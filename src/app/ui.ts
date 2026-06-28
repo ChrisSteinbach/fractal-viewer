@@ -2,7 +2,14 @@ import { transformColors } from "../fractal/color";
 import type { ColorMode, Transform } from "../fractal/types";
 import type { AppState, RenderStyle } from "./state";
 
-export type Preset = "sierpinski" | "menger" | "spiral";
+export type Preset =
+  | "sierpinski"
+  | "menger"
+  | "spiral"
+  | "pyramid"
+  | "octahedron"
+  | "icosahedron"
+  | "dodecahedron";
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -51,9 +58,7 @@ export class Ui {
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
   private readonly removeBtn: HTMLButtonElement;
-  private readonly sierpinskiBtn: HTMLButtonElement;
-  private readonly mengerBtn: HTMLButtonElement;
-  private readonly spiralBtn: HTMLButtonElement;
+  private readonly presetSelect: HTMLSelectElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
@@ -77,9 +82,7 @@ export class Ui {
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
     this.removeBtn = this.byId("removeBtn");
-    this.sierpinskiBtn = this.byId("sierpinskiBtn");
-    this.mengerBtn = this.byId("mengerBtn");
-    this.spiralBtn = this.byId("spiralBtn");
+    this.presetSelect = this.byId("presetSelect");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
@@ -104,11 +107,13 @@ export class Ui {
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
-    this.sierpinskiBtn.addEventListener("click", () =>
-      handlers.onPreset("sierpinski"),
-    );
-    this.mengerBtn.addEventListener("click", () => handlers.onPreset("menger"));
-    this.spiralBtn.addEventListener("click", () => handlers.onPreset("spiral"));
+    // The preset menu acts as a one-shot action list: fire the chosen preset,
+    // then snap back to the placeholder so it never implies a persistent mode.
+    this.presetSelect.addEventListener("change", () => {
+      const preset = this.presetSelect.value;
+      this.presetSelect.value = "";
+      if (preset) handlers.onPreset(preset as Preset);
+    });
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
