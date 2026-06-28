@@ -16,9 +16,9 @@ function color(rgb: Vec3): THREE.Color {
 
 /**
  * Thin wrapper around the Three.js scene graph: a fog-lit point cloud, a
- * reference grid and axes, and one wireframe "guide" box per transform. All
- * Three.js usage in the app is contained here; everything else works with plain
- * numbers and the pure `fractal/` core.
+ * reference grid and axes, and one wireframe "guide" box per transform. This is
+ * the main home for Three.js (interactions.ts also uses it for raycasting);
+ * everything else works with plain numbers and the pure `fractal/` core.
  */
 export class FractalScene {
   readonly scene: THREE.Scene;

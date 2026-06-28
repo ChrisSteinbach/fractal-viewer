@@ -62,7 +62,7 @@ src/
 │   ├── presets.ts       # default / Sierpinski / Menger / spiral systems
 │   └── rng.ts           # seedable PRNG for reproducible output
 └── app/       # Three.js rendering + DOM glue
-    ├── scene.ts         # Three.js scene wrapper (the only file importing three)
+    ├── scene.ts         # Three.js scene wrapper (point cloud, guides, fog)
     ├── orbit.ts         # spherical orbit-camera math (pure, tested)
     ├── state.ts         # app state + reducers (pure, tested)
     ├── ui.ts            # control panel + transform list (createElement)
