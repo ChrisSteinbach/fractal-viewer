@@ -1,7 +1,11 @@
 import { runChaosGame } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
 import {
+  dodecahedronFlake,
+  icosahedronFlake,
   mengerSponge,
+  octahedronFlake,
+  sierpinskiPyramid,
   sierpinskiTetrahedron,
   spiral,
 } from "../fractal/presets";
@@ -61,6 +65,14 @@ function presetTransforms(preset: Preset): Transform[] {
       return mengerSponge();
     case "spiral":
       return spiral();
+    case "pyramid":
+      return sierpinskiPyramid();
+    case "octahedron":
+      return octahedronFlake();
+    case "icosahedron":
+      return icosahedronFlake();
+    case "dodecahedron":
+      return dodecahedronFlake();
   }
 }
 

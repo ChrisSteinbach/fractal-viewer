@@ -15,9 +15,11 @@ const FIXTURE = `
   <span id="transformCount"></span>
   <button id="addBtn"></button>
   <button id="removeBtn"></button>
-  <button id="sierpinskiBtn"></button>
-  <button id="mengerBtn"></button>
-  <button id="spiralBtn"></button>
+  <select id="presetSelect">
+    <option value="" selected>Load a preset…</option>
+    <option value="sierpinski">Sierpinski Tetrahedron</option>
+    <option value="dodecahedron">Dodecahedron (20)</option>
+  </select>
   <span id="numPointsLabel"></span>
   <input id="numPointsSlider" type="range" min="0" max="500000" value="100000" />
   <span id="pointSizeLabel"></span>
@@ -161,6 +163,34 @@ describe("Ui point size slider", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onPointSizeInput).toHaveBeenCalledWith(1.75);
+  });
+});
+
+describe("Ui preset menu", () => {
+  it("fires onPreset for the chosen value, then resets to the placeholder", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    select.value = "dodecahedron";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onPreset).toHaveBeenCalledWith("dodecahedron");
+    // Snaps back so the menu reads as an action, not a persistent mode.
+    expect(select.value).toBe("");
+  });
+
+  it("ignores reselecting the placeholder", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onPreset).not.toHaveBeenCalled();
   });
 });
 

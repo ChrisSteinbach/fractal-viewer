@@ -49,15 +49,16 @@
       </div>
 
       <h3>Presets</h3>
-      <button class="btn btn-purple" id="sierpinskiBtn" type="button">
-        Sierpinski Tetrahedron
-      </button>
-      <button class="btn btn-purple" id="mengerBtn" type="button">
-        Menger Sponge
-      </button>
-      <button class="btn btn-purple" id="spiralBtn" type="button">
-        Spiral
-      </button>
+      <select id="presetSelect" aria-label="Load a preset">
+        <option value="" selected>Load a preset…</option>
+        <option value="sierpinski">Sierpinski Tetrahedron</option>
+        <option value="menger">Menger Sponge</option>
+        <option value="spiral">Spiral</option>
+        <option value="pyramid">Sierpinski Pyramid</option>
+        <option value="octahedron">Octahedron Flake</option>
+        <option value="icosahedron">Icosahedron (12)</option>
+        <option value="dodecahedron">Dodecahedron (20)</option>
+      </select>
 
       <h3>Points: <span id="numPointsLabel">100,000</span></h3>
       <input
