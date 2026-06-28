@@ -2,6 +2,14 @@ import { appendTransform, defaultTransforms } from "../fractal/presets";
 import type { Rng } from "../fractal/rng";
 import type { ColorMode, Transform } from "../fractal/types";
 
+/**
+ * How the point cloud conveys depth. `depthFade` is the original look (fog to
+ * the dark background); the rest are experiments compared via the UI switcher.
+ * Kept here (a plain string union, no Three.js) so state stays pure and
+ * `scene.ts` maps each style to a renderer configuration.
+ */
+export type RenderStyle = "depthFade" | "aerial" | "glow" | "dof" | "edl";
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
@@ -10,6 +18,7 @@ export interface AppState {
   selectedTransform: number | null;
   showGuides: boolean;
   colorMode: ColorMode;
+  renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
 }
@@ -25,6 +34,7 @@ export function initialState(panelOpen: boolean): AppState {
     selectedTransform: null,
     showGuides: true,
     colorMode: "transform",
+    renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
   };
@@ -81,6 +91,13 @@ export function setNumPoints(state: AppState, numPoints: number): AppState {
 
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
   return { ...state, colorMode };
+}
+
+export function setRenderStyle(
+  state: AppState,
+  renderStyle: RenderStyle,
+): AppState {
+  return { ...state, renderStyle };
 }
 
 export function setShowGuides(state: AppState, showGuides: boolean): AppState {

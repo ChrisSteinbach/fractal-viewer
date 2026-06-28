@@ -19,6 +19,7 @@ import {
   setColorMode,
   setNumPoints,
   setPanelOpen,
+  setRenderStyle,
   setShowGuides,
   setTransforms,
   updateTransform,
@@ -140,6 +141,10 @@ function main(): void {
       state = setColorMode(state, mode);
       regenerate();
     },
+    onRenderStyle: (style) => {
+      state = setRenderStyle(state, style);
+      scene.setRenderStyle(style);
+    },
     onToggleAutoUpdate: (checked) => {
       state = setAutoUpdate(state, checked);
     },
@@ -173,6 +178,7 @@ function main(): void {
 
   const loading = document.getElementById("loading");
   if (loading) loading.style.display = "none";
+  scene.setRenderStyle(state.renderStyle);
   refreshGuides();
   regenerate();
   refreshUi();

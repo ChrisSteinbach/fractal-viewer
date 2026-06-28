@@ -1,6 +1,6 @@
 import { transformColors } from "../fractal/color";
 import type { ColorMode, Transform } from "../fractal/types";
-import type { AppState } from "./state";
+import type { AppState, RenderStyle } from "./state";
 
 export type Preset = "sierpinski" | "menger" | "spiral";
 
@@ -12,6 +12,7 @@ export interface UiHandlers {
   onRegenerate: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
+  onRenderStyle: (style: RenderStyle) => void;
   onToggleAutoUpdate: (checked: boolean) => void;
   onSelect: (index: number | null) => void;
   onTogglePanel: () => void;
@@ -57,6 +58,7 @@ export class Ui {
   private readonly numPointsSlider: HTMLInputElement;
   private readonly showGuides: HTMLInputElement;
   private readonly colorMode: HTMLSelectElement;
+  private readonly renderStyle: HTMLSelectElement;
   private readonly autoUpdate: HTMLInputElement;
 
   constructor(doc: Document = document) {
@@ -80,6 +82,7 @@ export class Ui {
     this.numPointsSlider = this.byId("numPointsSlider");
     this.showGuides = this.byId("showGuides");
     this.colorMode = this.byId("colorMode");
+    this.renderStyle = this.byId("renderStyle");
     this.autoUpdate = this.byId("autoUpdate");
   }
 
@@ -111,6 +114,9 @@ export class Ui {
     this.colorMode.addEventListener("change", () =>
       handlers.onColorMode(this.colorMode.value as ColorMode),
     );
+    this.renderStyle.addEventListener("change", () =>
+      handlers.onRenderStyle(this.renderStyle.value as RenderStyle),
+    );
     this.autoUpdate.addEventListener("change", () =>
       handlers.onToggleAutoUpdate(this.autoUpdate.checked),
     );
@@ -123,6 +129,7 @@ export class Ui {
     this.numPointsLabel.textContent = state.numPoints.toLocaleString();
     this.numPointsSlider.value = String(state.numPoints);
     this.colorMode.value = state.colorMode;
+    this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;
 
