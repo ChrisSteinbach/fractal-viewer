@@ -20,6 +20,8 @@ const FIXTURE = `
   <button id="spiralBtn"></button>
   <span id="numPointsLabel"></span>
   <input id="numPointsSlider" type="range" min="0" max="500000" value="100000" />
+  <span id="pointSizeLabel"></span>
+  <input id="pointSizeSlider" type="range" min="0.25" max="4" step="0.05" value="1" />
   <button id="regenerateBtn"></button>
   <input id="showGuides" type="checkbox" checked />
   <select id="colorMode">
@@ -40,6 +42,7 @@ function noopHandlers(): UiHandlers {
     onRemove: vi.fn(),
     onPreset: vi.fn(),
     onNumPointsInput: vi.fn(),
+    onPointSizeInput: vi.fn(),
     onRegenerate: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
@@ -129,6 +132,35 @@ describe("Ui.updateLabels", () => {
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "Transform 2",
     );
+  });
+
+  it("reflects the point size as a multiplier and into the slider", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), pointSize: 2.5 });
+
+    expect(document.getElementById("pointSizeLabel")?.textContent).toBe(
+      "2.50×",
+    );
+    const slider = document.getElementById(
+      "pointSizeSlider",
+    ) as HTMLInputElement;
+    expect(slider.value).toBe("2.5");
+  });
+});
+
+describe("Ui point size slider", () => {
+  it("reports the slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "pointSizeSlider",
+    ) as HTMLInputElement;
+    slider.value = "1.75";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onPointSizeInput).toHaveBeenCalledWith(1.75);
   });
 });
 

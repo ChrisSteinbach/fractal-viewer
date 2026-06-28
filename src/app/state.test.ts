@@ -1,9 +1,11 @@
 import {
   addTransform,
+  DEFAULT_POINT_SIZE,
   initialState,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
+  setPointSize,
   setRenderStyle,
   setTransforms,
   updateTransform,
@@ -18,7 +20,17 @@ describe("initialState", () => {
     expect(state.transforms).toHaveLength(4);
     expect(state.colorMode).toBe("transform");
     expect(state.renderStyle).toBe("depthFade");
+    expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
     expect(state.panelOpen).toBe(true);
+  });
+});
+
+describe("setPointSize", () => {
+  it("sets the point-size multiplier immutably", () => {
+    const state = initialState(true);
+    const next = setPointSize(state, 2.5);
+    expect(next.pointSize).toBe(2.5);
+    expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
   });
 });
 

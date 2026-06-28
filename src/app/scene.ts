@@ -17,6 +17,14 @@ const BACKGROUND = 0x1a1a2e;
 const AERIAL_HAZE = 0x4a5a86;
 const FOG_MARGIN = 1.2;
 
+// Authored base point size per render style. The UI scales all of them by a
+// single multiplier (see {@link FractalScene.setPointSize}) so each style keeps
+// its own relative tuning as the user dials the cloud up or down.
+const BASE_POINT_SIZE = 0.02; // depthFade + aerial
+const DISC_POINT_SIZE = 0.025; // edl
+const GLOW_POINT_SIZE = 0.03; // glow
+const DOF_POINT_SIZE = 0.024; // dof
+
 function color(rgb: Vec3): THREE.Color {
   return new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]);
 }
@@ -212,13 +220,13 @@ export class FractalScene {
     this.scene.add(this.axes);
 
     this.baseMaterial = new THREE.PointsMaterial({
-      size: 0.02,
+      size: BASE_POINT_SIZE,
       vertexColors: true,
       sizeAttenuation: true,
       fog: true,
     });
     this.discMaterial = new THREE.PointsMaterial({
-      size: 0.025,
+      size: DISC_POINT_SIZE,
       map: discTexture(),
       alphaTest: 0.5,
       vertexColors: true,
@@ -229,7 +237,7 @@ export class FractalScene {
       // Additive: each point adds only a little, so colour survives in sparse
       // regions and only genuinely dense overlaps build up to a hot, bloom-able
       // core. Too much per-point alpha blows the whole cloud out to white.
-      size: 0.03,
+      size: GLOW_POINT_SIZE,
       map: glowTexture(),
       transparent: true,
       opacity: 0.16,
@@ -241,7 +249,7 @@ export class FractalScene {
     });
     this.dofMaterial = new THREE.ShaderMaterial({
       uniforms: {
-        uSize: { value: 0.024 },
+        uSize: { value: DOF_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
         uFocus: { value: 9 },
         uAperture: { value: 3.5 },
@@ -417,6 +425,17 @@ export class FractalScene {
         this.scene.background = this.darkBackground;
         break;
     }
+  }
+
+  /**
+   * Scale every render style's points by `multiplier` (1 = authored size).
+   * Applied to all materials at once so switching styles preserves the choice.
+   */
+  setPointSize(multiplier: number): void {
+    this.baseMaterial.size = BASE_POINT_SIZE * multiplier;
+    this.discMaterial.size = DISC_POINT_SIZE * multiplier;
+    this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
+    this.dofMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
   }
 
   /**
