@@ -4,6 +4,7 @@ import {
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
+  setRenderStyle,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -16,7 +17,17 @@ describe("initialState", () => {
     expect(state.selectedTransform).toBeNull();
     expect(state.transforms).toHaveLength(4);
     expect(state.colorMode).toBe("transform");
+    expect(state.renderStyle).toBe("depthFade");
     expect(state.panelOpen).toBe(true);
+  });
+});
+
+describe("setRenderStyle", () => {
+  it("switches the render style immutably", () => {
+    const state = initialState(true);
+    const next = setRenderStyle(state, "glow");
+    expect(next.renderStyle).toBe("glow");
+    expect(state.renderStyle).toBe("depthFade");
   });
 });
 

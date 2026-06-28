@@ -26,6 +26,10 @@ const FIXTURE = `
     <option value="transform">By Transform</option>
     <option value="uniform">Uniform</option>
   </select>
+  <select id="renderStyle">
+    <option value="depthFade">Depth Fade</option>
+    <option value="glow">Glow + Bloom</option>
+  </select>
   <input id="autoUpdate" type="checkbox" checked />
   <div id="transformList"></div>
 </div>`;
@@ -39,6 +43,7 @@ function noopHandlers(): UiHandlers {
     onRegenerate: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
+    onRenderStyle: vi.fn(),
     onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
     onTogglePanel: vi.fn(),
