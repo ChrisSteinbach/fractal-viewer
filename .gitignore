@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+.idea/
+.playwright-mcp/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
+.prep-pr/
+.dispatch/
