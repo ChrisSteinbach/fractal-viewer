@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Fractal Viewer">
+  <rect width="512" height="512" rx="96" fill="#1a1a2e" />
+  <g fill="#66ccff">
+    <polygon points="256,40 202,148 310,148" />
+    <polygon points="202,148 148,256 256,256" />
+    <polygon points="310,148 256,256 364,256" />
+  </g>
+  <g fill="#4ade80">
+    <polygon points="148,256 94,364 202,364" />
+    <polygon points="94,364 40,472 148,472" />
+    <polygon points="202,364 148,472 256,472" />
+    <polygon points="364,256 310,364 418,364" />
+    <polygon points="310,364 256,472 364,472" />
+    <polygon points="418,364 364,472 472,472" />
+  </g>
+</svg>
