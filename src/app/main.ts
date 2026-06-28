@@ -1,7 +1,11 @@
 import { runChaosGame } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
 import {
+  dodecahedronFlake,
+  icosahedronFlake,
   mengerSponge,
+  octahedronFlake,
+  sierpinskiPyramid,
   sierpinskiTetrahedron,
   spiral,
 } from "../fractal/presets";
@@ -19,6 +23,8 @@ import {
   setColorMode,
   setNumPoints,
   setPanelOpen,
+  setPointSize,
+  setRenderStyle,
   setShowGuides,
   setTransforms,
   updateTransform,
@@ -59,6 +65,14 @@ function presetTransforms(preset: Preset): Transform[] {
       return mengerSponge();
     case "spiral":
       return spiral();
+    case "pyramid":
+      return sierpinskiPyramid();
+    case "octahedron":
+      return octahedronFlake();
+    case "icosahedron":
+      return icosahedronFlake();
+    case "dodecahedron":
+      return dodecahedronFlake();
   }
 }
 
@@ -130,6 +144,11 @@ function main(): void {
       state = setNumPoints(state, value);
       ui.updateLabels(state);
     },
+    onPointSizeInput: (value) => {
+      state = setPointSize(state, value);
+      scene.setPointSize(value);
+      ui.updateLabels(state);
+    },
     onRegenerate: () => regenerate(),
     onToggleGuides: (checked) => {
       state = setShowGuides(state, checked);
@@ -139,6 +158,10 @@ function main(): void {
     onColorMode: (mode) => {
       state = setColorMode(state, mode);
       regenerate();
+    },
+    onRenderStyle: (style) => {
+      state = setRenderStyle(state, style);
+      scene.setRenderStyle(style);
     },
     onToggleAutoUpdate: (checked) => {
       state = setAutoUpdate(state, checked);
@@ -173,6 +196,8 @@ function main(): void {
 
   const loading = document.getElementById("loading");
   if (loading) loading.style.display = "none";
+  scene.setRenderStyle(state.renderStyle);
+  scene.setPointSize(state.pointSize);
   refreshGuides();
   regenerate();
   refreshUi();

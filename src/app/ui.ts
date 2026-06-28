@@ -1,17 +1,26 @@
 import { transformColors } from "../fractal/color";
 import type { ColorMode, Transform } from "../fractal/types";
-import type { AppState } from "./state";
+import type { AppState, RenderStyle } from "./state";
 
-export type Preset = "sierpinski" | "menger" | "spiral";
+export type Preset =
+  | "sierpinski"
+  | "menger"
+  | "spiral"
+  | "pyramid"
+  | "octahedron"
+  | "icosahedron"
+  | "dodecahedron";
 
 export interface UiHandlers {
   onAdd: () => void;
   onRemove: () => void;
   onPreset: (preset: Preset) => void;
   onNumPointsInput: (value: number) => void;
+  onPointSizeInput: (value: number) => void;
   onRegenerate: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
+  onRenderStyle: (style: RenderStyle) => void;
   onToggleAutoUpdate: (checked: boolean) => void;
   onSelect: (index: number | null) => void;
   onTogglePanel: () => void;
@@ -49,14 +58,15 @@ export class Ui {
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
   private readonly removeBtn: HTMLButtonElement;
-  private readonly sierpinskiBtn: HTMLButtonElement;
-  private readonly mengerBtn: HTMLButtonElement;
-  private readonly spiralBtn: HTMLButtonElement;
+  private readonly presetSelect: HTMLSelectElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
+  private readonly pointSizeLabel: HTMLElement;
+  private readonly pointSizeSlider: HTMLInputElement;
   private readonly showGuides: HTMLInputElement;
   private readonly colorMode: HTMLSelectElement;
+  private readonly renderStyle: HTMLSelectElement;
   private readonly autoUpdate: HTMLInputElement;
 
   constructor(doc: Document = document) {
@@ -72,14 +82,15 @@ export class Ui {
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
     this.removeBtn = this.byId("removeBtn");
-    this.sierpinskiBtn = this.byId("sierpinskiBtn");
-    this.mengerBtn = this.byId("mengerBtn");
-    this.spiralBtn = this.byId("spiralBtn");
+    this.presetSelect = this.byId("presetSelect");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
+    this.pointSizeLabel = this.byId("pointSizeLabel");
+    this.pointSizeSlider = this.byId("pointSizeSlider");
     this.showGuides = this.byId("showGuides");
     this.colorMode = this.byId("colorMode");
+    this.renderStyle = this.byId("renderStyle");
     this.autoUpdate = this.byId("autoUpdate");
   }
 
@@ -96,20 +107,28 @@ export class Ui {
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
-    this.sierpinskiBtn.addEventListener("click", () =>
-      handlers.onPreset("sierpinski"),
-    );
-    this.mengerBtn.addEventListener("click", () => handlers.onPreset("menger"));
-    this.spiralBtn.addEventListener("click", () => handlers.onPreset("spiral"));
+    // The preset menu acts as a one-shot action list: fire the chosen preset,
+    // then snap back to the placeholder so it never implies a persistent mode.
+    this.presetSelect.addEventListener("change", () => {
+      const preset = this.presetSelect.value;
+      this.presetSelect.value = "";
+      if (preset) handlers.onPreset(preset as Preset);
+    });
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
+    );
+    this.pointSizeSlider.addEventListener("input", () =>
+      handlers.onPointSizeInput(Number(this.pointSizeSlider.value)),
     );
     this.showGuides.addEventListener("change", () =>
       handlers.onToggleGuides(this.showGuides.checked),
     );
     this.colorMode.addEventListener("change", () =>
       handlers.onColorMode(this.colorMode.value as ColorMode),
+    );
+    this.renderStyle.addEventListener("change", () =>
+      handlers.onRenderStyle(this.renderStyle.value as RenderStyle),
     );
     this.autoUpdate.addEventListener("change", () =>
       handlers.onToggleAutoUpdate(this.autoUpdate.checked),
@@ -122,7 +141,10 @@ export class Ui {
     this.removeBtn.disabled = state.transforms.length <= 1;
     this.numPointsLabel.textContent = state.numPoints.toLocaleString();
     this.numPointsSlider.value = String(state.numPoints);
+    this.pointSizeLabel.textContent = `${state.pointSize.toFixed(2)}×`;
+    this.pointSizeSlider.value = String(state.pointSize);
     this.colorMode.value = state.colorMode;
+    this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;
 

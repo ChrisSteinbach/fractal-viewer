@@ -49,15 +49,16 @@
       </div>
 
       <h3>Presets</h3>
-      <button class="btn btn-purple" id="sierpinskiBtn" type="button">
-        Sierpinski Tetrahedron
-      </button>
-      <button class="btn btn-purple" id="mengerBtn" type="button">
-        Menger Sponge
-      </button>
-      <button class="btn btn-purple" id="spiralBtn" type="button">
-        Spiral
-      </button>
+      <select id="presetSelect" aria-label="Load a preset">
+        <option value="" selected>Load a preset…</option>
+        <option value="sierpinski">Sierpinski Tetrahedron</option>
+        <option value="menger">Menger Sponge</option>
+        <option value="spiral">Spiral</option>
+        <option value="pyramid">Sierpinski Pyramid</option>
+        <option value="octahedron">Octahedron Flake</option>
+        <option value="icosahedron">Icosahedron (12)</option>
+        <option value="dodecahedron">Dodecahedron (20)</option>
+      </select>
 
       <h3>Points: <span id="numPointsLabel">100,000</span></h3>
       <input
@@ -71,6 +72,16 @@
       <button class="btn btn-blue" id="regenerateBtn" type="button">
         Regenerate Points
       </button>
+
+      <h3>Point Size: <span id="pointSizeLabel">1.00×</span></h3>
+      <input
+        type="range"
+        id="pointSizeSlider"
+        min="0.25"
+        max="4"
+        step="0.05"
+        value="1"
+      />
 
       <h3>Display Options</h3>
       <label class="checkbox-label">
@@ -87,6 +98,17 @@
           <option value="position">By Position (XYZ→RGB)</option>
           <option value="iterationAge">By Iteration Age</option>
           <option value="uniform">Uniform Cyan</option>
+        </select>
+      </label>
+
+      <label class="select-label">
+        Depth Style
+        <select id="renderStyle">
+          <option value="depthFade">Depth Fade (current)</option>
+          <option value="aerial">Aerial Haze</option>
+          <option value="glow">Glow + Bloom</option>
+          <option value="dof">Depth of Field</option>
+          <option value="edl">Eye-Dome Lighting</option>
         </select>
       </label>
 

@@ -2,14 +2,25 @@ import { appendTransform, defaultTransforms } from "../fractal/presets";
 import type { Rng } from "../fractal/rng";
 import type { ColorMode, Transform } from "../fractal/types";
 
+/**
+ * How the point cloud conveys depth. `depthFade` is the original look (fog to
+ * the dark background); the rest are experiments compared via the UI switcher.
+ * Kept here (a plain string union, no Three.js) so state stays pure and
+ * `scene.ts` maps each style to a renderer configuration.
+ */
+export type RenderStyle = "depthFade" | "aerial" | "glow" | "dof" | "edl";
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
   numPoints: number;
+  /** Multiplier on each render style's base point size; 1 = as authored. */
+  pointSize: number;
   /** Index into `transforms`, or `null` for camera (orbit) mode. */
   selectedTransform: number | null;
   showGuides: boolean;
   colorMode: ColorMode;
+  renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
 }
@@ -17,14 +28,18 @@ export interface AppState {
 /** An IFS needs at least one map. */
 export const MIN_TRANSFORMS = 1;
 export const DEFAULT_NUM_POINTS = 100_000;
+/** Point-size multiplier; 1 renders each style at its authored size. */
+export const DEFAULT_POINT_SIZE = 1;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
     transforms: defaultTransforms(),
     numPoints: DEFAULT_NUM_POINTS,
+    pointSize: DEFAULT_POINT_SIZE,
     selectedTransform: null,
     showGuides: true,
     colorMode: "transform",
+    renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
   };
@@ -79,8 +94,19 @@ export function setNumPoints(state: AppState, numPoints: number): AppState {
   return { ...state, numPoints };
 }
 
+export function setPointSize(state: AppState, pointSize: number): AppState {
+  return { ...state, pointSize };
+}
+
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
   return { ...state, colorMode };
+}
+
+export function setRenderStyle(
+  state: AppState,
+  renderStyle: RenderStyle,
+): AppState {
+  return { ...state, renderStyle };
 }
 
 export function setShowGuides(state: AppState, showGuides: boolean): AppState {

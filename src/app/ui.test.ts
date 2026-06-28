@@ -15,16 +15,24 @@ const FIXTURE = `
   <span id="transformCount"></span>
   <button id="addBtn"></button>
   <button id="removeBtn"></button>
-  <button id="sierpinskiBtn"></button>
-  <button id="mengerBtn"></button>
-  <button id="spiralBtn"></button>
+  <select id="presetSelect">
+    <option value="" selected>Load a preset…</option>
+    <option value="sierpinski">Sierpinski Tetrahedron</option>
+    <option value="dodecahedron">Dodecahedron (20)</option>
+  </select>
   <span id="numPointsLabel"></span>
   <input id="numPointsSlider" type="range" min="0" max="500000" value="100000" />
+  <span id="pointSizeLabel"></span>
+  <input id="pointSizeSlider" type="range" min="0.25" max="4" step="0.05" value="1" />
   <button id="regenerateBtn"></button>
   <input id="showGuides" type="checkbox" checked />
   <select id="colorMode">
     <option value="transform">By Transform</option>
     <option value="uniform">Uniform</option>
+  </select>
+  <select id="renderStyle">
+    <option value="depthFade">Depth Fade</option>
+    <option value="glow">Glow + Bloom</option>
   </select>
   <input id="autoUpdate" type="checkbox" checked />
   <div id="transformList"></div>
@@ -36,9 +44,11 @@ function noopHandlers(): UiHandlers {
     onRemove: vi.fn(),
     onPreset: vi.fn(),
     onNumPointsInput: vi.fn(),
+    onPointSizeInput: vi.fn(),
     onRegenerate: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
+    onRenderStyle: vi.fn(),
     onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
     onTogglePanel: vi.fn(),
@@ -124,6 +134,63 @@ describe("Ui.updateLabels", () => {
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "Transform 2",
     );
+  });
+
+  it("reflects the point size as a multiplier and into the slider", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), pointSize: 2.5 });
+
+    expect(document.getElementById("pointSizeLabel")?.textContent).toBe(
+      "2.50×",
+    );
+    const slider = document.getElementById(
+      "pointSizeSlider",
+    ) as HTMLInputElement;
+    expect(slider.value).toBe("2.5");
+  });
+});
+
+describe("Ui point size slider", () => {
+  it("reports the slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "pointSizeSlider",
+    ) as HTMLInputElement;
+    slider.value = "1.75";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onPointSizeInput).toHaveBeenCalledWith(1.75);
+  });
+});
+
+describe("Ui preset menu", () => {
+  it("fires onPreset for the chosen value, then resets to the placeholder", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    select.value = "dodecahedron";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onPreset).toHaveBeenCalledWith("dodecahedron");
+    // Snaps back so the menu reads as an action, not a persistent mode.
+    expect(select.value).toBe("");
+  });
+
+  it("ignores reselecting the placeholder", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("presetSelect") as HTMLSelectElement;
+    select.value = "";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onPreset).not.toHaveBeenCalled();
   });
 });
 

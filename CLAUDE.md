@@ -44,15 +44,18 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `chaos-game.ts` — the IFS iterator: warm-up, escape-reset, bounds tracking.
     Takes an injected RNG so runs are reproducible in tests.
   - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the six color-mode palettes.
-  - `presets.ts` — default / Sierpinski / Menger / spiral systems + add-transform.
+  - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
+    octahedron/icosahedron/dodecahedron flakes) + add-transform.
   - `rng.ts` — seedable mulberry32 PRNG.
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
-  - `scene.ts` — the **only** file that imports `three` (scene, camera, renderer,
-    point cloud, guide boxes, fog).
+  - `scene.ts` — the main Three.js wrapper (scene, camera, renderer, point
+    cloud, guide boxes, fog). Three.js is confined to this file and
+    `interactions.ts`; everything else works with plain numbers.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `ui.ts` — control panel + transform list, built with `createElement`.
-  - `interactions.ts` — pointer / touch / wheel handling.
+  - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
+    raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
 
 Core algorithm: the chaos game on an IFS — repeatedly apply a randomly chosen

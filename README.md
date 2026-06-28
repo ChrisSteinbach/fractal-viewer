@@ -15,7 +15,8 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 - **Real-time chaos game** rendering of an IFS attractor (up to 500k points).
 - **Editable transforms** — add/remove maps and drag, rotate, and scale them in
   the 3D view with mouse or touch.
-- **Presets** — Sierpinski tetrahedron, Menger sponge, and a spiral.
+- **Presets** — a menu of seven systems, from the Sierpinski tetrahedron and
+  Menger sponge to 12- and 20-map icosahedron and dodecahedron flakes.
 - **Six color modes** — by transform, height, radius, position, iteration age, or
   a uniform cyan.
 - **Orbit camera** with rotate / pan / zoom, and depth fog that tracks the cloud.
@@ -59,10 +60,10 @@ src/
 │   ├── affine.ts        # Euler-XYZ rotation + TRS matrix compose/apply
 │   ├── chaos-game.ts    # the IFS iterator (the "chaos game")
 │   ├── color.ts         # HSL→RGB and the six color modes
-│   ├── presets.ts       # default / Sierpinski / Menger / spiral systems
+│   ├── presets.ts       # default + named systems (Sierpinski, Menger, flakes…)
 │   └── rng.ts           # seedable PRNG for reproducible output
 └── app/       # Three.js rendering + DOM glue
-    ├── scene.ts         # Three.js scene wrapper (the only file importing three)
+    ├── scene.ts         # Three.js scene wrapper (point cloud, guides, fog)
     ├── orbit.ts         # spherical orbit-camera math (pure, tested)
     ├── state.ts         # app state + reducers (pure, tested)
     ├── ui.ts            # control panel + transform list (createElement)
