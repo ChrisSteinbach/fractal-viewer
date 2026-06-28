@@ -9,6 +9,7 @@ export interface UiHandlers {
   onRemove: () => void;
   onPreset: (preset: Preset) => void;
   onNumPointsInput: (value: number) => void;
+  onPointSizeInput: (value: number) => void;
   onRegenerate: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
@@ -56,6 +57,8 @@ export class Ui {
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
+  private readonly pointSizeLabel: HTMLElement;
+  private readonly pointSizeSlider: HTMLInputElement;
   private readonly showGuides: HTMLInputElement;
   private readonly colorMode: HTMLSelectElement;
   private readonly renderStyle: HTMLSelectElement;
@@ -80,6 +83,8 @@ export class Ui {
     this.regenerateBtn = this.byId("regenerateBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
+    this.pointSizeLabel = this.byId("pointSizeLabel");
+    this.pointSizeSlider = this.byId("pointSizeSlider");
     this.showGuides = this.byId("showGuides");
     this.colorMode = this.byId("colorMode");
     this.renderStyle = this.byId("renderStyle");
@@ -108,6 +113,9 @@ export class Ui {
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
     );
+    this.pointSizeSlider.addEventListener("input", () =>
+      handlers.onPointSizeInput(Number(this.pointSizeSlider.value)),
+    );
     this.showGuides.addEventListener("change", () =>
       handlers.onToggleGuides(this.showGuides.checked),
     );
@@ -128,6 +136,8 @@ export class Ui {
     this.removeBtn.disabled = state.transforms.length <= 1;
     this.numPointsLabel.textContent = state.numPoints.toLocaleString();
     this.numPointsSlider.value = String(state.numPoints);
+    this.pointSizeLabel.textContent = `${state.pointSize.toFixed(2)}×`;
+    this.pointSizeSlider.value = String(state.pointSize);
     this.colorMode.value = state.colorMode;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;

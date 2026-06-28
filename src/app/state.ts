@@ -14,6 +14,8 @@ export type RenderStyle = "depthFade" | "aerial" | "glow" | "dof" | "edl";
 export interface AppState {
   transforms: Transform[];
   numPoints: number;
+  /** Multiplier on each render style's base point size; 1 = as authored. */
+  pointSize: number;
   /** Index into `transforms`, or `null` for camera (orbit) mode. */
   selectedTransform: number | null;
   showGuides: boolean;
@@ -26,11 +28,14 @@ export interface AppState {
 /** An IFS needs at least one map. */
 export const MIN_TRANSFORMS = 1;
 export const DEFAULT_NUM_POINTS = 100_000;
+/** Point-size multiplier; 1 renders each style at its authored size. */
+export const DEFAULT_POINT_SIZE = 1;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
     transforms: defaultTransforms(),
     numPoints: DEFAULT_NUM_POINTS,
+    pointSize: DEFAULT_POINT_SIZE,
     selectedTransform: null,
     showGuides: true,
     colorMode: "transform",
@@ -87,6 +92,10 @@ export function updateTransform(
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {
   return { ...state, numPoints };
+}
+
+export function setPointSize(state: AppState, pointSize: number): AppState {
+  return { ...state, pointSize };
 }
 
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
