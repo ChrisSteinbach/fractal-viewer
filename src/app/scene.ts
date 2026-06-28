@@ -383,6 +383,21 @@ export class FractalScene {
     return this.guideCubes[index];
   }
 
+  /**
+   * Move one guide box to match an edited transform, without the dispose-and-
+   * rebuild of {@link updateGuides}. Lets the panel sliders drive the box live.
+   */
+  setGuideGeometry(
+    index: number,
+    geometry: Pick<Transform, "position" | "rotation" | "scale">,
+  ): void {
+    const cube = this.guideCubes[index];
+    if (!cube) return;
+    cube.position.set(...geometry.position);
+    cube.rotation.set(...geometry.rotation);
+    cube.scale.set(...geometry.scale);
+  }
+
   /** Place the camera from the orbit state. */
   applyCamera(orbit: OrbitCamera): void {
     const [x, y, z] = orbit.position();

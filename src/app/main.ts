@@ -119,6 +119,11 @@ function main(): void {
   function refreshUi(): void {
     ui.updateLabels(state);
     ui.renderTransformList(state.transforms, state.selectedTransform);
+    const selected = state.selectedTransform;
+    ui.renderTransformEditor(
+      selected === null ? null : state.transforms[selected],
+      selected,
+    );
   }
 
   ui.bind({
@@ -171,6 +176,12 @@ function main(): void {
       refreshGuides();
       refreshUi();
     },
+    onTransformGeometry: (index, geometry) => {
+      state = updateTransform(state, index, geometry);
+      scene.setGuideGeometry(index, geometry);
+      ui.renderTransformList(state.transforms, state.selectedTransform);
+      if (state.autoUpdate) regenerate();
+    },
     onTogglePanel: () => {
       state = setPanelOpen(state, !state.panelOpen);
       ui.updateLabels(state);
@@ -186,6 +197,7 @@ function main(): void {
     onTransformChange: (index, geometry) => {
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(state.transforms, state.selectedTransform);
+      ui.renderTransformEditor(state.transforms[index], index);
       if (state.autoUpdate) regenerate();
     },
   });

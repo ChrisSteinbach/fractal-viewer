@@ -3,6 +3,7 @@ import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import { initialState } from "./state";
 import { defaultTransforms } from "../fractal/presets";
+import type { Transform } from "../fractal/types";
 
 const FIXTURE = `
 <div id="helpTitle"></div>
@@ -36,6 +37,7 @@ const FIXTURE = `
   </select>
   <input id="autoUpdate" type="checkbox" checked />
   <div id="transformList"></div>
+  <div id="transformEditor"></div>
 </div>`;
 
 function noopHandlers(): UiHandlers {
@@ -51,6 +53,7 @@ function noopHandlers(): UiHandlers {
     onRenderStyle: vi.fn(),
     onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
+    onTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
   };
@@ -62,6 +65,20 @@ function transformButtons(): HTMLButtonElement[] {
       "#transformList .transform-btn",
     ),
   );
+}
+
+function editorSliders(): HTMLInputElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      "#transformEditor input[type='range']",
+    ),
+  );
+}
+
+function editorGroupTitles(): string[] {
+  return Array.from(
+    document.querySelectorAll("#transformEditor .editor-group-title"),
+  ).map((el) => el.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -200,6 +217,113 @@ describe("Ui.setPointCount", () => {
     ui.setPointCount(100000);
     expect(document.getElementById("pointCount")?.textContent).toBe(
       `${(100000).toLocaleString()} pts`,
+    );
+  });
+});
+
+describe("Ui.renderTransformEditor", () => {
+  it("builds position, rotation, and scale sliders for the selected transform", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(defaultTransforms()[0], 0);
+
+    expect(editorGroupTitles()).toEqual(["Position", "Rotation", "Scale"]);
+    expect(editorSliders()).toHaveLength(9);
+  });
+
+  it("shows the stored rotation radians as degrees", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, Math.PI / 4, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    // Rotation is the second group, so its Y axis is the fifth slider.
+    expect(editorSliders()[4].value).toBe("45");
+  });
+
+  it("reports an edited rotation axis back in radians, preserving the rest", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    const rotationY = editorSliders()[4];
+    rotationY.value = "90";
+    rotationY.dispatchEvent(new Event("input"));
+
+    const calls = vi.mocked(handlers.onTransformGeometry).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [index, geometry] = calls[0];
+    expect(index).toBe(0);
+    expect(geometry.rotation[1]).toBeCloseTo(Math.PI / 2);
+    expect(geometry.rotation[0]).toBe(0);
+    expect(geometry.position).toEqual([0.5, 0.5, 0.5]);
+    expect(geometry.scale).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("supports non-uniform scale", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    // Scale is the third group, so its X axis is the seventh slider.
+    const scaleX = editorSliders()[6];
+    scaleX.value = "1.2";
+    scaleX.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.scale).toEqual([1.2, 0.5, 0.5]);
+  });
+
+  it("re-syncs the sliders when the transform changes under the same selection", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const base: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    };
+    ui.renderTransformEditor(base, 0);
+    // Same index → no rebuild; a drag moved X, so that slider should follow.
+    ui.renderTransformEditor({ ...base, position: [1, 0, 0] }, 0);
+
+    expect(editorSliders()[0].value).toBe("1");
+  });
+
+  it("clears the editor in camera mode", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(defaultTransforms()[0], 0);
+    expect(editorSliders()).toHaveLength(9);
+
+    ui.renderTransformEditor(null, null);
+    expect(document.getElementById("transformEditor")?.children).toHaveLength(
+      0,
     );
   });
 });

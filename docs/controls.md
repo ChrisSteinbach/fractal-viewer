@@ -36,8 +36,17 @@ change** is on (otherwise press **Regenerate Points**).
 | Two finger pinch | Scale (clamped to `[0.05, 2]`)          |
 | Two finger twist | Rotate around the vertical axis         |
 
+These gestures are quick but can't reach every degree of freedom (right-drag
+rotates only two axes, twist only one, and pinch scales uniformly). For precise,
+all-axis control — roll included, plus non-uniform scale — use the **Edit
+Transform** sliders that appear in the panel while a transform is selected.
+
 ## Panel controls
 
+- **Edit Transform N** — appears under **Select to Edit** while a transform is
+  selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in degrees), and
+  scale (X/Y/Z) give exact per-axis control on every device. The sliders track
+  the guide box live and stay in sync with the drag gestures above.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
 - **Presets** — a dropdown that replaces the whole system with one of seven named
   fractals: Sierpinski tetrahedron, Menger sponge, spiral, Sierpinski pyramid,
