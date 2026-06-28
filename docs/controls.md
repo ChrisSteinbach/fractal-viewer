@@ -1,0 +1,48 @@
+# Controls
+
+The viewer has two interaction modes. Switch between them from the panel's
+**Select to Edit** list: choose **🎥 Camera View** for camera mode, or a specific
+**Transform N** to edit that map. The help box (top-left) always shows the active
+mode and its gestures.
+
+## Camera mode
+
+Orbit around the fractal without changing it.
+
+| Input            | Action                           |
+| ---------------- | -------------------------------- |
+| Left-drag        | Orbit (rotate around the target) |
+| Right-drag       | Pan (shift the target)           |
+| Mouse wheel      | Zoom in / out                    |
+| One finger drag  | Orbit                            |
+| Two finger drag  | Pan                              |
+| Two finger pinch | Zoom                             |
+
+Phi (vertical orbit) is clamped just shy of the poles and the zoom radius is
+clamped to `[1, 100]` — see `src/app/orbit.ts`.
+
+## Transform mode
+
+With a transform selected, its **guide box** is highlighted in white and the same
+gestures now edit that map. Edits regenerate the fractal live when **Auto-update on
+change** is on (otherwise press **Regenerate Points**).
+
+| Input            | Action                                  |
+| ---------------- | --------------------------------------- |
+| Left-drag        | Move the box on the camera-facing plane |
+| Right-drag       | Rotate the box                          |
+| Mouse wheel      | Scale the box                           |
+| One finger drag  | Move                                    |
+| Two finger pinch | Scale (clamped to `[0.05, 2]`)          |
+| Two finger twist | Rotate around the vertical axis         |
+
+## Panel controls
+
+- **+ Add / − Remove** — add or remove a transform (at least one always remains).
+- **Presets** — replace the whole system with a Sierpinski tetrahedron, Menger
+  sponge, or spiral.
+- **Points** — slider for the point count (0–500k); takes effect on **Regenerate
+  Points** (or immediately on other edits when auto-update is on).
+- **Show Guides** — toggle the grid, axes, and transform boxes.
+- **Color Mode** — see [architecture.md](architecture.md#color-modes).
+- **Auto-update on change** — regenerate the cloud on every edit vs. on demand.

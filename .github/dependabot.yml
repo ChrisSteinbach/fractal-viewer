@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      production:
+        dependency-type: production
+    ignore:
+      # vite-plugin-pwa's peer range trails new Vite majors; hold Vite back
+      # until a release supports the next major. Check:
+      # npm view vite-plugin-pwa peerDependencies
+      - dependency-name: vite
+        versions: [">=8.0.0"]
+      # typescript-eslint trails new TypeScript majors. Check:
+      # npm view typescript-eslint peerDependencies
+      - dependency-name: typescript
+        versions: [">=6.0.0"]
