@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { ROTATE_SPEED } from "./orbit";
 import type { OrbitCamera } from "./orbit";
 import type { FractalScene } from "./scene";
+import { clamp } from "../fractal/vec";
 import type { Vec3 } from "../fractal/types";
 
 const MIN_GUIDE_SCALE = 0.05;
@@ -21,10 +22,6 @@ export interface InteractionCallbacks {
 }
 
 type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
 
 function touchOf(event: Event): TouchEvent | null {
   return "touches" in event ? (event as TouchEvent) : null;
