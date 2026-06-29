@@ -1,5 +1,6 @@
 import { transformColors } from "../fractal/color";
 import type { ColorMode, Transform, Vec3 } from "../fractal/types";
+import { clone3, to255 } from "../fractal/vec";
 import type { AppState, RenderStyle } from "./state";
 
 /** The position/rotation/scale triple a transform editor edits. */
@@ -138,10 +139,6 @@ interface EditorState {
   index: number;
   geometry: { position: Vec3; rotation: Vec3; scale: Vec3 };
   controls: Record<Channel, AxisControl[]>;
-}
-
-function clone3(v: Vec3): Vec3 {
-  return [v[0], v[1], v[2]];
 }
 
 /**
@@ -478,8 +475,4 @@ export class Ui {
       this.helpText.appendChild(div);
     }
   }
-}
-
-function to255(channel: number): number {
-  return Math.round(channel * 255);
 }
