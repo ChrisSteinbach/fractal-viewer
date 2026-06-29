@@ -173,28 +173,41 @@ function main(): void {
     }, 300);
   }
 
+  /**
+   * Shared choreography for edits that replace or modify the transform set.
+   *
+   * Centralises the autoUpdate policy in one place:
+   *   "auto"   — regenerate only when autoUpdate is on (add/remove/drag edits)
+   *   "always" — always regenerate regardless of autoUpdate (preset loads must
+   *               rebuild because the entire transform set is replaced)
+   *
+   * After applying the reducer, every geometry edit refreshes the guide boxes
+   * and the UI, then schedules a debounced save.
+   */
+  function applyEdit(
+    applyReducer: () => void,
+    effect: "auto" | "always" = "auto",
+  ): void {
+    applyReducer();
+    refreshGuides();
+    refreshUi();
+    if (effect === "always" || state.autoUpdate) regenerate();
+    scheduleSave();
+  }
+
   ui.bind({
-    onAdd: () => {
-      state = addTransform(state);
-      refreshGuides();
-      refreshUi();
-      if (state.autoUpdate) regenerate();
-      scheduleSave();
-    },
-    onRemove: () => {
-      state = removeTransform(state);
-      refreshGuides();
-      refreshUi();
-      if (state.autoUpdate) regenerate();
-      scheduleSave();
-    },
-    onPreset: (preset) => {
-      state = setTransforms(state, presetTransforms(preset));
-      refreshGuides();
-      refreshUi();
-      regenerate();
-      scheduleSave();
-    },
+    onAdd: () =>
+      applyEdit(() => {
+        state = addTransform(state);
+      }),
+    onRemove: () =>
+      applyEdit(() => {
+        state = removeTransform(state);
+      }),
+    onPreset: (preset) =>
+      applyEdit(() => {
+        state = setTransforms(state, presetTransforms(preset));
+      }, "always"),
     onNumPointsInput: (value) => {
       state = setNumPoints(state, value);
       ui.updateLabels(state);
