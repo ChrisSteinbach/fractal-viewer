@@ -350,6 +350,18 @@ export class FractalScene {
     this.pointGeometry.computeBoundingSphere();
   }
 
+  /**
+   * Replace only the per-point colors, leaving positions (and the bounding
+   * sphere) untouched. Lets a color-mode switch recolor the existing cloud
+   * without re-running the chaos game.
+   */
+  setColors(colors: Float32Array): void {
+    this.pointGeometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(colors, 3),
+    );
+  }
+
   /** Rebuild the wireframe guide boxes from the current transform list. */
   updateGuides(
     transforms: Transform[],

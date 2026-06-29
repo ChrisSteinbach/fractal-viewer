@@ -1,4 +1,4 @@
-import { runChaosGame } from "../fractal/chaos-game";
+import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
 import {
   dodecahedronFlake,
@@ -114,11 +114,28 @@ function main(): void {
   const orbit = new OrbitCamera([5, 4, 5]);
   const ui = new Ui(document);
 
+  // The most recent chaos-game run, cached so a color-mode change can recolor
+  // the existing cloud (see `recolor`) instead of re-rolling the RNG and drawing
+  // a brand-new random sample of the attractor.
+  let lastResult: ChaosGameResult | null = null;
+
+  // Re-run the chaos game: the only path that touches the RNG and changes point
+  // positions. Use this for geometry edits, add/remove, presets, and explicit
+  // regenerate — never for a mere palette change.
   function regenerate(): void {
-    const result = runChaosGame(state.transforms, state.numPoints);
-    const colors = buildColors(result, state.transforms, state.colorMode);
-    scene.setPoints(result.positions, colors);
-    ui.setPointCount(result.count);
+    lastResult = runChaosGame(state.transforms, state.numPoints);
+    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    scene.setPoints(lastResult.positions, colors);
+    ui.setPointCount(lastResult.count);
+  }
+
+  // Rebuild only the color buffer over the cached cloud and push it to the
+  // scene. Leaves positions (and thus the RNG) untouched, so switching color
+  // mode recolors the same shape instantly. No-op before the first generation.
+  function recolor(): void {
+    if (!lastResult) return;
+    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    scene.setColors(colors);
   }
 
   function refreshGuides(): void {
@@ -206,7 +223,7 @@ function main(): void {
     },
     onColorMode: (mode) => {
       state = setColorMode(state, mode);
-      regenerate();
+      recolor();
       scheduleSave();
     },
     onRenderStyle: (style) => {
