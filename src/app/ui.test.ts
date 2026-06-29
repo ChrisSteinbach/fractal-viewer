@@ -4,42 +4,10 @@ import type { UiHandlers } from "./ui";
 import { initialState } from "./state";
 import { defaultTransforms } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
-
-const FIXTURE = `
-<div id="helpTitle"></div>
-<div id="helpText"></div>
-<div id="pointCount"></div>
-<button id="menuToggle"></button>
-<div id="backdrop"></div>
-<div id="panel">
-  <button id="panelClose"></button>
-  <span id="transformCount"></span>
-  <button id="addBtn"></button>
-  <button id="removeBtn"></button>
-  <select id="presetSelect">
-    <option value="" selected>Load a preset…</option>
-    <option value="sierpinski">Sierpinski Tetrahedron</option>
-    <option value="dodecahedron">Dodecahedron (20)</option>
-  </select>
-  <span id="numPointsLabel"></span>
-  <input id="numPointsSlider" type="range" min="0" max="500000" value="100000" />
-  <span id="pointSizeLabel"></span>
-  <input id="pointSizeSlider" type="range" min="0.25" max="4" step="0.05" value="1" />
-  <button id="regenerateBtn"></button>
-  <button id="savePngBtn"></button>
-  <input id="showGuides" type="checkbox" checked />
-  <select id="colorMode">
-    <option value="transform">By Transform</option>
-    <option value="uniform">Uniform</option>
-  </select>
-  <select id="renderStyle">
-    <option value="depthFade">Depth Fade</option>
-    <option value="glow">Glow + Bloom</option>
-  </select>
-  <input id="autoUpdate" type="checkbox" checked />
-  <div id="transformList"></div>
-  <div id="transformEditor"></div>
-</div>`;
+// Load the production markup itself so the Ui↔DOM contract has one source of
+// truth: the constructor throws on any missing element, so renaming or removing
+// one in index.html fails these tests instead of silently breaking the app.
+import indexHtml from "./index.html?raw";
 
 function noopHandlers(): UiHandlers {
   return {
@@ -84,14 +52,19 @@ function editorGroupTitles(): string[] {
 }
 
 beforeEach(() => {
-  const parsed = new DOMParser().parseFromString(
-    `<body>${FIXTURE}</body>`,
-    "text/html",
-  );
+  const parsed = new DOMParser().parseFromString(indexHtml, "text/html");
   document.body.replaceChildren();
   for (const node of Array.from(parsed.body.children)) {
+    // Skip the module script tag — we exercise Ui, not the app bootstrap.
+    if (node.tagName === "SCRIPT") continue;
     document.body.appendChild(document.importNode(node, true));
   }
+});
+
+describe("Ui construction", () => {
+  it("binds to every element the real index.html provides", () => {
+    expect(() => new Ui(document)).not.toThrow();
+  });
 });
 
 describe("Ui.renderTransformList", () => {
