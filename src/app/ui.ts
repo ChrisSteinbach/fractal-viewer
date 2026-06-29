@@ -1,19 +1,13 @@
 import { transformColors } from "../fractal/color";
 import type { ColorMode, Transform, Vec3 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
+import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
+
+export type { Preset };
 
 /** The position/rotation/scale triple a transform editor edits. */
 type Geometry = Pick<Transform, "position" | "rotation" | "scale">;
-
-export type Preset =
-  | "sierpinski"
-  | "menger"
-  | "spiral"
-  | "pyramid"
-  | "octahedron"
-  | "icosahedron"
-  | "dodecahedron";
 
 export interface UiHandlers {
   onAdd: () => void;

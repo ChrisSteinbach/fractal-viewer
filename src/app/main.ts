@@ -13,7 +13,7 @@ import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { Ui } from "./ui";
-import type { Preset } from "./ui";
+import type { Preset } from "../fractal/presets";
 import {
   addTransform,
   initialState,
