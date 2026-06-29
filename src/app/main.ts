@@ -158,6 +158,20 @@ function main(): void {
     }, 300);
   }
 
+  // Flush any pending debounced save on page hide so an edit made less than
+  // 300 ms before the tab is closed or backgrounded is not lost. Reuses the
+  // guarded saveScene path, which already handles SecurityError (sandboxed
+  // iframes) and private-mode localStorage failures without throwing.
+  function flushSave(): void {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    saveScene(toSnapshot(state));
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushSave();
+  });
+  window.addEventListener("pagehide", flushSave);
+
   /**
    * Shared choreography for edits that replace or modify the transform set.
    *
