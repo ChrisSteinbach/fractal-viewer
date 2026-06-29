@@ -246,6 +246,18 @@ body {
   background: linear-gradient(180deg, #6aa8ff, #4789f7);
 }
 
+.btn-ghost {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+.btn-ghost:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+  color: var(--text);
+}
+
 .btn-row {
   display: flex;
   gap: 8px;

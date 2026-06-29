@@ -21,6 +21,7 @@ export interface UiHandlers {
   onNumPointsInput: (value: number) => void;
   onPointSizeInput: (value: number) => void;
   onRegenerate: () => void;
+  onSavePng: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
   onRenderStyle: (style: RenderStyle) => void;
@@ -166,6 +167,7 @@ export class Ui {
   private readonly removeBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
   private readonly regenerateBtn: HTMLButtonElement;
+  private readonly savePngBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
   private readonly pointSizeLabel: HTMLElement;
@@ -193,6 +195,7 @@ export class Ui {
     this.removeBtn = this.byId("removeBtn");
     this.presetSelect = this.byId("presetSelect");
     this.regenerateBtn = this.byId("regenerateBtn");
+    this.savePngBtn = this.byId("savePngBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
     this.pointSizeLabel = this.byId("pointSizeLabel");
@@ -225,6 +228,7 @@ export class Ui {
       if (preset) handlers.onPreset(preset as Preset);
     });
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
+    this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
     );

@@ -190,6 +190,14 @@ function main(): void {
       scheduleSave();
     },
     onRegenerate: () => regenerate(),
+    onSavePng: () => {
+      // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) and
+      // hand it to the browser as a timestamped download.
+      const link = document.createElement("a");
+      link.href = scene.captureFrame();
+      link.download = `fractal-${Date.now()}.png`;
+      link.click();
+    },
     onToggleGuides: (checked) => {
       state = setShowGuides(state, checked);
       scene.setGuidesVisible(checked);

@@ -26,6 +26,7 @@ const FIXTURE = `
   <span id="pointSizeLabel"></span>
   <input id="pointSizeSlider" type="range" min="0.25" max="4" step="0.05" value="1" />
   <button id="regenerateBtn"></button>
+  <button id="savePngBtn"></button>
   <input id="showGuides" type="checkbox" checked />
   <select id="colorMode">
     <option value="transform">By Transform</option>
@@ -48,6 +49,7 @@ function noopHandlers(): UiHandlers {
     onNumPointsInput: vi.fn(),
     onPointSizeInput: vi.fn(),
     onRegenerate: vi.fn(),
+    onSavePng: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
     onRenderStyle: vi.fn(),

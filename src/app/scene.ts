@@ -530,6 +530,17 @@ export class FractalScene {
     }
   }
 
+  /**
+   * Render one frame and read it back as a PNG data URL. Renders synchronously
+   * right before the read so the drawing buffer is still intact (the renderer
+   * runs without `preserveDrawingBuffer`, so a frame from the rAF loop would
+   * already be gone). Works for every render style since each paints the canvas.
+   */
+  captureFrame(): string {
+    this.render();
+    return this.renderer.domElement.toDataURL("image/png");
+  }
+
   /** Park the depth-of-field focal plane on the centre of the cloud. */
   private focusDof(): void {
     const bounds = this.pointGeometry.boundingSphere;
