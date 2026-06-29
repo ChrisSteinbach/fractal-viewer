@@ -45,6 +45,16 @@ function editorSliders(): HTMLInputElement[] {
   );
 }
 
+/** Grab one editor slider by its aria-label, e.g. "Rotation Y" — stable across
+ * group reordering, unlike a positional index. */
+function editorSlider(label: string): HTMLInputElement {
+  const slider = document.querySelector<HTMLInputElement>(
+    `#transformEditor input[aria-label="${label}"]`,
+  );
+  if (!slider) throw new Error(`No editor slider labelled "${label}"`);
+  return slider;
+}
+
 function editorGroupTitles(): string[] {
   return Array.from(
     document.querySelectorAll("#transformEditor .editor-group-title"),
@@ -219,8 +229,7 @@ describe("Ui.renderTransformEditor", () => {
       0,
     );
 
-    // Rotation is the second group, so its Y axis is the fifth slider.
-    expect(editorSliders()[4].value).toBe("45");
+    expect(editorSlider("Rotation Y").value).toBe("45");
   });
 
   it("reports an edited rotation axis back in radians, preserving the rest", () => {
@@ -237,7 +246,7 @@ describe("Ui.renderTransformEditor", () => {
       0,
     );
 
-    const rotationY = editorSliders()[4];
+    const rotationY = editorSlider("Rotation Y");
     rotationY.value = "90";
     rotationY.dispatchEvent(new Event("input"));
 
@@ -265,8 +274,7 @@ describe("Ui.renderTransformEditor", () => {
       0,
     );
 
-    // Scale is the third group, so its X axis is the seventh slider.
-    const scaleX = editorSliders()[6];
+    const scaleX = editorSlider("Scale X");
     scaleX.value = "1.2";
     scaleX.dispatchEvent(new Event("input"));
 
@@ -287,7 +295,7 @@ describe("Ui.renderTransformEditor", () => {
     // Same index → no rebuild; a drag moved X, so that slider should follow.
     ui.renderTransformEditor({ ...base, position: [1, 0, 0] }, 0);
 
-    expect(editorSliders()[0].value).toBe("1");
+    expect(editorSlider("Position X").value).toBe("1");
   });
 
   it("clears the editor in camera mode", () => {
