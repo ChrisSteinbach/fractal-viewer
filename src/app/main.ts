@@ -30,6 +30,7 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
+import { loadScene, saveScene } from "./persist";
 import type { Transform } from "../fractal/types";
 
 /** Below this viewport width the panel starts closed and floats over a scrim. */
@@ -97,7 +98,19 @@ function main(): void {
     return;
   }
 
-  let state: AppState = initialState(window.innerWidth > MOBILE_BREAKPOINT);
+  const panelOpen = window.innerWidth > MOBILE_BREAKPOINT;
+  const saved = loadScene();
+  let state: AppState = saved
+    ? {
+        ...initialState(panelOpen),
+        transforms: saved.transforms,
+        numPoints: saved.numPoints,
+        pointSize: saved.pointSize,
+        colorMode: saved.colorMode,
+        renderStyle: saved.renderStyle,
+        showGuides: saved.showGuides,
+      }
+    : initialState(panelOpen);
   const orbit = new OrbitCamera([5, 4, 5]);
   const ui = new Ui(document);
 
@@ -126,47 +139,72 @@ function main(): void {
     );
   }
 
+  // Debounced saver — persists 300 ms after the last scene-affecting change so
+  // rapid slider drags don't flood history/storage on every tick.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleSave(): void {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveScene({
+        transforms: state.transforms,
+        numPoints: state.numPoints,
+        pointSize: state.pointSize,
+        colorMode: state.colorMode,
+        renderStyle: state.renderStyle,
+        showGuides: state.showGuides,
+      });
+    }, 300);
+  }
+
   ui.bind({
     onAdd: () => {
       state = addTransform(state);
       refreshGuides();
       refreshUi();
       if (state.autoUpdate) regenerate();
+      scheduleSave();
     },
     onRemove: () => {
       state = removeTransform(state);
       refreshGuides();
       refreshUi();
       if (state.autoUpdate) regenerate();
+      scheduleSave();
     },
     onPreset: (preset) => {
       state = setTransforms(state, presetTransforms(preset));
       refreshGuides();
       refreshUi();
       regenerate();
+      scheduleSave();
     },
     onNumPointsInput: (value) => {
       state = setNumPoints(state, value);
       ui.updateLabels(state);
+      scheduleSave();
     },
     onPointSizeInput: (value) => {
       state = setPointSize(state, value);
       scene.setPointSize(value);
       ui.updateLabels(state);
+      scheduleSave();
     },
     onRegenerate: () => regenerate(),
     onToggleGuides: (checked) => {
       state = setShowGuides(state, checked);
       scene.setGuidesVisible(checked);
       refreshUi();
+      scheduleSave();
     },
     onColorMode: (mode) => {
       state = setColorMode(state, mode);
       regenerate();
+      scheduleSave();
     },
     onRenderStyle: (style) => {
       state = setRenderStyle(state, style);
       scene.setRenderStyle(style);
+      scheduleSave();
     },
     onToggleAutoUpdate: (checked) => {
       state = setAutoUpdate(state, checked);
@@ -181,6 +219,7 @@ function main(): void {
       scene.setGuideGeometry(index, geometry);
       ui.renderTransformList(state.transforms, state.selectedTransform);
       if (state.autoUpdate) regenerate();
+      scheduleSave();
     },
     onTogglePanel: () => {
       state = setPanelOpen(state, !state.panelOpen);
@@ -199,6 +238,7 @@ function main(): void {
       ui.renderTransformList(state.transforms, state.selectedTransform);
       ui.renderTransformEditor(state.transforms[index], index);
       if (state.autoUpdate) regenerate();
+      scheduleSave();
     },
   });
 
@@ -211,6 +251,9 @@ function main(): void {
   scene.setRenderStyle(state.renderStyle);
   scene.setPointSize(state.pointSize);
   refreshGuides();
+  // Match grid/axes to the initial (possibly restored) guide visibility, since
+  // refreshGuides only governs the per-transform boxes.
+  scene.setGuidesVisible(state.showGuides);
   regenerate();
   refreshUi();
 
