@@ -3,7 +3,8 @@
 The viewer has two interaction modes. Switch between them from the panel's
 **Select to Edit** list: choose **🎥 Camera View** for camera mode, or a specific
 **Transform N** to edit that map. The help box (top-left) always shows the active
-mode and its gestures.
+mode and its gestures, adapting the wording to the device: mouse verbs
+("Drag", "Right-drag", "Scroll") on pointer devices, finger gestures on touch.
 
 ## Camera mode
 
@@ -60,3 +61,20 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
+- **Save PNG** — download the current frame as a PNG. The image is the bare
+  render (fractal and backdrop) without the panel, help box, or vignette, so it
+  captures whatever depth style and color mode are active.
+
+## Sharing & persistence
+
+The scene — transforms, point count and size, color mode, depth style, and guide
+visibility — is encoded into the page URL (`#v1=…`) as you edit, and mirrored to
+`localStorage`. So:
+
+- **Copy the address bar to share a fractal.** Opening that link recreates the
+  exact system; a pasted link takes priority over any locally saved scene.
+- **Reloads restore your last scene** even without a link, from `localStorage`.
+
+Camera angle, selection, and panel state are intentionally left out — a shared
+link is about the _system_, not where you happened to be looking. See
+`src/app/persist.ts` (the codec rejects malformed links rather than throwing).

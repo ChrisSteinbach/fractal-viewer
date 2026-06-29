@@ -21,6 +21,7 @@ export interface UiHandlers {
   onNumPointsInput: (value: number) => void;
   onPointSizeInput: (value: number) => void;
   onRegenerate: () => void;
+  onSavePng: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
   onRenderStyle: (style: RenderStyle) => void;
@@ -34,6 +35,18 @@ export interface UiHandlers {
 
 /** Below this viewport width the panel floats over a dimmed backdrop. */
 const MOBILE_BREAKPOINT = 640;
+
+/**
+ * Whether the primary input is a mouse, so the help box can show mouse verbs
+ * ("Drag", "Scroll") instead of "1 finger / 2 fingers". Guarded for jsdom and
+ * any environment without `matchMedia`, where it falls back to touch wording.
+ */
+function usesMouse(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(hover: hover) and (pointer: fine)")?.matches === true
+  );
+}
 
 interface TransformButtonOptions {
   selected: boolean;
@@ -138,6 +151,7 @@ function clone3(v: Vec3): Vec3 {
  */
 export class Ui {
   private readonly doc: Document;
+  private readonly mouse = usesMouse();
   private handlers: UiHandlers | null = null;
 
   private readonly helpTitle: HTMLElement;
@@ -153,6 +167,7 @@ export class Ui {
   private readonly removeBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
   private readonly regenerateBtn: HTMLButtonElement;
+  private readonly savePngBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
   private readonly pointSizeLabel: HTMLElement;
@@ -180,6 +195,7 @@ export class Ui {
     this.removeBtn = this.byId("removeBtn");
     this.presetSelect = this.byId("presetSelect");
     this.regenerateBtn = this.byId("regenerateBtn");
+    this.savePngBtn = this.byId("savePngBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
     this.pointSizeLabel = this.byId("pointSizeLabel");
@@ -212,6 +228,7 @@ export class Ui {
       if (preset) handlers.onPreset(preset as Preset);
     });
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
+    this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
     );
@@ -247,10 +264,18 @@ export class Ui {
 
     if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
-      this.setHelpLines(["1 finger: Rotate", "2 fingers: Pan/Zoom"]);
+      this.setHelpLines(
+        this.mouse
+          ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
+          : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+      );
     } else {
       this.helpTitle.textContent = `Transform ${state.selectedTransform + 1}`;
-      this.setHelpLines(["1 finger: Move", "Pinch: Scale", "Twist: Rotate"]);
+      this.setHelpLines(
+        this.mouse
+          ? ["Drag: Move", "Right-drag: Rotate", "Scroll: Scale"]
+          : ["1 finger: Move", "Pinch: Scale", "Twist: Rotate"],
+      );
     }
 
     this.panel.classList.toggle("open", state.panelOpen);
@@ -273,7 +298,11 @@ export class Ui {
         selected: selected === null,
         accent: "#60a5fa",
         title: "🎥 Camera View",
-        lines: ["Drag to orbit, pinch to zoom"],
+        lines: [
+          this.mouse
+            ? "Drag to orbit · scroll to zoom"
+            : "Drag to orbit · pinch to zoom",
+        ],
         onClick: () => this.handlers?.onSelect(null),
       }),
     );

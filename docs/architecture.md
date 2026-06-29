@@ -91,6 +91,21 @@ in `state.ts`, and after each change calls the relevant refreshers
 boxes; `refreshUi` → update labels and the transform list). The animation loop
 applies the orbit camera, retightens the fog, and renders.
 
+## Scene persistence
+
+`persist.ts` keeps the viewer share-ready. The persistent subset of `AppState`
+(transforms, point count/size, color mode, depth style, guide visibility) is
+serialized to a compact `v1=<base64url>` payload and written to both the URL hash
+(`history.replaceState`, so edits don't pile up in the back-button stack) and
+`localStorage`, debounced so slider drags don't thrash. On load the hash wins
+over storage — a pasted link beats the last local session.
+
+`decodeScene` is the one place that ingests untrusted input (a URL someone
+pastes), so it is a strict, **never-throwing** boundary: it rejects an unknown
+version, bad base64/JSON, the wrong transform shape, or an unknown color/depth
+enum, and clamps numeric ranges. Storage and location are injected, so the codec
+is unit-tested with no real browser.
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state
