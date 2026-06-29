@@ -19,6 +19,21 @@ body {
   height: 100vh;
 }
 
+/* Cinematic framing: darken the corners so the eye settles on the attractor.
+   Sits above the canvas but ignores pointer events so it never blocks gestures. */
+#vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 78% 78% at 50% 44%,
+    transparent 50%,
+    rgb(0 0 0 / 24%) 78%,
+    rgb(0 0 0 / 50%) 100%
+  );
+}
+
 #error {
   display: none;
   position: absolute;

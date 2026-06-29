@@ -22,7 +22,7 @@ const FOG_MARGIN = 1.2;
 // its own relative tuning as the user dials the cloud up or down.
 const BASE_POINT_SIZE = 0.02; // depthFade + aerial
 const DISC_POINT_SIZE = 0.025; // edl
-const GLOW_POINT_SIZE = 0.03; // glow
+const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
 
 function color(rgb: Vec3): THREE.Color {
@@ -61,6 +61,28 @@ function sprite(
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (ctx) draw(ctx, size / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * A camera-independent vertical gradient used as the scene backdrop, so the
+ * cloud floats in a sense of depth instead of a flat fill. Authored in sRGB and
+ * left unconverted to match the rest of the pipeline (ColorManagement is off).
+ */
+function gradientBackground(top: string, bottom: string): THREE.Texture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 4;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    g.addColorStop(0, top);
+    g.addColorStop(1, bottom);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
   return tex;
@@ -176,8 +198,8 @@ export class FractalScene {
   private readonly dofMaterial: THREE.ShaderMaterial; // dof
 
   private readonly fog: THREE.Fog;
-  private readonly darkBackground: THREE.Color;
-  private readonly hazeBackground: THREE.Color;
+  private readonly darkBackground: THREE.Texture;
+  private readonly hazeBackground: THREE.Texture;
 
   // Glow uses bloom post-processing; EDL renders to a depth target then shades.
   private readonly composer: EffectComposer;
@@ -191,8 +213,8 @@ export class FractalScene {
     const height = container.clientHeight || window.innerHeight;
 
     this.scene = new THREE.Scene();
-    this.darkBackground = new THREE.Color(BACKGROUND);
-    this.hazeBackground = new THREE.Color(AERIAL_HAZE);
+    this.darkBackground = gradientBackground("#0d0d18", "#1f2039");
+    this.hazeBackground = gradientBackground("#3c4a72", "#5d6d9b");
     this.scene.background = this.darkBackground;
     this.fog = new THREE.Fog(BACKGROUND, 1, 10);
     this.scene.fog = this.fog;
@@ -211,12 +233,17 @@ export class FractalScene {
     container.appendChild(this.renderer.domElement);
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
 
-    this.grid = new THREE.GridHelper(6, 12, 0x444466, 0x333355);
+    // A quiet ground reference, not a focal point: dim lines, held translucent
+    // so the vignette can dissolve the grid's hard square edge into the backdrop.
+    this.grid = new THREE.GridHelper(6, 12, 0x3a3a5c, 0x24243c);
     disableFog(this.grid.material);
+    fadeLines(this.grid.material, 0.5);
     this.scene.add(this.grid);
 
-    this.axes = new THREE.AxesHelper(2);
+    // A subtle orientation hint rather than RGB laser beams: short and faint.
+    this.axes = new THREE.AxesHelper(1.4);
     disableFog(this.axes.material);
+    fadeLines(this.axes.material, 0.32);
     this.scene.add(this.axes);
 
     this.baseMaterial = new THREE.PointsMaterial({
@@ -236,11 +263,13 @@ export class FractalScene {
     this.glowMaterial = new THREE.PointsMaterial({
       // Additive: each point adds only a little, so colour survives in sparse
       // regions and only genuinely dense overlaps build up to a hot, bloom-able
-      // core. Too much per-point alpha blows the whole cloud out to white.
+      // core. Pitched so a lone point still reads as a saturated spark while
+      // overlaps push past 1.0 (HDR buffer) into the bloom — too much per-point
+      // alpha would blow the whole cloud out to white.
       size: GLOW_POINT_SIZE,
       map: glowTexture(),
       transparent: true,
-      opacity: 0.16,
+      opacity: 0.28,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
@@ -272,11 +301,11 @@ export class FractalScene {
     });
     this.composer = new EffectComposer(this.renderer, hdr);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    // strength, radius, threshold — only hot cores (lum > threshold) bloom.
-    // Keep radius/strength low so the coarse blur mips don't flood the whole
-    // frame with a grey haze.
+    // strength, radius, threshold — only cores brighter than `threshold` bloom.
+    // A lower threshold lets the cloud's denser veins catch light; modest
+    // radius/strength keep the blur from flooding the frame with grey haze.
     this.composer.addPass(
-      new UnrealBloomPass(new THREE.Vector2(width, height), 0.35, 0.2, 0.65),
+      new UnrealBloomPass(new THREE.Vector2(width, height), 0.55, 0.4, 0.58),
     );
 
     const depthTexture = new THREE.DepthTexture(buffer.x, buffer.y);
@@ -531,6 +560,18 @@ function disableFog(material: THREE.Material | THREE.Material[]): void {
   const list = Array.isArray(material) ? material : [material];
   for (const m of list) {
     (m as { fog?: boolean }).fog = false;
+  }
+}
+
+/** Render a helper's lines translucent so they read as quiet reference, not UI. */
+function fadeLines(
+  material: THREE.Material | THREE.Material[],
+  opacity: number,
+): void {
+  const list = Array.isArray(material) ? material : [material];
+  for (const m of list) {
+    m.transparent = true;
+    m.opacity = opacity;
   }
 }
 
