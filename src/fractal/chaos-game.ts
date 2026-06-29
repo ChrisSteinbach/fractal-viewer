@@ -72,6 +72,15 @@ export function runChaosGame(
 
   // One chaos-game iteration: hop along a random transform, reseeding if the
   // point escapes to infinity. Returns the chosen transform index.
+  //
+  // Known caveat: when a point escapes and is reseeded, the returned idx is
+  // the transform that TRIGGERED the escape, not one that "placed" the new
+  // random seed. The recording loop therefore tags a reseeded point with the
+  // escaping transform's index, making its "by transform" color inaccurate.
+  // This is intentional — the alternative (retry or skip) adds complexity for
+  // a case that is essentially impossible with contractive IFS maps (escape
+  // requires a net-expansive application, which a well-formed IFS never
+  // produces in steady state). The reseed path is a safety net only.
   const step = (): number => {
     const idx = Math.floor(rng() * transforms.length);
     const p = applyAffine(affines[idx], x, y, z);
