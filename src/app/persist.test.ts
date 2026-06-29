@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { decodeScene, encodeScene, loadScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
+import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,6 +142,36 @@ describe("decodeScene rejects malformed input", () => {
 
   it("returns null for an unknown renderStyle", () => {
     const raw = { ...baseSnapshot(), renderStyle: "plasma" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null for more than the maximum number of transforms", () => {
+    const tooMany = Array.from({ length: MAX_TRANSFORMS + 1 }, () => ({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    }));
+    const raw = { ...baseSnapshot(), transforms: tooMany };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when transforms is not an array", () => {
+    const raw = { ...baseSnapshot(), transforms: "nope" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when a transform entry is not an object", () => {
+    const raw = { ...baseSnapshot(), transforms: [42] };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null for a non-finite numPoints", () => {
+    const raw = { ...baseSnapshot(), numPoints: "lots" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null for a non-finite pointSize", () => {
+    const raw = { ...baseSnapshot(), pointSize: "big" };
     expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
   });
 });
