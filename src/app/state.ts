@@ -5,10 +5,23 @@ import type { ColorMode, Transform } from "../fractal/types";
 /**
  * How the point cloud conveys depth. `depthFade` is the original look (fog to
  * the dark background); the rest are experiments compared via the UI switcher.
- * Kept here (a plain string union, no Three.js) so state stays pure and
- * `scene.ts` maps each style to a renderer configuration.
+ * Kept here (plain strings, no Three.js) so state stays pure and `scene.ts`
+ * maps each style to a renderer configuration.
+ *
+ * This array is the single source of truth for both the {@link RenderStyle}
+ * type and the persistence validator (`VALID_RENDER_STYLES` in `persist.ts`),
+ * so adding a style is one edit and the runtime guard can never silently drift
+ * from the type.
  */
-export type RenderStyle = "depthFade" | "aerial" | "glow" | "dof" | "edl";
+export const RENDER_STYLES = [
+  "depthFade",
+  "aerial",
+  "glow",
+  "dof",
+  "edl",
+] as const;
+
+export type RenderStyle = (typeof RENDER_STYLES)[number];
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
