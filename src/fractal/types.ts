@@ -13,9 +13,23 @@ export interface Transform {
   scale: Vec3;
 }
 
+/**
+ * The color modes, in UI order. This array is the single source of truth for
+ * both the {@link ColorMode} type and the persistence validator
+ * (`VALID_COLOR_MODES` in `persist.ts`), so adding a mode is one edit and the
+ * runtime guard can never silently drift from the type.
+ */
+export const COLOR_MODES = [
+  "transform",
+  "height",
+  "radius",
+  "position",
+  "iterationAge",
+  "uniform",
+] as const;
+
 /** How point colors are derived from the generated cloud. */
-export type ColorMode =
-  "transform" | "height" | "radius" | "position" | "iterationAge" | "uniform";
+export type ColorMode = (typeof COLOR_MODES)[number];
 
 /** Axis-aligned extent of a point cloud, plus radial extent from the origin. */
 export interface Bounds {

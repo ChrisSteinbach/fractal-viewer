@@ -30,7 +30,7 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
-import { loadScene, saveScene } from "./persist";
+import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import type { Transform } from "../fractal/types";
 
 /** Below this viewport width the panel starts closed and floats over a scrim. */
@@ -101,15 +101,7 @@ function main(): void {
   const panelOpen = window.innerWidth > MOBILE_BREAKPOINT;
   const saved = loadScene();
   let state: AppState = saved
-    ? {
-        ...initialState(panelOpen),
-        transforms: saved.transforms,
-        numPoints: saved.numPoints,
-        pointSize: saved.pointSize,
-        colorMode: saved.colorMode,
-        renderStyle: saved.renderStyle,
-        showGuides: saved.showGuides,
-      }
+    ? fromSnapshot(saved, initialState(panelOpen))
     : initialState(panelOpen);
   const orbit = new OrbitCamera([5, 4, 5]);
   const ui = new Ui(document);
@@ -162,14 +154,7 @@ function main(): void {
   function scheduleSave(): void {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      saveScene({
-        transforms: state.transforms,
-        numPoints: state.numPoints,
-        pointSize: state.pointSize,
-        colorMode: state.colorMode,
-        renderStyle: state.renderStyle,
-        showGuides: state.showGuides,
-      });
+      saveScene(toSnapshot(state));
     }, 300);
   }
 

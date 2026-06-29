@@ -8,8 +8,10 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
+import { COLOR_MODES } from "../fractal/types";
 import type { ColorMode, Transform, Vec3 } from "../fractal/types";
-import type { RenderStyle } from "./state";
+import { RENDER_STYLES } from "./state";
+import type { AppState, RenderStyle } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 
 // ---------------------------------------------------------------------------
@@ -33,29 +35,56 @@ export interface PersistDeps {
 }
 
 // ---------------------------------------------------------------------------
+// AppState <-> SceneSnapshot projection
+// ---------------------------------------------------------------------------
+
+/**
+ * Project the persistent subset out of full app state. This is the ONE place
+ * that lists the persisted fields; both restore (`fromSnapshot`) and save go
+ * through here, so a forgotten field can't silently drop out of storage with
+ * no compiler complaint.
+ */
+export function toSnapshot(state: AppState): SceneSnapshot {
+  return {
+    transforms: state.transforms,
+    numPoints: state.numPoints,
+    pointSize: state.pointSize,
+    colorMode: state.colorMode,
+    renderStyle: state.renderStyle,
+    showGuides: state.showGuides,
+  };
+}
+
+/**
+ * Merge a restored snapshot over a base AppState (typically `initialState`),
+ * overwriting exactly the persisted fields while leaving session-only state
+ * (selection, autoUpdate, panel) from `base` intact. `SceneSnapshot` is a
+ * structural subset of `AppState`, so the spread needs no field list of its
+ * own — it stays the exact inverse of `toSnapshot` with nothing to hand-sync.
+ */
+export function fromSnapshot(
+  snapshot: SceneSnapshot,
+  base: AppState,
+): AppState {
+  return { ...base, ...snapshot };
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = "fractal-viewer:scene";
 
+// Built FROM the const-array unions so the runtime guard can never drift from
+// the type: adding a value to COLOR_MODES / RENDER_STYLES grows these sets too,
+// while a removed value stops compiling everywhere it is referenced. The sets
+// still match exactly — unknown values are rejected just as before.
+
 /** Exact set of valid ColorMode values for strict validation of untrusted input. */
-const VALID_COLOR_MODES = new Set<string>([
-  "transform",
-  "height",
-  "radius",
-  "position",
-  "iterationAge",
-  "uniform",
-]);
+const VALID_COLOR_MODES = new Set<string>(COLOR_MODES);
 
 /** Exact set of valid RenderStyle values. */
-const VALID_RENDER_STYLES = new Set<string>([
-  "depthFade",
-  "aerial",
-  "glow",
-  "dof",
-  "edl",
-]);
+const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
 
 // ---------------------------------------------------------------------------
 // Codec helpers
