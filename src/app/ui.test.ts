@@ -2,7 +2,7 @@
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import { initialState } from "./state";
-import { defaultTransforms } from "../fractal/presets";
+import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
@@ -74,6 +74,19 @@ beforeEach(() => {
 describe("Ui construction", () => {
   it("binds to every element the real index.html provides", () => {
     expect(() => new Ui(document)).not.toThrow();
+  });
+});
+
+describe("preset menu", () => {
+  // Guards against the menu and the preset registry drifting apart — e.g. a
+  // startup or new system that has no <option> and so can never be selected.
+  it("offers exactly the registered presets", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#presetSelect option"),
+    )
+      .map((o) => o.value)
+      .filter((v) => v !== "");
+    expect(values.sort()).toEqual([...PRESET_NAMES].sort());
   });
 });
 

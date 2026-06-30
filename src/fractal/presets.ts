@@ -1,16 +1,6 @@
 import type { Rng } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
-/** The named preset systems that can be loaded via the preset menu. */
-export type Preset =
-  | "sierpinski"
-  | "menger"
-  | "spiral"
-  | "pyramid"
-  | "octahedron"
-  | "icosahedron"
-  | "dodecahedron";
-
 const HALF = 0.5;
 
 /** The four-map system the viewer starts with. */
@@ -216,6 +206,38 @@ export function dodecahedronFlake(): Transform[] {
     0.3,
   );
 }
+
+/**
+ * The named systems offered in the preset menu, mapped to their transform
+ * factories. `default` is the system the viewer boots with (see
+ * {@link defaultTransforms}); listing it here keeps the startup fractal
+ * selectable from the menu instead of being an orphan you can never return to.
+ *
+ * This record is the single source of truth for both the {@link Preset} type
+ * and the menu↔factory mapping ({@link presetTransforms}), so adding a preset
+ * is one edit and the option list in `index.html` is checked against these keys
+ * by `presets.test.ts`.
+ */
+const PRESETS = {
+  default: defaultTransforms,
+  sierpinski: sierpinskiTetrahedron,
+  menger: mengerSponge,
+  spiral,
+  pyramid: sierpinskiPyramid,
+  octahedron: octahedronFlake,
+  icosahedron: icosahedronFlake,
+  dodecahedron: dodecahedronFlake,
+} as const satisfies Record<string, () => Transform[]>;
+
+export type Preset = keyof typeof PRESETS;
+
+/** Build the transform set for a named preset. */
+export function presetTransforms(preset: Preset): Transform[] {
+  return PRESETS[preset]();
+}
+
+/** Every preset key, for menus and exhaustiveness checks. */
+export const PRESET_NAMES = Object.keys(PRESETS) as Preset[];
 
 /** Lowest unused id in a transform list (max existing id + 1, or 0 if empty). */
 export function nextId(transforms: Transform[]): number {

@@ -7,6 +7,8 @@ import {
   mengerSponge,
   nextId,
   octahedronFlake,
+  PRESET_NAMES,
+  presetTransforms,
   sierpinskiPyramid,
   sierpinskiTetrahedron,
   spiral,
@@ -53,6 +55,20 @@ describe("presets", () => {
   it("assigns unique ids within each preset", () => {
     const ids = dodecahedronFlake().map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("presetTransforms", () => {
+  // The system the viewer boots with must be reachable from the menu, or it is
+  // an orphan the user can never return to once they pick another preset.
+  it("the 'default' preset is the startup system", () => {
+    expect(presetTransforms("default")).toEqual(defaultTransforms());
+  });
+
+  it("every preset name builds a non-empty system", () => {
+    for (const name of PRESET_NAMES) {
+      expect(presetTransforms(name).length).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -10,7 +10,7 @@ import {
   setTransforms,
   updateTransform,
 } from "./state";
-import { mengerSponge } from "../fractal/presets";
+import { mengerSponge, presetTransforms } from "../fractal/presets";
 import { mulberry32 } from "../fractal/rng";
 
 describe("initialState", () => {
@@ -22,6 +22,11 @@ describe("initialState", () => {
     expect(state.renderStyle).toBe("depthFade");
     expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
     expect(state.panelOpen).toBe(true);
+  });
+
+  // The startup fractal must match a menu preset so it can be reselected.
+  it("starts with the 'default' preset's system", () => {
+    expect(initialState(true).transforms).toEqual(presetTransforms("default"));
   });
 });
 
