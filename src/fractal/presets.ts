@@ -298,8 +298,8 @@ export function chiralLace(): Transform[] {
  * One Barnsley-fern map: the *exact* 2x2 linear part of his published affine
  * transform plus its translation, in the fern's own tall coordinates (a frond
  * rooted at the origin growing up +y), with its relative selection weight.
- * These are literally Barnsley's numbers — {@link fern} decomposes each linear
- * part into the engine's rotation/scale/shear at build time.
+ * These are literally Barnsley's numbers — {@link buildFern} decomposes each
+ * linear part into the engine's rotation/scale/shear at build time.
  */
 interface FernMap {
   /**
@@ -319,6 +319,12 @@ const FERN_SCALE = 0.3;
 const FERN_CENTER: [number, number] = [-0.07, -1.5];
 /** z-axis contraction; any magnitude < 1 collapses the leaf onto z = 0. */
 const FERN_FLATTEN = 0.3;
+/**
+ * Curling Fern only: out-of-plane tilt of the frond map per application,
+ * radians. Each recursive step up the rachis adds this tilt, so it compounds
+ * into a fiddlehead curl toward the tip. Larger ⇒ tighter curl; 0 ⇒ flat.
+ */
+const FERN_CURL = 0.12;
 
 /**
  * Barnsley's four exact maps, with weights proportional to his published
@@ -376,25 +382,30 @@ function decomposePlanar(
 }
 
 /**
- * Fern — Barnsley's fern, the canonical "looks nothing like its equations"
- * fractal.
+ * Build a fern from Barnsley's {@link FERN_MAPS}. Each linear part is decomposed
+ * into the engine's rotation/scale/shear ({@link decomposePlanar}) — the right
+ * leaflet needs all three, which is what shear unlocked — then conjugated by
+ * `A(p) = FERN_SCALE·p + FERN_CENTER` so the frond lands centred in the box.
+ * Conjugating by a similarity leaves each map's linear part `M` untouched and
+ * only rewrites its translation to `FERN_SCALE·t + (I − M)·FERN_CENTER`.
  *
- * It is a *weighted* IFS: the self-similar frond map must run the large
- * majority of the time for the rachis to grow tall and the leaflets to recurse
- * into ever-smaller fronds; pick the four maps evenly and you get a smudge, not
- * a fern. Each map carries a {@link Transform.weight} and the chaos game samples
- * in proportion — frond ~85%, each leaflet ~7%, the stem ~1%.
- *
- * The maps are Barnsley's exact affine transforms. Each linear part is
- * decomposed into the engine's rotation/scale/shear ({@link decomposePlanar}) —
- * the right leaflet needs all three, which is what shear unlocked — then
- * conjugated by `A(p) = FERN_SCALE·p + FERN_CENTER` so the frond lands centred
- * in the box. Conjugating by a similarity leaves each map's linear part `M`
- * untouched and only rewrites its translation to
- * `FERN_SCALE·t + (I − M)·FERN_CENTER`.
+ * With `curl = 0` this is Barnsley's exact, perfectly planar fern. A non-zero
+ * `curl` tilts the dominant frond map that many radians out of plane per
+ * application: because the frond is the recursive map that climbs the rachis,
+ * the tilt compounds, so the base stays flat while the tip curls like an
+ * unfurling fiddlehead, and the leaflets ride the curl inside the rotated
+ * copies. Only the frond curls — and it keeps its depth (z-scale = its xy
+ * scale) so the tilt is a true 3-D rotation, not flattened to `FERN_FLATTEN`
+ * like the planar maps.
  */
-export function fern(): Transform[] {
+function buildFern(curl: number): Transform[] {
   const [cx, cy] = FERN_CENTER;
+  // The frond is Barnsley's dominant, self-similar map (his highest weight); it
+  // alone climbs the rachis, so it alone carries the curl.
+  const frond = FERN_MAPS.reduce(
+    (best, m, i, maps) => (m.weight > maps[best].weight ? i : best),
+    0,
+  );
   return FERN_MAPS.map(({ linear, translate, weight }, id): Transform => {
     const [a, b, c, d] = linear;
     const { angle, scaleX, scaleY, shear } = decomposePlanar(a, b, c, d);
@@ -402,15 +413,40 @@ export function fern(): Transform[] {
     // (I − M)·FERN_CENTER, using Barnsley's exact M = [[a, b], [c, d]].
     const px = FERN_SCALE * translate[0] + cx - (a * cx + b * cy);
     const py = FERN_SCALE * translate[1] + cy - (c * cx + d * cy);
+    const curls = curl !== 0 && id === frond;
     return {
       id,
       position: [px, py, 0],
-      rotation: [0, 0, angle],
-      scale: [scaleX, scaleY, FERN_FLATTEN],
+      rotation: [curls ? curl : 0, 0, angle],
+      scale: [scaleX, scaleY, curls ? scaleX : FERN_FLATTEN],
       shear: [shear, 0, 0],
       weight,
     };
   });
+}
+
+/**
+ * Barnsley's fern — the canonical "looks nothing like its equations" fractal.
+ *
+ * A *weighted* IFS: the self-similar frond map must run the large majority of
+ * the time for the rachis to grow tall and the leaflets to recurse into
+ * ever-smaller fronds; pick the four maps evenly and you get a smudge, not a
+ * fern. Each map carries a {@link Transform.weight} and the chaos game samples
+ * in proportion — frond ~85%, each leaflet ~7%, the stem ~1%. The maps are
+ * Barnsley's exact, perfectly planar affine transforms ({@link buildFern}).
+ */
+export function barnsleyFern(): Transform[] {
+  return buildFern(0);
+}
+
+/**
+ * Curling Fern — Barnsley's fern lifted into 3-D. The maps are identical except
+ * the frond is tilted {@link FERN_CURL} radians out of plane each time it
+ * recurses, so the frond rolls toward its tip like an unfurling fiddlehead and
+ * the leaflets fan out along the curl. See {@link buildFern}.
+ */
+export function curlingFern(): Transform[] {
+  return buildFern(FERN_CURL);
 }
 
 /**
@@ -435,7 +471,8 @@ const PRESETS = {
   dodecahedron: dodecahedronFlake,
   jerusalem: jerusalemCube,
   chiral: chiralLace,
-  fern,
+  barnsley: barnsleyFern,
+  curling: curlingFern,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;

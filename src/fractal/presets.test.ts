@@ -2,10 +2,11 @@ import { composeAffine } from "./affine";
 import { runChaosGame } from "./chaos-game";
 import {
   appendTransform,
+  barnsleyFern,
   chiralLace,
+  curlingFern,
   defaultTransforms,
   dodecahedronFlake,
-  fern,
   icosahedronFlake,
   jerusalemCube,
   mengerSponge,
@@ -160,10 +161,10 @@ describe("chiralLace", () => {
   });
 });
 
-describe("fern", () => {
+describe("barnsleyFern", () => {
   // Four maps now that the chaos game samples by weight — no duplication.
   it("is a compact four-map weighted system", () => {
-    const transforms = fern();
+    const transforms = barnsleyFern();
     expect(transforms).toHaveLength(4);
     expect(transforms.some((t) => (t.weight ?? 1) !== 1)).toBe(true);
   });
@@ -171,7 +172,7 @@ describe("fern", () => {
   // The frond map must dominate selection for the frond to develop; Barnsley
   // runs it the large majority of the time.
   it("weights the frond map far above the leaflets", () => {
-    const weights = fern().map((t) => t.weight ?? 1);
+    const weights = barnsleyFern().map((t) => t.weight ?? 1);
     const total = weights.reduce((sum, w) => sum + w, 0);
     expect(Math.max(...weights) / total).toBeGreaterThan(0.5);
   });
@@ -182,7 +183,7 @@ describe("fern", () => {
   // (the plane collapses onto the stem line), so the bound is |scale| < 1 with
   // no positive lower bound.
   it("contracts on every axis and reflects the right leaflet", () => {
-    const transforms = fern();
+    const transforms = barnsleyFern();
     expect(transforms.some((t) => t.scale.some((c) => c < 0))).toBe(true);
     for (const t of transforms) {
       for (const c of t.scale) {
@@ -198,14 +199,14 @@ describe("fern", () => {
   // the right leaflet's shear (m[1] = 0.28) and reflection that a pure
   // scale+rotation cannot express.
   it("expresses Barnsley's exact linear parts", () => {
-    // [a, b, c, d] per map, in fern() order: stem, frond, left, right.
+    // [a, b, c, d] per map, in barnsleyFern() order: stem, frond, left, right.
     const barnsley = [
       [0, 0, 0, 0.16],
       [0.85, 0.04, -0.04, 0.85],
       [0.2, -0.26, 0.23, 0.22],
       [-0.15, 0.28, 0.26, 0.24],
     ];
-    const maps = fern();
+    const maps = barnsleyFern();
     barnsley.forEach(([a, b, c, d], i) => {
       const { m } = composeAffine(maps[i]);
       expect(m[0]).toBeCloseTo(a, 10);
@@ -218,7 +219,7 @@ describe("fern", () => {
   // A fern frond is a flat leaf, taller than it is wide: the cloud collapses
   // onto a plane (negligible depth) and its height dominates its width.
   it("renders a flat, upright leaf", () => {
-    const { bounds } = runChaosGame(fern(), 4000, mulberry32(1));
+    const { bounds } = runChaosGame(barnsleyFern(), 4000, mulberry32(1));
     for (const v of Object.values(bounds)) {
       expect(Number.isFinite(v)).toBe(true);
       expect(Math.abs(v)).toBeLessThan(10);
@@ -228,6 +229,43 @@ describe("fern", () => {
     const depth = bounds.maxZ - bounds.minZ;
     expect(height).toBeGreaterThan(width);
     expect(depth).toBeLessThan(0.01 * height);
+  });
+});
+
+describe("curlingFern", () => {
+  // Same four weighted maps as the flat fern — it is the planar fern with one
+  // map tilted out of plane, not a different system.
+  it("is a four-map weighted system like the flat fern", () => {
+    const transforms = curlingFern();
+    expect(transforms).toHaveLength(4);
+    expect(transforms.some((t) => (t.weight ?? 1) !== 1)).toBe(true);
+  });
+
+  // The curl lives on exactly one map — the dominant frond (highest weight),
+  // which alone climbs the rachis — tilted about x. That single compounding
+  // tilt is what lifts the tip out of plane.
+  it("tilts only the dominant frond map out of plane", () => {
+    const transforms = curlingFern();
+    const tilted = transforms.filter((t) => t.rotation[0] !== 0);
+    expect(tilted).toHaveLength(1);
+    const maxWeight = Math.max(...transforms.map((t) => t.weight ?? 1));
+    expect(tilted[0].weight).toBe(maxWeight);
+  });
+
+  // Unlike the flat fern (depth ≈ 0), the curl gives the leaf real depth while
+  // it stays an upright leaf — taller than wide, and not ballooned into a blob.
+  it("lifts the leaf out of plane while staying upright", () => {
+    const { bounds } = runChaosGame(curlingFern(), 4000, mulberry32(1));
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(Math.abs(v)).toBeLessThan(10);
+    }
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    const depth = bounds.maxZ - bounds.minZ;
+    expect(height).toBeGreaterThan(width);
+    expect(depth).toBeGreaterThan(0.1 * height); // genuinely 3-D, not flat
+    expect(depth).toBeLessThan(height); // still a leaf, not a blob
   });
 });
 
