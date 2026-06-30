@@ -139,14 +139,6 @@ export function buildColors(
       }
       break;
     }
-    case "iterationAge": {
-      // Early iterations magenta, late iterations cyan.
-      for (let i = 0; i < count; i++) {
-        const t = i / count;
-        writeHsl(colors, i * 3, 0.8 - t * 0.3, 0.9, 0.55);
-      }
-      break;
-    }
     case "uniform":
     default: {
       for (let i = 0; i < count * 3; i += 3) {

@@ -53,16 +53,15 @@ translation, and a composed case against hand-computed values.
 ## Color modes
 
 `buildColors(result, transforms, mode)` in `color.ts` produces a parallel
-`Float32Array` of per-point RGB. The six modes:
+`Float32Array` of per-point RGB. The five modes:
 
-| Mode           | Mapping                                             |
-| -------------- | --------------------------------------------------- |
-| `transform`    | one hue per map (evenly spaced)                     |
-| `height`       | y normalized → blue → green → red                   |
-| `radius`       | distance from origin → warm (inner) to cool (outer) |
-| `position`     | normalized xyz → rgb                                |
-| `iterationAge` | generation order → magenta (early) to cyan (late)   |
-| `uniform`      | constant cyan `(0.4, 0.8, 1.0)`                     |
+| Mode        | Mapping                                             |
+| ----------- | --------------------------------------------------- |
+| `transform` | one hue per map (evenly spaced)                     |
+| `height`    | y normalized → blue → green → red                   |
+| `radius`    | distance from origin → warm (inner) to cool (outer) |
+| `position`  | normalized xyz → rgb                                |
+| `uniform`   | constant cyan `(0.4, 0.8, 1.0)`                     |
 
 `hslToRgb` matches `THREE.Color.setHSL`'s algorithm. The renderer runs with
 **color management disabled** (`THREE.ColorManagement.enabled = false` in
