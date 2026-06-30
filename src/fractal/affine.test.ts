@@ -1,5 +1,10 @@
-import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
-import type { Transform } from "./types";
+import {
+  applyAffine,
+  composeAffine,
+  rotationMatrixXYZ,
+  shearMatrix,
+} from "./affine";
+import type { Transform, Vec3 } from "./types";
 
 const HALF_PI = Math.PI / 2;
 
@@ -109,5 +114,27 @@ describe("composeAffine shear", () => {
     const col1 = [a.m[1], a.m[4], a.m[7]];
     const dot = col0[0] * col1[0] + col0[1] * col1[1] + col0[2] * col1[2];
     expect(dot).toBeCloseTo(0.5); // 0 would mean orthogonal (no shear)
+  });
+});
+
+describe("shearMatrix", () => {
+  it("is the identity for zero shear", () => {
+    expectVecClose(shearMatrix([0, 0, 0]), [1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  });
+
+  it("puts [xy, xz, yz] on the off-diagonal of a unit upper-triangular matrix", () => {
+    // prettier-ignore
+    expectVecClose(shearMatrix([0.3, -0.5, 0.7]), [
+      1, 0.3, -0.5,
+      0, 1,    0.7,
+      0, 0,    1,
+    ]);
+  });
+
+  it("matches the U composeAffine folds in, so guides can't drift from the fractal", () => {
+    // With identity rotation and unit scale, composeAffine's linear part is
+    // exactly U — the same convention, encoded two ways, pinned to agree.
+    const shear: Vec3 = [0.3, -0.5, 0.7];
+    expectVecClose(composeAffine(transform({ shear })).m, shearMatrix(shear));
   });
 });
