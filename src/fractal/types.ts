@@ -11,6 +11,21 @@ export interface Transform {
   position: Vec3;
   rotation: Vec3;
   scale: Vec3;
+  /**
+   * Relative selection weight for the chaos game. The iterator picks each map
+   * with probability proportional to its weight, so a frond map at weight 12 is
+   * drawn ~12× as often as a leaflet at weight 1. Omitted ⇒ 1, and a system
+   * whose weights are all 1 samples uniformly exactly as before.
+   */
+  weight?: number;
+  /**
+   * Optional shear `[xy, xz, yz]`, a unit upper-triangular factor `U` applied as
+   * `M = R · diag(scale) · U`. Rotation + per-axis scale alone can only produce
+   * orthogonal-column maps; shear supplies the remaining 3 degrees of freedom,
+   * so position/rotation/scale/shear together express *any* affine map. Omitted
+   * ⇒ no shear, leaving existing systems unchanged.
+   */
+  shear?: Vec3;
 }
 
 /**

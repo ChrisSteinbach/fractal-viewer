@@ -95,7 +95,10 @@ export function setTransforms(
 export function updateTransform(
   state: AppState,
   index: number,
-  geometry: Pick<Transform, "position" | "rotation" | "scale">,
+  geometry: Pick<
+    Transform,
+    "position" | "rotation" | "scale" | "weight" | "shear"
+  >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>
     i === index ? { ...t, ...geometry } : t,

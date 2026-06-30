@@ -220,13 +220,20 @@ describe("Ui.setPointCount", () => {
 });
 
 describe("Ui.renderTransformEditor", () => {
-  it("builds position, rotation, and scale sliders for the selected transform", () => {
+  it("builds position, rotation, scale, and weight controls for the selection", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(defaultTransforms()[0], 0);
 
-    expect(editorGroupTitles()).toEqual(["Position", "Rotation", "Scale"]);
-    expect(editorSliders()).toHaveLength(9);
+    expect(editorGroupTitles()).toEqual([
+      "Position",
+      "Rotation",
+      "Scale",
+      "Shear",
+      "Weight",
+    ]);
+    // 12 axis sliders (4 channels × 3) + 1 weight slider.
+    expect(editorSliders()).toHaveLength(13);
   });
 
   it("shows the stored rotation radians as degrees", () => {
@@ -295,6 +302,55 @@ describe("Ui.renderTransformEditor", () => {
     expect(geometry.scale).toEqual([1.2, 0.5, 0.5]);
   });
 
+  it("labels shear rows XY/XZ/YZ and reports an edit back, preserving the rest", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    const shearXY = editorSlider("Shear XY");
+    shearXY.value = "0.5";
+    shearXY.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.shear).toEqual([0.5, 0, 0]);
+    expect(geometry.scale).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("shows the stored weight and reports an edit back as a multiplier", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1,
+      },
+      0,
+    );
+
+    const weight = editorSlider("Weight");
+    // Log-scaled: the default weight of 1 sits at slider value 0.
+    expect(weight.value).toBe("0");
+
+    weight.value = "1"; // 10^1 = 10×
+    weight.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.weight).toBeCloseTo(10);
+  });
+
   it("re-syncs the sliders when the transform changes under the same selection", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -315,7 +371,7 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(defaultTransforms()[0], 0);
-    expect(editorSliders()).toHaveLength(9);
+    expect(editorSliders()).toHaveLength(13);
 
     ui.renderTransformEditor(null, null);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(

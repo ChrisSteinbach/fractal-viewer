@@ -64,6 +64,24 @@ export function composeAffine(transform: Transform): Affine {
     r[7] * sy,
     r[8] * sz,
   ];
+  // Shear: right-multiply by the unit upper-triangular U(shear), giving the
+  // full map M = R · diag(scale) · U. With shear [a, b, c]: column 1 gains
+  // a·column 0, and column 2 gains b·column 0 + c·column 1 (the *original*
+  // column 1, so column 2 is updated before column 1). This is the missing
+  // degree of freedom that lets a Transform express any affine map.
+  const { shear } = transform;
+  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
+    const [a, b, c] = shear;
+    const c1x = m[1];
+    const c1y = m[4];
+    const c1z = m[7];
+    m[2] += b * m[0] + c * c1x;
+    m[5] += b * m[3] + c * c1y;
+    m[8] += b * m[6] + c * c1z;
+    m[1] += a * m[0];
+    m[4] += a * m[3];
+    m[7] += a * m[6];
+  }
   return { m, t: [...transform.position] };
 }
 
