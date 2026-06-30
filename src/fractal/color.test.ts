@@ -61,6 +61,16 @@ describe("buildColors", () => {
     }
   });
 
+  it("recolors a fixed cloud: switching mode changes colors, not point count", () => {
+    // The app caches one ChaosGameResult and rebuilds colors over it when the
+    // palette changes, so a color-mode switch must recolor the same cloud
+    // without needing a fresh (re-rolled) run.
+    const height = buildColors(result, defaultTransforms(), "height");
+    const radius = buildColors(result, defaultTransforms(), "radius");
+    expect(radius).toHaveLength(height.length);
+    expect(Array.from(radius)).not.toEqual(Array.from(height));
+  });
+
   it("handles a degenerate cloud without dividing by zero", () => {
     const flat: ChaosGameResult = {
       positions: new Float32Array([1, 1, 1, 1, 1, 1]),

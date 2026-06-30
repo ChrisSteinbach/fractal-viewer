@@ -1,4 +1,4 @@
-import { runChaosGame } from "../fractal/chaos-game";
+import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
 import {
   dodecahedronFlake,
@@ -13,7 +13,7 @@ import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { Ui } from "./ui";
-import type { Preset } from "./ui";
+import type { Preset } from "../fractal/presets";
 import {
   addTransform,
   initialState,
@@ -30,11 +30,9 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
-import { loadScene, saveScene } from "./persist";
+import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
+import { MOBILE_BREAKPOINT } from "./constants";
 import type { Transform } from "../fractal/types";
-
-/** Below this viewport width the panel starts closed and floats over a scrim. */
-const MOBILE_BREAKPOINT = 640;
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -101,24 +99,33 @@ function main(): void {
   const panelOpen = window.innerWidth > MOBILE_BREAKPOINT;
   const saved = loadScene();
   let state: AppState = saved
-    ? {
-        ...initialState(panelOpen),
-        transforms: saved.transforms,
-        numPoints: saved.numPoints,
-        pointSize: saved.pointSize,
-        colorMode: saved.colorMode,
-        renderStyle: saved.renderStyle,
-        showGuides: saved.showGuides,
-      }
+    ? fromSnapshot(saved, initialState(panelOpen))
     : initialState(panelOpen);
   const orbit = new OrbitCamera([5, 4, 5]);
   const ui = new Ui(document);
 
+  // The most recent chaos-game run, cached so a color-mode change can recolor
+  // the existing cloud (see `recolor`) instead of re-rolling the RNG and drawing
+  // a brand-new random sample of the attractor.
+  let lastResult: ChaosGameResult | null = null;
+
+  // Re-run the chaos game: the only path that touches the RNG and changes point
+  // positions. Use this for geometry edits, add/remove, presets, and explicit
+  // regenerate — never for a mere palette change.
   function regenerate(): void {
-    const result = runChaosGame(state.transforms, state.numPoints);
-    const colors = buildColors(result, state.transforms, state.colorMode);
-    scene.setPoints(result.positions, colors);
-    ui.setPointCount(result.count);
+    lastResult = runChaosGame(state.transforms, state.numPoints);
+    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    scene.setPoints(lastResult.positions, colors);
+    ui.setPointCount(lastResult.count);
+  }
+
+  // Rebuild only the color buffer over the cached cloud and push it to the
+  // scene. Leaves positions (and thus the RNG) untouched, so switching color
+  // mode recolors the same shape instantly. No-op before the first generation.
+  function recolor(): void {
+    if (!lastResult) return;
+    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    scene.setColors(colors);
   }
 
   function refreshGuides(): void {
@@ -145,39 +152,59 @@ function main(): void {
   function scheduleSave(): void {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      saveScene({
-        transforms: state.transforms,
-        numPoints: state.numPoints,
-        pointSize: state.pointSize,
-        colorMode: state.colorMode,
-        renderStyle: state.renderStyle,
-        showGuides: state.showGuides,
-      });
+      saveScene(toSnapshot(state));
     }, 300);
   }
 
+  // Flush any pending debounced save on page hide so an edit made less than
+  // 300 ms before the tab is closed or backgrounded is not lost. Reuses the
+  // guarded saveScene path, which already handles SecurityError (sandboxed
+  // iframes) and private-mode localStorage failures without throwing.
+  function flushSave(): void {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    saveScene(toSnapshot(state));
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushSave();
+  });
+  window.addEventListener("pagehide", flushSave);
+
+  /**
+   * Shared choreography for edits that replace or modify the transform set.
+   *
+   * Centralises the autoUpdate policy in one place:
+   *   "auto"   — regenerate only when autoUpdate is on (add/remove/drag edits)
+   *   "always" — always regenerate regardless of autoUpdate (preset loads must
+   *               rebuild because the entire transform set is replaced)
+   *
+   * After applying the reducer, every geometry edit refreshes the guide boxes
+   * and the UI, then schedules a debounced save.
+   */
+  function applyEdit(
+    applyReducer: () => void,
+    effect: "auto" | "always" = "auto",
+  ): void {
+    applyReducer();
+    refreshGuides();
+    refreshUi();
+    if (effect === "always" || state.autoUpdate) regenerate();
+    scheduleSave();
+  }
+
   ui.bind({
-    onAdd: () => {
-      state = addTransform(state);
-      refreshGuides();
-      refreshUi();
-      if (state.autoUpdate) regenerate();
-      scheduleSave();
-    },
-    onRemove: () => {
-      state = removeTransform(state);
-      refreshGuides();
-      refreshUi();
-      if (state.autoUpdate) regenerate();
-      scheduleSave();
-    },
-    onPreset: (preset) => {
-      state = setTransforms(state, presetTransforms(preset));
-      refreshGuides();
-      refreshUi();
-      regenerate();
-      scheduleSave();
-    },
+    onAdd: () =>
+      applyEdit(() => {
+        state = addTransform(state);
+      }),
+    onRemove: () =>
+      applyEdit(() => {
+        state = removeTransform(state);
+      }),
+    onPreset: (preset) =>
+      applyEdit(() => {
+        state = setTransforms(state, presetTransforms(preset));
+      }, "always"),
     onNumPointsInput: (value) => {
       state = setNumPoints(state, value);
       ui.updateLabels(state);
@@ -206,7 +233,7 @@ function main(): void {
     },
     onColorMode: (mode) => {
       state = setColorMode(state, mode);
-      regenerate();
+      recolor();
       scheduleSave();
     },
     onRenderStyle: (style) => {
