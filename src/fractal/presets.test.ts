@@ -1,9 +1,11 @@
 import { runChaosGame } from "./chaos-game";
 import {
   appendTransform,
+  chiralLace,
   defaultTransforms,
   dodecahedronFlake,
   icosahedronFlake,
+  jerusalemCube,
   mengerSponge,
   nextId,
   octahedronFlake,
@@ -98,6 +100,62 @@ describe("flake presets converge", () => {
       }
     });
   }
+});
+
+describe("jerusalemCube", () => {
+  it("has eight large corner cubes and twelve small edge cubes", () => {
+    const big = Math.SQRT2 - 1;
+    const small = big * big;
+    const transforms = jerusalemCube();
+    const atScale = (s: number) =>
+      transforms.filter((t) => t.scale.every((c) => Math.abs(c - s) < 1e-9))
+        .length;
+    expect(transforms).toHaveLength(20);
+    expect(atScale(big)).toBe(8);
+    expect(atScale(small)).toBe(12);
+  });
+
+  it("uses only contractions", () => {
+    for (const t of jerusalemCube()) {
+      expect(Math.max(...t.scale)).toBeLessThan(1);
+      expect(Math.min(...t.scale)).toBeGreaterThan(0);
+    }
+  });
+
+  it("renders a finite, bounded cloud", () => {
+    const { bounds } = runChaosGame(jerusalemCube(), 2000, mulberry32(1));
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(Math.abs(v)).toBeLessThan(10);
+    }
+  });
+});
+
+describe("chiralLace", () => {
+  it("has four maps", () => {
+    expect(chiralLace()).toHaveLength(4);
+  });
+
+  // The mirror is the whole point — without a sign flip it is just a plain
+  // flake — but a reflected map must still contract or the cloud escapes.
+  it("reflects on an axis yet contracts on every axis", () => {
+    const transforms = chiralLace();
+    expect(transforms.some((t) => t.scale.some((c) => c < 0))).toBe(true);
+    for (const t of transforms) {
+      for (const c of t.scale) {
+        expect(Math.abs(c)).toBeGreaterThan(0);
+        expect(Math.abs(c)).toBeLessThan(1);
+      }
+    }
+  });
+
+  it("renders a finite, bounded cloud", () => {
+    const { bounds } = runChaosGame(chiralLace(), 2000, mulberry32(1));
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(Math.abs(v)).toBeLessThan(10);
+    }
+  });
 });
 
 describe("nextId", () => {
