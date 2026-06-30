@@ -3,7 +3,9 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
+import { shearMatrix } from "../fractal/affine";
 import { transformColors } from "../fractal/color";
+import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3 } from "../fractal/types";
 import type { OrbitCamera } from "./orbit";
 import type { RenderStyle } from "./state";
@@ -188,6 +190,10 @@ export class FractalScene {
   private readonly pointGeometry: THREE.BufferGeometry;
   private readonly pointCloud: THREE.Points;
   private guideCubes: THREE.Object3D[] = [];
+  // The shear currently baked into each guide cube's geometry, parallel to
+  // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
+  // actually changed (position/rotation/scale ride the Object3D's TRS instead).
+  private guideShears: Vec3[] = [];
 
   private renderStyle: RenderStyle = "depthFade";
 
@@ -374,12 +380,17 @@ export class FractalScene {
     }
 
     const palette = transformColors(transforms.length);
+    this.guideShears = transforms.map((t) => clone3(t.shear ?? NO_SHEAR));
     this.guideCubes = transforms.map((t, i) => {
       const selectedHere = selected === i;
       const tint = selectedHere ? new THREE.Color(0xffffff) : color(palette[i]);
 
+      // The box is the unit cell's affine image. Position/rotation/scale ride
+      // the Object3D's TRS (so interactions.ts can drag them); shear, which a
+      // TRS can't express, is baked into the geometry as a parallelepiped.
+      const { edges, faces } = guideCellGeometry(t.shear);
       const cube = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+        edges,
         new THREE.LineBasicMaterial({
           color: tint,
           transparent: true,
@@ -394,7 +405,7 @@ export class FractalScene {
 
       cube.add(
         new THREE.Mesh(
-          new THREE.BoxGeometry(1, 1, 1),
+          faces,
           new THREE.MeshBasicMaterial({
             color: tint,
             transparent: true,
@@ -428,19 +439,54 @@ export class FractalScene {
    * Move one guide box to match an edited transform, without the dispose-and-
    * rebuild of {@link updateGuides}. Lets the panel sliders drive the box live.
    *
-   * The box tracks position/rotation/scale only; any `shear` is intentionally
-   * not shown, so the guide stays a plain TRS cell the drag gizmos can read and
-   * write (see `interactions.ts`).
+   * Position/rotation/scale ride the Object3D's TRS so the drag gizmos in
+   * `interactions.ts` can keep reading and writing them. A change to `shear` —
+   * which a TRS can't express — re-bakes just this cell's geometry into the
+   * matching parallelepiped (see {@link reshapeGuide}).
    */
   setGuideGeometry(
     index: number,
-    geometry: Pick<Transform, "position" | "rotation" | "scale">,
+    geometry: Pick<Transform, "position" | "rotation" | "scale" | "shear">,
   ): void {
     const cube = this.guideCubes[index];
     if (!cube) return;
     cube.position.set(...geometry.position);
     cube.rotation.set(...geometry.rotation);
     cube.scale.set(...geometry.scale);
+    this.reshapeGuide(index, cube, geometry.shear);
+  }
+
+  /**
+   * Re-bake a guide cell's geometry when its shear changes, so the box stays the
+   * parallelepiped the map actually sends the unit cube to. A no-op while the
+   * shear is unchanged, so position/rotation/scale drags don't churn geometry.
+   */
+  private reshapeGuide(
+    index: number,
+    cube: THREE.Object3D,
+    shear: Vec3 | undefined,
+  ): void {
+    const next = shear ?? NO_SHEAR;
+    const prev = this.guideShears[index];
+    if (
+      prev &&
+      prev[0] === next[0] &&
+      prev[1] === next[1] &&
+      prev[2] === next[2]
+    ) {
+      return;
+    }
+    this.guideShears[index] = clone3(next);
+
+    const { edges, faces } = guideCellGeometry(next);
+    const line = cube as THREE.LineSegments;
+    line.geometry.dispose();
+    line.geometry = edges;
+    const mesh = cube.children[0] as THREE.Mesh | undefined;
+    if (mesh) {
+      mesh.geometry.dispose();
+      mesh.geometry = faces;
+    }
   }
 
   /** Place the camera from the orbit state. */
@@ -581,6 +627,44 @@ export class FractalScene {
 }
 
 const ZERO = new THREE.Vector3();
+const NO_SHEAR: Vec3 = [0, 0, 0];
+
+/**
+ * Build a guide cell's wireframe edges + translucent faces. Any shear is baked
+ * into the vertices, so a sheared map's cell renders as the parallelepiped it
+ * sends the unit cube to rather than an upright box. The edges are taken from
+ * the pristine cube (a guaranteed 12) and then sheared, so the wireframe is
+ * exact for any shear magnitude.
+ */
+function guideCellGeometry(shear: Vec3 | undefined): {
+  edges: THREE.BufferGeometry;
+  faces: THREE.BufferGeometry;
+} {
+  const faces: THREE.BufferGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const edges: THREE.BufferGeometry = new THREE.EdgesGeometry(faces);
+  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
+    const u = shearMatrix4(shear);
+    faces.applyMatrix4(u);
+    edges.applyMatrix4(u);
+  }
+  return { edges, faces };
+}
+
+/**
+ * The shear factor {@link shearMatrix} as a Three.js Matrix4. `Matrix4.set` and
+ * `shearMatrix` are both row-major, so the 3x3 maps straight into the upper-left
+ * block with an identity translation row/column.
+ */
+function shearMatrix4(shear: Vec3): THREE.Matrix4 {
+  const u = shearMatrix(shear);
+  // prettier-ignore
+  return new THREE.Matrix4().set(
+    u[0], u[1], u[2], 0,
+    u[3], u[4], u[5], 0,
+    u[6], u[7], u[8], 0,
+    0,    0,    0,    1,
+  );
+}
 
 function disableFog(material: THREE.Material | THREE.Material[]): void {
   // `fog` lives on concrete material subclasses, not the base `Material` type.

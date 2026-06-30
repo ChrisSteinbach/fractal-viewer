@@ -85,6 +85,30 @@ export function composeAffine(transform: Transform): Affine {
   return { m, t: [...transform.position] };
 }
 
+/**
+ * The shear factor `U` as a row-major 3x3 matrix: the unit upper-triangular
+ * matrix whose above-diagonal entries are `shear = [xy, xz, yz]`,
+ *
+ *     U = | 1  xy  xz |
+ *         | 0   1  yz |
+ *         | 0   0   1 |
+ *
+ * This is the exact `U` that {@link composeAffine} right-multiplies into
+ * `R · diag(scale)` (there it is folded in by column operations rather than
+ * materialised). Anything that needs the shear on its own — e.g. drawing a
+ * guide cell as the parallelepiped the map sends the unit cube to — builds it
+ * here, so the visualisation can never drift from how the fractal is generated.
+ */
+export function shearMatrix(shear: Vec3): number[] {
+  const [xy, xz, yz] = shear;
+  // prettier-ignore
+  return [
+    1, xy, xz,
+    0, 1,  yz,
+    0, 0,  1,
+  ];
+}
+
 /** Apply an affine map to a point: returns `m · (x, y, z) + t`. */
 export function applyAffine(a: Affine, x: number, y: number, z: number): Vec3 {
   const { m, t } = a;
