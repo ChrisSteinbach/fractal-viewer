@@ -3,6 +3,11 @@ import type { ColorMode, Transform, Vec3 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
+import {
+  MOBILE_BREAKPOINT,
+  MIN_GUIDE_SCALE,
+  MAX_GUIDE_SCALE,
+} from "./constants";
 
 export type { Preset };
 
@@ -27,9 +32,6 @@ export interface UiHandlers {
   onTogglePanel: () => void;
   onClosePanel: () => void;
 }
-
-/** Below this viewport width the panel floats over a dimmed backdrop. */
-const MOBILE_BREAKPOINT = 640;
 
 /**
  * Whether the primary input is a mouse, so the help box can show mouse verbs
@@ -90,7 +92,7 @@ function displayDegrees(rad: number): number {
   return Math.round(wrapDegrees(radToDeg(rad)));
 }
 
-// Scale bounds mirror the guide-box clamp in interactions.ts (MIN/MAX_GUIDE_SCALE).
+// Scale bounds share the guide-box clamp (MIN/MAX_GUIDE_SCALE) used in interactions.ts.
 const CHANNELS: Record<Channel, ChannelSpec> = {
   position: {
     title: "Position",
@@ -112,8 +114,8 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
   },
   scale: {
     title: "Scale",
-    min: 0.05,
-    max: 2,
+    min: MIN_GUIDE_SCALE,
+    max: MAX_GUIDE_SCALE,
     step: 0.01,
     toSlider: (v) => v,
     fromSlider: (v) => v,

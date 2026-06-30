@@ -3,10 +3,8 @@ import { ROTATE_SPEED } from "./orbit";
 import type { OrbitCamera } from "./orbit";
 import type { FractalScene } from "./scene";
 import { clamp } from "../fractal/vec";
+import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { Vec3 } from "../fractal/types";
-
-const MIN_GUIDE_SCALE = 0.05;
-const MAX_GUIDE_SCALE = 2;
 
 export interface TransformGeometry {
   position: Vec3;

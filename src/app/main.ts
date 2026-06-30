@@ -31,10 +31,8 @@ import {
 } from "./state";
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
+import { MOBILE_BREAKPOINT } from "./constants";
 import type { Transform } from "../fractal/types";
-
-/** Below this viewport width the panel starts closed and floats over a scrim. */
-const MOBILE_BREAKPOINT = 640;
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
