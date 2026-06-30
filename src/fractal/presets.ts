@@ -295,14 +295,18 @@ export function chiralLace(): Transform[] {
 }
 
 /**
- * One Barnsley-fern map, written in the fern's own tall coordinates (a frond
+ * One Barnsley-fern map: the *exact* 2x2 linear part of his published affine
+ * transform plus its translation, in the fern's own tall coordinates (a frond
  * rooted at the origin growing up +y), with its relative selection weight.
+ * These are literally Barnsley's numbers — {@link fern} decomposes each linear
+ * part into the engine's rotation/scale/shear at build time.
  */
 interface FernMap {
-  /** z-rotation of the linear part, radians. */
-  angle: number;
-  /** Native [x, y] scale; a negative axis reflects (the mirrored leaflet). */
-  scale: [number, number];
+  /**
+   * Barnsley's exact linear part, row-major `[a, b, c, d]` for the planar map
+   * `x' = a·x + b·y`, `y' = c·x + d·y`.
+   */
+  linear: [number, number, number, number];
   /** Native translation, in Barnsley's coordinates. */
   translate: [number, number];
   /** Relative selection weight (see {@link Transform.weight}). */
@@ -317,19 +321,59 @@ const FERN_CENTER: [number, number] = [-0.07, -1.5];
 const FERN_FLATTEN = 0.3;
 
 /**
- * Barnsley's four maps with his classic probabilities. The frond map is a pure
- * similarity (its 0.85 scale and 2.7° lean accumulate into the signature curl)
- * selected ~80% of the time; the leaflets are near-similarities at ~8% each
- * (the right one carrying Barnsley's mirror reflection — a negative y-scale),
- * and the thin stem makes up the remainder. The weights are relative, so they
- * are proportional to Barnsley's [20, 2, 2, 1] selection ratio.
+ * Barnsley's four exact maps, with weights proportional to his published
+ * probabilities — `1 : 85 : 7 : 7` for stem : frond : left : right. The frond
+ * is a pure similarity (rotation + uniform 0.85 scale) run ~85% of the time and
+ * accumulates into the signature curl; the two leaflets are near-similarities,
+ * each carrying a slight shear, and the right one also reflects (its 2x2 has a
+ * negative determinant). The stem is a rank-1 line map that collapses x —
+ * Barnsley's `[[0, 0], [0, 0.16]]` — drawn ~1% of the time.
  */
 const FERN_MAPS: FernMap[] = [
-  { angle: -0.047, scale: [0.851, 0.851], translate: [0, 1.6], weight: 1 },
-  { angle: 0.855, scale: [0.305, 0.34], translate: [0, 1.6], weight: 0.1 },
-  { angle: 2.094, scale: [0.3, -0.363], translate: [0, 0.44], weight: 0.1 },
-  { angle: 0, scale: [0.02, 0.16], translate: [0, 0], weight: 0.05 },
+  { linear: [0, 0, 0, 0.16], translate: [0, 0], weight: 1 }, // f1 stem
+  { linear: [0.85, 0.04, -0.04, 0.85], translate: [0, 1.6], weight: 85 }, // f2 frond
+  { linear: [0.2, -0.26, 0.23, 0.22], translate: [0, 1.6], weight: 7 }, // f3 left
+  { linear: [-0.15, 0.28, 0.26, 0.24], translate: [0, 0.44], weight: 7 }, // f4 right
 ];
+
+/** A planar 2x2 linear part decomposed into the engine's affine parameters. */
+interface PlanarParts {
+  /** z-rotation, radians. */
+  angle: number;
+  /** Native x scale (always ≥ 0). */
+  scaleX: number;
+  /** Native y scale; negative ⇒ the map reflects. */
+  scaleY: number;
+  /** The unit upper-triangular factor's xy shear. */
+  shear: number;
+}
+
+/**
+ * QR-decompose a planar 2x2 linear part `[[a, b], [c, d]]` into the engine's
+ * `M = R(angle) · diag(scaleX, scaleY) · [[1, shear], [0, 1]]`.
+ *
+ * The rotation aligns the first column `(a, c)` with +x, so `scaleX` is that
+ * column's length and `angle = atan2(c, a)`. The second scale is the signed
+ * area `det(M) / scaleX` (negative ⇒ the map reflects), and the shear is the
+ * first column's pull on the second, `(a·b + c·d) / scaleX²`. A zero first
+ * column — Barnsley's rank-1 stem, which collapses x — has no width to rotate,
+ * so it degenerates to `R(0) · diag(0, d)`.
+ */
+function decomposePlanar(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+): PlanarParts {
+  const scaleX = Math.hypot(a, c);
+  if (scaleX === 0) return { angle: 0, scaleX: 0, scaleY: d, shear: 0 };
+  return {
+    angle: Math.atan2(c, a),
+    scaleX,
+    scaleY: (a * d - b * c) / scaleX,
+    shear: (a * b + c * d) / (scaleX * scaleX),
+  };
+}
 
 /**
  * Fern — Barnsley's fern, the canonical "looks nothing like its equations"
@@ -339,33 +383,31 @@ const FERN_MAPS: FernMap[] = [
  * majority of the time for the rachis to grow tall and the leaflets to recurse
  * into ever-smaller fronds; pick the four maps evenly and you get a smudge, not
  * a fern. Each map carries a {@link Transform.weight} and the chaos game samples
- * in proportion — frond ~80%, each leaflet ~8%, the stem the rest.
+ * in proportion — frond ~85%, each leaflet ~7%, the stem ~1%.
  *
- * The maps live in Barnsley's tall coordinates, then are conjugated by
- * `A(p) = FERN_SCALE·p + FERN_CENTER` so the frond lands centred in the box.
- * Conjugating by a similarity leaves each map's linear part `M` untouched and
- * only rewrites its translation to `FERN_SCALE·t + (I − M)·FERN_CENTER`.
+ * The maps are Barnsley's exact affine transforms. Each linear part is
+ * decomposed into the engine's rotation/scale/shear ({@link decomposePlanar}) —
+ * the right leaflet needs all three, which is what shear unlocked — then
+ * conjugated by `A(p) = FERN_SCALE·p + FERN_CENTER` so the frond lands centred
+ * in the box. Conjugating by a similarity leaves each map's linear part `M`
+ * untouched and only rewrites its translation to
+ * `FERN_SCALE·t + (I − M)·FERN_CENTER`.
  */
 export function fern(): Transform[] {
   const [cx, cy] = FERN_CENTER;
-  let id = 0;
-  return FERN_MAPS.map(({ angle, scale, translate, weight }): Transform => {
-    const [sx, sy] = scale;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    // Linear part M = R(angle) · diag(sx, sy), then translation under the
-    // re-centring conjugation: FERN_SCALE·t + (I − M)·FERN_CENTER.
-    const m00 = cos * sx;
-    const m01 = -sin * sy;
-    const m10 = sin * sx;
-    const m11 = cos * sy;
-    const px = FERN_SCALE * translate[0] + cx - (m00 * cx + m01 * cy);
-    const py = FERN_SCALE * translate[1] + cy - (m10 * cx + m11 * cy);
+  return FERN_MAPS.map(({ linear, translate, weight }, id): Transform => {
+    const [a, b, c, d] = linear;
+    const { angle, scaleX, scaleY, shear } = decomposePlanar(a, b, c, d);
+    // Translation under the re-centring conjugation: FERN_SCALE·t +
+    // (I − M)·FERN_CENTER, using Barnsley's exact M = [[a, b], [c, d]].
+    const px = FERN_SCALE * translate[0] + cx - (a * cx + b * cy);
+    const py = FERN_SCALE * translate[1] + cy - (c * cx + d * cy);
     return {
-      id: id++,
+      id,
       position: [px, py, 0],
       rotation: [0, 0, angle],
-      scale: [sx, sy, FERN_FLATTEN],
+      scale: [scaleX, scaleY, FERN_FLATTEN],
+      shear: [shear, 0, 0],
       weight,
     };
   });

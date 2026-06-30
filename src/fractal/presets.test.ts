@@ -1,3 +1,4 @@
+import { composeAffine } from "./affine";
 import { runChaosGame } from "./chaos-game";
 import {
   appendTransform,
@@ -175,17 +176,43 @@ describe("fern", () => {
     expect(Math.max(...weights) / total).toBeGreaterThan(0.5);
   });
 
-  // Every map must contract (|scale| < 1 on each axis) or the cloud escapes;
-  // one axis is negative — the mirror reflection of the right-hand leaflet.
-  it("contracts on every axis, with a reflected leaflet", () => {
+  // Every map must contract (no axis magnitude ≥ 1) or the cloud escapes. The
+  // right leaflet reflects — its 2x2 has a negative determinant, encoded as a
+  // negative scale axis. Barnsley's stem is rank-1: its x-scale is exactly 0
+  // (the plane collapses onto the stem line), so the bound is |scale| < 1 with
+  // no positive lower bound.
+  it("contracts on every axis and reflects the right leaflet", () => {
     const transforms = fern();
     expect(transforms.some((t) => t.scale.some((c) => c < 0))).toBe(true);
     for (const t of transforms) {
       for (const c of t.scale) {
-        expect(Math.abs(c)).toBeGreaterThan(0);
         expect(Math.abs(c)).toBeLessThan(1);
       }
     }
+  });
+
+  // The whole point of this preset: the maps are Barnsley's published affine
+  // transforms verbatim, not the rotation+scale similarities that approximate
+  // them. Conjugation by the re-centring similarity leaves each linear part
+  // intact, so the composed map's xy block must be his exact 2x2 — including
+  // the right leaflet's shear (m[1] = 0.28) and reflection that a pure
+  // scale+rotation cannot express.
+  it("expresses Barnsley's exact linear parts", () => {
+    // [a, b, c, d] per map, in fern() order: stem, frond, left, right.
+    const barnsley = [
+      [0, 0, 0, 0.16],
+      [0.85, 0.04, -0.04, 0.85],
+      [0.2, -0.26, 0.23, 0.22],
+      [-0.15, 0.28, 0.26, 0.24],
+    ];
+    const maps = fern();
+    barnsley.forEach(([a, b, c, d], i) => {
+      const { m } = composeAffine(maps[i]);
+      expect(m[0]).toBeCloseTo(a, 10);
+      expect(m[1]).toBeCloseTo(b, 10);
+      expect(m[3]).toBeCloseTo(c, 10);
+      expect(m[4]).toBeCloseTo(d, 10);
+    });
   });
 
   // A fern frond is a flat leaf, taller than it is wide: the cloud collapses
