@@ -1,19 +1,10 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
-import {
-  dodecahedronFlake,
-  icosahedronFlake,
-  mengerSponge,
-  octahedronFlake,
-  sierpinskiPyramid,
-  sierpinskiTetrahedron,
-  spiral,
-} from "../fractal/presets";
+import { presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { Ui } from "./ui";
-import type { Preset } from "../fractal/presets";
 import {
   addTransform,
   initialState,
@@ -32,7 +23,6 @@ import {
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
-import type { Transform } from "../fractal/types";
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -53,25 +43,6 @@ function webglAvailable(): boolean {
     return Boolean(window.WebGLRenderingContext && gl);
   } catch {
     return false;
-  }
-}
-
-function presetTransforms(preset: Preset): Transform[] {
-  switch (preset) {
-    case "sierpinski":
-      return sierpinskiTetrahedron();
-    case "menger":
-      return mengerSponge();
-    case "spiral":
-      return spiral();
-    case "pyramid":
-      return sierpinskiPyramid();
-    case "octahedron":
-      return octahedronFlake();
-    case "icosahedron":
-      return icosahedronFlake();
-    case "dodecahedron":
-      return dodecahedronFlake();
   }
 }
 

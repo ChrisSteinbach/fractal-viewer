@@ -1,16 +1,6 @@
 import type { Rng } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
-/** The named preset systems that can be loaded via the preset menu. */
-export type Preset =
-  | "sierpinski"
-  | "menger"
-  | "spiral"
-  | "pyramid"
-  | "octahedron"
-  | "icosahedron"
-  | "dodecahedron";
-
 const HALF = 0.5;
 
 /** The four-map system the viewer starts with. */
@@ -216,6 +206,127 @@ export function dodecahedronFlake(): Transform[] {
     0.3,
   );
 }
+
+/**
+ * The Jerusalem cube — the Menger sponge's lesser-known cousin. Where the
+ * Menger uses one cube size, the Jerusalem cube interlocks cubes of *two*
+ * sizes: eight large cubes at the corners (side `L`) and twelve smaller cubes
+ * at the edge midpoints (side `S = L²`), leaving a recessed plus/cross on every
+ * face. Centering a sub-cube on each edge fixes `2L + S = 1`; with `S = L²`
+ * that is `L² + 2L − 1 = 0`, so `L = √2 − 1` and the two scales nest exactly.
+ * Twenty maps, no rotation, but two scales — a crisper, rarer relative of the
+ * sponge.
+ */
+export function jerusalemCube(): Transform[] {
+  const big = Math.SQRT2 - 1; // L: root of L² + 2L − 1 = 0
+  const small = big * big; // S = L² = 3 − 2√2
+  const cornerOffset = 0.5 - big / 2; // corner-cube center on each axis
+  const edgeOffset = 0.5 - small / 2; // edge-cube offset on its two face axes
+  const transforms: Transform[] = [];
+  let id = 0;
+  for (const x of [-1, 1]) {
+    for (const y of [-1, 1]) {
+      for (const z of [-1, 1]) {
+        transforms.push({
+          id: id++,
+          position: [x * cornerOffset, y * cornerOffset, z * cornerOffset],
+          rotation: [0, 0, 0],
+          scale: [big, big, big],
+        });
+      }
+    }
+  }
+  // One small cube centered on each of the twelve edges: the edge's own axis
+  // sits at 0, the other two at ±edgeOffset.
+  for (const a of [-1, 1]) {
+    for (const b of [-1, 1]) {
+      const e = a * edgeOffset;
+      const f = b * edgeOffset;
+      transforms.push(
+        {
+          id: id++,
+          position: [0, e, f],
+          rotation: [0, 0, 0],
+          scale: [small, small, small],
+        },
+        {
+          id: id++,
+          position: [e, 0, f],
+          rotation: [0, 0, 0],
+          scale: [small, small, small],
+        },
+        {
+          id: id++,
+          position: [e, f, 0],
+          rotation: [0, 0, 0],
+          scale: [small, small, small],
+        },
+      );
+    }
+  }
+  return transforms;
+}
+
+/**
+ * Chiral Lace — a reflected, tilted tetrahedral gasket. Each of the four maps
+ * contracts toward a tetrahedron vertex like a Sierpinski flake, but with a
+ * *negative* y-scale (a mirror reflection), unequal axis scales, and a small
+ * two-axis tilt. The reflection flips handedness at every level while the
+ * uneven scale stretches each copy, weaving an organic, frost-like lace that an
+ * upright single-scale flake never produces. It deliberately reaches into the
+ * corners of the affine range the other presets leave unused: reflection
+ * (negative scale), off-axis rotation, and anisotropic scale.
+ */
+export function chiralLace(): Transform[] {
+  const corners: Vec3[] = [
+    [1, 1, 1],
+    [1, -1, -1],
+    [-1, 1, -1],
+    [-1, -1, 1],
+  ];
+  // Seat each copy halfway out toward its (scaled) vertex; the mirror + tilt do
+  // the weaving. Scale magnitudes stay < 1 so every map still contracts.
+  return corners.map((v, id): Transform => ({
+    id,
+    position: scaleVec(v, 0.3),
+    rotation: [0, 0.5, 0.6],
+    scale: [0.54, -0.5, 0.46],
+  }));
+}
+
+/**
+ * The named systems offered in the preset menu, mapped to their transform
+ * factories. `default` is the system the viewer boots with (see
+ * {@link defaultTransforms}); listing it here keeps the startup fractal
+ * selectable from the menu instead of being an orphan you can never return to.
+ *
+ * This record is the single source of truth for both the {@link Preset} type
+ * and the menu↔factory mapping ({@link presetTransforms}), so adding a preset
+ * is one edit and the option list in `index.html` is checked against these keys
+ * by `ui.test.ts`.
+ */
+const PRESETS = {
+  default: defaultTransforms,
+  sierpinski: sierpinskiTetrahedron,
+  menger: mengerSponge,
+  spiral,
+  pyramid: sierpinskiPyramid,
+  octahedron: octahedronFlake,
+  icosahedron: icosahedronFlake,
+  dodecahedron: dodecahedronFlake,
+  jerusalem: jerusalemCube,
+  chiral: chiralLace,
+} as const satisfies Record<string, () => Transform[]>;
+
+export type Preset = keyof typeof PRESETS;
+
+/** Build the transform set for a named preset. */
+export function presetTransforms(preset: Preset): Transform[] {
+  return PRESETS[preset]();
+}
+
+/** Every preset key, for menus and exhaustiveness checks. */
+export const PRESET_NAMES = Object.keys(PRESETS) as Preset[];
 
 /** Lowest unused id in a transform list (max existing id + 1, or 0 if empty). */
 export function nextId(transforms: Transform[]): number {

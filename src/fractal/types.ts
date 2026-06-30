@@ -24,7 +24,6 @@ export const COLOR_MODES = [
   "height",
   "radius",
   "position",
-  "iterationAge",
   "uniform",
 ] as const;
 
