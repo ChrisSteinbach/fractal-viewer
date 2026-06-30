@@ -66,6 +66,39 @@ export function runChaosGame(
   const positions = new Float32Array(numPoints * 3);
   const transformIndices = new Uint8Array(numPoints);
 
+  // Selection weights. When every weight is 1 (the common case) we keep the
+  // original `Math.floor(rng() * n)` draw, so uniform systems consume the RNG
+  // identically and render exactly as before. Only a genuinely weighted system
+  // pays for the cumulative-weight table + binary search.
+  const weights = transforms.map((t) => t.weight ?? 1);
+  let totalWeight = 0;
+  const cumulative = new Float64Array(weights.length);
+  for (let i = 0; i < weights.length; i++) {
+    totalWeight += weights[i];
+    cumulative[i] = totalWeight;
+  }
+  const weighted =
+    weights.some((w) => w !== 1) &&
+    totalWeight > 0 &&
+    Number.isFinite(totalWeight);
+
+  // Smallest index whose cumulative weight exceeds `r = rng() * totalWeight`.
+  // For all-unit weights this lower-bound search coincides with the uniform
+  // draw above, so the two paths agree where they overlap.
+  const pickIndex = weighted
+    ? (): number => {
+        const r = rng() * totalWeight;
+        let lo = 0;
+        let hi = cumulative.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (r < cumulative[mid]) hi = mid;
+          else lo = mid + 1;
+        }
+        return lo;
+      }
+    : (): number => Math.floor(rng() * transforms.length);
+
   let x = rng() - 0.5;
   let y = rng() - 0.5;
   let z = rng() - 0.5;
@@ -82,7 +115,7 @@ export function runChaosGame(
   // requires a net-expansive application, which a well-formed IFS never
   // produces in steady state). The reseed path is a safety net only.
   const step = (): number => {
-    const idx = Math.floor(rng() * transforms.length);
+    const idx = pickIndex();
     const p = applyAffine(affines[idx], x, y, z);
     x = p[0];
     y = p[1];

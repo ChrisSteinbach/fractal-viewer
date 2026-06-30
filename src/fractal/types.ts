@@ -11,6 +11,13 @@ export interface Transform {
   position: Vec3;
   rotation: Vec3;
   scale: Vec3;
+  /**
+   * Relative selection weight for the chaos game. The iterator picks each map
+   * with probability proportional to its weight, so a frond map at weight 12 is
+   * drawn ~12× as often as a leaflet at weight 1. Omitted ⇒ 1, and a system
+   * whose weights are all 1 samples uniformly exactly as before.
+   */
+  weight?: number;
 }
 
 /**

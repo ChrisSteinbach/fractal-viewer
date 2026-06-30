@@ -67,3 +67,56 @@ describe("runChaosGame", () => {
     );
   });
 });
+
+describe("runChaosGame weighting", () => {
+  // Two maps with identical geometry, so only the weights — never position —
+  // can bias which map is chosen.
+  function twoMaps(w0: number, w1: number): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: w0,
+      },
+      {
+        id: 1,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: w1,
+      },
+    ];
+  }
+
+  function shareOfMap0(transforms: Transform[]): number {
+    const result = runChaosGame(transforms, 8000, mulberry32(5));
+    let zero = 0;
+    for (const idx of result.transformIndices) if (idx === 0) zero++;
+    return zero / result.count;
+  }
+
+  it("draws maps in proportion to their weights (3:1 ≈ 75%)", () => {
+    const share = shareOfMap0(twoMaps(3, 1));
+    expect(share).toBeGreaterThan(0.7);
+    expect(share).toBeLessThan(0.8);
+  });
+
+  it("stays unbiased on the weighted path when weights are equal", () => {
+    const share = shareOfMap0(twoMaps(2, 2));
+    expect(share).toBeGreaterThan(0.45);
+    expect(share).toBeLessThan(0.55);
+  });
+
+  it("treats an omitted weight as an explicit weight of 1 (same RNG stream)", () => {
+    const omitted = makeTransforms(4);
+    const explicitOnes = omitted.map((t) => ({ ...t, weight: 1 }));
+    const a = runChaosGame(omitted, 500, mulberry32(11));
+    const b = runChaosGame(explicitOnes, 500, mulberry32(11));
+    expect(Array.from(b.transformIndices)).toEqual(
+      Array.from(a.transformIndices),
+    );
+    expect(Array.from(b.positions)).toEqual(Array.from(a.positions));
+  });
+});

@@ -127,11 +127,22 @@ function isVec3(v: unknown): v is Vec3 {
  */
 export function encodeScene(s: SceneSnapshot): string {
   const payload = {
-    transforms: s.transforms.map(({ position, rotation, scale }) => ({
-      position: position.map(round4),
-      rotation: rotation.map(round4),
-      scale: scale.map(round4),
-    })),
+    transforms: s.transforms.map((t) => {
+      // Only non-default weight is written, keeping uniform systems' URLs as
+      // short as before (old links, which never had the field, still decode).
+      const e: {
+        position: number[];
+        rotation: number[];
+        scale: number[];
+        weight?: number;
+      } = {
+        position: t.position.map(round4),
+        rotation: t.rotation.map(round4),
+        scale: t.scale.map(round4),
+      };
+      if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
+      return e;
+    }),
     numPoints: s.numPoints,
     pointSize: round4(s.pointSize),
     colorMode: s.colorMode,
@@ -174,12 +185,20 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       if (!isVec3(tf.position) || !isVec3(tf.rotation) || !isVec3(tf.scale))
         return null;
       // Safe: isVec3 verified these are valid Vec3 tuples.
-      transforms.push({
+      const decoded: Transform = {
         id: i,
         position: tf.position,
         rotation: tf.rotation,
         scale: tf.scale,
-      });
+      };
+      // weight: optional. Reject non-finite (malformed), clamp to a positive
+      // range otherwise; absent stays undefined ⇒ uniform.
+      if (tf.weight !== undefined) {
+        const w = Number(tf.weight);
+        if (!Number.isFinite(w)) return null;
+        decoded.weight = Math.max(0.0001, Math.min(10000, w));
+      }
+      transforms.push(decoded);
     }
 
     // colorMode / renderStyle: exact known-string matches only. ---------------

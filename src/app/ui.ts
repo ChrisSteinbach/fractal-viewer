@@ -11,8 +11,8 @@ import {
 
 export type { Preset };
 
-/** The position/rotation/scale triple a transform editor edits. */
-type Geometry = Pick<Transform, "position" | "rotation" | "scale">;
+/** The geometry (and weight) a transform editor edits. */
+type Geometry = Pick<Transform, "position" | "rotation" | "scale" | "weight">;
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -125,6 +125,20 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
 
 const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale"];
 
+/**
+ * The weight editor is log-scaled, so the slider sits at centre for the default
+ * weight of 1 and reaches both rare (~0.05) and dominant (~20) maps without
+ * crowding the low end. Stored as a plain multiplier on {@link Transform}.
+ */
+const WEIGHT_MIN = 0.05;
+const WEIGHT_MAX = 20;
+function weightToSlider(weight: number): number {
+  return Math.log10(Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, weight)));
+}
+function sliderToWeight(slider: number): number {
+  return 10 ** slider;
+}
+
 interface AxisControl {
   slider: HTMLInputElement;
   readout: HTMLElement;
@@ -133,8 +147,9 @@ interface AxisControl {
 /** Live handles into a built editor so external edits can re-sync the sliders. */
 interface EditorState {
   index: number;
-  geometry: { position: Vec3; rotation: Vec3; scale: Vec3 };
+  geometry: { position: Vec3; rotation: Vec3; scale: Vec3; weight: number };
   controls: Record<Channel, AxisControl[]>;
+  weightControl: AxisControl;
 }
 
 /**
@@ -312,6 +327,9 @@ export class Ui {
           lines: [
             `Pos: [${t.position.map((v) => v.toFixed(2)).join(", ")}]`,
             `Scale: ${t.scale[0].toFixed(2)}`,
+            ...(t.weight !== undefined && t.weight !== 1
+              ? [`Weight: ${t.weight.toFixed(2)}`]
+              : []),
           ],
           onClick: () => this.handlers?.onSelect(i),
         }),
@@ -373,6 +391,7 @@ export class Ui {
       position: clone3(transform.position),
       rotation: clone3(transform.rotation),
       scale: clone3(transform.scale),
+      weight: transform.weight ?? 1,
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -424,7 +443,49 @@ export class Ui {
       this.transformEditor.appendChild(group);
     }
 
-    this.editor = { index, geometry, controls };
+    const weightControl = this.buildWeightControl(geometry.weight);
+
+    this.editor = { index, geometry, controls, weightControl };
+  }
+
+  /** Build the single-value weight control in its own group below the axes. */
+  private buildWeightControl(weight: number): AxisControl {
+    const group = this.doc.createElement("div");
+    group.className = "editor-group";
+
+    const title = this.doc.createElement("div");
+    title.className = "editor-group-title";
+    title.textContent = "Weight";
+    group.appendChild(title);
+
+    const row = this.doc.createElement("div");
+    row.className = "editor-row";
+
+    const name = this.doc.createElement("span");
+    name.className = "axis";
+    name.textContent = "×";
+
+    const slider = this.doc.createElement("input");
+    slider.type = "range";
+    slider.min = String(weightToSlider(WEIGHT_MIN));
+    slider.max = String(weightToSlider(WEIGHT_MAX));
+    slider.step = "0.01";
+    slider.value = String(weightToSlider(weight));
+    slider.setAttribute("aria-label", "Weight");
+
+    const readout = this.doc.createElement("span");
+    readout.className = "value";
+    readout.textContent = weight.toFixed(2);
+
+    slider.addEventListener("input", () =>
+      this.onWeightInput(Number(slider.value)),
+    );
+
+    row.append(name, slider, readout);
+    group.appendChild(row);
+    this.transformEditor.appendChild(group);
+
+    return { slider, readout };
   }
 
   private syncEditor(transform: Transform): void {
@@ -434,6 +495,7 @@ export class Ui {
       position: clone3(transform.position),
       rotation: clone3(transform.rotation),
       scale: clone3(transform.scale),
+      weight: transform.weight ?? 1,
     };
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
@@ -443,6 +505,9 @@ export class Ui {
         control.readout.textContent = spec.format(model);
       });
     }
+    const { weight } = editor.geometry;
+    editor.weightControl.slider.value = String(weightToSlider(weight));
+    editor.weightControl.readout.textContent = weight.toFixed(2);
   }
 
   private onAxisInput(
@@ -456,10 +521,27 @@ export class Ui {
     const model = spec.fromSlider(sliderValue);
     editor.geometry[channel][axis] = model;
     editor.controls[channel][axis].readout.textContent = spec.format(model);
+    this.emitGeometry();
+  }
+
+  private onWeightInput(sliderValue: number): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const weight = sliderToWeight(sliderValue);
+    editor.geometry.weight = weight;
+    editor.weightControl.readout.textContent = weight.toFixed(2);
+    this.emitGeometry();
+  }
+
+  /** Push the editor's current geometry (including weight) back to the handler. */
+  private emitGeometry(): void {
+    const editor = this.editor;
+    if (!editor) return;
     this.handlers?.onTransformGeometry(editor.index, {
       position: clone3(editor.geometry.position),
       rotation: clone3(editor.geometry.rotation),
       scale: clone3(editor.geometry.scale),
+      weight: editor.geometry.weight,
     });
   }
 

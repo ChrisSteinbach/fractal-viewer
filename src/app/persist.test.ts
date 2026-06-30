@@ -177,6 +177,83 @@ describe("decodeScene rejects malformed input", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-transform weight (optional field)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene transform weight", () => {
+  it("round-trips a non-default weight", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          weight: 0.85,
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].weight).toBeCloseTo(0.85, 4);
+  });
+
+  it("leaves weight undefined for an old link that never carried the field", () => {
+    // baseSnapshot() has no weight — exactly an old v1 payload.
+    const result = decodeScene(encodeScene(baseSnapshot()));
+    expect(result!.transforms[0].weight).toBeUndefined();
+  });
+
+  it("does not persist a weight of 1, decoding it back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          weight: 1,
+        },
+      ],
+    };
+    expect(decodeScene(encodeScene(s))!.transforms[0].weight).toBeUndefined();
+  });
+
+  it("returns null for a non-finite weight", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          weight: "heavy",
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps a non-positive weight up to a positive value", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          weight: -3,
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].weight).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Clamping
 // ---------------------------------------------------------------------------
 
