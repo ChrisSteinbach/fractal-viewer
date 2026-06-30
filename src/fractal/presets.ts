@@ -295,6 +295,86 @@ export function chiralLace(): Transform[] {
 }
 
 /**
+ * One Barnsley-fern map, written in the fern's own tall coordinates (a frond
+ * rooted at the origin growing up +y), plus how many times it is emitted.
+ */
+interface FernMap {
+  /** z-rotation of the linear part, radians. */
+  angle: number;
+  /** Native [x, y] scale; a negative axis reflects (the mirrored leaflet). */
+  scale: [number, number];
+  /** Native translation, in Barnsley's coordinates. */
+  translate: [number, number];
+  /** Emission count — this map's selection weight under uniform sampling. */
+  copies: number;
+}
+
+/** Uniform shrink that brings the ~10-tall frond into the viewer's box. */
+const FERN_SCALE = 0.3;
+/** Shift (in fern coordinates) that re-centres the frond on the origin. */
+const FERN_CENTER: [number, number] = [-0.07, -1.5];
+/** z-axis contraction; any magnitude < 1 collapses the leaf onto z = 0. */
+const FERN_FLATTEN = 0.3;
+
+/**
+ * Barnsley's four maps. The frond map is a pure similarity (its 0.85 scale and
+ * 2.7° lean accumulate into the signature curl); the leaflets are
+ * near-similarities, the right one carrying Barnsley's mirror reflection
+ * (negative y-scale). `copies` reproduces his probabilities — frond ~80%,
+ * each leaflet ~8%, the thin stem the remainder.
+ */
+const FERN_MAPS: FernMap[] = [
+  { angle: -0.047, scale: [0.851, 0.851], translate: [0, 1.6], copies: 20 },
+  { angle: 0.855, scale: [0.305, 0.34], translate: [0, 1.6], copies: 2 },
+  { angle: 2.094, scale: [0.3, -0.363], translate: [0, 0.44], copies: 2 },
+  { angle: 0, scale: [0.02, 0.16], translate: [0, 0], copies: 1 },
+];
+
+/**
+ * Fern — Barnsley's fern, the canonical "looks nothing like its equations"
+ * fractal, realized in this viewer's uniform chaos game.
+ *
+ * Barnsley's fern is a *weighted* IFS: the self-similar frond map must run the
+ * vast majority of the time for the rachis to grow tall and the leaflets to
+ * recurse into ever-smaller fronds; pick the four maps evenly and you get a
+ * smudge, not a fern. The chaos game here has no per-map weight, so each map is
+ * emitted {@link FernMap.copies} times and uniform selection over the expanded
+ * list reproduces the intended frequencies.
+ *
+ * The maps live in Barnsley's tall coordinates, then are conjugated by
+ * `A(p) = FERN_SCALE·p + FERN_CENTER` so the frond lands centred in the box.
+ * Conjugating by a similarity leaves each map's linear part `M` untouched and
+ * only rewrites its translation to `FERN_SCALE·t + (I − M)·FERN_CENTER`.
+ */
+export function fern(): Transform[] {
+  const [cx, cy] = FERN_CENTER;
+  const transforms: Transform[] = [];
+  let id = 0;
+  for (const { angle, scale, translate, copies } of FERN_MAPS) {
+    const [sx, sy] = scale;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    // Linear part M = R(angle) · diag(sx, sy), then translation under the
+    // re-centring conjugation: FERN_SCALE·t + (I − M)·FERN_CENTER.
+    const m00 = cos * sx;
+    const m01 = -sin * sy;
+    const m10 = sin * sx;
+    const m11 = cos * sy;
+    const px = FERN_SCALE * translate[0] + cx - (m00 * cx + m01 * cy);
+    const py = FERN_SCALE * translate[1] + cy - (m10 * cx + m11 * cy);
+    for (let c = 0; c < copies; c++) {
+      transforms.push({
+        id: id++,
+        position: [px, py, 0],
+        rotation: [0, 0, angle],
+        scale: [sx, sy, FERN_FLATTEN],
+      });
+    }
+  }
+  return transforms;
+}
+
+/**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
  * {@link defaultTransforms}); listing it here keeps the startup fractal
@@ -316,6 +396,7 @@ const PRESETS = {
   dodecahedron: dodecahedronFlake,
   jerusalem: jerusalemCube,
   chiral: chiralLace,
+  fern,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;

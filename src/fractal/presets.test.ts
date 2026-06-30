@@ -4,6 +4,7 @@ import {
   chiralLace,
   defaultTransforms,
   dodecahedronFlake,
+  fern,
   icosahedronFlake,
   jerusalemCube,
   mengerSponge,
@@ -155,6 +156,47 @@ describe("chiralLace", () => {
       expect(Number.isFinite(v)).toBe(true);
       expect(Math.abs(v)).toBeLessThan(10);
     }
+  });
+});
+
+describe("fern", () => {
+  // Barnsley weights the frond map far above the leaflets; with no per-map
+  // weight in the chaos game, the fern encodes that by emitting the frond map
+  // many times, so the system has the same geometry repeated.
+  it("repeats a map to weight it", () => {
+    const transforms = fern();
+    const geometries = transforms.map((t) =>
+      JSON.stringify([t.position, t.rotation, t.scale]),
+    );
+    expect(new Set(geometries).size).toBeLessThan(transforms.length);
+  });
+
+  // Every map must contract (|scale| < 1 on each axis) or the cloud escapes;
+  // one axis is negative — the mirror reflection of the right-hand leaflet.
+  it("contracts on every axis, with a reflected leaflet", () => {
+    const transforms = fern();
+    expect(transforms.some((t) => t.scale.some((c) => c < 0))).toBe(true);
+    for (const t of transforms) {
+      for (const c of t.scale) {
+        expect(Math.abs(c)).toBeGreaterThan(0);
+        expect(Math.abs(c)).toBeLessThan(1);
+      }
+    }
+  });
+
+  // A fern frond is a flat leaf, taller than it is wide: the cloud collapses
+  // onto a plane (negligible depth) and its height dominates its width.
+  it("renders a flat, upright leaf", () => {
+    const { bounds } = runChaosGame(fern(), 4000, mulberry32(1));
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(Math.abs(v)).toBeLessThan(10);
+    }
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    const depth = bounds.maxZ - bounds.minZ;
+    expect(height).toBeGreaterThan(width);
+    expect(depth).toBeLessThan(0.01 * height);
   });
 });
 
