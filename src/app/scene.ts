@@ -427,6 +427,10 @@ export class FractalScene {
   /**
    * Move one guide box to match an edited transform, without the dispose-and-
    * rebuild of {@link updateGuides}. Lets the panel sliders drive the box live.
+   *
+   * The box tracks position/rotation/scale only; any `shear` is intentionally
+   * not shown, so the guide stays a plain TRS cell the drag gizmos can read and
+   * write (see `interactions.ts`).
    */
   setGuideGeometry(
     index: number,

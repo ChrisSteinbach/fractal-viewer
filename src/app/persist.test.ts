@@ -254,6 +254,66 @@ describe("decodeScene transform weight", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-transform shear (optional field)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene transform shear", () => {
+  it("round-trips a shear vector", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          shear: [0.2, -0.1, 0.3],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].shear).toEqual([0.2, -0.1, 0.3]);
+  });
+
+  it("does not persist a zero shear, decoding it back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          shear: [0, 0, 0],
+        },
+      ],
+    };
+    expect(decodeScene(encodeScene(s))!.transforms[0].shear).toBeUndefined();
+  });
+
+  it("leaves shear undefined for an old link that never carried the field", () => {
+    expect(
+      decodeScene(encodeScene(baseSnapshot()))!.transforms[0].shear,
+    ).toBeUndefined();
+  });
+
+  it("returns null for a malformed shear (not a Vec3)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          shear: [1, 2],
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Clamping
 // ---------------------------------------------------------------------------
 

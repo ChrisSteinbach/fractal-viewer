@@ -12,7 +12,10 @@ import {
 export type { Preset };
 
 /** The geometry (and weight) a transform editor edits. */
-type Geometry = Pick<Transform, "position" | "rotation" | "scale" | "weight">;
+type Geometry = Pick<
+  Transform,
+  "position" | "rotation" | "scale" | "weight" | "shear"
+>;
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -57,7 +60,7 @@ interface TransformButtonOptions {
 const AXES = ["X", "Y", "Z"] as const;
 
 /** Which geometry channel a group of editor sliders edits. */
-type Channel = "position" | "rotation" | "scale";
+type Channel = "position" | "rotation" | "scale" | "shear";
 
 /**
  * Per-channel slider config. The model is stored in {@link Transform} units
@@ -73,6 +76,8 @@ interface ChannelSpec {
   toSlider: (model: number) => number;
   fromSlider: (slider: number) => number;
   format: (model: number) => string;
+  /** Row labels; defaults to the X/Y/Z axes when omitted (shear uses XY/XZ/YZ). */
+  axisLabels?: readonly [string, string, string];
 }
 
 function radToDeg(rad: number): number {
@@ -121,9 +126,19 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
     fromSlider: (v) => v,
     format: (v) => v.toFixed(2),
   },
+  shear: {
+    title: "Shear",
+    min: -2,
+    max: 2,
+    step: 0.01,
+    toSlider: (v) => v,
+    fromSlider: (v) => v,
+    format: (v) => v.toFixed(2),
+    axisLabels: ["XY", "XZ", "YZ"],
+  },
 };
 
-const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale"];
+const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale", "shear"];
 
 /**
  * The weight editor is log-scaled, so the slider sits at centre for the default
@@ -147,7 +162,13 @@ interface AxisControl {
 /** Live handles into a built editor so external edits can re-sync the sliders. */
 interface EditorState {
   index: number;
-  geometry: { position: Vec3; rotation: Vec3; scale: Vec3; weight: number };
+  geometry: {
+    position: Vec3;
+    rotation: Vec3;
+    scale: Vec3;
+    shear: Vec3;
+    weight: number;
+  };
   controls: Record<Channel, AxisControl[]>;
   weightControl: AxisControl;
 }
@@ -391,12 +412,14 @@ export class Ui {
       position: clone3(transform.position),
       rotation: clone3(transform.rotation),
       scale: clone3(transform.scale),
+      shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
       rotation: [],
       scale: [],
+      shear: [],
     };
 
     for (const channel of CHANNEL_ORDER) {
@@ -409,7 +432,8 @@ export class Ui {
       title.textContent = spec.title;
       group.appendChild(title);
 
-      AXES.forEach((axisLabel, axis) => {
+      const axisLabels = spec.axisLabels ?? AXES;
+      axisLabels.forEach((axisLabel, axis) => {
         const model = geometry[channel][axis];
 
         const row = this.doc.createElement("div");
@@ -495,6 +519,7 @@ export class Ui {
       position: clone3(transform.position),
       rotation: clone3(transform.rotation),
       scale: clone3(transform.scale),
+      shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
     };
     for (const channel of CHANNEL_ORDER) {
@@ -541,6 +566,7 @@ export class Ui {
       position: clone3(editor.geometry.position),
       rotation: clone3(editor.geometry.rotation),
       scale: clone3(editor.geometry.scale),
+      shear: clone3(editor.geometry.shear),
       weight: editor.geometry.weight,
     });
   }

@@ -18,6 +18,14 @@ export interface Transform {
    * whose weights are all 1 samples uniformly exactly as before.
    */
   weight?: number;
+  /**
+   * Optional shear `[xy, xz, yz]`, a unit upper-triangular factor `U` applied as
+   * `M = R · diag(scale) · U`. Rotation + per-axis scale alone can only produce
+   * orthogonal-column maps; shear supplies the remaining 3 degrees of freedom,
+   * so position/rotation/scale/shear together express *any* affine map. Omitted
+   * ⇒ no shear, leaving existing systems unchanged.
+   */
+  shear?: Vec3;
 }
 
 /**

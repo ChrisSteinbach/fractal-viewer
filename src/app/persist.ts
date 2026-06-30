@@ -135,12 +135,15 @@ export function encodeScene(s: SceneSnapshot): string {
         rotation: number[];
         scale: number[];
         weight?: number;
+        shear?: number[];
       } = {
         position: t.position.map(round4),
         rotation: t.rotation.map(round4),
         scale: t.scale.map(round4),
       };
       if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
+      if (t.shear && t.shear.some((v) => v !== 0))
+        e.shear = t.shear.map(round4);
       return e;
     }),
     numPoints: s.numPoints,
@@ -197,6 +200,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         const w = Number(tf.weight);
         if (!Number.isFinite(w)) return null;
         decoded.weight = Math.max(0.0001, Math.min(10000, w));
+      }
+      // shear: optional. Present ⇒ must be a valid Vec3; absent stays undefined.
+      if (tf.shear !== undefined) {
+        if (!isVec3(tf.shear)) return null;
+        decoded.shear = tf.shear;
       }
       transforms.push(decoded);
     }
