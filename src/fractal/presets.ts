@@ -1,6 +1,16 @@
 import type { Rng } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
+/** The named preset systems that can be loaded via the preset menu. */
+export type Preset =
+  | "sierpinski"
+  | "menger"
+  | "spiral"
+  | "pyramid"
+  | "octahedron"
+  | "icosahedron"
+  | "dodecahedron";
+
 const HALF = 0.5;
 
 /** The four-map system the viewer starts with. */

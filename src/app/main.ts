@@ -13,7 +13,7 @@ import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { Ui } from "./ui";
-import type { Preset } from "./ui";
+import type { Preset } from "../fractal/presets";
 import {
   addTransform,
   initialState,
@@ -31,10 +31,8 @@ import {
 } from "./state";
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
+import { MOBILE_BREAKPOINT } from "./constants";
 import type { Transform } from "../fractal/types";
-
-/** Below this viewport width the panel starts closed and floats over a scrim. */
-const MOBILE_BREAKPOINT = 640;
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -157,6 +155,20 @@ function main(): void {
       saveScene(toSnapshot(state));
     }, 300);
   }
+
+  // Flush any pending debounced save on page hide so an edit made less than
+  // 300 ms before the tab is closed or backgrounded is not lost. Reuses the
+  // guarded saveScene path, which already handles SecurityError (sandboxed
+  // iframes) and private-mode localStorage failures without throwing.
+  function flushSave(): void {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    saveScene(toSnapshot(state));
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushSave();
+  });
+  window.addEventListener("pagehide", flushSave);
 
   /**
    * Shared choreography for edits that replace or modify the transform set.

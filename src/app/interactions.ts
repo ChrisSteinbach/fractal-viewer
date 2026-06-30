@@ -3,10 +3,8 @@ import { ROTATE_SPEED } from "./orbit";
 import type { OrbitCamera } from "./orbit";
 import type { FractalScene } from "./scene";
 import { clamp } from "../fractal/vec";
+import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { Vec3 } from "../fractal/types";
-
-const MIN_GUIDE_SCALE = 0.05;
-const MAX_GUIDE_SCALE = 2;
 
 export interface TransformGeometry {
   position: Vec3;
@@ -53,13 +51,16 @@ function pinchCenter(event: TouchEvent): { x: number; y: number } {
  * Wire mouse, touch, and wheel input to the scene. In camera mode the gestures
  * orbit/pan/zoom the {@link OrbitCamera}; with a transform selected they move,
  * rotate, and scale its guide box, reporting edits via
- * {@link InteractionCallbacks.onTransformChange}. Returns a teardown function.
+ * {@link InteractionCallbacks.onTransformChange}.
+ *
+ * Listeners are attached for the page lifetime — correct for this
+ * single-instance SPA; there is no teardown path.
  */
 export function attachInteractions(
   scene: FractalScene,
   orbit: OrbitCamera,
   callbacks: InteractionCallbacks,
-): () => void {
+): void {
   const canvas = scene.canvas;
   const camera = scene.camera;
   const raycaster = new THREE.Raycaster();
@@ -263,15 +264,4 @@ export function attachInteractions(
   document.addEventListener("touchend", onPointerUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("contextmenu", onContextMenu);
-
-  return function detach(): void {
-    canvas.removeEventListener("mousedown", onPointerDown);
-    canvas.removeEventListener("touchstart", onPointerDown);
-    document.removeEventListener("mousemove", onPointerMove);
-    document.removeEventListener("touchmove", onPointerMove);
-    document.removeEventListener("mouseup", onPointerUp);
-    document.removeEventListener("touchend", onPointerUp);
-    canvas.removeEventListener("wheel", onWheel);
-    canvas.removeEventListener("contextmenu", onContextMenu);
-  };
 }
