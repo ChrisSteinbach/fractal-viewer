@@ -160,15 +160,19 @@ describe("chiralLace", () => {
 });
 
 describe("fern", () => {
-  // Barnsley weights the frond map far above the leaflets; with no per-map
-  // weight in the chaos game, the fern encodes that by emitting the frond map
-  // many times, so the system has the same geometry repeated.
-  it("repeats a map to weight it", () => {
+  // Four maps now that the chaos game samples by weight — no duplication.
+  it("is a compact four-map weighted system", () => {
     const transforms = fern();
-    const geometries = transforms.map((t) =>
-      JSON.stringify([t.position, t.rotation, t.scale]),
-    );
-    expect(new Set(geometries).size).toBeLessThan(transforms.length);
+    expect(transforms).toHaveLength(4);
+    expect(transforms.some((t) => (t.weight ?? 1) !== 1)).toBe(true);
+  });
+
+  // The frond map must dominate selection for the frond to develop; Barnsley
+  // runs it the large majority of the time.
+  it("weights the frond map far above the leaflets", () => {
+    const weights = fern().map((t) => t.weight ?? 1);
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    expect(Math.max(...weights) / total).toBeGreaterThan(0.5);
   });
 
   // Every map must contract (|scale| < 1 on each axis) or the cloud escapes;
