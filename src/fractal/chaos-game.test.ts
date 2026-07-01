@@ -68,6 +68,56 @@ describe("runChaosGame", () => {
   });
 });
 
+describe("runChaosGame with variations", () => {
+  // Two contractive maps with off-axis rotation, so the affine part alone gives
+  // a well-behaved attractor and the variation is the only thing under test.
+  function twoMaps(variations?: Transform["variations"]): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.3, 0.1, -0.2],
+        rotation: [0.2, 0.4, 0.1],
+        scale: [0.5, 0.5, 0.5],
+        variations,
+      },
+      {
+        id: 1,
+        position: [-0.3, 0.2, 0.15],
+        rotation: [0, 0.3, 0.5],
+        scale: [0.5, 0.5, 0.5],
+        variations,
+      },
+    ];
+  }
+
+  it("keeps every coordinate finite so a singularity never leaks NaN", () => {
+    // spherical diverges at the origin; the escape/non-finite guard must catch
+    // any bad landing before it poisons the rest of the orbit.
+    const spherical = twoMaps([{ type: "spherical", weight: 1 }]);
+    const { positions } = runChaosGame(spherical, 3000, mulberry32(4));
+    for (const v of positions) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it("is deterministic for a seed even with a stochastic variation", () => {
+    const julia = twoMaps([{ type: "julia", weight: 1 }]);
+    const a = runChaosGame(julia, 500, mulberry32(9));
+    const b = runChaosGame(julia, 500, mulberry32(9));
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+  });
+
+  it("warps the cloud: a variation changes where points land", () => {
+    const plain = runChaosGame(twoMaps(), 500, mulberry32(9));
+    const warped = runChaosGame(
+      twoMaps([{ type: "spherical", weight: 1 }]),
+      500,
+      mulberry32(9),
+    );
+    expect(Array.from(warped.positions)).not.toEqual(
+      Array.from(plain.positions),
+    );
+  });
+});
+
 describe("runChaosGame weighting", () => {
   // Two maps with identical geometry, so only the weights — never position —
   // can bias which map is chosen.

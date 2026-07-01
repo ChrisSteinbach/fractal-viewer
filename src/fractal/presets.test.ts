@@ -17,6 +17,8 @@ import {
   sierpinskiPyramid,
   sierpinskiTetrahedron,
   spiral,
+  sphericalFlame,
+  swirlFlame,
 } from "./presets";
 import { mulberry32 } from "./rng";
 
@@ -267,6 +269,41 @@ describe("curlingFern", () => {
     expect(depth).toBeGreaterThan(0.1 * height); // genuinely 3-D, not flat
     expect(depth).toBeLessThan(height); // still a leaf, not a blob
   });
+});
+
+describe("variation flame presets", () => {
+  it("sphericalFlame is three maps, each carrying a spherical variation", () => {
+    const transforms = sphericalFlame();
+    expect(transforms).toHaveLength(3);
+    for (const t of transforms) {
+      expect(t.variations).toEqual([{ type: "spherical", weight: 1 }]);
+    }
+  });
+
+  it("swirlFlame blends swirl with a touch of linear across two maps", () => {
+    const transforms = swirlFlame();
+    expect(transforms).toHaveLength(2);
+    for (const t of transforms) {
+      expect(t.variations?.map((v) => v.type)).toEqual(["swirl", "linear"]);
+    }
+  });
+
+  // Nonlinear maps can diverge at singularities; the point of the test is that
+  // the chaos game's guard keeps the whole cloud finite (never NaN/Inf) and the
+  // attractor has real extent rather than collapsing to a point.
+  for (const [name, transforms] of Object.entries({
+    sphericalFlame: sphericalFlame(),
+    swirlFlame: swirlFlame(),
+  })) {
+    it(`${name} renders a finite, non-degenerate cloud`, () => {
+      const { bounds } = runChaosGame(transforms, 3000, mulberry32(1));
+      for (const v of Object.values(bounds)) {
+        expect(Number.isFinite(v)).toBe(true);
+      }
+      expect(bounds.maxX - bounds.minX).toBeGreaterThan(0);
+      expect(bounds.maxY - bounds.minY).toBeGreaterThan(0);
+    });
+  }
 });
 
 describe("nextId", () => {

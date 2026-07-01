@@ -1,5 +1,12 @@
 import { transformColors } from "../fractal/color";
-import type { ColorMode, Transform, Vec3 } from "../fractal/types";
+import { VARIATION_TYPES } from "../fractal/types";
+import type {
+  ColorMode,
+  Transform,
+  Variation,
+  VariationType,
+  Vec3,
+} from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
@@ -11,10 +18,10 @@ import {
 
 export type { Preset };
 
-/** The geometry (and weight) a transform editor edits. */
+/** The geometry (and weight/variations) a transform editor edits. */
 type Geometry = Pick<
   Transform,
-  "position" | "rotation" | "scale" | "weight" | "shear"
+  "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
 >;
 
 export interface UiHandlers {
@@ -154,6 +161,35 @@ function sliderToWeight(slider: number): number {
   return 10 ** slider;
 }
 
+/**
+ * Variation blend-weight slider bounds. Linear (not log like selection weight):
+ * a variation's strength reads naturally as a `0…2` coefficient, with 0 meaning
+ * "remove it" — which is exactly what the row's × button does.
+ */
+const VARIATION_WEIGHT_MIN = 0;
+const VARIATION_WEIGHT_MAX = 2;
+const DEFAULT_VARIATION_WEIGHT = 1;
+
+/** Title-case a variation type for display, e.g. "handkerchief" → "Handkerchief". */
+function variationLabel(type: VariationType): string {
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+/** Structural equality for a variation list, so the editor only rebuilds on real change. */
+function variationsEqual(a: Variation[], b: Variation[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((v, i) => v.type === b[i].type && v.weight === b[i].weight)
+  );
+}
+
+/** One "Var: …" line naming a transform's active variations, for the list row. */
+function variationSummary(t: Transform): string[] {
+  const active = (t.variations ?? []).filter((v) => v.weight !== 0);
+  if (active.length === 0) return [];
+  return [`Var: ${active.map((v) => v.type).join(", ")}`];
+}
+
 interface AxisControl {
   slider: HTMLInputElement;
   readout: HTMLElement;
@@ -171,6 +207,12 @@ interface EditorState {
   };
   controls: Record<Channel, AxisControl[]>;
   weightControl: AxisControl;
+  /** Working copy of the transform's variation blend, edited in place. */
+  variations: Variation[];
+  /** Container the variation rows are (re)built into on add/remove. */
+  variationList: HTMLElement;
+  /** The "add variation" dropdown, whose options exclude already-added types. */
+  variationAdd: HTMLSelectElement;
 }
 
 /**
@@ -351,6 +393,7 @@ export class Ui {
             ...(t.weight !== undefined && t.weight !== 1
               ? [`Weight: ${t.weight.toFixed(2)}`]
               : []),
+            ...variationSummary(t),
           ],
           onClick: () => this.handlers?.onSelect(i),
         }),
@@ -468,8 +511,19 @@ export class Ui {
     }
 
     const weightControl = this.buildWeightControl(geometry.weight);
+    const { list, add } = this.buildVariationsGroup();
 
-    this.editor = { index, geometry, controls, weightControl };
+    this.editor = {
+      index,
+      geometry,
+      controls,
+      weightControl,
+      variations: (transform.variations ?? []).map((v) => ({ ...v })),
+      variationList: list,
+      variationAdd: add,
+    };
+    this.renderVariationRows();
+    this.refreshAddOptions();
   }
 
   /** Build the single-value weight control in its own group below the axes. */
@@ -512,6 +566,127 @@ export class Ui {
     return { slider, readout };
   }
 
+  /**
+   * Build the "Variations" group: a title, the (initially empty) row list, and
+   * the add-variation dropdown. Rows themselves are filled by
+   * {@link renderVariationRows} once the editor state exists.
+   */
+  private buildVariationsGroup(): {
+    list: HTMLElement;
+    add: HTMLSelectElement;
+  } {
+    const group = this.doc.createElement("div");
+    group.className = "editor-group";
+
+    const title = this.doc.createElement("div");
+    title.className = "editor-group-title";
+    title.textContent = "Variations";
+    group.appendChild(title);
+
+    const list = this.doc.createElement("div");
+    list.className = "variation-list";
+    group.appendChild(list);
+
+    // Acts as a one-shot action like the preset menu: pick a type to add it,
+    // then snap back to the placeholder.
+    const add = this.doc.createElement("select");
+    add.className = "variation-add";
+    add.setAttribute("aria-label", "Add variation");
+    add.addEventListener("change", () => {
+      const type = add.value;
+      add.value = "";
+      if (type) this.addVariation(type as VariationType);
+    });
+    group.appendChild(add);
+
+    this.transformEditor.appendChild(group);
+    return { list, add };
+  }
+
+  /** Rebuild the variation rows from `editor.variations` (called on add/remove). */
+  private renderVariationRows(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.variationList.replaceChildren();
+    editor.variations.forEach((variation, i) => {
+      const row = this.doc.createElement("div");
+      row.className = "editor-row variation-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = variationLabel(variation.type);
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.min = String(VARIATION_WEIGHT_MIN);
+      slider.max = String(VARIATION_WEIGHT_MAX);
+      slider.step = "0.05";
+      slider.value = String(variation.weight);
+      slider.setAttribute("aria-label", `Variation ${variation.type}`);
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = variation.weight.toFixed(2);
+
+      const remove = this.doc.createElement("button");
+      remove.type = "button";
+      remove.className = "variation-remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remove ${variation.type}`);
+
+      slider.addEventListener("input", () => {
+        const weight = Number(slider.value);
+        editor.variations[i].weight = weight;
+        readout.textContent = weight.toFixed(2);
+        this.emitGeometry();
+      });
+      remove.addEventListener("click", () => this.removeVariation(i));
+
+      row.append(name, slider, readout, remove);
+      editor.variationList.appendChild(row);
+    });
+  }
+
+  /** Repopulate the add-dropdown with the variation types not already applied. */
+  private refreshAddOptions(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const used = new Set(editor.variations.map((v) => v.type));
+    editor.variationAdd.replaceChildren();
+
+    const placeholder = this.doc.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Add variation…";
+    editor.variationAdd.appendChild(placeholder);
+
+    for (const type of VARIATION_TYPES) {
+      if (used.has(type)) continue;
+      const option = this.doc.createElement("option");
+      option.value = type;
+      option.textContent = variationLabel(type);
+      editor.variationAdd.appendChild(option);
+    }
+    editor.variationAdd.value = "";
+  }
+
+  private addVariation(type: VariationType): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.variations.push({ type, weight: DEFAULT_VARIATION_WEIGHT });
+    this.renderVariationRows();
+    this.refreshAddOptions();
+    this.emitGeometry();
+  }
+
+  private removeVariation(index: number): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.variations.splice(index, 1);
+    this.renderVariationRows();
+    this.refreshAddOptions();
+    this.emitGeometry();
+  }
+
   private syncEditor(transform: Transform): void {
     const editor = this.editor;
     if (!editor) return;
@@ -533,6 +708,15 @@ export class Ui {
     const { weight } = editor.geometry;
     editor.weightControl.slider.value = String(weightToSlider(weight));
     editor.weightControl.readout.textContent = weight.toFixed(2);
+
+    // Variations rarely change under a stable selection (drags don't touch
+    // them), so only rebuild the rows when they actually differ.
+    const incoming = transform.variations ?? [];
+    if (!variationsEqual(incoming, editor.variations)) {
+      editor.variations = incoming.map((v) => ({ ...v }));
+      this.renderVariationRows();
+      this.refreshAddOptions();
+    }
   }
 
   private onAxisInput(
@@ -558,7 +742,7 @@ export class Ui {
     this.emitGeometry();
   }
 
-  /** Push the editor's current geometry (including weight) back to the handler. */
+  /** Push the editor's current geometry (weight and variations included) back to the handler. */
   private emitGeometry(): void {
     const editor = this.editor;
     if (!editor) return;
@@ -568,6 +752,7 @@ export class Ui {
       scale: clone3(editor.geometry.scale),
       shear: clone3(editor.geometry.shear),
       weight: editor.geometry.weight,
+      variations: editor.variations.map((v) => ({ ...v })),
     });
   }
 

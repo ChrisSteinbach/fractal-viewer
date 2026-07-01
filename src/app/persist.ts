@@ -8,8 +8,14 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
-import { COLOR_MODES } from "../fractal/types";
-import type { ColorMode, Transform, Vec3 } from "../fractal/types";
+import { COLOR_MODES, VARIATION_TYPES } from "../fractal/types";
+import type {
+  ColorMode,
+  Transform,
+  Variation,
+  VariationType,
+  Vec3,
+} from "../fractal/types";
 import { RENDER_STYLES } from "./state";
 import type { AppState, RenderStyle } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
@@ -86,6 +92,19 @@ const VALID_COLOR_MODES = new Set<string>(COLOR_MODES);
 /** Exact set of valid RenderStyle values. */
 const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
 
+/** Exact set of valid VariationType values. */
+const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
+
+/**
+ * Cap on variations per transform when decoding untrusted input. There are only
+ * a dozen distinct warps, so this is generous headroom while still bounding what
+ * a hand-crafted URL can allocate.
+ */
+const MAX_VARIATIONS = 32;
+
+/** Reject wildly out-of-range blend weights from hand-crafted input; clamp the rest. */
+const MAX_VARIATION_WEIGHT = 100;
+
 // ---------------------------------------------------------------------------
 // Codec helpers
 // ---------------------------------------------------------------------------
@@ -116,6 +135,35 @@ function isVec3(v: unknown): v is Vec3 {
   );
 }
 
+/**
+ * Validate one transform's untrusted `variations` field: an array (capped at
+ * {@link MAX_VARIATIONS}) of `{ type, weight }` with a known {@link VariationType}
+ * and a finite weight (clamped to ±{@link MAX_VARIATION_WEIGHT}). Returns the
+ * parsed list, or `null` when anything is malformed so the caller rejects the
+ * whole scene — matching how every other field guards untrusted input.
+ */
+function decodeVariations(raw: unknown): Variation[] | null {
+  if (!Array.isArray(raw)) return null;
+  if (raw.length > MAX_VARIATIONS) return null;
+  const variations: Variation[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const v = entry as Record<string, unknown>;
+    if (typeof v.type !== "string" || !VALID_VARIATION_TYPES.has(v.type))
+      return null;
+    const weight = Number(v.weight);
+    if (!Number.isFinite(weight)) return null;
+    variations.push({
+      type: v.type as VariationType,
+      weight: Math.max(
+        -MAX_VARIATION_WEIGHT,
+        Math.min(MAX_VARIATION_WEIGHT, weight),
+      ),
+    });
+  }
+  return variations;
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -136,6 +184,7 @@ export function encodeScene(s: SceneSnapshot): string {
         scale: number[];
         weight?: number;
         shear?: number[];
+        variations?: { type: VariationType; weight: number }[];
       } = {
         position: t.position.map(round4),
         rotation: t.rotation.map(round4),
@@ -144,6 +193,15 @@ export function encodeScene(s: SceneSnapshot): string {
       if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
       if (t.shear && t.shear.some((v) => v !== 0))
         e.shear = t.shear.map(round4);
+      // Only inert-free variations are written: a zero weight is a no-op the
+      // engine already ignores, so dropping it keeps affine URLs short and old
+      // links (which never had the field) decoding unchanged.
+      if (t.variations && t.variations.length > 0) {
+        const active = t.variations
+          .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
+          .map((v) => ({ type: v.type, weight: round4(v.weight) }));
+        if (active.length > 0) e.variations = active;
+      }
       return e;
     }),
     numPoints: s.numPoints,
@@ -205,6 +263,14 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       if (tf.shear !== undefined) {
         if (!isVec3(tf.shear)) return null;
         decoded.shear = tf.shear;
+      }
+      // variations: optional. Present ⇒ an array (capped) of { type, weight }
+      // with a known type and finite weight; weight is clamped, absent stays
+      // undefined. Any malformed entry rejects the whole scene.
+      if (tf.variations !== undefined) {
+        const variations = decodeVariations(tf.variations);
+        if (variations === null) return null;
+        if (variations.length > 0) decoded.variations = variations;
       }
       transforms.push(decoded);
     }
