@@ -27,6 +27,8 @@ import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 /** The persistent subset of AppState — everything needed to recreate the scene. */
 export interface SceneSnapshot {
   transforms: Transform[];
+  /** Optional final-transform lens (see {@link AppState.finalTransform}). */
+  finalTransform?: Transform;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -53,6 +55,7 @@ export interface PersistDeps {
 export function toSnapshot(state: AppState): SceneSnapshot {
   return {
     transforms: state.transforms,
+    finalTransform: state.finalTransform,
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -164,9 +167,84 @@ function decodeVariations(raw: unknown): Variation[] | null {
   return variations;
 }
 
+/**
+ * Validate one untrusted transform into a {@link Transform} with the given `id`,
+ * or `null` when anything is malformed so the caller rejects the whole scene.
+ * Requires three valid Vec3 fields; `weight` / `shear` / `variations` are
+ * optional and validated exactly as they encode. Shared by the transform list
+ * (id = array index) and the final transform (id = 0) so neither can drift.
+ */
+function decodeTransform(raw: unknown, id: number): Transform | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const tf = raw as Record<string, unknown>;
+  if (!isVec3(tf.position) || !isVec3(tf.rotation) || !isVec3(tf.scale))
+    return null;
+  // Safe: isVec3 verified these are valid Vec3 tuples.
+  const decoded: Transform = {
+    id,
+    position: tf.position,
+    rotation: tf.rotation,
+    scale: tf.scale,
+  };
+  // weight: optional. Reject non-finite (malformed), clamp to a positive range
+  // otherwise; absent stays undefined ⇒ uniform.
+  if (tf.weight !== undefined) {
+    const w = Number(tf.weight);
+    if (!Number.isFinite(w)) return null;
+    decoded.weight = Math.max(0.0001, Math.min(10000, w));
+  }
+  // shear: optional. Present ⇒ must be a valid Vec3; absent stays undefined.
+  if (tf.shear !== undefined) {
+    if (!isVec3(tf.shear)) return null;
+    decoded.shear = tf.shear;
+  }
+  // variations: optional. Present ⇒ an array (capped) of { type, weight } with a
+  // known type and finite weight; weight is clamped, absent stays undefined. Any
+  // malformed entry rejects the whole scene.
+  if (tf.variations !== undefined) {
+    const variations = decodeVariations(tf.variations);
+    if (variations === null) return null;
+    if (variations.length > 0) decoded.variations = variations;
+  }
+  return decoded;
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
+
+/** The compact wire form of one transform: `id` dropped, floats rounded. */
+interface EncodedTransform {
+  position: number[];
+  rotation: number[];
+  scale: number[];
+  weight?: number;
+  shear?: number[];
+  variations?: { type: VariationType; weight: number }[];
+}
+
+/**
+ * Encode one transform's persistent fields, dropping inert data so URLs stay
+ * short and old links decode unchanged: `id` (reassigned on decode), a weight
+ * of 1, an all-zero shear, and zero-weight variations are all omitted. Shared
+ * by the transform list and the final transform so their wire forms can't drift.
+ */
+function encodeTransform(t: Transform): EncodedTransform {
+  const e: EncodedTransform = {
+    position: t.position.map(round4),
+    rotation: t.rotation.map(round4),
+    scale: t.scale.map(round4),
+  };
+  if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
+  if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
+  if (t.variations && t.variations.length > 0) {
+    const active = t.variations
+      .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
+      .map((v) => ({ type: v.type, weight: round4(v.weight) }));
+    if (active.length > 0) e.variations = active;
+  }
+  return e;
+}
 
 /**
  * Produce a compact, URL-safe `v1=<base64url>` string for `s`. Floats are
@@ -174,42 +252,26 @@ function decodeVariations(raw: unknown): Variation[] | null {
  * the array index on decode.
  */
 export function encodeScene(s: SceneSnapshot): string {
-  const payload = {
-    transforms: s.transforms.map((t) => {
-      // Only non-default weight is written, keeping uniform systems' URLs as
-      // short as before (old links, which never had the field, still decode).
-      const e: {
-        position: number[];
-        rotation: number[];
-        scale: number[];
-        weight?: number;
-        shear?: number[];
-        variations?: { type: VariationType; weight: number }[];
-      } = {
-        position: t.position.map(round4),
-        rotation: t.rotation.map(round4),
-        scale: t.scale.map(round4),
-      };
-      if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
-      if (t.shear && t.shear.some((v) => v !== 0))
-        e.shear = t.shear.map(round4);
-      // Only inert-free variations are written: a zero weight is a no-op the
-      // engine already ignores, so dropping it keeps affine URLs short and old
-      // links (which never had the field) decoding unchanged.
-      if (t.variations && t.variations.length > 0) {
-        const active = t.variations
-          .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
-          .map((v) => ({ type: v.type, weight: round4(v.weight) }));
-        if (active.length > 0) e.variations = active;
-      }
-      return e;
-    }),
+  const payload: {
+    transforms: EncodedTransform[];
+    finalTransform?: EncodedTransform;
+    numPoints: number;
+    pointSize: number;
+    colorMode: ColorMode;
+    renderStyle: RenderStyle;
+    showGuides: boolean;
+  } = {
+    transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
     pointSize: round4(s.pointSize),
     colorMode: s.colorMode,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
   };
+  // Written only when present, so old links stay byte-identical (they never
+  // carried the field) and lens-free systems keep their short URLs.
+  if (s.finalTransform)
+    payload.finalTransform = encodeTransform(s.finalTransform);
   return "v1=" + toBase64url(JSON.stringify(payload));
 }
 
@@ -219,8 +281,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * it must never throw.
  *
  * Validates strictly: requires the `v1=` prefix; 1..MAX_TRANSFORMS transforms
- * each with valid Vec3 fields; exact colorMode / renderStyle matches. Clamps
- * numPoints to [0, 500 000] and pointSize to [0.25, 4].
+ * each with valid Vec3 fields; an optional finalTransform validated the same
+ * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000]
+ * and pointSize to [0.25, 4].
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -240,39 +303,19 @@ export function decodeScene(raw: string): SceneSnapshot | null {
 
     const transforms: Transform[] = [];
     for (let i = 0; i < rawTransforms.length; i++) {
-      const t: unknown = rawTransforms[i];
-      if (typeof t !== "object" || t === null) return null;
-      const tf = t as Record<string, unknown>;
-      if (!isVec3(tf.position) || !isVec3(tf.rotation) || !isVec3(tf.scale))
-        return null;
-      // Safe: isVec3 verified these are valid Vec3 tuples.
-      const decoded: Transform = {
-        id: i,
-        position: tf.position,
-        rotation: tf.rotation,
-        scale: tf.scale,
-      };
-      // weight: optional. Reject non-finite (malformed), clamp to a positive
-      // range otherwise; absent stays undefined ⇒ uniform.
-      if (tf.weight !== undefined) {
-        const w = Number(tf.weight);
-        if (!Number.isFinite(w)) return null;
-        decoded.weight = Math.max(0.0001, Math.min(10000, w));
-      }
-      // shear: optional. Present ⇒ must be a valid Vec3; absent stays undefined.
-      if (tf.shear !== undefined) {
-        if (!isVec3(tf.shear)) return null;
-        decoded.shear = tf.shear;
-      }
-      // variations: optional. Present ⇒ an array (capped) of { type, weight }
-      // with a known type and finite weight; weight is clamped, absent stays
-      // undefined. Any malformed entry rejects the whole scene.
-      if (tf.variations !== undefined) {
-        const variations = decodeVariations(tf.variations);
-        if (variations === null) return null;
-        if (variations.length > 0) decoded.variations = variations;
-      }
+      const decoded = decodeTransform(rawTransforms[i], i);
+      if (decoded === null) return null;
       transforms.push(decoded);
+    }
+
+    // finalTransform: optional. Present ⇒ must validate like any transform (its
+    // id is irrelevant, so 0); a malformed lens rejects the whole scene, exactly
+    // as a malformed transform does. Absent/null stays undefined ⇒ no lens.
+    let finalTransform: Transform | undefined;
+    if (o.finalTransform !== undefined && o.finalTransform !== null) {
+      const decoded = decodeTransform(o.finalTransform, 0);
+      if (decoded === null) return null;
+      finalTransform = decoded;
     }
 
     // colorMode / renderStyle: exact known-string matches only. ---------------
@@ -297,6 +340,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
 
     return {
       transforms,
+      finalTransform,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,

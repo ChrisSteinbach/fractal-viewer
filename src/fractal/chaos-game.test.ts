@@ -1,4 +1,5 @@
 import { MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
+import { applyAffine, composeAffine } from "./affine";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform } from "./types";
@@ -115,6 +116,105 @@ describe("runChaosGame with variations", () => {
     expect(Array.from(warped.positions)).not.toEqual(
       Array.from(plain.positions),
     );
+  });
+});
+
+describe("runChaosGame with a final transform", () => {
+  // Two contractive maps with a well-behaved affine attractor and no per-map
+  // variations, so the only RNG-consuming warp under test is the final one.
+  function twoMaps(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.3, 0.1, -0.2],
+        rotation: [0.2, 0.4, 0.1],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [-0.3, 0.2, 0.15],
+        rotation: [0, 0.3, 0.5],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+  }
+
+  it("bends plotted points through the final transform without feeding back into the orbit", () => {
+    // A pure-affine final transform consumes no RNG, so the underlying orbit —
+    // and thus the transform indices — stay identical to a run without it; only
+    // the plotted positions change, each the orbit point run through F. That
+    // pins down all three properties at once: applied at plot time, applied to
+    // the orbit point (not fed back), and RNG-neutral when it has no variation.
+    const finalTransform: Transform = {
+      id: 0,
+      position: [1, -2, 0.5],
+      rotation: [0, 0, 0],
+      scale: [2, 2, 2],
+    };
+    const base = runChaosGame(twoMaps(), 400, mulberry32(9));
+    const lensed = runChaosGame(twoMaps(), 400, mulberry32(9), finalTransform);
+
+    expect(Array.from(lensed.transformIndices)).toEqual(
+      Array.from(base.transformIndices),
+    );
+    const F = composeAffine(finalTransform);
+    for (let i = 0; i < base.count; i++) {
+      const [ex, ey, ez] = applyAffine(
+        F,
+        base.positions[i * 3],
+        base.positions[i * 3 + 1],
+        base.positions[i * 3 + 2],
+      );
+      expect(lensed.positions[i * 3]).toBeCloseTo(ex, 4);
+      expect(lensed.positions[i * 3 + 1]).toBeCloseTo(ey, 4);
+      expect(lensed.positions[i * 3 + 2]).toBeCloseTo(ez, 4);
+    }
+  });
+
+  it("leaves the cloud unchanged for an identity final transform", () => {
+    const identity: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    const without = runChaosGame(twoMaps(), 300, mulberry32(4));
+    const withIdentity = runChaosGame(twoMaps(), 300, mulberry32(4), identity);
+    expect(Array.from(withIdentity.positions)).toEqual(
+      Array.from(without.positions),
+    );
+  });
+
+  it("keeps every coordinate finite when the final transform diverges at a singularity", () => {
+    // spherical inverts through the origin, sending points near it to infinity;
+    // the finite guard must plot the un-bent point rather than leak NaN/Inf.
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "spherical", weight: 1 }],
+    };
+    const { positions } = runChaosGame(
+      twoMaps(),
+      3000,
+      mulberry32(4),
+      finalTransform,
+    );
+    for (const v of positions) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it("is deterministic for a seed even with a stochastic final transform", () => {
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "julia", weight: 1 }],
+    };
+    const a = runChaosGame(twoMaps(), 500, mulberry32(9), finalTransform);
+    const b = runChaosGame(twoMaps(), 500, mulberry32(9), finalTransform);
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
   });
 });
 

@@ -3,6 +3,15 @@ import type { Transform, Variation, Vec3 } from "./types";
 
 const HALF = 0.5;
 
+/**
+ * The identity map the final-transform lens starts as when first enabled: a
+ * visual no-op (unit scale, no rotation/translation, no variation) the user then
+ * shapes — mirroring how "+ Add" seeds a plain transform.
+ */
+export function defaultFinalTransform(): Transform {
+  return { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+}
+
 /** The four-map system the viewer starts with. */
 export function defaultTransforms(): Transform[] {
   return [

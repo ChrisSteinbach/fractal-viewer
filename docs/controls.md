@@ -64,12 +64,19 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active.
+- **Final Transform** — _Enable lens (warps the whole cloud)_ turns on a **final
+  transform**: one more affine + variation map applied to every point as it is
+  plotted, bending the whole attractor at once (the fractal-flame _final xform_;
+  see [architecture.md](architecture.md#final-transform)). It appears as a
+  **✦ Final Transform** row under **Select to Edit** with the usual
+  position/rotation/scale/shear/variation sliders — but no selection weight, which
+  is meaningless for a map applied to every point. Untick to remove it.
 
 ## Sharing & persistence
 
-The scene — transforms, point count and size, color mode, depth style, and guide
-visibility — is encoded into the page URL (`#v1=…`) as you edit, and mirrored to
-`localStorage`. So:
+The scene — transforms, the optional final transform, point count and size, color
+mode, depth style, and guide visibility — is encoded into the page URL (`#v1=…`)
+as you edit, and mirrored to `localStorage`. So:
 
 - **Copy the address bar to share a fractal.** Opening that link recreates the
   exact system; a pasted link takes priority over any locally saved scene.

@@ -43,11 +43,17 @@ function emptyBounds(): Bounds {
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`. Returns an empty result when there are no transforms or no
  * points were requested.
+ *
+ * An optional `finalTransform` is applied to every point *as it is plotted*
+ * (fractal-flame terminology) — a lens over the whole cloud that never feeds
+ * back into the orbit. Omit it (or pass `null`) and the loop takes the exact
+ * same path, and consumes the RNG identically, as before the feature existed.
  */
 export function runChaosGame(
   transforms: Transform[],
   numPoints: number,
   rng: Rng = Math.random,
+  finalTransform: Transform | null = null,
 ): ChaosGameResult {
   if (transforms.length === 0 || numPoints <= 0) {
     return {
@@ -68,6 +74,13 @@ export function runChaosGame(
   // is null for the existing presets, so `step` takes the exact same path (and
   // touches the RNG identically) as before variations existed.
   const variations = transforms.map((t) => composeVariations(t.variations));
+  // The optional final transform: one more affine + variation map applied only
+  // when a point is plotted (below), never fed back into the orbit. Both stay
+  // null when absent, so the recording loop keeps the pre-feature code path.
+  const finalAffine = finalTransform ? composeAffine(finalTransform) : null;
+  const finalWarp = finalTransform
+    ? composeVariations(finalTransform.variations)
+    : null;
   const positions = new Float32Array(numPoints * 3);
   const transformIndices = new Uint8Array(numPoints);
 
@@ -166,18 +179,44 @@ export function runChaosGame(
 
   for (let i = 0; i < numPoints; i++) {
     const idx = step();
-    positions[i * 3] = x;
-    positions[i * 3 + 1] = y;
-    positions[i * 3 + 2] = z;
+    // The plotted point is the orbit point, optionally bent by the final
+    // transform. The orbit state x/y/z is left untouched, so the lens never
+    // feeds back into the iteration.
+    let px = x;
+    let py = y;
+    let pz = z;
+    if (finalAffine !== null) {
+      const p = applyAffine(finalAffine, x, y, z);
+      let fx = p[0];
+      let fy = p[1];
+      let fz = p[2];
+      if (finalWarp !== null) {
+        const q = finalWarp(fx, fy, fz, rng);
+        fx = q[0];
+        fy = q[1];
+        fz = q[2];
+      }
+      // A nonlinear lens can diverge at a singularity; only adopt the bent point
+      // while it stayed finite, otherwise plot the un-bent orbit point so a bad
+      // landing never writes NaN/Inf into the buffer.
+      if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
+        px = fx;
+        py = fy;
+        pz = fz;
+      }
+    }
+    positions[i * 3] = px;
+    positions[i * 3 + 1] = py;
+    positions[i * 3 + 2] = pz;
     transformIndices[i] = idx;
 
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-    minZ = Math.min(minZ, z);
-    maxZ = Math.max(maxZ, z);
-    const r = Math.sqrt(x * x + y * y + z * z);
+    minX = Math.min(minX, px);
+    maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py);
+    maxY = Math.max(maxY, py);
+    minZ = Math.min(minZ, pz);
+    maxZ = Math.max(maxZ, pz);
+    const r = Math.sqrt(px * px + py * py + pz * pz);
     minR = Math.min(minR, r);
     maxR = Math.max(maxR, r);
   }

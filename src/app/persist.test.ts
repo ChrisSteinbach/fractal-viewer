@@ -467,6 +467,82 @@ describe("decodeScene transform variations", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Final transform (optional field)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene final transform", () => {
+  it("round-trips a final transform with its own variation lens", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      finalTransform: {
+        id: 0,
+        position: [0.5, 0, -0.5],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.finalTransform).toEqual({
+      id: 0,
+      position: [0.5, 0, -0.5],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "spherical", weight: 1 }],
+    });
+  });
+
+  it("persists an enabled but unedited (identity) lens so it survives a reload", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    };
+    expect(decodeScene(encodeScene(s))!.finalTransform).toEqual({
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+  });
+
+  it("leaves finalTransform undefined for a link that never carried one", () => {
+    expect(
+      decodeScene(encodeScene(baseSnapshot()))!.finalTransform,
+    ).toBeUndefined();
+  });
+
+  it("returns null for a malformed final transform", () => {
+    const raw = {
+      ...baseSnapshot(),
+      finalTransform: {
+        position: [0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null for a final transform carrying an unknown variation", () => {
+    const raw = {
+      ...baseSnapshot(),
+      finalTransform: {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "wormhole", weight: 1 }],
+      },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Clamping
 // ---------------------------------------------------------------------------
 

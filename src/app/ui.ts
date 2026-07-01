@@ -24,6 +24,13 @@ type Geometry = Pick<
   "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
 >;
 
+/** The final transform's geometry — the same, minus the selection weight, which
+ * is meaningless for a map applied to every point. */
+type FinalGeometry = Omit<Geometry, "weight">;
+
+/** The current edit target: a transform index, the final transform, or none. */
+type EditTarget = number | "final" | null;
+
 export interface UiHandlers {
   onAdd: () => void;
   onRemove: () => void;
@@ -36,9 +43,13 @@ export interface UiHandlers {
   onColorMode: (mode: ColorMode) => void;
   onRenderStyle: (style: RenderStyle) => void;
   onToggleAutoUpdate: (checked: boolean) => void;
-  onSelect: (index: number | null) => void;
+  onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
+  /** The lens toggle was flipped: enable a default final transform, or clear it. */
+  onToggleFinalTransform: (checked: boolean) => void;
+  /** A panel slider edited the final transform's geometry. */
+  onFinalTransformGeometry: (geometry: FinalGeometry) => void;
   onTogglePanel: () => void;
   onClosePanel: () => void;
 }
@@ -197,7 +208,8 @@ interface AxisControl {
 
 /** Live handles into a built editor so external edits can re-sync the sliders. */
 interface EditorState {
-  index: number;
+  /** What the editor edits: a transform index or the final transform. */
+  target: number | "final";
   geometry: {
     position: Vec3;
     rotation: Vec3;
@@ -206,7 +218,8 @@ interface EditorState {
     weight: number;
   };
   controls: Record<Channel, AxisControl[]>;
-  weightControl: AxisControl;
+  /** The selection-weight control, or `null` for the final transform (no weight). */
+  weightControl: AxisControl | null;
   /** Working copy of the transform's variation blend, edited in place. */
   variations: Variation[];
   /** Container the variation rows are (re)built into on add/remove. */
@@ -247,6 +260,7 @@ export class Ui {
   private readonly colorMode: HTMLSelectElement;
   private readonly renderStyle: HTMLSelectElement;
   private readonly autoUpdate: HTMLInputElement;
+  private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
   private editor: EditorState | null = null;
@@ -275,6 +289,7 @@ export class Ui {
     this.colorMode = this.byId("colorMode");
     this.renderStyle = this.byId("renderStyle");
     this.autoUpdate = this.byId("autoUpdate");
+    this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
   }
 
@@ -318,6 +333,9 @@ export class Ui {
     this.autoUpdate.addEventListener("change", () =>
       handlers.onToggleAutoUpdate(this.autoUpdate.checked),
     );
+    this.finalTransformToggle.addEventListener("change", () =>
+      handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -332,6 +350,7 @@ export class Ui {
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;
+    this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
     if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
@@ -339,6 +358,19 @@ export class Ui {
         this.mouse
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+      );
+    } else if (state.selectedTransform === "final") {
+      // The lens has no draggable guide box, so the canvas keeps orbiting the
+      // camera; the panel sliders do the editing.
+      this.helpTitle.textContent = "Final Transform";
+      this.setHelpLines(
+        this.mouse
+          ? ["A lens on the whole cloud", "Drag: Orbit", "Scroll: Zoom"]
+          : [
+              "A lens on the whole cloud",
+              "1 finger: Rotate",
+              "2 fingers: Pan/Zoom",
+            ],
       );
     } else {
       this.helpTitle.textContent = `Transform ${state.selectedTransform + 1}`;
@@ -361,8 +393,15 @@ export class Ui {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
   }
 
-  /** Rebuild the "select to edit" list: a camera row plus one row per transform. */
-  renderTransformList(transforms: Transform[], selected: number | null): void {
+  /**
+   * Rebuild the "select to edit" list: a camera row, one row per transform, and
+   * — when a final transform is enabled — a lens row at the bottom.
+   */
+  renderTransformList(
+    transforms: Transform[],
+    selected: EditTarget,
+    finalTransform: Transform | null,
+  ): void {
     this.transformList.replaceChildren();
     this.transformList.appendChild(
       this.transformButton({
@@ -399,6 +438,23 @@ export class Ui {
         }),
       );
     });
+
+    // The lens is a global effect with no palette slot, so it gets its own
+    // distinct accent and sits apart from the numbered maps.
+    if (finalTransform) {
+      this.transformList.appendChild(
+        this.transformButton({
+          selected: selected === "final",
+          accent: "#c084fc",
+          title: "✦ Final Transform",
+          lines: [
+            "Lens over the whole cloud",
+            ...variationSummary(finalTransform),
+          ],
+          onClick: () => this.handlers?.onSelect("final"),
+        }),
+      );
+    }
   }
 
   private transformButton(options: TransformButtonOptions): HTMLButtonElement {
@@ -428,27 +484,25 @@ export class Ui {
    * mode. Rebuilds when the selection changes; otherwise re-syncs the existing
    * sliders so drag edits and slider edits stay in step.
    */
-  renderTransformEditor(
-    transform: Transform | null,
-    index: number | null,
-  ): void {
-    if (!transform || index === null) {
+  renderTransformEditor(transform: Transform | null, target: EditTarget): void {
+    if (!transform || target === null) {
       this.transformEditor.replaceChildren();
       this.editor = null;
       return;
     }
-    if (!this.editor || this.editor.index !== index) {
-      this.buildEditor(transform, index);
+    if (!this.editor || this.editor.target !== target) {
+      this.buildEditor(transform, target);
     } else {
       this.syncEditor(transform);
     }
   }
 
-  private buildEditor(transform: Transform, index: number): void {
+  private buildEditor(transform: Transform, target: number | "final"): void {
     this.transformEditor.replaceChildren();
 
     const heading = this.doc.createElement("h3");
-    heading.textContent = `Edit Transform ${index + 1}`;
+    heading.textContent =
+      target === "final" ? "Final Transform" : `Edit Transform ${target + 1}`;
     this.transformEditor.appendChild(heading);
 
     const geometry = {
@@ -510,11 +564,14 @@ export class Ui {
       this.transformEditor.appendChild(group);
     }
 
-    const weightControl = this.buildWeightControl(geometry.weight);
+    // The selection weight is meaningless for a lens applied to every point, so
+    // the final transform's editor omits it.
+    const weightControl =
+      target === "final" ? null : this.buildWeightControl(geometry.weight);
     const { list, add } = this.buildVariationsGroup();
 
     this.editor = {
-      index,
+      target,
       geometry,
       controls,
       weightControl,
@@ -705,9 +762,11 @@ export class Ui {
         control.readout.textContent = spec.format(model);
       });
     }
-    const { weight } = editor.geometry;
-    editor.weightControl.slider.value = String(weightToSlider(weight));
-    editor.weightControl.readout.textContent = weight.toFixed(2);
+    if (editor.weightControl) {
+      const { weight } = editor.geometry;
+      editor.weightControl.slider.value = String(weightToSlider(weight));
+      editor.weightControl.readout.textContent = weight.toFixed(2);
+    }
 
     // Variations rarely change under a stable selection (drags don't touch
     // them), so only rebuild the rows when they actually differ.
@@ -735,25 +794,35 @@ export class Ui {
 
   private onWeightInput(sliderValue: number): void {
     const editor = this.editor;
-    if (!editor) return;
+    // The weight slider only exists for a numbered transform, so its control is
+    // always present when this fires; the guard just satisfies the nullable type.
+    if (!editor || !editor.weightControl) return;
     const weight = sliderToWeight(sliderValue);
     editor.geometry.weight = weight;
     editor.weightControl.readout.textContent = weight.toFixed(2);
     this.emitGeometry();
   }
 
-  /** Push the editor's current geometry (weight and variations included) back to the handler. */
+  /** Push the editor's current geometry back to the matching handler — the final
+   * transform gets no selection weight, a regular transform does. */
   private emitGeometry(): void {
     const editor = this.editor;
     if (!editor) return;
-    this.handlers?.onTransformGeometry(editor.index, {
+    const base = {
       position: clone3(editor.geometry.position),
       rotation: clone3(editor.geometry.rotation),
       scale: clone3(editor.geometry.scale),
       shear: clone3(editor.geometry.shear),
-      weight: editor.geometry.weight,
       variations: editor.variations.map((v) => ({ ...v })),
-    });
+    };
+    if (editor.target === "final") {
+      this.handlers?.onFinalTransformGeometry(base);
+    } else {
+      this.handlers?.onTransformGeometry(editor.target, {
+        ...base,
+        weight: editor.geometry.weight,
+      });
+    }
   }
 
   private setHelpLines(lines: string[]): void {

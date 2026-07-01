@@ -5,12 +5,17 @@ import {
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
+  setFinalTransform,
   setPointSize,
   setRenderStyle,
   setTransforms,
   updateTransform,
 } from "./state";
-import { mengerSponge, presetTransforms } from "../fractal/presets";
+import {
+  defaultFinalTransform,
+  mengerSponge,
+  presetTransforms,
+} from "../fractal/presets";
 import { mulberry32 } from "../fractal/rng";
 
 describe("initialState", () => {
@@ -85,6 +90,38 @@ describe("setTransforms", () => {
     const next = setTransforms(state, mengerSponge());
     expect(next.transforms).toHaveLength(20);
     expect(next.selectedTransform).toBeNull();
+  });
+});
+
+describe("setFinalTransform", () => {
+  it("enables a final transform immutably", () => {
+    const state = initialState(true);
+    const lens = defaultFinalTransform();
+    const next = setFinalTransform(state, lens);
+    expect(next.finalTransform).toBe(lens);
+    expect(state.finalTransform).toBeUndefined();
+  });
+
+  it("clears the final transform when passed null", () => {
+    const enabled = setFinalTransform(
+      initialState(true),
+      defaultFinalTransform(),
+    );
+    expect(setFinalTransform(enabled, null).finalTransform).toBeUndefined();
+  });
+});
+
+describe("selectTransform with the final transform", () => {
+  it("targets the final transform", () => {
+    expect(selectTransform(initialState(true), "final").selectedTransform).toBe(
+      "final",
+    );
+  });
+
+  it("keeps the final transform selected when a transform is removed", () => {
+    let state = addTransform(initialState(true), mulberry32(1));
+    state = selectTransform(state, "final");
+    expect(removeTransform(state).selectedTransform).toBe("final");
   });
 });
 

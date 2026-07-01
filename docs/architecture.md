@@ -19,8 +19,8 @@ settles onto the attractor), every subsequent point lands on — or vanishingly
 close to — `A`. With four corner-contraction maps you get a Sierpinski
 tetrahedron; with the 20 edge maps of a subdivided cube you get a Menger sponge.
 
-`runChaosGame(transforms, numPoints, rng)` in `src/fractal/chaos-game.ts`
-implements exactly this. It:
+`runChaosGame(transforms, numPoints, rng, finalTransform?)` in
+`src/fractal/chaos-game.ts` implements exactly this. It:
 
 - composes each transform once into an `Affine` (see below),
 - iterates, writing interleaved `xyz` into a `Float32Array`,
@@ -79,6 +79,33 @@ the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
 
 The `spherical` and `swirl` presets showcase the feature; the transform editor's
 **Variations** group adds/removes/weights them live.
+
+## Final transform
+
+A **final transform** (the fractal-flame _final xform_) is one more affine +
+variation map — a `Transform` like any other — applied to every point _as it is
+plotted_, never fed back into the orbit. It acts as a lens over the whole cloud:
+the same `spherical` inversion that turns a triangular gasket into interlocking
+bubbles can bend an entire attractor at once.
+
+`runChaosGame` takes it as an optional fourth argument, composed once into its own
+`Affine` + variation blend. In the recording loop it maps the orbit point to the
+_plotted_ point while the orbit state `x/y/z` is left untouched — so the lens
+changes only what is drawn (and the bounding box tracked over it), not the
+iteration. Omitted (or `null`), the loop takes the exact same path and consumes
+the RNG identically, so lens-free scenes stay byte-for-byte unchanged. Because a
+nonlinear lens can still diverge, a non-finite result falls back to the un-bent
+point rather than writing `NaN`/`Inf` into the buffer.
+
+Being a global effect, the lens lives in `AppState.finalTransform` (not the
+transform array) and persists across preset loads like `colorMode` /
+`renderStyle`. The panel's **Final Transform** toggle enables a default (identity,
+no-op) lens and reveals it as a `"final"` row in the edit list; selecting it opens
+the ordinary transform editor, minus the selection **Weight** (meaningless for a
+map applied to every point). `chaos-game.test.ts` pins the plot-time-only
+semantics — a pure-affine lens leaves the transform indices identical and each
+plotted point is the orbit point run through it — plus finiteness at a singularity
+and seed-determinism with a stochastic lens.
 
 ## Color modes
 
