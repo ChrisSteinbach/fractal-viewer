@@ -1,6 +1,6 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
-import { presetTransforms } from "../fractal/presets";
+import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
@@ -12,6 +12,7 @@ import {
   selectTransform,
   setAutoUpdate,
   setColorMode,
+  setFinalTransform,
   setNumPoints,
   setPanelOpen,
   setPointSize,
@@ -84,7 +85,12 @@ function main(): void {
   // positions. Use this for geometry edits, add/remove, presets, and explicit
   // regenerate — never for a mere palette change.
   function regenerate(): void {
-    lastResult = runChaosGame(state.transforms, state.numPoints);
+    lastResult = runChaosGame(
+      state.transforms,
+      state.numPoints,
+      Math.random,
+      state.finalTransform ?? null,
+    );
     const colors = buildColors(lastResult, state.transforms, state.colorMode);
     scene.setPoints(lastResult.positions, colors);
     ui.setPointCount(lastResult.count);
@@ -99,22 +105,33 @@ function main(): void {
     scene.setColors(colors);
   }
 
+  // The lens has no guide box, so map its selection (like camera) to "nothing
+  // highlighted" — only a numbered transform highlights a box or is draggable.
+  function selectedBox(): number | null {
+    return typeof state.selectedTransform === "number"
+      ? state.selectedTransform
+      : null;
+  }
+
   function refreshGuides(): void {
-    scene.updateGuides(
-      state.transforms,
-      state.selectedTransform,
-      state.showGuides,
-    );
+    scene.updateGuides(state.transforms, selectedBox(), state.showGuides);
   }
 
   function refreshUi(): void {
     ui.updateLabels(state);
-    ui.renderTransformList(state.transforms, state.selectedTransform);
-    const selected = state.selectedTransform;
-    ui.renderTransformEditor(
-      selected === null ? null : state.transforms[selected],
-      selected,
+    ui.renderTransformList(
+      state.transforms,
+      state.selectedTransform,
+      state.finalTransform ?? null,
     );
+    const sel = state.selectedTransform;
+    const editing =
+      sel === null
+        ? null
+        : sel === "final"
+          ? (state.finalTransform ?? null)
+          : state.transforms[sel];
+    ui.renderTransformEditor(editing, sel);
   }
 
   // Debounced saver — persists 300 ms after the last scene-affecting change so
@@ -223,7 +240,38 @@ function main(): void {
     onTransformGeometry: (index, geometry) => {
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
-      ui.renderTransformList(state.transforms, state.selectedTransform);
+      ui.renderTransformList(
+        state.transforms,
+        state.selectedTransform,
+        state.finalTransform ?? null,
+      );
+      if (state.autoUpdate) regenerate();
+      scheduleSave();
+    },
+    onToggleFinalTransform: (checked) =>
+      applyEdit(() => {
+        if (checked) {
+          // Enable a default (identity, no-op) lens and jump straight to its
+          // editor so the next click can start shaping it.
+          state = setFinalTransform(
+            state,
+            state.finalTransform ?? defaultFinalTransform(),
+          );
+          state = selectTransform(state, "final");
+        } else {
+          state = setFinalTransform(state, null);
+          // Drop the selection if it was pointing at the now-removed lens.
+          if (state.selectedTransform === "final")
+            state = selectTransform(state, null);
+        }
+      }),
+    onFinalTransformGeometry: (geometry) => {
+      state = setFinalTransform(state, { id: 0, ...geometry });
+      ui.renderTransformList(
+        state.transforms,
+        state.selectedTransform,
+        state.finalTransform ?? null,
+      );
       if (state.autoUpdate) regenerate();
       scheduleSave();
     },
@@ -238,10 +286,14 @@ function main(): void {
   });
 
   attachInteractions(scene, orbit, {
-    selectedTransform: () => state.selectedTransform,
+    selectedTransform: selectedBox,
     onTransformChange: (index, geometry) => {
       state = updateTransform(state, index, geometry);
-      ui.renderTransformList(state.transforms, state.selectedTransform);
+      ui.renderTransformList(
+        state.transforms,
+        state.selectedTransform,
+        state.finalTransform ?? null,
+      );
       ui.renderTransformEditor(state.transforms[index], index);
       if (state.autoUpdate) regenerate();
       scheduleSave();

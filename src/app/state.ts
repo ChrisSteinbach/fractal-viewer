@@ -26,11 +26,21 @@ export type RenderStyle = (typeof RENDER_STYLES)[number];
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
+  /**
+   * Optional final transform (fractal-flame "final xform"): an affine +
+   * variation lens applied to every point as it is plotted, never fed back into
+   * the orbit. Omitted ⇒ no lens. Being a global effect it persists across
+   * preset loads, like `colorMode` / `renderStyle`.
+   */
+  finalTransform?: Transform;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
-  /** Index into `transforms`, or `null` for camera (orbit) mode. */
-  selectedTransform: number | null;
+  /**
+   * The edit target: an index into `transforms`, `"final"` for the final
+   * transform, or `null` for camera (orbit) mode.
+   */
+  selectedTransform: number | "final" | null;
   showGuides: boolean;
   colorMode: ColorMode;
   renderStyle: RenderStyle;
@@ -78,7 +88,7 @@ export function removeTransform(state: AppState): AppState {
 
 export function selectTransform(
   state: AppState,
-  index: number | null,
+  index: number | "final" | null,
 ): AppState {
   return { ...state, selectedTransform: index };
 }
@@ -104,6 +114,17 @@ export function updateTransform(
     i === index ? { ...t, ...geometry } : t,
   );
   return { ...state, transforms };
+}
+
+/**
+ * Enable/replace the final transform, or clear it with `null`. Stored as
+ * `undefined` when cleared so it drops out of the persisted snapshot entirely.
+ */
+export function setFinalTransform(
+  state: AppState,
+  finalTransform: Transform | null,
+): AppState {
+  return { ...state, finalTransform: finalTransform ?? undefined };
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {

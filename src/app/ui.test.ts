@@ -24,6 +24,8 @@ function noopHandlers(): UiHandlers {
     onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
+    onToggleFinalTransform: vi.fn(),
+    onFinalTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
   };
@@ -94,7 +96,7 @@ describe("Ui.renderTransformList", () => {
   it("renders a camera row plus one row per transform", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformList(defaultTransforms(), null);
+    ui.renderTransformList(defaultTransforms(), null, null);
 
     const buttons = transformButtons();
     expect(buttons).toHaveLength(5);
@@ -105,7 +107,7 @@ describe("Ui.renderTransformList", () => {
   it("marks the selected transform and no others", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformList(defaultTransforms(), 2);
+    ui.renderTransformList(defaultTransforms(), 2, null);
 
     const selected = transformButtons().filter((b) =>
       b.classList.contains("selected"),
@@ -119,7 +121,7 @@ describe("Ui.renderTransformList", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformList(defaultTransforms(), null);
+    ui.renderTransformList(defaultTransforms(), null, null);
 
     transformButtons()[1].click();
     expect(handlers.onSelect).toHaveBeenCalledWith(0);
@@ -379,6 +381,99 @@ describe("Ui.renderTransformEditor", () => {
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
       0,
     );
+  });
+});
+
+describe("Ui final transform", () => {
+  const lens: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  };
+
+  function finalRow(): HTMLButtonElement | undefined {
+    return transformButtons().find((b) =>
+      b.textContent?.includes("Final Transform"),
+    );
+  }
+
+  it("reports the lens toggle state on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const toggle = document.getElementById(
+      "finalTransformToggle",
+    ) as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change"));
+
+    expect(handlers.onToggleFinalTransform).toHaveBeenCalledWith(true);
+  });
+
+  it("reflects an enabled lens into the toggle checkbox", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), finalTransform: lens });
+    expect(
+      (document.getElementById("finalTransformToggle") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("adds a selectable lens row only when a final transform exists", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.renderTransformList(defaultTransforms(), null, null);
+    expect(finalRow()).toBeUndefined();
+
+    ui.renderTransformList(defaultTransforms(), null, lens);
+    expect(finalRow()).toBeDefined();
+  });
+
+  it("selects the final transform when its row is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformList(defaultTransforms(), null, lens);
+
+    finalRow()!.click();
+    expect(handlers.onSelect).toHaveBeenCalledWith("final");
+  });
+
+  it("edits the final transform without a selection-weight control", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(lens, "final");
+
+    // Same channels as a transform, but no Weight group — a selection weight is
+    // meaningless for a map applied to every point.
+    expect(editorGroupTitles()).toEqual([
+      "Position",
+      "Rotation",
+      "Scale",
+      "Shear",
+      "Variations",
+    ]);
+  });
+
+  it("reports final-transform edits through onFinalTransformGeometry, with no weight", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(lens, "final");
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "1.5";
+    scaleX.dispatchEvent(new Event("input"));
+
+    expect(handlers.onTransformGeometry).not.toHaveBeenCalled();
+    const calls = vi.mocked(handlers.onFinalTransformGeometry).mock.calls;
+    expect(calls).toHaveLength(1);
+    const geometry = calls[0][0];
+    expect(geometry.scale).toEqual([1.5, 1, 1]);
+    expect(geometry).not.toHaveProperty("weight");
   });
 });
 
