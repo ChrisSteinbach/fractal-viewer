@@ -24,8 +24,13 @@ export interface ChaosGameResult {
  * converge onto the same attractor and stay RNG-identical.
  */
 export const WARMUP_ITERATIONS = 100;
-/** Reset to a fresh seed point if a coordinate diverges past this magnitude. */
-const ESCAPE_LIMIT = 50;
+/**
+ * Reset to a fresh seed point if a coordinate diverges past this magnitude.
+ * Exported alongside {@link pickIndex} so a hand-inlined hot loop (see
+ * `flame.ts`'s `accumulateFlame`) can replicate `stepOrbit`'s escape check
+ * exactly, rather than duplicating (and risking drift from) this threshold.
+ */
+export const ESCAPE_LIMIT = 50;
 /** Uint8 transform indices cap the system at 256 maps. */
 export const MAX_TRANSFORMS = 256;
 
@@ -136,8 +141,12 @@ export function prepareChaosGame(
  * non-1 weight — the fast, RNG-identical path for the common unweighted case
  * (see {@link prepareChaosGame}). For all-unit weights the lower-bound search
  * coincides with the uniform draw, so the two paths agree where they overlap.
+ *
+ * Exported so a hand-inlined hot loop (see `flame.ts`'s `accumulateFlame`)
+ * can pick a transform the exact same way {@link stepOrbit} does, without
+ * paying for `stepOrbit`'s per-call `OrbitStep` allocation.
  */
-function pickIndex(prepared: PreparedChaosGame, rng: Rng): number {
+export function pickIndex(prepared: PreparedChaosGame, rng: Rng): number {
   if (!prepared.weighted) {
     return Math.floor(rng() * prepared.transformCount);
   }
