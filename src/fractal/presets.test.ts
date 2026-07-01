@@ -14,10 +14,10 @@ import {
   octahedronFlake,
   PRESET_NAMES,
   presetTransforms,
+  radiolarian,
   sierpinskiPyramid,
   sierpinskiTetrahedron,
   spiral,
-  sphericalFlame,
   swirlFlame,
 } from "./presets";
 import { mulberry32 } from "./rng";
@@ -272,11 +272,14 @@ describe("curlingFern", () => {
 });
 
 describe("variation flame presets", () => {
-  it("sphericalFlame is three maps, each carrying a spherical variation", () => {
-    const transforms = sphericalFlame();
-    expect(transforms).toHaveLength(3);
+  it("radiolarian is the icosahedron flake with a partial spherical warp", () => {
+    const transforms = radiolarian();
+    expect(transforms).toHaveLength(12);
     for (const t of transforms) {
-      expect(t.variations).toEqual([{ type: "spherical", weight: 1 }]);
+      expect(t.variations).toEqual([
+        { type: "linear", weight: 1 },
+        { type: "spherical", weight: 0.32 },
+      ]);
     }
   });
 
@@ -292,7 +295,7 @@ describe("variation flame presets", () => {
   // the chaos game's guard keeps the whole cloud finite (never NaN/Inf) and the
   // attractor has real extent rather than collapsing to a point.
   for (const [name, transforms] of Object.entries({
-    sphericalFlame: sphericalFlame(),
+    radiolarian: radiolarian(),
     swirlFlame: swirlFlame(),
   })) {
     it(`${name} renders a finite, non-degenerate cloud`, () => {

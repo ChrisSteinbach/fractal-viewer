@@ -467,21 +467,24 @@ function withVariations(
 }
 
 /**
- * "Spherical" — the canonical fractal-flame look. Three contractive maps arranged
- * as a rotated triangle, each followed by the `spherical` variation (inversion
- * through the unit sphere). The inversion turns the plain triangular gasket into
- * an endless lattice of interlocking bubbles — the shape that first made flames
- * famous, here in 3-D so the bubbles have real depth.
+ * "Radiolarian" — an {@link icosahedronFlake} bent into an ornate, hollow orb by
+ * a partial `spherical` inversion. The twelve vertex maps alone make a crisp,
+ * spiky icosahedral gasket; giving each a light `spherical` warp (weight 0.32)
+ * blended over a full-weight `linear` everts that gasket through the unit
+ * sphere, folding its lobes into the nested, interlocking rings of a
+ * fractal-flame "bubble" while the icosahedral symmetry holds it to a rounded
+ * shell — a five-fold mandala down one axis, a rounded triangle down another.
+ *
+ * Keeping `linear` at full weight is the whole trick: unlike the pure `spherical`
+ * flame this replaces (a triangular gasket everted into a featureless blob), the
+ * geometric skeleton survives the warp, so the attractor reads as an intricate,
+ * silica-shelled radiolarian rather than a smudge.
  */
-export function sphericalFlame(): Transform[] {
-  const t = (2 * Math.PI) / 3; // 120° between the three lobes
-  const base: Transform[] = [0, 1, 2].map((i): Transform => ({
-    id: i,
-    position: [Math.cos(i * t) * 0.5, Math.sin(i * t) * 0.5, 0],
-    rotation: [0, 0, i * t],
-    scale: [0.5, 0.5, 0.5],
-  }));
-  return withVariations(base, [{ type: "spherical", weight: 1 }]);
+export function radiolarian(): Transform[] {
+  return withVariations(icosahedronFlake(), [
+    { type: "linear", weight: 1 },
+    { type: "spherical", weight: 0.32 },
+  ]);
 }
 
 /**
@@ -535,7 +538,7 @@ const PRESETS = {
   chiral: chiralLace,
   barnsley: barnsleyFern,
   curling: curlingFern,
-  spherical: sphericalFlame,
+  radiolarian,
   swirl: swirlFlame,
 } as const satisfies Record<string, () => Transform[]>;
 

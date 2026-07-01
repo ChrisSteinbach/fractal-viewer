@@ -77,7 +77,7 @@ poison the rest of the orbit with `NaN`. `variations.test.ts` covers the math an
 the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
 (including the stochastic `julia`), and that a variation actually moves points.
 
-The `spherical` and `swirl` presets showcase the feature; the transform editor's
+The `radiolarian` and `swirl` presets showcase the feature; the transform editor's
 **Variations** group adds/removes/weights them live.
 
 ## Final transform
