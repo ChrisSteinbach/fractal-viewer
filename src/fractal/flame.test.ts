@@ -58,6 +58,24 @@ describe("createFlameHistogram", () => {
     expect(Array.from(hist.hits).every((h) => h === 0)).toBe(true);
     expect(hist.maxHits).toBe(0);
   });
+
+  // Regression: sumRGB must stay Float64Array, matching hits. A hot bucket's
+  // channel sum can exceed 2^24 (~16.78M) in a converged render — past that
+  // magnitude Float32's ULP exceeds 1, so accumulating an O(1) palette color
+  // per hit silently rounds away to a no-op: the sum plateaus while hits
+  // keeps climbing correctly, and `sumRGB / hits` undershoots toward black
+  // exactly where the render is meant to glow brightest.
+  it("keeps accumulating a hot bucket's color sum past 2^24, where Float32 would round it away", () => {
+    const hist = createFlameHistogram(1, 1);
+    expect(hist.sumRGB).toBeInstanceOf(Float64Array);
+
+    const priorSum = 20_000_000; // past 2^24 = 16_777_216
+    hist.sumRGB[0] = priorSum;
+    // A Float32Array-backed sum would show no change at all from this
+    // increment — Math.fround(20_000_000 + 0.9) rounds back to 20_000_000.
+    hist.sumRGB[0] += 0.9;
+    expect(hist.sumRGB[0]).toBe(priorSum + 0.9);
+  });
 });
 
 describe("accumulateFlame projection and bucketing", () => {

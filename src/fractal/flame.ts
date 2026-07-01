@@ -44,14 +44,20 @@ export type Mat4 = number[];
 /**
  * A 2D density accumulation: one bucket per pixel of the target image, each
  * tracking how many iterations landed there and their summed color (so the
- * average — `sumRGB / hits` — is the bucket's color). `hits` is a
- * `Float64Array` (not `Float32Array`) because a single hot bucket in a
- * converged render can exceed 2^24, the point past which `Float32` can no
- * longer represent every integer exactly — losing hits there would silently
- * cap the brightest region's density. `sumRGB` stays `Float32Array`: it also
- * accumulates over many additions, but the *visible* output is an 8-bit
- * channel, so `Float32`'s precision loss at large sums is far below what the
- * final image can even display.
+ * average — `sumRGB / hits` — is the bucket's color). Both `hits` and
+ * `sumRGB` are `Float64Array`, not `Float32Array`, because a single hot
+ * bucket in a converged render can exceed 2^24 — the point past which
+ * `Float32` can no longer represent every integer exactly, and, worse, where
+ * its ULP exceeds 1: once `sumRGB[o]` (which accumulates an O(1) palette
+ * channel per hit) passes that magnitude in `Float32`, `+=` increments
+ * smaller than the local ULP round away to a complete no-op, so the sum
+ * *stops growing* while `hits` (correctly `Float64`) keeps climbing —
+ * `sumRGB / hits` then systematically undershoots, desaturating and
+ * darkening exactly the hottest, most-converged bucket toward black. That
+ * is precisely the region this renderer (and the higher iteration counts
+ * fr-73y will push toward) is built to render brightest, so the extra
+ * memory (~2x `sumRGB`'s share — roughly 66 MB total at 1920x1080) buys
+ * correctness where it matters most, not just cosmetic precision.
  *
  * Pass a histogram back into {@link accumulateFlame} to keep converging it —
  * see {@link createFlameHistogram} and {@link accumulateFlame}'s `orbit`
@@ -63,7 +69,7 @@ export interface FlameHistogram {
   /** Hit count per bucket, row-major (`row * width + col`), length `width * height`. */
   hits: Float64Array;
   /** Summed color per bucket, interleaved RGB, length `width * height * 3`. */
-  sumRGB: Float32Array;
+  sumRGB: Float64Array;
   /** Highest hit count seen in any bucket so far — anchors {@link tonemapFlame}'s log-density curve. */
   maxHits: number;
   /**
@@ -85,7 +91,7 @@ export function createFlameHistogram(
     width,
     height,
     hits: new Float64Array(width * height),
-    sumRGB: new Float32Array(width * height * 3),
+    sumRGB: new Float64Array(width * height * 3),
     maxHits: 0,
     orbit: [0, 0, 0],
   };
