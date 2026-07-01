@@ -300,7 +300,8 @@ input[type="range"] {
 
 #presetSelect,
 #colorMode,
-#renderStyle {
+#renderStyle,
+.variation-add {
   width: 100%;
   margin-top: 5px;
   padding: 9px 10px;
@@ -314,7 +315,8 @@ input[type="range"] {
 
 #presetSelect:focus-visible,
 #colorMode:focus-visible,
-#renderStyle:focus-visible {
+#renderStyle:focus-visible,
+.variation-add:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -402,6 +404,39 @@ input[type="range"] {
   color: var(--text);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Variation rows carry a full type name and a remove button, so the fixed
+   12px axis column and 50px value column of the geometry rows don't fit. */
+.variation-row .axis {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 62px;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.variation-row .value {
+  width: 34px;
+}
+
+.variation-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.variation-remove:hover {
+  color: #ff6b6b;
+  background: rgb(255 107 107 / 12%);
 }
 
 #backdrop {

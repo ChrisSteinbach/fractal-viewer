@@ -97,7 +97,7 @@ export function updateTransform(
   index: number,
   geometry: Pick<
     Transform,
-    "position" | "rotation" | "scale" | "weight" | "shear"
+    "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>

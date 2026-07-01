@@ -1,4 +1,5 @@
 import { applyAffine, composeAffine } from "./affine";
+import { composeVariations } from "./variations";
 import type { Rng } from "./rng";
 import type { Bounds, Transform } from "./types";
 
@@ -63,6 +64,10 @@ export function runChaosGame(
   }
 
   const affines = transforms.map(composeAffine);
+  // Per-transform nonlinear warp, or null for a purely affine map. Every entry
+  // is null for the existing presets, so `step` takes the exact same path (and
+  // touches the RNG identically) as before variations existed.
+  const variations = transforms.map((t) => composeVariations(t.variations));
   const positions = new Float32Array(numPoints * 3);
   const transformIndices = new Uint8Array(numPoints);
 
@@ -117,10 +122,24 @@ export function runChaosGame(
   const step = (): number => {
     const idx = pickIndex();
     const p = applyAffine(affines[idx], x, y, z);
-    x = p[0];
-    y = p[1];
-    z = p[2];
+    const warp = variations[idx];
+    if (warp === null) {
+      x = p[0];
+      y = p[1];
+      z = p[2];
+    } else {
+      // Nonlinear maps can send a point to infinity — or, at a singularity, to
+      // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
+      // stopping a bad landing from poisoning the rest of the orbit.
+      const q = warp(p[0], p[1], p[2], rng);
+      x = q[0];
+      y = q[1];
+      z = q[2];
+    }
     if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      !Number.isFinite(z) ||
       Math.abs(x) > ESCAPE_LIMIT ||
       Math.abs(y) > ESCAPE_LIMIT ||
       Math.abs(z) > ESCAPE_LIMIT

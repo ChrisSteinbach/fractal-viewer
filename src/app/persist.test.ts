@@ -314,6 +314,159 @@ describe("decodeScene transform shear", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-transform variations (optional field)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene transform variations", () => {
+  it("round-trips a variation blend", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            { type: "spherical", weight: 1 },
+            { type: "swirl", weight: 0.4 },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "spherical", weight: 1 },
+      { type: "swirl", weight: 0.4 },
+    ]);
+  });
+
+  it("does not persist a zero-weight variation, dropping it on decode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            { type: "spherical", weight: 1 },
+            { type: "swirl", weight: 0 },
+          ],
+        },
+      ],
+    };
+    expect(decodeScene(encodeScene(s))!.transforms[0].variations).toEqual([
+      { type: "spherical", weight: 1 },
+    ]);
+  });
+
+  it("omits an all-zero blend entirely, decoding back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherical", weight: 0 }],
+        },
+      ],
+    };
+    expect(
+      decodeScene(encodeScene(s))!.transforms[0].variations,
+    ).toBeUndefined();
+  });
+
+  it("leaves variations undefined for an old link that never carried the field", () => {
+    expect(
+      decodeScene(encodeScene(baseSnapshot()))!.transforms[0].variations,
+    ).toBeUndefined();
+  });
+
+  it("returns null for an unknown variation type", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "wormhole", weight: 1 }],
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null for a non-finite variation weight", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherical", weight: "lots" }],
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when variations is not an array", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: "spherical",
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when a variation entry is not an object", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [42],
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps an out-of-range variation weight into the allowed band", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherical", weight: 100000 }],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    const weight = result!.transforms[0].variations![0].weight;
+    expect(weight).toBeGreaterThan(0);
+    expect(weight).toBeLessThanOrEqual(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Clamping
 // ---------------------------------------------------------------------------
 

@@ -50,6 +50,36 @@ do on the GPU and the fractal looks identical to the original standalone viewer.
 `affine.test.ts` pins this down with identity, single-axis 90° rotations, scale,
 translation, and a composed case against hand-computed values.
 
+## Nonlinear variations
+
+Strict affine maps only ever produce self-similar, straight-edged attractors.
+**Variations** — borrowed from Draves & Reckase's _fractal flame_ algorithm —
+are nonlinear functions applied to a transform's point _after_ its affine part,
+warping space into flowing, organic, "impossible" shapes. `variations.ts` holds
+a dozen classics (`spherical`, `swirl`, `bubble`, `julia`, …) as pure
+`(x, y, z, rng) → [x, y, z]` functions.
+
+A transform carries an optional `variations: { type, weight }[]`. Its post-affine
+point is the **weighted blend** `Σ weight · V(type)` — flame semantics, so the
+weights are free strengths, not a normalized mix. `composeVariations` compiles a
+list into one blend function, returning `null` when there is nothing to apply
+(no list, or every weight zero). That `null` is the fast path: every existing
+preset has no variations, so `runChaosGame` takes the identical affine-only code
+path and consumes the RNG exactly as before — old scenes render byte-for-byte
+unchanged.
+
+The classic variations are planar; each is generalized to 3-D consistently
+(radial warps use the full `x²+y²+z²`, angular warps act in the xy-plane and
+carry `z`). Nonlinear maps can diverge or hit a singularity, so every function is
+kept total with a small `EPS` floor on its divisors, and the chaos game's escape
+check also reseeds on any **non-finite** coordinate — one bad landing can never
+poison the rest of the orbit with `NaN`. `variations.test.ts` covers the math and
+the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
+(including the stochastic `julia`), and that a variation actually moves points.
+
+The `spherical` and `swirl` presets showcase the feature; the transform editor's
+**Variations** group adds/removes/weights them live.
+
 ## Color modes
 
 `buildColors(result, transforms, mode)` in `color.ts` produces a parallel

@@ -1,5 +1,5 @@
 import type { Rng } from "./rng";
-import type { Transform, Vec3 } from "./types";
+import type { Transform, Variation, Vec3 } from "./types";
 
 const HALF = 0.5;
 
@@ -449,6 +449,59 @@ export function curlingFern(): Transform[] {
   return buildFern(FERN_CURL);
 }
 
+/** Attach the same variation blend to every map in a system. */
+function withVariations(
+  transforms: Transform[],
+  variations: Variation[],
+): Transform[] {
+  return transforms.map((t) => ({ ...t, variations }));
+}
+
+/**
+ * "Spherical" — the canonical fractal-flame look. Three contractive maps arranged
+ * as a rotated triangle, each followed by the `spherical` variation (inversion
+ * through the unit sphere). The inversion turns the plain triangular gasket into
+ * an endless lattice of interlocking bubbles — the shape that first made flames
+ * famous, here in 3-D so the bubbles have real depth.
+ */
+export function sphericalFlame(): Transform[] {
+  const t = (2 * Math.PI) / 3; // 120° between the three lobes
+  const base: Transform[] = [0, 1, 2].map((i): Transform => ({
+    id: i,
+    position: [Math.cos(i * t) * 0.5, Math.sin(i * t) * 0.5, 0],
+    rotation: [0, 0, i * t],
+    scale: [0.5, 0.5, 0.5],
+  }));
+  return withVariations(base, [{ type: "spherical", weight: 1 }]);
+}
+
+/**
+ * "Swirl" — a two-map flame that rotates every point by its own squared radius
+ * (`swirl`) with a whisper of `linear` to keep the arms coherent. The result is
+ * a churning, galaxy-like spiral that the strictly self-similar presets can
+ * never produce — the clearest demonstration of what nonlinear variations add.
+ */
+export function swirlFlame(): Transform[] {
+  const base: Transform[] = [
+    {
+      id: 0,
+      position: [0.35, 0.25, 0],
+      rotation: [0, 0, 0.5],
+      scale: [0.7, 0.7, 0.7],
+    },
+    {
+      id: 1,
+      position: [-0.45, -0.2, 0.15],
+      rotation: [0.25, 0, 1.3],
+      scale: [0.55, 0.55, 0.55],
+    },
+  ];
+  return withVariations(base, [
+    { type: "swirl", weight: 1 },
+    { type: "linear", weight: 0.2 },
+  ]);
+}
+
 /**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
@@ -473,6 +526,8 @@ const PRESETS = {
   chiral: chiralLace,
   barnsley: barnsleyFern,
   curling: curlingFern,
+  spherical: sphericalFlame,
+  swirl: swirlFlame,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;

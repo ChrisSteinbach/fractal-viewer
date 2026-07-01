@@ -220,7 +220,7 @@ describe("Ui.setPointCount", () => {
 });
 
 describe("Ui.renderTransformEditor", () => {
-  it("builds position, rotation, scale, and weight controls for the selection", () => {
+  it("builds position, rotation, scale, weight, and variation controls for the selection", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(defaultTransforms()[0], 0);
@@ -231,8 +231,10 @@ describe("Ui.renderTransformEditor", () => {
       "Scale",
       "Shear",
       "Weight",
+      "Variations",
     ]);
-    // 12 axis sliders (4 channels × 3) + 1 weight slider.
+    // 12 axis sliders (4 channels × 3) + 1 weight slider; a plain transform has
+    // no variations, so the Variations group adds no range sliders (just a menu).
     expect(editorSliders()).toHaveLength(13);
   });
 
@@ -377,5 +379,102 @@ describe("Ui.renderTransformEditor", () => {
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
       0,
     );
+  });
+});
+
+describe("Ui variation editor", () => {
+  const plain: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  function addSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .variation-add",
+    );
+    if (!select) throw new Error("No variation-add select");
+    return select;
+  }
+
+  function lastGeometry(handlers: UiHandlers) {
+    const calls = vi.mocked(handlers.onTransformGeometry).mock.calls;
+    return calls[calls.length - 1][1];
+  }
+
+  it("adds a variation from the dropdown at the default weight, then resets the menu", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0);
+
+    const select = addSelect();
+    select.value = "spherical";
+    select.dispatchEvent(new Event("change"));
+
+    // A weighted row appears at the default weight of 1.
+    expect(editorSlider("Variation spherical").value).toBe("1");
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "spherical", weight: 1 },
+    ]);
+    // The menu snaps back to the placeholder, like the preset menu.
+    expect(select.value).toBe("");
+  });
+
+  it("reports an edited variation weight back", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "swirl", weight: 1 }] },
+      0,
+    );
+
+    const slider = editorSlider("Variation swirl");
+    slider.value = "0.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "swirl", weight: 0.5 },
+    ]);
+  });
+
+  it("removes a variation, reporting an empty blend", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "bubble", weight: 1 }] },
+      0,
+    );
+
+    const remove = document.querySelector<HTMLButtonElement>(
+      "#transformEditor .variation-remove",
+    );
+    remove!.click();
+
+    expect(
+      document.querySelectorAll("#transformEditor .variation-row"),
+    ).toHaveLength(0);
+    expect(lastGeometry(handlers).variations).toEqual([]);
+  });
+
+  it("excludes an already-added variation from the add menu", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "spherical", weight: 1 }] },
+      0,
+    );
+
+    const options = Array.from(
+      document.querySelectorAll<HTMLOptionElement>(
+        "#transformEditor .variation-add option",
+      ),
+    ).map((o) => o.value);
+    expect(options).not.toContain("spherical");
+    expect(options).toContain(""); // placeholder
+    expect(options).toContain("swirl"); // other types still offered
   });
 });
