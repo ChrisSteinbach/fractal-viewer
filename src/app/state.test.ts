@@ -1,11 +1,20 @@
 import {
   addTransform,
+  DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_ITERATIONS,
   DEFAULT_POINT_SIZE,
   initialState,
+  MAX_FLAME_EXPOSURE,
+  MAX_FLAME_ITERATIONS,
+  MIN_FLAME_EXPOSURE,
+  MIN_FLAME_ITERATIONS,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
   setFinalTransform,
+  setFlameActive,
+  setFlameExposure,
+  setFlameIterations,
   setPointSize,
   setRenderStyle,
   setTransforms,
@@ -27,6 +36,17 @@ describe("initialState", () => {
     expect(state.renderStyle).toBe("depthFade");
     expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
     expect(state.panelOpen).toBe(true);
+  });
+
+  // The app always boots into the live explorer, never straight into a
+  // flame render — see the headline "explorer-first" decision.
+  it("boots with the flame render inactive, at its default settings", () => {
+    const state = initialState(true);
+    expect(state.flameActive).toBe(false);
+    expect(state.flame).toEqual({
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    });
   });
 
   // The startup fractal must match a menu preset so it can be reselected.
@@ -138,5 +158,57 @@ describe("updateTransform", () => {
     expect(next.transforms[1].id).toBe(originalId);
     // Other transforms untouched.
     expect(next.transforms[0]).toBe(state.transforms[0]);
+  });
+});
+
+describe("setFlameExposure", () => {
+  it("sets the exposure immutably", () => {
+    const state = initialState(true);
+    const next = setFlameExposure(state, 2.5);
+    expect(next.flame.exposure).toBe(2.5);
+    expect(state.flame.exposure).toBe(DEFAULT_FLAME_EXPOSURE);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFlameExposure(initialState(true), 999).flame.exposure).toBe(
+      MAX_FLAME_EXPOSURE,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFlameExposure(initialState(true), -5).flame.exposure).toBe(
+      MIN_FLAME_EXPOSURE,
+    );
+  });
+});
+
+describe("setFlameIterations", () => {
+  it("sets the iteration budget immutably", () => {
+    const state = initialState(true);
+    const next = setFlameIterations(state, 50_000_000);
+    expect(next.flame.iterations).toBe(50_000_000);
+    expect(state.flame.iterations).toBe(DEFAULT_FLAME_ITERATIONS);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setFlameIterations(initialState(true), 1_000_000_000).flame.iterations,
+    ).toBe(MAX_FLAME_ITERATIONS);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFlameIterations(initialState(true), 1).flame.iterations).toBe(
+      MIN_FLAME_ITERATIONS,
+    );
+  });
+});
+
+describe("setFlameActive", () => {
+  it("toggles the flame overlay immutably, independent of flame params", () => {
+    const state = initialState(true);
+    const next = setFlameActive(state, true);
+    expect(next.flameActive).toBe(true);
+    expect(state.flameActive).toBe(false);
+    expect(next.flame).toBe(state.flame);
   });
 });

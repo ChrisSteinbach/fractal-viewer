@@ -16,8 +16,16 @@ import type {
   VariationType,
   Vec3,
 } from "../fractal/types";
-import { RENDER_STYLES } from "./state";
-import type { AppState, RenderStyle } from "./state";
+import {
+  DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_ITERATIONS,
+  MAX_FLAME_EXPOSURE,
+  MAX_FLAME_ITERATIONS,
+  MIN_FLAME_EXPOSURE,
+  MIN_FLAME_ITERATIONS,
+  RENDER_STYLES,
+} from "./state";
+import type { AppState, FlameParams, RenderStyle } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +42,12 @@ export interface SceneSnapshot {
   colorMode: ColorMode;
   renderStyle: RenderStyle;
   showGuides: boolean;
+  /**
+   * Flame render-current-view settings (see {@link AppState.flame}). Note
+   * `AppState.flameActive` is intentionally NOT part of this snapshot — the
+   * app always boots into the explorer, never straight into a render.
+   */
+  flame: FlameParams;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -61,6 +75,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     colorMode: state.colorMode,
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
+    flame: state.flame,
   };
 }
 
@@ -209,6 +224,40 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   return decoded;
 }
 
+/**
+ * Validate the untrusted `flame` render-settings block. `flame` predates
+ * this feature's rollout in exactly zero existing links, so — like
+ * `finalTransform` — an absent field decodes quietly to the default rather
+ * than rejecting the scene; but once present, a malformed value rejects the
+ * whole scene, matching `weight`/`shear`/`variations`. Finite values are
+ * clamped into range rather than rejected, matching `weight`.
+ */
+function decodeFlameParams(raw: unknown): FlameParams | null {
+  if (raw === undefined) {
+    return {
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    };
+  }
+  if (typeof raw !== "object" || raw === null) return null;
+  const f = raw as Record<string, unknown>;
+  const exposure = Number(f.exposure);
+  const iterations = Number(f.iterations);
+  if (!Number.isFinite(exposure) || !Number.isFinite(iterations)) return null;
+  return {
+    exposure: Math.max(
+      MIN_FLAME_EXPOSURE,
+      Math.min(MAX_FLAME_EXPOSURE, exposure),
+    ),
+    iterations: Math.round(
+      Math.max(
+        MIN_FLAME_ITERATIONS,
+        Math.min(MAX_FLAME_ITERATIONS, iterations),
+      ),
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -260,6 +309,7 @@ export function encodeScene(s: SceneSnapshot): string {
     colorMode: ColorMode;
     renderStyle: RenderStyle;
     showGuides: boolean;
+    flame: FlameParams;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -267,6 +317,13 @@ export function encodeScene(s: SceneSnapshot): string {
     colorMode: s.colorMode,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
+    // Always written, like numPoints/pointSize (not conditionally omitted
+    // like finalTransform/weight/shear): it is a small, always-present
+    // settings block, not a per-transform optional feature.
+    flame: {
+      exposure: round4(s.flame.exposure),
+      iterations: Math.round(s.flame.iterations),
+    },
   };
   // Written only when present, so old links stay byte-identical (they never
   // carried the field) and lens-free systems keep their short URLs.
@@ -282,8 +339,10 @@ export function encodeScene(s: SceneSnapshot): string {
  *
  * Validates strictly: requires the `v1=` prefix; 1..MAX_TRANSFORMS transforms
  * each with valid Vec3 fields; an optional finalTransform validated the same
- * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000]
- * and pointSize to [0.25, 4].
+ * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000],
+ * pointSize to [0.25, 4], flame.exposure to [{@link MIN_FLAME_EXPOSURE},
+ * {@link MAX_FLAME_EXPOSURE}], and flame.iterations to
+ * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}].
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -338,6 +397,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = Math.max(0.25, Math.min(4, rawPointSize));
 
+    // flame: absent (an old link) defaults quietly; present-but-malformed
+    // rejects the whole scene. See decodeFlameParams.
+    const flame = decodeFlameParams(o.flame);
+    if (flame === null) return null;
+
     return {
       transforms,
       finalTransform,
@@ -346,6 +410,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       colorMode: colorMode as ColorMode,
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
+      flame,
     };
   } catch {
     return null;

@@ -52,6 +52,12 @@ export interface UiHandlers {
   onFinalTransformGeometry: (geometry: FinalGeometry) => void;
   onTogglePanel: () => void;
   onClosePanel: () => void;
+  /** "Render Current View" was clicked: freeze the camera and start a flame render. */
+  onEnterFlameRender: () => void;
+  /** "Back to Explorer" was clicked: discard the in-progress render. */
+  onExitFlameRender: () => void;
+  onFlameExposureInput: (value: number) => void;
+  onFlameIterationsInput: (value: number) => void;
 }
 
 /**
@@ -263,6 +269,16 @@ export class Ui {
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
+  private readonly explorerControls: HTMLElement;
+  private readonly renderBtn: HTMLButtonElement;
+  private readonly flameControls: HTMLElement;
+  private readonly flameExposureLabel: HTMLElement;
+  private readonly flameExposureSlider: HTMLInputElement;
+  private readonly flameIterationsLabel: HTMLElement;
+  private readonly flameIterationsSlider: HTMLInputElement;
+  private readonly flameProgress: HTMLElement;
+  private readonly exitRenderBtn: HTMLButtonElement;
+
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
@@ -291,6 +307,15 @@ export class Ui {
     this.autoUpdate = this.byId("autoUpdate");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
+    this.explorerControls = this.byId("explorerControls");
+    this.renderBtn = this.byId("renderBtn");
+    this.flameControls = this.byId("flameControls");
+    this.flameExposureLabel = this.byId("flameExposureLabel");
+    this.flameExposureSlider = this.byId("flameExposureSlider");
+    this.flameIterationsLabel = this.byId("flameIterationsLabel");
+    this.flameIterationsSlider = this.byId("flameIterationsSlider");
+    this.flameProgress = this.byId("flameProgress");
+    this.exitRenderBtn = this.byId("exitRenderBtn");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -336,6 +361,18 @@ export class Ui {
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
+    this.renderBtn.addEventListener("click", () =>
+      handlers.onEnterFlameRender(),
+    );
+    this.exitRenderBtn.addEventListener("click", () =>
+      handlers.onExitFlameRender(),
+    );
+    this.flameExposureSlider.addEventListener("input", () =>
+      handlers.onFlameExposureInput(Number(this.flameExposureSlider.value)),
+    );
+    this.flameIterationsSlider.addEventListener("input", () =>
+      handlers.onFlameIterationsInput(Number(this.flameIterationsSlider.value)),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -352,7 +389,25 @@ export class Ui {
     this.autoUpdate.checked = state.autoUpdate;
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
-    if (state.selectedTransform === null) {
+    this.flameExposureLabel.textContent = `${state.flame.exposure.toFixed(2)}×`;
+    this.flameExposureSlider.value = String(state.flame.exposure);
+    this.flameIterationsLabel.textContent = `${(
+      state.flame.iterations / 1_000_000
+    ).toFixed(0)}M iterations`;
+    this.flameIterationsSlider.value = String(state.flame.iterations);
+
+    // The flame render takes over the panel — editing controls that have no
+    // effect on a frozen, already-plotted image would just be confusing —
+    // and the explorer's own hints (drag/orbit/scale) no longer apply since
+    // the camera and geometry are frozen for the render.
+    this.explorerControls.classList.toggle("hidden", state.flameActive);
+    this.renderBtn.classList.toggle("hidden", state.flameActive);
+    this.flameControls.classList.toggle("hidden", !state.flameActive);
+
+    if (state.flameActive) {
+      this.helpTitle.textContent = "Flame Render";
+      this.setHelpLines(["Rendering the frozen camera view…"]);
+    } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
       this.setHelpLines(
         this.mouse
@@ -391,6 +446,17 @@ export class Ui {
 
   setPointCount(count: number): void {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
+  }
+
+  /** Reflect flame-render progress as an iteration count and percentage. */
+  setFlameProgress(iterationsDone: number, iterationsBudget: number): void {
+    const pct =
+      iterationsBudget > 0
+        ? Math.min(100, Math.round((iterationsDone / iterationsBudget) * 100))
+        : 100;
+    const done = (iterationsDone / 1_000_000).toFixed(1);
+    const budget = (iterationsBudget / 1_000_000).toFixed(1);
+    this.flameProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
   }
 
   /**

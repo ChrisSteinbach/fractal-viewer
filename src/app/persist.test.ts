@@ -2,6 +2,14 @@
 import { decodeScene, encodeScene, loadScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import {
+  DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_ITERATIONS,
+  MAX_FLAME_EXPOSURE,
+  MAX_FLAME_ITERATIONS,
+  MIN_FLAME_EXPOSURE,
+  MIN_FLAME_ITERATIONS,
+} from "./state";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,6 +36,10 @@ function baseSnapshot(): SceneSnapshot {
     colorMode: "transform",
     renderStyle: "depthFade",
     showGuides: true,
+    flame: {
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    },
   };
 }
 
@@ -50,6 +62,10 @@ describe("encodeScene / decodeScene round-trip", () => {
     expect(result!.colorMode).toBe("transform");
     expect(result!.renderStyle).toBe("depthFade");
     expect(result!.showGuides).toBe(true);
+    expect(result!.flame).toEqual({
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    });
   });
 
   it("reassigns transform ids from the array index, ignoring stored ids", () => {
@@ -539,6 +555,94 @@ describe("decodeScene final transform", () => {
       },
     };
     expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Flame render params (added after v1 shipped — same "absent defaults
+// quietly, malformed rejects" contract as finalTransform/weight/shear)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene flame params", () => {
+  it("round-trips a non-default exposure and iteration budget", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { exposure: 2.25, iterations: 42_000_000 },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.flame.exposure).toBeCloseTo(2.25, 4);
+    expect(result!.flame.iterations).toBe(42_000_000);
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `flame` key at all — exactly what every
+    // v1 link looked like before this field was added.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame).toEqual({
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    });
+  });
+
+  it("returns null when flame is present but not an object", () => {
+    const raw = { ...baseSnapshot(), flame: "bright" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when flame is present but exposure is non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { exposure: "lots", iterations: 20_000_000 },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when flame is present but iterations is non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { exposure: 1, iterations: "lots" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps an out-of-range exposure into the allowed band", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { exposure: 999, iterations: DEFAULT_FLAME_ITERATIONS },
+    };
+    expect(decodeScene(encodeScene(s))!.flame.exposure).toBe(
+      MAX_FLAME_EXPOSURE,
+    );
+  });
+
+  it("clamps an out-of-range iteration budget into the allowed band", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { exposure: 1, iterations: 1 },
+    };
+    expect(decodeScene(encodeScene(s))!.flame.iterations).toBe(
+      MIN_FLAME_ITERATIONS,
+    );
+  });
+
+  it("never rejects the scene for an exposure at the extreme but finite ends", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { exposure: -1e9, iterations: 1e12 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.exposure).toBe(MIN_FLAME_EXPOSURE);
+    expect(result!.flame.iterations).toBe(MAX_FLAME_ITERATIONS);
   });
 });
 

@@ -23,6 +23,19 @@ export const RENDER_STYLES = [
 
 export type RenderStyle = (typeof RENDER_STYLES)[number];
 
+/**
+ * Render-current-view settings for the flame renderer (`src/fractal/flame.ts`).
+ * Deliberately minimal — see `FlameHistogram`/`tonemapFlame` — and persists as
+ * a render setting like `colorMode` / `renderStyle`, independent of whether a
+ * render is currently active (see {@link AppState.flameActive}).
+ */
+export interface FlameParams {
+  /** Brightness multiplier over the log-density tone-map; 1 = neutral. */
+  exposure: number;
+  /** Total chaos-game iterations to accumulate before a render is "done". */
+  iterations: number;
+}
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
@@ -46,6 +59,15 @@ export interface AppState {
   renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
+  /** Render-current-view settings; persists independent of {@link flameActive}. */
+  flame: FlameParams;
+  /**
+   * Whether the flame render-current-view overlay is showing (in place of the
+   * live point cloud). Session-only, like `selectedTransform` /
+   * `autoUpdate` — never persisted, so the app always boots into the
+   * explorer (see `persist.ts`'s `SceneSnapshot`, which omits this field).
+   */
+  flameActive: boolean;
 }
 
 /** An IFS needs at least one map. */
@@ -53,6 +75,19 @@ export const MIN_TRANSFORMS = 1;
 export const DEFAULT_NUM_POINTS = 100_000;
 /** Point-size multiplier; 1 renders each style at its authored size. */
 export const DEFAULT_POINT_SIZE = 1;
+/** Neutral brightness multiplier for a freshly started flame render. */
+export const DEFAULT_FLAME_EXPOSURE = 1;
+/**
+ * Default iteration budget for a full flame render: enough for a
+ * reasonably converged image within a few seconds on typical hardware
+ * (chunked across animation frames — see `main.ts`), without the tab
+ * stalling on an unbounded accumulation.
+ */
+export const DEFAULT_FLAME_ITERATIONS = 20_000_000;
+export const MIN_FLAME_EXPOSURE = 0.2;
+export const MAX_FLAME_EXPOSURE = 4;
+export const MIN_FLAME_ITERATIONS = 1_000_000;
+export const MAX_FLAME_ITERATIONS = 100_000_000;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -65,6 +100,11 @@ export function initialState(panelOpen: boolean): AppState {
     renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
+    flame: {
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+    },
+    flameActive: false,
   };
 }
 
@@ -156,4 +196,49 @@ export function setAutoUpdate(state: AppState, autoUpdate: boolean): AppState {
 
 export function setPanelOpen(state: AppState, panelOpen: boolean): AppState {
   return { ...state, panelOpen };
+}
+
+/** Set the flame render's brightness multiplier, clamped to a sane range. */
+export function setFlameExposure(state: AppState, exposure: number): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      exposure: Math.max(
+        MIN_FLAME_EXPOSURE,
+        Math.min(MAX_FLAME_EXPOSURE, exposure),
+      ),
+    },
+  };
+}
+
+/**
+ * Set the flame render's iteration budget, clamped to a sane range. Live-
+ * reactive: raising it while a render is in progress lets accumulation
+ * continue past what had looked "done" (see `main.ts`'s render loop).
+ */
+export function setFlameIterations(
+  state: AppState,
+  iterations: number,
+): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      iterations: Math.round(
+        Math.max(
+          MIN_FLAME_ITERATIONS,
+          Math.min(MAX_FLAME_ITERATIONS, iterations),
+        ),
+      ),
+    },
+  };
+}
+
+/** Enter or exit the flame render-current-view overlay (session-only). */
+export function setFlameActive(
+  state: AppState,
+  flameActive: boolean,
+): AppState {
+  return { ...state, flameActive };
 }

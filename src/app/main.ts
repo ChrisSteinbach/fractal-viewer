@@ -1,5 +1,13 @@
-import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
-import { buildColors } from "../fractal/color";
+import {
+  prepareChaosGame,
+  runChaosGame,
+  type ChaosGameResult,
+  type PreparedChaosGame,
+} from "../fractal/chaos-game";
+import { buildColors, transformColors } from "../fractal/color";
+import { accumulateFlame, tonemapFlame } from "../fractal/flame";
+import type { FlameHistogram, Mat4 } from "../fractal/flame";
+import type { Vec3 } from "../fractal/types";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
@@ -13,6 +21,9 @@ import {
   setAutoUpdate,
   setColorMode,
   setFinalTransform,
+  setFlameActive,
+  setFlameExposure,
+  setFlameIterations,
   setNumPoints,
   setPanelOpen,
   setPointSize,
@@ -24,6 +35,20 @@ import {
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
+
+/**
+ * Iterations accumulated per animation frame while a flame render converges.
+ * Self-adjusts toward {@link FLAME_FRAME_BUDGET_MS} (see `animate`'s flame
+ * branch) — this is only the seed for the very first chunk, chosen small and
+ * safe rather than tuned to any particular machine.
+ */
+const FLAME_CHUNK_INITIAL = 1_000_000;
+const FLAME_CHUNK_MIN = 100_000;
+const FLAME_CHUNK_MAX = 20_000_000;
+/** Target wall-clock time per accumulation chunk, leaving headroom in a
+ * 16 ms (60 fps) frame for the tone-map pass, texture upload, and everything
+ * else the tab needs to stay responsive. */
+const FLAME_FRAME_BUDGET_MS = 8;
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -103,6 +128,52 @@ function main(): void {
     if (!lastResult) return;
     const colors = buildColors(lastResult, state.transforms, state.colorMode);
     scene.setColors(colors);
+  }
+
+  // Flame render session (fr-o7s): runtime accumulation state for the
+  // in-progress render, valid only while state.flameActive. Not part of
+  // AppState — like lastResult, it is cached/derived, not a source of truth,
+  // and unlike AppState it cannot be usefully persisted (an accumulated
+  // histogram is huge and tied to a since-possibly-moved camera).
+  let flamePrepared: PreparedChaosGame | null = null;
+  let flameProjection: Mat4 | null = null;
+  let flamePalette: Vec3[] = [];
+  let flameHistogram: FlameHistogram | null = null;
+  let flameWidth = 0;
+  let flameHeight = 0;
+  let flameIterationsDone = 0;
+  let flameLastExposure: number | undefined;
+  let flameChunkSize = FLAME_CHUNK_INITIAL;
+
+  // Freeze the current camera and start converging a flame render of it.
+  // Called only from the Render button — never automatically — so the
+  // explorer stays the default, always-interactive experience.
+  function enterFlameMode(): void {
+    const { width, height } = scene.flameRenderSize();
+    flameWidth = width;
+    flameHeight = height;
+    flamePrepared = prepareChaosGame(
+      state.transforms,
+      state.finalTransform ?? null,
+    );
+    flameProjection = scene.flameProjectionMatrix();
+    flamePalette = transformColors(state.transforms.length);
+    flameHistogram = null;
+    flameIterationsDone = 0;
+    flameLastExposure = undefined;
+    flameChunkSize = FLAME_CHUNK_INITIAL;
+    state = setFlameActive(state, true);
+    refreshUi();
+  }
+
+  // Discard the in-progress render and return to the live explorer, exactly
+  // as it was left (the camera/orbit was never touched while rendering).
+  function exitFlameMode(): void {
+    flamePrepared = null;
+    flameProjection = null;
+    flameHistogram = null;
+    state = setFlameActive(state, false);
+    refreshUi();
   }
 
   // The lens has no guide box, so map its selection (like camera) to "nothing
@@ -206,10 +277,14 @@ function main(): void {
     },
     onRegenerate: () => regenerate(),
     onSavePng: () => {
-      // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) and
-      // hand it to the browser as a timestamped download.
+      // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
+      // while a flame render is active, its own 2D canvas (true alpha; see
+      // captureFlameFrame) — and hand it to the browser as a timestamped
+      // download.
       const link = document.createElement("a");
-      link.href = scene.captureFrame();
+      link.href = state.flameActive
+        ? scene.captureFlameFrame()
+        : scene.captureFrame();
       link.download = `fractal-${Date.now()}.png`;
       link.click();
     },
@@ -283,10 +358,23 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
+    onEnterFlameRender: () => enterFlameMode(),
+    onExitFlameRender: () => exitFlameMode(),
+    onFlameExposureInput: (value) => {
+      state = setFlameExposure(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
+    onFlameIterationsInput: (value) => {
+      state = setFlameIterations(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
   });
 
   attachInteractions(scene, orbit, {
     selectedTransform: selectedBox,
+    frozen: () => state.flameActive,
     onTransformChange: (index, geometry) => {
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
@@ -315,8 +403,71 @@ function main(): void {
   regenerate();
   refreshUi();
 
+  // Accumulate one flame-render chunk and, if anything changed (more
+  // iterations landed, or the exposure slider moved), re-tone-map and
+  // upload the image. Self-adjusts flameChunkSize toward
+  // FLAME_FRAME_BUDGET_MS so the tab stays responsive regardless of the
+  // machine's actual throughput, which nothing in this environment can be
+  // profiled against ahead of time.
+  function stepFlame(): void {
+    if (!flamePrepared || !flameProjection) return;
+    let changed = false;
+
+    if (flameIterationsDone < state.flame.iterations) {
+      const chunk = Math.min(
+        flameChunkSize,
+        state.flame.iterations - flameIterationsDone,
+      );
+      const start = performance.now();
+      flameHistogram = accumulateFlame(
+        flamePrepared,
+        flameProjection,
+        flameWidth,
+        flameHeight,
+        chunk,
+        Math.random,
+        flamePalette,
+        flameHistogram ?? undefined,
+      );
+      const elapsed = performance.now() - start;
+      flameIterationsDone += chunk;
+      changed = true;
+
+      if (elapsed > 0) {
+        // Damped multiplicative correction (capped to 0.5x–2x per frame) so
+        // one slow frame (e.g. a GC pause) doesn't overcorrect wildly.
+        const scale = Math.min(
+          2,
+          Math.max(0.5, FLAME_FRAME_BUDGET_MS / elapsed),
+        );
+        flameChunkSize = Math.round(
+          Math.min(
+            FLAME_CHUNK_MAX,
+            Math.max(FLAME_CHUNK_MIN, flameChunkSize * scale),
+          ),
+        );
+      }
+    } else if (flameLastExposure !== state.flame.exposure) {
+      changed = true;
+    }
+
+    if (changed && flameHistogram) {
+      flameLastExposure = state.flame.exposure;
+      const image = tonemapFlame(flameHistogram, {
+        exposure: state.flame.exposure,
+      });
+      scene.setFlameImage(image, flameWidth, flameHeight);
+      ui.setFlameProgress(flameIterationsDone, state.flame.iterations);
+    }
+    scene.renderFlame();
+  }
+
   function animate(): void {
     requestAnimationFrame(animate);
+    if (state.flameActive) {
+      stepFlame();
+      return;
+    }
     scene.applyCamera(orbit);
     scene.updateFog();
     scene.render();

@@ -299,7 +299,7 @@ export interface TonemapParams {
 export function tonemapFlame(
   histogram: FlameHistogram,
   params: TonemapParams,
-): Uint8ClampedArray {
+): Uint8ClampedArray<ArrayBuffer> {
   const { width, height, hits, sumRGB, maxHits } = histogram;
   const out = new Uint8ClampedArray(width * height * 4);
   if (maxHits <= 0) return out; // Nothing accumulated yet — fully transparent.

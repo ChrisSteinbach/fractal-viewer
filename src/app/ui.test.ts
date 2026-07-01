@@ -28,6 +28,10 @@ function noopHandlers(): UiHandlers {
     onFinalTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
+    onEnterFlameRender: vi.fn(),
+    onExitFlameRender: vi.fn(),
+    onFlameExposureInput: vi.fn(),
+    onFlameIterationsInput: vi.fn(),
   };
 }
 
@@ -571,5 +575,132 @@ describe("Ui variation editor", () => {
     expect(options).not.toContain("spherical");
     expect(options).toContain(""); // placeholder
     expect(options).toContain("swirl"); // other types still offered
+  });
+});
+
+describe("Ui flame render controls", () => {
+  function renderBtn(): HTMLButtonElement {
+    return document.getElementById("renderBtn") as HTMLButtonElement;
+  }
+  function exitRenderBtn(): HTMLButtonElement {
+    return document.getElementById("exitRenderBtn") as HTMLButtonElement;
+  }
+  function explorerControls(): HTMLElement {
+    return document.getElementById("explorerControls") as HTMLElement;
+  }
+  function flameControls(): HTMLElement {
+    return document.getElementById("flameControls") as HTMLElement;
+  }
+
+  it("shows the explorer panel and the Render button while inactive", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: false });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(false);
+    expect(renderBtn().classList.contains("hidden")).toBe(false);
+    expect(flameControls().classList.contains("hidden")).toBe(true);
+  });
+
+  it("swaps to the flame controls and hides the explorer panel while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: true });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(renderBtn().classList.contains("hidden")).toBe(true);
+    expect(flameControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("names the render mode in the help box while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: true });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "Flame Render",
+    );
+  });
+
+  it("fires onEnterFlameRender when Render Current View is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    renderBtn().click();
+    expect(handlers.onEnterFlameRender).toHaveBeenCalledOnce();
+  });
+
+  it("fires onExitFlameRender when Back to Explorer is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    exitRenderBtn().click();
+    expect(handlers.onExitFlameRender).toHaveBeenCalledOnce();
+  });
+
+  it("reflects exposure and iterations into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { exposure: 2.5, iterations: 42_000_000 },
+    });
+
+    const exposureSlider = document.getElementById(
+      "flameExposureSlider",
+    ) as HTMLInputElement;
+    expect(exposureSlider.value).toBe("2.5");
+    expect(document.getElementById("flameExposureLabel")?.textContent).toBe(
+      "2.50×",
+    );
+
+    const iterationsSlider = document.getElementById(
+      "flameIterationsSlider",
+    ) as HTMLInputElement;
+    expect(iterationsSlider.value).toBe("42000000");
+    expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
+      "42M iterations",
+    );
+  });
+
+  it("reports the exposure slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameExposureSlider",
+    ) as HTMLInputElement;
+    slider.value = "1.75";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameExposureInput).toHaveBeenCalledWith(1.75);
+  });
+
+  it("reports the iterations slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameIterationsSlider",
+    ) as HTMLInputElement;
+    slider.value = "5000000";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(5_000_000);
+  });
+});
+
+describe("Ui.setFlameProgress", () => {
+  it("formats done/budget in millions with a percentage", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(12_345_000, 20_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "12.3M / 20.0M iterations (62%)",
+    );
+  });
+
+  it("never exceeds 100%, even if done overshoots the budget", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(25_000_000, 20_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toContain(
+      "(100%)",
+    );
   });
 });
