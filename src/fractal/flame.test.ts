@@ -1,12 +1,18 @@
 import {
   DEFAULT_GAMMA_THRESHOLD,
   accumulateFlame,
+  adaptiveDownsampleFlame,
   clampSupersampleToBudget,
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
 } from "./flame";
-import type { FlameHistogram, Mat4, TonemapParams } from "./flame";
+import type {
+  DensityEstimatorParams,
+  FlameHistogram,
+  Mat4,
+  TonemapParams,
+} from "./flame";
 import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
 import { transformColors } from "./color";
 import { mulberry32 } from "./rng";
@@ -876,5 +882,307 @@ describe("clampSupersampleToBudget", () => {
   it("treats a non-positive width or height as unconstrained (nothing to divide by)", () => {
     expect(clampSupersampleToBudget(0, 100, 3, 10)).toBe(3);
     expect(clampSupersampleToBudget(100, 0, 3, 10)).toBe(3);
+  });
+});
+
+describe("adaptiveDownsampleFlame", () => {
+  it("rejects a source whose dimensions aren't an exact multiple of the target", () => {
+    const oversized = createFlameHistogram(10, 8);
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    };
+    expect(() => adaptiveDownsampleFlame(oversized, 3, 8, params)).toThrow(
+      RangeError,
+    );
+    expect(() => adaptiveDownsampleFlame(oversized, 10, 3, params)).toThrow(
+      RangeError,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Oracle: a constant radius must reproduce downsampleFlame exactly
+  // -------------------------------------------------------------------------
+
+  it("reproduces downsampleFlame exactly when estimatorRadius equals estimatorMinimumRadius", () => {
+    // A non-uniform, non-trivial field (several hit counts spanning orders of
+    // magnitude) so this isn't accidentally passing on a degenerate input —
+    // every cell's computed density differs, but the radius formula must
+    // still collapse to the same constant everywhere when max == min.
+    const hist = createFlameHistogram(6, 6);
+    const hot = [
+      { bucket: 0, hits: 1 },
+      { bucket: 7, hits: 50 },
+      { bucket: 14, hits: 1000 },
+      { bucket: 21, hits: 5 },
+      { bucket: 28, hits: 200_000 },
+      { bucket: 35, hits: 12 },
+    ];
+    let maxHits = 0;
+    for (const { bucket, hits } of hot) {
+      hist.hits[bucket] = hits;
+      hist.sumRGB[bucket * 3] = hits * 0.3;
+      hist.sumRGB[bucket * 3 + 1] = hits * 0.6;
+      hist.sumRGB[bucket * 3 + 2] = hits * 0.9;
+      maxHits = Math.max(maxHits, hits);
+    }
+    hist.maxHits = maxHits;
+
+    const radius = 1; // an exact multiple of RADIUS_QUANTUM (0.5) - no quantization rounding.
+    const adaptive = adaptiveDownsampleFlame(hist, 3, 3, {
+      estimatorRadius: radius,
+      estimatorMinimumRadius: radius,
+      estimatorCurve: 0.4, // irrelevant when max == min: (1-d)**curve is always multiplied by a zero span.
+    });
+    const fixed = downsampleFlame(hist, 3, 3, radius);
+
+    expect(Array.from(adaptive.hits)).toEqual(Array.from(fixed.hits));
+    expect(Array.from(adaptive.sumRGB)).toEqual(Array.from(fixed.sumRGB));
+    expect(adaptive.maxHits).toBe(fixed.maxHits);
+  });
+
+  // -------------------------------------------------------------------------
+  // Density -> radius mapping
+  // -------------------------------------------------------------------------
+
+  // Each of these compares a cell's OWN reading (how much its raw value
+  // survives being pooled with its — empty, in every scenario below —
+  // neighbors) across two scenarios that differ only in what radius that
+  // cell's own local density resolves to: the WIDER the radius a cell
+  // gathers with, the more it dilutes its own peak by averaging in more
+  // (zero) neighbors. That is the directly observable effect of radius
+  // choice — not, e.g., how far a DIFFERENT cell's influence spreads (a
+  // neighboring empty cell's OWN radius depends on ITS OWN — always zero —
+  // local density, not on how dense a nearby source happens to be, so it
+  // is always the widest possible regardless of what is next to it).
+
+  it("dilutes a sparse cell's own reading more than a dense cell's, at the same raw hit count", () => {
+    const width = 60;
+    const height = 1;
+    const bucket = 30;
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 8,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 1,
+    };
+
+    // Scenario A: this cell IS the histogram's peak (normalizedDensity ==
+    // 1, "dense") -> narrowest radius -> minimal dilution.
+    const dense = createFlameHistogram(width, height);
+    dense.hits[bucket] = 100;
+    dense.sumRGB[bucket * 3] = 100;
+    dense.maxHits = 100;
+
+    // Scenario B: the identical raw hit count, but read against a much
+    // higher peak recorded elsewhere in the render (set directly on maxHits
+    // — no competing bucket actually holding it, so there is nothing at
+    // that position for a kernel to geometrically pick up; maxHits is a
+    // pure normalization reference, not a spatial one) -> lower
+    // normalizedDensity -> wider radius -> more dilution.
+    const sparse = createFlameHistogram(width, height);
+    sparse.hits[bucket] = 100;
+    sparse.sumRGB[bucket * 3] = 100;
+    sparse.maxHits = 1_000_000;
+
+    const denseOut = adaptiveDownsampleFlame(dense, width, height, params);
+    const sparseOut = adaptiveDownsampleFlame(sparse, width, height, params);
+
+    expect(denseOut.hits[bucket]).toBeGreaterThan(sparseOut.hits[bucket]);
+    // The dense case is close to its raw 100 (small correction only from
+    // MIN_ADAPTIVE_FILTER_SIGMA's floor — see that constant's doc); the
+    // sparse case is diluted to a small fraction of it.
+    expect(denseOut.hits[bucket]).toBeGreaterThan(90);
+    expect(sparseOut.hits[bucket]).toBeLessThan(50);
+  });
+
+  it("keeps a fully-saturated cell's own reading close to its raw value", () => {
+    // normalizedDensity is exactly log1p(maxHits)/log1p(maxHits) == 1, so
+    // (1 - 1) ** curve is exactly 0 regardless of curve and radius collapses
+    // to estimatorMinimumRadius exactly, provably (not just empirically) —
+    // but estimatorMinimumRadius: 0 does not mean the radius used to BUILD
+    // the kernel is literally 0 (see MIN_ADAPTIVE_FILTER_SIGMA's doc for
+    // why), so this checks "close to raw", not bit-exact pass-through.
+    const hist = createFlameHistogram(5, 5);
+    hist.hits[12] = 500; // center bucket, and the histogram's only hits.
+    hist.sumRGB[12 * 3] = 500;
+    hist.maxHits = 500;
+
+    const out = adaptiveDownsampleFlame(hist, 5, 5, {
+      estimatorRadius: 10,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    });
+
+    expect(out.hits[12]).toBeGreaterThan(475); // within 5% of the raw 500.
+    expect(out.hits[12]).toBeLessThanOrEqual(500);
+  });
+
+  it("shapes the falloff with estimatorCurve: a lower curve dilutes a mid-density cell more than a higher curve does", () => {
+    // (1 - 0.5) ** curve is LARGER for curve < 1 than curve > 1 (0.5 ** 0.3
+    // ~= 0.81 vs 0.5 ** 3 ~= 0.125), so a mid-density cell's OWN radius (and
+    // therefore its own dilution) should be visibly wider at the low curve.
+    const width = 30;
+    const height = 4;
+    const hist = createFlameHistogram(width, height);
+    const midBucket = 2 * width + 5;
+    // maxHits chosen so this single cell's log-density sits near the curve's
+    // midpoint: log1p(hits) / log1p(maxHits) ~= 0.5.
+    const maxHits = 1_000_000;
+    const midHits = Math.round(Math.expm1(0.5 * Math.log1p(maxHits)));
+    hist.hits[midBucket] = midHits;
+    hist.sumRGB[midBucket * 3] = midHits;
+    hist.maxHits = maxHits;
+
+    const wideAtMid = adaptiveDownsampleFlame(hist, width, height, {
+      estimatorRadius: 8,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.3,
+    });
+    const narrowAtMid = adaptiveDownsampleFlame(hist, width, height, {
+      estimatorRadius: 8,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 3,
+    });
+
+    // Higher curve -> narrower radius at this same mid-density -> less
+    // diluted -> a reading closer to the raw midHits value.
+    expect(narrowAtMid.hits[midBucket]).toBeGreaterThan(
+      wideAtMid.hits[midBucket],
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Neighborhood density estimate (not a single noisy cell)
+  // -------------------------------------------------------------------------
+
+  it("estimates density from the whole home block, not just the single output-aligned source cell", () => {
+    // supersample = 2 (a 2x2 home block per output cell). The block's OWN
+    // "home" source cell (top-left of the block) is empty, but its three
+    // siblings in the same block are as hot as the histogram gets — a
+    // density estimate that only looked at the single home cell would see
+    // zero density here (widest possible blur, heavy dilution); one that
+    // sums the whole block sees it as fully dense (sharpest possible blur,
+    // minimal dilution) instead. The hot block sits well away from every
+    // edge/corner (comfortably beyond any radius this test uses) so the
+    // comparison point is never itself in reach of the hot block's kernel.
+    const outSize = 20;
+    const srcSize = outSize * 2;
+    const hist = createFlameHistogram(srcSize, srcSize);
+    // Output cell (10, 10)'s home block is source rows/cols [20, 21].
+    const homeBase = 20;
+    const siblingBuckets = [
+      homeBase * srcSize + (homeBase + 1), // top-right of the block.
+      (homeBase + 1) * srcSize + homeBase, // bottom-left.
+      (homeBase + 1) * srcSize + (homeBase + 1), // bottom-right.
+    ];
+    for (const b of siblingBuckets) {
+      hist.hits[b] = 1_000_000;
+      hist.sumRGB[b * 3] = 1_000_000;
+    }
+    hist.maxHits = 1_000_000;
+
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 2, // small on purpose: keeps the far corner (below)
+      estimatorMinimumRadius: 0, // genuinely out of reach at any density,
+      estimatorCurve: 0.4, // isolating the density estimate from raw distance.
+    };
+    const out = adaptiveDownsampleFlame(hist, outSize, outSize, params);
+
+    const centerBucket = 10 * outSize + 10;
+    const farCorner = 0; // output (0, 0) — 20+ output cells from the block.
+    // A block-aware estimate reads this block's SUM (3,000,000, three cells
+    // at the global max) as saturated and collapses to a narrow radius, so
+    // most of the block's own mass survives pooling — well above what
+    // spreading it across the widest (estimatorRadius) kernel could leave
+    // behind (the "dilutes a sparse cell" test above shows a lone 100-hit
+    // cell loses over half its own reading under the widest radius; here
+    // the home block holds 3,000,000 hits, so a single-cell estimate that
+    // missed the hot siblings and fell back to the widest radius would
+    // scatter far more of it away than survives below). A truly distant,
+    // all-empty corner reads exactly zero regardless.
+    expect(out.hits[centerBucket]).toBeGreaterThan(500_000);
+    expect(out.hits[farCorner]).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Weighted-sum pooling (same discipline as downsampleFlame)
+  // -------------------------------------------------------------------------
+
+  it("pools hits and color as weighted sums, not pre-averaged per source cell", () => {
+    // Same setup/reasoning as downsampleFlame's own version of this test:
+    // pooling raw (weight * value) sums must weight a dense-but-dim cell
+    // more than a sparse-but-bright one of the same average color, which
+    // pre-averaging each source cell before pooling would get wrong.
+    const hist = createFlameHistogram(2, 2);
+    hist.hits[0] = 1;
+    hist.sumRGB[0] = 1;
+    hist.hits[1] = 99;
+    hist.sumRGB[1 * 3] = 99;
+    hist.maxHits = 99;
+
+    const out = adaptiveDownsampleFlame(hist, 1, 1, {
+      estimatorRadius: 2,
+      estimatorMinimumRadius: 0.5,
+      estimatorCurve: 0.4,
+    });
+    expect(out.sumRGB[0] / out.hits[0]).toBeCloseTo(1, 6);
+    expect(out.hits[0]).toBeGreaterThan(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Edge handling
+  // -------------------------------------------------------------------------
+
+  it("does not darken a hit near the border for lack of off-histogram neighbors", () => {
+    // A uniform field downsamples to an equally uniform result everywhere,
+    // including at the edges, exactly like downsampleFlame's own version of
+    // this test — the density estimate is uniform too, so every cell picks
+    // the same radius, isolating the edge-renormalization behavior.
+    const hist = createFlameHistogram(6, 6);
+    for (let i = 0; i < hist.hits.length; i++) {
+      hist.hits[i] = 40;
+      hist.sumRGB[i * 3] = 40;
+    }
+    hist.maxHits = 40;
+
+    const out = adaptiveDownsampleFlame(hist, 3, 3, {
+      estimatorRadius: 3,
+      estimatorMinimumRadius: 1,
+      estimatorCurve: 0.4,
+    });
+    const corner = out.hits[0];
+    const center = out.hits[1 * 3 + 1];
+    expect(corner).toBeCloseTo(center, 6);
+  });
+
+  // -------------------------------------------------------------------------
+  // estimatorMinimumRadius defensively clamped to estimatorRadius
+  // -------------------------------------------------------------------------
+
+  it("clamps an estimatorMinimumRadius greater than estimatorRadius rather than inverting the curve", () => {
+    const hist = createFlameHistogram(4, 4);
+    hist.hits[5] = 500;
+    hist.sumRGB[5 * 3] = 500;
+    hist.maxHits = 500;
+
+    // estimatorMinimumRadius (10) > estimatorRadius (2): every density must
+    // still resolve to the SAME effective radius (2), matching what passing
+    // estimatorMinimumRadius: estimatorRadius: 2 directly would produce -
+    // not a negative span or an inverted (denser = blurrier) result.
+    const inverted = adaptiveDownsampleFlame(hist, 4, 4, {
+      estimatorRadius: 2,
+      estimatorMinimumRadius: 10,
+      estimatorCurve: 0.4,
+    });
+    const clampedEquivalent = adaptiveDownsampleFlame(hist, 4, 4, {
+      estimatorRadius: 2,
+      estimatorMinimumRadius: 2,
+      estimatorCurve: 0.4,
+    });
+
+    expect(Array.from(inverted.hits)).toEqual(
+      Array.from(clampedEquivalent.hits),
+    );
   });
 });

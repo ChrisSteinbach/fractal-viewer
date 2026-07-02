@@ -481,11 +481,13 @@ const MIN_FILTER_SIGMA = 1e-3;
  * sum), so a bucket near the border isn't darkened for lack of neighbors.
  *
  * `filterRadius` is FIXED for every output cell — a plain reconstruction /
- * antialiasing filter, not density-adaptive. fr-17t generalizes this to a
- * per-cell radius driven by local density (flam3's "density estimation");
- * when it lands it will very likely replace this function's fixed radius
- * with a computed one rather than sit beside it, since the two differ only
- * in how the radius is chosen.
+ * antialiasing filter, not density-adaptive. {@link adaptiveDownsampleFlame}
+ * (fr-17t) generalizes this to a per-cell radius driven by local density
+ * (flam3's "density estimation") — the two functions COEXIST rather than one
+ * replacing the other: this one stays cheap for progressive-preview frames
+ * (no per-cell radius/kernel-cache work), while the adaptive one is reserved
+ * for a finished/paused render, where its O(width * height * radius^2) cost
+ * only has to be paid once. See that function's doc for the full reasoning.
  *
  * `oversized`'s dimensions must be an exact positive-integer multiple of
  * `outWidth` / `outHeight` in each axis (the app always accumulates at
@@ -601,5 +603,279 @@ export function downsampleFlame(
   // that must never be fed back into accumulateFlame, so its own orbit is
   // meaningless; leave it at createFlameHistogram's zero default rather than
   // copying a value nothing should ever read.
+  return out;
+}
+
+/**
+ * Controls for {@link adaptiveDownsampleFlame}'s per-cell blur radius —
+ * flam3's "density estimation" parameters.
+ */
+export interface DensityEstimatorParams {
+  /** Blur radius (output pixels) for a cell with ~zero local density — the
+   * widest the kernel ever gets, filling gaps in sparse/noisy regions. */
+  estimatorRadius: number;
+  /** Blur radius (output pixels) for a cell at full local density; 0 leaves
+   * fully-sampled regions pin-sharp. Clamped to `estimatorRadius` if given a
+   * larger value, so "minimum" can never exceed "maximum". */
+  estimatorMinimumRadius: number;
+  /** Shapes how quickly the radius narrows as density rises from 0 to 1 (see
+   * {@link adaptiveDownsampleFlame}'s doc for the exact curve). Below 1,
+   * radius stays close to `estimatorRadius` until density is nearly maxed
+   * out, then narrows sharply; above 1, it narrows quickly even at modest
+   * density and stays close to `estimatorMinimumRadius` the rest of the way.
+   * flam3-ish values sit around 0.3-0.6. */
+  estimatorCurve: number;
+}
+
+/** Steps (in output pixels) between distinct precomputed kernel radii in
+ * {@link adaptiveDownsampleFlame} — see its doc for why radii are quantized
+ * into a small cache instead of every cell building its own kernel. */
+const RADIUS_QUANTUM = 0.5;
+
+/**
+ * Floor for {@link adaptiveDownsampleFlame}'s kernel sigma — DELIBERATELY
+ * much larger than `downsampleFlame`'s `MIN_FILTER_SIGMA`, and not shared
+ * with it, for a real reason, not just belt-and-suspenders:
+ * `estimatorMinimumRadius: 0` ("pin-sharp at full density") is an expected,
+ * commonly-used setting here, unlike `downsampleFlame`'s `filterRadius`,
+ * which is always a fixed non-zero constant in practice (0 only ever occurs
+ * in that function's own pass-through unit test).
+ *
+ * A radius that rounds to (quantizes to) 0 combined with an EVEN supersample
+ * factor (phase = 0.5, exactly between two source cells — see the phase
+ * comment below) is exactly the failure mode this guards: at
+ * `downsampleFlame`'s tiny `1e-3` floor, the Gaussian's weight at the
+ * nearest actual grid offset (0.5 cells away, since nothing sits exactly on
+ * the phase-shifted peak) underflows to precisely 0.0 in double precision —
+ * `weightSum` for that output cell is then also exactly 0, and the
+ * `weightSum > 0` guard silently skips writing it, leaving a BLACK HOLE at
+ * exactly the densest, most important part of the image (density 1 is what
+ * maps to `estimatorMinimumRadius` in the first place). 0.3 keeps the
+ * weight at a half-cell offset comfortably away from underflow (`exp(-0.25 /
+ * (2 * (0.3 * 2) ** 2))` ~= 0.7, not ~0) while still being narrow enough
+ * that "pin-sharp" reads as sharp — this only changes anything for a radius
+ * that would otherwise have quantized below 0.3; any real, non-degenerate
+ * radius is unaffected (`Math.max(radius, 0.3)` is a no-op once radius
+ * clears that bar).
+ */
+const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
+
+/**
+ * Per-cell-adaptive generalization of {@link downsampleFlame}: instead of one
+ * FIXED radius for every output cell, each cell's radius is driven by its
+ * OWN local sample density — sparse, noisy regions blur wide (filling gaps,
+ * smoothing wispy structure into something legible); dense, well-sampled
+ * regions stay pin-sharp. This is flam3's "density estimation," the classic
+ * fractal-flame algorithm's signature denoising step, and the reason a
+ * converging render visibly sharpens as it accumulates instead of just
+ * getting less grainy in place.
+ *
+ * Same slot in the pipeline as `downsampleFlame` (the linear accumulation
+ * domain, before {@link tonemapFlame} — see that function's doc for why),
+ * the same weighted-SUM pooling / edge-renormalization discipline, and the
+ * same phase-correct kernel centering. The two functions do not layer (this
+ * does not run `downsampleFlame` first) — for whichever frame calls it, this
+ * replaces it outright, since both do the exact same "combine an oversampled
+ * neighborhood into one output cell" job and differ only in how each cell's
+ * radius is chosen; see `downsampleFlame`'s own doc for why they coexist as
+ * two functions rather than one merging both jobs.
+ *
+ * ALGORITHM, per output cell:
+ * 1. Estimate local density from the cell's own "home block" — the same
+ *    `scaleX x scaleY` source-cell footprint `downsampleFlame` treats as one
+ *    output cell's 1:1 region — not a single source cell, which on its own
+ *    is far too noisy (Monte-Carlo shot noise) to drive a stable radius
+ *    choice; summing a small neighborhood first is what flam3 does too.
+ * 2. Normalize that count against the histogram's peak (`log1p`, the same
+ *    density concept {@link tonemapFlame} already uses, so "well-sampled"
+ *    here lines up with "bright" there) and map it to a radius: `1` maps to
+ *    `estimatorMinimumRadius`, `0` to `estimatorRadius`, interpolated by
+ *    `estimatorCurve` — `estimatorMinimumRadius + (estimatorRadius -
+ *    estimatorMinimumRadius) * (1 - density) ** estimatorCurve`.
+ * 3. Gather a Gaussian kernel of THAT radius. Building one with `Math.exp`
+ *    fresh for every one of `width * height` cells would dominate the cost,
+ *    so radii are quantized to the nearest {@link RADIUS_QUANTUM} output
+ *    pixels and cached — a real render needs at most a few dozen distinct
+ *    radius classes regardless of image size, turning "exp per cell" into
+ *    "array lookup per cell, exp per class".
+ *
+ * Deliberately NOT separable (two 1-D passes): a spatially-varying-width
+ * Gaussian isn't exactly separable in the first place (a true two-pass
+ * filter assumes the same width at every intermediate position), and the
+ * usual "approximate it anyway, same per-cell radius both passes" shortcut
+ * trades accuracy for a speed-up this function doesn't need — unlike
+ * `downsampleFlame`, this runs once per finished/paused render, not on every
+ * progressive frame, so the exact non-separable 2-D gather (reusing
+ * `downsampleFlame`'s own proven loop shape) is worth its extra cost here.
+ *
+ * COST: still O(width * height * radius^2) in the worst case (a maximally
+ * sparse image, every cell requesting the widest kernel) — expensive enough
+ * that it belongs on a finished/paused render, not every progressive frame;
+ * see the worker's `runChunk` for how the two functions divide that work.
+ *
+ * `oversized`'s dimensions must be an exact positive-integer multiple of
+ * `outWidth` / `outHeight`, exactly like `downsampleFlame`. Throws
+ * `RangeError` otherwise.
+ */
+export function adaptiveDownsampleFlame(
+  oversized: FlameHistogram,
+  outWidth: number,
+  outHeight: number,
+  params: DensityEstimatorParams,
+): FlameHistogram {
+  const {
+    width: srcWidth,
+    height: srcHeight,
+    hits: srcHits,
+    sumRGB: srcRGB,
+    maxHits: srcMaxHits,
+  } = oversized;
+  if (
+    outWidth <= 0 ||
+    outHeight <= 0 ||
+    srcWidth % outWidth !== 0 ||
+    srcHeight % outHeight !== 0
+  ) {
+    throw new RangeError(
+      `adaptiveDownsampleFlame: source ${srcWidth}x${srcHeight} is not a positive-integer multiple of target ${outWidth}x${outHeight}`,
+    );
+  }
+  const scaleX = srcWidth / outWidth;
+  const scaleY = srcHeight / outHeight;
+  const out = createFlameHistogram(outWidth, outHeight);
+  const { hits: dstHits, sumRGB: dstRGB } = out;
+
+  const estimatorRadius = Math.max(0, params.estimatorRadius);
+  // Never let "minimum" exceed "maximum", regardless of how the caller's
+  // sliders happen to be set relative to each other.
+  const estimatorMinimumRadius = Math.min(
+    estimatorRadius,
+    Math.max(0, params.estimatorMinimumRadius),
+  );
+  const estimatorCurve = params.estimatorCurve;
+  // log1p(0) is 0, so a histogram with no hits anywhere (srcMaxHits <= 0)
+  // falls out naturally: every cell's normalizedDensity below is 0 / 0 ->
+  // guarded to 0 -> every cell gets the widest (estimatorRadius) kernel,
+  // same as downsampleFlame would with nothing to distinguish cells by.
+  const logMax = srcMaxHits > 0 ? Math.log1p(srcMaxHits) : 0;
+
+  // The same constant per-axis phase downsampleFlame relies on (see its
+  // doc) — every output cell's footprint center sits at this fixed
+  // fractional offset from its nearest source-cell grid line, regardless of
+  // which cell, so it can be baked into every cached kernel below once.
+  const phaseX = 0.5 * (scaleX - 1);
+  const phaseY = 0.5 * (scaleY - 1);
+
+  const kernelCache = new Map<
+    number,
+    {
+      kernelX: Float64Array;
+      kernelY: Float64Array;
+      radiusX: number;
+      radiusY: number;
+    }
+  >();
+  function kernelFor(radius: number): {
+    kernelX: Float64Array;
+    kernelY: Float64Array;
+    radiusX: number;
+    radiusY: number;
+  } {
+    const quantized = Math.round(radius / RADIUS_QUANTUM) * RADIUS_QUANTUM;
+    const cached = kernelCache.get(quantized);
+    if (cached) return cached;
+    const sigmaX = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleX;
+    const sigmaY = Math.max(quantized, MIN_ADAPTIVE_FILTER_SIGMA) * scaleY;
+    const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
+    const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
+    const kernelX = new Float64Array(2 * radiusX + 1);
+    for (let k = -radiusX; k <= radiusX; k++) {
+      const d = k - phaseX;
+      kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
+    }
+    const kernelY = new Float64Array(2 * radiusY + 1);
+    for (let k = -radiusY; k <= radiusY; k++) {
+      const d = k - phaseY;
+      kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
+    }
+    const built = { kernelX, kernelY, radiusX, radiusY };
+    kernelCache.set(quantized, built);
+    return built;
+  }
+
+  let maxHits = 0;
+  for (let oy = 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY; // exact integer: the output cell's home row.
+    for (let ox = 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX; // exact integer: the output cell's home column.
+
+      // Step 1: local density from this cell's home block, not a single
+      // (noisy) source cell.
+      let localCount = 0;
+      for (let j = 0; j < scaleY; j++) {
+        const rowBase = (baseY + j) * srcWidth;
+        for (let i = 0; i < scaleX; i++) {
+          localCount += srcHits[rowBase + baseX + i];
+        }
+      }
+      // A home block's summed count can exceed the single-cell srcMaxHits,
+      // so this is clamped to 1 rather than trusted to land there naturally.
+      const normalizedDensity =
+        logMax > 0 ? Math.min(1, Math.log1p(localCount) / logMax) : 0;
+
+      // Step 2: map density to a radius.
+      const radius =
+        estimatorMinimumRadius +
+        (estimatorRadius - estimatorMinimumRadius) *
+          (1 - normalizedDensity) ** estimatorCurve;
+
+      // Step 3: gather the (cached-by-quantized-radius) kernel.
+      const { kernelX, kernelY, radiusX, radiusY } = kernelFor(radius);
+
+      let weightSum = 0;
+      let hitSum = 0;
+      let rSum = 0;
+      let gSum = 0;
+      let bSum = 0;
+      for (let j = -radiusY; j <= radiusY; j++) {
+        const sy = baseY + j;
+        if (sy < 0 || sy >= srcHeight) continue;
+        const wy = kernelY[j + radiusY];
+        const rowBase = sy * srcWidth;
+        for (let i = -radiusX; i <= radiusX; i++) {
+          const sx = baseX + i;
+          if (sx < 0 || sx >= srcWidth) continue;
+          const weight = wy * kernelX[i + radiusX];
+          const bucket = rowBase + sx;
+          weightSum += weight;
+          hitSum += weight * srcHits[bucket];
+          const so = bucket * 3;
+          rSum += weight * srcRGB[so];
+          gSum += weight * srcRGB[so + 1];
+          bSum += weight * srcRGB[so + 2];
+        }
+      }
+
+      // weightSum is always > 0 in practice (the center tap, j = i = 0, is
+      // always in-bounds since baseX/baseY are themselves in-bounds source
+      // coordinates) — guarded anyway, matching downsampleFlame and this
+      // codebase's general habit of guarding "essentially impossible" cases.
+      if (weightSum > 0) {
+        const norm = 1 / weightSum;
+        const hVal = hitSum * norm;
+        const dstBucket = oy * outWidth + ox;
+        dstHits[dstBucket] = hVal;
+        const dOff = dstBucket * 3;
+        dstRGB[dOff] = rSum * norm;
+        dstRGB[dOff + 1] = gSum * norm;
+        dstRGB[dOff + 2] = bSum * norm;
+        if (hVal > maxHits) maxHits = hVal;
+      }
+    }
+  }
+
+  out.maxHits = maxHits;
+  // Same non-answer as downsampleFlame's — see its doc — this is a
+  // display-only derivative, never fed back into accumulateFlame.
   return out;
 }
