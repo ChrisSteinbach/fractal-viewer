@@ -2,6 +2,7 @@ import { appendTransform, defaultTransforms } from "../fractal/presets";
 import type { FlamePaletteId } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
 import type { ColorMode, Transform } from "../fractal/types";
+import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 
 /**
  * How the point cloud conveys depth. `depthFade` is the original look (fog to
@@ -79,6 +80,36 @@ export interface FlameParams {
   paletteId: FlamePaletteId;
 }
 
+/**
+ * Settings for the solid render (fr-v4f; `src/fractal/voxel.ts` + the GPU
+ * raymarcher in `scene.ts`). Persists as a render-settings block like
+ * {@link FlameParams}, independent of whether a render is active.
+ */
+export interface SolidParams {
+  /**
+   * Voxels per axis of the density grid. Memory and detail are O(n^3), so
+   * this is stepped in multiples of `VOXEL_RESOLUTION_STEP`; changing it
+   * restarts accumulation (the grid's dimensions change, nothing to keep).
+   */
+  resolution: number;
+  /** Total chaos-game iterations to accumulate before the grid is "done". */
+  iterations: number;
+  /**
+   * Isosurface level on the log-normalized density in [0, 1]: lower carves
+   * the surface out of fainter density (bulkier, noisier), higher keeps only
+   * the hottest structure (thinner, crisper). A GPU uniform — live-reactive
+   * at full frame rate, never re-accumulates.
+   */
+  threshold: number;
+  /** Light's horizontal angle in degrees. Live-reactive like `threshold`. */
+  lightAzimuth: number;
+  /** Light's height above the horizon in degrees. Live-reactive. */
+  lightElevation: number;
+  /** Fill-light floor in [0, 1]: how bright fully shadowed/occluded surfaces
+   * stay. Live-reactive. */
+  ambient: number;
+}
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
@@ -111,6 +142,14 @@ export interface AppState {
    * explorer (see `persist.ts`'s `SceneSnapshot`, which omits this field).
    */
   flameActive: boolean;
+  /** Solid render settings; persists independent of {@link solidActive}. */
+  solid: SolidParams;
+  /**
+   * Whether the solid (lit voxel) render is showing in place of the live
+   * point cloud. Session-only and never persisted, exactly like
+   * {@link flameActive} — the app always boots into the explorer.
+   */
+  solidActive: boolean;
 }
 
 /** An IFS needs at least one map. */
@@ -181,6 +220,38 @@ export const MAX_ESTIMATOR_CURVE = 3;
  * exactly as before until the user picks a gradient palette.
  */
 export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "legacy";
+/**
+ * Solid render (fr-v4f) defaults and ranges. 192^3 is the detail/memory
+ * sweet spot (a 256^3 grid is ~2.4x the memory and allocation risk for a
+ * modest sharpness gain); the worker's own byte budget may still clamp the
+ * top of this range on constrained devices (see `voxel-worker-core.ts`).
+ */
+export const DEFAULT_SOLID_RESOLUTION = 192;
+export const MIN_SOLID_RESOLUTION = 64;
+export const MAX_SOLID_RESOLUTION = 256;
+/** Same iteration economics as the flame: the grid has a comparable bucket
+ * count to a 2D histogram, so the same default converges similarly fast. */
+export const DEFAULT_SOLID_ITERATIONS = 20_000_000;
+export const MIN_SOLID_ITERATIONS = 1_000_000;
+export const MAX_SOLID_ITERATIONS = 100_000_000;
+/** Low enough that mid-density structure survives, high enough that a lone
+ * stray hit doesn't read as a solid floating speck. */
+export const DEFAULT_SOLID_THRESHOLD = 0.3;
+export const MIN_SOLID_THRESHOLD = 0.02;
+export const MAX_SOLID_THRESHOLD = 0.95;
+export const DEFAULT_SOLID_LIGHT_AZIMUTH = 135;
+export const MIN_SOLID_LIGHT_AZIMUTH = -180;
+export const MAX_SOLID_LIGHT_AZIMUTH = 180;
+/** Elevation floors at 5° (not 0°): a perfectly horizontal light makes the
+ * shadow ray graze the whole volume and everything reads as shadowed. */
+export const DEFAULT_SOLID_LIGHT_ELEVATION = 50;
+export const MIN_SOLID_LIGHT_ELEVATION = 5;
+export const MAX_SOLID_LIGHT_ELEVATION = 85;
+/** Capped at 0.8, not 1: full ambient would erase the diffuse term (and with
+ * it every cue this mode exists to provide). */
+export const DEFAULT_SOLID_AMBIENT = 0.25;
+export const MIN_SOLID_AMBIENT = 0;
+export const MAX_SOLID_AMBIENT = 0.8;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -205,6 +276,15 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_FLAME_PALETTE,
     },
     flameActive: false,
+    solid: {
+      resolution: DEFAULT_SOLID_RESOLUTION,
+      iterations: DEFAULT_SOLID_ITERATIONS,
+      threshold: DEFAULT_SOLID_THRESHOLD,
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+    },
+    solidActive: false,
   };
 }
 
@@ -463,4 +543,128 @@ export function setFlameActive(
   flameActive: boolean,
 ): AppState {
   return { ...state, flameActive };
+}
+
+/**
+ * Set the solid render's grid resolution, snapped to the voxel step and
+ * clamped to a sane range. Like {@link setFlameSupersample} this is NOT
+ * live-reactive: it changes the grid's dimensions, so `main.ts` restarts
+ * accumulation when it actually changes.
+ */
+export function setSolidResolution(
+  state: AppState,
+  resolution: number,
+): AppState {
+  const snapped =
+    Math.round(resolution / VOXEL_RESOLUTION_STEP) * VOXEL_RESOLUTION_STEP;
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      resolution: Math.max(
+        MIN_SOLID_RESOLUTION,
+        Math.min(MAX_SOLID_RESOLUTION, snapped),
+      ),
+    },
+  };
+}
+
+/**
+ * Set the solid render's iteration budget, clamped to a sane range. Live-
+ * reactive exactly like {@link setFlameIterations}: raising it mid-render
+ * lets accumulation continue past what had looked "done".
+ */
+export function setSolidIterations(
+  state: AppState,
+  iterations: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      iterations: Math.round(
+        Math.max(
+          MIN_SOLID_ITERATIONS,
+          Math.min(MAX_SOLID_ITERATIONS, iterations),
+        ),
+      ),
+    },
+  };
+}
+
+/** Set the solid render's isosurface level, clamped to a sane range. A GPU
+ * uniform — live-reactive at full frame rate, never re-accumulates. */
+export function setSolidThreshold(
+  state: AppState,
+  threshold: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      threshold: Math.max(
+        MIN_SOLID_THRESHOLD,
+        Math.min(MAX_SOLID_THRESHOLD, threshold),
+      ),
+    },
+  };
+}
+
+/** Set the light's horizontal angle (degrees), clamped. Live-reactive like
+ * {@link setSolidThreshold}. */
+export function setSolidLightAzimuth(
+  state: AppState,
+  lightAzimuth: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      lightAzimuth: Math.max(
+        MIN_SOLID_LIGHT_AZIMUTH,
+        Math.min(MAX_SOLID_LIGHT_AZIMUTH, lightAzimuth),
+      ),
+    },
+  };
+}
+
+/** Set the light's height above the horizon (degrees), clamped. Live-reactive
+ * like {@link setSolidThreshold}. */
+export function setSolidLightElevation(
+  state: AppState,
+  lightElevation: number,
+): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      lightElevation: Math.max(
+        MIN_SOLID_LIGHT_ELEVATION,
+        Math.min(MAX_SOLID_LIGHT_ELEVATION, lightElevation),
+      ),
+    },
+  };
+}
+
+/** Set the solid render's fill-light floor, clamped. Live-reactive like
+ * {@link setSolidThreshold}. */
+export function setSolidAmbient(state: AppState, ambient: number): AppState {
+  return {
+    ...state,
+    solid: {
+      ...state.solid,
+      ambient: Math.max(
+        MIN_SOLID_AMBIENT,
+        Math.min(MAX_SOLID_AMBIENT, ambient),
+      ),
+    },
+  };
+}
+
+/** Enter or exit the solid render (session-only, like {@link setFlameActive}). */
+export function setSolidActive(
+  state: AppState,
+  solidActive: boolean,
+): AppState {
+  return { ...state, solidActive };
 }

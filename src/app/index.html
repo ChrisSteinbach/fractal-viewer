@@ -147,8 +147,10 @@
       </button>
       <div id="flameControls" class="hidden">
         <p class="flame-hint">
-          Renders a converging 2D flame image through the frozen camera. The
-          live view is paused until you go back.
+          The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D
+          image that converges through the frozen camera. For crisp lit
+          surfaces, use Solid Render instead. The live view is paused until you
+          go back.
         </p>
         <label class="select-label">
           Exposure: <span id="flameExposureLabel">1.00×</span>
@@ -256,6 +258,89 @@
         </label>
         <div id="flameProgress" class="flame-progress">0%</div>
         <button class="btn btn-ghost" id="exitRenderBtn" type="button">
+          ← Back to Explorer
+        </button>
+      </div>
+
+      <h3>Solid Render</h3>
+      <button class="btn btn-blue" id="solidBtn" type="button">
+        ◆ Render Solid View
+      </button>
+      <div id="solidControls" class="hidden">
+        <p class="flame-hint">
+          Builds a lit, shadowed solid from the attractor&#8217;s density,
+          colored by the explorer&#8217;s Color Mode. Keep orbiting while it
+          converges — the light and surface react live.
+        </p>
+        <label class="select-label">
+          Surface level: <span id="solidThresholdLabel">0.30</span>
+          <input
+            type="range"
+            id="solidThresholdSlider"
+            min="0.02"
+            max="0.95"
+            step="0.01"
+            value="0.3"
+          />
+        </label>
+        <label class="select-label">
+          Light angle: <span id="solidLightAzimuthLabel">135°</span>
+          <input
+            type="range"
+            id="solidLightAzimuthSlider"
+            min="-180"
+            max="180"
+            step="5"
+            value="135"
+          />
+        </label>
+        <label class="select-label">
+          Light height: <span id="solidLightElevationLabel">50°</span>
+          <input
+            type="range"
+            id="solidLightElevationSlider"
+            min="5"
+            max="85"
+            step="5"
+            value="50"
+          />
+        </label>
+        <label class="select-label">
+          Ambient: <span id="solidAmbientLabel">25%</span>
+          <input
+            type="range"
+            id="solidAmbientSlider"
+            min="0"
+            max="0.8"
+            step="0.05"
+            value="0.25"
+          />
+        </label>
+        <label class="select-label">
+          Quality: <span id="solidIterationsLabel">20M iterations</span>
+          <input
+            type="range"
+            id="solidIterationsSlider"
+            min="1000000"
+            max="100000000"
+            step="1000000"
+            value="20000000"
+          />
+        </label>
+        <label class="select-label">
+          Detail: <span id="solidResolutionLabel">192³ (restarts render)</span>
+          <input
+            type="range"
+            id="solidResolutionSlider"
+            min="64"
+            max="256"
+            step="32"
+            value="192"
+          />
+        </label>
+        <p id="solidResolutionNote" class="flame-note hidden"></p>
+        <div id="solidProgress" class="flame-progress">0%</div>
+        <button class="btn btn-ghost" id="exitSolidBtn" type="button">
           ← Back to Explorer
         </button>
       </div>

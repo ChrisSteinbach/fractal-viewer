@@ -2,6 +2,7 @@
 import { decodeScene, encodeScene, loadScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import {
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -12,16 +13,27 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_ITERATIONS,
+  DEFAULT_SOLID_LIGHT_AZIMUTH,
+  DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_RESOLUTION,
+  DEFAULT_SOLID_THRESHOLD,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
+  MAX_SOLID_RESOLUTION,
+  MAX_SOLID_THRESHOLD,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
+  MIN_SOLID_AMBIENT,
+  MIN_SOLID_ITERATIONS,
+  MIN_SOLID_RESOLUTION,
 } from "./state";
 
 // ---------------------------------------------------------------------------
@@ -60,6 +72,14 @@ function baseSnapshot(): SceneSnapshot {
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
     },
+    solid: {
+      resolution: DEFAULT_SOLID_RESOLUTION,
+      iterations: DEFAULT_SOLID_ITERATIONS,
+      threshold: DEFAULT_SOLID_THRESHOLD,
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+    },
   };
 }
 
@@ -92,6 +112,14 @@ describe("encodeScene / decodeScene round-trip", () => {
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
+    });
+    expect(result!.solid).toEqual({
+      resolution: DEFAULT_SOLID_RESOLUTION,
+      iterations: DEFAULT_SOLID_ITERATIONS,
+      threshold: DEFAULT_SOLID_THRESHOLD,
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
     });
   });
 
@@ -885,6 +913,131 @@ describe("decodeScene flame params", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.flame.paletteId).toBe("legacy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Solid render params (fr-v4f — same "absent defaults quietly, malformed
+// rejects" contract as the flame block above)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene solid params", () => {
+  it("round-trips a fully customized solid block", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: {
+        resolution: 224,
+        iterations: 42_000_000,
+        threshold: 0.6,
+        lightAzimuth: -45,
+        lightElevation: 70,
+        ambient: 0.5,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.solid).toEqual({
+      resolution: 224,
+      iterations: 42_000_000,
+      threshold: 0.6,
+      lightAzimuth: -45,
+      lightElevation: 70,
+      ambient: 0.5,
+    });
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `solid` key at all — exactly what every
+    // link looked like before fr-v4f.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.solid).toEqual({
+      resolution: DEFAULT_SOLID_RESOLUTION,
+      iterations: DEFAULT_SOLID_ITERATIONS,
+      threshold: DEFAULT_SOLID_THRESHOLD,
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+    });
+  });
+
+  it("returns null when solid is present but not an object", () => {
+    const raw = { ...baseSnapshot(), solid: "bright" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when threshold is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, threshold: "x" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when iterations is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, iterations: "lots" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps an out-of-range threshold and ambient into their allowed bands", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, threshold: 999, ambient: -5 },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.solid.threshold).toBe(MAX_SOLID_THRESHOLD);
+    expect(result!.solid.ambient).toBe(MIN_SOLID_AMBIENT);
+  });
+
+  it("clamps an out-of-range iteration budget into the allowed band", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, iterations: 1 },
+    };
+    expect(decodeScene(encodeScene(s))!.solid.iterations).toBe(
+      MIN_SOLID_ITERATIONS,
+    );
+  });
+
+  it("snaps an off-step resolution to the nearest multiple of the voxel step", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, resolution: 100 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.solid.resolution % VOXEL_RESOLUTION_STEP).toBe(0);
+    expect(result!.solid.resolution).toBe(96);
+  });
+
+  it("clamps resolution above the maximum down to the max", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, resolution: 9999 },
+    };
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid.resolution,
+    ).toBe(MAX_SOLID_RESOLUTION);
+  });
+
+  it("clamps resolution below the minimum up to the min", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, resolution: 1 },
+    };
+    expect(
+      decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid.resolution,
+    ).toBe(MIN_SOLID_RESOLUTION);
   });
 });
 

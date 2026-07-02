@@ -1,4 +1,9 @@
-import { buildColors, hslToRgb, transformColors } from "./color";
+import {
+  buildColorModeLUT,
+  buildColors,
+  hslToRgb,
+  transformColors,
+} from "./color";
 import { runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import { defaultTransforms } from "./presets";
@@ -96,3 +101,64 @@ function zeroRangeBounds(): Bounds {
     maxR: Math.sqrt(3),
   };
 }
+
+describe("buildColorModeLUT", () => {
+  // The drift guard for the solid render (fr-c1d): the LUT and buildColors
+  // share one ramp definition, and this pins that fact — points placed at
+  // exact LUT sample coordinates must get the same colors from both paths.
+  const unitBounds: Bounds = {
+    minX: 0,
+    maxX: 1,
+    minY: 0,
+    maxY: 1,
+    minZ: 0,
+    maxZ: 1,
+    minR: 0,
+    maxR: 1,
+  };
+  const samples = [0, 51, 128, 204, 255];
+
+  it("matches buildColors' height ramp at LUT sample points", () => {
+    const positions = new Float32Array(samples.length * 3);
+    samples.forEach((i, n) => {
+      positions[n * 3 + 1] = i / 255;
+    });
+    const cloud: ChaosGameResult = {
+      positions,
+      transformIndices: new Uint8Array(samples.length),
+      count: samples.length,
+      bounds: unitBounds,
+    };
+
+    const colors = buildColors(cloud, defaultTransforms(), "height");
+    const lut = buildColorModeLUT("height");
+    samples.forEach((i, n) => {
+      expectRgbClose(
+        [colors[n * 3], colors[n * 3 + 1], colors[n * 3 + 2]],
+        [lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]],
+      );
+    });
+  });
+
+  it("matches buildColors' radius ramp at LUT sample points", () => {
+    const positions = new Float32Array(samples.length * 3);
+    samples.forEach((i, n) => {
+      positions[n * 3] = i / 255; // r = x for points on the +x axis.
+    });
+    const cloud: ChaosGameResult = {
+      positions,
+      transformIndices: new Uint8Array(samples.length),
+      count: samples.length,
+      bounds: unitBounds,
+    };
+
+    const colors = buildColors(cloud, defaultTransforms(), "radius");
+    const lut = buildColorModeLUT("radius");
+    samples.forEach((i, n) => {
+      expectRgbClose(
+        [colors[n * 3], colors[n * 3 + 1], colors[n * 3 + 2]],
+        [lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]],
+      );
+    });
+  });
+});

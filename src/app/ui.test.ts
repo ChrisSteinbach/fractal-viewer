@@ -40,6 +40,14 @@ function noopHandlers(): UiHandlers {
     onFlameEstimatorRadiusInput: vi.fn(),
     onFlameEstimatorMinimumRadiusInput: vi.fn(),
     onFlameEstimatorCurveInput: vi.fn(),
+    onEnterSolidRender: vi.fn(),
+    onExitSolidRender: vi.fn(),
+    onSolidThresholdInput: vi.fn(),
+    onSolidLightAzimuthInput: vi.fn(),
+    onSolidLightElevationInput: vi.fn(),
+    onSolidAmbientInput: vi.fn(),
+    onSolidIterationsInput: vi.fn(),
+    onSolidResolutionInput: vi.fn(),
   };
 }
 
@@ -938,6 +946,275 @@ describe("Ui.setFlameSupersampleNote", () => {
     const ui = new Ui(document);
     ui.setFlameSupersampleNote(1, 3);
     ui.setFlameSupersampleNote(null);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+});
+
+describe("Ui solid render controls", () => {
+  function solidBtn(): HTMLButtonElement {
+    return document.getElementById("solidBtn") as HTMLButtonElement;
+  }
+  function exitSolidBtn(): HTMLButtonElement {
+    return document.getElementById("exitSolidBtn") as HTMLButtonElement;
+  }
+  function explorerControls(): HTMLElement {
+    return document.getElementById("explorerControls") as HTMLElement;
+  }
+  function solidControls(): HTMLElement {
+    return document.getElementById("solidControls") as HTMLElement;
+  }
+
+  it("shows the explorer panel and the Render Solid button while inactive", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), solidActive: false });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(false);
+    expect(solidBtn().classList.contains("hidden")).toBe(false);
+    expect(solidControls().classList.contains("hidden")).toBe(true);
+  });
+
+  it("swaps to the solid controls and hides the explorer panel while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), solidActive: true });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(solidBtn().classList.contains("hidden")).toBe(true);
+    expect(solidControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("names the render mode in the help box while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), solidActive: true });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "Solid Render",
+    );
+  });
+
+  it("also hides the Render Current View button while the solid render is active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), solidActive: true });
+    expect(
+      document.getElementById("renderBtn")?.classList.contains("hidden"),
+    ).toBe(true);
+  });
+
+  it("fires onEnterSolidRender when Render Solid View is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    solidBtn().click();
+    expect(handlers.onEnterSolidRender).toHaveBeenCalledOnce();
+  });
+
+  it("fires onExitSolidRender when Back to Explorer is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    exitSolidBtn().click();
+    expect(handlers.onExitSolidRender).toHaveBeenCalledOnce();
+  });
+
+  it("reflects threshold, light angle/height, and ambient into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      solid: {
+        ...initialState(true).solid,
+        threshold: 0.6,
+        lightAzimuth: -45,
+        lightElevation: 70,
+        ambient: 0.5,
+      },
+    });
+
+    expect(
+      (document.getElementById("solidThresholdSlider") as HTMLInputElement)
+        .value,
+    ).toBe("0.6");
+    expect(document.getElementById("solidThresholdLabel")?.textContent).toBe(
+      "0.60",
+    );
+
+    expect(
+      (document.getElementById("solidLightAzimuthSlider") as HTMLInputElement)
+        .value,
+    ).toBe("-45");
+    expect(document.getElementById("solidLightAzimuthLabel")?.textContent).toBe(
+      "-45°",
+    );
+
+    expect(
+      (document.getElementById("solidLightElevationSlider") as HTMLInputElement)
+        .value,
+    ).toBe("70");
+    expect(
+      document.getElementById("solidLightElevationLabel")?.textContent,
+    ).toBe("70°");
+
+    expect(
+      (document.getElementById("solidAmbientSlider") as HTMLInputElement).value,
+    ).toBe("0.5");
+    expect(document.getElementById("solidAmbientLabel")?.textContent).toBe(
+      "50%",
+    );
+  });
+
+  it("reports the threshold slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidThresholdSlider",
+    ) as HTMLInputElement;
+    slider.value = "0.45";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidThresholdInput).toHaveBeenCalledWith(0.45);
+  });
+
+  it("reports the light azimuth slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidLightAzimuthSlider",
+    ) as HTMLInputElement;
+    slider.value = "-90";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidLightAzimuthInput).toHaveBeenCalledWith(-90);
+  });
+
+  it("reports the light elevation slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidLightElevationSlider",
+    ) as HTMLInputElement;
+    slider.value = "35";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidLightElevationInput).toHaveBeenCalledWith(35);
+  });
+
+  it("reports the ambient slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidAmbientSlider",
+    ) as HTMLInputElement;
+    slider.value = "0.4";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidAmbientInput).toHaveBeenCalledWith(0.4);
+  });
+
+  it("reflects iterations and resolution into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      solid: {
+        ...initialState(true).solid,
+        iterations: 42_000_000,
+        resolution: 224,
+      },
+    });
+
+    expect(
+      (document.getElementById("solidIterationsSlider") as HTMLInputElement)
+        .value,
+    ).toBe("42000000");
+    expect(document.getElementById("solidIterationsLabel")?.textContent).toBe(
+      "42M iterations",
+    );
+
+    expect(
+      (document.getElementById("solidResolutionSlider") as HTMLInputElement)
+        .value,
+    ).toBe("224");
+    expect(
+      document.getElementById("solidResolutionLabel")?.textContent,
+    ).toContain("224³");
+  });
+
+  it("reports the iterations slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidIterationsSlider",
+    ) as HTMLInputElement;
+    slider.value = "5000000";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidIterationsInput).toHaveBeenCalledWith(5_000_000);
+  });
+
+  it("reports the resolution slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "solidResolutionSlider",
+    ) as HTMLInputElement;
+    slider.value = "224";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSolidResolutionInput).toHaveBeenCalledWith(224);
+  });
+});
+
+describe("Ui.setSolidProgress", () => {
+  it("formats done/budget in millions with a percentage", () => {
+    const ui = new Ui(document);
+    ui.setSolidProgress(12_345_000, 20_000_000);
+    expect(document.getElementById("solidProgress")?.textContent).toBe(
+      "12.3M / 20.0M iterations (62%)",
+    );
+  });
+
+  it("never exceeds 100%, even if done overshoots the budget", () => {
+    const ui = new Ui(document);
+    ui.setSolidProgress(25_000_000, 20_000_000);
+    expect(document.getElementById("solidProgress")?.textContent).toContain(
+      "(100%)",
+    );
+  });
+});
+
+describe("Ui.setSolidResolutionNote", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("solidResolutionNote");
+  }
+
+  it("is hidden with empty text by default", () => {
+    new Ui(document);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows a reduced-from message and un-hides when passed an effective value", () => {
+    const ui = new Ui(document);
+    ui.setSolidResolutionNote(128, 192);
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.textContent).toBe(
+      "Reduced to 128³ (from 192³) to fit available memory.",
+    );
+  });
+
+  it("hides again when passed null", () => {
+    const ui = new Ui(document);
+    ui.setSolidResolutionNote(128, 192);
+    ui.setSolidResolutionNote(null);
     expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
   });

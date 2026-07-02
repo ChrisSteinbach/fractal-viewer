@@ -10,6 +10,12 @@ import {
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_POINT_SIZE,
+  DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_ITERATIONS,
+  DEFAULT_SOLID_LIGHT_AZIMUTH,
+  DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_RESOLUTION,
+  DEFAULT_SOLID_THRESHOLD,
   initialState,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
@@ -19,6 +25,12 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_SOLID_AMBIENT,
+  MAX_SOLID_ITERATIONS,
+  MAX_SOLID_LIGHT_AZIMUTH,
+  MAX_SOLID_LIGHT_ELEVATION,
+  MAX_SOLID_RESOLUTION,
+  MAX_SOLID_THRESHOLD,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -27,6 +39,12 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_SOLID_AMBIENT,
+  MIN_SOLID_ITERATIONS,
+  MIN_SOLID_LIGHT_AZIMUTH,
+  MIN_SOLID_LIGHT_ELEVATION,
+  MIN_SOLID_RESOLUTION,
+  MIN_SOLID_THRESHOLD,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
@@ -43,6 +61,13 @@ import {
   setFlameVibrancy,
   setPointSize,
   setRenderStyle,
+  setSolidActive,
+  setSolidAmbient,
+  setSolidIterations,
+  setSolidLightAzimuth,
+  setSolidLightElevation,
+  setSolidResolution,
+  setSolidThreshold,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -79,6 +104,20 @@ describe("initialState", () => {
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
+    });
+  });
+
+  // Like the flame render, the solid render never starts active — see above.
+  it("boots with the solid render inactive, at its default settings", () => {
+    const state = initialState(true);
+    expect(state.solidActive).toBe(false);
+    expect(state.solid).toEqual({
+      resolution: DEFAULT_SOLID_RESOLUTION,
+      iterations: DEFAULT_SOLID_ITERATIONS,
+      threshold: DEFAULT_SOLID_THRESHOLD,
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
     });
   });
 
@@ -396,5 +435,147 @@ describe("setFlameActive", () => {
     expect(next.flameActive).toBe(true);
     expect(state.flameActive).toBe(false);
     expect(next.flame).toBe(state.flame);
+  });
+});
+
+describe("setSolidResolution", () => {
+  it("sets the resolution immutably", () => {
+    const state = initialState(true);
+    const next = setSolidResolution(state, 224);
+    expect(next.solid.resolution).toBe(224);
+    expect(state.solid.resolution).toBe(DEFAULT_SOLID_RESOLUTION);
+  });
+
+  it("snaps to the nearest multiple of the voxel step", () => {
+    expect(setSolidResolution(initialState(true), 100).solid.resolution).toBe(
+      96,
+    );
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSolidResolution(initialState(true), 999).solid.resolution).toBe(
+      MAX_SOLID_RESOLUTION,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSolidResolution(initialState(true), 1).solid.resolution).toBe(
+      MIN_SOLID_RESOLUTION,
+    );
+  });
+});
+
+describe("setSolidIterations", () => {
+  it("sets the iteration budget immutably", () => {
+    const state = initialState(true);
+    const next = setSolidIterations(state, 50_000_000);
+    expect(next.solid.iterations).toBe(50_000_000);
+    expect(state.solid.iterations).toBe(DEFAULT_SOLID_ITERATIONS);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setSolidIterations(initialState(true), 1_000_000_000).solid.iterations,
+    ).toBe(MAX_SOLID_ITERATIONS);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSolidIterations(initialState(true), 1).solid.iterations).toBe(
+      MIN_SOLID_ITERATIONS,
+    );
+  });
+});
+
+describe("setSolidThreshold", () => {
+  it("sets the isosurface level immutably", () => {
+    const state = initialState(true);
+    const next = setSolidThreshold(state, 0.6);
+    expect(next.solid.threshold).toBe(0.6);
+    expect(state.solid.threshold).toBe(DEFAULT_SOLID_THRESHOLD);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSolidThreshold(initialState(true), 999).solid.threshold).toBe(
+      MAX_SOLID_THRESHOLD,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSolidThreshold(initialState(true), -5).solid.threshold).toBe(
+      MIN_SOLID_THRESHOLD,
+    );
+  });
+});
+
+describe("setSolidLightAzimuth", () => {
+  it("sets the light's horizontal angle immutably", () => {
+    const state = initialState(true);
+    const next = setSolidLightAzimuth(state, -90);
+    expect(next.solid.lightAzimuth).toBe(-90);
+    expect(state.solid.lightAzimuth).toBe(DEFAULT_SOLID_LIGHT_AZIMUTH);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setSolidLightAzimuth(initialState(true), 999).solid.lightAzimuth,
+    ).toBe(MAX_SOLID_LIGHT_AZIMUTH);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setSolidLightAzimuth(initialState(true), -999).solid.lightAzimuth,
+    ).toBe(MIN_SOLID_LIGHT_AZIMUTH);
+  });
+});
+
+describe("setSolidLightElevation", () => {
+  it("sets the light's elevation immutably", () => {
+    const state = initialState(true);
+    const next = setSolidLightElevation(state, 70);
+    expect(next.solid.lightElevation).toBe(70);
+    expect(state.solid.lightElevation).toBe(DEFAULT_SOLID_LIGHT_ELEVATION);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setSolidLightElevation(initialState(true), 999).solid.lightElevation,
+    ).toBe(MAX_SOLID_LIGHT_ELEVATION);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setSolidLightElevation(initialState(true), -999).solid.lightElevation,
+    ).toBe(MIN_SOLID_LIGHT_ELEVATION);
+  });
+});
+
+describe("setSolidAmbient", () => {
+  it("sets the ambient floor immutably", () => {
+    const state = initialState(true);
+    const next = setSolidAmbient(state, 0.5);
+    expect(next.solid.ambient).toBe(0.5);
+    expect(state.solid.ambient).toBe(DEFAULT_SOLID_AMBIENT);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSolidAmbient(initialState(true), 5).solid.ambient).toBe(
+      MAX_SOLID_AMBIENT,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSolidAmbient(initialState(true), -5).solid.ambient).toBe(
+      MIN_SOLID_AMBIENT,
+    );
+  });
+});
+
+describe("setSolidActive", () => {
+  it("toggles the solid overlay immutably, independent of solid params", () => {
+    const state = initialState(true);
+    const next = setSolidActive(state, true);
+    expect(next.solidActive).toBe(true);
+    expect(state.solidActive).toBe(false);
+    expect(next.solid).toBe(state.solid);
   });
 });

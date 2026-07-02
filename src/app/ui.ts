@@ -72,6 +72,19 @@ export interface UiHandlers {
   onFlameEstimatorRadiusInput: (value: number) => void;
   onFlameEstimatorMinimumRadiusInput: (value: number) => void;
   onFlameEstimatorCurveInput: (value: number) => void;
+  /** "Render Solid View" was clicked: start accumulating the density volume
+   * (the camera stays LIVE, unlike the flame render). */
+  onEnterSolidRender: () => void;
+  /** The solid render's "Back to Explorer" was clicked. */
+  onExitSolidRender: () => void;
+  /** Surface/lighting sliders — pure GPU uniforms, live at full frame rate. */
+  onSolidThresholdInput: (value: number) => void;
+  onSolidLightAzimuthInput: (value: number) => void;
+  onSolidLightElevationInput: (value: number) => void;
+  onSolidAmbientInput: (value: number) => void;
+  onSolidIterationsInput: (value: number) => void;
+  /** The resolution slider changed — the app restarts accumulation. */
+  onSolidResolutionInput: (value: number) => void;
 }
 
 /**
@@ -307,6 +320,24 @@ export class Ui {
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
+  private readonly solidBtn: HTMLButtonElement;
+  private readonly solidControls: HTMLElement;
+  private readonly solidThresholdLabel: HTMLElement;
+  private readonly solidThresholdSlider: HTMLInputElement;
+  private readonly solidLightAzimuthLabel: HTMLElement;
+  private readonly solidLightAzimuthSlider: HTMLInputElement;
+  private readonly solidLightElevationLabel: HTMLElement;
+  private readonly solidLightElevationSlider: HTMLInputElement;
+  private readonly solidAmbientLabel: HTMLElement;
+  private readonly solidAmbientSlider: HTMLInputElement;
+  private readonly solidIterationsLabel: HTMLElement;
+  private readonly solidIterationsSlider: HTMLInputElement;
+  private readonly solidResolutionLabel: HTMLElement;
+  private readonly solidResolutionSlider: HTMLInputElement;
+  private readonly solidResolutionNote: HTMLElement;
+  private readonly solidProgress: HTMLElement;
+  private readonly exitSolidBtn: HTMLButtonElement;
+
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
@@ -362,6 +393,23 @@ export class Ui {
     this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
+    this.solidBtn = this.byId("solidBtn");
+    this.solidControls = this.byId("solidControls");
+    this.solidThresholdLabel = this.byId("solidThresholdLabel");
+    this.solidThresholdSlider = this.byId("solidThresholdSlider");
+    this.solidLightAzimuthLabel = this.byId("solidLightAzimuthLabel");
+    this.solidLightAzimuthSlider = this.byId("solidLightAzimuthSlider");
+    this.solidLightElevationLabel = this.byId("solidLightElevationLabel");
+    this.solidLightElevationSlider = this.byId("solidLightElevationSlider");
+    this.solidAmbientLabel = this.byId("solidAmbientLabel");
+    this.solidAmbientSlider = this.byId("solidAmbientSlider");
+    this.solidIterationsLabel = this.byId("solidIterationsLabel");
+    this.solidIterationsSlider = this.byId("solidIterationsSlider");
+    this.solidResolutionLabel = this.byId("solidResolutionLabel");
+    this.solidResolutionSlider = this.byId("solidResolutionSlider");
+    this.solidResolutionNote = this.byId("solidResolutionNote");
+    this.solidProgress = this.byId("solidProgress");
+    this.exitSolidBtn = this.byId("exitSolidBtn");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -448,6 +496,34 @@ export class Ui {
         Number(this.flameEstimatorCurveSlider.value),
       ),
     );
+    this.solidBtn.addEventListener("click", () =>
+      handlers.onEnterSolidRender(),
+    );
+    this.exitSolidBtn.addEventListener("click", () =>
+      handlers.onExitSolidRender(),
+    );
+    this.solidThresholdSlider.addEventListener("input", () =>
+      handlers.onSolidThresholdInput(Number(this.solidThresholdSlider.value)),
+    );
+    this.solidLightAzimuthSlider.addEventListener("input", () =>
+      handlers.onSolidLightAzimuthInput(
+        Number(this.solidLightAzimuthSlider.value),
+      ),
+    );
+    this.solidLightElevationSlider.addEventListener("input", () =>
+      handlers.onSolidLightElevationInput(
+        Number(this.solidLightElevationSlider.value),
+      ),
+    );
+    this.solidAmbientSlider.addEventListener("input", () =>
+      handlers.onSolidAmbientInput(Number(this.solidAmbientSlider.value)),
+    );
+    this.solidIterationsSlider.addEventListener("input", () =>
+      handlers.onSolidIterationsInput(Number(this.solidIterationsSlider.value)),
+    );
+    this.solidResolutionSlider.addEventListener("input", () =>
+      handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -489,17 +565,44 @@ export class Ui {
       state.flame.estimatorCurve.toFixed(2);
     this.flameEstimatorCurveSlider.value = String(state.flame.estimatorCurve);
 
-    // The flame render takes over the panel — editing controls that have no
-    // effect on a frozen, already-plotted image would just be confusing —
-    // and the explorer's own hints (drag/orbit/scale) no longer apply since
-    // the camera and geometry are frozen for the render.
-    this.explorerControls.classList.toggle("hidden", state.flameActive);
-    this.renderBtn.classList.toggle("hidden", state.flameActive);
+    this.solidThresholdLabel.textContent = state.solid.threshold.toFixed(2);
+    this.solidThresholdSlider.value = String(state.solid.threshold);
+    this.solidLightAzimuthLabel.textContent = `${Math.round(state.solid.lightAzimuth)}°`;
+    this.solidLightAzimuthSlider.value = String(state.solid.lightAzimuth);
+    this.solidLightElevationLabel.textContent = `${Math.round(state.solid.lightElevation)}°`;
+    this.solidLightElevationSlider.value = String(state.solid.lightElevation);
+    this.solidAmbientLabel.textContent = `${Math.round(state.solid.ambient * 100)}%`;
+    this.solidAmbientSlider.value = String(state.solid.ambient);
+    this.solidIterationsLabel.textContent = `${(
+      state.solid.iterations / 1_000_000
+    ).toFixed(0)}M iterations`;
+    this.solidIterationsSlider.value = String(state.solid.iterations);
+    this.solidResolutionLabel.textContent = `${state.solid.resolution}³ (restarts render)`;
+    this.solidResolutionSlider.value = String(state.solid.resolution);
+
+    // Either render mode takes over the panel — editing controls that can't
+    // affect the in-progress render would just be confusing. The two modes
+    // are mutually exclusive by construction: each mode's entry button is
+    // hidden while the other is active.
+    const rendering = state.flameActive || state.solidActive;
+    this.explorerControls.classList.toggle("hidden", rendering);
+    this.renderBtn.classList.toggle("hidden", rendering);
+    this.solidBtn.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
+    this.solidControls.classList.toggle("hidden", !state.solidActive);
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
       this.setHelpLines(["Rendering the frozen camera view…"]);
+    } else if (state.solidActive) {
+      // Unlike the flame's frozen view, the solid render's volume is
+      // world-space: the camera stays fully interactive while it converges.
+      this.helpTitle.textContent = "Solid Render";
+      this.setHelpLines(
+        this.mouse
+          ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
+          : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+      );
     } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
       this.setHelpLines(
@@ -572,6 +675,35 @@ export class Ui {
         ? `Reduced to ${effective}× (from ${requested}×) to fit available memory.`
         : `Reduced to ${effective}× to fit available memory.`;
     this.flameSupersampleNote.classList.remove("hidden");
+  }
+
+  /** Reflect solid-render progress, mirroring {@link setFlameProgress}. */
+  setSolidProgress(iterationsDone: number, iterationsBudget: number): void {
+    const pct =
+      iterationsBudget > 0
+        ? Math.min(100, Math.round((iterationsDone / iterationsBudget) * 100))
+        : 100;
+    const done = (iterationsDone / 1_000_000).toFixed(1);
+    const budget = (iterationsBudget / 1_000_000).toFixed(1);
+    this.solidProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+  }
+
+  /**
+   * Reflect whether the resolution slider's requested value had to be reduced
+   * to fit the worker's memory budget — the solid render's counterpart to
+   * {@link setFlameSupersampleNote}, with the same `null`-hides contract.
+   */
+  setSolidResolutionNote(effective: number | null, requested?: number): void {
+    if (effective === null) {
+      this.solidResolutionNote.textContent = "";
+      this.solidResolutionNote.classList.add("hidden");
+      return;
+    }
+    this.solidResolutionNote.textContent =
+      requested !== undefined
+        ? `Reduced to ${effective}³ (from ${requested}³) to fit available memory.`
+        : `Reduced to ${effective}³ to fit available memory.`;
+    this.solidResolutionNote.classList.remove("hidden");
   }
 
   /**
