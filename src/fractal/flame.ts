@@ -109,6 +109,34 @@ export function createFlameHistogram(
 }
 
 /**
+ * Wrap externally-owned bucket arrays as a {@link FlameHistogram} — the
+ * shared-memory counterpart to {@link createFlameHistogram}. Exists for the
+ * flame worker's SharedArrayBuffer transport (fr-96i), where `hits`/`sumRGB`
+ * are views over memory shared between the worker (which downsamples into
+ * them) and the main thread (which tone-maps straight out of them): both
+ * sides need the same wrapper, and neither should have to know that `orbit`/
+ * `orbitColor` are meaningless filler on a display-only histogram (see
+ * `downsampleFlame`'s closing comment for why).
+ */
+export function viewFlameHistogram(
+  width: number,
+  height: number,
+  hits: Float64Array,
+  sumRGB: Float64Array,
+  maxHits: number,
+): FlameHistogram {
+  return {
+    width,
+    height,
+    hits,
+    sumRGB,
+    maxHits,
+    orbit: [0, 0, 0],
+    orbitColor: 0.5,
+  };
+}
+
+/**
  * Largest integer supersample factor `<= requested` (and always `>= 1`)
  * whose accumulation buckets — `(width * ss) * (height * ss)` — fit within
  * `maxBuckets`. `width`/`height` are the DISPLAY resolution (already
@@ -547,12 +575,22 @@ const MIN_FILTER_SIGMA = 1e-3;
  * `outWidth` / `outHeight` in each axis (the app always accumulates at
  * `outWidth * supersample` x `outHeight * supersample` for exactly this
  * reason). Throws `RangeError` otherwise.
+ *
+ * Pass `out` (dimensions must be exactly `outWidth` x `outHeight`; throws
+ * `RangeError` otherwise) to write the result into an existing histogram
+ * instead of allocating a fresh one — every bucket is fully overwritten, so
+ * a dirty `out` is fine. This is what lets the flame worker reuse one
+ * display-resolution histogram across progressive redisplays (instead of
+ * churning a multi-megabyte allocation per tick) and, in shared-memory mode
+ * (fr-96i), downsample straight into SharedArrayBuffer-backed buckets the
+ * main thread tone-maps from with no copy in between.
  */
 export function downsampleFlame(
   oversized: FlameHistogram,
   outWidth: number,
   outHeight: number,
   filterRadius: number,
+  out?: FlameHistogram,
 ): FlameHistogram {
   const {
     width: srcWidth,
@@ -570,10 +608,15 @@ export function downsampleFlame(
       `downsampleFlame: source ${srcWidth}x${srcHeight} is not a positive-integer multiple of target ${outWidth}x${outHeight}`,
     );
   }
+  if (out && (out.width !== outWidth || out.height !== outHeight)) {
+    throw new RangeError(
+      `downsampleFlame: out histogram is ${out.width}x${out.height}, but ${outWidth}x${outHeight} was requested`,
+    );
+  }
   const scaleX = srcWidth / outWidth;
   const scaleY = srcHeight / outHeight;
-  const out = createFlameHistogram(outWidth, outHeight);
-  const { hits: dstHits, sumRGB: dstRGB } = out;
+  const target = out ?? createFlameHistogram(outWidth, outHeight);
+  const { hits: dstHits, sumRGB: dstRGB } = target;
 
   // An output cell's footprint center sits at a CONSTANT fractional offset
   // from its nearest source-cell grid line, the same for every output cell
@@ -637,27 +680,36 @@ export function downsampleFlame(
       // coordinates) — guarded anyway as a safety net, matching this
       // codebase's habit of guarding "essentially impossible" cases rather
       // than assuming them away.
+      const dstBucket = oy * outWidth + ox;
+      const dOff = dstBucket * 3;
       if (weightSum > 0) {
         const norm = 1 / weightSum;
         const hVal = hitSum * norm;
-        const dstBucket = oy * outWidth + ox;
         dstHits[dstBucket] = hVal;
-        const dOff = dstBucket * 3;
         dstRGB[dOff] = rSum * norm;
         dstRGB[dOff + 1] = gSum * norm;
         dstRGB[dOff + 2] = bSum * norm;
         if (hVal > maxHits) maxHits = hVal;
+      } else {
+        // A skipped cell must still be WRITTEN now that `out` can be a reused
+        // (dirty) histogram — a fresh allocation showed 0 here for free, and
+        // reuse must be indistinguishable from that, not leak a stale bucket.
+        dstHits[dstBucket] = 0;
+        dstRGB[dOff] = 0;
+        dstRGB[dOff + 1] = 0;
+        dstRGB[dOff + 2] = 0;
       }
     }
   }
 
-  out.maxHits = maxHits;
+  target.maxHits = maxHits;
   // The oversized accumulator is the real progressive state (see
   // FlameHistogram.orbit) — this filtered view is a display-only derivative
   // that must never be fed back into accumulateFlame, so its own orbit is
-  // meaningless; leave it at createFlameHistogram's zero default rather than
-  // copying a value nothing should ever read.
-  return out;
+  // meaningless; leave whatever is there (createFlameHistogram's zero default,
+  // or a reused out's old filler) rather than maintaining a value nothing
+  // should ever read.
+  return target;
 }
 
 /**
@@ -770,12 +822,18 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  * `oversized`'s dimensions must be an exact positive-integer multiple of
  * `outWidth` / `outHeight`, exactly like `downsampleFlame`. Throws
  * `RangeError` otherwise.
+ *
+ * `out` reuses an existing `outWidth` x `outHeight` histogram instead of
+ * allocating (throws `RangeError` on a size mismatch), with every bucket
+ * fully overwritten — same contract, and same shared-memory/allocation-churn
+ * reasoning, as `downsampleFlame`'s `out`.
  */
 export function adaptiveDownsampleFlame(
   oversized: FlameHistogram,
   outWidth: number,
   outHeight: number,
   params: DensityEstimatorParams,
+  out?: FlameHistogram,
 ): FlameHistogram {
   const {
     width: srcWidth,
@@ -794,10 +852,15 @@ export function adaptiveDownsampleFlame(
       `adaptiveDownsampleFlame: source ${srcWidth}x${srcHeight} is not a positive-integer multiple of target ${outWidth}x${outHeight}`,
     );
   }
+  if (out && (out.width !== outWidth || out.height !== outHeight)) {
+    throw new RangeError(
+      `adaptiveDownsampleFlame: out histogram is ${out.width}x${out.height}, but ${outWidth}x${outHeight} was requested`,
+    );
+  }
   const scaleX = srcWidth / outWidth;
   const scaleY = srcHeight / outHeight;
-  const out = createFlameHistogram(outWidth, outHeight);
-  const { hits: dstHits, sumRGB: dstRGB } = out;
+  const target = out ?? createFlameHistogram(outWidth, outHeight);
+  const { hits: dstHits, sumRGB: dstRGB } = target;
 
   const estimatorRadius = Math.max(0, params.estimatorRadius);
   // Never let "minimum" exceed "maximum", regardless of how the caller's
@@ -914,22 +977,28 @@ export function adaptiveDownsampleFlame(
       // always in-bounds since baseX/baseY are themselves in-bounds source
       // coordinates) — guarded anyway, matching downsampleFlame and this
       // codebase's general habit of guarding "essentially impossible" cases.
+      const dstBucket = oy * outWidth + ox;
+      const dOff = dstBucket * 3;
       if (weightSum > 0) {
         const norm = 1 / weightSum;
         const hVal = hitSum * norm;
-        const dstBucket = oy * outWidth + ox;
         dstHits[dstBucket] = hVal;
-        const dOff = dstBucket * 3;
         dstRGB[dOff] = rSum * norm;
         dstRGB[dOff + 1] = gSum * norm;
         dstRGB[dOff + 2] = bSum * norm;
         if (hVal > maxHits) maxHits = hVal;
+      } else {
+        // Written, not skipped, for reused-out parity — see downsampleFlame.
+        dstHits[dstBucket] = 0;
+        dstRGB[dOff] = 0;
+        dstRGB[dOff + 1] = 0;
+        dstRGB[dOff + 2] = 0;
       }
     }
   }
 
-  out.maxHits = maxHits;
+  target.maxHits = maxHits;
   // Same non-answer as downsampleFlame's — see its doc — this is a
   // display-only derivative, never fed back into accumulateFlame.
-  return out;
+  return target;
 }

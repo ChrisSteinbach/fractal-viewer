@@ -11,6 +11,18 @@ export default defineConfig({
   base: "./",
   server: {
     host: "0.0.0.0",
+    // Native COOP/COEP in dev, where no service worker runs: makes the page
+    // cross-origin isolated so `npm run dev` exercises the flame renderer's
+    // SharedArrayBuffer transport (fr-96i). Production gets the same headers
+    // injected by the hand-written service worker (src/app/sw/sw.ts)
+    // instead, because GitHub Pages cannot send them. `npm run preview`
+    // deliberately does NOT set them, so the service-worker path — including
+    // the first-visit reload-once bootstrap in register-sw.ts — can be
+    // exercised locally against the real production build.
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
   },
   build: {
     outDir: "../../dist/app",
@@ -19,6 +31,20 @@ export default defineConfig({
   plugins: [
     basicSsl(),
     VitePWA({
+      // Hand-written worker (fr-96i): Workbox precache composed with a
+      // COOP/COEP rewrap in ONE fetch handler — something generateSW cannot
+      // express. See src/app/sw/sw.ts.
+      strategies: "injectManifest",
+      srcDir: "sw",
+      filename: "sw.ts",
+      // Registration lives in src/app/register-sw.ts (it also runs the
+      // isolation reload-once bootstrap); the auto-injected script would
+      // register a second time.
+      injectRegister: false,
+      // With registration and the worker both hand-written this setting is
+      // inert, but it documents the intended semantics (the worker
+      // skipWaiting()s + claims, new deploys take over silently) — and keeps
+      // them if injectRegister is ever switched back on.
       registerType: "autoUpdate",
       manifest: {
         name: APP_NAME,
@@ -36,11 +62,17 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+      injectManifest: {
+        // webmanifest is listed explicitly: generateSW used to precache it
+        // automatically, injectManifest only knows what the glob names.
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
         // The bundled Three.js runtime exceeds Workbox's 2 MiB default
         // precache size limit; raise it so the app shell works offline.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // A single classic-script bundle: sw.js is registered without
+        // `type: "module"` (register-sw.ts), matching the widest browser
+        // support, so its build output must not rely on module syntax.
+        rollupFormat: "iife",
       },
     }),
   ],

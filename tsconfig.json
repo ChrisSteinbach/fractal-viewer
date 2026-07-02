@@ -15,5 +15,9 @@
     "rootDir": "src",
     "types": ["vitest/globals", "node", "vite/client"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The service worker needs the WebWorker lib, which conflicts with this
+  // program's DOM lib — it type-checks under its own src/app/sw/tsconfig.json
+  // (see the comment there); `npm run lint` runs both programs.
+  "exclude": ["src/app/sw"]
 }

@@ -34,9 +34,12 @@ const session = new FlameWorkerSession({
   now: () => performance.now(),
   schedule: (fn) => setTimeout(fn, 0),
   emit: (event) => {
-    // Transfer the image's backing buffer — a zero-copy ownership move to
-    // the main thread, not a copy (see flame-worker-core's doc for why
-    // postMessage transfer, not SharedArrayBuffer).
+    // Transfer-mode "progress" carries a whole RGBA frame: move its backing
+    // buffer (zero-copy ownership transfer) rather than cloning it. Every
+    // other event — including shared-mode's "sharedFrame", whose frame
+    // already lives in SharedArrayBuffer-backed memory both threads see —
+    // is scalars only, with nothing worth transferring (see
+    // flame-worker-core's doc for the two transports).
     if (event.type === "progress") {
       scope.postMessage(event, [event.image.buffer]);
     } else {
