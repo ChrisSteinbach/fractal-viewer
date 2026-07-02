@@ -3,6 +3,7 @@ import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import { initialState } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
+import { FLAME_PALETTE_IDS } from "../fractal/palette";
 import type { Transform } from "../fractal/types";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
@@ -35,6 +36,7 @@ function noopHandlers(): UiHandlers {
     onFlameGammaInput: vi.fn(),
     onFlameVibrancyInput: vi.fn(),
     onFlameSupersampleInput: vi.fn(),
+    onFlamePaletteChange: vi.fn(),
     onFlameEstimatorRadiusInput: vi.fn(),
     onFlameEstimatorMinimumRadiusInput: vi.fn(),
     onFlameEstimatorCurveInput: vi.fn(),
@@ -859,6 +861,38 @@ describe("Ui flame render controls", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onFlameEstimatorCurveInput).toHaveBeenCalledWith(0.8);
+  });
+
+  // Guards against the dropdown and the palette registry drifting apart — the
+  // options must match FLAME_PALETTES exactly, in order (legacy first).
+  it("offers exactly the registered flame palettes, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#flamePalette option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...FLAME_PALETTE_IDS]);
+  });
+
+  it("reflects the palette id into the select", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "aurora" },
+    });
+    expect(
+      (document.getElementById("flamePalette") as HTMLSelectElement).value,
+    ).toBe("aurora");
+  });
+
+  it("reports the selected palette id on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("flamePalette") as HTMLSelectElement;
+    select.value = "spectrum";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFlamePaletteChange).toHaveBeenCalledWith("spectrum");
   });
 });
 

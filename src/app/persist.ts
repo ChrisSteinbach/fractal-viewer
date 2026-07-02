@@ -8,6 +8,8 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
+import { FLAME_PALETTE_IDS } from "../fractal/palette";
+import type { FlamePaletteId } from "../fractal/palette";
 import { COLOR_MODES, VARIATION_TYPES } from "../fractal/types";
 import type {
   ColorMode,
@@ -23,6 +25,7 @@ import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   MAX_ESTIMATOR_CURVE,
@@ -130,6 +133,9 @@ const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
 
 /** Exact set of valid VariationType values. */
 const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
+
+/** Exact set of valid flame palette ids (see `palette.ts`'s `FLAME_PALETTES`). */
+const VALID_FLAME_PALETTES = new Set<string>(FLAME_PALETTE_IDS);
 
 /**
  * Cap on variations per transform when decoding untrusted input. There are only
@@ -255,6 +261,13 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * `supersample` is additionally rounded to an integer, matching
  * `setFlameSupersample`; the estimator radii/curve are NOT (continuous like
  * gamma/vibrancy, matching their own setters).
+ *
+ * `paletteId` (fr-6us) is the one exception to the reject-on-malformed rule:
+ * an unknown OR missing id decodes to `"legacy"` rather than rejecting the
+ * scene, so a link written by a future build carrying a palette this build
+ * doesn't know keeps the rest of its scene instead of being thrown away over
+ * one cosmetic field — the enum equivalent of the finite-but-out-of-range
+ * clamp the numeric fields already use.
  */
 function decodeFlameParams(raw: unknown): FlameParams | null {
   if (raw === undefined) {
@@ -267,6 +280,7 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     };
   }
   if (typeof raw !== "object" || raw === null) return null;
@@ -312,6 +326,12 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
     estimatorCurve = Number(f.estimatorCurve);
     if (!Number.isFinite(estimatorCurve)) return null;
   }
+  // paletteId: unknown or missing quietly becomes "legacy" (see the doc above)
+  // rather than rejecting the scene.
+  const paletteId: FlamePaletteId =
+    typeof f.paletteId === "string" && VALID_FLAME_PALETTES.has(f.paletteId)
+      ? (f.paletteId as FlamePaletteId)
+      : DEFAULT_FLAME_PALETTE;
 
   return {
     exposure: Math.max(
@@ -347,6 +367,7 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
       MIN_ESTIMATOR_CURVE,
       Math.min(MAX_ESTIMATOR_CURVE, estimatorCurve),
     ),
+    paletteId,
   };
 }
 
@@ -421,6 +442,7 @@ export function encodeScene(s: SceneSnapshot): string {
       estimatorRadius: round4(s.flame.estimatorRadius),
       estimatorMinimumRadius: round4(s.flame.estimatorMinimumRadius),
       estimatorCurve: round4(s.flame.estimatorCurve),
+      paletteId: s.flame.paletteId,
     },
   };
   // Written only when present, so old links stay byte-identical (they never
@@ -448,7 +470,8 @@ export function encodeScene(s: SceneSnapshot): string {
  * {@link MAX_ESTIMATOR_RADIUS}], flame.estimatorMinimumRadius to
  * [{@link MIN_ESTIMATOR_MINIMUM_RADIUS}, {@link MAX_ESTIMATOR_MINIMUM_RADIUS}],
  * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
- * {@link MAX_ESTIMATOR_CURVE}].
+ * {@link MAX_ESTIMATOR_CURVE}]. An unknown/missing flame.paletteId falls back
+ * to `"legacy"` (see {@link decodeFlameParams}).
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;

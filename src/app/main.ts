@@ -21,6 +21,7 @@ import {
   setFlameExposure,
   setFlameGamma,
   setFlameIterations,
+  setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
   setNumPoints,
@@ -196,6 +197,7 @@ function main(): void {
       estimatorRadius: state.flame.estimatorRadius,
       estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
       estimatorCurve: state.flame.estimatorCurve,
+      paletteId: state.flame.paletteId,
     });
 
     state = setFlameActive(state, true);
@@ -440,6 +442,15 @@ function main(): void {
         type: "setSupersample",
         supersample: state.flame.supersample,
       });
+      scheduleSave();
+    },
+    onFlamePaletteChange: (paletteId) => {
+      // Like supersample this restarts accumulation in the worker (the color
+      // sums bake in the palette); the worker owns that restart, so this just
+      // updates state + label and forwards the new palette.
+      state = setFlamePaletteId(state, paletteId);
+      ui.updateLabels(state);
+      postFlame({ type: "setPalette", paletteId: state.flame.paletteId });
       scheduleSave();
     },
     onFlameEstimatorRadiusInput: (value) => {

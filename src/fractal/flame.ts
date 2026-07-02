@@ -80,6 +80,16 @@ export interface FlameHistogram {
    * restarting — and rewarming — it every chunk.
    */
   orbit: Vec3;
+  /**
+   * The orbit's color coordinate (flam3 semantics): a value in `[0, 1]` that
+   * blends toward the picked transform's slot each step, indexing a smooth
+   * gradient palette when {@link accumulateFlame} is given a `colorLUT`. Kept
+   * on the histogram — alongside {@link orbit} — so a chunked render resumes
+   * the exact same color walk; only read/written on the `colorLUT` path (it
+   * stays at its `0.5` default in the per-transform `"legacy"` mode). NOT
+   * folded into `orbit` because it is not a spatial coordinate.
+   */
+  orbitColor: number;
 }
 
 /** A fresh, empty histogram: every bucket at zero hits, ready to accumulate into. */
@@ -94,6 +104,7 @@ export function createFlameHistogram(
     sumRGB: new Float64Array(width * height * 3),
     maxHits: 0,
     orbit: [0, 0, 0],
+    orbitColor: 0.5,
   };
 }
 
@@ -137,13 +148,28 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * exactly as the point-cloud path computes them) is projected by `projection`
  * (clip space, perspective-divided to NDC) and, if it lands in front of the
  * camera and inside the `width` x `height` frame, increments that pixel's
- * hit count and adds `palette[transformIndex]` to its color sum.
+ * hit count and adds a color to its color sum.
+ *
+ * **Coloring** has two modes (fr-6us). By default the added color is
+ * `palette[transformIndex]` — the flat per-transform hue ("legacy"). Pass a
+ * `colorLUT` (a `256 * 3` interleaved RGB table from `palette.ts`'s
+ * `buildPaletteLUT`) to switch to flam3-style structural coloring instead: a
+ * color coordinate `c` in `[0, 1]` rides along the orbit — initialised to
+ * `0.5` and, each step, blended halfway toward the picked transform's slot
+ * (`c = (c + i / (n - 1)) / 2`, or `0.5` for a single-transform system) — and
+ * the LUT color at `c` is accumulated, so color flows continuously along the
+ * structure. Updating `c` consumes NO `rng`, so a given seed produces the
+ * byte-identical *orbit* (and thus identical `hits`) whether or not a
+ * `colorLUT` is supplied; only the color sums differ. An escape-reseed resets
+ * `c` to `0.5` alongside the point. `palette` is still required (and used when
+ * `colorLUT` is omitted).
  *
  * **Progressive**: pass the histogram returned by a previous call back in as
- * `histogram` to keep converging the same image — the orbit resumes from
- * exactly where it left off (see {@link FlameHistogram.orbit}), so splitting
- * a run into chunks (e.g. one per animation frame) produces the identical
- * result as running all the iterations at once, given the same `rng`
+ * `histogram` to keep converging the same image — the orbit (and its color
+ * coordinate) resumes from exactly where it left off (see
+ * {@link FlameHistogram.orbit} / {@link FlameHistogram.orbitColor}), so
+ * splitting a run into chunks (e.g. one per animation frame) produces the
+ * identical result as running all the iterations at once, given the same `rng`
  * *instance* threaded through every call. Omit `histogram` to start a fresh
  * one: a new random seed point is drawn from `rng` and warmed up for
  * {@link WARMUP_ITERATIONS} steps first (unrecorded), exactly like
@@ -162,6 +188,7 @@ export function accumulateFlame(
   rng: Rng,
   palette: Vec3[],
   histogram?: FlameHistogram,
+  colorLUT?: Float32Array,
 ): FlameHistogram {
   if (projection.length !== 16) {
     throw new RangeError(
@@ -178,6 +205,16 @@ export function accumulateFlame(
   const { affines, variations, finalAffine, finalWarp } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
+
+  // Structural coloring (fr-6us): when a colorLUT is supplied, `c` rides the
+  // orbit and indexes the gradient; otherwise every `colorLUT !== undefined`
+  // branch below is skipped and the per-transform `palette` path runs
+  // unchanged. `colorDenom` is `n - 1` (0 for a single-transform system, which
+  // pins the coordinate at 0.5) — the divisor mapping a transform index to its
+  // [0, 1] color slot.
+  const colorDenom =
+    prepared.transformCount > 1 ? prepared.transformCount - 1 : 0;
+  let c = hist.orbitColor;
 
   let x: number;
   let y: number;
@@ -216,6 +253,12 @@ export function accumulateFlame(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
+    // Blend the color coordinate halfway toward this transform's slot. No rng
+    // is consumed, so the orbit (and `hits`) stays identical to the legacy path.
+    if (colorLUT !== undefined) {
+      const slot = colorDenom > 0 ? idx / colorDenom : 0.5;
+      c = (c + slot) * 0.5;
+    }
     const aff = affines[idx];
     const m = aff.m;
     const t = aff.t;
@@ -249,6 +292,8 @@ export function accumulateFlame(
       nx = rng() - 0.5;
       ny = rng() - 0.5;
       nz = rng() - 0.5;
+      // The orbit restarts, so its color coordinate does too.
+      if (colorLUT !== undefined) c = 0.5;
     }
     x = nx;
     y = ny;
@@ -292,14 +337,23 @@ export function accumulateFlame(
     const bucket = row * width + col;
     const hit = ++hits[bucket];
     if (hit > maxHits) maxHits = hit;
-    const rgb = palette[idx] ?? FALLBACK_COLOR;
     const o = bucket * 3;
-    sumRGB[o] += rgb[0];
-    sumRGB[o + 1] += rgb[1];
-    sumRGB[o + 2] += rgb[2];
+    if (colorLUT !== undefined) {
+      // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      sumRGB[o] += colorLUT[li];
+      sumRGB[o + 1] += colorLUT[li + 1];
+      sumRGB[o + 2] += colorLUT[li + 2];
+    } else {
+      const rgb = palette[idx] ?? FALLBACK_COLOR;
+      sumRGB[o] += rgb[0];
+      sumRGB[o + 1] += rgb[1];
+      sumRGB[o + 2] += rgb[2];
+    }
   }
 
   hist.orbit = [x, y, z];
+  hist.orbitColor = c;
   hist.maxHits = maxHits;
   return hist;
 }

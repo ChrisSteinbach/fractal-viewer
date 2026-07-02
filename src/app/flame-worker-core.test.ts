@@ -41,6 +41,7 @@ function startCommand(
     estimatorRadius: 4,
     estimatorMinimumRadius: 0,
     estimatorCurve: 0.4,
+    paletteId: "legacy",
     ...overrides,
   };
 }
@@ -423,6 +424,44 @@ describe("FlameWorkerSession setSupersample", () => {
       effective: 1,
       requested: 3,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Palette: live setPalette command (fr-6us)
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession setPalette", () => {
+  it("restarts a finished render so it re-accumulates in the new palette", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 20, paletteId: "legacy" }));
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20);
+    const framesBefore = progressEvents(events).length;
+
+    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    scheduler.drain();
+
+    // A finished render produces no more frames on its own; that it climbs back
+    // to the budget AND emits new frames proves it reset to zero and re-ran.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20);
+    expect(progressEvents(events).length).toBeGreaterThan(framesBefore);
+  });
+
+  it("colors differently under a gradient palette than legacy for the same seed", () => {
+    function finalImage(paletteId: "legacy" | "spectrum"): Uint8ClampedArray {
+      const { session, events, scheduler } = harness();
+      session.handle(
+        startCommand({ seed: 7, iterationsBudget: 500, paletteId }),
+      );
+      scheduler.drain();
+      return progressEvents(events).at(-1)!.image;
+    }
+    // Same seed → identical orbit and hits; only the baked-in colors differ, so
+    // the tone-mapped image must differ once a gradient palette is in play.
+    expect(Array.from(finalImage("spectrum"))).not.toEqual(
+      Array.from(finalImage("legacy")),
+    );
   });
 });
 

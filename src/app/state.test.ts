@@ -6,6 +6,7 @@ import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_POINT_SIZE,
@@ -37,6 +38,7 @@ import {
   setFlameExposure,
   setFlameGamma,
   setFlameIterations,
+  setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
   setPointSize,
@@ -76,6 +78,7 @@ describe("initialState", () => {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     });
   });
 
@@ -299,6 +302,23 @@ describe("setFlameSupersample", () => {
     expect(setFlameSupersample(initialState(true), 0).flame.supersample).toBe(
       MIN_FLAME_SUPERSAMPLE,
     );
+  });
+});
+
+describe("setFlamePaletteId", () => {
+  it("sets the palette id immutably", () => {
+    const state = initialState(true);
+    const next = setFlamePaletteId(state, "spectrum");
+    expect(next.flame.paletteId).toBe("spectrum");
+    expect(state.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
+  });
+
+  it("leaves the other flame params untouched", () => {
+    const state = initialState(true);
+    const next = setFlamePaletteId(state, "ember");
+    expect(next.flame.gamma).toBe(state.flame.gamma);
+    expect(next.flame.exposure).toBe(state.flame.exposure);
+    expect(next.flame.supersample).toBe(state.flame.supersample);
   });
 });
 
