@@ -33,8 +33,23 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
+import type { Bounds } from "../fractal/types";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
+
+/** Zero-extent bounds — the defensive fallback if a flame render is somehow
+ * started before the first cloud exists (regenerate() runs at boot, so in
+ * practice lastResult is always set by the time Render is reachable). */
+const EMPTY_BOUNDS: Bounds = {
+  minX: 0,
+  maxX: 0,
+  minY: 0,
+  maxY: 0,
+  minZ: 0,
+  maxZ: 0,
+  minR: 0,
+  maxR: 0,
+};
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -198,6 +213,12 @@ function main(): void {
       estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
       estimatorCurve: state.flame.estimatorCurve,
       paletteId: state.flame.paletteId,
+      // Mirror the explorer's coloring (fr-6do): the non-transform modes color
+      // each point against the current cloud's bounds, so the render matches
+      // the frozen view it was launched from. lastResult is always set here —
+      // regenerate() runs at boot before Render is reachable.
+      colorMode: state.colorMode,
+      bounds: lastResult?.bounds ?? EMPTY_BOUNDS,
     });
 
     state = setFlameActive(state, true);

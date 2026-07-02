@@ -298,6 +298,7 @@ export class Ui {
   private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flamePalette: HTMLSelectElement;
+  private readonly flamePaletteLabel: HTMLElement;
   private readonly flameEstimatorRadiusLabel: HTMLElement;
   private readonly flameEstimatorRadiusSlider: HTMLInputElement;
   private readonly flameEstimatorMinimumRadiusLabel: HTMLElement;
@@ -350,6 +351,7 @@ export class Ui {
     this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flamePalette = this.byId("flamePalette");
+    this.flamePaletteLabel = this.byId("flamePaletteLabel");
     this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
     this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
     this.flameEstimatorMinimumRadiusLabel = this.byId(
@@ -478,6 +480,14 @@ export class Ui {
     this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
     this.flameSupersampleSlider.value = String(state.flame.supersample);
     this.flamePalette.value = state.flame.paletteId;
+    // The palette only drives transform-mode (structural) coloring; in the
+    // other color modes the flame mirrors the explorer's per-point ramp
+    // (fr-6do), so hide the selector rather than offer a control that does
+    // nothing (and would needlessly restart the render).
+    this.flamePaletteLabel.classList.toggle(
+      "hidden",
+      state.colorMode !== "transform",
+    );
 
     this.flameEstimatorRadiusLabel.textContent = `${state.flame.estimatorRadius.toFixed(1)}px`;
     this.flameEstimatorRadiusSlider.value = String(state.flame.estimatorRadius);
