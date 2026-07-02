@@ -10,6 +10,10 @@ import {
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_POINT_SIZE,
+  DEFAULT_RAYMARCH_ITERATIONS,
+  DEFAULT_RAYMARCH_MAX_DISTANCE,
+  DEFAULT_RAYMARCH_MAX_STEPS,
+  DEFAULT_RAYMARCH_POWER,
   initialState,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
@@ -19,6 +23,8 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_RAYMARCH_MAX_STEPS,
+  MAX_RAYMARCH_POWER,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -27,6 +33,8 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_RAYMARCH_MAX_DISTANCE,
+  MIN_RAYMARCH_POWER,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
@@ -42,6 +50,11 @@ import {
   setFlameSupersample,
   setFlameVibrancy,
   setPointSize,
+  setRaymarchActive,
+  setRaymarchIterations,
+  setRaymarchMaxDistance,
+  setRaymarchMaxSteps,
+  setRaymarchPower,
   setRenderStyle,
   setTransforms,
   updateTransform,
@@ -79,6 +92,18 @@ describe("initialState", () => {
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
+    });
+  });
+
+  // The raymarch renderer is explorer-first too — never the boot mode.
+  it("boots with the raymarch render inactive, at its default settings", () => {
+    const state = initialState(true);
+    expect(state.raymarchActive).toBe(false);
+    expect(state.raymarch).toEqual({
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
     });
   });
 
@@ -396,5 +421,66 @@ describe("setFlameActive", () => {
     expect(next.flameActive).toBe(true);
     expect(state.flameActive).toBe(false);
     expect(next.flame).toBe(state.flame);
+  });
+});
+
+describe("setRaymarchPower", () => {
+  it("sets the Mandelbulb power immutably", () => {
+    const state = initialState(true);
+    const next = setRaymarchPower(state, 6);
+    expect(next.raymarch.power).toBe(6);
+    expect(state.raymarch.power).toBe(DEFAULT_RAYMARCH_POWER);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setRaymarchPower(initialState(true), 999).raymarch.power).toBe(
+      MAX_RAYMARCH_POWER,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setRaymarchPower(initialState(true), -5).raymarch.power).toBe(
+      MIN_RAYMARCH_POWER,
+    );
+  });
+});
+
+describe("setRaymarchIterations", () => {
+  it("rounds to an integer (it drives a fixed GLSL loop)", () => {
+    expect(
+      setRaymarchIterations(initialState(true), 9.7).raymarch.iterations,
+    ).toBe(10);
+  });
+
+  it("clamps above the maximum", () => {
+    const clamped = setRaymarchIterations(initialState(true), 999).raymarch
+      .iterations;
+    expect(clamped).toBe(20);
+  });
+});
+
+describe("setRaymarchMaxSteps", () => {
+  it("rounds and clamps to the step ceiling", () => {
+    expect(
+      setRaymarchMaxSteps(initialState(true), 9999).raymarch.maxSteps,
+    ).toBe(MAX_RAYMARCH_MAX_STEPS);
+  });
+});
+
+describe("setRaymarchMaxDistance", () => {
+  it("clamps below the minimum", () => {
+    expect(
+      setRaymarchMaxDistance(initialState(true), -1).raymarch.maxDistance,
+    ).toBe(MIN_RAYMARCH_MAX_DISTANCE);
+  });
+});
+
+describe("setRaymarchActive", () => {
+  it("toggles the raymarch overlay immutably, independent of its params", () => {
+    const state = initialState(true);
+    const next = setRaymarchActive(state, true);
+    expect(next.raymarchActive).toBe(true);
+    expect(state.raymarchActive).toBe(false);
+    expect(next.raymarch).toBe(state.raymarch);
   });
 });

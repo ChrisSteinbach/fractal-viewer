@@ -79,6 +79,36 @@ export interface FlameParams {
   paletteId: FlamePaletteId;
 }
 
+/**
+ * Settings for the raymarching distance-estimator renderer (fr-yor; the GPU
+ * shader lives in `src/app/raymarch-material.ts`, the CPU reference DE in
+ * `src/fractal/raymarch.ts`). Persists as a render setting like {@link
+ * FlameParams}, independent of whether a raymarch render is currently active
+ * (see {@link AppState.raymarchActive}). Unlike the flame renderer these are
+ * all live-reactive: the shader re-evaluates the whole field every frame, so
+ * changing any of them just re-renders — there is no accumulation to restart.
+ */
+export interface RaymarchParams {
+  /**
+   * Mandelbulb exponent (White & Nylander's power-`n` formula). 8 is the
+   * classic look; lower powers give blobbier bulbs, higher ones more lobes.
+   */
+  power: number;
+  /**
+   * Escape-time iteration budget for the distance estimate — how deep the
+   * fractal detail is resolved before a point is taken to be inside the set.
+   * Higher is crisper but costlier per ray step.
+   */
+  iterations: number;
+  /**
+   * Maximum sphere-tracing steps per primary ray before giving up (a miss).
+   * Higher lets grazing rays resolve fine silhouettes at the cost of speed.
+   */
+  maxSteps: number;
+  /** Far cutoff: a ray that marches past this world distance is a miss (sky). */
+  maxDistance: number;
+}
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
@@ -111,6 +141,14 @@ export interface AppState {
    * explorer (see `persist.ts`'s `SceneSnapshot`, which omits this field).
    */
   flameActive: boolean;
+  /** Raymarch render settings; persists independent of {@link raymarchActive}. */
+  raymarch: RaymarchParams;
+  /**
+   * Whether the raymarch render overlay is showing (in place of the live point
+   * cloud). Session-only like {@link flameActive} — never persisted, so the
+   * app always boots into the explorer.
+   */
+  raymarchActive: boolean;
 }
 
 /** An IFS needs at least one map. */
@@ -182,6 +220,26 @@ export const MAX_ESTIMATOR_CURVE = 3;
  */
 export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "legacy";
 
+/**
+ * Raymarch defaults + clamps (fr-yor). Power 8 is the canonical Mandelbulb.
+ * The rest trade quality for frame rate: the defaults are tuned for a smooth
+ * look on a mid-range GPU, and the clamps bound both the shader's fixed loop
+ * counts (`maxSteps`, `iterations`) and how far a ray can wander
+ * (`maxDistance`).
+ */
+export const DEFAULT_RAYMARCH_POWER = 8;
+export const MIN_RAYMARCH_POWER = 2;
+export const MAX_RAYMARCH_POWER = 16;
+export const DEFAULT_RAYMARCH_ITERATIONS = 8;
+export const MIN_RAYMARCH_ITERATIONS = 1;
+export const MAX_RAYMARCH_ITERATIONS = 20;
+export const DEFAULT_RAYMARCH_MAX_STEPS = 96;
+export const MIN_RAYMARCH_MAX_STEPS = 16;
+export const MAX_RAYMARCH_MAX_STEPS = 256;
+export const DEFAULT_RAYMARCH_MAX_DISTANCE = 12;
+export const MIN_RAYMARCH_MAX_DISTANCE = 2;
+export const MAX_RAYMARCH_MAX_DISTANCE = 40;
+
 export function initialState(panelOpen: boolean): AppState {
   return {
     transforms: defaultTransforms(),
@@ -205,6 +263,13 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_FLAME_PALETTE,
     },
     flameActive: false,
+    raymarch: {
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
+    },
+    raymarchActive: false,
   };
 }
 
@@ -463,4 +528,82 @@ export function setFlameActive(
   flameActive: boolean,
 ): AppState {
   return { ...state, flameActive };
+}
+
+/** Set the Mandelbulb power, clamped to a sane range. Live-reactive: the
+ * raymarch shader re-evaluates the field every frame, so no restart is needed. */
+export function setRaymarchPower(state: AppState, power: number): AppState {
+  return {
+    ...state,
+    raymarch: {
+      ...state.raymarch,
+      power: Math.max(MIN_RAYMARCH_POWER, Math.min(MAX_RAYMARCH_POWER, power)),
+    },
+  };
+}
+
+/** Set the DE escape-time iteration budget, rounded to an integer and clamped
+ * (it drives a fixed GLSL loop). Live-reactive like {@link setRaymarchPower}. */
+export function setRaymarchIterations(
+  state: AppState,
+  iterations: number,
+): AppState {
+  return {
+    ...state,
+    raymarch: {
+      ...state.raymarch,
+      iterations: Math.round(
+        Math.max(
+          MIN_RAYMARCH_ITERATIONS,
+          Math.min(MAX_RAYMARCH_ITERATIONS, iterations),
+        ),
+      ),
+    },
+  };
+}
+
+/** Set the max sphere-tracing steps per ray, rounded to an integer and clamped
+ * (it drives a fixed GLSL loop). Live-reactive like {@link setRaymarchPower}. */
+export function setRaymarchMaxSteps(
+  state: AppState,
+  maxSteps: number,
+): AppState {
+  return {
+    ...state,
+    raymarch: {
+      ...state.raymarch,
+      maxSteps: Math.round(
+        Math.max(
+          MIN_RAYMARCH_MAX_STEPS,
+          Math.min(MAX_RAYMARCH_MAX_STEPS, maxSteps),
+        ),
+      ),
+    },
+  };
+}
+
+/** Set the ray far cutoff, clamped to a sane range. Live-reactive like
+ * {@link setRaymarchPower}. */
+export function setRaymarchMaxDistance(
+  state: AppState,
+  maxDistance: number,
+): AppState {
+  return {
+    ...state,
+    raymarch: {
+      ...state.raymarch,
+      maxDistance: Math.max(
+        MIN_RAYMARCH_MAX_DISTANCE,
+        Math.min(MAX_RAYMARCH_MAX_DISTANCE, maxDistance),
+      ),
+    },
+  };
+}
+
+/** Enter or exit the raymarch render overlay (session-only). */
+export function setRaymarchActive(
+  state: AppState,
+  raymarchActive: boolean,
+): AppState {
+  return { ...state, raymarchActive };
 }
