@@ -3,15 +3,21 @@ import { decodeScene, encodeScene, loadScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
+  DEFAULT_ESTIMATOR_CURVE,
+  DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+  DEFAULT_ESTIMATOR_RADIUS,
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  MAX_ESTIMATOR_CURVE,
+  MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
+  MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
@@ -48,6 +54,9 @@ function baseSnapshot(): SceneSnapshot {
       gamma: DEFAULT_FLAME_GAMMA,
       vibrancy: DEFAULT_FLAME_VIBRANCY,
       supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
     },
   };
 }
@@ -77,6 +86,9 @@ describe("encodeScene / decodeScene round-trip", () => {
       gamma: DEFAULT_FLAME_GAMMA,
       vibrancy: DEFAULT_FLAME_VIBRANCY,
       supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
     });
   });
 
@@ -609,6 +621,9 @@ describe("decodeScene flame params", () => {
       gamma: DEFAULT_FLAME_GAMMA,
       vibrancy: DEFAULT_FLAME_VIBRANCY,
       supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
     });
   });
 
@@ -749,6 +764,85 @@ describe("decodeScene flame params", () => {
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.flame.supersample).toBe(3);
+  });
+
+  it("round-trips non-default estimator params", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: {
+        ...baseSnapshot().flame,
+        estimatorRadius: 9,
+        estimatorMinimumRadius: 1.5,
+        estimatorCurve: 1.2,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.flame.estimatorRadius).toBeCloseTo(9, 4);
+    expect(result!.flame.estimatorMinimumRadius).toBeCloseTo(1.5, 4);
+    expect(result!.flame.estimatorCurve).toBeCloseTo(1.2, 4);
+  });
+
+  it("defaults estimator params quietly for a link encoded before fr-17t existed", () => {
+    // A hand-built flame block carrying only pre-fr-17t fields.
+    const raw = {
+      ...baseSnapshot(),
+      flame: {
+        exposure: 1.5,
+        iterations: 30_000_000,
+        gamma: 3,
+        vibrancy: 0.5,
+        supersample: 2,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.estimatorRadius).toBe(DEFAULT_ESTIMATOR_RADIUS);
+    expect(result!.flame.estimatorMinimumRadius).toBe(
+      DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+    );
+    expect(result!.flame.estimatorCurve).toBe(DEFAULT_ESTIMATOR_CURVE);
+  });
+
+  it("returns null when estimatorRadius is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, estimatorRadius: "wide" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when estimatorMinimumRadius is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, estimatorMinimumRadius: "sharp" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when estimatorCurve is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, estimatorCurve: "steep" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps out-of-range estimator params into their allowed bands", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: {
+        ...baseSnapshot().flame,
+        estimatorRadius: 999,
+        estimatorMinimumRadius: -5,
+        estimatorCurve: 999,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.flame.estimatorRadius).toBe(MAX_ESTIMATOR_RADIUS);
+    expect(result!.flame.estimatorMinimumRadius).toBe(
+      MIN_ESTIMATOR_MINIMUM_RADIUS,
+    );
+    expect(result!.flame.estimatorCurve).toBe(MAX_ESTIMATOR_CURVE);
   });
 });
 
