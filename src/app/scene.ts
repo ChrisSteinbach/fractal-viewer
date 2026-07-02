@@ -9,7 +9,8 @@ import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
-import type { RenderStyle } from "./state";
+import { RaymarchQuad } from "./raymarch-material";
+import type { RaymarchParams, RenderStyle } from "./state";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -225,6 +226,13 @@ export class FractalScene {
   private readonly flameTexture: THREE.CanvasTexture;
   private readonly flameMaterial: THREE.MeshBasicMaterial;
   private readonly flameQuad: FullScreenQuad;
+
+  // The raymarch render (fr-yor): a GPU distance-estimator renderer drawn to a
+  // full-screen quad in place of the point cloud. Unlike the flame renderer it
+  // needs no worker or accumulation — the fragment shader re-evaluates the
+  // whole lit surface every frame — so this is just a quad the animation loop
+  // draws while a raymarch render is active (see `renderRaymarch`).
+  private readonly raymarchQuad = new RaymarchQuad();
 
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
@@ -705,6 +713,33 @@ export class FractalScene {
    */
   captureFlameFrame(): string {
     return this.flameCanvas.toDataURL("image/png");
+  }
+
+  /** Update the raymarch renderer's DE/marching parameters (see fr-yor). */
+  setRaymarchParams(params: RaymarchParams): void {
+    this.raymarchQuad.setParams(params);
+  }
+
+  /**
+   * Render only the raymarch quad, sphere-tracing the Mandelbulb through the
+   * current (frozen) camera — used in place of {@link render} while a raymarch
+   * render is active, so the 3D point-cloud scene never draws. The camera is
+   * snapshotted every call so a mid-render window resize (which updates the
+   * projection's aspect) still reconstructs correct rays.
+   */
+  renderRaymarch(): void {
+    this.raymarchQuad.setCamera(this.camera);
+    this.raymarchQuad.render(this.renderer);
+  }
+
+  /**
+   * Save-PNG source while a raymarch render is active: render the quad to the
+   * WebGL canvas and read it straight back (like {@link captureFrame}, the
+   * render happens right before the read since the buffer isn't preserved).
+   */
+  captureRaymarchFrame(): string {
+    this.renderRaymarch();
+    return this.renderer.domElement.toDataURL("image/png");
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */
