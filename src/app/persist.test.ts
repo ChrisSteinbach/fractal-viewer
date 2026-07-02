@@ -12,16 +12,23 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_RAYMARCH_ITERATIONS,
+  DEFAULT_RAYMARCH_MAX_DISTANCE,
+  DEFAULT_RAYMARCH_MAX_STEPS,
+  DEFAULT_RAYMARCH_POWER,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
+  MAX_RAYMARCH_MAX_STEPS,
+  MAX_RAYMARCH_POWER,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
+  MIN_RAYMARCH_MAX_DISTANCE,
 } from "./state";
 
 // ---------------------------------------------------------------------------
@@ -60,6 +67,12 @@ function baseSnapshot(): SceneSnapshot {
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
     },
+    raymarch: {
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
+    },
   };
 }
 
@@ -92,6 +105,12 @@ describe("encodeScene / decodeScene round-trip", () => {
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
+    });
+    expect(result!.raymarch).toEqual({
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
     });
   });
 
@@ -885,6 +904,94 @@ describe("decodeScene flame params", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.flame.paletteId).toBe("legacy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Raymarch params (fr-yor — same "absent defaults, malformed rejects, finite
+// clamps" contract as the flame block)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene raymarch params", () => {
+  it("round-trips raymarch settings through encode → decode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      raymarch: { power: 6, iterations: 12, maxSteps: 160, maxDistance: 20 },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.raymarch).toEqual({
+      power: 6,
+      iterations: 12,
+      maxSteps: 160,
+      maxDistance: 20,
+    });
+  });
+
+  it("defaults the whole block when raymarch is absent (a pre-fr-yor link)", () => {
+    // A hand-built payload with no `raymarch` key at all.
+    const raw = {
+      transforms: [
+        { position: [0, 0, 0], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+      ],
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.raymarch).toEqual({
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
+    });
+  });
+
+  it("returns null when raymarch is present but not an object", () => {
+    const raw = { ...baseSnapshot(), raymarch: "bulb" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when a present raymarch field is non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      raymarch: { ...baseSnapshot().raymarch, power: "lots" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps finite out-of-range raymarch values rather than rejecting", () => {
+    const raw = {
+      ...baseSnapshot(),
+      raymarch: {
+        power: 999,
+        iterations: 8,
+        maxSteps: 999,
+        maxDistance: -100,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.raymarch.power).toBe(MAX_RAYMARCH_POWER);
+    expect(result!.raymarch.maxSteps).toBe(MAX_RAYMARCH_MAX_STEPS);
+    expect(result!.raymarch.maxDistance).toBe(MIN_RAYMARCH_MAX_DISTANCE);
+  });
+
+  it("rounds iterations and maxSteps to integers (they drive fixed loops)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      raymarch: {
+        power: 8,
+        iterations: 9.7,
+        maxSteps: 100.4,
+        maxDistance: 12,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.raymarch.iterations).toBe(10);
+    expect(result!.raymarch.maxSteps).toBe(100);
   });
 });
 

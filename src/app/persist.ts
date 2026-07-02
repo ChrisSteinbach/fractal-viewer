@@ -28,6 +28,10 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_RAYMARCH_ITERATIONS,
+  DEFAULT_RAYMARCH_MAX_DISTANCE,
+  DEFAULT_RAYMARCH_MAX_STEPS,
+  DEFAULT_RAYMARCH_POWER,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
   MAX_ESTIMATOR_RADIUS,
@@ -36,6 +40,10 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_RAYMARCH_ITERATIONS,
+  MAX_RAYMARCH_MAX_DISTANCE,
+  MAX_RAYMARCH_MAX_STEPS,
+  MAX_RAYMARCH_POWER,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -44,9 +52,18 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_RAYMARCH_ITERATIONS,
+  MIN_RAYMARCH_MAX_DISTANCE,
+  MIN_RAYMARCH_MAX_STEPS,
+  MIN_RAYMARCH_POWER,
   RENDER_STYLES,
 } from "./state";
-import type { AppState, FlameParams, RenderStyle } from "./state";
+import type {
+  AppState,
+  FlameParams,
+  RaymarchParams,
+  RenderStyle,
+} from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +86,11 @@ export interface SceneSnapshot {
    * app always boots into the explorer, never straight into a render.
    */
   flame: FlameParams;
+  /**
+   * Raymarch render settings (see {@link AppState.raymarch}). Like `flame`,
+   * `AppState.raymarchActive` is intentionally NOT persisted.
+   */
+  raymarch: RaymarchParams;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -97,6 +119,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
     flame: state.flame,
+    raymarch: state.raymarch,
   };
 }
 
@@ -371,6 +394,70 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
   };
 }
 
+/**
+ * Validate the untrusted `raymarch` render-settings block (fr-yor), following
+ * the exact rules {@link decodeFlameParams} uses: an absent block, or an
+ * absent field within a present block, decodes quietly to its default (so a
+ * link written before this feature keeps working); but a present-but-malformed
+ * (non-finite) value rejects the whole scene, and a finite out-of-range value
+ * is clamped rather than rejected. `power`/`iterations`/`maxSteps` drive fixed
+ * GLSL loops, so like `supersample` they are additionally rounded to integers;
+ * `maxDistance` is continuous.
+ */
+function decodeRaymarchParams(raw: unknown): RaymarchParams | null {
+  if (raw === undefined) {
+    return {
+      power: DEFAULT_RAYMARCH_POWER,
+      iterations: DEFAULT_RAYMARCH_ITERATIONS,
+      maxSteps: DEFAULT_RAYMARCH_MAX_STEPS,
+      maxDistance: DEFAULT_RAYMARCH_MAX_DISTANCE,
+    };
+  }
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+
+  let power = DEFAULT_RAYMARCH_POWER;
+  if (r.power !== undefined) {
+    power = Number(r.power);
+    if (!Number.isFinite(power)) return null;
+  }
+  let iterations = DEFAULT_RAYMARCH_ITERATIONS;
+  if (r.iterations !== undefined) {
+    iterations = Number(r.iterations);
+    if (!Number.isFinite(iterations)) return null;
+  }
+  let maxSteps = DEFAULT_RAYMARCH_MAX_STEPS;
+  if (r.maxSteps !== undefined) {
+    maxSteps = Number(r.maxSteps);
+    if (!Number.isFinite(maxSteps)) return null;
+  }
+  let maxDistance = DEFAULT_RAYMARCH_MAX_DISTANCE;
+  if (r.maxDistance !== undefined) {
+    maxDistance = Number(r.maxDistance);
+    if (!Number.isFinite(maxDistance)) return null;
+  }
+
+  return {
+    power: Math.max(MIN_RAYMARCH_POWER, Math.min(MAX_RAYMARCH_POWER, power)),
+    iterations: Math.round(
+      Math.max(
+        MIN_RAYMARCH_ITERATIONS,
+        Math.min(MAX_RAYMARCH_ITERATIONS, iterations),
+      ),
+    ),
+    maxSteps: Math.round(
+      Math.max(
+        MIN_RAYMARCH_MAX_STEPS,
+        Math.min(MAX_RAYMARCH_MAX_STEPS, maxSteps),
+      ),
+    ),
+    maxDistance: Math.max(
+      MIN_RAYMARCH_MAX_DISTANCE,
+      Math.min(MAX_RAYMARCH_MAX_DISTANCE, maxDistance),
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -423,6 +510,7 @@ export function encodeScene(s: SceneSnapshot): string {
     renderStyle: RenderStyle;
     showGuides: boolean;
     flame: FlameParams;
+    raymarch: RaymarchParams;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -443,6 +531,16 @@ export function encodeScene(s: SceneSnapshot): string {
       estimatorMinimumRadius: round4(s.flame.estimatorMinimumRadius),
       estimatorCurve: round4(s.flame.estimatorCurve),
       paletteId: s.flame.paletteId,
+    },
+    // Always written, like the flame block: a small, always-present settings
+    // group. iterations/maxSteps are integers (they drive fixed GLSL loops);
+    // power/maxDistance are rounded to 4 dp to keep the URL compact, matching
+    // pointSize (power allows fractional Mandelbulb variants).
+    raymarch: {
+      power: round4(s.raymarch.power),
+      iterations: Math.round(s.raymarch.iterations),
+      maxSteps: Math.round(s.raymarch.maxSteps),
+      maxDistance: round4(s.raymarch.maxDistance),
     },
   };
   // Written only when present, so old links stay byte-identical (they never
@@ -531,6 +629,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     const flame = decodeFlameParams(o.flame);
     if (flame === null) return null;
 
+    // raymarch: same rule as flame — absent defaults, malformed rejects. See
+    // decodeRaymarchParams.
+    const raymarch = decodeRaymarchParams(o.raymarch);
+    if (raymarch === null) return null;
+
     return {
       transforms,
       finalTransform,
@@ -540,6 +643,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
       flame,
+      raymarch,
     };
   } catch {
     return null;
