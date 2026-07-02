@@ -615,6 +615,225 @@ function tonemapFlamePreFrUcs(
   return out;
 }
 
+describe("accumulateFlame with symmetry (fr-6im)", () => {
+  it("matches the stepOrbit/plotPoint oracle when the prepared system has rotated copies", () => {
+    // Same shape as "accumulateFlame vs. stepOrbit/plotPoint" above, but
+    // `prepared` is built with rotated copies: stepOrbit already rotates a
+    // picked slot's full affine+variation output (see chaos-game.test.ts's
+    // "rotates a slot's FULL affine+variation output"), so if
+    // accumulateFlame's hand-inlined loop ever drifts from that — including
+    // its post-rotation and BASE-index handling — this is what catches it.
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+    };
+    const prepared = prepareChaosGame(transforms, finalTransform, {
+      order: 4,
+      axis: "y",
+    });
+    const palette = transformColors(transforms.length);
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const projection = ORTHOGRAPHIC;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(42),
+      palette,
+    );
+
+    const rng = mulberry32(42);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const ndcX = cx / cw;
+      const ndcY = cy / cw;
+      const col = Math.floor((ndcX + 1) * 0.5 * width);
+      const row = Math.floor((1 - ndcY) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      // s.index is already the BASE map (see chaos-game.ts's stepOrbit), so
+      // this indexes `palette` (sized to transforms.length) exactly like the
+      // no-symmetry oracle above.
+      const rgb = palette[s.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+    }
+    expected.orbit = [x, y, z];
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+  });
+
+  it("matches the structural-coloring (colorLUT) oracle when the prepared system has rotated copies", () => {
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+    };
+    const prepared = prepareChaosGame(transforms, finalTransform, {
+      order: 3,
+      axis: "z",
+    });
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const projection = ORTHOGRAPHIC;
+    // BASE count — colorDenom keys on this, not the expanded slot count (see
+    // flame.ts's accumulateFlame), so every rotated copy of a base map
+    // repeats that map's gradient slot instead of smearing across copies.
+    const n = transforms.length;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(42),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    const rng = mulberry32(42);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    let c = 0.5;
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const slot = n > 1 ? s.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      expected.sumRGB[o] += colorLUT[li];
+      expected.sumRGB[o + 1] += colorLUT[li + 1];
+      expected.sumRGB[o + 2] += colorLUT[li + 2];
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitColor = c;
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitColor).toBe(expected.orbitColor);
+  });
+
+  it("produces a differently-shaped histogram than the same seed without symmetry", () => {
+    const transforms = sierpinskiTetrahedron();
+    const palette = transformColors(transforms.length);
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+
+    const withoutSymmetry = accumulateFlame(
+      prepareChaosGame(transforms),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(1),
+      palette,
+    );
+    const withSymmetry = accumulateFlame(
+      prepareChaosGame(transforms, null, { order: 5, axis: "x" }),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(1),
+      palette,
+    );
+
+    expect(Array.from(withSymmetry.hits)).not.toEqual(
+      Array.from(withoutSymmetry.hits),
+    );
+  });
+});
+
 describe("tonemapFlame", () => {
   function histogramWith(
     entries: { bucket: number; hits: number; color: Vec3 }[],

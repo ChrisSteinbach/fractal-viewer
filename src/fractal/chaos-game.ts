@@ -1,9 +1,9 @@
-import { applyAffine, composeAffine } from "./affine";
+import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import type { Affine } from "./affine";
 import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
 import type { Rng } from "./rng";
-import type { Bounds, Transform, Vec3 } from "./types";
+import type { Bounds, SymmetryParams, Transform, Vec3 } from "./types";
 
 /** Result of running the chaos game: a flat point cloud plus metadata. */
 export interface ChaosGameResult {
@@ -33,6 +33,50 @@ export const WARMUP_ITERATIONS = 100;
 export const ESCAPE_LIMIT = 50;
 /** Uint8 transform indices cap the system at 256 maps. */
 export const MAX_TRANSFORMS = 256;
+
+/** `prepareChaosGame`'s default `symmetry`: order 1 is the identity (today's
+ * unreplicated system) for any axis, so every existing caller that omits the
+ * parameter gets byte-identical behavior. */
+const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
+
+/**
+ * Largest symmetry order `<= requestedOrder` (and always `>= 1`) whose
+ * expanded transform count (`order * baseTransformCount`) fits within
+ * {@link MAX_TRANSFORMS} — the same "ask for N, get the largest N that fits"
+ * shape as `flame.ts`'s `clampSupersampleToBudget`. `requestedOrder` is
+ * floored to an integer and floored at 1 first, so a fractional or
+ * non-finite input degrades gracefully rather than propagating; exported so
+ * the UI can show the same "reduced to Nx" fact `prepareChaosGame` itself
+ * acts on, without a round trip through a worker (unlike the memory-budget
+ * clamps, this is a pure function of already-known state, not a runtime
+ * device fact).
+ */
+export function effectiveSymmetryOrder(
+  requestedOrder: number,
+  baseTransformCount: number,
+): number {
+  const requested = Math.max(1, Math.floor(requestedOrder) || 1);
+  if (baseTransformCount <= 0) return requested;
+  const fits = Math.floor(MAX_TRANSFORMS / baseTransformCount);
+  return Math.max(1, Math.min(requested, fits));
+}
+
+/** Row-major 3x3 rotation by `angle` radians about a single axis — one
+ * nonzero Euler angle into {@link rotationMatrixXYZ} gives exactly that,
+ * since the other two axes' sin/cos terms all collapse to 0/1. */
+function symmetryRotation(
+  axis: SymmetryParams["axis"],
+  angle: number,
+): number[] {
+  switch (axis) {
+    case "x":
+      return rotationMatrixXYZ(angle, 0, 0);
+    case "y":
+      return rotationMatrixXYZ(0, angle, 0);
+    case "z":
+      return rotationMatrixXYZ(0, 0, angle);
+  }
+}
 
 function emptyBounds(): Bounds {
   return {
@@ -65,14 +109,39 @@ export interface PreparedChaosGame {
   finalAffine: Affine | null;
   /** Composed final-transform variation blend, or `null`. */
   finalWarp: VariationBlend | null;
-  /** `transforms.length`, i.e. the draw range for the unweighted uniform pick. */
+  /**
+   * The draw range for the unweighted uniform pick in `pickIndex`: every
+   * rotated-copy SLOT, not just the base maps — `baseTransformCount *
+   * effectiveSymmetryOrder(...)`. Equal to `baseTransformCount` at symmetry
+   * order 1 (see {@link baseTransformCount}).
+   */
   transformCount: number;
+  /**
+   * `transforms.length` — the number of BASE (un-rotated) maps, i.e. the
+   * length `affines`/`variations`/`postRotations` would have with no
+   * symmetry. A `pickIndex` draw (0..`transformCount` - 1) recovers the
+   * "logical" map it came from via `idx % baseTransformCount` — see
+   * {@link stepOrbit} — which is what per-transform coloring, the editor's
+   * selection, and the flame's `palette` array must key on to keep meaning
+   * "logical map" rather than "which kaleidoscope copy". Equal to
+   * `transformCount` at symmetry order 1.
+   */
+  baseTransformCount: number;
   /** Whether any transform has a non-1 weight — selects the weighted draw in `pickIndex`. */
   weighted: boolean;
   /** Running sum of weights, indexed like `transforms`; binary-searched when `weighted`. */
   cumulative: Float64Array;
   /** Sum of all transform weights. */
   totalWeight: number;
+  /**
+   * Row-major 3x3 rotation applied AFTER a slot's affine + variation output
+   * (fr-6im's kaleidoscope copies), indexed like `affines`/`variations`, or
+   * `null` for an unrotated slot — every slot at symmetry order 1, and every
+   * copy-0 slot at any order, so the RNG stream and every coordinate stay
+   * byte-identical to the pre-symmetry code path exactly where there is
+   * nothing to rotate. See {@link stepOrbit}.
+   */
+  postRotations: (number[] | null)[];
 }
 
 /**
@@ -81,12 +150,23 @@ export interface PreparedChaosGame {
  * per-iteration. Call once per run and reuse the result for every
  * {@link stepOrbit} / {@link plotPoint} call in that run.
  *
+ * `symmetry` (fr-6im; defaults to order 1, the identity) replicates every
+ * base map `effectiveSymmetryOrder(symmetry.order, transforms.length)` times,
+ * copy `k` rotated by `2π·k / order` about `symmetry.axis` — see
+ * {@link stepOrbit} for where that rotation is actually applied. At order 1
+ * (any axis) this expansion is a no-op: exactly one (unrotated) copy of each
+ * base map, so every existing caller that omits `symmetry` gets a
+ * byte-identical `PreparedChaosGame` to before this parameter existed.
+ *
  * Throws `RangeError` if `transforms.length` exceeds {@link MAX_TRANSFORMS}
- * (the Uint8 transform-index cap).
+ * (the Uint8 transform-index cap) — independent of `symmetry`, which instead
+ * silently reduces its own effective order to fit that same cap on the
+ * EXPANDED count (see {@link effectiveSymmetryOrder}).
  */
 export function prepareChaosGame(
   transforms: Transform[],
   finalTransform: Transform | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY,
 ): PreparedChaosGame {
   if (transforms.length > MAX_TRANSFORMS) {
     throw new RangeError(
@@ -94,11 +174,12 @@ export function prepareChaosGame(
     );
   }
 
-  const affines = transforms.map(composeAffine);
+  const baseTransformCount = transforms.length;
+  const baseAffines = transforms.map(composeAffine);
   // Per-transform nonlinear warp, or null for a purely affine map. Every entry
   // is null for the existing presets, so `stepOrbit` takes the exact same path
   // (and touches the RNG identically) as before variations existed.
-  const variations = transforms.map((t) => composeVariations(t.variations));
+  const baseVariations = transforms.map((t) => composeVariations(t.variations));
   // The optional final transform: one more affine + variation map applied only
   // when a point is plotted (`plotPoint`), never fed back into the orbit. Both
   // stay null when absent, so `plotPoint` keeps the pre-feature code path.
@@ -107,16 +188,45 @@ export function prepareChaosGame(
     ? composeVariations(finalTransform.variations)
     : null;
 
-  // Selection weights. When every weight is 1 (the common case) we keep the
-  // original `Math.floor(rng() * n)` draw, so uniform systems consume the RNG
-  // identically and render exactly as before. Only a genuinely weighted system
-  // pays for the cumulative-weight table + binary search.
-  const weights = transforms.map((t) => t.weight ?? 1);
+  // Expand into one prepared SLOT per (copy, base map) pair, slot k*n+i —
+  // copy 0 first (unrotated), then copy 1, etc. — so `idx % baseTransformCount`
+  // always recovers base index i regardless of how many copies exist. Copy 0's
+  // rotation is always null (not just an identity matrix) and, at order 1,
+  // it's the ONLY copy, so this loop degenerates to exactly the pre-symmetry
+  // affines/variations arrays — same values, same order, same RNG behavior.
+  const order = effectiveSymmetryOrder(symmetry.order, baseTransformCount);
+  const affines: Affine[] = [];
+  const variations: (VariationBlend | null)[] = [];
+  const postRotations: (number[] | null)[] = [];
+  for (let k = 0; k < order; k++) {
+    const post =
+      k === 0
+        ? null
+        : symmetryRotation(symmetry.axis, (2 * Math.PI * k) / order);
+    for (let i = 0; i < baseTransformCount; i++) {
+      affines.push(baseAffines[i]);
+      variations.push(baseVariations[i]);
+      postRotations.push(post);
+    }
+  }
+  const transformCount = affines.length;
+
+  // Selection weights: each slot inherits its BASE map's weight unchanged, so
+  // pickIndex's draw over the full expanded list gives every copy an equal
+  // share of its base map's total probability mass. When every weight is 1
+  // (the common case) we keep the original `Math.floor(rng() * n)` draw, so
+  // uniform systems consume the RNG identically and render exactly as before.
+  // Only a genuinely weighted system pays for the cumulative-weight table +
+  // binary search.
+  const weights = new Array<number>(transformCount);
+  for (let s = 0; s < transformCount; s++) {
+    weights[s] = transforms[s % baseTransformCount].weight ?? 1;
+  }
   let totalWeight = 0;
-  const cumulative = new Float64Array(weights.length);
-  for (let i = 0; i < weights.length; i++) {
-    totalWeight += weights[i];
-    cumulative[i] = totalWeight;
+  const cumulative = new Float64Array(transformCount);
+  for (let s = 0; s < transformCount; s++) {
+    totalWeight += weights[s];
+    cumulative[s] = totalWeight;
   }
   const weighted =
     weights.some((w) => w !== 1) &&
@@ -128,10 +238,12 @@ export function prepareChaosGame(
     variations,
     finalAffine,
     finalWarp,
-    transformCount: transforms.length,
+    transformCount,
+    baseTransformCount,
     weighted,
     cumulative,
     totalWeight,
+    postRotations,
   };
 }
 
@@ -187,6 +299,18 @@ export interface OrbitStep {
  * that is essentially impossible with contractive IFS maps (escape requires a
  * net-expansive application, which a well-formed IFS never produces in steady
  * state). The reseed path is a safety net only.
+ *
+ * Symmetry (fr-6im): when `prepared` has rotated copies, the picked slot's
+ * `postRotations` entry — the copy's rotation, applied to the map's FULL
+ * affine + variation output — bends the landing point before the escape
+ * check, since that rotated point is what actually feeds back into the
+ * orbit. `null` (every slot at symmetry order 1, and every unrotated copy-0
+ * slot at any order) skips this step entirely, so the RNG stream and every
+ * coordinate stay byte-identical to the pre-symmetry code path exactly where
+ * there is nothing to rotate. The returned `index` is always the BASE map
+ * index (`idx % prepared.baseTransformCount`), never the expanded slot, so
+ * per-transform coloring and the editor's selection keep meaning "logical
+ * map" regardless of which kaleidoscope copy actually fired.
  */
 export function stepOrbit(
   prepared: PreparedChaosGame,
@@ -214,6 +338,15 @@ export function stepOrbit(
     ny = q[1];
     nz = q[2];
   }
+  const post = prepared.postRotations[idx];
+  if (post !== null) {
+    const rx = post[0] * nx + post[1] * ny + post[2] * nz;
+    const ry = post[3] * nx + post[4] * ny + post[5] * nz;
+    const rz = post[6] * nx + post[7] * ny + post[8] * nz;
+    nx = rx;
+    ny = ry;
+    nz = rz;
+  }
   if (
     !Number.isFinite(nx) ||
     !Number.isFinite(ny) ||
@@ -226,7 +359,7 @@ export function stepOrbit(
     ny = rng() - 0.5;
     nz = rng() - 0.5;
   }
-  return { x: nx, y: ny, z: nz, index: idx };
+  return { x: nx, y: ny, z: nz, index: idx % prepared.baseTransformCount };
 }
 
 /**
@@ -277,6 +410,12 @@ export function plotPoint(
  * back into the orbit. Omit it (or pass `null`) and the loop takes the exact
  * same path, and consumes the RNG identically, as before the feature existed.
  *
+ * An optional `symmetry` (fr-6im; defaults to order 1, the identity) draws
+ * from `effectiveSymmetryOrder(symmetry.order, transforms.length)` rotated
+ * copies of the transform set instead of just the base maps — see
+ * {@link prepareChaosGame}. `transformIndices` still records the BASE map
+ * index regardless, so per-transform coloring is unaffected.
+ *
  * The per-run setup ({@link prepareChaosGame}) and per-iteration stepping
  * ({@link stepOrbit}, {@link plotPoint}) this function drives are exported so
  * another consumer — e.g. a histogram accumulator that needs the same
@@ -287,6 +426,7 @@ export function runChaosGame(
   numPoints: number,
   rng: Rng = Math.random,
   finalTransform: Transform | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY,
 ): ChaosGameResult {
   if (transforms.length === 0 || numPoints <= 0) {
     return {
@@ -297,7 +437,7 @@ export function runChaosGame(
     };
   }
 
-  const prepared = prepareChaosGame(transforms, finalTransform);
+  const prepared = prepareChaosGame(transforms, finalTransform, symmetry);
 
   const positions = new Float32Array(numPoints * 3);
   const transformIndices = new Uint8Array(numPoints);
