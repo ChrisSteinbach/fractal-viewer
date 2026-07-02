@@ -303,12 +303,14 @@ export interface TonemapParams {
   gamma: number;
   /**
    * Below this normalized density, the gamma curve is replaced by a straight
-   * line through the origin, slope-matched to `density ** (1/gamma)` at the
-   * threshold (so there is no kink). `density ** (1/gamma)` has infinite
-   * slope at density = 0 whenever gamma > 1, so without this a single stray
-   * hit in an otherwise-empty bucket — exactly what fills a not-yet-converged
-   * progressive render — gets blown out into a bright speckle. Has no effect
-   * when `gamma` is 1 (see {@link DEFAULT_GAMMA_THRESHOLD}).
+   * line through the origin whose value matches `density ** (1/gamma)`
+   * exactly at the threshold (continuous — no jump), though not its slope
+   * there (a faint kink, not a discontinuity). `density ** (1/gamma)` has
+   * infinite slope at density = 0 whenever gamma > 1, so without even that
+   * much, a single stray hit in an otherwise-empty bucket — exactly what
+   * fills a not-yet-converged progressive render — gets blown out into a
+   * bright speckle. Has no effect when `gamma` is 1 (see
+   * {@link DEFAULT_GAMMA_THRESHOLD}).
    */
   gammaThreshold: number;
   /**
@@ -353,10 +355,12 @@ export function tonemapFlame(
   const { exposure, gamma, gammaThreshold, vibrancy } = params;
   const invGamma = 1 / gamma;
   const flatness = 1 - vibrancy;
-  // Slope of `x ** invGamma` at x = gammaThreshold: self-division, so this is
-  // exactly 1 at gamma = 1 regardless of gammaThreshold, which is what keeps
-  // the linear branch below agreeing with the power branch at the collapse
-  // point (see the doc comment above).
+  // Slope of the line from the origin through (gammaThreshold, gammaThreshold
+  // ** invGamma) — a chord, not the power curve's own tangent slope at that
+  // point, which is what leaves a faint kink there (see the doc comment
+  // above). Self-division makes this exactly 1 at gamma = 1 regardless of
+  // gammaThreshold, which is what keeps the linear branch below agreeing
+  // with the power branch at the collapse point.
   const thresholdSlope =
     gammaThreshold > 0 ? gammaThreshold ** invGamma / gammaThreshold : 1;
   // log1p(hits), not log(hits): finite (and 0) at hits = 0 or 1, so a bucket
