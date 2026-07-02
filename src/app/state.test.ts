@@ -1,20 +1,32 @@
 import {
   addTransform,
   DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_SUPERSAMPLE,
+  DEFAULT_FLAME_VIBRANCY,
   DEFAULT_POINT_SIZE,
   initialState,
   MAX_FLAME_EXPOSURE,
+  MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
+  MAX_FLAME_SUPERSAMPLE,
+  MAX_FLAME_VIBRANCY,
   MIN_FLAME_EXPOSURE,
+  MIN_FLAME_GAMMA,
   MIN_FLAME_ITERATIONS,
+  MIN_FLAME_SUPERSAMPLE,
+  MIN_FLAME_VIBRANCY,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
   setFinalTransform,
   setFlameActive,
   setFlameExposure,
+  setFlameGamma,
   setFlameIterations,
+  setFlameSupersample,
+  setFlameVibrancy,
   setPointSize,
   setRenderStyle,
   setTransforms,
@@ -46,6 +58,9 @@ describe("initialState", () => {
     expect(state.flame).toEqual({
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     });
   });
 
@@ -199,6 +214,75 @@ describe("setFlameIterations", () => {
   it("clamps below the minimum", () => {
     expect(setFlameIterations(initialState(true), 1).flame.iterations).toBe(
       MIN_FLAME_ITERATIONS,
+    );
+  });
+});
+
+describe("setFlameGamma", () => {
+  it("sets gamma immutably", () => {
+    const state = initialState(true);
+    const next = setFlameGamma(state, 3.5);
+    expect(next.flame.gamma).toBe(3.5);
+    expect(state.flame.gamma).toBe(DEFAULT_FLAME_GAMMA);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFlameGamma(initialState(true), 999).flame.gamma).toBe(
+      MAX_FLAME_GAMMA,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFlameGamma(initialState(true), -5).flame.gamma).toBe(
+      MIN_FLAME_GAMMA,
+    );
+  });
+});
+
+describe("setFlameVibrancy", () => {
+  it("sets vibrancy immutably", () => {
+    const state = initialState(true);
+    const next = setFlameVibrancy(state, 0.5);
+    expect(next.flame.vibrancy).toBe(0.5);
+    expect(state.flame.vibrancy).toBe(DEFAULT_FLAME_VIBRANCY);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFlameVibrancy(initialState(true), 5).flame.vibrancy).toBe(
+      MAX_FLAME_VIBRANCY,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFlameVibrancy(initialState(true), -5).flame.vibrancy).toBe(
+      MIN_FLAME_VIBRANCY,
+    );
+  });
+});
+
+describe("setFlameSupersample", () => {
+  it("sets the supersample factor immutably", () => {
+    const state = initialState(true);
+    const next = setFlameSupersample(state, 3);
+    expect(next.flame.supersample).toBe(3);
+    expect(state.flame.supersample).toBe(DEFAULT_FLAME_SUPERSAMPLE);
+  });
+
+  it("rounds to the nearest integer", () => {
+    expect(setFlameSupersample(initialState(true), 2.6).flame.supersample).toBe(
+      3,
+    );
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFlameSupersample(initialState(true), 99).flame.supersample).toBe(
+      MAX_FLAME_SUPERSAMPLE,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFlameSupersample(initialState(true), 0).flame.supersample).toBe(
+      MIN_FLAME_SUPERSAMPLE,
     );
   });
 });

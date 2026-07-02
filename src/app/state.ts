@@ -25,15 +25,33 @@ export type RenderStyle = (typeof RENDER_STYLES)[number];
 
 /**
  * Render-current-view settings for the flame renderer (`src/fractal/flame.ts`).
- * Deliberately minimal — see `FlameHistogram`/`tonemapFlame` — and persists as
- * a render setting like `colorMode` / `renderStyle`, independent of whether a
- * render is currently active (see {@link AppState.flameActive}).
+ * Persists as a render setting like `colorMode` / `renderStyle`, independent
+ * of whether a render is currently active (see {@link AppState.flameActive}).
  */
 export interface FlameParams {
   /** Brightness multiplier over the log-density tone-map; 1 = neutral. */
   exposure: number;
   /** Total chaos-game iterations to accumulate before a render is "done". */
   iterations: number;
+  /**
+   * Gamma-reshapes the log-density curve (see `flame.ts`'s `TonemapParams`);
+   * 1 = neutral (fr-o7s's original curve, unchanged). Applied live over the
+   * current accumulation — never needs a re-accumulate.
+   */
+  gamma: number;
+  /**
+   * Blends density-scaled color (1) against a flat gamma-only color that
+   * ignores density (0) — see `TonemapParams`. Applied live, like `gamma`.
+   */
+  vibrancy: number;
+  /**
+   * Linear supersample factor: accumulates into a `supersample`x-larger
+   * histogram (in each axis), then downfilters it to display resolution
+   * every frame for antialiasing (see `flame.ts`'s `downsampleFlame`).
+   * Changing it mid-render restarts accumulation — the histogram's
+   * dimensions change, so there is nothing to keep.
+   */
+  supersample: number;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -88,6 +106,21 @@ export const MIN_FLAME_EXPOSURE = 0.2;
 export const MAX_FLAME_EXPOSURE = 4;
 export const MIN_FLAME_ITERATIONS = 1_000_000;
 export const MAX_FLAME_ITERATIONS = 100_000_000;
+/** Neutral gamma — fr-o7s's original log-density curve, unreshaped. */
+export const DEFAULT_FLAME_GAMMA = 2.4;
+export const MIN_FLAME_GAMMA = 1;
+export const MAX_FLAME_GAMMA = 6;
+/** Fully density-scaled color — today's look, before vibrancy existed. */
+export const DEFAULT_FLAME_VIBRANCY = 1;
+export const MIN_FLAME_VIBRANCY = 0;
+export const MAX_FLAME_VIBRANCY = 1;
+/** No supersampling — accumulate straight at display resolution. */
+export const DEFAULT_FLAME_SUPERSAMPLE = 2;
+export const MIN_FLAME_SUPERSAMPLE = 1;
+/** Memory is O(supersample^2): a Float64 hits + Float64x3 sumRGB bucket is 32
+ * bytes, so 3x at 1080p is already ~373 MB — capped well short of where a
+ * casual slider drag could exhaust a phone's memory. */
+export const MAX_FLAME_SUPERSAMPLE = 3;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -103,6 +136,9 @@ export function initialState(panelOpen: boolean): AppState {
     flame: {
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     },
     flameActive: false,
   };
@@ -229,6 +265,57 @@ export function setFlameIterations(
         Math.max(
           MIN_FLAME_ITERATIONS,
           Math.min(MAX_FLAME_ITERATIONS, iterations),
+        ),
+      ),
+    },
+  };
+}
+
+/** Set the flame render's gamma curve, clamped to a sane range. Live-reactive
+ * (re-tonemaps the existing accumulation, never re-accumulates). */
+export function setFlameGamma(state: AppState, gamma: number): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      gamma: Math.max(MIN_FLAME_GAMMA, Math.min(MAX_FLAME_GAMMA, gamma)),
+    },
+  };
+}
+
+/** Set the flame render's vibrancy blend, clamped to [0, 1]. Live-reactive,
+ * like {@link setFlameGamma}. */
+export function setFlameVibrancy(state: AppState, vibrancy: number): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      vibrancy: Math.max(
+        MIN_FLAME_VIBRANCY,
+        Math.min(MAX_FLAME_VIBRANCY, vibrancy),
+      ),
+    },
+  };
+}
+
+/**
+ * Set the flame render's supersample factor, rounded to the nearest integer
+ * and clamped to a sane range. Unlike gamma/vibrancy/exposure this is NOT
+ * live-reactive: it changes the accumulated histogram's dimensions, so
+ * `main.ts` restarts accumulation from scratch when this actually changes.
+ */
+export function setFlameSupersample(
+  state: AppState,
+  supersample: number,
+): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      supersample: Math.round(
+        Math.max(
+          MIN_FLAME_SUPERSAMPLE,
+          Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
         ),
       ),
     },

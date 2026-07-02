@@ -4,11 +4,17 @@ import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
   DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_SUPERSAMPLE,
+  DEFAULT_FLAME_VIBRANCY,
   MAX_FLAME_EXPOSURE,
+  MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
+  MAX_FLAME_SUPERSAMPLE,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
+  MIN_FLAME_VIBRANCY,
 } from "./state";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +45,9 @@ function baseSnapshot(): SceneSnapshot {
     flame: {
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     },
   };
 }
@@ -65,6 +74,9 @@ describe("encodeScene / decodeScene round-trip", () => {
     expect(result!.flame).toEqual({
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     });
   });
 
@@ -567,7 +579,11 @@ describe("decodeScene flame params", () => {
   it("round-trips a non-default exposure and iteration budget", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
-      flame: { exposure: 2.25, iterations: 42_000_000 },
+      flame: {
+        ...baseSnapshot().flame,
+        exposure: 2.25,
+        iterations: 42_000_000,
+      },
     };
     const result = decodeScene(encodeScene(s));
     expect(result!.flame.exposure).toBeCloseTo(2.25, 4);
@@ -590,6 +606,9 @@ describe("decodeScene flame params", () => {
     expect(result!.flame).toEqual({
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     });
   });
 
@@ -617,7 +636,11 @@ describe("decodeScene flame params", () => {
   it("clamps an out-of-range exposure into the allowed band", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
-      flame: { exposure: 999, iterations: DEFAULT_FLAME_ITERATIONS },
+      flame: {
+        ...baseSnapshot().flame,
+        exposure: 999,
+        iterations: DEFAULT_FLAME_ITERATIONS,
+      },
     };
     expect(decodeScene(encodeScene(s))!.flame.exposure).toBe(
       MAX_FLAME_EXPOSURE,
@@ -627,7 +650,7 @@ describe("decodeScene flame params", () => {
   it("clamps an out-of-range iteration budget into the allowed band", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
-      flame: { exposure: 1, iterations: 1 },
+      flame: { ...baseSnapshot().flame, exposure: 1, iterations: 1 },
     };
     expect(decodeScene(encodeScene(s))!.flame.iterations).toBe(
       MIN_FLAME_ITERATIONS,
@@ -643,6 +666,89 @@ describe("decodeScene flame params", () => {
     expect(result).not.toBeNull();
     expect(result!.flame.exposure).toBe(MIN_FLAME_EXPOSURE);
     expect(result!.flame.iterations).toBe(MAX_FLAME_ITERATIONS);
+  });
+
+  it("round-trips a non-default gamma, vibrancy, and supersample", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: {
+        ...baseSnapshot().flame,
+        gamma: 3.5,
+        vibrancy: 0.6,
+        supersample: 3,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.flame.gamma).toBeCloseTo(3.5, 4);
+    expect(result!.flame.vibrancy).toBeCloseTo(0.6, 4);
+    expect(result!.flame.supersample).toBe(3);
+  });
+
+  it("defaults gamma/vibrancy/supersample quietly for a link encoded before fr-ucs existed", () => {
+    // A hand-built flame block carrying only the fr-o7s-era fields.
+    const raw = {
+      ...baseSnapshot(),
+      flame: { exposure: 1.5, iterations: 30_000_000 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.exposure).toBeCloseTo(1.5, 4);
+    expect(result!.flame.iterations).toBe(30_000_000);
+    expect(result!.flame.gamma).toBe(DEFAULT_FLAME_GAMMA);
+    expect(result!.flame.vibrancy).toBe(DEFAULT_FLAME_VIBRANCY);
+    expect(result!.flame.supersample).toBe(DEFAULT_FLAME_SUPERSAMPLE);
+  });
+
+  it("returns null when gamma is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, gamma: "bright" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when vibrancy is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, vibrancy: "lots" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when supersample is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, supersample: "big" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps an out-of-range gamma and vibrancy into their allowed bands", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, gamma: 999, vibrancy: -5 },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.flame.gamma).toBe(MAX_FLAME_GAMMA);
+    expect(result!.flame.vibrancy).toBe(MIN_FLAME_VIBRANCY);
+  });
+
+  it("clamps an out-of-range supersample into its allowed band", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, supersample: 99 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.flame.supersample).toBe(MAX_FLAME_SUPERSAMPLE);
+  });
+
+  it("rounds a fractional supersample to the nearest integer", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, supersample: 2.6 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.flame.supersample).toBe(3);
   });
 });
 

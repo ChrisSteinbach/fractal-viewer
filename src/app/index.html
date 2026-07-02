@@ -172,6 +172,40 @@
             value="20000000"
           />
         </label>
+        <label class="select-label">
+          Gamma: <span id="flameGammaLabel">2.40</span>
+          <input
+            type="range"
+            id="flameGammaSlider"
+            min="1"
+            max="6"
+            step="0.1"
+            value="2.4"
+          />
+        </label>
+        <label class="select-label">
+          Vibrancy: <span id="flameVibrancyLabel">100%</span>
+          <input
+            type="range"
+            id="flameVibrancySlider"
+            min="0"
+            max="1"
+            step="0.05"
+            value="1"
+          />
+        </label>
+        <label class="select-label">
+          Supersample:
+          <span id="flameSupersampleLabel">2× (restarts render)</span>
+          <input
+            type="range"
+            id="flameSupersampleSlider"
+            min="1"
+            max="3"
+            step="1"
+            value="2"
+          />
+        </label>
         <div id="flameProgress" class="flame-progress">0%</div>
         <button class="btn btn-ghost" id="exitRenderBtn" type="button">
           ← Back to Explorer

@@ -58,6 +58,10 @@ export interface UiHandlers {
   onExitFlameRender: () => void;
   onFlameExposureInput: (value: number) => void;
   onFlameIterationsInput: (value: number) => void;
+  onFlameGammaInput: (value: number) => void;
+  onFlameVibrancyInput: (value: number) => void;
+  /** The supersample slider changed — the app restarts accumulation. */
+  onFlameSupersampleInput: (value: number) => void;
 }
 
 /**
@@ -276,6 +280,12 @@ export class Ui {
   private readonly flameExposureSlider: HTMLInputElement;
   private readonly flameIterationsLabel: HTMLElement;
   private readonly flameIterationsSlider: HTMLInputElement;
+  private readonly flameGammaLabel: HTMLElement;
+  private readonly flameGammaSlider: HTMLInputElement;
+  private readonly flameVibrancyLabel: HTMLElement;
+  private readonly flameVibrancySlider: HTMLInputElement;
+  private readonly flameSupersampleLabel: HTMLElement;
+  private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
@@ -314,6 +324,12 @@ export class Ui {
     this.flameExposureSlider = this.byId("flameExposureSlider");
     this.flameIterationsLabel = this.byId("flameIterationsLabel");
     this.flameIterationsSlider = this.byId("flameIterationsSlider");
+    this.flameGammaLabel = this.byId("flameGammaLabel");
+    this.flameGammaSlider = this.byId("flameGammaSlider");
+    this.flameVibrancyLabel = this.byId("flameVibrancyLabel");
+    this.flameVibrancySlider = this.byId("flameVibrancySlider");
+    this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
+    this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
   }
@@ -373,6 +389,17 @@ export class Ui {
     this.flameIterationsSlider.addEventListener("input", () =>
       handlers.onFlameIterationsInput(Number(this.flameIterationsSlider.value)),
     );
+    this.flameGammaSlider.addEventListener("input", () =>
+      handlers.onFlameGammaInput(Number(this.flameGammaSlider.value)),
+    );
+    this.flameVibrancySlider.addEventListener("input", () =>
+      handlers.onFlameVibrancyInput(Number(this.flameVibrancySlider.value)),
+    );
+    this.flameSupersampleSlider.addEventListener("input", () =>
+      handlers.onFlameSupersampleInput(
+        Number(this.flameSupersampleSlider.value),
+      ),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -395,6 +422,13 @@ export class Ui {
       state.flame.iterations / 1_000_000
     ).toFixed(0)}M iterations`;
     this.flameIterationsSlider.value = String(state.flame.iterations);
+
+    this.flameGammaLabel.textContent = state.flame.gamma.toFixed(2);
+    this.flameGammaSlider.value = String(state.flame.gamma);
+    this.flameVibrancyLabel.textContent = `${Math.round(state.flame.vibrancy * 100)}%`;
+    this.flameVibrancySlider.value = String(state.flame.vibrancy);
+    this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
+    this.flameSupersampleSlider.value = String(state.flame.supersample);
 
     // The flame render takes over the panel — editing controls that have no
     // effect on a frozen, already-plotted image would just be confusing —

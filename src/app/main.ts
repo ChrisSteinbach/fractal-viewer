@@ -5,7 +5,12 @@ import {
   type PreparedChaosGame,
 } from "../fractal/chaos-game";
 import { buildColors, transformColors } from "../fractal/color";
-import { accumulateFlame, tonemapFlame } from "../fractal/flame";
+import {
+  DEFAULT_GAMMA_THRESHOLD,
+  accumulateFlame,
+  downsampleFlame,
+  tonemapFlame,
+} from "../fractal/flame";
 import type { FlameHistogram, Mat4 } from "../fractal/flame";
 import type { Vec3 } from "../fractal/types";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
@@ -23,7 +28,10 @@ import {
   setFinalTransform,
   setFlameActive,
   setFlameExposure,
+  setFlameGamma,
   setFlameIterations,
+  setFlameSupersample,
+  setFlameVibrancy,
   setNumPoints,
   setPanelOpen,
   setPointSize,
@@ -49,6 +57,25 @@ const FLAME_CHUNK_MAX = 20_000_000;
  * 16 ms (60 fps) frame for the tone-map pass, texture upload, and everything
  * else the tab needs to stay responsive. */
 const FLAME_FRAME_BUDGET_MS = 8;
+
+/**
+ * Fixed reconstruction-filter radius (in display pixels) `downsampleFlame`
+ * blurs with — see its doc for why a plain fixed radius, not yet the
+ * density-adaptive one fr-17t will add. Small on purpose: the filter's cost
+ * grows with radius^2, and — unlike accumulation — it isn't chunked, so it
+ * has to stay cheap enough for {@link FLAME_REDISPLAY_INTERVAL_MS} to hold.
+ */
+const FLAME_FILTER_RADIUS = 0.4;
+/**
+ * Minimum time between downsample + tone-map + upload refreshes while a
+ * flame render is actively converging. Accumulation itself still runs every
+ * animation frame (self-tuned as above); only the (much more expensive,
+ * O(width * height * filterRadius^2) and NOT chunked) redisplay is
+ * throttled, so a slow downsample degrades the update rate instead of
+ * stalling every single frame. The very first chunk and the final "done"
+ * frame both bypass this — see `stepFlame`.
+ */
+const FLAME_REDISPLAY_INTERVAL_MS = 150;
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -130,7 +157,7 @@ function main(): void {
     scene.setColors(colors);
   }
 
-  // Flame render session (fr-o7s): runtime accumulation state for the
+  // Flame render session (fr-o7s/fr-ucs): runtime accumulation state for the
   // in-progress render, valid only while state.flameActive. Not part of
   // AppState — like lastResult, it is cached/derived, not a source of truth,
   // and unlike AppState it cannot be usefully persisted (an accumulated
@@ -138,12 +165,51 @@ function main(): void {
   let flamePrepared: PreparedChaosGame | null = null;
   let flameProjection: Mat4 | null = null;
   let flamePalette: Vec3[] = [];
+  // The real progressive accumulator: accumulates at flameWidth/flameHeight
+  // TIMES the current supersample factor. flameDisplayHistogram is a
+  // display-only derivative — never fed back into accumulateFlame (see
+  // downsampleFlame's doc) — refreshed from it on the cadence stepFlame
+  // decides below.
   let flameHistogram: FlameHistogram | null = null;
+  let flameDisplayHistogram: FlameHistogram | null = null;
+  // Display resolution — fixed for the life of a render (the frozen camera's
+  // size). flameAccumWidth/Height are this scaled by the CURRENT
+  // supersample and are what accumulateFlame actually targets.
   let flameWidth = 0;
   let flameHeight = 0;
+  let flameAccumWidth = 0;
+  let flameAccumHeight = 0;
+  // The supersample factor flameHistogram was created at — compared against
+  // state.flame.supersample every stepFlame to detect a live change (see
+  // startFlameAccumulation).
+  let flameSupersampleUsed = 1;
   let flameIterationsDone = 0;
   let flameLastExposure: number | undefined;
+  let flameLastGamma: number | undefined;
+  let flameLastVibrancy: number | undefined;
+  // undefined until the first downsample+tonemap+upload of this render, so
+  // that first one is never throttled (see stepFlame).
+  let flameLastDownsampleAt: number | undefined;
   let flameChunkSize = FLAME_CHUNK_INITIAL;
+
+  // (Re)size the accumulator for state.flame.supersample and discard any
+  // progress: shared by entering flame mode and by a live supersample
+  // change mid-render, both of which need a from-scratch histogram at a new
+  // size. Assumes flameWidth/flameHeight (the display size) are already set.
+  function startFlameAccumulation(): void {
+    const supersample = state.flame.supersample;
+    flameAccumWidth = flameWidth * supersample;
+    flameAccumHeight = flameHeight * supersample;
+    flameSupersampleUsed = supersample;
+    flameHistogram = null;
+    flameDisplayHistogram = null;
+    flameIterationsDone = 0;
+    flameLastExposure = undefined;
+    flameLastGamma = undefined;
+    flameLastVibrancy = undefined;
+    flameLastDownsampleAt = undefined;
+    flameChunkSize = FLAME_CHUNK_INITIAL;
+  }
 
   // Freeze the current camera and start converging a flame render of it.
   // Called only from the Render button — never automatically — so the
@@ -158,10 +224,7 @@ function main(): void {
     );
     flameProjection = scene.flameProjectionMatrix();
     flamePalette = transformColors(state.transforms.length);
-    flameHistogram = null;
-    flameIterationsDone = 0;
-    flameLastExposure = undefined;
-    flameChunkSize = FLAME_CHUNK_INITIAL;
+    startFlameAccumulation();
     state = setFlameActive(state, true);
     refreshUi();
   }
@@ -172,6 +235,7 @@ function main(): void {
     flamePrepared = null;
     flameProjection = null;
     flameHistogram = null;
+    flameDisplayHistogram = null;
     state = setFlameActive(state, false);
     refreshUi();
   }
@@ -370,6 +434,26 @@ function main(): void {
       ui.updateLabels(state);
       scheduleSave();
     },
+    onFlameGammaInput: (value) => {
+      state = setFlameGamma(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
+    onFlameVibrancyInput: (value) => {
+      state = setFlameVibrancy(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
+    onFlameSupersampleInput: (value) => {
+      // The reducer clamps/rounds; stepFlame compares the settled value
+      // against flameSupersampleUsed and restarts accumulation for us next
+      // frame — no need to restart here directly (and refreshUi/regenerate
+      // would be premature: the display size hasn't changed, only the
+      // accumulator's).
+      state = setFlameSupersample(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
   });
 
   attachInteractions(scene, orbit, {
@@ -403,15 +487,25 @@ function main(): void {
   regenerate();
   refreshUi();
 
-  // Accumulate one flame-render chunk and, if anything changed (more
-  // iterations landed, or the exposure slider moved), re-tone-map and
-  // upload the image. Self-adjusts flameChunkSize toward
-  // FLAME_FRAME_BUDGET_MS so the tab stays responsive regardless of the
-  // machine's actual throughput, which nothing in this environment can be
-  // profiled against ahead of time.
+  // Accumulate one flame-render chunk into the (possibly supersampled)
+  // accumulator, periodically downfilter it to display resolution, and
+  // re-tone-map + upload whenever the displayed image should change.
+  // Self-adjusts flameChunkSize toward FLAME_FRAME_BUDGET_MS so the
+  // accumulate step stays responsive regardless of the machine's actual
+  // throughput, which nothing in this environment can be profiled against
+  // ahead of time. The (much pricier, unchunked) downsample pass is instead
+  // rate-limited by FLAME_REDISPLAY_INTERVAL_MS — see its doc.
   function stepFlame(): void {
     if (!flamePrepared || !flameProjection) return;
-    let changed = false;
+
+    // The supersample slider is live-editable mid-render (it lives in the
+    // same panel as exposure/iterations), but changes the accumulator's
+    // dimensions, so there is nothing to carry forward — restart flat.
+    if (state.flame.supersample !== flameSupersampleUsed) {
+      startFlameAccumulation();
+    }
+
+    let needsRedraw = false;
 
     if (flameIterationsDone < state.flame.iterations) {
       const chunk = Math.min(
@@ -422,8 +516,8 @@ function main(): void {
       flameHistogram = accumulateFlame(
         flamePrepared,
         flameProjection,
-        flameWidth,
-        flameHeight,
+        flameAccumWidth,
+        flameAccumHeight,
         chunk,
         Math.random,
         flamePalette,
@@ -431,7 +525,6 @@ function main(): void {
       );
       const elapsed = performance.now() - start;
       flameIterationsDone += chunk;
-      changed = true;
 
       if (elapsed > 0) {
         // Damped multiplicative correction (capped to 0.5x–2x per frame) so
@@ -447,14 +540,49 @@ function main(): void {
           ),
         );
       }
-    } else if (flameLastExposure !== state.flame.exposure) {
-      changed = true;
+
+      // Refresh the display-resolution histogram now if this is the very
+      // first chunk (nothing on screen yet), the render just finished (show
+      // the fully-converged result promptly, not up to an interval stale),
+      // or the redisplay interval has elapsed — never on every single
+      // chunk, since downsampleFlame is comparatively expensive and isn't
+      // itself chunked.
+      const now = performance.now();
+      const finished = flameIterationsDone >= state.flame.iterations;
+      const due =
+        finished ||
+        flameLastDownsampleAt === undefined ||
+        now - flameLastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
+      if (due) {
+        flameDisplayHistogram = downsampleFlame(
+          flameHistogram,
+          flameWidth,
+          flameHeight,
+          FLAME_FILTER_RADIUS,
+        );
+        flameLastDownsampleAt = now;
+        needsRedraw = true;
+      }
+    } else if (
+      flameLastExposure !== state.flame.exposure ||
+      flameLastGamma !== state.flame.gamma ||
+      flameLastVibrancy !== state.flame.vibrancy
+    ) {
+      // Done accumulating: exposure/gamma/vibrancy re-tone-map the cached
+      // display histogram live — never a re-downsample, let alone a
+      // re-accumulate.
+      needsRedraw = true;
     }
 
-    if (changed && flameHistogram) {
+    if (needsRedraw && flameDisplayHistogram) {
       flameLastExposure = state.flame.exposure;
-      const image = tonemapFlame(flameHistogram, {
+      flameLastGamma = state.flame.gamma;
+      flameLastVibrancy = state.flame.vibrancy;
+      const image = tonemapFlame(flameDisplayHistogram, {
         exposure: state.flame.exposure,
+        gamma: state.flame.gamma,
+        gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+        vibrancy: state.flame.vibrancy,
       });
       scene.setFlameImage(image, flameWidth, flameHeight);
       ui.setFlameProgress(flameIterationsDone, state.flame.iterations);

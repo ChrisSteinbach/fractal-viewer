@@ -32,6 +32,9 @@ function noopHandlers(): UiHandlers {
     onExitFlameRender: vi.fn(),
     onFlameExposureInput: vi.fn(),
     onFlameIterationsInput: vi.fn(),
+    onFlameGammaInput: vi.fn(),
+    onFlameVibrancyInput: vi.fn(),
+    onFlameSupersampleInput: vi.fn(),
   };
 }
 
@@ -638,7 +641,11 @@ describe("Ui flame render controls", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      flame: { exposure: 2.5, iterations: 42_000_000 },
+      flame: {
+        ...initialState(true).flame,
+        exposure: 2.5,
+        iterations: 42_000_000,
+      },
     });
 
     const exposureSlider = document.getElementById(
@@ -684,6 +691,84 @@ describe("Ui flame render controls", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(5_000_000);
+  });
+
+  it("reflects gamma, vibrancy, and supersample into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        gamma: 3.5,
+        vibrancy: 0.6,
+        supersample: 3,
+      },
+    });
+
+    expect(
+      (document.getElementById("flameGammaSlider") as HTMLInputElement).value,
+    ).toBe("3.5");
+    expect(document.getElementById("flameGammaLabel")?.textContent).toBe(
+      "3.50",
+    );
+
+    expect(
+      (document.getElementById("flameVibrancySlider") as HTMLInputElement)
+        .value,
+    ).toBe("0.6");
+    expect(document.getElementById("flameVibrancyLabel")?.textContent).toBe(
+      "60%",
+    );
+
+    expect(
+      (document.getElementById("flameSupersampleSlider") as HTMLInputElement)
+        .value,
+    ).toBe("3");
+    expect(
+      document.getElementById("flameSupersampleLabel")?.textContent,
+    ).toContain("3×");
+  });
+
+  it("reports the gamma slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameGammaSlider",
+    ) as HTMLInputElement;
+    slider.value = "4.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameGammaInput).toHaveBeenCalledWith(4.5);
+  });
+
+  it("reports the vibrancy slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameVibrancySlider",
+    ) as HTMLInputElement;
+    slider.value = "0.25";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameVibrancyInput).toHaveBeenCalledWith(0.25);
+  });
+
+  it("reports the supersample slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameSupersampleSlider",
+    ) as HTMLInputElement;
+    slider.value = "3";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameSupersampleInput).toHaveBeenCalledWith(3);
   });
 });
 

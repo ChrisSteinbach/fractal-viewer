@@ -18,11 +18,20 @@ import type {
 } from "../fractal/types";
 import {
   DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_SUPERSAMPLE,
+  DEFAULT_FLAME_VIBRANCY,
   MAX_FLAME_EXPOSURE,
+  MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
+  MAX_FLAME_SUPERSAMPLE,
+  MAX_FLAME_VIBRANCY,
   MIN_FLAME_EXPOSURE,
+  MIN_FLAME_GAMMA,
   MIN_FLAME_ITERATIONS,
+  MIN_FLAME_SUPERSAMPLE,
+  MIN_FLAME_VIBRANCY,
   RENDER_STYLES,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle } from "./state";
@@ -226,24 +235,53 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
 
 /**
  * Validate the untrusted `flame` render-settings block. `flame` predates
- * this feature's rollout in exactly zero existing links, so — like
- * `finalTransform` — an absent field decodes quietly to the default rather
- * than rejecting the scene; but once present, a malformed value rejects the
- * whole scene, matching `weight`/`shear`/`variations`. Finite values are
- * clamped into range rather than rejected, matching `weight`.
+ * this feature's rollout (and `gamma`/`vibrancy`/`supersample` predate
+ * fr-ucs's rollout within it) in exactly zero existing links, so — like
+ * `finalTransform` — an absent block, or an absent field within a present
+ * block, decodes quietly to its default rather than rejecting the scene;
+ * but once a field IS present, a malformed value rejects the whole scene,
+ * matching `weight`/`shear`/`variations`. Finite values are clamped into
+ * range rather than rejected, matching `weight`. `supersample` is additionally
+ * rounded to an integer, matching `setFlameSupersample`.
  */
 function decodeFlameParams(raw: unknown): FlameParams | null {
   if (raw === undefined) {
     return {
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
     };
   }
   if (typeof raw !== "object" || raw === null) return null;
   const f = raw as Record<string, unknown>;
+
   const exposure = Number(f.exposure);
   const iterations = Number(f.iterations);
   if (!Number.isFinite(exposure) || !Number.isFinite(iterations)) return null;
+
+  // gamma/vibrancy/supersample: each optional independently (an fr-o7s-era
+  // link carries neither), so an absent field defaults quietly while a
+  // present-but-malformed one rejects the whole scene, same as exposure just
+  // above — the two feature rollouts share one block but not one presence
+  // rule per field.
+  let gamma = DEFAULT_FLAME_GAMMA;
+  if (f.gamma !== undefined) {
+    gamma = Number(f.gamma);
+    if (!Number.isFinite(gamma)) return null;
+  }
+  let vibrancy = DEFAULT_FLAME_VIBRANCY;
+  if (f.vibrancy !== undefined) {
+    vibrancy = Number(f.vibrancy);
+    if (!Number.isFinite(vibrancy)) return null;
+  }
+  let supersample = DEFAULT_FLAME_SUPERSAMPLE;
+  if (f.supersample !== undefined) {
+    supersample = Number(f.supersample);
+    if (!Number.isFinite(supersample)) return null;
+  }
+
   return {
     exposure: Math.max(
       MIN_FLAME_EXPOSURE,
@@ -253,6 +291,17 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
       Math.max(
         MIN_FLAME_ITERATIONS,
         Math.min(MAX_FLAME_ITERATIONS, iterations),
+      ),
+    ),
+    gamma: Math.max(MIN_FLAME_GAMMA, Math.min(MAX_FLAME_GAMMA, gamma)),
+    vibrancy: Math.max(
+      MIN_FLAME_VIBRANCY,
+      Math.min(MAX_FLAME_VIBRANCY, vibrancy),
+    ),
+    supersample: Math.round(
+      Math.max(
+        MIN_FLAME_SUPERSAMPLE,
+        Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
       ),
     ),
   };
@@ -323,6 +372,9 @@ export function encodeScene(s: SceneSnapshot): string {
     flame: {
       exposure: round4(s.flame.exposure),
       iterations: Math.round(s.flame.iterations),
+      gamma: round4(s.flame.gamma),
+      vibrancy: round4(s.flame.vibrancy),
+      supersample: Math.round(s.flame.supersample),
     },
   };
   // Written only when present, so old links stay byte-identical (they never
@@ -341,8 +393,12 @@ export function encodeScene(s: SceneSnapshot): string {
  * each with valid Vec3 fields; an optional finalTransform validated the same
  * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000],
  * pointSize to [0.25, 4], flame.exposure to [{@link MIN_FLAME_EXPOSURE},
- * {@link MAX_FLAME_EXPOSURE}], and flame.iterations to
- * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}].
+ * {@link MAX_FLAME_EXPOSURE}], flame.iterations to
+ * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}], flame.gamma to
+ * [{@link MIN_FLAME_GAMMA}, {@link MAX_FLAME_GAMMA}], flame.vibrancy to
+ * [{@link MIN_FLAME_VIBRANCY}, {@link MAX_FLAME_VIBRANCY}], and
+ * flame.supersample to [{@link MIN_FLAME_SUPERSAMPLE},
+ * {@link MAX_FLAME_SUPERSAMPLE}].
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
