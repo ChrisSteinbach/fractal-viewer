@@ -1,0 +1,22 @@
+{
+  // The service worker's own TypeScript program: `sw.ts` (and the
+  // workbox-precaching types it imports) needs the WebWorker lib, which
+  // cannot coexist with the DOM lib the main program uses — they declare
+  // conflicting globals (`self` among them; see flame-worker.ts's header for
+  // the same constraint solved the no-dependencies way). The root
+  // tsconfig.json excludes this directory; `npm run lint` type-checks it via
+  // a second `tsc -p src/app/sw`, and typescript-eslint's projectService
+  // discovers this file on its own as the nearest tsconfig.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "WebWorker"],
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["."]
+}

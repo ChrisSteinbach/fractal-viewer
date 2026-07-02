@@ -1,11 +1,18 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
+import {
+  DEFAULT_GAMMA_THRESHOLD,
+  tonemapFlame,
+  viewFlameHistogram,
+} from "../fractal/flame";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
+import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
+import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
 import {
   addTransform,
@@ -126,11 +133,18 @@ function main(): void {
 
   // Flame render session (fr-o7s/fr-ucs/fr-73y): a Web Worker owns the
   // supersampled accumulation, the OOM guard, the throttled downsample, and
-  // the tone-map (see flame-worker-core.ts) — this is thin glue that spins
-  // one up per render and forwards UI events as messages. NOT
-  // SharedArrayBuffer (GitHub Pages cannot set the COOP/COEP headers that
-  // needs): the worker keeps its big oversampled histogram entirely to
-  // itself and only ever transfers back a small display-resolution image.
+  // (in transfer mode) the tone-map (see flame-worker-core.ts) — this is
+  // thin glue that spins one up per render and forwards UI events as
+  // messages. When the page is cross-origin isolated (fr-96i: natively in
+  // dev via vite's server headers; in production via the COOP/COEP-injecting
+  // service worker in sw/sw.ts, since GitHub Pages cannot send those headers
+  // itself), the render upgrades to a SharedArrayBuffer transport: the
+  // worker downsamples into shared display-resolution buckets and THIS
+  // thread tone-maps a live view of them (see presentSharedFrame), so
+  // exposure/gamma/vibrancy changes land instantly with no worker round
+  // trip and nothing per-tick crosses but a few scalars. Without isolation
+  // it falls back to fr-73y's postMessage transfer of a tone-mapped image.
+  // Either way the big oversampled accumulator never leaves the worker.
   let flameWorker: Worker | null = null;
   // True once the CURRENT session's first "progress" image has arrived.
   // Spinning up a worker (and the round trip to its first accumulate +
@@ -140,6 +154,68 @@ function main(): void {
   // stale contents (blank on a first-ever render, or the PREVIOUS render's
   // image on a repeat one, since neither enter nor exit clears it).
   let flameHasImage = false;
+
+  // The shared-transport session (fr-96i): the two SAB-backed frame slots
+  // this side allocated for the current render, plus which slot the worker
+  // most recently told us to read (and its maxHits — the one tonemapFlame
+  // input that isn't in the shared arrays). null whenever the current render
+  // runs in transfer mode (not isolated, or the slots failed to allocate).
+  interface FlameSharedSession {
+    frames: [SharedFrameBuffers, SharedFrameBuffers];
+    width: number;
+    height: number;
+    last: { slot: number; maxHits: number } | null;
+  }
+  let flameShared: FlameSharedSession | null = null;
+
+  // Allocate the two shared display-resolution frame slots, or null to fall
+  // back to transfer mode: when the page isn't cross-origin isolated the
+  // SharedArrayBuffer constructor isn't even exposed, and when it is, the
+  // slots (32 bytes per display pixel across both) can still lose to a
+  // memory-constrained device — a fallback, not a failure, either way.
+  function tryCreateFlameSharedSession(
+    width: number,
+    height: number,
+  ): FlameSharedSession | null {
+    if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined")
+      return null;
+    const bytes = Float64Array.BYTES_PER_ELEMENT;
+    try {
+      const frame = (): SharedFrameBuffers => ({
+        hits: new Float64Array(new SharedArrayBuffer(width * height * bytes)),
+        sumRGB: new Float64Array(
+          new SharedArrayBuffer(width * height * 3 * bytes),
+        ),
+      });
+      return { frames: [frame(), frame()], width, height, last: null };
+    } catch {
+      return null;
+    }
+  }
+
+  // Tone-map the worker's most recent shared frame straight out of the live
+  // shared buckets and put it on screen. Runs on a "sharedFrame"
+  // notification AND directly from the exposure/gamma/vibrancy handlers —
+  // the shared transport's whole payoff: a tone-map slider re-renders
+  // immediately, even while the worker is deep inside an accumulate chunk.
+  // Reading the last-notified slot is safe mid-accumulation: the worker
+  // writes the OTHER slot next (double buffer), and the notification that
+  // flips slots is what re-points `last` here first.
+  function presentSharedFrame(): void {
+    if (!flameShared?.last) return;
+    const { frames, width, height, last } = flameShared;
+    const frame = frames[last.slot];
+    const image = tonemapFlame(
+      viewFlameHistogram(width, height, frame.hits, frame.sumRGB, last.maxHits),
+      {
+        exposure: state.flame.exposure,
+        gamma: state.flame.gamma,
+        gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+        vibrancy: state.flame.vibrancy,
+      },
+    );
+    scene.setFlameImage(image, width, height);
+  }
 
   function postFlame(command: FlameWorkerCommand): void {
     flameWorker?.postMessage(command);
@@ -151,6 +227,18 @@ function main(): void {
         scene.setFlameImage(event.image, event.width, event.height);
         ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
         flameHasImage = true;
+        break;
+      case "sharedFrame":
+        // Shared-mode counterpart to "progress": the frame is already in
+        // the named shared slot; remember which one (plus its maxHits) and
+        // tone-map it here. The guard is defensive — a sharedFrame can only
+        // arrive from a session this side started WITH shared frames.
+        if (flameShared) {
+          flameShared.last = { slot: event.slot, maxHits: event.maxHits };
+          presentSharedFrame();
+          ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
+          flameHasImage = true;
+        }
         break;
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
@@ -175,6 +263,12 @@ function main(): void {
     ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh worker reports its own.
     ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
     flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
+    flameShared = tryCreateFlameSharedSession(width, height);
+    console.info(
+      flameShared
+        ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
+        : "Flame render: postMessage-transfer transport.",
+    );
 
     flameWorker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
@@ -206,6 +300,9 @@ function main(): void {
       estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
       estimatorCurve: state.flame.estimatorCurve,
       paletteId: state.flame.paletteId,
+      // SAB-backed views structured-clone by SHARING their buffers — the
+      // worker sees the same memory these frames wrap, nothing is copied.
+      sharedFrames: flameShared?.frames,
     });
 
     state = setFlameActive(state, true);
@@ -221,6 +318,7 @@ function main(): void {
   function exitFlameMode(): void {
     flameWorker?.terminate();
     flameWorker = null;
+    flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
     ui.setFlameSupersampleNote(null);
     flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
     state = setFlameActive(state, false);
@@ -515,7 +613,12 @@ function main(): void {
     onFlameExposureInput: (value) => {
       state = setFlameExposure(state, value);
       ui.updateLabels(state);
-      postFlame({ type: "setExposure", exposure: state.flame.exposure });
+      // Shared mode: the tone-map runs on THIS thread over the live shared
+      // buckets, so the change lands instantly — even mid-chunk, when the
+      // worker couldn't service a command anyway. Transfer mode: the worker
+      // owns the tone-map; forward as before. Same split for gamma/vibrancy.
+      if (flameShared) presentSharedFrame();
+      else postFlame({ type: "setExposure", exposure: state.flame.exposure });
       scheduleSave();
     },
     onFlameIterationsInput: (value) => {
@@ -530,13 +633,15 @@ function main(): void {
     onFlameGammaInput: (value) => {
       state = setFlameGamma(state, value);
       ui.updateLabels(state);
-      postFlame({ type: "setGamma", gamma: state.flame.gamma });
+      if (flameShared) presentSharedFrame();
+      else postFlame({ type: "setGamma", gamma: state.flame.gamma });
       scheduleSave();
     },
     onFlameVibrancyInput: (value) => {
       state = setFlameVibrancy(state, value);
       ui.updateLabels(state);
-      postFlame({ type: "setVibrancy", vibrancy: state.flame.vibrancy });
+      if (flameShared) presentSharedFrame();
+      else postFlame({ type: "setVibrancy", vibrancy: state.flame.vibrancy });
       scheduleSave();
     },
     onFlameSupersampleInput: (value) => {
@@ -712,4 +817,5 @@ function main(): void {
   animate();
 }
 
+registerServiceWorker();
 main();

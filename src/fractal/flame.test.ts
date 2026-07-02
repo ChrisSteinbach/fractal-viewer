@@ -6,6 +6,7 @@ import {
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
+  viewFlameHistogram,
 } from "./flame";
 import type {
   DensityEstimatorParams,
@@ -1365,6 +1366,133 @@ describe("adaptiveDownsampleFlame", () => {
 
     expect(Array.from(inverted.hits)).toEqual(
       Array.from(clampedEquivalent.hits),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reused `out` histograms (fr-96i): both downsample flavors can write into a
+// caller-provided target — the seam that lets the flame worker downsample
+// straight into SharedArrayBuffer-backed buckets (and reuse one local
+// histogram across progressive ticks in transfer mode). The contract under
+// test: byte-identical to allocating fresh, even from a dirty target.
+// ---------------------------------------------------------------------------
+
+/** A non-trivial 6x6 source (hit counts spanning orders of magnitude) so the
+ * reuse oracles below aren't accidentally passing on a mostly-zero input. */
+function unevenSource(): FlameHistogram {
+  const hist = createFlameHistogram(6, 6);
+  const hot = [
+    { bucket: 0, hits: 1 },
+    { bucket: 7, hits: 50 },
+    { bucket: 14, hits: 1000 },
+    { bucket: 21, hits: 5 },
+    { bucket: 28, hits: 200_000 },
+    { bucket: 35, hits: 12 },
+  ];
+  let maxHits = 0;
+  for (const { bucket, hits } of hot) {
+    hist.hits[bucket] = hits;
+    hist.sumRGB[bucket * 3] = hits * 0.3;
+    hist.sumRGB[bucket * 3 + 1] = hits * 0.6;
+    hist.sumRGB[bucket * 3 + 2] = hits * 0.9;
+    maxHits = Math.max(maxHits, hits);
+  }
+  hist.maxHits = maxHits;
+  return hist;
+}
+
+/** A deliberately dirty 3x3 target: every bucket and maxHits pre-filled with
+ * garbage a lazy implementation would leak through. */
+function dirtyTarget(): FlameHistogram {
+  const target = createFlameHistogram(3, 3);
+  target.hits.fill(123);
+  target.sumRGB.fill(-7);
+  target.maxHits = 999_999;
+  return target;
+}
+
+describe("downsampleFlame into a reused out histogram", () => {
+  it("returns the provided histogram itself, byte-identical to a fresh allocation", () => {
+    const source = unevenSource();
+    const fresh = downsampleFlame(source, 3, 3, 0.5);
+
+    const target = dirtyTarget();
+    const returned = downsampleFlame(source, 3, 3, 0.5, target);
+
+    expect(returned).toBe(target); // wrote in place, not into a new allocation.
+    expect(Array.from(target.hits)).toEqual(Array.from(fresh.hits));
+    expect(Array.from(target.sumRGB)).toEqual(Array.from(fresh.sumRGB));
+    expect(target.maxHits).toBe(fresh.maxHits);
+  });
+
+  it("rejects an out histogram whose dimensions don't match the requested target size", () => {
+    const source = unevenSource();
+    expect(() =>
+      downsampleFlame(source, 3, 3, 0.5, createFlameHistogram(3, 2)),
+    ).toThrow(RangeError);
+    expect(() =>
+      downsampleFlame(source, 3, 3, 0.5, createFlameHistogram(6, 6)),
+    ).toThrow(RangeError);
+  });
+});
+
+describe("adaptiveDownsampleFlame into a reused out histogram", () => {
+  const params: DensityEstimatorParams = {
+    estimatorRadius: 3,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
+  };
+
+  it("returns the provided histogram itself, byte-identical to a fresh allocation", () => {
+    const source = unevenSource();
+    const fresh = adaptiveDownsampleFlame(source, 3, 3, params);
+
+    const target = dirtyTarget();
+    const returned = adaptiveDownsampleFlame(source, 3, 3, params, target);
+
+    expect(returned).toBe(target);
+    expect(Array.from(target.hits)).toEqual(Array.from(fresh.hits));
+    expect(Array.from(target.sumRGB)).toEqual(Array.from(fresh.sumRGB));
+    expect(target.maxHits).toBe(fresh.maxHits);
+  });
+
+  it("rejects an out histogram whose dimensions don't match the requested target size", () => {
+    const source = unevenSource();
+    expect(() =>
+      adaptiveDownsampleFlame(source, 3, 3, params, createFlameHistogram(2, 3)),
+    ).toThrow(RangeError);
+  });
+});
+
+describe("viewFlameHistogram", () => {
+  it("wraps external arrays without copying, and tone-maps identically to the histogram it mirrors", () => {
+    // Accumulate something real, then rebuild it as a view over the SAME
+    // arrays plus the scalar maxHits — the exact reconstruction the main
+    // thread performs over shared memory in the worker's shared-frame mode.
+    const prepared = prepareChaosGame(sierpinskiTetrahedron(), null);
+    const hist = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      8,
+      8,
+      2000,
+      mulberry32(1),
+      transformColors(4),
+    );
+
+    const view = viewFlameHistogram(8, 8, hist.hits, hist.sumRGB, hist.maxHits);
+    expect(view.hits).toBe(hist.hits); // shares, never copies.
+    expect(view.sumRGB).toBe(hist.sumRGB);
+
+    const params: TonemapParams = {
+      exposure: 1.5,
+      gamma: 2.2,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 0.8,
+    };
+    expect(Array.from(tonemapFlame(view, params))).toEqual(
+      Array.from(tonemapFlame(hist, params)),
     );
   });
 });

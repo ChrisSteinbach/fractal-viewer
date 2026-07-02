@@ -60,6 +60,14 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
+  - `register-sw.ts` — service-worker registration + the reload-once
+    cross-origin-isolation bootstrap (gives the flame worker its
+    SharedArrayBuffer fast path; postMessage transfer is the fallback).
+  - `sw/sw.ts` — hand-written service worker (vite-plugin-pwa
+    `injectManifest`): Workbox precache composed with COOP/COEP header
+    injection in ONE fetch handler. Lives in its own TS program
+    (`sw/tsconfig.json`) because the WebWorker lib conflicts with the app's
+    DOM lib; `npm run lint` type-checks both programs.
 
 Core algorithm: the chaos game on an IFS — repeatedly apply a randomly chosen
 affine map to a moving point and plot where it lands; the cloud converges on the

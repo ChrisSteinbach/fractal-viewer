@@ -1,4 +1,9 @@
-import { accumulateFlame } from "../fractal/flame";
+import {
+  accumulateFlame,
+  tonemapFlame,
+  viewFlameHistogram,
+  DEFAULT_GAMMA_THRESHOLD,
+} from "../fractal/flame";
 import type { Mat4 } from "../fractal/flame";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import { FlameWorkerSession } from "./flame-worker-core";
@@ -6,6 +11,7 @@ import type {
   FlameWorkerCommand,
   FlameWorkerDeps,
   FlameWorkerEvent,
+  SharedFrameBuffers,
 } from "./flame-worker-core";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +117,26 @@ function progressEvents(
   events: FlameWorkerEvent[],
 ): Extract<FlameWorkerEvent, { type: "progress" }>[] {
   return events.filter((e) => e.type === "progress");
+}
+
+function sharedFrameEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "sharedFrame" }>[] {
+  return events.filter((e) => e.type === "sharedFrame");
+}
+
+/** Two real SAB-backed frame slots, exactly as main.ts allocates them (Node
+ * exposes SharedArrayBuffer unconditionally — no isolation needed here). */
+function makeSharedFrames(
+  width: number,
+  height: number,
+): [SharedFrameBuffers, SharedFrameBuffers] {
+  const bytes = Float64Array.BYTES_PER_ELEMENT;
+  const frame = (): SharedFrameBuffers => ({
+    hits: new Float64Array(new SharedArrayBuffer(width * height * bytes)),
+    sumRGB: new Float64Array(new SharedArrayBuffer(width * height * 3 * bytes)),
+  });
+  return [frame(), frame()];
 }
 
 function noteEvents(
@@ -769,5 +795,135 @@ describe("FlameWorkerSession live estimator params", () => {
     const afterChange = Array.from(progressEvents(events).at(-1)!.image);
 
     expect(afterChange).not.toEqual(finishedImage);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared-frame transport (fr-96i): `start` carrying SAB-backed slots flips
+// the session to downsampling into shared memory and emitting scalars-only
+// sharedFrame notifications; the main thread tone-maps the named slot itself.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession shared-frame transport", () => {
+  it("emits sharedFrame notifications instead of progress transfers, with the frame in the named slot", () => {
+    const frames = makeSharedFrames(8, 8);
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ sharedFrames: frames }));
+    scheduler.drain();
+
+    expect(progressEvents(events)).toHaveLength(0); // nothing tone-mapped worker-side.
+    const shared = sharedFrameEvents(events);
+    expect(shared).toHaveLength(1); // budget (500) < one chunk -> a single, finished frame.
+    const frame = shared[0];
+    expect(frame.iterationsDone).toBe(500);
+    expect(frame.iterationsBudget).toBe(500);
+    expect(frame.slot).toBe(0); // the double buffer starts at slot 0.
+
+    // The named slot really holds the downsampled frame, and the event's
+    // maxHits is that slot's own peak — together the exact inputs the main
+    // thread's tone-map needs.
+    const slotHits = frames[frame.slot].hits;
+    expect(Math.max(...slotHits)).toBeGreaterThan(0);
+    expect(frame.maxHits).toBe(Math.max(...slotHits));
+  });
+
+  it("produces the byte-identical image the transfer transport would, for the same seed (oracle)", () => {
+    const transfer = harness();
+    transfer.session.handle(startCommand({ seed: 42 }));
+    transfer.scheduler.drain();
+    const transferImage = progressEvents(transfer.events).at(-1)!.image;
+
+    const frames = makeSharedFrames(8, 8);
+    const shared = harness();
+    shared.session.handle(startCommand({ seed: 42, sharedFrames: frames }));
+    shared.scheduler.drain();
+    const note = sharedFrameEvents(shared.events).at(-1)!;
+
+    // Reconstruct exactly what main.ts's presentSharedFrame does: a view
+    // over the shared buckets plus the notified maxHits, tone-mapped with
+    // the same (start-command) params the transfer-mode worker used.
+    const image = tonemapFlame(
+      viewFlameHistogram(
+        8,
+        8,
+        frames[note.slot].hits,
+        frames[note.slot].sumRGB,
+        note.maxHits,
+      ),
+      {
+        exposure: 1,
+        gamma: 1,
+        gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+        vibrancy: 1,
+      },
+    );
+    expect(Array.from(image)).toEqual(Array.from(transferImage));
+  });
+
+  it("alternates between the two slots across redisplays, never overwriting the slot it just notified", () => {
+    // A clock stepping past the redisplay throttle makes every chunk due, so
+    // a multi-chunk render produces a run of sharedFrames; consecutive ones
+    // must name different slots (the double buffer's whole guarantee: the
+    // main thread can still be reading slot N while N+1 is being written).
+    const frames = makeSharedFrames(8, 8);
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 10,
+      now: fakeClock(200),
+    });
+    session.handle(
+      startCommand({ iterationsBudget: 250_000, sharedFrames: frames }),
+    );
+    scheduler.drain();
+
+    const slots = sharedFrameEvents(events).map((e) => e.slot);
+    expect(slots.length).toBeGreaterThan(2);
+    for (let i = 1; i < slots.length; i++) {
+      expect(slots[i]).toBe(1 - slots[i - 1]);
+    }
+  });
+
+  it("rebuilds an estimator change into the OTHER slot, leaving the previous frame intact", () => {
+    const frames = makeSharedFrames(8, 8);
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        seed: 3,
+        sharedFrames: frames,
+        estimatorRadius: 1,
+        estimatorMinimumRadius: 1,
+        estimatorCurve: 1,
+      }),
+    );
+    scheduler.drain();
+    const first = sharedFrameEvents(events).at(-1)!;
+    expect(first.slot).toBe(0);
+    const firstSlotSnapshot = Array.from(frames[0].hits);
+
+    // ONE command -> exactly one adaptive rebuild, which must land in the
+    // other slot (each command cycles the buffer, so a second one would wrap
+    // back around to slot 0 — deliberately not sent here).
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
+
+    const after = sharedFrameEvents(events).at(-1)!;
+    expect(after.slot).toBe(1);
+    expect(Array.from(frames[0].hits)).not.toEqual(Array.from(frames[1].hits)); // genuinely different estimates.
+    expect(Array.from(frames[0].hits)).toEqual(firstSlotSnapshot); // the previously notified slot was never touched.
+  });
+
+  it("re-notifies the same already-built slot when a finished render's budget target changes (fr-15z label parity)", () => {
+    const frames = makeSharedFrames(8, 8);
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ sharedFrames: frames }));
+    scheduler.drain();
+    const finished = sharedFrameEvents(events).at(-1)!;
+    expect(finished.iterationsBudget).toBe(500);
+
+    session.handle({ type: "setIterationsBudget", iterations: 20 });
+
+    const relabeled = sharedFrameEvents(events).at(-1)!;
+    expect(relabeled.slot).toBe(finished.slot); // nothing re-downsampled — same frame, fresh scalars.
+    expect(relabeled.maxHits).toBe(finished.maxHits);
+    expect(relabeled.iterationsDone).toBe(500);
+    expect(relabeled.iterationsBudget).toBe(20);
   });
 });

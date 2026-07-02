@@ -10,19 +10,34 @@
  * `performance`, `setTimeout`), which is what makes it plain-Vitest testable
  * with an injected {@link FlameWorkerDeps} instead of a real Worker.
  *
- * Transport is postMessage TRANSFER, not SharedArrayBuffer: SAB needs
- * cross-origin isolation (COOP/COEP), which GitHub Pages — this app's deploy
- * target — cannot set at all (see fr-73y's design notes). So this session
- * keeps the big supersampled histogram entirely to itself and only ever
- * hands the main thread a small, already-downsampled-and-tone-mapped
- * display-resolution RGBA image per update.
+ * Transport comes in two flavors (fr-96i). The upgrade is a
+ * **SharedArrayBuffer-backed display histogram**: when the page is
+ * cross-origin isolated (COOP/COEP — natively from the dev server's headers,
+ * or injected by the service worker in `sw/sw.ts` on hosts like GitHub Pages
+ * that can't send them), the main thread passes two SAB-backed
+ * display-resolution frame slots in the `start` command; this session
+ * downsamples into them alternately (a double buffer, so the slot the main
+ * thread last read is never the one being overwritten) and each update
+ * crosses as a scalars-only `sharedFrame` notification — the main thread
+ * tone-maps straight out of the live shared buckets, which is also what
+ * makes exposure/gamma/vibrancy changes land instantly there with no worker
+ * round trip. The notification postMessage doubles as the memory-visibility
+ * edge for the bucket writes (message delivery happens-after them), so no
+ * Atomics are involved. The **fallback** is fr-73y's postMessage TRANSFER:
+ * without isolation (SAB is unavailable there at all) the session keeps
+ * every histogram to itself and hands the main thread an
+ * already-downsampled-and-tone-mapped display-resolution RGBA image per
+ * update. Either way the big supersampled accumulator never leaves the
+ * worker.
  */
 import {
   accumulateFlame,
   adaptiveDownsampleFlame,
   clampSupersampleToBudget,
+  createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
+  viewFlameHistogram,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
 import type {
@@ -43,6 +58,22 @@ import type { Transform } from "../fractal/types";
 // ---------------------------------------------------------------------------
 // Protocol
 // ---------------------------------------------------------------------------
+
+/**
+ * One shared display-resolution frame slot (fr-96i): views over
+ * SharedArrayBuffers, allocated by the main thread and handed to the worker
+ * in the `start` command (structured clone of a SAB-backed view shares the
+ * buffer — nothing is copied or transferred). Same bucket layout as
+ * {@link FlameHistogram}'s `hits`/`sumRGB`, at display resolution: that plus
+ * a per-notification `maxHits` is everything `tonemapFlame` needs, so the
+ * main thread can tone-map a live view of the worker's downsample output.
+ */
+export interface SharedFrameBuffers {
+  /** Hit count per display bucket, row-major, length `width * height`. */
+  hits: Float64Array<SharedArrayBuffer>;
+  /** Summed color per display bucket, interleaved RGB, length `width * height * 3`. */
+  sumRGB: Float64Array<SharedArrayBuffer>;
+}
 
 /** Main thread → worker. */
 export type FlameWorkerCommand =
@@ -70,6 +101,17 @@ export type FlameWorkerCommand =
       estimatorCurve: number;
       /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
       paletteId: FlamePaletteId;
+      /**
+       * Two SAB-backed display-resolution frame slots (fr-96i), present only
+       * when the page is cross-origin isolated (the main thread gates the
+       * allocation on `crossOriginIsolated`). Their presence selects the
+       * transport: the session downsamples into them alternately and emits
+       * `sharedFrame` notifications; omitted, it emits `progress` transfers
+       * exactly as before. Two slots — a double buffer — so the slot the
+       * main thread was last told to read is never the one the next
+       * downsample is concurrently overwriting.
+       */
+      sharedFrames?: [SharedFrameBuffers, SharedFrameBuffers];
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
@@ -91,6 +133,23 @@ export type FlameWorkerEvent =
       image: Uint8ClampedArray<ArrayBuffer>;
       width: number;
       height: number;
+    }
+  | {
+      /**
+       * Shared-memory counterpart to `progress` (fr-96i): the frame is
+       * already sitting in one of the `start` command's `sharedFrames`
+       * slots, so only scalars cross here — the main thread tone-maps the
+       * named slot itself. Delivery of this message is also what guarantees
+       * the slot's bucket writes are visible to the main thread.
+       */
+      type: "sharedFrame";
+      /** Index into `sharedFrames` of the slot that was just (re)written. */
+      slot: number;
+      /** `maxHits` of the display histogram in that slot — the one input
+       * `tonemapFlame` needs that doesn't live in the shared arrays. */
+      maxHits: number;
+      iterationsDone: number;
+      iterationsBudget: number;
     }
   | {
       type: "supersampleNote";
@@ -212,8 +271,26 @@ export class FlameWorkerSession {
    * size x effective supersample). */
   private histogram: FlameHistogram | null = null;
   /** Display-resolution derivative, refreshed on the cadence `runChunk`
-   * decides — never fed back into `accumulateFlame` (see `downsampleFlame`). */
+   * decides — never fed back into `accumulateFlame` (see `downsampleFlame`).
+   * Always points at whichever of {@link displaySlots} was written last;
+   * `null` only while nothing has been downsampled yet this accumulation. */
   private displayHistogram: FlameHistogram | null = null;
+  /** The display-resolution histogram(s) `rebuildDisplay` cycles through as
+   * `downsampleFlame`/`adaptiveDownsampleFlame` `out` targets. Shared mode:
+   * the two SAB-backed slots from the `start` command (the double buffer the
+   * protocol doc describes). Transfer mode: ONE locally-owned histogram —
+   * reused so a progressive render stops churning a display-size Float64
+   * allocation every redisplay tick (nobody else ever reads it; the
+   * tone-map happens synchronously right after each rebuild). */
+  private displaySlots: FlameHistogram[] = [];
+  /** Cursor into {@link displaySlots}: which slot the NEXT rebuild writes. */
+  private nextDisplaySlot = 0;
+  /** Index of the slot written LAST — what a `sharedFrame` notification
+   * names, including a re-notification for an already-built frame. */
+  private lastDisplaySlot = 0;
+  /** True when `start` carried `sharedFrames` — selects which event shape
+   * {@link sendProgress} emits. */
+  private sharedMode = false;
 
   /** Display resolution — fixed for the session's life. */
   private width = 0;
@@ -284,8 +361,9 @@ export class FlameWorkerSession {
         } else if (wasFinished) {
           // Already finished before this change, so the frame on screen is
           // already the adaptive finished one — only the label's target is
-          // now stale (fr-15z). Re-send (a cheap re-tonemap, same cost as a
-          // live exposure change) so it reads 100% against the new budget.
+          // now stale (fr-15z). Re-send (a cheap re-tonemap in transfer
+          // mode, a scalars-only re-notification in shared mode) so it
+          // reads 100% against the new budget.
           this.redisplayNow();
         } else {
           // Lowered to/below the accumulated count mid-render: that finishes
@@ -337,6 +415,19 @@ export class FlameWorkerSession {
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
+    this.sharedMode = cmd.sharedFrames !== undefined;
+    this.displaySlots = cmd.sharedFrames
+      ? cmd.sharedFrames.map((frame) =>
+          viewFlameHistogram(
+            cmd.width,
+            cmd.height,
+            frame.hits,
+            frame.sumRGB,
+            0,
+          ),
+        )
+      : [createFlameHistogram(cmd.width, cmd.height)];
+    this.nextDisplaySlot = 0;
     this.iterationsBudget = cmd.iterationsBudget;
     this.tonemapParams = {
       exposure: cmd.exposure,
@@ -398,6 +489,11 @@ export class FlameWorkerSession {
     value: TonemapParams[K],
   ): void {
     this.tonemapParams = { ...this.tonemapParams, [key]: value };
+    // Transfer mode only, in practice: in shared mode the main thread owns
+    // the tone-map and applies these params locally without ever sending a
+    // command (see main.ts) — if one arrives anyway, the redisplay below
+    // just re-notifies the current slot, which is harmless.
+    //
     // While still accumulating, the next naturally-scheduled (throttled)
     // redisplay already reads tonemapParams fresh, so nothing else to do.
     // Once done, nothing else will ever refresh the display again — this is
@@ -533,26 +629,7 @@ export class FlameWorkerSession {
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
     if (due) {
-      // The full adaptive pass (fr-17t) is O(width * height * radius^2) and
-      // not chunked — cheap enough to pay ONCE on the finished frame, but
-      // not on every throttled progressive redisplay while still
-      // accumulating (this loop's whole reason to be throttled at all). The
-      // cheap fixed-radius filter covers every preview tick instead; see
-      // `downsampleFlame`'s and `adaptiveDownsampleFlame`'s docs for why
-      // the two coexist rather than one replacing the other.
-      this.displayHistogram = finished
-        ? adaptiveDownsampleFlame(
-            this.histogram,
-            this.width,
-            this.height,
-            this.estimatorParams,
-          )
-        : downsampleFlame(
-            this.histogram,
-            this.width,
-            this.height,
-            FLAME_FILTER_RADIUS,
-          );
+      this.rebuildDisplay(finished);
       this.lastDownsampleAt = t1;
       this.sendProgress();
     }
@@ -577,9 +654,57 @@ export class FlameWorkerSession {
     );
   }
 
+  /**
+   * Rebuild `displayHistogram` from the current (full-resolution)
+   * `histogram` into the next {@link displaySlots} target. `adaptive` picks
+   * the filter: the full density-estimation pass (fr-17t) is O(width *
+   * height * radius^2) and not chunked — cheap enough to pay ONCE on the
+   * finished frame, but not on every throttled progressive redisplay while
+   * still accumulating (that loop's whole reason to be throttled at all).
+   * The cheap fixed-radius filter covers every preview tick instead; see
+   * `downsampleFlame`'s and `adaptiveDownsampleFlame`'s docs for why the
+   * two coexist rather than one replacing the other.
+   */
+  private rebuildDisplay(adaptive: boolean): void {
+    if (!this.histogram) return;
+    this.lastDisplaySlot = this.nextDisplaySlot;
+    const out = this.displaySlots[this.nextDisplaySlot];
+    this.nextDisplaySlot =
+      (this.nextDisplaySlot + 1) % this.displaySlots.length;
+    this.displayHistogram = adaptive
+      ? adaptiveDownsampleFlame(
+          this.histogram,
+          this.width,
+          this.height,
+          this.estimatorParams,
+          out,
+        )
+      : downsampleFlame(
+          this.histogram,
+          this.width,
+          this.height,
+          FLAME_FILTER_RADIUS,
+          out,
+        );
+  }
+
   private sendProgress(): void {
-    if (!this.displayHistogram) return;
-    const image = tonemapFlame(this.displayHistogram, this.tonemapParams);
+    const display = this.displayHistogram;
+    if (!display) return;
+    if (this.sharedMode) {
+      // The frame is already sitting in the shared slot; only scalars cross.
+      // This postMessage is also the memory-visibility edge for the slot's
+      // bucket writes — see the module doc.
+      this.emit({
+        type: "sharedFrame",
+        slot: this.lastDisplaySlot,
+        maxHits: display.maxHits,
+        iterationsDone: this.iterationsDone,
+        iterationsBudget: this.iterationsBudget,
+      });
+      return;
+    }
+    const image = tonemapFlame(display, this.tonemapParams);
     this.emit({
       type: "progress",
       iterationsDone: this.iterationsDone,
@@ -594,19 +719,14 @@ export class FlameWorkerSession {
     if (this.displayHistogram) this.sendProgress();
   }
 
-  /** Rebuilds `displayHistogram` from the current (full-resolution)
-   * `histogram` via the adaptive pass with the latest `estimatorParams`, and
-   * sends it — the finished-frame counterpart to `redisplayNow`'s "just
-   * re-tonemap what's already there", used when the thing that changed
-   * affects the downsample itself, not just the tone-map applied after it. */
+  /** Re-runs the adaptive pass over the frame already in hand with the
+   * latest `estimatorParams` (into the next display slot), and sends it —
+   * the finished-frame counterpart to `redisplayNow`'s "just re-send what's
+   * already there", used when the thing that changed affects the downsample
+   * itself, not just the tone-map applied after it. */
   private redisplayWithFreshEstimate(): void {
     if (!this.histogram) return;
-    this.displayHistogram = adaptiveDownsampleFlame(
-      this.histogram,
-      this.width,
-      this.height,
-      this.estimatorParams,
-    );
+    this.rebuildDisplay(true);
     this.sendProgress();
   }
 }

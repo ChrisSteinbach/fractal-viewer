@@ -10,7 +10,7 @@
     "test": "npm run lint && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "tsc --noEmit && eslint src/ && stylelint \"src/**/*.css\" && prettier --check .",
+    "lint": "tsc --noEmit && tsc --noEmit -p src/app/sw && eslint src/ && stylelint \"src/**/*.css\" && prettier --check .",
     "lint:fix": "eslint src/ --fix && stylelint \"src/**/*.css\" --fix && prettier --write .",
     "lint:stylelint": "stylelint \"src/**/*.css\"",
     "lint:eslint": "eslint src/",
@@ -44,7 +44,8 @@
     "typescript-eslint": "^8.59.3",
     "vite": "^7.3.3",
     "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "workbox-precaching": "^7.4.1"
   },
   "dependencies": {
     "three": "^0.185.0"

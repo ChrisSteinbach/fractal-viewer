@@ -162,6 +162,40 @@ version, bad base64/JSON, the wrong transform shape, or an unknown color/depth
 enum, and clamps numeric ranges. Storage and location are injected, so the codec
 is unit-tested with no real browser.
 
+## Render workers & cross-origin isolation
+
+The two on-demand renderers (the fractal-flame still and the solid voxel view)
+each run in a dedicated Web Worker (`flame-worker.ts` / `voxel-worker.ts`) so
+hundreds of millions of chaos-game iterations never touch the main thread. The
+workers are thin `postMessage` glue around plain-Vitest-testable session state
+machines (`flame-worker-core.ts` / `voxel-worker-core.ts`).
+
+The flame worker's transport has two flavors:
+
+- **SharedArrayBuffer (fast path)** — when the page is cross-origin isolated,
+  the main thread allocates two SAB-backed display-resolution histogram slots;
+  the worker downsamples into them alternately (a double buffer) and each
+  update crosses as a scalars-only notification. The main thread tone-maps a
+  live view of the shared buckets itself, so exposure/gamma/vibrancy sliders
+  re-render instantly with no worker round trip.
+- **postMessage transfer (fallback)** — without isolation the worker tone-maps
+  and transfers a display-resolution RGBA image per update, exactly the
+  original design.
+
+Isolation needs `Cross-Origin-Opener-Policy` + `Cross-Origin-Embedder-Policy`
+headers, which GitHub Pages cannot send. In dev, Vite's server sends them
+natively (see `vite.config.ts`). In production, a hand-written service worker
+(`src/app/sw/sw.ts`, built via vite-plugin-pwa's `injectManifest`) composes the
+Workbox precache with a COOP/COEP response rewrap in a single fetch handler —
+one handler because only the first `respondWith` on an event wins, and cache
+hits must be rewrapped too or isolation would break exactly when offline. A
+first-ever visit necessarily loads before any service worker controls the page,
+so `register-sw.ts` reloads such a page once as soon as the worker claims it
+(and never again — a sessionStorage marker prevents loops where isolation can't
+work, and the app then simply stays on the transfer fallback). The service
+worker lives in its own tiny TypeScript program (`src/app/sw/tsconfig.json`)
+because its WebWorker lib conflicts with the app's DOM lib.
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state
