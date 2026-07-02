@@ -35,6 +35,9 @@ function noopHandlers(): UiHandlers {
     onFlameGammaInput: vi.fn(),
     onFlameVibrancyInput: vi.fn(),
     onFlameSupersampleInput: vi.fn(),
+    onFlameEstimatorRadiusInput: vi.fn(),
+    onFlameEstimatorMinimumRadiusInput: vi.fn(),
+    onFlameEstimatorCurveInput: vi.fn(),
   };
 }
 
@@ -769,6 +772,93 @@ describe("Ui flame render controls", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onFlameSupersampleInput).toHaveBeenCalledWith(3);
+  });
+
+  it("reflects the estimator params into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        estimatorRadius: 9,
+        estimatorMinimumRadius: 1.5,
+        estimatorCurve: 1.2,
+      },
+    });
+
+    expect(
+      (
+        document.getElementById(
+          "flameEstimatorRadiusSlider",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("9");
+    expect(
+      document.getElementById("flameEstimatorRadiusLabel")?.textContent,
+    ).toBe("9.0px");
+
+    expect(
+      (
+        document.getElementById(
+          "flameEstimatorMinimumRadiusSlider",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("1.5");
+    expect(
+      document.getElementById("flameEstimatorMinimumRadiusLabel")?.textContent,
+    ).toBe("1.5px");
+
+    expect(
+      (document.getElementById("flameEstimatorCurveSlider") as HTMLInputElement)
+        .value,
+    ).toBe("1.2");
+    expect(
+      document.getElementById("flameEstimatorCurveLabel")?.textContent,
+    ).toBe("1.20");
+  });
+
+  it("reports the estimator radius slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorRadiusSlider",
+    ) as HTMLInputElement;
+    slider.value = "7.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorRadiusInput).toHaveBeenCalledWith(7.5);
+  });
+
+  it("reports the estimator minimum radius slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorMinimumRadiusSlider",
+    ) as HTMLInputElement;
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorMinimumRadiusInput).toHaveBeenCalledWith(
+      2.5,
+    );
+  });
+
+  it("reports the estimator curve slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorCurveSlider",
+    ) as HTMLInputElement;
+    slider.value = "0.8";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorCurveInput).toHaveBeenCalledWith(0.8);
   });
 });
 

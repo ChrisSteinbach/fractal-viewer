@@ -62,6 +62,12 @@ export interface UiHandlers {
   onFlameVibrancyInput: (value: number) => void;
   /** The supersample slider changed — the app restarts accumulation. */
   onFlameSupersampleInput: (value: number) => void;
+  /** Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
+   * gamma/vibrancy: re-run just the finished-frame adaptive pass, never a
+   * re-accumulate. */
+  onFlameEstimatorRadiusInput: (value: number) => void;
+  onFlameEstimatorMinimumRadiusInput: (value: number) => void;
+  onFlameEstimatorCurveInput: (value: number) => void;
 }
 
 /**
@@ -287,6 +293,12 @@ export class Ui {
   private readonly flameSupersampleLabel: HTMLElement;
   private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameSupersampleNote: HTMLElement;
+  private readonly flameEstimatorRadiusLabel: HTMLElement;
+  private readonly flameEstimatorRadiusSlider: HTMLInputElement;
+  private readonly flameEstimatorMinimumRadiusLabel: HTMLElement;
+  private readonly flameEstimatorMinimumRadiusSlider: HTMLInputElement;
+  private readonly flameEstimatorCurveLabel: HTMLElement;
+  private readonly flameEstimatorCurveSlider: HTMLInputElement;
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
@@ -332,6 +344,16 @@ export class Ui {
     this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
     this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
+    this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
+    this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
+    this.flameEstimatorMinimumRadiusLabel = this.byId(
+      "flameEstimatorMinimumRadiusLabel",
+    );
+    this.flameEstimatorMinimumRadiusSlider = this.byId(
+      "flameEstimatorMinimumRadiusSlider",
+    );
+    this.flameEstimatorCurveLabel = this.byId("flameEstimatorCurveLabel");
+    this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
   }
@@ -402,6 +424,21 @@ export class Ui {
         Number(this.flameSupersampleSlider.value),
       ),
     );
+    this.flameEstimatorRadiusSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorRadiusInput(
+        Number(this.flameEstimatorRadiusSlider.value),
+      ),
+    );
+    this.flameEstimatorMinimumRadiusSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorMinimumRadiusInput(
+        Number(this.flameEstimatorMinimumRadiusSlider.value),
+      ),
+    );
+    this.flameEstimatorCurveSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorCurveInput(
+        Number(this.flameEstimatorCurveSlider.value),
+      ),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -431,6 +468,16 @@ export class Ui {
     this.flameVibrancySlider.value = String(state.flame.vibrancy);
     this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
     this.flameSupersampleSlider.value = String(state.flame.supersample);
+
+    this.flameEstimatorRadiusLabel.textContent = `${state.flame.estimatorRadius.toFixed(1)}px`;
+    this.flameEstimatorRadiusSlider.value = String(state.flame.estimatorRadius);
+    this.flameEstimatorMinimumRadiusLabel.textContent = `${state.flame.estimatorMinimumRadius.toFixed(1)}px`;
+    this.flameEstimatorMinimumRadiusSlider.value = String(
+      state.flame.estimatorMinimumRadius,
+    );
+    this.flameEstimatorCurveLabel.textContent =
+      state.flame.estimatorCurve.toFixed(2);
+    this.flameEstimatorCurveSlider.value = String(state.flame.estimatorCurve);
 
     // The flame render takes over the panel — editing controls that have no
     // effect on a frozen, already-plotted image would just be confusing —

@@ -15,6 +15,9 @@ import {
   setColorMode,
   setFinalTransform,
   setFlameActive,
+  setFlameEstimatorCurve,
+  setFlameEstimatorMinimumRadius,
+  setFlameEstimatorRadius,
   setFlameExposure,
   setFlameGamma,
   setFlameIterations,
@@ -190,6 +193,9 @@ function main(): void {
       exposure: state.flame.exposure,
       gamma: state.flame.gamma,
       vibrancy: state.flame.vibrancy,
+      estimatorRadius: state.flame.estimatorRadius,
+      estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
+      estimatorCurve: state.flame.estimatorCurve,
     });
 
     state = setFlameActive(state, true);
@@ -433,6 +439,33 @@ function main(): void {
       postFlame({
         type: "setSupersample",
         supersample: state.flame.supersample,
+      });
+      scheduleSave();
+    },
+    onFlameEstimatorRadiusInput: (value) => {
+      state = setFlameEstimatorRadius(state, value);
+      ui.updateLabels(state);
+      postFlame({
+        type: "setEstimatorRadius",
+        estimatorRadius: state.flame.estimatorRadius,
+      });
+      scheduleSave();
+    },
+    onFlameEstimatorMinimumRadiusInput: (value) => {
+      state = setFlameEstimatorMinimumRadius(state, value);
+      ui.updateLabels(state);
+      postFlame({
+        type: "setEstimatorMinimumRadius",
+        estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
+      });
+      scheduleSave();
+    },
+    onFlameEstimatorCurveInput: (value) => {
+      state = setFlameEstimatorCurve(state, value);
+      ui.updateLabels(state);
+      postFlame({
+        type: "setEstimatorCurve",
+        estimatorCurve: state.flame.estimatorCurve,
       });
       scheduleSave();
     },
