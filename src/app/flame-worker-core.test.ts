@@ -310,10 +310,61 @@ describe("FlameWorkerSession setIterationsBudget", () => {
     scheduler.drain(); // the already-scheduled chunk fires, but must no-op.
 
     expect(calls).toHaveLength(1); // no further (and certainly no negative-count) accumulate call.
-    // No new progress event either — matches the pre-fr-73y main.ts, which
-    // also only refreshed the readout on further accumulation or a live
-    // tone-map param change, neither of which happened here.
+  });
+
+  it("reports the finish immediately when the budget is lowered below what has already accumulated (fr-15z)", () => {
+    // Lowering the budget below iterationsDone finishes the render on the
+    // spot, but no chunk runs to say so — the session must emit the final
+    // progress itself, or the label freezes at its pre-change value.
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    scheduler.step(); // one chunk in (10 done).
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(10);
+
+    session.handle({ type: "setIterationsBudget", iterations: 5 });
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsDone).toBe(10); // what actually accumulated, unchanged.
+    expect(last.iterationsBudget).toBe(5); // the new (already-met) target.
+  });
+
+  it("applies the finished-frame adaptive estimate when a lowered budget ends the render early", () => {
+    // Two sessions identical except for wildly different estimator params,
+    // each ended early by lowering the budget below what accumulated: since
+    // progressive previews ignore estimator params entirely (pinned by the
+    // adaptive-blur suite), differing final images prove the early finish
+    // ran the finished-frame adaptive pass, not another cheap preview.
+    function earlyFinishImage(estimatorRadius: number): Uint8ClampedArray {
+      const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+      session.handle(
+        startCommand({
+          seed: 7,
+          iterationsBudget: 40,
+          estimatorRadius,
+          estimatorMinimumRadius: estimatorRadius,
+          estimatorCurve: 1,
+        }),
+      );
+      scheduler.step(); // one chunk in (10 done).
+      session.handle({ type: "setIterationsBudget", iterations: 5 });
+      return progressEvents(events).at(-1)!.image;
+    }
+    expect(Array.from(earlyFinishImage(15))).not.toEqual(
+      Array.from(earlyFinishImage(1)),
+    );
+  });
+
+  it("refreshes the label's target when an already-finished render's budget is lowered further", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsBudget).toBe(50);
+
+    session.handle({ type: "setIterationsBudget", iterations: 20 });
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsDone).toBe(50);
+    expect(last.iterationsBudget).toBe(20);
   });
 });
 

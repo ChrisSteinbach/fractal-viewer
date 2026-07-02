@@ -213,6 +213,32 @@ describe("VoxelWorkerSession setIterationsBudget", () => {
       expect(grid.iterationsDone).toBeGreaterThanOrEqual(0);
       expect(grid.iterationsDone).toBeLessThanOrEqual(100);
     }
+    // The lowered budget finished the render on the spot, and no chunk runs
+    // to say so — the session must send the final grid itself (fresh
+    // counters included) or the progress label freezes (fr-15z).
+    const last = gridEvents(events)[gridEvents(events).length - 1];
+    expect(last.iterationsDone).toBe(100); // what actually accumulated, unchanged.
+    expect(last.iterationsBudget).toBe(50); // the new (already-met) target.
+  });
+
+  it("refreshes the label's target without re-packing when an already-finished render's budget is lowered further", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 100 });
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    scheduler.drain();
+    const gridsWhenDone = gridEvents(events).length;
+
+    session.handle({ type: "setIterationsBudget", iterations: 100 });
+
+    // The displayed texture was already final — no heavy grid re-pack, just
+    // a counters-only progress event so the label tracks the new target.
+    expect(gridEvents(events)).toHaveLength(gridsWhenDone);
+    const progress = events.filter((e) => e.type === "progress");
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toEqual({
+      type: "progress",
+      iterationsDone: 200,
+      iterationsBudget: 100,
+    });
   });
 });
 

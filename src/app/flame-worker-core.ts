@@ -276,10 +276,28 @@ export class FlameWorkerSession {
       case "start":
         this.start(command);
         break;
-      case "setIterationsBudget":
+      case "setIterationsBudget": {
+        const wasFinished = this.iterationsDone >= this.iterationsBudget;
         this.iterationsBudget = command.iterations;
-        this.ensureRunning(); // resume if this raised the budget past iterationsDone.
+        if (this.iterationsDone < this.iterationsBudget) {
+          this.ensureRunning(); // resume if this raised the budget past iterationsDone.
+        } else if (wasFinished) {
+          // Already finished before this change, so the frame on screen is
+          // already the adaptive finished one — only the label's target is
+          // now stale (fr-15z). Re-send (a cheap re-tonemap, same cost as a
+          // live exposure change) so it reads 100% against the new budget.
+          this.redisplayNow();
+        } else {
+          // Lowered to/below the accumulated count mid-render: that finishes
+          // the render on the spot, but no chunk will run to say so — the
+          // already-scheduled one bails silently in runChunk — so the label
+          // would freeze at its last value (fr-15z) and the display would
+          // keep the cheap progressive filter instead of the finished-frame
+          // adaptive estimate. Finish here: adaptive pass + final progress.
+          this.redisplayWithFreshEstimate();
+        }
         break;
+      }
       case "setExposure":
         this.setTonemapParam("exposure", command.exposure);
         break;
