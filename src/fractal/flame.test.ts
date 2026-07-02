@@ -1,5 +1,11 @@
-import { accumulateFlame, createFlameHistogram, tonemapFlame } from "./flame";
-import type { FlameHistogram, Mat4 } from "./flame";
+import {
+  DEFAULT_GAMMA_THRESHOLD,
+  accumulateFlame,
+  createFlameHistogram,
+  downsampleFlame,
+  tonemapFlame,
+} from "./flame";
+import type { FlameHistogram, Mat4, TonemapParams } from "./flame";
 import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
 import { transformColors } from "./color";
 import { mulberry32 } from "./rng";
@@ -378,6 +384,47 @@ describe("accumulateFlame vs. stepOrbit/plotPoint (correctness oracle)", () => {
   });
 });
 
+/**
+ * `TonemapParams` at the fr-ucs collapse point (gamma: 1, vibrancy: 1) — see
+ * "collapses to the pre-fr-ucs tonemap" below. `gammaThreshold` is
+ * deliberately a real, non-degenerate value (not e.g. 0) so these tests
+ * exercise the same code path a real render does, not a threshold-disabled
+ * shortcut.
+ */
+function neutral(exposure: number): TonemapParams {
+  return {
+    exposure,
+    gamma: 1,
+    gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+    vibrancy: 1,
+  };
+}
+
+/** Pre-fr-ucs tonemapFlame, verbatim — the oracle "collapses to the
+ * pre-fr-ucs tonemap" pins the new formula against. */
+function tonemapFlamePreFrUcs(
+  histogram: FlameHistogram,
+  exposure: number,
+): Uint8ClampedArray {
+  const { width, height, hits, sumRGB, maxHits } = histogram;
+  const out = new Uint8ClampedArray(width * height * 4);
+  if (maxHits <= 0) return out;
+  const logMax = Math.log1p(maxHits);
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    if (h <= 0) continue;
+    const brightness = (Math.log1p(h) / logMax) * exposure;
+    const invHits = 1 / h;
+    const o = i * 3;
+    const oi = i * 4;
+    out[oi] = sumRGB[o] * invHits * brightness * 255;
+    out[oi + 1] = sumRGB[o + 1] * invHits * brightness * 255;
+    out[oi + 2] = sumRGB[o + 2] * invHits * brightness * 255;
+    out[oi + 3] = 255;
+  }
+  return out;
+}
+
 describe("tonemapFlame", () => {
   function histogramWith(
     entries: { bucket: number; hits: number; color: Vec3 }[],
@@ -399,14 +446,14 @@ describe("tonemapFlame", () => {
   }
 
   it("returns a fully transparent image for a histogram with no hits", () => {
-    const image = tonemapFlame(createFlameHistogram(4, 4), { exposure: 1 });
+    const image = tonemapFlame(createFlameHistogram(4, 4), neutral(1));
     expect(image).toHaveLength(4 * 4 * 4);
     expect(Array.from(image).every((v) => v === 0)).toBe(true);
   });
 
   it("leaves an unvisited bucket fully transparent alongside a visited one", () => {
     const hist = histogramWith([{ bucket: 5, hits: 100, color: [1, 1, 1] }]);
-    const image = tonemapFlame(hist, { exposure: 1 });
+    const image = tonemapFlame(hist, neutral(1));
     expect(Array.from(image.slice(0, 4))).toEqual([0, 0, 0, 0]);
     expect(image[5 * 4 + 3]).toBe(255); // visited bucket is opaque.
   });
@@ -416,7 +463,7 @@ describe("tonemapFlame", () => {
       { bucket: 0, hits: 1, color: [1, 0, 0] },
       { bucket: 1, hits: 1_000_000, color: [1, 0, 0] },
     ]);
-    const image = tonemapFlame(hist, { exposure: 1 });
+    const image = tonemapFlame(hist, neutral(1));
     expect(image[0 * 4]).toBeLessThan(image[1 * 4]);
   });
 
@@ -425,7 +472,7 @@ describe("tonemapFlame", () => {
       { bucket: 0, hits: 1, color: [1, 1, 1] },
       { bucket: 1, hits: 1_000_000, color: [1, 1, 1] },
     ]);
-    const image = tonemapFlame(hist, { exposure: 1 });
+    const image = tonemapFlame(hist, neutral(1));
     // A linear hits/maxHits ratio would put this near 0/255; log-density
     // keeps a lone visited bucket clearly legible.
     expect(image[0]).toBeGreaterThan(10);
@@ -435,8 +482,8 @@ describe("tonemapFlame", () => {
     const hist = histogramWith([
       { bucket: 0, hits: 50, color: [0.5, 0.5, 0.5] },
     ]);
-    const dim = tonemapFlame(hist, { exposure: 0.5 });
-    const bright = tonemapFlame(hist, { exposure: 1 });
+    const dim = tonemapFlame(hist, neutral(0.5));
+    const bright = tonemapFlame(hist, neutral(1));
     expect(bright[0]).toBeGreaterThan(dim[0]);
   });
 
@@ -448,7 +495,7 @@ describe("tonemapFlame", () => {
       color: [1, 1, 1] as Vec3,
     }));
     const hist = histogramWith(entries, counts.length, 1);
-    const image = tonemapFlame(hist, { exposure: 1 });
+    const image = tonemapFlame(hist, neutral(1));
 
     let previous = -1;
     for (let i = 0; i < counts.length; i++) {
@@ -456,5 +503,336 @@ describe("tonemapFlame", () => {
       expect(value).toBeGreaterThanOrEqual(previous);
       previous = value;
     }
+  });
+});
+
+describe("tonemapFlame collapses to the pre-fr-ucs tonemap at gamma: 1, vibrancy: 1", () => {
+  // The regression guard fr-ucs's design explicitly calls for: every render
+  // (and every fr-o7s-era test) that never touches gamma/vibrancy must see
+  // byte-for-byte the same image as before those controls existed.
+  function histogramWith(
+    entries: { bucket: number; hits: number; color: Vec3 }[],
+    width: number,
+    height: number,
+  ): FlameHistogram {
+    const hist = createFlameHistogram(width, height);
+    let maxHits = 0;
+    for (const { bucket, hits, color } of entries) {
+      hist.hits[bucket] = hits;
+      const o = bucket * 3;
+      hist.sumRGB[o] = color[0] * hits;
+      hist.sumRGB[o + 1] = color[1] * hits;
+      hist.sumRGB[o + 2] = color[2] * hits;
+      maxHits = Math.max(maxHits, hits);
+    }
+    hist.maxHits = maxHits;
+    return hist;
+  }
+
+  it("matches the pre-fr-ucs formula exactly across a spread of hit counts, colors, and exposures", () => {
+    const hist = histogramWith(
+      [
+        { bucket: 0, hits: 1, color: [1, 0.4, 0.1] },
+        { bucket: 1, hits: 7, color: [0, 1, 0.5] },
+        { bucket: 2, hits: 500, color: [0.2, 0.2, 0.9] },
+        { bucket: 5, hits: 1_000_000, color: [1, 1, 1] },
+      ],
+      4,
+      4,
+    );
+    for (const exposure of [0.2, 0.5, 1, 2, 4]) {
+      const actual = tonemapFlame(hist, neutral(exposure));
+      const expected = tonemapFlamePreFrUcs(hist, exposure);
+      expect(Array.from(actual)).toEqual(Array.from(expected));
+    }
+  });
+
+  it("matches on a histogram produced by a real accumulateFlame run", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const hist = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      24,
+      24,
+      6000,
+      mulberry32(7),
+      transformColors(4),
+    );
+    const actual = tonemapFlame(hist, neutral(1.3));
+    const expected = tonemapFlamePreFrUcs(hist, 1.3);
+    expect(Array.from(actual)).toEqual(Array.from(expected));
+  });
+});
+
+describe("tonemapFlame gamma", () => {
+  function singleBucketHist(hits: number, maxHits: number): FlameHistogram {
+    const hist = createFlameHistogram(2, 1);
+    hist.hits[0] = hits;
+    hist.sumRGB[0] = hits;
+    hist.sumRGB[1] = hits;
+    hist.sumRGB[2] = hits;
+    hist.maxHits = maxHits;
+    return hist;
+  }
+
+  it("above 1, brightens a faint (low-density) bucket relative to gamma: 1", () => {
+    const hist = singleBucketHist(2, 1_000_000);
+    const plain = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    const punchy = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 3,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    expect(punchy[0]).toBeGreaterThan(plain[0]);
+  });
+
+  it("below 1, darkens a faint bucket relative to gamma: 1", () => {
+    const hist = singleBucketHist(2, 1_000_000);
+    const plain = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    const flat = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 0.5,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    expect(flat[0]).toBeLessThan(plain[0]);
+  });
+
+  it("leaves the fully-saturated (maximum-density) bucket at full brightness regardless of gamma", () => {
+    // density = 1 at the hottest bucket; 1 ** (1/gamma) === 1 for any gamma.
+    const hist = singleBucketHist(1_000_000, 1_000_000);
+    const gamma1 = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    const gamma4 = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 4,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    expect(gamma4[0]).toBe(gamma1[0]);
+  });
+});
+
+describe("tonemapFlame gammaThreshold", () => {
+  it("is continuous across the threshold: densities just below and just above it read nearly identically", () => {
+    // Solve for the (real-valued) hit count whose density lands exactly on
+    // the threshold, then take the integer hit counts immediately below and
+    // above it — their densities straddle the threshold as tightly as an
+    // integer hit count allows. A large maxHits keeps consecutive integers'
+    // densities close together near the crossing (log1p is steep for small
+    // maxHits, which would make even adjacent integers straddle by a lot).
+    const maxHits = 1_000_000_000;
+    const threshold = 0.2;
+    const gamma = 5;
+    const targetH = Math.expm1(threshold * Math.log1p(maxHits));
+    const hBelow = Math.floor(targetH);
+    const hAbove = hBelow + 1;
+
+    const hist = createFlameHistogram(2, 1);
+    hist.hits[0] = hBelow;
+    hist.hits[1] = hAbove;
+    hist.sumRGB[0] = hBelow;
+    hist.sumRGB[1] = hBelow;
+    hist.sumRGB[2] = hBelow;
+    hist.sumRGB[3] = hAbove;
+    hist.sumRGB[4] = hAbove;
+    hist.sumRGB[5] = hAbove;
+    hist.maxHits = maxHits;
+    const params: TonemapParams = {
+      exposure: 1,
+      gamma,
+      gammaThreshold: threshold,
+      vibrancy: 1,
+    };
+    const image = tonemapFlame(hist, params);
+    expect(Math.abs(image[0] - image[4])).toBeLessThanOrEqual(1);
+  });
+
+  it("has no effect when gamma is 1, at any threshold", () => {
+    const hist = createFlameHistogram(2, 1);
+    hist.hits[0] = 3;
+    hist.sumRGB[0] = 3;
+    hist.sumRGB[1] = 3;
+    hist.sumRGB[2] = 3;
+    hist.maxHits = 10_000;
+    const low = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: 0.001,
+      vibrancy: 1,
+    });
+    const high = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 1,
+      gammaThreshold: 0.5,
+      vibrancy: 1,
+    });
+    expect(Array.from(low)).toEqual(Array.from(high));
+  });
+});
+
+describe("tonemapFlame vibrancy", () => {
+  function twoToneHist(): FlameHistogram {
+    // A hot, saturated-red bucket: density-scaled (vivid) and flat-gamma
+    // color diverge sharply here, so vibrancy's effect is easy to see.
+    const hist = createFlameHistogram(1, 1);
+    hist.hits[0] = 500;
+    hist.sumRGB[0] = 500; // r = 1
+    hist.sumRGB[1] = 0; // g = 0
+    hist.sumRGB[2] = 0; // b = 0
+    hist.maxHits = 1_000_000;
+    return hist;
+  }
+
+  it("at 0, ignores density entirely: red channel matches the gamma-only curve on the raw color", () => {
+    const hist = twoToneHist();
+    const params: TonemapParams = {
+      exposure: 1,
+      gamma: 2,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 0,
+    };
+    const image = tonemapFlame(hist, params);
+    // r = 1 (sumRGB/hits), so the flat branch is 1 ** (1/gamma) * exposure = 1.
+    expect(image[0]).toBe(255);
+  });
+
+  it("at 1, matches the density-scaled color (vivid) exactly", () => {
+    const hist = twoToneHist();
+    const vivid = tonemapFlame(hist, {
+      exposure: 1,
+      gamma: 2,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+      vibrancy: 1,
+    });
+    const density = Math.log1p(500) / Math.log1p(1_000_000);
+    const alpha = density ** 0.5; // invGamma = 1/2.
+    // Route through a Uint8ClampedArray rather than hand-rounding, so this
+    // matches its actual round-half-to-even clamping rule instead of risking
+    // a tie-breaking mismatch against a plain Math.round.
+    const expected = new Uint8ClampedArray([alpha * 255]);
+    expect(vivid[0]).toBe(expected[0]);
+  });
+
+  it("at a fractional value, lands strictly between the vibrancy: 0 and vibrancy: 1 results", () => {
+    const hist = twoToneHist();
+    const base = {
+      exposure: 1,
+      gamma: 2,
+      gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
+    };
+    const flat = tonemapFlame(hist, { ...base, vibrancy: 0 });
+    const vivid = tonemapFlame(hist, { ...base, vibrancy: 1 });
+    const mid = tonemapFlame(hist, { ...base, vibrancy: 0.5 });
+    const lo = Math.min(flat[0], vivid[0]);
+    const hi = Math.max(flat[0], vivid[0]);
+    expect(mid[0]).toBeGreaterThanOrEqual(lo);
+    expect(mid[0]).toBeLessThanOrEqual(hi);
+  });
+});
+
+describe("downsampleFlame", () => {
+  it("rejects a source whose dimensions aren't an exact multiple of the target", () => {
+    const oversized = createFlameHistogram(10, 8);
+    expect(() => downsampleFlame(oversized, 3, 8, 1)).toThrow(RangeError);
+    expect(() => downsampleFlame(oversized, 10, 3, 1)).toThrow(RangeError);
+  });
+
+  it("passes an already-target-sized histogram through unchanged at filterRadius 0", () => {
+    // supersample = 1 (source and target are the same size) and filterRadius
+    // 0 together mean every output cell's kernel collapses to a single tap
+    // on its own source cell (weight at any nonzero offset underflows to
+    // exactly 0 at the floored sigma) — true pass-through, not just "close
+    // because neighbors happen to be empty". A nonzero filterRadius, even at
+    // supersample 1, is a real blur: see "pools hits and color as weighted
+    // sums" below for what spreading mass into empty neighbors looks like.
+    const hist = createFlameHistogram(3, 3);
+    hist.hits[4] = 10; // center bucket.
+    hist.sumRGB[4 * 3] = 5;
+    hist.sumRGB[4 * 3 + 1] = 2;
+    hist.sumRGB[4 * 3 + 2] = 1;
+    hist.maxHits = 10;
+
+    const out = downsampleFlame(hist, 3, 3, 0);
+    expect(out.width).toBe(3);
+    expect(out.height).toBe(3);
+    expect(out.hits[4]).toBeCloseTo(10, 6);
+    expect(out.sumRGB[4 * 3]).toBeCloseTo(5, 6);
+    expect(out.sumRGB[4 * 3 + 1]).toBeCloseTo(2, 6);
+    expect(out.sumRGB[4 * 3 + 2]).toBeCloseTo(1, 6);
+  });
+
+  it("pools hits and color as weighted sums, not pre-averaged per source cell", () => {
+    // Two adjacent, equally-weighted source buckets (supersample = 2, so
+    // both fall in the same 2x2 home block of the single output cell) with
+    // very different hit counts but the same per-hit color: a pre-average
+    // bug (averaging each source cell's color before pooling) would treat
+    // the sparse-but-bright and dense-but-dim cells as EQUALLY important;
+    // pooling raw sums instead weights the output toward the denser one.
+    const hist = createFlameHistogram(2, 2);
+    hist.hits[0] = 1; // sparse
+    hist.sumRGB[0] = 1;
+    hist.hits[1] = 99; // dense, same per-hit color (sumRGB/hits = 1 for both)
+    hist.sumRGB[1 * 3] = 99;
+    hist.maxHits = 99;
+
+    const out = downsampleFlame(hist, 1, 1, 0.5);
+    // Pooled hits = 1 + 99 = 100 (times each cell's kernel weight, which are
+    // equal here since both cells are equidistant from the output center on
+    // the x axis and on the same row) — either way, color-per-hit is
+    // uniformly 1 in both source cells, so the reconstructed average must
+    // also be 1, and hits must reflect real pooled mass, not an average of
+    // two averages.
+    expect(out.sumRGB[0] / out.hits[0]).toBeCloseTo(1, 6);
+    expect(out.hits[0]).toBeGreaterThan(1); // reflects pooled mass, not a single cell.
+  });
+
+  it("recomputes maxHits from the filtered histogram, not the source's", () => {
+    const hist = createFlameHistogram(4, 4);
+    hist.hits[0] = 1_000_000; // an isolated spike, far from every other cell.
+    hist.sumRGB[0] = 1_000_000;
+    hist.maxHits = 1_000_000;
+
+    const out = downsampleFlame(hist, 2, 2, 0.5);
+    // Spread across a narrow kernel and normalized, the reconstructed peak
+    // is necessarily smaller than the raw spike it came from.
+    expect(out.maxHits).toBeLessThan(1_000_000);
+    expect(out.maxHits).toBeGreaterThan(0);
+    expect(out.maxHits).toBe(Math.max(...out.hits));
+  });
+
+  it("does not darken a hit near the border for lack of off-histogram neighbors", () => {
+    // A uniform field (every source cell equally hot) should downsample to
+    // an equally uniform result everywhere, including at the edges — if
+    // edge cells weren't renormalized to their own (smaller) surviving
+    // weight sum, they would read measurably dimmer than the interior.
+    const hist = createFlameHistogram(6, 6);
+    for (let i = 0; i < hist.hits.length; i++) {
+      hist.hits[i] = 40;
+      hist.sumRGB[i * 3] = 40;
+      hist.sumRGB[i * 3 + 1] = 40;
+      hist.sumRGB[i * 3 + 2] = 40;
+    }
+    hist.maxHits = 40;
+
+    const out = downsampleFlame(hist, 3, 3, 1);
+    const corner = out.hits[0];
+    const center = out.hits[1 * 3 + 1];
+    expect(corner).toBeCloseTo(center, 6);
   });
 });

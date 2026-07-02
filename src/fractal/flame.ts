@@ -274,17 +274,50 @@ export function accumulateFlame(
 }
 
 /**
- * Minimal tone-mapping controls. Deliberately small: gamma, vibrancy, and
- * supersampling are a later pass (fr-ucs) — this is just enough to make a
- * converging render usable.
+ * Recommended `gammaThreshold` (see {@link TonemapParams}) when the app
+ * doesn't expose it as its own control — flam3 uses a value in this
+ * neighborhood as an internal noise-suppression constant rather than
+ * something users routinely tune.
+ */
+export const DEFAULT_GAMMA_THRESHOLD = 0.01;
+
+/**
+ * Tone-mapping controls: `exposure` alone was enough to make a converging
+ * render usable (fr-o7s); `gamma`, `gammaThreshold`, and `vibrancy` (fr-ucs)
+ * add the rest of the classic flame "punchy, painterly" look on top.
  */
 export interface TonemapParams {
   /**
-   * Brightness multiplier applied to the log-density curve; 1 is neutral.
-   * Above 1 pushes more of the image toward full brightness (and lets the
-   * hottest buckets clip to white); below 1 darkens the whole image.
+   * Brightness multiplier applied to the final color; 1 is neutral. Above 1
+   * pushes more of the image toward full brightness (and lets the hottest
+   * buckets clip to white); below 1 darkens the whole image.
    */
   exposure: number;
+  /**
+   * Reshapes the normalized [0, 1] log-density curve by `density **
+   * (1/gamma)`; 1 leaves the log-density curve exactly as fr-o7s shipped it
+   * (no reshaping — the collapse point every gamma-related test is pinned
+   * to). Above 1 pushes faint, sparsely-visited detail brighter relative to
+   * the hottest buckets — the "punchy" flame look; below 1 does the reverse.
+   */
+  gamma: number;
+  /**
+   * Below this normalized density, the gamma curve is replaced by a straight
+   * line through the origin, slope-matched to `density ** (1/gamma)` at the
+   * threshold (so there is no kink). `density ** (1/gamma)` has infinite
+   * slope at density = 0 whenever gamma > 1, so without this a single stray
+   * hit in an otherwise-empty bucket — exactly what fills a not-yet-converged
+   * progressive render — gets blown out into a bright speckle. Has no effect
+   * when `gamma` is 1 (see {@link DEFAULT_GAMMA_THRESHOLD}).
+   */
+  gammaThreshold: number;
+  /**
+   * How much of the final color comes from the density-scaled accumulated
+   * hue (1) vs. a flat `gamma`-only curve on the raw averaged color that
+   * ignores density entirely (0); fractional values blend the two. 1 is the
+   * collapse point — today's color exactly, scaled purely by density.
+   */
+  vibrancy: number;
 }
 
 /**
@@ -293,10 +326,17 @@ export interface TonemapParams {
  * log-density of hits, so a bucket with a single hit stays faintly visible
  * instead of vanishing while the hottest bucket anchors the top of the
  * curve — the classic flame tone-map that keeps both a blazing core and
- * wispy, sparsely-visited tendrils legible in one image. Color is each
- * bucket's average accumulated color (`sumRGB / hits`) scaled by that
- * brightness. Buckets with no hits are fully transparent black, so the
- * image composites cleanly over any backdrop.
+ * wispy, sparsely-visited tendrils legible in one image. `gamma` reshapes
+ * that curve and `vibrancy` blends the density-scaled color against a flat
+ * gamma-only one (see {@link TonemapParams}). Buckets with no hits are fully
+ * transparent black, so the image composites cleanly over any backdrop.
+ *
+ * At `gamma: 1, vibrancy: 1` this is byte-for-byte the fr-o7s tone-map (see
+ * "collapses to the pre-fr-ucs tonemap" in flame.test.ts) — every term the
+ * new controls introduce provably reduces to a no-op at that point (`x ** 1
+ * === x`, `0 * anything-finite === 0`, `1 * x === x`), so existing renders
+ * and every fr-o7s-era test stay pixel-identical without needing a
+ * gamma/vibrancy-aware special case.
  *
  * Pure, and does one pass over `width * height` (independent of how many
  * iterations are behind the histogram) — safe to call every frame while a
@@ -310,7 +350,15 @@ export function tonemapFlame(
   const out = new Uint8ClampedArray(width * height * 4);
   if (maxHits <= 0) return out; // Nothing accumulated yet — fully transparent.
 
-  const { exposure } = params;
+  const { exposure, gamma, gammaThreshold, vibrancy } = params;
+  const invGamma = 1 / gamma;
+  const flatness = 1 - vibrancy;
+  // Slope of `x ** invGamma` at x = gammaThreshold: self-division, so this is
+  // exactly 1 at gamma = 1 regardless of gammaThreshold, which is what keeps
+  // the linear branch below agreeing with the power branch at the collapse
+  // point (see the doc comment above).
+  const thresholdSlope =
+    gammaThreshold > 0 ? gammaThreshold ** invGamma / gammaThreshold : 1;
   // log1p(hits), not log(hits): finite (and 0) at hits = 0 or 1, so a bucket
   // with a single hit lands near the bottom of the curve instead of at
   // -Infinity or needing a discontinuous special case.
@@ -319,16 +367,204 @@ export function tonemapFlame(
   for (let i = 0; i < hits.length; i++) {
     const h = hits[i];
     if (h <= 0) continue;
-    const brightness = (Math.log1p(h) / logMax) * exposure;
+    const density = Math.log1p(h) / logMax;
+    // Gamma-reshape the log-density curve; linear below gammaThreshold so a
+    // lone hit's infinite-slope singularity at density = 0 never blows out
+    // into a bright speckle (see TonemapParams.gammaThreshold). density is
+    // always >= 0, so when gammaThreshold <= 0 this always takes the power
+    // branch — the linear branch is only ever reached for a positive
+    // threshold, exactly as intended.
+    const alpha =
+      density >= gammaThreshold
+        ? density ** invGamma
+        : density * thresholdSlope;
+    // glow bundles exposure into the density term the same way the pre-fr-ucs
+    // formula's `brightness` did (`density * exposure`) — precomputing it
+    // this way, rather than multiplying exposure in afterward, is what makes
+    // the vivid branch below reduce to the exact pre-fr-ucs expression at
+    // gamma = 1 (see the doc comment above), not just a numerically close one.
+    const glow = alpha * exposure;
     const invHits = 1 / h;
     const o = i * 3;
     const oi = i * 4;
+
+    // avg is always >= 0 in practice (palette colors are sRGB in [0, 1] — see
+    // hslToRgb — so sumRGB only ever accumulates non-negative values); the
+    // clamp is a defensive guard so a negative/garbage channel can never
+    // reach `** invGamma` and produce a silently-clamped-to-black NaN instead
+    // of a loud failure.
+    const r = Math.max(0, sumRGB[o] * invHits);
+    const g = Math.max(0, sumRGB[o + 1] * invHits);
+    const b = Math.max(0, sumRGB[o + 2] * invHits);
+
+    // vivid: the density-scaled accumulated color (today's look). flat: a
+    // gamma-only curve on the raw averaged color, ignoring density — the
+    // desaturated-toward-white-in-dense-areas alternative vibrancy blends
+    // against. At vibrancy = 1, `flatness` is exactly 0 and `flat`'s own
+    // value (always finite) is multiplied away without affecting the result.
     // Uint8ClampedArray rounds and clamps to [0, 255] on assignment, so an
     // over-exposed (>1) or negative channel never needs a manual clamp.
-    out[oi] = sumRGB[o] * invHits * brightness * 255;
-    out[oi + 1] = sumRGB[o + 1] * invHits * brightness * 255;
-    out[oi + 2] = sumRGB[o + 2] * invHits * brightness * 255;
+    out[oi] =
+      (vibrancy * (r * glow) + flatness * r ** invGamma * exposure) * 255;
+    out[oi + 1] =
+      (vibrancy * (g * glow) + flatness * g ** invGamma * exposure) * 255;
+    out[oi + 2] =
+      (vibrancy * (b * glow) + flatness * b ** invGamma * exposure) * 255;
     out[oi + 3] = 255;
   }
+  return out;
+}
+
+/** Floor for the downsample kernel's sigma, in output pixels — keeps the
+ * Gaussian's denominator away from zero for a `filterRadius` of 0 (or
+ * smaller), giving a narrow-but-well-defined kernel instead of a divide. */
+const MIN_FILTER_SIGMA = 1e-3;
+
+/**
+ * Combine an oversampled {@link FlameHistogram} into a `outWidth x
+ * outHeight` one: the linear-domain supersample downfilter that MUST run
+ * before {@link tonemapFlame} — see that function's doc for why filtering
+ * has to happen on raw `hits`/`sumRGB`, not on the tone-mapped image
+ * (averaging Monte-Carlo sample counts is only statistically meaningful
+ * before the nonlinear log/gamma compression).
+ *
+ * Every output cell pools the oversampled cells within `filterRadius`
+ * *output* pixels of its center, weighted by a Gaussian, as independent
+ * weighted SUMS — `hits` and `sumRGB` are pooled separately and each divided
+ * by the same per-cell weight total once at the end. This never pre-averages
+ * a source cell's color before pooling (dividing by *its own* hit count),
+ * which would mis-weight a sparse-but-bright source cell against a
+ * dense-but-dim one; `tonemapFlame`'s own `sumRGB / hits` divide happens
+ * downstream, unchanged, on these pooled totals.
+ *
+ * The kernel is precomputed once per call (not per output cell — every
+ * output cell uses the identical weight-by-offset shape, just recentered),
+ * so the hot part of this function is plain multiply-adds over a small
+ * typed-array kernel, not a `Math.exp` call per source cell. Cells beyond
+ * the histogram's edge are simply skipped and the surviving weights
+ * renormalized (dividing by *their own* sum, not the theoretical full-kernel
+ * sum), so a bucket near the border isn't darkened for lack of neighbors.
+ *
+ * `filterRadius` is FIXED for every output cell — a plain reconstruction /
+ * antialiasing filter, not density-adaptive. fr-17t generalizes this to a
+ * per-cell radius driven by local density (flam3's "density estimation");
+ * when it lands it will very likely replace this function's fixed radius
+ * with a computed one rather than sit beside it, since the two differ only
+ * in how the radius is chosen.
+ *
+ * `oversized`'s dimensions must be an exact positive-integer multiple of
+ * `outWidth` / `outHeight` in each axis (the app always accumulates at
+ * `outWidth * supersample` x `outHeight * supersample` for exactly this
+ * reason). Throws `RangeError` otherwise.
+ */
+export function downsampleFlame(
+  oversized: FlameHistogram,
+  outWidth: number,
+  outHeight: number,
+  filterRadius: number,
+): FlameHistogram {
+  const {
+    width: srcWidth,
+    height: srcHeight,
+    hits: srcHits,
+    sumRGB: srcRGB,
+  } = oversized;
+  if (
+    outWidth <= 0 ||
+    outHeight <= 0 ||
+    srcWidth % outWidth !== 0 ||
+    srcHeight % outHeight !== 0
+  ) {
+    throw new RangeError(
+      `downsampleFlame: source ${srcWidth}x${srcHeight} is not a positive-integer multiple of target ${outWidth}x${outHeight}`,
+    );
+  }
+  const scaleX = srcWidth / outWidth;
+  const scaleY = srcHeight / outHeight;
+  const out = createFlameHistogram(outWidth, outHeight);
+  const { hits: dstHits, sumRGB: dstRGB } = out;
+
+  // An output cell's footprint center sits at a CONSTANT fractional offset
+  // from its nearest source-cell grid line, the same for every output cell
+  // on that axis (e.g. exactly half a source cell for an even supersample
+  // factor, exactly on a source cell for an odd one — the surrounding
+  // "+0.5 ... -0.5" cancels to a whole number for every cell but the
+  // leftover phase term). Baking that phase into the precomputed kernel
+  // (rather than rounding each cell's center to its nearest source cell)
+  // keeps every output cell exactly correctly weighted, not just
+  // approximately so.
+  const phaseX = 0.5 * (scaleX - 1);
+  const phaseY = 0.5 * (scaleY - 1);
+  const sigmaX = Math.max(filterRadius, MIN_FILTER_SIGMA) * scaleX;
+  const sigmaY = Math.max(filterRadius, MIN_FILTER_SIGMA) * scaleY;
+  const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
+  const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
+
+  const kernelX = new Float64Array(2 * radiusX + 1);
+  for (let k = -radiusX; k <= radiusX; k++) {
+    const d = k - phaseX;
+    kernelX[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
+  }
+  const kernelY = new Float64Array(2 * radiusY + 1);
+  for (let k = -radiusY; k <= radiusY; k++) {
+    const d = k - phaseY;
+    kernelY[k + radiusY] = Math.exp(-(d * d) / (2 * sigmaY * sigmaY));
+  }
+
+  let maxHits = 0;
+  for (let oy = 0; oy < outHeight; oy++) {
+    const baseY = oy * scaleY; // exact integer: the output cell's home row.
+    for (let ox = 0; ox < outWidth; ox++) {
+      const baseX = ox * scaleX; // exact integer: the output cell's home column.
+
+      let weightSum = 0;
+      let hitSum = 0;
+      let rSum = 0;
+      let gSum = 0;
+      let bSum = 0;
+      for (let j = -radiusY; j <= radiusY; j++) {
+        const sy = baseY + j;
+        if (sy < 0 || sy >= srcHeight) continue;
+        const wy = kernelY[j + radiusY];
+        const rowBase = sy * srcWidth;
+        for (let i = -radiusX; i <= radiusX; i++) {
+          const sx = baseX + i;
+          if (sx < 0 || sx >= srcWidth) continue;
+          const weight = wy * kernelX[i + radiusX];
+          const bucket = rowBase + sx;
+          weightSum += weight;
+          hitSum += weight * srcHits[bucket];
+          const so = bucket * 3;
+          rSum += weight * srcRGB[so];
+          gSum += weight * srcRGB[so + 1];
+          bSum += weight * srcRGB[so + 2];
+        }
+      }
+
+      // weightSum is always > 0 in practice (the center tap, j = i = 0, is
+      // always in-bounds since baseX/baseY are themselves in-bounds source
+      // coordinates) — guarded anyway as a safety net, matching this
+      // codebase's habit of guarding "essentially impossible" cases rather
+      // than assuming them away.
+      if (weightSum > 0) {
+        const norm = 1 / weightSum;
+        const hVal = hitSum * norm;
+        const dstBucket = oy * outWidth + ox;
+        dstHits[dstBucket] = hVal;
+        const dOff = dstBucket * 3;
+        dstRGB[dOff] = rSum * norm;
+        dstRGB[dOff + 1] = gSum * norm;
+        dstRGB[dOff + 2] = bSum * norm;
+        if (hVal > maxHits) maxHits = hVal;
+      }
+    }
+  }
+
+  out.maxHits = maxHits;
+  // The oversized accumulator is the real progressive state (see
+  // FlameHistogram.orbit) — this filtered view is a display-only derivative
+  // that must never be fed back into accumulateFlame, so its own orbit is
+  // meaningless; leave it at createFlameHistogram's zero default rather than
+  // copying a value nothing should ever read.
   return out;
 }
