@@ -41,103 +41,211 @@
       </button>
       <h2>3D IFS Fractal</h2>
 
-      <h3>Transforms (<span id="transformCount">4</span>)</h3>
-      <div class="btn-row">
-        <button class="btn btn-green" id="addBtn" type="button">+ Add</button>
-        <button class="btn btn-red" id="removeBtn" type="button">
-          − Remove
+      <div id="explorerControls">
+        <h3>Transforms (<span id="transformCount">4</span>)</h3>
+        <div class="btn-row">
+          <button class="btn btn-green" id="addBtn" type="button">+ Add</button>
+          <button class="btn btn-red" id="removeBtn" type="button">
+            − Remove
+          </button>
+        </div>
+
+        <h3>Presets</h3>
+        <select id="presetSelect" aria-label="Load a preset">
+          <option value="" selected>Load a preset…</option>
+          <option value="default">Twisted Tetrahedron</option>
+          <option value="sierpinski">Sierpinski Tetrahedron</option>
+          <option value="menger">Menger Sponge</option>
+          <option value="spiral">Spiral</option>
+          <option value="pyramid">Sierpinski Pyramid</option>
+          <option value="octahedron">Octahedron Flake</option>
+          <option value="icosahedron">Icosahedron (12)</option>
+          <option value="dodecahedron">Dodecahedron (20)</option>
+          <option value="jerusalem">Jerusalem Cube</option>
+          <option value="chiral">Chiral Lace</option>
+          <option value="barnsley">Barnsley Fern</option>
+          <option value="curling">Curling Fern</option>
+          <option value="radiolarian">Radiolarian (flame)</option>
+          <option value="swirl">Swirl (flame)</option>
+        </select>
+
+        <h3>Points: <span id="numPointsLabel">100,000</span></h3>
+        <input
+          type="range"
+          id="numPointsSlider"
+          min="0"
+          max="500000"
+          step="5000"
+          value="100000"
+        />
+        <button class="btn btn-blue" id="regenerateBtn" type="button">
+          Regenerate Points
         </button>
+
+        <h3>Point Size: <span id="pointSizeLabel">1.00×</span></h3>
+        <input
+          type="range"
+          id="pointSizeSlider"
+          min="0.25"
+          max="4"
+          step="0.05"
+          value="1"
+        />
+
+        <h3>Display Options</h3>
+        <label class="checkbox-label">
+          <input type="checkbox" id="showGuides" checked />
+          Show Guides
+        </label>
+
+        <label class="select-label">
+          Color Mode
+          <select id="colorMode">
+            <option value="transform">By Transform</option>
+            <option value="height">By Height (terrain)</option>
+            <option value="radius">By Radius (warm→cool)</option>
+            <option value="position">By Position (XYZ→RGB)</option>
+            <option value="uniform">Uniform Cyan</option>
+          </select>
+        </label>
+
+        <label class="select-label">
+          Depth Style
+          <select id="renderStyle">
+            <option value="depthFade">Depth Fade (current)</option>
+            <option value="aerial">Aerial Haze</option>
+            <option value="glow">Glow + Bloom</option>
+            <option value="dof">Depth of Field</option>
+            <option value="edl">Eye-Dome Lighting</option>
+          </select>
+        </label>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoUpdate" checked />
+          Auto-update on change
+        </label>
+
+        <h3>Final Transform</h3>
+        <label class="checkbox-label">
+          <input type="checkbox" id="finalTransformToggle" />
+          Enable lens (warps the whole cloud)
+        </label>
+
+        <h3>Select to Edit</h3>
+        <div class="transform-list" id="transformList"></div>
+        <div id="transformEditor"></div>
       </div>
-
-      <h3>Presets</h3>
-      <select id="presetSelect" aria-label="Load a preset">
-        <option value="" selected>Load a preset…</option>
-        <option value="default">Twisted Tetrahedron</option>
-        <option value="sierpinski">Sierpinski Tetrahedron</option>
-        <option value="menger">Menger Sponge</option>
-        <option value="spiral">Spiral</option>
-        <option value="pyramid">Sierpinski Pyramid</option>
-        <option value="octahedron">Octahedron Flake</option>
-        <option value="icosahedron">Icosahedron (12)</option>
-        <option value="dodecahedron">Dodecahedron (20)</option>
-        <option value="jerusalem">Jerusalem Cube</option>
-        <option value="chiral">Chiral Lace</option>
-        <option value="barnsley">Barnsley Fern</option>
-        <option value="curling">Curling Fern</option>
-        <option value="radiolarian">Radiolarian (flame)</option>
-        <option value="swirl">Swirl (flame)</option>
-      </select>
-
-      <h3>Points: <span id="numPointsLabel">100,000</span></h3>
-      <input
-        type="range"
-        id="numPointsSlider"
-        min="0"
-        max="500000"
-        step="5000"
-        value="100000"
-      />
-      <button class="btn btn-blue" id="regenerateBtn" type="button">
-        Regenerate Points
-      </button>
-
-      <h3>Point Size: <span id="pointSizeLabel">1.00×</span></h3>
-      <input
-        type="range"
-        id="pointSizeSlider"
-        min="0.25"
-        max="4"
-        step="0.05"
-        value="1"
-      />
-
-      <h3>Display Options</h3>
-      <label class="checkbox-label">
-        <input type="checkbox" id="showGuides" checked />
-        Show Guides
-      </label>
-
-      <label class="select-label">
-        Color Mode
-        <select id="colorMode">
-          <option value="transform">By Transform</option>
-          <option value="height">By Height (terrain)</option>
-          <option value="radius">By Radius (warm→cool)</option>
-          <option value="position">By Position (XYZ→RGB)</option>
-          <option value="uniform">Uniform Cyan</option>
-        </select>
-      </label>
-
-      <label class="select-label">
-        Depth Style
-        <select id="renderStyle">
-          <option value="depthFade">Depth Fade (current)</option>
-          <option value="aerial">Aerial Haze</option>
-          <option value="glow">Glow + Bloom</option>
-          <option value="dof">Depth of Field</option>
-          <option value="edl">Eye-Dome Lighting</option>
-        </select>
-      </label>
-
-      <label class="checkbox-label">
-        <input type="checkbox" id="autoUpdate" checked />
-        Auto-update on change
-      </label>
 
       <h3>Export</h3>
       <button class="btn btn-ghost" id="savePngBtn" type="button">
         ⤓ Save PNG
       </button>
 
-      <h3>Final Transform</h3>
-      <label class="checkbox-label">
-        <input type="checkbox" id="finalTransformToggle" />
-        Enable lens (warps the whole cloud)
-      </label>
-
-      <h3>Select to Edit</h3>
-      <div class="transform-list" id="transformList"></div>
-      <div id="transformEditor"></div>
+      <h3>Flame Render</h3>
+      <button class="btn btn-blue" id="renderBtn" type="button">
+        ✺ Render Current View
+      </button>
+      <div id="flameControls" class="hidden">
+        <p class="flame-hint">
+          Renders a converging 2D flame image through the frozen camera. The
+          live view is paused until you go back.
+        </p>
+        <label class="select-label">
+          Exposure: <span id="flameExposureLabel">1.00×</span>
+          <input
+            type="range"
+            id="flameExposureSlider"
+            min="0.2"
+            max="4"
+            step="0.05"
+            value="1"
+          />
+        </label>
+        <label class="select-label">
+          Quality: <span id="flameIterationsLabel">20M iterations</span>
+          <input
+            type="range"
+            id="flameIterationsSlider"
+            min="1000000"
+            max="100000000"
+            step="1000000"
+            value="20000000"
+          />
+        </label>
+        <label class="select-label">
+          Gamma: <span id="flameGammaLabel">2.40</span>
+          <input
+            type="range"
+            id="flameGammaSlider"
+            min="1"
+            max="6"
+            step="0.1"
+            value="2.4"
+          />
+        </label>
+        <label class="select-label">
+          Vibrancy: <span id="flameVibrancyLabel">100%</span>
+          <input
+            type="range"
+            id="flameVibrancySlider"
+            min="0"
+            max="1"
+            step="0.05"
+            value="1"
+          />
+        </label>
+        <label class="select-label">
+          Supersample:
+          <span id="flameSupersampleLabel">2× (restarts render)</span>
+          <input
+            type="range"
+            id="flameSupersampleSlider"
+            min="1"
+            max="3"
+            step="1"
+            value="2"
+          />
+        </label>
+        <p id="flameSupersampleNote" class="flame-note hidden"></p>
+        <label class="select-label">
+          Blur radius: <span id="flameEstimatorRadiusLabel">6.0px</span>
+          <input
+            type="range"
+            id="flameEstimatorRadiusSlider"
+            min="1"
+            max="15"
+            step="0.5"
+            value="6"
+          />
+        </label>
+        <label class="select-label">
+          Sharp radius:
+          <span id="flameEstimatorMinimumRadiusLabel">0.0px</span>
+          <input
+            type="range"
+            id="flameEstimatorMinimumRadiusSlider"
+            min="0"
+            max="15"
+            step="0.5"
+            value="0"
+          />
+        </label>
+        <label class="select-label">
+          Blur falloff: <span id="flameEstimatorCurveLabel">0.40</span>
+          <input
+            type="range"
+            id="flameEstimatorCurveSlider"
+            min="0.1"
+            max="3"
+            step="0.05"
+            value="0.4"
+          />
+        </label>
+        <div id="flameProgress" class="flame-progress">0%</div>
+        <button class="btn btn-ghost" id="exitRenderBtn" type="button">
+          ← Back to Explorer
+        </button>
+      </div>
     </div>
 
     <script type="module" src="./main.ts"></script>

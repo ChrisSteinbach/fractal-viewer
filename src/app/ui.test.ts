@@ -28,6 +28,16 @@ function noopHandlers(): UiHandlers {
     onFinalTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
+    onEnterFlameRender: vi.fn(),
+    onExitFlameRender: vi.fn(),
+    onFlameExposureInput: vi.fn(),
+    onFlameIterationsInput: vi.fn(),
+    onFlameGammaInput: vi.fn(),
+    onFlameVibrancyInput: vi.fn(),
+    onFlameSupersampleInput: vi.fn(),
+    onFlameEstimatorRadiusInput: vi.fn(),
+    onFlameEstimatorMinimumRadiusInput: vi.fn(),
+    onFlameEstimatorCurveInput: vi.fn(),
   };
 }
 
@@ -571,5 +581,330 @@ describe("Ui variation editor", () => {
     expect(options).not.toContain("spherical");
     expect(options).toContain(""); // placeholder
     expect(options).toContain("swirl"); // other types still offered
+  });
+});
+
+describe("Ui flame render controls", () => {
+  function renderBtn(): HTMLButtonElement {
+    return document.getElementById("renderBtn") as HTMLButtonElement;
+  }
+  function exitRenderBtn(): HTMLButtonElement {
+    return document.getElementById("exitRenderBtn") as HTMLButtonElement;
+  }
+  function explorerControls(): HTMLElement {
+    return document.getElementById("explorerControls") as HTMLElement;
+  }
+  function flameControls(): HTMLElement {
+    return document.getElementById("flameControls") as HTMLElement;
+  }
+
+  it("shows the explorer panel and the Render button while inactive", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: false });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(false);
+    expect(renderBtn().classList.contains("hidden")).toBe(false);
+    expect(flameControls().classList.contains("hidden")).toBe(true);
+  });
+
+  it("swaps to the flame controls and hides the explorer panel while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: true });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(renderBtn().classList.contains("hidden")).toBe(true);
+    expect(flameControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("names the render mode in the help box while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: true });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "Flame Render",
+    );
+  });
+
+  it("fires onEnterFlameRender when Render Current View is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    renderBtn().click();
+    expect(handlers.onEnterFlameRender).toHaveBeenCalledOnce();
+  });
+
+  it("fires onExitFlameRender when Back to Explorer is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    exitRenderBtn().click();
+    expect(handlers.onExitFlameRender).toHaveBeenCalledOnce();
+  });
+
+  it("reflects exposure and iterations into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        exposure: 2.5,
+        iterations: 42_000_000,
+      },
+    });
+
+    const exposureSlider = document.getElementById(
+      "flameExposureSlider",
+    ) as HTMLInputElement;
+    expect(exposureSlider.value).toBe("2.5");
+    expect(document.getElementById("flameExposureLabel")?.textContent).toBe(
+      "2.50×",
+    );
+
+    const iterationsSlider = document.getElementById(
+      "flameIterationsSlider",
+    ) as HTMLInputElement;
+    expect(iterationsSlider.value).toBe("42000000");
+    expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
+      "42M iterations",
+    );
+  });
+
+  it("reports the exposure slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameExposureSlider",
+    ) as HTMLInputElement;
+    slider.value = "1.75";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameExposureInput).toHaveBeenCalledWith(1.75);
+  });
+
+  it("reports the iterations slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameIterationsSlider",
+    ) as HTMLInputElement;
+    slider.value = "5000000";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(5_000_000);
+  });
+
+  it("reflects gamma, vibrancy, and supersample into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        gamma: 3.5,
+        vibrancy: 0.6,
+        supersample: 3,
+      },
+    });
+
+    expect(
+      (document.getElementById("flameGammaSlider") as HTMLInputElement).value,
+    ).toBe("3.5");
+    expect(document.getElementById("flameGammaLabel")?.textContent).toBe(
+      "3.50",
+    );
+
+    expect(
+      (document.getElementById("flameVibrancySlider") as HTMLInputElement)
+        .value,
+    ).toBe("0.6");
+    expect(document.getElementById("flameVibrancyLabel")?.textContent).toBe(
+      "60%",
+    );
+
+    expect(
+      (document.getElementById("flameSupersampleSlider") as HTMLInputElement)
+        .value,
+    ).toBe("3");
+    expect(
+      document.getElementById("flameSupersampleLabel")?.textContent,
+    ).toContain("3×");
+  });
+
+  it("reports the gamma slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameGammaSlider",
+    ) as HTMLInputElement;
+    slider.value = "4.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameGammaInput).toHaveBeenCalledWith(4.5);
+  });
+
+  it("reports the vibrancy slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameVibrancySlider",
+    ) as HTMLInputElement;
+    slider.value = "0.25";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameVibrancyInput).toHaveBeenCalledWith(0.25);
+  });
+
+  it("reports the supersample slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameSupersampleSlider",
+    ) as HTMLInputElement;
+    slider.value = "3";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameSupersampleInput).toHaveBeenCalledWith(3);
+  });
+
+  it("reflects the estimator params into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        estimatorRadius: 9,
+        estimatorMinimumRadius: 1.5,
+        estimatorCurve: 1.2,
+      },
+    });
+
+    expect(
+      (
+        document.getElementById(
+          "flameEstimatorRadiusSlider",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("9");
+    expect(
+      document.getElementById("flameEstimatorRadiusLabel")?.textContent,
+    ).toBe("9.0px");
+
+    expect(
+      (
+        document.getElementById(
+          "flameEstimatorMinimumRadiusSlider",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("1.5");
+    expect(
+      document.getElementById("flameEstimatorMinimumRadiusLabel")?.textContent,
+    ).toBe("1.5px");
+
+    expect(
+      (document.getElementById("flameEstimatorCurveSlider") as HTMLInputElement)
+        .value,
+    ).toBe("1.2");
+    expect(
+      document.getElementById("flameEstimatorCurveLabel")?.textContent,
+    ).toBe("1.20");
+  });
+
+  it("reports the estimator radius slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorRadiusSlider",
+    ) as HTMLInputElement;
+    slider.value = "7.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorRadiusInput).toHaveBeenCalledWith(7.5);
+  });
+
+  it("reports the estimator minimum radius slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorMinimumRadiusSlider",
+    ) as HTMLInputElement;
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorMinimumRadiusInput).toHaveBeenCalledWith(
+      2.5,
+    );
+  });
+
+  it("reports the estimator curve slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "flameEstimatorCurveSlider",
+    ) as HTMLInputElement;
+    slider.value = "0.8";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFlameEstimatorCurveInput).toHaveBeenCalledWith(0.8);
+  });
+});
+
+describe("Ui.setFlameProgress", () => {
+  it("formats done/budget in millions with a percentage", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(12_345_000, 20_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "12.3M / 20.0M iterations (62%)",
+    );
+  });
+
+  it("never exceeds 100%, even if done overshoots the budget", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(25_000_000, 20_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toContain(
+      "(100%)",
+    );
+  });
+});
+
+describe("Ui.setFlameSupersampleNote", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("flameSupersampleNote");
+  }
+
+  it("is hidden with empty text by default", () => {
+    new Ui(document);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows a reduced-from message and un-hides when passed an effective value", () => {
+    const ui = new Ui(document);
+    ui.setFlameSupersampleNote(1, 3);
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.textContent).toBe(
+      "Reduced to 1× (from 3×) to fit available memory.",
+    );
+  });
+
+  it("hides again when passed null", () => {
+    const ui = new Ui(document);
+    ui.setFlameSupersampleNote(1, 3);
+    ui.setFlameSupersampleNote(null);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
   });
 });

@@ -1,4 +1,11 @@
-import { MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
+import {
+  MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  plotPoint,
+  prepareChaosGame,
+  runChaosGame,
+  stepOrbit,
+} from "./chaos-game";
 import { applyAffine, composeAffine } from "./affine";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
@@ -268,5 +275,150 @@ describe("runChaosGame weighting", () => {
       Array.from(a.transformIndices),
     );
     expect(Array.from(b.positions)).toEqual(Array.from(a.positions));
+  });
+});
+
+describe("prepareChaosGame", () => {
+  it("composes one affine and one variation slot per transform", () => {
+    const prepared = prepareChaosGame(makeTransforms(4));
+    expect(prepared.affines).toHaveLength(4);
+    expect(prepared.variations).toHaveLength(4);
+    expect(prepared.transformCount).toBe(4);
+  });
+
+  it("has no final transform when none is passed", () => {
+    const prepared = prepareChaosGame(makeTransforms(2));
+    expect(prepared.finalAffine).toBeNull();
+    expect(prepared.finalWarp).toBeNull();
+  });
+
+  it("flags a system as weighted only when a weight differs from 1", () => {
+    const uniform = prepareChaosGame(makeTransforms(2));
+    expect(uniform.weighted).toBe(false);
+
+    const skewed = [
+      { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        weight: 3,
+      },
+    ] satisfies Transform[];
+    const weighted = prepareChaosGame(skewed);
+    expect(weighted.weighted).toBe(true);
+    expect(weighted.totalWeight).toBe(4);
+    expect(Array.from(weighted.cumulative)).toEqual([1, 4]);
+  });
+
+  it("rejects systems with more than the supported number of transforms", () => {
+    expect(() => prepareChaosGame(makeTransforms(MAX_TRANSFORMS + 1))).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("stepOrbit", () => {
+  it("is deterministic for a given prepared system, point, and seed", () => {
+    const prepared = prepareChaosGame(makeTransforms(4));
+    const a = stepOrbit(prepared, 0.1, -0.2, 0.05, mulberry32(3));
+    const b = stepOrbit(prepared, 0.1, -0.2, 0.05, mulberry32(3));
+    expect(a).toEqual(b);
+  });
+
+  it("only ever returns a valid transform index", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const rng = mulberry32(21);
+    let x = 0.1;
+    let y = -0.1;
+    let z = 0.2;
+    for (let i = 0; i < 500; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      expect(s.index).toBeGreaterThanOrEqual(0);
+      expect(s.index).toBeLessThan(sierpinskiTetrahedron().length);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+  });
+});
+
+describe("plotPoint", () => {
+  it("returns the orbit point unchanged when the prepared system has no final transform", () => {
+    const prepared = prepareChaosGame(makeTransforms(4));
+    expect(plotPoint(prepared, 1, -2, 0.5, mulberry32(1))).toEqual([
+      1, -2, 0.5,
+    ]);
+  });
+
+  it("bends the point through the final transform when one is present", () => {
+    const finalTransform: Transform = {
+      id: 0,
+      position: [1, -2, 0.5],
+      rotation: [0, 0, 0],
+      scale: [2, 2, 2],
+    };
+    const prepared = prepareChaosGame(makeTransforms(4), finalTransform);
+    const F = composeAffine(finalTransform);
+    const [ex, ey, ez] = applyAffine(F, 0.3, 0.1, -0.2);
+    const [px, py, pz] = plotPoint(prepared, 0.3, 0.1, -0.2, mulberry32(1));
+    expect(px).toBeCloseTo(ex, 10);
+    expect(py).toBeCloseTo(ey, 10);
+    expect(pz).toBeCloseTo(ez, 10);
+  });
+});
+
+describe("driving stepOrbit/plotPoint by hand", () => {
+  it("reproduces runChaosGame's output exactly for the same seed", () => {
+    // A stand-in for a future consumer (e.g. a histogram accumulator) that
+    // shares prepareChaosGame/stepOrbit/plotPoint but owns its own loop and
+    // sink. This pins the contract between runChaosGame and the exported
+    // building blocks so the two can never silently drift apart.
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+    };
+    const numPoints = 500;
+    const expected = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(42),
+      finalTransform,
+    );
+
+    const rng = mulberry32(42);
+    const prepared = prepareChaosGame(transforms, finalTransform);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+
+    const positions = new Float32Array(numPoints * 3);
+    const transformIndices = new Uint8Array(numPoints);
+    for (let i = 0; i < numPoints; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      transformIndices[i] = s.index;
+    }
+
+    expect(Array.from(positions)).toEqual(Array.from(expected.positions));
+    expect(Array.from(transformIndices)).toEqual(
+      Array.from(expected.transformIndices),
+    );
   });
 });

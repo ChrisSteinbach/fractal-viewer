@@ -16,8 +16,34 @@ import type {
   VariationType,
   Vec3,
 } from "../fractal/types";
-import { RENDER_STYLES } from "./state";
-import type { AppState, RenderStyle } from "./state";
+import {
+  DEFAULT_ESTIMATOR_CURVE,
+  DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+  DEFAULT_ESTIMATOR_RADIUS,
+  DEFAULT_FLAME_EXPOSURE,
+  DEFAULT_FLAME_GAMMA,
+  DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_SUPERSAMPLE,
+  DEFAULT_FLAME_VIBRANCY,
+  MAX_ESTIMATOR_CURVE,
+  MAX_ESTIMATOR_MINIMUM_RADIUS,
+  MAX_ESTIMATOR_RADIUS,
+  MAX_FLAME_EXPOSURE,
+  MAX_FLAME_GAMMA,
+  MAX_FLAME_ITERATIONS,
+  MAX_FLAME_SUPERSAMPLE,
+  MAX_FLAME_VIBRANCY,
+  MIN_ESTIMATOR_CURVE,
+  MIN_ESTIMATOR_MINIMUM_RADIUS,
+  MIN_ESTIMATOR_RADIUS,
+  MIN_FLAME_EXPOSURE,
+  MIN_FLAME_GAMMA,
+  MIN_FLAME_ITERATIONS,
+  MIN_FLAME_SUPERSAMPLE,
+  MIN_FLAME_VIBRANCY,
+  RENDER_STYLES,
+} from "./state";
+import type { AppState, FlameParams, RenderStyle } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +60,12 @@ export interface SceneSnapshot {
   colorMode: ColorMode;
   renderStyle: RenderStyle;
   showGuides: boolean;
+  /**
+   * Flame render-current-view settings (see {@link AppState.flame}). Note
+   * `AppState.flameActive` is intentionally NOT part of this snapshot — the
+   * app always boots into the explorer, never straight into a render.
+   */
+  flame: FlameParams;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -61,6 +93,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     colorMode: state.colorMode,
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
+    flame: state.flame,
   };
 }
 
@@ -209,6 +242,114 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   return decoded;
 }
 
+/**
+ * Validate the untrusted `flame` render-settings block. `flame` predates
+ * this feature's rollout (and `gamma`/`vibrancy`/`supersample` predate
+ * fr-ucs's rollout within it, and `estimatorRadius`/`estimatorMinimumRadius`/
+ * `estimatorCurve` predate fr-17t's within it) in exactly zero existing
+ * links, so — like `finalTransform` — an absent block, or an absent field
+ * within a present block, decodes quietly to its default rather than
+ * rejecting the scene; but once a field IS present, a malformed value
+ * rejects the whole scene, matching `weight`/`shear`/`variations`. Finite
+ * values are clamped into range rather than rejected, matching `weight`.
+ * `supersample` is additionally rounded to an integer, matching
+ * `setFlameSupersample`; the estimator radii/curve are NOT (continuous like
+ * gamma/vibrancy, matching their own setters).
+ */
+function decodeFlameParams(raw: unknown): FlameParams | null {
+  if (raw === undefined) {
+    return {
+      exposure: DEFAULT_FLAME_EXPOSURE,
+      iterations: DEFAULT_FLAME_ITERATIONS,
+      gamma: DEFAULT_FLAME_GAMMA,
+      vibrancy: DEFAULT_FLAME_VIBRANCY,
+      supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+    };
+  }
+  if (typeof raw !== "object" || raw === null) return null;
+  const f = raw as Record<string, unknown>;
+
+  const exposure = Number(f.exposure);
+  const iterations = Number(f.iterations);
+  if (!Number.isFinite(exposure) || !Number.isFinite(iterations)) return null;
+
+  // gamma/vibrancy/supersample/estimatorRadius/estimatorMinimumRadius/
+  // estimatorCurve: each optional independently (an fr-o7s-era link carries
+  // none of them), so an absent field defaults quietly while a
+  // present-but-malformed one rejects the whole scene, same as exposure just
+  // above — the three feature rollouts share one block but not one presence
+  // rule per field.
+  let gamma = DEFAULT_FLAME_GAMMA;
+  if (f.gamma !== undefined) {
+    gamma = Number(f.gamma);
+    if (!Number.isFinite(gamma)) return null;
+  }
+  let vibrancy = DEFAULT_FLAME_VIBRANCY;
+  if (f.vibrancy !== undefined) {
+    vibrancy = Number(f.vibrancy);
+    if (!Number.isFinite(vibrancy)) return null;
+  }
+  let supersample = DEFAULT_FLAME_SUPERSAMPLE;
+  if (f.supersample !== undefined) {
+    supersample = Number(f.supersample);
+    if (!Number.isFinite(supersample)) return null;
+  }
+  let estimatorRadius = DEFAULT_ESTIMATOR_RADIUS;
+  if (f.estimatorRadius !== undefined) {
+    estimatorRadius = Number(f.estimatorRadius);
+    if (!Number.isFinite(estimatorRadius)) return null;
+  }
+  let estimatorMinimumRadius = DEFAULT_ESTIMATOR_MINIMUM_RADIUS;
+  if (f.estimatorMinimumRadius !== undefined) {
+    estimatorMinimumRadius = Number(f.estimatorMinimumRadius);
+    if (!Number.isFinite(estimatorMinimumRadius)) return null;
+  }
+  let estimatorCurve = DEFAULT_ESTIMATOR_CURVE;
+  if (f.estimatorCurve !== undefined) {
+    estimatorCurve = Number(f.estimatorCurve);
+    if (!Number.isFinite(estimatorCurve)) return null;
+  }
+
+  return {
+    exposure: Math.max(
+      MIN_FLAME_EXPOSURE,
+      Math.min(MAX_FLAME_EXPOSURE, exposure),
+    ),
+    iterations: Math.round(
+      Math.max(
+        MIN_FLAME_ITERATIONS,
+        Math.min(MAX_FLAME_ITERATIONS, iterations),
+      ),
+    ),
+    gamma: Math.max(MIN_FLAME_GAMMA, Math.min(MAX_FLAME_GAMMA, gamma)),
+    vibrancy: Math.max(
+      MIN_FLAME_VIBRANCY,
+      Math.min(MAX_FLAME_VIBRANCY, vibrancy),
+    ),
+    supersample: Math.round(
+      Math.max(
+        MIN_FLAME_SUPERSAMPLE,
+        Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
+      ),
+    ),
+    estimatorRadius: Math.max(
+      MIN_ESTIMATOR_RADIUS,
+      Math.min(MAX_ESTIMATOR_RADIUS, estimatorRadius),
+    ),
+    estimatorMinimumRadius: Math.max(
+      MIN_ESTIMATOR_MINIMUM_RADIUS,
+      Math.min(MAX_ESTIMATOR_MINIMUM_RADIUS, estimatorMinimumRadius),
+    ),
+    estimatorCurve: Math.max(
+      MIN_ESTIMATOR_CURVE,
+      Math.min(MAX_ESTIMATOR_CURVE, estimatorCurve),
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -260,6 +401,7 @@ export function encodeScene(s: SceneSnapshot): string {
     colorMode: ColorMode;
     renderStyle: RenderStyle;
     showGuides: boolean;
+    flame: FlameParams;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -267,6 +409,19 @@ export function encodeScene(s: SceneSnapshot): string {
     colorMode: s.colorMode,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
+    // Always written, like numPoints/pointSize (not conditionally omitted
+    // like finalTransform/weight/shear): it is a small, always-present
+    // settings block, not a per-transform optional feature.
+    flame: {
+      exposure: round4(s.flame.exposure),
+      iterations: Math.round(s.flame.iterations),
+      gamma: round4(s.flame.gamma),
+      vibrancy: round4(s.flame.vibrancy),
+      supersample: Math.round(s.flame.supersample),
+      estimatorRadius: round4(s.flame.estimatorRadius),
+      estimatorMinimumRadius: round4(s.flame.estimatorMinimumRadius),
+      estimatorCurve: round4(s.flame.estimatorCurve),
+    },
   };
   // Written only when present, so old links stay byte-identical (they never
   // carried the field) and lens-free systems keep their short URLs.
@@ -282,8 +437,18 @@ export function encodeScene(s: SceneSnapshot): string {
  *
  * Validates strictly: requires the `v1=` prefix; 1..MAX_TRANSFORMS transforms
  * each with valid Vec3 fields; an optional finalTransform validated the same
- * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000]
- * and pointSize to [0.25, 4].
+ * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000],
+ * pointSize to [0.25, 4], flame.exposure to [{@link MIN_FLAME_EXPOSURE},
+ * {@link MAX_FLAME_EXPOSURE}], flame.iterations to
+ * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}], flame.gamma to
+ * [{@link MIN_FLAME_GAMMA}, {@link MAX_FLAME_GAMMA}], flame.vibrancy to
+ * [{@link MIN_FLAME_VIBRANCY}, {@link MAX_FLAME_VIBRANCY}], flame.supersample
+ * to [{@link MIN_FLAME_SUPERSAMPLE}, {@link MAX_FLAME_SUPERSAMPLE}],
+ * flame.estimatorRadius to [{@link MIN_ESTIMATOR_RADIUS},
+ * {@link MAX_ESTIMATOR_RADIUS}], flame.estimatorMinimumRadius to
+ * [{@link MIN_ESTIMATOR_MINIMUM_RADIUS}, {@link MAX_ESTIMATOR_MINIMUM_RADIUS}],
+ * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
+ * {@link MAX_ESTIMATOR_CURVE}].
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -338,6 +503,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = Math.max(0.25, Math.min(4, rawPointSize));
 
+    // flame: absent (an old link) defaults quietly; present-but-malformed
+    // rejects the whole scene. See decodeFlameParams.
+    const flame = decodeFlameParams(o.flame);
+    if (flame === null) return null;
+
     return {
       transforms,
       finalTransform,
@@ -346,6 +516,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       colorMode: colorMode as ColorMode,
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
+      flame,
     };
   } catch {
     return null;

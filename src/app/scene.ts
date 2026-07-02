@@ -7,6 +7,7 @@ import { shearMatrix } from "../fractal/affine";
 import { transformColors } from "../fractal/color";
 import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3 } from "../fractal/types";
+import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import type { RenderStyle } from "./state";
 
@@ -214,6 +215,17 @@ export class FractalScene {
   private readonly edlResolution: THREE.Vector2;
   private readonly edlQuad: FullScreenQuad;
 
+  // The flame render (fr-o7s): a plain 2D canvas holds the tone-mapped RGBA
+  // image (see `setFlameImage`) and doubles as both the CanvasTexture source
+  // for on-screen display AND the Save-PNG export source (`captureFlameFrame`)
+  // — unlike the WebGL canvas, a 2D canvas keeps true alpha, so the exported
+  // PNG has a transparent background wherever the histogram was never hit.
+  private readonly flameCanvas: HTMLCanvasElement;
+  private readonly flameCtx: CanvasRenderingContext2D;
+  private readonly flameTexture: THREE.CanvasTexture;
+  private readonly flameMaterial: THREE.MeshBasicMaterial;
+  private readonly flameQuad: FullScreenQuad;
+
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -337,6 +349,23 @@ export class FractalScene {
       fragmentShader: EDL_FRAGMENT,
     });
     this.edlQuad = new FullScreenQuad(this.edlMaterial);
+
+    // 1x1 until the first setFlameImage call sizes it to the actual render.
+    this.flameCanvas = document.createElement("canvas");
+    this.flameCanvas.width = 1;
+    this.flameCanvas.height = 1;
+    const flameCtx = this.flameCanvas.getContext("2d");
+    if (!flameCtx) {
+      throw new Error("2D canvas context unavailable for the flame renderer.");
+    }
+    this.flameCtx = flameCtx;
+    this.flameTexture = new THREE.CanvasTexture(this.flameCanvas);
+    this.flameMaterial = new THREE.MeshBasicMaterial({
+      map: this.flameTexture,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.flameQuad = new FullScreenQuad(this.flameMaterial);
   }
 
   get canvas(): HTMLCanvasElement {
@@ -601,6 +630,81 @@ export class FractalScene {
   captureFrame(): string {
     this.render();
     return this.renderer.domElement.toDataURL("image/png");
+  }
+
+  /**
+   * Physical pixel size of the drawing buffer (accounts for
+   * `devicePixelRatio`) — the resolution a flame render should target so it
+   * matches what is currently on screen 1:1.
+   */
+  flameRenderSize(): { width: number; height: number } {
+    const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    return { width: Math.round(buffer.x), height: Math.round(buffer.y) };
+  }
+
+  /**
+   * The current camera's combined `projection * view` matrix, row-major and
+   * flattened to plain numbers (see `flame.ts`'s `Mat4`) — the boundary
+   * across which the camera crosses from the Three.js layer into the
+   * dependency-free `src/fractal/` core. Snapshotting this once and not
+   * calling {@link applyCamera} again is what "freezes the camera" for a
+   * flame render.
+   *
+   * `updateMatrixWorld` is called explicitly first so this is correct
+   * regardless of whether a normal render has already happened this frame
+   * (Three.js otherwise only refreshes a camera's world/inverse matrices as
+   * a side effect of rendering).
+   */
+  flameProjectionMatrix(): Mat4 {
+    this.camera.updateMatrixWorld();
+    const combined = this.camera.projectionMatrix
+      .clone()
+      .multiply(this.camera.matrixWorldInverse);
+    // Matrix4.elements is column-major (WebGL convention); .transpose() before
+    // reading it sequentially gives the row-major flattening flame.ts expects.
+    return Array.from(combined.transpose().elements);
+  }
+
+  /**
+   * Upload a freshly tone-mapped flame image (RGBA bytes, `width * height *
+   * 4` long, row 0 = top — see `tonemapFlame`) so the next {@link
+   * renderFlame} call displays it. Resizes the backing canvas/texture only
+   * when the requested size changes.
+   */
+  setFlameImage(
+    image: Uint8ClampedArray<ArrayBuffer>,
+    width: number,
+    height: number,
+  ): void {
+    if (
+      this.flameCanvas.width !== width ||
+      this.flameCanvas.height !== height
+    ) {
+      this.flameCanvas.width = width;
+      this.flameCanvas.height = height;
+    }
+    this.flameCtx.putImageData(new ImageData(image, width, height), 0, 0);
+    this.flameTexture.needsUpdate = true;
+  }
+
+  /**
+   * Render only the flame quad, filling the canvas with the last image
+   * uploaded via {@link setFlameImage} — used in place of {@link render}
+   * while a flame render is active, so the (frozen) 3D scene never draws.
+   */
+  renderFlame(): void {
+    this.renderer.setRenderTarget(null);
+    this.flameQuad.render(this.renderer);
+  }
+
+  /**
+   * Save-PNG source while a flame render is active: the flame image's own 2D
+   * canvas rather than the WebGL canvas, so the exported PNG keeps the true
+   * per-pixel alpha `tonemapFlame` produced (an opaque WebGL round-trip would
+   * flatten it against the renderer's clear color).
+   */
+  captureFlameFrame(): string {
+    return this.flameCanvas.toDataURL("image/png");
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */

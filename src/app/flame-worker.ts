@@ -1,0 +1,48 @@
+/**
+ * The flame render's actual Web Worker entry point (fr-73y): thin
+ * `self.onmessage` / `postMessage` glue around {@link FlameWorkerSession},
+ * which owns all the real logic (see that module's doc). Nothing here is
+ * unit-tested directly — it is verified by running the app, same as
+ * `main.ts`/`interactions.ts` — since it is just wiring the session to the
+ * real worker globals `flame-worker-core.ts` is deliberately kept free of.
+ *
+ * Bundling: Vite's standard worker pattern (`new Worker(new URL(...,
+ * import.meta.url), { type: "module" })` in `main.ts`) picks this file up
+ * automatically as its own chunk — no vite.config change needed (verified
+ * against the pinned Vite version during fr-73y's design).
+ *
+ * `self` is deliberately NOT typed via the ambient `webworker` lib: this
+ * project's tsconfig has no explicit `lib`, so (per `target: ES2022`) it
+ * defaults to including `DOM` for the main-thread app code, and `DOM` +
+ * `webworker` cannot both be active in one TypeScript program (they declare
+ * conflicting globals, `self` among them). Rather than split the project
+ * into two tsconfigs for this one file, `self` is narrowed to just the
+ * handful of members this file actually needs — true at runtime because
+ * this module only ever runs inside a real Worker.
+ */
+import { FlameWorkerSession } from "./flame-worker-core";
+import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
+
+interface FlameWorkerScope {
+  postMessage(message: FlameWorkerEvent, transfer: Transferable[]): void;
+  onmessage: ((event: MessageEvent<FlameWorkerCommand>) => void) | null;
+}
+
+const scope = self as unknown as FlameWorkerScope;
+
+const session = new FlameWorkerSession({
+  now: () => performance.now(),
+  schedule: (fn) => setTimeout(fn, 0),
+  emit: (event) => {
+    // Transfer the image's backing buffer — a zero-copy ownership move to
+    // the main thread, not a copy (see flame-worker-core's doc for why
+    // postMessage transfer, not SharedArrayBuffer).
+    if (event.type === "progress") {
+      scope.postMessage(event, [event.image.buffer]);
+    } else {
+      scope.postMessage(event, []);
+    }
+  },
+});
+
+scope.onmessage = (event) => session.handle(event.data);

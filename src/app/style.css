@@ -439,6 +439,37 @@ input[type="range"] {
   background: rgb(255 107 107 / 12%);
 }
 
+/* Generic display-toggle, used to swap the explorer panel for the flame
+   render controls (and back) without removing either from the DOM. */
+.hidden {
+  display: none;
+}
+
+.flame-hint {
+  margin-bottom: 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.flame-progress {
+  margin: 10px 0 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Shown only when the supersample slider's value had to be reduced to fit
+   the memory budget (see main.ts's clampSupersampleToBudget) — --bad flags
+   it as "not quite what you asked for" without being alarm-red. */
+.flame-note {
+  margin: -6px 0 10px;
+  color: var(--bad);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;

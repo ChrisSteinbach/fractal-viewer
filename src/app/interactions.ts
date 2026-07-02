@@ -17,6 +17,13 @@ export interface InteractionCallbacks {
   selectedTransform: () => number | null;
   /** Called whenever a drag edits the selected transform's geometry. */
   onTransformChange: (index: number, geometry: TransformGeometry) => void;
+  /**
+   * True while a flame render is converging: pointer/wheel input is ignored
+   * so the frozen camera (and the transforms it is rendering) can't drift
+   * out from under it. The listeners stay attached (see the module doc
+   * comment on teardown) — this just short-circuits their effect.
+   */
+  frozen: () => boolean;
 }
 
 type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
@@ -51,7 +58,9 @@ function pinchCenter(event: TouchEvent): { x: number; y: number } {
  * Wire mouse, touch, and wheel input to the scene. In camera mode the gestures
  * orbit/pan/zoom the {@link OrbitCamera}; with a transform selected they move,
  * rotate, and scale its guide box, reporting edits via
- * {@link InteractionCallbacks.onTransformChange}.
+ * {@link InteractionCallbacks.onTransformChange}. While
+ * {@link InteractionCallbacks.frozen} is true (a flame render is converging),
+ * every gesture is ignored so the camera it was frozen at cannot drift.
  *
  * Listeners are attached for the page lifetime — correct for this
  * single-instance SPA; there is no teardown path.
@@ -149,6 +158,7 @@ export function attachInteractions(
   }
 
   function onPointerDown(event: Event): void {
+    if (callbacks.frozen()) return;
     const { x, y } = pointerXY(event);
     setNdc(x, y);
     lastX = x;
@@ -216,6 +226,7 @@ export function attachInteractions(
   }
 
   function onPointerMove(event: Event): void {
+    if (callbacks.frozen()) return;
     const { x, y } = pointerXY(event);
     const dx = x - lastX;
     const dy = y - lastY;
@@ -238,6 +249,7 @@ export function attachInteractions(
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
+    if (callbacks.frozen()) return;
     const selected = callbacks.selectedTransform();
     if (selected === null) {
       orbit.dolly(event.deltaY > 0 ? 1.1 : 0.9);

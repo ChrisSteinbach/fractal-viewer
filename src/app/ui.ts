@@ -52,6 +52,22 @@ export interface UiHandlers {
   onFinalTransformGeometry: (geometry: FinalGeometry) => void;
   onTogglePanel: () => void;
   onClosePanel: () => void;
+  /** "Render Current View" was clicked: freeze the camera and start a flame render. */
+  onEnterFlameRender: () => void;
+  /** "Back to Explorer" was clicked: discard the in-progress render. */
+  onExitFlameRender: () => void;
+  onFlameExposureInput: (value: number) => void;
+  onFlameIterationsInput: (value: number) => void;
+  onFlameGammaInput: (value: number) => void;
+  onFlameVibrancyInput: (value: number) => void;
+  /** The supersample slider changed — the app restarts accumulation. */
+  onFlameSupersampleInput: (value: number) => void;
+  /** Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
+   * gamma/vibrancy: re-run just the finished-frame adaptive pass, never a
+   * re-accumulate. */
+  onFlameEstimatorRadiusInput: (value: number) => void;
+  onFlameEstimatorMinimumRadiusInput: (value: number) => void;
+  onFlameEstimatorCurveInput: (value: number) => void;
 }
 
 /**
@@ -263,6 +279,29 @@ export class Ui {
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
+  private readonly explorerControls: HTMLElement;
+  private readonly renderBtn: HTMLButtonElement;
+  private readonly flameControls: HTMLElement;
+  private readonly flameExposureLabel: HTMLElement;
+  private readonly flameExposureSlider: HTMLInputElement;
+  private readonly flameIterationsLabel: HTMLElement;
+  private readonly flameIterationsSlider: HTMLInputElement;
+  private readonly flameGammaLabel: HTMLElement;
+  private readonly flameGammaSlider: HTMLInputElement;
+  private readonly flameVibrancyLabel: HTMLElement;
+  private readonly flameVibrancySlider: HTMLInputElement;
+  private readonly flameSupersampleLabel: HTMLElement;
+  private readonly flameSupersampleSlider: HTMLInputElement;
+  private readonly flameSupersampleNote: HTMLElement;
+  private readonly flameEstimatorRadiusLabel: HTMLElement;
+  private readonly flameEstimatorRadiusSlider: HTMLInputElement;
+  private readonly flameEstimatorMinimumRadiusLabel: HTMLElement;
+  private readonly flameEstimatorMinimumRadiusSlider: HTMLInputElement;
+  private readonly flameEstimatorCurveLabel: HTMLElement;
+  private readonly flameEstimatorCurveSlider: HTMLInputElement;
+  private readonly flameProgress: HTMLElement;
+  private readonly exitRenderBtn: HTMLButtonElement;
+
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
@@ -291,6 +330,32 @@ export class Ui {
     this.autoUpdate = this.byId("autoUpdate");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
+    this.explorerControls = this.byId("explorerControls");
+    this.renderBtn = this.byId("renderBtn");
+    this.flameControls = this.byId("flameControls");
+    this.flameExposureLabel = this.byId("flameExposureLabel");
+    this.flameExposureSlider = this.byId("flameExposureSlider");
+    this.flameIterationsLabel = this.byId("flameIterationsLabel");
+    this.flameIterationsSlider = this.byId("flameIterationsSlider");
+    this.flameGammaLabel = this.byId("flameGammaLabel");
+    this.flameGammaSlider = this.byId("flameGammaSlider");
+    this.flameVibrancyLabel = this.byId("flameVibrancyLabel");
+    this.flameVibrancySlider = this.byId("flameVibrancySlider");
+    this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
+    this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
+    this.flameSupersampleNote = this.byId("flameSupersampleNote");
+    this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
+    this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
+    this.flameEstimatorMinimumRadiusLabel = this.byId(
+      "flameEstimatorMinimumRadiusLabel",
+    );
+    this.flameEstimatorMinimumRadiusSlider = this.byId(
+      "flameEstimatorMinimumRadiusSlider",
+    );
+    this.flameEstimatorCurveLabel = this.byId("flameEstimatorCurveLabel");
+    this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
+    this.flameProgress = this.byId("flameProgress");
+    this.exitRenderBtn = this.byId("exitRenderBtn");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -336,6 +401,44 @@ export class Ui {
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
+    this.renderBtn.addEventListener("click", () =>
+      handlers.onEnterFlameRender(),
+    );
+    this.exitRenderBtn.addEventListener("click", () =>
+      handlers.onExitFlameRender(),
+    );
+    this.flameExposureSlider.addEventListener("input", () =>
+      handlers.onFlameExposureInput(Number(this.flameExposureSlider.value)),
+    );
+    this.flameIterationsSlider.addEventListener("input", () =>
+      handlers.onFlameIterationsInput(Number(this.flameIterationsSlider.value)),
+    );
+    this.flameGammaSlider.addEventListener("input", () =>
+      handlers.onFlameGammaInput(Number(this.flameGammaSlider.value)),
+    );
+    this.flameVibrancySlider.addEventListener("input", () =>
+      handlers.onFlameVibrancyInput(Number(this.flameVibrancySlider.value)),
+    );
+    this.flameSupersampleSlider.addEventListener("input", () =>
+      handlers.onFlameSupersampleInput(
+        Number(this.flameSupersampleSlider.value),
+      ),
+    );
+    this.flameEstimatorRadiusSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorRadiusInput(
+        Number(this.flameEstimatorRadiusSlider.value),
+      ),
+    );
+    this.flameEstimatorMinimumRadiusSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorMinimumRadiusInput(
+        Number(this.flameEstimatorMinimumRadiusSlider.value),
+      ),
+    );
+    this.flameEstimatorCurveSlider.addEventListener("input", () =>
+      handlers.onFlameEstimatorCurveInput(
+        Number(this.flameEstimatorCurveSlider.value),
+      ),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -352,7 +455,42 @@ export class Ui {
     this.autoUpdate.checked = state.autoUpdate;
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
-    if (state.selectedTransform === null) {
+    this.flameExposureLabel.textContent = `${state.flame.exposure.toFixed(2)}×`;
+    this.flameExposureSlider.value = String(state.flame.exposure);
+    this.flameIterationsLabel.textContent = `${(
+      state.flame.iterations / 1_000_000
+    ).toFixed(0)}M iterations`;
+    this.flameIterationsSlider.value = String(state.flame.iterations);
+
+    this.flameGammaLabel.textContent = state.flame.gamma.toFixed(2);
+    this.flameGammaSlider.value = String(state.flame.gamma);
+    this.flameVibrancyLabel.textContent = `${Math.round(state.flame.vibrancy * 100)}%`;
+    this.flameVibrancySlider.value = String(state.flame.vibrancy);
+    this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
+    this.flameSupersampleSlider.value = String(state.flame.supersample);
+
+    this.flameEstimatorRadiusLabel.textContent = `${state.flame.estimatorRadius.toFixed(1)}px`;
+    this.flameEstimatorRadiusSlider.value = String(state.flame.estimatorRadius);
+    this.flameEstimatorMinimumRadiusLabel.textContent = `${state.flame.estimatorMinimumRadius.toFixed(1)}px`;
+    this.flameEstimatorMinimumRadiusSlider.value = String(
+      state.flame.estimatorMinimumRadius,
+    );
+    this.flameEstimatorCurveLabel.textContent =
+      state.flame.estimatorCurve.toFixed(2);
+    this.flameEstimatorCurveSlider.value = String(state.flame.estimatorCurve);
+
+    // The flame render takes over the panel — editing controls that have no
+    // effect on a frozen, already-plotted image would just be confusing —
+    // and the explorer's own hints (drag/orbit/scale) no longer apply since
+    // the camera and geometry are frozen for the render.
+    this.explorerControls.classList.toggle("hidden", state.flameActive);
+    this.renderBtn.classList.toggle("hidden", state.flameActive);
+    this.flameControls.classList.toggle("hidden", !state.flameActive);
+
+    if (state.flameActive) {
+      this.helpTitle.textContent = "Flame Render";
+      this.setHelpLines(["Rendering the frozen camera view…"]);
+    } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
       this.setHelpLines(
         this.mouse
@@ -391,6 +529,39 @@ export class Ui {
 
   setPointCount(count: number): void {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
+  }
+
+  /** Reflect flame-render progress as an iteration count and percentage. */
+  setFlameProgress(iterationsDone: number, iterationsBudget: number): void {
+    const pct =
+      iterationsBudget > 0
+        ? Math.min(100, Math.round((iterationsDone / iterationsBudget) * 100))
+        : 100;
+    const done = (iterationsDone / 1_000_000).toFixed(1);
+    const budget = (iterationsBudget / 1_000_000).toFixed(1);
+    this.flameProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+  }
+
+  /**
+   * Reflect whether the supersample slider's requested value had to be
+   * reduced to stay under the accumulation memory budget (see main.ts's
+   * `clampSupersampleToBudget`) — a runtime, device-dependent fact that
+   * isn't part of AppState, so (like {@link setFlameProgress}) this is a
+   * targeted setter main.ts calls directly rather than something
+   * `updateLabels` derives from state. Pass `null` when running at the
+   * requested value unclamped, to hide the note.
+   */
+  setFlameSupersampleNote(effective: number | null, requested?: number): void {
+    if (effective === null) {
+      this.flameSupersampleNote.textContent = "";
+      this.flameSupersampleNote.classList.add("hidden");
+      return;
+    }
+    this.flameSupersampleNote.textContent =
+      requested !== undefined
+        ? `Reduced to ${effective}× (from ${requested}×) to fit available memory.`
+        : `Reduced to ${effective}× to fit available memory.`;
+    this.flameSupersampleNote.classList.remove("hidden");
   }
 
   /**
