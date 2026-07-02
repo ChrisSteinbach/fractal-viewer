@@ -28,6 +28,12 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_ITERATIONS,
+  DEFAULT_SOLID_LIGHT_AZIMUTH,
+  DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_RESOLUTION,
+  DEFAULT_SOLID_THRESHOLD,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
   MAX_ESTIMATOR_RADIUS,
@@ -36,6 +42,12 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_SOLID_AMBIENT,
+  MAX_SOLID_ITERATIONS,
+  MAX_SOLID_LIGHT_AZIMUTH,
+  MAX_SOLID_LIGHT_ELEVATION,
+  MAX_SOLID_RESOLUTION,
+  MAX_SOLID_THRESHOLD,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -44,10 +56,17 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_SOLID_AMBIENT,
+  MIN_SOLID_ITERATIONS,
+  MIN_SOLID_LIGHT_AZIMUTH,
+  MIN_SOLID_LIGHT_ELEVATION,
+  MIN_SOLID_RESOLUTION,
+  MIN_SOLID_THRESHOLD,
   RENDER_STYLES,
 } from "./state";
-import type { AppState, FlameParams, RenderStyle } from "./state";
+import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -69,6 +88,9 @@ export interface SceneSnapshot {
    * app always boots into the explorer, never straight into a render.
    */
   flame: FlameParams;
+  /** Solid render settings (see {@link AppState.solid}); like `flame`,
+   * `solidActive` is intentionally NOT part of this snapshot. */
+  solid: SolidParams;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -97,6 +119,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
     flame: state.flame,
+    solid: state.solid,
   };
 }
 
@@ -371,6 +394,78 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
   };
 }
 
+/**
+ * Validate the untrusted `solid` render-settings block (fr-v4f), following
+ * `decodeFlameParams`' presence rules exactly: the block predates its own
+ * rollout in every existing link, so an absent block — or an absent field
+ * within a present block — decodes quietly to its default, while a
+ * present-but-malformed (non-finite) value rejects the whole scene. Finite
+ * values are clamped into range; `resolution` is additionally snapped to the
+ * voxel step and `iterations` rounded, matching their setters.
+ */
+function decodeSolidParams(raw: unknown): SolidParams | null {
+  const defaults: SolidParams = {
+    resolution: DEFAULT_SOLID_RESOLUTION,
+    iterations: DEFAULT_SOLID_ITERATIONS,
+    threshold: DEFAULT_SOLID_THRESHOLD,
+    lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+    lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+    ambient: DEFAULT_SOLID_AMBIENT,
+  };
+  if (raw === undefined) return defaults;
+  if (typeof raw !== "object" || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+
+  const out = { ...defaults };
+  const numeric: (keyof SolidParams)[] = [
+    "resolution",
+    "iterations",
+    "threshold",
+    "lightAzimuth",
+    "lightElevation",
+    "ambient",
+  ];
+  for (const key of numeric) {
+    if (s[key] === undefined) continue;
+    const value = Number(s[key]);
+    if (!Number.isFinite(value)) return null;
+    out[key] = value;
+  }
+
+  return {
+    resolution: Math.max(
+      MIN_SOLID_RESOLUTION,
+      Math.min(
+        MAX_SOLID_RESOLUTION,
+        Math.round(out.resolution / VOXEL_RESOLUTION_STEP) *
+          VOXEL_RESOLUTION_STEP,
+      ),
+    ),
+    iterations: Math.round(
+      Math.max(
+        MIN_SOLID_ITERATIONS,
+        Math.min(MAX_SOLID_ITERATIONS, out.iterations),
+      ),
+    ),
+    threshold: Math.max(
+      MIN_SOLID_THRESHOLD,
+      Math.min(MAX_SOLID_THRESHOLD, out.threshold),
+    ),
+    lightAzimuth: Math.max(
+      MIN_SOLID_LIGHT_AZIMUTH,
+      Math.min(MAX_SOLID_LIGHT_AZIMUTH, out.lightAzimuth),
+    ),
+    lightElevation: Math.max(
+      MIN_SOLID_LIGHT_ELEVATION,
+      Math.min(MAX_SOLID_LIGHT_ELEVATION, out.lightElevation),
+    ),
+    ambient: Math.max(
+      MIN_SOLID_AMBIENT,
+      Math.min(MAX_SOLID_AMBIENT, out.ambient),
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -423,6 +518,7 @@ export function encodeScene(s: SceneSnapshot): string {
     renderStyle: RenderStyle;
     showGuides: boolean;
     flame: FlameParams;
+    solid: SolidParams;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -443,6 +539,14 @@ export function encodeScene(s: SceneSnapshot): string {
       estimatorMinimumRadius: round4(s.flame.estimatorMinimumRadius),
       estimatorCurve: round4(s.flame.estimatorCurve),
       paletteId: s.flame.paletteId,
+    },
+    solid: {
+      resolution: Math.round(s.solid.resolution),
+      iterations: Math.round(s.solid.iterations),
+      threshold: round4(s.solid.threshold),
+      lightAzimuth: round4(s.solid.lightAzimuth),
+      lightElevation: round4(s.solid.lightElevation),
+      ambient: round4(s.solid.ambient),
     },
   };
   // Written only when present, so old links stay byte-identical (they never
@@ -526,10 +630,13 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = Math.max(0.25, Math.min(4, rawPointSize));
 
-    // flame: absent (an old link) defaults quietly; present-but-malformed
-    // rejects the whole scene. See decodeFlameParams.
+    // flame/solid: absent (an old link) defaults quietly; present-but-
+    // malformed rejects the whole scene. See decodeFlameParams /
+    // decodeSolidParams.
     const flame = decodeFlameParams(o.flame);
     if (flame === null) return null;
+    const solid = decodeSolidParams(o.solid);
+    if (solid === null) return null;
 
     return {
       transforms,
@@ -540,6 +647,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
       flame,
+      solid,
     };
   } catch {
     return null;

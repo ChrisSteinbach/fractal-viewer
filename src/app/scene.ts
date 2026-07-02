@@ -9,7 +9,13 @@ import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
-import type { RenderStyle } from "./state";
+import type { RenderStyle, SolidParams } from "./state";
+import {
+  configureVoxelTexture,
+  createVoxelMaterial,
+  emptyVoxelTexture,
+  lightDirection,
+} from "./voxel-material";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -226,6 +232,14 @@ export class FractalScene {
   private readonly flameMaterial: THREE.MeshBasicMaterial;
   private readonly flameQuad: FullScreenQuad;
 
+  // The solid render (fr-v4f): the chaos game's density volume raymarched on
+  // the GPU with lighting/shadows/AO (see voxel-material.ts). The volume is
+  // world-space and camera-independent, so — unlike the flame's frozen view —
+  // renderSolid reads the LIVE camera every frame and the user keeps orbiting.
+  private voxelTexture: THREE.Data3DTexture;
+  private readonly voxelMaterial: THREE.ShaderMaterial;
+  private readonly voxelQuad: FullScreenQuad;
+
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -366,6 +380,11 @@ export class FractalScene {
       depthWrite: false,
     });
     this.flameQuad = new FullScreenQuad(this.flameMaterial);
+
+    // 1x1x1 transparent placeholder until the first setVoxelGrid call.
+    this.voxelTexture = emptyVoxelTexture();
+    this.voxelMaterial = createVoxelMaterial(this.voxelTexture);
+    this.voxelQuad = new FullScreenQuad(this.voxelMaterial);
   }
 
   get canvas(): HTMLCanvasElement {
@@ -705,6 +724,83 @@ export class FractalScene {
    */
   captureFlameFrame(): string {
     return this.flameCanvas.toDataURL("image/png");
+  }
+
+  /**
+   * Upload a freshly packed density volume (RGBA8 bytes from
+   * `voxelTextureData`, `size ** 3 * 4` long, x-fastest) so the next
+   * {@link renderSolid} call marches it. Re-uses the existing 3D texture
+   * when the resolution is unchanged (the common progressive-update case) and
+   * rebuilds it otherwise — a `Data3DTexture`'s dimensions are fixed at
+   * construction.
+   */
+  setVoxelGrid(
+    data: Uint8Array<ArrayBuffer>,
+    size: number,
+    boundsMin: Vec3,
+    boundsMax: Vec3,
+  ): void {
+    if (this.voxelTexture.image.width !== size) {
+      this.voxelTexture.dispose();
+      this.voxelTexture = new THREE.Data3DTexture(data, size, size, size);
+      configureVoxelTexture(this.voxelTexture);
+      this.voxelMaterial.uniforms.uVolume.value = this.voxelTexture;
+    } else {
+      this.voxelTexture.image.data = data;
+      this.voxelTexture.needsUpdate = true;
+    }
+    const u = this.voxelMaterial.uniforms;
+    (u.uBoundsMin.value as THREE.Vector3).set(...boundsMin);
+    (u.uBoundsSize.value as THREE.Vector3).set(
+      boundsMax[0] - boundsMin[0],
+      boundsMax[1] - boundsMin[1],
+      boundsMax[2] - boundsMin[2],
+    );
+    u.uTexel.value = 1 / size;
+  }
+
+  /**
+   * Push the solid render's lighting/surface settings to the raymarcher.
+   * Pure GPU uniforms — live-reactive at full frame rate, no worker restart
+   * or re-accumulation for any of them (`resolution`/`iterations`, the
+   * accumulation-side params, are the worker's business, not this one's).
+   */
+  setSolidParams(params: SolidParams): void {
+    const u = this.voxelMaterial.uniforms;
+    u.uThreshold.value = params.threshold;
+    u.uAmbient.value = params.ambient;
+    (u.uLightDir.value as THREE.Vector3).copy(
+      lightDirection(params.lightAzimuth, params.lightElevation),
+    );
+  }
+
+  /**
+   * Raymarch the density volume from the CURRENT camera, filling the canvas —
+   * used in place of {@link render} while the solid render is active. Reads
+   * the live camera each call, so orbit/zoom keep working mid-render.
+   */
+  renderSolid(): void {
+    this.camera.updateMatrixWorld();
+    const u = this.voxelMaterial.uniforms;
+    (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
+    (u.uInvProjView.value as THREE.Matrix4)
+      .multiplyMatrices(
+        this.camera.projectionMatrix,
+        this.camera.matrixWorldInverse,
+      )
+      .invert();
+    this.renderer.setRenderTarget(null);
+    this.voxelQuad.render(this.renderer);
+  }
+
+  /**
+   * Save-PNG source while the solid render is active: render synchronously
+   * right before the read so the drawing buffer is intact, exactly like
+   * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`).
+   */
+  captureSolidFrame(): string {
+    this.renderSolid();
+    return this.renderer.domElement.toDataURL("image/png");
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */
