@@ -48,6 +48,8 @@ function noopHandlers(): UiHandlers {
     onSolidAmbientInput: vi.fn(),
     onSolidIterationsInput: vi.fn(),
     onSolidResolutionInput: vi.fn(),
+    onSymmetryOrderInput: vi.fn(),
+    onSymmetryAxisChange: vi.fn(),
   };
 }
 
@@ -1217,5 +1219,87 @@ describe("Ui.setSolidResolutionNote", () => {
     ui.setSolidResolutionNote(null);
     expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+  });
+});
+
+describe("Ui symmetry controls", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("symmetryNote");
+  }
+
+  it("reflects order and axis into the slider, label, and select", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 5, axis: "z" },
+    });
+
+    expect(
+      (document.getElementById("symmetryOrderSlider") as HTMLInputElement)
+        .value,
+    ).toBe("5");
+    expect(document.getElementById("symmetryOrderLabel")?.textContent).toBe(
+      "5-fold",
+    );
+    expect(
+      (document.getElementById("symmetryAxis") as HTMLSelectElement).value,
+    ).toBe("z");
+  });
+
+  it("reports the order slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "symmetryOrderSlider",
+    ) as HTMLInputElement;
+    slider.value = "6";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onSymmetryOrderInput).toHaveBeenCalledWith(6);
+  });
+
+  it("reports the selected axis on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("symmetryAxis") as HTMLSelectElement;
+    select.value = "x";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onSymmetryAxisChange).toHaveBeenCalledWith("x");
+  });
+
+  it("hides the reduction note when the requested order fits under the transform limit", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 9, axis: "y" },
+    });
+
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows a reduced-from message when the requested order would exceed the transform limit", () => {
+    const ui = new Ui(document);
+    // 9-fold over 30 transforms is 270 slots, past the 256-transform cap, so
+    // the note should report the largest order that still fits (8).
+    const manyTransforms = Array.from(
+      { length: 30 },
+      () => defaultTransforms()[0],
+    );
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: manyTransforms,
+      symmetry: { order: 9, axis: "y" },
+    });
+
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.textContent).toBe(
+      "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
+    );
   });
 });

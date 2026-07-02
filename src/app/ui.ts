@@ -1,8 +1,10 @@
+import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
   ColorMode,
+  SymmetryAxis,
   Transform,
   Variation,
   VariationType,
@@ -85,6 +87,12 @@ export interface UiHandlers {
   onSolidIterationsInput: (value: number) => void;
   /** The resolution slider changed — the app restarts accumulation. */
   onSolidResolutionInput: (value: number) => void;
+  /** The symmetry order slider changed — reshapes the live point cloud (and
+   * any active flame/solid render), not just a render-only setting. */
+  onSymmetryOrderInput: (value: number) => void;
+  /** The symmetry axis dropdown changed — same reach as
+   * {@link onSymmetryOrderInput}. */
+  onSymmetryAxisChange: (axis: SymmetryAxis) => void;
 }
 
 /**
@@ -293,6 +301,10 @@ export class Ui {
   private readonly colorMode: HTMLSelectElement;
   private readonly renderStyle: HTMLSelectElement;
   private readonly autoUpdate: HTMLInputElement;
+  private readonly symmetryOrderLabel: HTMLElement;
+  private readonly symmetryOrderSlider: HTMLInputElement;
+  private readonly symmetryAxisSelect: HTMLSelectElement;
+  private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
@@ -364,6 +376,10 @@ export class Ui {
     this.colorMode = this.byId("colorMode");
     this.renderStyle = this.byId("renderStyle");
     this.autoUpdate = this.byId("autoUpdate");
+    this.symmetryOrderLabel = this.byId("symmetryOrderLabel");
+    this.symmetryOrderSlider = this.byId("symmetryOrderSlider");
+    this.symmetryAxisSelect = this.byId("symmetryAxis");
+    this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
@@ -452,6 +468,14 @@ export class Ui {
     this.autoUpdate.addEventListener("change", () =>
       handlers.onToggleAutoUpdate(this.autoUpdate.checked),
     );
+    this.symmetryOrderSlider.addEventListener("input", () =>
+      handlers.onSymmetryOrderInput(Number(this.symmetryOrderSlider.value)),
+    );
+    this.symmetryAxisSelect.addEventListener("change", () =>
+      handlers.onSymmetryAxisChange(
+        this.symmetryAxisSelect.value as SymmetryAxis,
+      ),
+    );
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
@@ -538,6 +562,22 @@ export class Ui {
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;
+
+    this.symmetryOrderSlider.value = String(state.symmetry.order);
+    this.symmetryOrderLabel.textContent = `${state.symmetry.order}-fold`;
+    this.symmetryAxisSelect.value = state.symmetry.axis;
+    const effectiveOrder = effectiveSymmetryOrder(
+      state.symmetry.order,
+      state.transforms.length,
+    );
+    if (effectiveOrder !== state.symmetry.order) {
+      this.symmetryNote.textContent = `Reduced to ${effectiveOrder}-fold (from ${state.symmetry.order}-fold) to fit the ${MAX_TRANSFORMS}-transform limit.`;
+      this.symmetryNote.classList.remove("hidden");
+    } else {
+      this.symmetryNote.textContent = "";
+      this.symmetryNote.classList.add("hidden");
+    }
+
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
     this.flameExposureLabel.textContent = `${state.flame.exposure.toFixed(2)}×`;
