@@ -48,6 +48,8 @@ function startCommand(
     estimatorMinimumRadius: 0,
     estimatorCurve: 0.4,
     paletteId: "legacy",
+    order: 1,
+    axis: "y",
     ...overrides,
   };
 }
@@ -539,6 +541,85 @@ describe("FlameWorkerSession setPalette", () => {
     expect(Array.from(finalImage("spectrum"))).not.toEqual(
       Array.from(finalImage("legacy")),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Symmetry: live setSymmetry command (fr-6im)
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession setSymmetry", () => {
+  it("runs to completion and reports the final progress when order > 1", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ order: 3, axis: "y", iterationsBudget: 500 }),
+    );
+    scheduler.drain();
+
+    const progress = progressEvents(events);
+    expect(progress.length).toBeGreaterThan(0);
+    const last = progress[progress.length - 1];
+    expect(last.iterationsDone).toBe(500);
+    expect(last.iterationsBudget).toBe(500);
+    expect(last.width).toBe(8);
+    expect(last.height).toBe(8);
+    expect(last.image).toHaveLength(8 * 8 * 4);
+  });
+
+  it("restarts accumulation from zero when the order actually changes", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ order: 1, axis: "y", iterationsBudget: 40 }));
+    scheduler.step();
+    scheduler.step(); // partway through; the second chunk isn't "due" (clock is frozen), so only one progress event exists so far.
+    const framesBeforeRestart = progressEvents(events).length;
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(10);
+
+    session.handle({ type: "setSymmetry", order: 3, axis: "y" });
+    scheduler.step(); // the restarted render's first chunk — always "due" (lastDownsampleAt was reset to undefined).
+    const afterOneStep = progressEvents(events);
+    expect(afterOneStep.length).toBe(framesBeforeRestart + 1); // a genuinely NEW event landed, not just a re-send.
+    expect(afterOneStep.at(-1)!.iterationsDone).toBe(10); // exactly one chunk's worth, not 20 -> iterationsDone was reset to 0.
+
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40); // still reaches the same budget after restarting.
+  });
+
+  it("restarts accumulation when only the axis changes (order held constant)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ order: 3, axis: "y", iterationsBudget: 40 }));
+    scheduler.step();
+    scheduler.step(); // partway through; only the first chunk's event is visible (see the order-change test above).
+    const framesBeforeRestart = progressEvents(events).length;
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(10);
+
+    session.handle({ type: "setSymmetry", order: 3, axis: "z" });
+    scheduler.step();
+    const afterOneStep = progressEvents(events);
+    expect(afterOneStep.length).toBe(framesBeforeRestart + 1);
+    expect(afterOneStep.at(-1)!.iterationsDone).toBe(10); // reset to 0, one chunk back in.
+  });
+
+  it("does not restart when order and axis are unchanged (no-op guard)", () => {
+    const calls: number[] = [];
+    const countingAccumulate: typeof accumulateFlame = (...args) => {
+      calls.push(args[4]); // iterations argument.
+      return accumulateFlame(...args);
+    };
+    const { session, scheduler } = harness({ accumulate: countingAccumulate });
+    session.handle(startCommand({ order: 3, axis: "y", iterationsBudget: 20 }));
+    scheduler.drain();
+    const callsBefore = calls.length;
+
+    session.handle({ type: "setSymmetry", order: 3, axis: "y" });
+    expect(calls).toHaveLength(callsBefore); // no restart -> no new accumulate call.
+  });
+
+  it("is a no-op and does not throw when sent before any start", () => {
+    const { session, events } = harness();
+    expect(() =>
+      session.handle({ type: "setSymmetry", order: 3, axis: "y" }),
+    ).not.toThrow();
+    expect(events).toHaveLength(0);
   });
 });
 
