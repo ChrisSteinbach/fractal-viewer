@@ -38,6 +38,9 @@ function startCommand(
     exposure: 1,
     gamma: 1,
     vibrancy: 1,
+    estimatorRadius: 4,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 0.4,
     ...overrides,
   };
 }
@@ -515,5 +518,166 @@ describe("FlameWorkerSession reactive OOM guard", () => {
     // surface as an error rather than silently retrying forever.
     const errors = events.filter((e) => e.type === "error");
     expect(errors).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adaptive density-estimation blur (fr-17t): fixed-radius previews, adaptive
+// only on the finished frame.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession adaptive density-estimation blur", () => {
+  it("ignores estimator params for a progressive (not-yet-finished) preview", () => {
+    // Two sessions, identical in every way except wildly different estimator
+    // params, each stepped through only its FIRST (not final) chunk: since
+    // the progressive-preview path never reads estimatorParams at all (see
+    // runChunk's `due` branch), the two images must be byte-identical.
+    const a = harness({ initialChunkSize: 10 });
+    a.session.handle(
+      startCommand({
+        seed: 7,
+        iterationsBudget: 40,
+        estimatorRadius: 1,
+        estimatorMinimumRadius: 0,
+        estimatorCurve: 1,
+      }),
+    );
+    a.scheduler.step();
+
+    const b = harness({ initialChunkSize: 10 });
+    b.session.handle(
+      startCommand({
+        seed: 7,
+        iterationsBudget: 40,
+        estimatorRadius: 15,
+        estimatorMinimumRadius: 15,
+        estimatorCurve: 3,
+      }),
+    );
+    b.scheduler.step();
+
+    const imgA = progressEvents(a.events)[0].image;
+    const imgB = progressEvents(b.events)[0].image;
+    expect(imgA).toHaveLength(imgB.length);
+    expect(Array.from(imgA)).toEqual(Array.from(imgB));
+  });
+
+  it("applies estimator params to the finished frame", () => {
+    // Same seed and budget, run to completion, differing only in estimator
+    // params — a narrow-everywhere run (radius pinned to 1 throughout) must
+    // render differently from a wide-and-curved one once the adaptive pass
+    // has actually run.
+    const a = harness();
+    a.session.handle(
+      startCommand({
+        seed: 7,
+        iterationsBudget: 500,
+        estimatorRadius: 1,
+        estimatorMinimumRadius: 1,
+        estimatorCurve: 1,
+      }),
+    );
+    a.scheduler.drain();
+
+    const b = harness();
+    b.session.handle(
+      startCommand({
+        seed: 7,
+        iterationsBudget: 500,
+        estimatorRadius: 8,
+        estimatorMinimumRadius: 0,
+        estimatorCurve: 0.3,
+      }),
+    );
+    b.scheduler.drain();
+
+    const imgA = progressEvents(a.events).at(-1)!.image;
+    const imgB = progressEvents(b.events).at(-1)!.image;
+    expect(Array.from(imgA)).not.toEqual(Array.from(imgB));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live estimator params (fr-17t): mirrors "live tone-map params" above, but
+// a change re-runs the adaptive downsample itself (not just a re-tonemap of
+// the existing displayHistogram), since estimatorParams feed that pass, not
+// tonemapFlame.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession live estimator params", () => {
+  it("does not force an extra redisplay while still accumulating — the next naturally-due one picks it up", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    scheduler.step(); // first chunk: due (lastDownsampleAt was undefined) -> 1 progress event so far.
+    expect(progressEvents(events)).toHaveLength(1);
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
+    // A zero-step clock means no chunk before the last is "due" again, so
+    // the live param change alone must not have emitted anything extra.
+    expect(progressEvents(events)).toHaveLength(1);
+
+    scheduler.drain();
+    // The final chunk is always due (finished) — that's the next progress,
+    // and it runs the adaptive pass with the just-set radius.
+    expect(progressEvents(events)).toHaveLength(2);
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsDone).toBe(40);
+  });
+
+  it("re-runs the adaptive estimate and sends immediately when a param changes after accumulation is done", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+    const doneCount = progressEvents(events).length;
+    expect(doneCount).toBeGreaterThan(0); // budget (50) < initial chunk size -> finished already.
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
+    expect(progressEvents(events)).toHaveLength(doneCount + 1);
+
+    session.handle({
+      type: "setEstimatorMinimumRadius",
+      estimatorMinimumRadius: 2,
+    });
+    session.handle({ type: "setEstimatorCurve", estimatorCurve: 1.5 });
+    expect(progressEvents(events)).toHaveLength(doneCount + 3);
+  });
+
+  it("does not re-accumulate for a live estimator param change once done", () => {
+    const calls: number[] = [];
+    const countingAccumulate: typeof accumulateFlame = (...args) => {
+      calls.push(args[4]); // iterations argument.
+      return accumulateFlame(...args);
+    };
+    const { session } = harness({ accumulate: countingAccumulate });
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    const callsAfterDone = calls.length;
+
+    session.handle({ type: "setEstimatorCurve", estimatorCurve: 2 });
+    expect(calls).toHaveLength(callsAfterDone); // no new accumulate call.
+  });
+
+  it("actually changes the rendered image, not just re-sends the same one (proving the downsample itself re-ran)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        seed: 3,
+        iterationsBudget: 500,
+        estimatorRadius: 1,
+        estimatorMinimumRadius: 1,
+        estimatorCurve: 1,
+      }),
+    );
+    scheduler.drain();
+    const finishedImage = Array.from(progressEvents(events).at(-1)!.image);
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
+    session.handle({
+      type: "setEstimatorMinimumRadius",
+      estimatorMinimumRadius: 0,
+    });
+    session.handle({ type: "setEstimatorCurve", estimatorCurve: 0.3 });
+    const afterChange = Array.from(progressEvents(events).at(-1)!.image);
+
+    expect(afterChange).not.toEqual(finishedImage);
   });
 });

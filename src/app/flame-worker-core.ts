@@ -2,7 +2,8 @@
  * The flame render's Web Worker session state machine (fr-73y): everything
  * `main.ts`'s old `stepFlame` used to do synchronously on the main thread —
  * supersampled accumulation, the proactive + reactive OOM guard, throttled
- * downsample, and live tone-map re-application — now runs here, off the main
+ * downsample, a finished-frame adaptive density-estimation blur (fr-17t),
+ * and live tone-map/estimate re-application — now runs here, off the main
  * thread. `flame-worker.ts` is the thin `self.onmessage`/`postMessage` glue
  * that wires a {@link FlameWorkerSession} to the real worker globals; this
  * module touches none of them directly (no `self`, `postMessage`,
@@ -18,12 +19,18 @@
  */
 import {
   accumulateFlame,
+  adaptiveDownsampleFlame,
   clampSupersampleToBudget,
   downsampleFlame,
   tonemapFlame,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
-import type { FlameHistogram, Mat4, TonemapParams } from "../fractal/flame";
+import type {
+  DensityEstimatorParams,
+  FlameHistogram,
+  Mat4,
+  TonemapParams,
+} from "../fractal/flame";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
@@ -55,12 +62,19 @@ export type FlameWorkerCommand =
       exposure: number;
       gamma: number;
       vibrancy: number;
+      /** Initial {@link DensityEstimatorParams} — see that type's doc. */
+      estimatorRadius: number;
+      estimatorMinimumRadius: number;
+      estimatorCurve: number;
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
   | { type: "setGamma"; gamma: number }
   | { type: "setVibrancy"; vibrancy: number }
-  | { type: "setSupersample"; supersample: number };
+  | { type: "setSupersample"; supersample: number }
+  | { type: "setEstimatorRadius"; estimatorRadius: number }
+  | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
+  | { type: "setEstimatorCurve"; estimatorCurve: number };
 
 /** Worker → main thread. */
 export type FlameWorkerEvent =
@@ -127,7 +141,10 @@ const FLAME_CHUNK_MAX = 20_000_000;
 const FLAME_FRAME_BUDGET_MS = 8;
 
 /** Fixed reconstruction-filter radius (display pixels) `downsampleFlame` blurs
- * with — see its doc for why fixed, not yet density-adaptive (that's fr-17t). */
+ * PROGRESSIVE (not-yet-finished) frames with in `runChunk` — see its doc for
+ * why fixed rather than density-adaptive. The finished frame instead gets
+ * `adaptiveDownsampleFlame` (fr-17t), which has no equivalent fixed-radius
+ * constant since its whole point is a radius computed per cell. */
 const FLAME_FILTER_RADIUS = 0.4;
 /** Minimum time between downsample + tone-map + transfer refreshes while
  * actively accumulating. Accumulation itself still runs every scheduled
@@ -159,8 +176,9 @@ function describeError(e: unknown): string {
 
 /**
  * One flame render's worker-side session: owns the supersampled accumulator,
- * the OOM guard, the throttled downsample, and live tone-map re-application.
- * One instance per `start` — a supersample change restarts accumulation
+ * the OOM guard, the throttled downsample, the finished-frame adaptive
+ * density-estimation blur, and live tone-map/estimate re-application. One
+ * instance per `start` — a supersample change restarts accumulation
  * in-place (see {@link startAccumulation}), it does not create a new session;
  * the main thread gets a fresh session by terminating the worker and
  * spinning up a new one (see `main.ts`'s `enterFlameMode`/`exitFlameMode`),
@@ -216,6 +234,14 @@ export class FlameWorkerSession {
     gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
     vibrancy: 1,
   };
+  /** Only ever read once accumulation is finished (see `runChunk`'s `due`
+   * block) — this inline default is overwritten by `start` before that can
+   * happen, same as `tonemapParams` above. */
+  private estimatorParams: DensityEstimatorParams = {
+    estimatorRadius: 0,
+    estimatorMinimumRadius: 0,
+    estimatorCurve: 1,
+  };
 
   /** undefined until the first downsample+tonemap+transfer of this session,
    * so that first one is never throttled. */
@@ -258,6 +284,18 @@ export class FlameWorkerSession {
       case "setSupersample":
         this.setSupersample(command.supersample);
         break;
+      case "setEstimatorRadius":
+        this.setEstimatorParam("estimatorRadius", command.estimatorRadius);
+        break;
+      case "setEstimatorMinimumRadius":
+        this.setEstimatorParam(
+          "estimatorMinimumRadius",
+          command.estimatorMinimumRadius,
+        );
+        break;
+      case "setEstimatorCurve":
+        this.setEstimatorParam("estimatorCurve", command.estimatorCurve);
+        break;
     }
   }
 
@@ -274,6 +312,11 @@ export class FlameWorkerSession {
       gamma: cmd.gamma,
       gammaThreshold: DEFAULT_GAMMA_THRESHOLD,
       vibrancy: cmd.vibrancy,
+    };
+    this.estimatorParams = {
+      estimatorRadius: cmd.estimatorRadius,
+      estimatorMinimumRadius: cmd.estimatorMinimumRadius,
+      estimatorCurve: cmd.estimatorCurve,
     };
     this.maxSafeSupersample = Infinity; // a fresh session has no learned ceiling yet.
     this.startAccumulation(cmd.requestedSupersample);
@@ -329,6 +372,24 @@ export class FlameWorkerSession {
     // Once done, nothing else will ever refresh the display again — this is
     // the only thing that will, so do it now.
     if (!this.running) this.redisplayNow();
+  }
+
+  private setEstimatorParam<K extends keyof DensityEstimatorParams>(
+    key: K,
+    value: DensityEstimatorParams[K],
+  ): void {
+    this.estimatorParams = { ...this.estimatorParams, [key]: value };
+    // Unlike tonemapParams (re-read fresh by sendProgress on every send, so
+    // just resending picks up a live change), estimatorParams only feeds the
+    // adaptive downsample baked into `displayHistogram` by `runChunk`'s
+    // finished branch — resending as-is would just re-tonemap the OLD
+    // estimate. While still accumulating, that finished branch hasn't run
+    // yet and will read estimatorParams fresh when it does, so nothing else
+    // to do here. Once finished, nothing will ever rebuild displayHistogram
+    // again on its own — this is the only thing that will, so redo the
+    // (done-frame-only, not re-chunked) adaptive pass against the histogram
+    // already in hand now, rather than re-accumulating from scratch.
+    if (!this.running) this.redisplayWithFreshEstimate();
   }
 
   private setSupersample(requested: number): void {
@@ -428,12 +489,26 @@ export class FlameWorkerSession {
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
     if (due) {
-      this.displayHistogram = downsampleFlame(
-        this.histogram,
-        this.width,
-        this.height,
-        FLAME_FILTER_RADIUS,
-      );
+      // The full adaptive pass (fr-17t) is O(width * height * radius^2) and
+      // not chunked — cheap enough to pay ONCE on the finished frame, but
+      // not on every throttled progressive redisplay while still
+      // accumulating (this loop's whole reason to be throttled at all). The
+      // cheap fixed-radius filter covers every preview tick instead; see
+      // `downsampleFlame`'s and `adaptiveDownsampleFlame`'s docs for why
+      // the two coexist rather than one replacing the other.
+      this.displayHistogram = finished
+        ? adaptiveDownsampleFlame(
+            this.histogram,
+            this.width,
+            this.height,
+            this.estimatorParams,
+          )
+        : downsampleFlame(
+            this.histogram,
+            this.width,
+            this.height,
+            FLAME_FILTER_RADIUS,
+          );
       this.lastDownsampleAt = t1;
       this.sendProgress();
     }
@@ -473,5 +548,21 @@ export class FlameWorkerSession {
 
   private redisplayNow(): void {
     if (this.displayHistogram) this.sendProgress();
+  }
+
+  /** Rebuilds `displayHistogram` from the current (full-resolution)
+   * `histogram` via the adaptive pass with the latest `estimatorParams`, and
+   * sends it — the finished-frame counterpart to `redisplayNow`'s "just
+   * re-tonemap what's already there", used when the thing that changed
+   * affects the downsample itself, not just the tone-map applied after it. */
+  private redisplayWithFreshEstimate(): void {
+    if (!this.histogram) return;
+    this.displayHistogram = adaptiveDownsampleFlame(
+      this.histogram,
+      this.width,
+      this.height,
+      this.estimatorParams,
+    );
+    this.sendProgress();
   }
 }
