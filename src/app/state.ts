@@ -1,4 +1,5 @@
 import { appendTransform, defaultTransforms } from "../fractal/presets";
+import type { FlamePaletteId } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
 import type { ColorMode, Transform } from "../fractal/types";
 
@@ -68,6 +69,14 @@ export interface FlameParams {
    * `flame.ts`'s `DensityEstimatorParams.estimatorCurve`. Live-reactive like
    * `estimatorRadius`. */
   estimatorCurve: number;
+  /**
+   * Structural-coloring palette (fr-6us; see `palette.ts`). `"legacy"` (the
+   * default) keeps the original per-transform-hue coloring, so existing
+   * scenes/renders are unchanged; a cosine-gradient id paints continuous color
+   * along the orbit. Changing it restarts accumulation — the accumulated color
+   * sums bake in the palette, so there is nothing to keep (see `main.ts`).
+   */
+  paletteId: FlamePaletteId;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -166,6 +175,12 @@ export const MAX_ESTIMATOR_MINIMUM_RADIUS = 15;
 export const DEFAULT_ESTIMATOR_CURVE = 0.4;
 export const MIN_ESTIMATOR_CURVE = 0.1;
 export const MAX_ESTIMATOR_CURVE = 3;
+/**
+ * Default flame palette. `"legacy"` is the pre-fr-6us per-transform-hue
+ * coloring, so a scene that predates this feature (or a fresh one) renders
+ * exactly as before until the user picks a gradient palette.
+ */
+export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "legacy";
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -187,6 +202,7 @@ export function initialState(panelOpen: boolean): AppState {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     },
     flameActive: false,
   };
@@ -426,6 +442,19 @@ export function setFlameEstimatorCurve(
       ),
     },
   };
+}
+
+/**
+ * Set the flame render's structural-coloring palette. Not clamped — it is an
+ * enum (see `palette.ts`), and the UI only offers valid ids (persistence
+ * validates untrusted input in `decodeScene`). Restarts accumulation in the
+ * worker when it changes; see `main.ts`.
+ */
+export function setFlamePaletteId(
+  state: AppState,
+  paletteId: FlamePaletteId,
+): AppState {
+  return { ...state, flame: { ...state.flame, paletteId } };
 }
 
 /** Enter or exit the flame render-current-view overlay (session-only). */

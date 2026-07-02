@@ -1,4 +1,5 @@
 import { transformColors } from "../fractal/color";
+import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
   ColorMode,
@@ -62,6 +63,9 @@ export interface UiHandlers {
   onFlameVibrancyInput: (value: number) => void;
   /** The supersample slider changed — the app restarts accumulation. */
   onFlameSupersampleInput: (value: number) => void;
+  /** The palette dropdown changed — the app restarts accumulation (the
+   * accumulated color sums bake in the palette). */
+  onFlamePaletteChange: (paletteId: FlamePaletteId) => void;
   /** Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
    * gamma/vibrancy: re-run just the finished-frame adaptive pass, never a
    * re-accumulate. */
@@ -293,6 +297,7 @@ export class Ui {
   private readonly flameSupersampleLabel: HTMLElement;
   private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameSupersampleNote: HTMLElement;
+  private readonly flamePalette: HTMLSelectElement;
   private readonly flameEstimatorRadiusLabel: HTMLElement;
   private readonly flameEstimatorRadiusSlider: HTMLInputElement;
   private readonly flameEstimatorMinimumRadiusLabel: HTMLElement;
@@ -344,6 +349,7 @@ export class Ui {
     this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
     this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
+    this.flamePalette = this.byId("flamePalette");
     this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
     this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
     this.flameEstimatorMinimumRadiusLabel = this.byId(
@@ -424,6 +430,9 @@ export class Ui {
         Number(this.flameSupersampleSlider.value),
       ),
     );
+    this.flamePalette.addEventListener("change", () =>
+      handlers.onFlamePaletteChange(this.flamePalette.value as FlamePaletteId),
+    );
     this.flameEstimatorRadiusSlider.addEventListener("input", () =>
       handlers.onFlameEstimatorRadiusInput(
         Number(this.flameEstimatorRadiusSlider.value),
@@ -468,6 +477,7 @@ export class Ui {
     this.flameVibrancySlider.value = String(state.flame.vibrancy);
     this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
     this.flameSupersampleSlider.value = String(state.flame.supersample);
+    this.flamePalette.value = state.flame.paletteId;
 
     this.flameEstimatorRadiusLabel.textContent = `${state.flame.estimatorRadius.toFixed(1)}px`;
     this.flameEstimatorRadiusSlider.value = String(state.flame.estimatorRadius);

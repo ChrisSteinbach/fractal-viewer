@@ -9,6 +9,7 @@ import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
+  DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   MAX_ESTIMATOR_CURVE,
@@ -57,6 +58,7 @@ function baseSnapshot(): SceneSnapshot {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     },
   };
 }
@@ -89,6 +91,7 @@ describe("encodeScene / decodeScene round-trip", () => {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     });
   });
 
@@ -624,6 +627,7 @@ describe("decodeScene flame params", () => {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      paletteId: DEFAULT_FLAME_PALETTE,
     });
   });
 
@@ -843,6 +847,44 @@ describe("decodeScene flame params", () => {
       MIN_ESTIMATOR_MINIMUM_RADIUS,
     );
     expect(result!.flame.estimatorCurve).toBe(MAX_ESTIMATOR_CURVE);
+  });
+
+  it("round-trips a non-default paletteId", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "spectrum" },
+    };
+    expect(decodeScene(encodeScene(s))!.flame.paletteId).toBe("spectrum");
+  });
+
+  it("falls back to legacy for an unknown paletteId instead of rejecting the scene", () => {
+    // Unlike every other flame field, an unknown palette does NOT nuke the
+    // whole scene — a link from a future build carrying a palette this build
+    // doesn't know still restores, just with the default coloring.
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "chartreuse" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.paletteId).toBe("legacy");
+  });
+
+  it("defaults paletteId to legacy for a link encoded before fr-6us existed", () => {
+    // A flame block carrying every field except paletteId.
+    const raw = {
+      ...baseSnapshot(),
+      flame: {
+        exposure: 1.5,
+        iterations: 30_000_000,
+        gamma: 3,
+        vibrancy: 0.5,
+        supersample: 2,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.paletteId).toBe("legacy");
   });
 });
 

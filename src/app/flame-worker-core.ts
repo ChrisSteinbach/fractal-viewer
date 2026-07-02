@@ -34,6 +34,8 @@ import type {
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
+import { buildPaletteLUT } from "../fractal/palette";
+import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import type { Transform } from "../fractal/types";
@@ -66,6 +68,8 @@ export type FlameWorkerCommand =
       estimatorRadius: number;
       estimatorMinimumRadius: number;
       estimatorCurve: number;
+      /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
+      paletteId: FlamePaletteId;
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
@@ -74,7 +78,8 @@ export type FlameWorkerCommand =
   | { type: "setSupersample"; supersample: number }
   | { type: "setEstimatorRadius"; estimatorRadius: number }
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
-  | { type: "setEstimatorCurve"; estimatorCurve: number };
+  | { type: "setEstimatorCurve"; estimatorCurve: number }
+  | { type: "setPalette"; paletteId: FlamePaletteId };
 
 /** Worker → main thread. */
 export type FlameWorkerEvent =
@@ -198,6 +203,9 @@ export class FlameWorkerSession {
   private prepared: PreparedChaosGame | null = null;
   private projection: Mat4 | null = null;
   private palette: ReturnType<typeof transformColors> = [];
+  /** Gradient lookup table for structural coloring, or `null` for the
+   * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
+  private colorLUT: Float32Array | null = null;
   private rng: Rng = Math.random;
 
   /** The real progressive accumulator, at accumWidth x accumHeight (display
@@ -296,6 +304,9 @@ export class FlameWorkerSession {
       case "setEstimatorCurve":
         this.setEstimatorParam("estimatorCurve", command.estimatorCurve);
         break;
+      case "setPalette":
+        this.setPalette(command.paletteId);
+        break;
     }
   }
 
@@ -303,6 +314,8 @@ export class FlameWorkerSession {
     this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform);
     this.projection = cmd.projection;
     this.palette = transformColors(cmd.transforms.length);
+    // null for "legacy" — accumulateFlame then colors by transform (palette).
+    this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
@@ -407,6 +420,18 @@ export class FlameWorkerSession {
     }
   }
 
+  private setPalette(paletteId: FlamePaletteId): void {
+    if (!this.prepared || !this.projection) return; // no active session yet.
+    this.colorLUT = buildPaletteLUT(paletteId);
+    // sumRGB has the old palette's colors baked into it, so — unlike a
+    // tone-map param — this can't be re-applied to the existing accumulation;
+    // it has to accumulate afresh. Same restart path setSupersample uses (the
+    // size is unchanged, so this reallocates an identical-size histogram).
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
   private ensureRunning(): void {
     if (this.running) return;
     if (!this.prepared || !this.projection) return;
@@ -456,6 +481,7 @@ export class FlameWorkerSession {
         this.rng,
         this.palette,
         this.histogram ?? undefined,
+        this.colorLUT ?? undefined,
       );
     } catch (e) {
       this.running = false;
