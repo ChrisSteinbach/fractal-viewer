@@ -252,6 +252,11 @@ function main(): void {
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
         solidHasTexture = true;
         break;
+      case "progress":
+        // Counters-only label refresh (the displayed texture is already
+        // final) — e.g. the budget slider moved on a finished render.
+        ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        break;
       case "resolutionNote":
         ui.setSolidResolutionNote(event.effective, event.requested);
         break;

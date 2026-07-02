@@ -73,6 +73,16 @@ export type VoxelWorkerEvent =
       effective: number | null;
       requested?: number;
     }
+  | {
+      /** Counters-only label refresh for when the budget changes but the
+       * displayed texture is already final (see `setIterationsBudget` in
+       * {@link VoxelWorkerSession.handle}) — re-packing and re-transferring
+       * the whole O(size³) volume just to update a label would be far too
+       * heavy for a slider drag. */
+      type: "progress";
+      iterationsDone: number;
+      iterationsBudget: number;
+    }
   | { type: "error"; message: string };
 
 /**
@@ -205,10 +215,32 @@ export class VoxelWorkerSession {
       case "start":
         this.start(command);
         break;
-      case "setIterationsBudget":
+      case "setIterationsBudget": {
+        const wasFinished = this.iterationsDone >= this.iterationsBudget;
         this.iterationsBudget = command.iterations;
-        this.ensureRunning(); // resume if this raised the budget past iterationsDone.
+        if (this.iterationsDone < this.iterationsBudget) {
+          this.ensureRunning(); // resume if this raised the budget past iterationsDone.
+        } else if (wasFinished) {
+          // Already finished before this change, so the displayed texture is
+          // already final — only the label's target is now stale (fr-15z).
+          // Send just the counters; see the `progress` event's doc for why
+          // not the (heavy) full grid.
+          this.emit({
+            type: "progress",
+            iterationsDone: this.iterationsDone,
+            iterationsBudget: this.iterationsBudget,
+          });
+        } else if (this.grid) {
+          // Lowered to/below the accumulated count mid-render: that finishes
+          // the render on the spot, but no chunk will run to say so — the
+          // already-scheduled one bails silently in runChunk — so the label
+          // would freeze at its last value (fr-15z) and the display would
+          // miss whatever accumulated since the last throttled pack. Send
+          // the final grid (fresh counters included) here.
+          this.sendGrid(this.grid);
+        }
         break;
+      }
     }
   }
 
@@ -312,26 +344,10 @@ export class VoxelWorkerSession {
       t1 - this.lastTextureAt >= VOXEL_TEXTURE_INTERVAL_MS;
     if (due) {
       this.lastTextureAt = t1;
-      // Packing allocates the full RGBA8 volume; a failure here (unlike the
-      // grid allocation in startAccumulation) has accumulated progress worth
-      // keeping, but no way to display it — surface it rather than looping.
-      let texture: Uint8Array<ArrayBuffer>;
-      try {
-        texture = voxelTextureData(grid);
-      } catch (e) {
+      if (!this.sendGrid(grid)) {
         this.running = false;
-        this.emit({ type: "error", message: describeError(e) });
         return;
       }
-      this.emit({
-        type: "grid",
-        texture,
-        size: this.effectiveResolution,
-        boundsMin: grid.bounds.min,
-        boundsMax: grid.bounds.max,
-        iterationsDone: this.iterationsDone,
-        iterationsBudget: this.iterationsBudget,
-      });
     }
 
     if (finished) {
@@ -339,6 +355,33 @@ export class VoxelWorkerSession {
     } else {
       this.schedule(() => this.runChunk());
     }
+  }
+
+  /**
+   * Pack `grid` and send it with the current progress counters; returns
+   * false (after emitting an error) if the pack fails. Packing allocates the
+   * full RGBA8 volume; a failure here (unlike the grid allocation in
+   * `startAccumulation`) has accumulated progress worth keeping, but no way
+   * to display it — surface it rather than looping.
+   */
+  private sendGrid(grid: VoxelGrid): boolean {
+    let texture: Uint8Array<ArrayBuffer>;
+    try {
+      texture = voxelTextureData(grid);
+    } catch (e) {
+      this.emit({ type: "error", message: describeError(e) });
+      return false;
+    }
+    this.emit({
+      type: "grid",
+      texture,
+      size: this.effectiveResolution,
+      boundsMin: grid.bounds.min,
+      boundsMax: grid.bounds.max,
+      iterationsDone: this.iterationsDone,
+      iterationsBudget: this.iterationsBudget,
+    });
+    return true;
   }
 
   private adaptChunkSize(elapsed: number): void {
