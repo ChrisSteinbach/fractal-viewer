@@ -23,8 +23,10 @@ import {
   stepOrbit,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
+import { colorSpan, writePointColor } from "./color";
+import type { ColorSpan } from "./color";
 import type { Rng } from "./rng";
-import type { Vec3 } from "./types";
+import type { Bounds, ColorMode, Vec3 } from "./types";
 
 /**
  * A 4x4 matrix, row-major and flattened: `m[0..3]` is row 0, `m[4..7]` row 1,
@@ -143,6 +145,32 @@ export function clampSupersampleToBudget(
 const FALLBACK_COLOR: Vec3 = [1, 1, 1];
 
 /**
+ * Scratch RGB for the non-transform color modes: `writePointColor` writes a
+ * point's color here and the hot loop adds it into `sumRGB`. Reused across
+ * iterations (and calls — `accumulateFlame` runs to completion synchronously,
+ * never re-entrant) so a per-point color costs no allocation, matching the
+ * hand-inlined loop's allocation-free discipline.
+ */
+const modeColorScratch = new Float32Array(3);
+
+/**
+ * Defensive fallback for a non-transform `colorMode` called without `bounds`
+ * (the app always supplies the frozen cloud's bounds — see `main.ts`). Its
+ * zero extents make every `colorSpan` range collapse to 1, so coloring stays
+ * finite and deterministic instead of dividing by an absent span.
+ */
+const EMPTY_BOUNDS: Bounds = {
+  minX: 0,
+  maxX: 0,
+  minY: 0,
+  maxY: 0,
+  minZ: 0,
+  maxZ: 0,
+  minR: 0,
+  maxR: 0,
+};
+
+/**
  * Accumulate `iterations` more chaos-game steps into a 2D histogram, seen
  * through a frozen camera. Each plotted point (`stepOrbit` + `plotPoint`,
  * exactly as the point-cloud path computes them) is projected by `projection`
@@ -150,19 +178,30 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * camera and inside the `width` x `height` frame, increments that pixel's
  * hit count and adds a color to its color sum.
  *
- * **Coloring** has two modes (fr-6us). By default the added color is
- * `palette[transformIndex]` — the flat per-transform hue ("legacy"). Pass a
- * `colorLUT` (a `256 * 3` interleaved RGB table from `palette.ts`'s
- * `buildPaletteLUT`) to switch to flam3-style structural coloring instead: a
- * color coordinate `c` in `[0, 1]` rides along the orbit — initialised to
- * `0.5` and, each step, blended halfway toward the picked transform's slot
- * (`c = (c + i / (n - 1)) / 2`, or `0.5` for a single-transform system) — and
- * the LUT color at `c` is accumulated, so color flows continuously along the
- * structure. Updating `c` consumes NO `rng`, so a given seed produces the
- * byte-identical *orbit* (and thus identical `hits`) whether or not a
- * `colorLUT` is supplied; only the color sums differ. An escape-reseed resets
- * `c` to `0.5` alongside the point. `palette` is still required (and used when
- * `colorLUT` is omitted).
+ * **Coloring** follows `colorMode` (default `"transform"`), mirroring the
+ * explorer's `buildColors` so a render matches the frozen point cloud it was
+ * launched from (fr-6do):
+ *
+ * - `"transform"` — the transform-index coloring (fr-6us). By default the
+ *   added color is `palette[transformIndex]` — the flat per-transform hue
+ *   ("legacy"). Pass a `colorLUT` (a `256 * 3` interleaved RGB table from
+ *   `palette.ts`'s `buildPaletteLUT`) to switch to flam3-style structural
+ *   coloring instead: a color coordinate `c` in `[0, 1]` rides along the orbit
+ *   — initialised to `0.5` and, each step, blended halfway toward the picked
+ *   transform's slot (`c = (c + i / (n - 1)) / 2`, or `0.5` for a
+ *   single-transform system) — and the LUT color at `c` is accumulated, so
+ *   color flows continuously along the structure. An escape-reseed resets `c`
+ *   to `0.5` alongside the point. `colorLUT` is ignored in every other mode.
+ * - `"height"` / `"radius"` / `"position"` / `"uniform"` — the plotted point's
+ *   color comes from `color.ts`'s shared `writePointColor` (the exact ramps
+ *   `buildColors` uses), normalized against `bounds` — pass the same
+ *   {@link Bounds} the explorer's cloud produced so the flame reproduces its
+ *   colors. `palette`/`colorLUT` are unused here.
+ *
+ * `palette` is always required (and used for `"transform"` + no `colorLUT`).
+ * Coloring never consumes `rng`, so a given seed produces the byte-identical
+ * *orbit* (and thus identical `hits`) regardless of `colorMode`/`colorLUT`;
+ * only the color sums differ.
  *
  * **Progressive**: pass the histogram returned by a previous call back in as
  * `histogram` to keep converging the same image — the orbit (and its color
@@ -189,6 +228,8 @@ export function accumulateFlame(
   palette: Vec3[],
   histogram?: FlameHistogram,
   colorLUT?: Float32Array,
+  colorMode: ColorMode = "transform",
+  bounds?: Bounds,
 ): FlameHistogram {
   if (projection.length !== 16) {
     throw new RangeError(
@@ -206,12 +247,19 @@ export function accumulateFlame(
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
-  // Structural coloring (fr-6us): when a colorLUT is supplied, `c` rides the
-  // orbit and indexes the gradient; otherwise every `colorLUT !== undefined`
-  // branch below is skipped and the per-transform `palette` path runs
-  // unchanged. `colorDenom` is `n - 1` (0 for a single-transform system, which
-  // pins the coordinate at 0.5) — the divisor mapping a transform index to its
-  // [0, 1] color slot.
+  // Coloring dispatch, hoisted out of the hot loop (fr-6do). `modeColoring` is
+  // the position-based path (height/radius/position/uniform), colored per point
+  // by the same `writePointColor` the explorer's cloud uses, normalized against
+  // `span`. Otherwise we are in the transform path: `structural` picks the
+  // fr-6us colorLUT gradient (a color coordinate `c` riding the orbit), and
+  // failing that the flat per-transform `palette`. `colorDenom` is `n - 1` (0
+  // for a single-transform system, which pins the coordinate at 0.5) — the
+  // divisor mapping a transform index to its [0, 1] color slot.
+  const modeColoring = colorMode !== "transform";
+  const structural = !modeColoring && colorLUT !== undefined;
+  const span: ColorSpan | null = modeColoring
+    ? colorSpan(bounds ?? EMPTY_BOUNDS)
+    : null;
   const colorDenom =
     prepared.transformCount > 1 ? prepared.transformCount - 1 : 0;
   let c = hist.orbitColor;
@@ -254,8 +302,8 @@ export function accumulateFlame(
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
     // Blend the color coordinate halfway toward this transform's slot. No rng
-    // is consumed, so the orbit (and `hits`) stays identical to the legacy path.
-    if (colorLUT !== undefined) {
+    // is consumed, so the orbit (and `hits`) stays identical to every other path.
+    if (structural) {
       const slot = colorDenom > 0 ? idx / colorDenom : 0.5;
       c = (c + slot) * 0.5;
     }
@@ -293,7 +341,7 @@ export function accumulateFlame(
       ny = rng() - 0.5;
       nz = rng() - 0.5;
       // The orbit restarts, so its color coordinate does too.
-      if (colorLUT !== undefined) c = 0.5;
+      if (structural) c = 0.5;
     }
     x = nx;
     y = ny;
@@ -338,8 +386,18 @@ export function accumulateFlame(
     const hit = ++hits[bucket];
     if (hit > maxHits) maxHits = hit;
     const o = bucket * 3;
-    if (colorLUT !== undefined) {
-      // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
+    if (modeColoring) {
+      // Position-based mode: color this plotted point exactly as the explorer's
+      // cloud would (span is non-null whenever modeColoring is true).
+      writePointColor(modeColorScratch, 0, colorMode, px, py, pz, span!);
+      sumRGB[o] += modeColorScratch[0];
+      sumRGB[o + 1] += modeColorScratch[1];
+      sumRGB[o + 2] += modeColorScratch[2];
+    } else if (colorLUT !== undefined) {
+      // Structural gradient: c is in [0, 1]; the min guards the c === 1 edge
+      // (256 -> 255). (`else if` here is exactly `structural` — modeColoring
+      // was handled above — but written as the narrowing check so colorLUT is
+      // typed non-undefined without an assertion.)
       const li = Math.min(255, (c * 256) | 0) * 3;
       sumRGB[o] += colorLUT[li];
       sumRGB[o + 1] += colorLUT[li + 1];

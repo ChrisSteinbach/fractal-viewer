@@ -42,6 +42,17 @@ function startCommand(
     estimatorMinimumRadius: 0,
     estimatorCurve: 0.4,
     paletteId: "legacy",
+    colorMode: "transform",
+    bounds: {
+      minX: 0,
+      maxX: 1,
+      minY: 0,
+      maxY: 1,
+      minZ: 0,
+      maxZ: 1,
+      minR: 0,
+      maxR: 1,
+    },
     ...overrides,
   };
 }

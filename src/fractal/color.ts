@@ -1,5 +1,5 @@
 import type { ChaosGameResult } from "./chaos-game";
-import type { ColorMode, Transform, Vec3 } from "./types";
+import type { Bounds, ColorMode, Transform, Vec3 } from "./types";
 
 function hue2rgb(q: number, p: number, t: number): number {
   let h = t;
@@ -69,6 +69,97 @@ export function transformColors(count: number): Vec3[] {
 }
 
 /**
+ * A cloud's bounds pre-reduced to the axis minimums and non-zero spans the
+ * position-normalized color modes need. Each `range*` is `max - min` with a
+ * `|| 1` guard so a degenerate (zero-extent) axis never divides by zero — it
+ * collapses every point on that axis to `t = 0` instead. Built once per
+ * consumer ({@link buildColors}' recolor pass, the flame accumulate loop) so
+ * {@link writePointColor} stays a few multiply-adds per point with no
+ * per-point `max - min || 1` recompute.
+ */
+export interface ColorSpan {
+  minX: number;
+  minY: number;
+  minZ: number;
+  minR: number;
+  rangeX: number;
+  rangeY: number;
+  rangeZ: number;
+  rangeR: number;
+}
+
+/** Reduce {@link Bounds} to the {@link ColorSpan} {@link writePointColor} indexes by. */
+export function colorSpan(bounds: Bounds): ColorSpan {
+  return {
+    minX: bounds.minX,
+    minY: bounds.minY,
+    minZ: bounds.minZ,
+    minR: bounds.minR,
+    rangeX: bounds.maxX - bounds.minX || 1,
+    rangeY: bounds.maxY - bounds.minY || 1,
+    rangeZ: bounds.maxZ - bounds.minZ || 1,
+    rangeR: bounds.maxR - bounds.minR || 1,
+  };
+}
+
+/**
+ * Write the sRGB color a single plotted point `(px, py, pz)` gets under a
+ * position-based {@link ColorMode} into `out[o..o+2]` — the exact ramps
+ * {@link buildColors} paints the point cloud with, factored out so the flame
+ * renderer (`flame.ts`'s `accumulateFlame`) colors identically and the two
+ * views can never drift apart (fr-6do explorer↔flame parity). Allocation-free
+ * (writes channels in place, no intermediate `Vec3`) so the flame hot loop can
+ * call it per iteration.
+ *
+ * `"transform"` is deliberately excluded: it colors by the *producing
+ * transform's* palette entry, not by a point + bounds, so both callers
+ * dispatch it themselves before reaching here.
+ */
+export function writePointColor(
+  out: Float32Array,
+  o: number,
+  mode: Exclude<ColorMode, "transform">,
+  px: number,
+  py: number,
+  pz: number,
+  span: ColorSpan,
+): void {
+  switch (mode) {
+    case "height": {
+      // Blue (low) → green (mid) → red (high).
+      const t = (py - span.minY) / span.rangeY;
+      if (t < 0.5) {
+        writeHsl(out, o, 0.6 - t * 0.4, 0.8, 0.5);
+      } else {
+        writeHsl(out, o, 0.2 - (t - 0.5) * 0.4, 0.8, 0.5);
+      }
+      break;
+    }
+    case "radius": {
+      // Inner = warm, outer = cool.
+      const r = Math.sqrt(px * px + py * py + pz * pz);
+      const t = (r - span.minR) / span.rangeR;
+      writeHsl(out, o, t * 0.7, 0.85, 0.55);
+      break;
+    }
+    case "position": {
+      // XYZ → RGB.
+      out[o] = ((px - span.minX) / span.rangeX) * 0.8 + 0.2;
+      out[o + 1] = ((py - span.minY) / span.rangeY) * 0.8 + 0.2;
+      out[o + 2] = ((pz - span.minZ) / span.rangeZ) * 0.8 + 0.2;
+      break;
+    }
+    case "uniform":
+    default: {
+      out[o] = 0.4;
+      out[o + 1] = 0.8;
+      out[o + 2] = 1.0;
+      break;
+    }
+  }
+}
+
+/**
  * Build the per-point color buffer for a generated cloud. Each {@link ColorMode}
  * maps a point's transform, height, radius, position, or generation order to an
  * sRGB color, mirroring the original viewer's palettes.
@@ -85,69 +176,34 @@ export function buildColors(
   const { positions, transformIndices, count, bounds } = result;
   const colors = new Float32Array(count * 3);
 
-  const rangeX = bounds.maxX - bounds.minX || 1;
-  const rangeY = bounds.maxY - bounds.minY || 1;
-  const rangeZ = bounds.maxZ - bounds.minZ || 1;
-  const rangeR = bounds.maxR - bounds.minR || 1;
+  if (mode === "transform") {
+    const tColors = transformColors(transforms.length);
+    for (let i = 0; i < count; i++) {
+      const rgb = tColors[transformIndices[i]] ?? [1, 1, 1];
+      const o = i * 3;
+      colors[o] = rgb[0];
+      colors[o + 1] = rgb[1];
+      colors[o + 2] = rgb[2];
+    }
+    return colors;
+  }
 
-  switch (mode) {
-    case "transform": {
-      const tColors = transformColors(transforms.length);
-      for (let i = 0; i < count; i++) {
-        const rgb = tColors[transformIndices[i]] ?? [1, 1, 1];
-        const o = i * 3;
-        colors[o] = rgb[0];
-        colors[o + 1] = rgb[1];
-        colors[o + 2] = rgb[2];
-      }
-      break;
-    }
-    case "height": {
-      // Blue (low) → green (mid) → red (high).
-      for (let i = 0; i < count; i++) {
-        const py = positions[i * 3 + 1];
-        const t = (py - bounds.minY) / rangeY;
-        const o = i * 3;
-        if (t < 0.5) {
-          writeHsl(colors, o, 0.6 - t * 0.4, 0.8, 0.5);
-        } else {
-          writeHsl(colors, o, 0.2 - (t - 0.5) * 0.4, 0.8, 0.5);
-        }
-      }
-      break;
-    }
-    case "radius": {
-      // Inner = warm, outer = cool.
-      for (let i = 0; i < count; i++) {
-        const o = i * 3;
-        const px = positions[o];
-        const py = positions[o + 1];
-        const pz = positions[o + 2];
-        const r = Math.sqrt(px * px + py * py + pz * pz);
-        const t = (r - bounds.minR) / rangeR;
-        writeHsl(colors, o, t * 0.7, 0.85, 0.55);
-      }
-      break;
-    }
-    case "position": {
-      // XYZ → RGB.
-      for (let i = 0; i < count; i++) {
-        const o = i * 3;
-        colors[o] = ((positions[o] - bounds.minX) / rangeX) * 0.8 + 0.2;
-        colors[o + 1] = ((positions[o + 1] - bounds.minY) / rangeY) * 0.8 + 0.2;
-        colors[o + 2] = ((positions[o + 2] - bounds.minZ) / rangeZ) * 0.8 + 0.2;
-      }
-      break;
-    }
-    case "uniform":
-    default: {
-      for (let i = 0; i < count * 3; i += 3) {
-        colors[i] = 0.4;
-        colors[i + 1] = 0.8;
-        colors[i + 2] = 1.0;
-      }
-      break;
-    }
+  // Every non-transform mode is a pure function of a point + the cloud's
+  // bounds, so it shares one per-point writer with the flame renderer (see
+  // writePointColor) — the mode dispatch stays hoisted out of the loop inside
+  // that switch, and the span is reduced once here.
+  const span = colorSpan(bounds);
+  for (let i = 0; i < count; i++) {
+    const o = i * 3;
+    writePointColor(
+      colors,
+      o,
+      mode,
+      positions[o],
+      positions[o + 1],
+      positions[o + 2],
+      span,
+    );
   }
 
   return colors;

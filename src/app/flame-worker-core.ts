@@ -38,7 +38,7 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { Transform } from "../fractal/types";
+import type { Bounds, ColorMode, Transform } from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -68,8 +68,17 @@ export type FlameWorkerCommand =
       estimatorRadius: number;
       estimatorMinimumRadius: number;
       estimatorCurve: number;
-      /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
+      /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue.
+       * Only applies when `colorMode` is `"transform"`. */
       paletteId: FlamePaletteId;
+      /** The explorer's color mode, frozen at render time (fr-6do). Non-
+       * transform modes color each point by `bounds` instead of the palette,
+       * mirroring the point cloud. */
+      colorMode: ColorMode;
+      /** The frozen cloud's bounds — normalizes the non-transform color modes
+       * so the flame reproduces the explorer's exact colors (see `color.ts`'s
+       * `writePointColor`). */
+      bounds: Bounds;
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
@@ -206,6 +215,12 @@ export class FlameWorkerSession {
   /** Gradient lookup table for structural coloring, or `null` for the
    * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
   private colorLUT: Float32Array | null = null;
+  /** Explorer color mode + the frozen cloud's bounds (fr-6do): drive the
+   * non-transform (height/radius/position/uniform) coloring so the flame
+   * matches the point cloud. Both are captured at `start` and never change for
+   * the session's life (the explorer's controls are hidden while rendering). */
+  private colorMode: ColorMode = "transform";
+  private bounds: Bounds | undefined;
   private rng: Rng = Math.random;
 
   /** The real progressive accumulator, at accumWidth x accumHeight (display
@@ -316,6 +331,8 @@ export class FlameWorkerSession {
     this.palette = transformColors(cmd.transforms.length);
     // null for "legacy" — accumulateFlame then colors by transform (palette).
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
+    this.colorMode = cmd.colorMode;
+    this.bounds = cmd.bounds;
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
@@ -482,6 +499,8 @@ export class FlameWorkerSession {
         this.palette,
         this.histogram ?? undefined,
         this.colorLUT ?? undefined,
+        this.colorMode,
+        this.bounds,
       );
     } catch (e) {
       this.running = false;

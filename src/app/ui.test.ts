@@ -894,6 +894,34 @@ describe("Ui flame render controls", () => {
 
     expect(handlers.onFlamePaletteChange).toHaveBeenCalledWith("spectrum");
   });
+
+  // The palette only drives transform-mode (structural) coloring; in the other
+  // color modes the flame mirrors the explorer's per-point ramp (fr-6do), so
+  // the selector is hidden rather than left offering a no-op.
+  function paletteLabelHidden(): boolean {
+    return document
+      .getElementById("flamePaletteLabel")!
+      .classList.contains("hidden");
+  }
+
+  it("shows the palette selector in transform color mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "transform" });
+    expect(paletteLabelHidden()).toBe(false);
+  });
+
+  it("hides the palette selector in non-transform color modes", () => {
+    const ui = new Ui(document);
+    for (const colorMode of [
+      "height",
+      "radius",
+      "position",
+      "uniform",
+    ] as const) {
+      ui.updateLabels({ ...initialState(true), colorMode });
+      expect(paletteLabelHidden()).toBe(true);
+    }
+  });
 });
 
 describe("Ui.setFlameProgress", () => {

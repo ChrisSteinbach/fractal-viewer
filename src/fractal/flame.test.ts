@@ -14,11 +14,12 @@ import type {
   TonemapParams,
 } from "./flame";
 import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
-import { transformColors } from "./color";
+import type { PreparedChaosGame } from "./chaos-game";
+import { colorSpan, transformColors, writePointColor } from "./color";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
-import type { Transform, Vec3 } from "./types";
+import type { Bounds, ColorMode, Transform, Vec3 } from "./types";
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -570,6 +571,212 @@ describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
     expect(Array.from(colored.hits)).toEqual(Array.from(legacy.hits));
     // ...but the accumulated colors differ (gradient vs per-transform hue).
     expect(Array.from(colored.sumRGB)).not.toEqual(Array.from(legacy.sumRGB));
+  });
+});
+
+describe("accumulateFlame non-transform color modes (fr-6do)", () => {
+  // A deliberately off-origin, asymmetric extent so each axis (and the radius)
+  // normalizes to a distinct t — a symmetric unit cube could mask an axis
+  // mix-up between the flame loop and writePointColor.
+  const CLOUD_BOUNDS: Bounds = {
+    minX: -1.5,
+    maxX: 2,
+    minY: -1,
+    maxY: 3,
+    minZ: -0.5,
+    maxZ: 1.5,
+    minR: 0.2,
+    maxR: 2.8,
+  };
+
+  /**
+   * The color-mode counterpart to the transform/colorLUT oracles above: drive
+   * the tested stepping blocks by hand and color each plotted point through
+   * `color.ts`'s shared `writePointColor` — the very primitive the point cloud
+   * uses — so this pins the flame's per-point color to the explorer's, mode for
+   * mode. ORTHOGRAPHIC (w = 1) means NDC = world xyz, so the projection reduces
+   * to the pixel mapping alone.
+   */
+  function referenceModeHistogram(
+    prepared: PreparedChaosGame,
+    mode: Exclude<ColorMode, "transform">,
+    bounds: Bounds,
+    width: number,
+    height: number,
+    iterations: number,
+    seed: number,
+  ): FlameHistogram {
+    const span = colorSpan(bounds);
+    const scratch = new Float32Array(3);
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const col = Math.floor((px + 1) * 0.5 * width);
+      const row = Math.floor((1 - py) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      writePointColor(scratch, 0, mode, px, py, pz, span);
+      const o = bucket * 3;
+      expected.sumRGB[o] += scratch[0];
+      expected.sumRGB[o + 1] += scratch[1];
+      expected.sumRGB[o + 2] += scratch[2];
+    }
+    expected.orbit = [x, y, z];
+    return expected;
+  }
+
+  for (const mode of ["height", "radius", "position", "uniform"] as const) {
+    it(`colors ${mode} mode exactly as the explorer's writePointColor does`, () => {
+      const prepared = prepareChaosGame(sierpinskiTetrahedron());
+      const width = 48;
+      const height = 48;
+      const iterations = 4000;
+      const seed = 7;
+
+      const actual = accumulateFlame(
+        prepared,
+        ORTHOGRAPHIC,
+        width,
+        height,
+        iterations,
+        mulberry32(seed),
+        transformColors(4),
+        undefined,
+        undefined,
+        mode,
+        CLOUD_BOUNDS,
+      );
+      const expected = referenceModeHistogram(
+        prepared,
+        mode,
+        CLOUD_BOUNDS,
+        width,
+        height,
+        iterations,
+        seed,
+      );
+
+      expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+      expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+      expect(actual.maxHits).toBe(expected.maxHits);
+      expect(actual.orbit).toEqual(expected.orbit);
+    });
+  }
+
+  it("paints every visited bucket flat cyan in uniform mode", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const hist = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      3000,
+      mulberry32(2),
+      transformColors(4),
+      undefined,
+      undefined,
+      "uniform",
+      CLOUD_BOUNDS,
+    );
+    let visited = 0;
+    for (let i = 0; i < hist.hits.length; i++) {
+      const h = hist.hits[i];
+      if (h <= 0) continue;
+      visited++;
+      const o = i * 3;
+      expect(hist.sumRGB[o]).toBeCloseTo(0.4 * h, 5);
+      expect(hist.sumRGB[o + 1]).toBeCloseTo(0.8 * h, 5);
+      expect(hist.sumRGB[o + 2]).toBeCloseTo(1.0 * h, 5);
+    }
+    expect(visited).toBeGreaterThan(0);
+  });
+
+  it("recolors without disturbing the orbit: same hits as the transform path, different colors, color coordinate untouched", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const transform = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      24,
+      24,
+      1500,
+      mulberry32(9),
+      transformColors(4),
+    );
+    const height = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      24,
+      24,
+      1500,
+      mulberry32(9),
+      transformColors(4),
+      undefined,
+      undefined,
+      "height",
+      CLOUD_BOUNDS,
+    );
+
+    // Coloring consumes no rng, so the orbit — and thus hits — is identical.
+    expect(Array.from(height.hits)).toEqual(Array.from(transform.hits));
+    // ...but the accumulated colors differ (height ramp vs per-transform hue).
+    expect(Array.from(height.sumRGB)).not.toEqual(Array.from(transform.sumRGB));
+    // The color coordinate belongs to structural (transform + LUT) coloring only.
+    expect(height.orbitColor).toBe(0.5);
+  });
+
+  it("ignores a colorLUT when a non-transform color mode is active", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+
+    const withLut = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      24,
+      24,
+      1500,
+      mulberry32(4),
+      transformColors(4),
+      undefined,
+      colorLUT,
+      "radius",
+      CLOUD_BOUNDS,
+    );
+    const withoutLut = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      24,
+      24,
+      1500,
+      mulberry32(4),
+      transformColors(4),
+      undefined,
+      undefined,
+      "radius",
+      CLOUD_BOUNDS,
+    );
+
+    // The mode's ramp wins over the palette, so the LUT changes nothing —
+    // colors and the (never-touched) color coordinate both match.
+    expect(Array.from(withLut.sumRGB)).toEqual(Array.from(withoutLut.sumRGB));
+    expect(withLut.orbitColor).toBe(0.5);
+    expect(withoutLut.orbitColor).toBe(0.5);
   });
 });
 
