@@ -1,6 +1,7 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { buildColors } from "../fractal/color";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
+import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
@@ -29,6 +30,13 @@ import {
   setPointSize,
   setRenderStyle,
   setShowGuides,
+  setSolidActive,
+  setSolidAmbient,
+  setSolidIterations,
+  setSolidLightAzimuth,
+  setSolidLightElevation,
+  setSolidResolution,
+  setSolidThreshold,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -219,6 +227,96 @@ function main(): void {
     refreshUi();
   }
 
+  // Solid render session (fr-v4f): mirrors the flame session above exactly,
+  // except the accumulated volume is world-space, so — unlike the frozen
+  // flame view — the camera stays LIVE while it converges (see animate()).
+  let solidWorker: Worker | null = null;
+  // True once the CURRENT session's first "grid" event has arrived; like
+  // flameHasImage, keeps the live explorer showing during the worker's
+  // startup gap instead of flashing an empty/stale volume.
+  let solidHasTexture = false;
+
+  function postVoxel(command: VoxelWorkerCommand): void {
+    solidWorker?.postMessage(command);
+  }
+
+  function handleSolidEvent(event: VoxelWorkerEvent): void {
+    switch (event.type) {
+      case "grid":
+        scene.setVoxelGrid(
+          event.texture,
+          event.size,
+          event.boundsMin,
+          event.boundsMax,
+        );
+        ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        solidHasTexture = true;
+        break;
+      case "resolutionNote":
+        ui.setSolidResolutionNote(event.effective, event.requested);
+        break;
+      case "error":
+        console.error(
+          "Solid render failed to accumulate; returning to explorer.",
+          event.message,
+        );
+        exitSolidMode();
+        break;
+    }
+  }
+
+  // Start accumulating a density volume of the current system in a fresh
+  // worker. Unlike enterFlameMode this does NOT freeze the camera: the grid
+  // is world-space, so the live orbit keeps working over it (see animate()).
+  // Also drops any transform selection, since the lens has no guide box in
+  // this mode and pointer gestures should orbit the camera instead of
+  // dragging one that's no longer shown.
+  function enterSolidMode(): void {
+    solidWorker?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker.
+    ui.setSolidResolutionNote(null); // clear any note from a previous render before the fresh worker reports its own.
+    ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
+    solidHasTexture = false; // keep showing the live explorer (see animate()) until this session's first grid arrives.
+
+    solidWorker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    solidWorker.onmessage = (e: MessageEvent<VoxelWorkerEvent>) =>
+      handleSolidEvent(e.data);
+    solidWorker.onerror = (e) => {
+      console.error("Solid worker crashed; returning to explorer.", e);
+      exitSolidMode();
+    };
+
+    postVoxel({
+      type: "start",
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      resolution: state.solid.resolution,
+      iterationsBudget: state.solid.iterations,
+      // A worker needs an explicit numeric seed — a live Rng (like
+      // Math.random) can't cross postMessage — which as a side effect makes
+      // a render a reproducible pure function of its inputs.
+      seed: Math.floor(Math.random() * 0xffffffff),
+    });
+
+    state = selectTransform(state, null);
+    state = setSolidActive(state, true);
+    refreshGuides();
+    refreshUi();
+  }
+
+  // Discard the in-progress accumulation and return to the live explorer.
+  // Like exitFlameMode, terminates outright rather than asking the worker to
+  // wind down — the next Render click spins up a fresh one regardless.
+  function exitSolidMode(): void {
+    solidWorker?.terminate();
+    solidWorker = null;
+    solidHasTexture = false; // tidy up so a stray volume can't leak into a future session's gap.
+    ui.setSolidResolutionNote(null);
+    state = setSolidActive(state, false);
+    refreshUi();
+  }
+
   // The lens has no guide box, so map its selection (like camera) to "nothing
   // highlighted" — only a numbered transform highlights a box or is draggable.
   function selectedBox(): number | null {
@@ -322,12 +420,15 @@ function main(): void {
     onSavePng: () => {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
       // while a flame render is active, its own 2D canvas (true alpha; see
-      // captureFlameFrame) — and hand it to the browser as a timestamped
-      // download.
+      // captureFlameFrame) — or, while a solid render is active, a fresh
+      // raymarch of the live camera (captureSolidFrame) — and hand it to the
+      // browser as a timestamped download.
       const link = document.createElement("a");
-      link.href = state.flameActive
-        ? scene.captureFlameFrame()
-        : scene.captureFrame();
+      link.href = state.solidActive
+        ? scene.captureSolidFrame()
+        : state.flameActive
+          ? scene.captureFlameFrame()
+          : scene.captureFrame();
       link.download = `fractal-${Date.now()}.png`;
       link.click();
     },
@@ -480,6 +581,55 @@ function main(): void {
       });
       scheduleSave();
     },
+    onEnterSolidRender: () => enterSolidMode(),
+    onExitSolidRender: () => exitSolidMode(),
+    onSolidThresholdInput: (value) => {
+      state = setSolidThreshold(state, value);
+      ui.updateLabels(state);
+      scene.setSolidParams(state.solid);
+      scheduleSave();
+    },
+    onSolidLightAzimuthInput: (value) => {
+      state = setSolidLightAzimuth(state, value);
+      ui.updateLabels(state);
+      scene.setSolidParams(state.solid);
+      scheduleSave();
+    },
+    onSolidLightElevationInput: (value) => {
+      state = setSolidLightElevation(state, value);
+      ui.updateLabels(state);
+      scene.setSolidParams(state.solid);
+      scheduleSave();
+    },
+    onSolidAmbientInput: (value) => {
+      state = setSolidAmbient(state, value);
+      ui.updateLabels(state);
+      scene.setSolidParams(state.solid);
+      scheduleSave();
+    },
+    onSolidIterationsInput: (value) => {
+      state = setSolidIterations(state, value);
+      ui.updateLabels(state);
+      postVoxel({
+        type: "setIterationsBudget",
+        iterations: state.solid.iterations,
+      });
+      scheduleSave();
+    },
+    onSolidResolutionInput: (value) => {
+      // The reducer clamps/snaps to the voxel step; unlike the flame's
+      // supersample the worker has no live "change resolution" command (a
+      // grid's dimensions are fixed at allocation), so a genuine change while
+      // active restarts the whole session via enterSolidMode — a fresh
+      // worker, exactly like a Render click.
+      const previousResolution = state.solid.resolution;
+      state = setSolidResolution(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+      if (state.solidActive && state.solid.resolution !== previousResolution) {
+        enterSolidMode();
+      }
+    },
   });
 
   attachInteractions(scene, orbit, {
@@ -519,6 +669,22 @@ function main(): void {
   // image was most recently uploaded via scene.setFlameImage.
   function animate(): void {
     requestAnimationFrame(animate);
+    if (state.solidActive) {
+      // Unlike the flame's frozen view, the volume is world-space: keep
+      // applying the live orbit camera so the user can keep looking around
+      // while accumulation converges.
+      scene.applyCamera(orbit);
+      if (solidHasTexture) {
+        scene.renderSolid();
+      } else {
+        // Keep showing the live explorer (fog + point cloud) until the
+        // worker's first grid lands, avoiding a flash of an empty volume
+        // during the worker startup gap.
+        scene.updateFog();
+        scene.render();
+      }
+      return;
+    }
     if (state.flameActive) {
       // Keep drawing the frozen explorer view (already-applied camera, no
       // further orbit input while flameActive) until the worker's first
