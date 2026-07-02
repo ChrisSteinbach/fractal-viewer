@@ -292,6 +292,9 @@ function main(): void {
       transforms: state.transforms,
       finalTransform: state.finalTransform ?? null,
       resolution: state.solid.resolution,
+      // The explorer's Color Mode carries into the voxel colors (fr-c1d);
+      // entering the mode snapshots it, exactly like the transform set.
+      colorMode: state.colorMode,
       iterationsBudget: state.solid.iterations,
       // A worker needs an explicit numeric seed — a live Rng (like
       // Math.random) can't cross postMessage — which as a side effect makes

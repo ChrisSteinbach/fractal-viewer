@@ -28,7 +28,7 @@ import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { Transform, Vec3 } from "../fractal/types";
+import type { ColorMode, Transform, Vec3 } from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -42,6 +42,9 @@ export type VoxelWorkerCommand =
       finalTransform: Transform | null;
       /** Requested voxels per axis; the session clamps to its memory budget. */
       resolution: number;
+      /** The explorer's active color mode, carried into the voxel colors
+       * (fr-c1d) — see `accumulateVoxels`' coloring doc. */
+      colorMode: ColorMode;
       iterationsBudget: number;
       /** Explicit numeric seed (not a live `Rng`, which can't cross
        * postMessage) — also makes a render a reproducible pure function of
@@ -162,6 +165,7 @@ export class VoxelWorkerSession {
   private prepared: PreparedChaosGame | null = null;
   private palette: ReturnType<typeof transformColors> = [];
   private rng: Rng = Math.random;
+  private colorMode: ColorMode = "transform";
   private grid: VoxelGrid | null = null;
   private bounds: VoxelBounds | null = null;
 
@@ -212,6 +216,7 @@ export class VoxelWorkerSession {
     this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform);
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
+    this.colorMode = cmd.colorMode;
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
@@ -288,7 +293,14 @@ export class VoxelWorkerSession {
       this.iterationsBudget - this.iterationsDone,
     );
     const t0 = this.now();
-    accumulateVoxels(prepared, grid, chunk, this.rng, this.palette);
+    accumulateVoxels(
+      prepared,
+      grid,
+      chunk,
+      this.rng,
+      this.palette,
+      this.colorMode,
+    );
     const t1 = this.now();
     this.iterationsDone += chunk;
     this.adaptChunkSize(t1 - t0);

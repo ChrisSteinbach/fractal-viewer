@@ -69,6 +69,52 @@ export function transformColors(count: number): Vec3[] {
 }
 
 /**
+ * The "by height" ramp at normalized height `t` in [0, 1] — blue (low) →
+ * green (mid) → red (high) — written into `out` at offset `o`. The ONE
+ * definition of the ramp: `buildColors`' height branch and
+ * {@link buildColorModeLUT} both call this, so the explorer's point colors
+ * and the solid render's voxel colors can never drift apart.
+ */
+function writeHeightColor(out: Float32Array, o: number, t: number): void {
+  if (t < 0.5) {
+    writeHsl(out, o, 0.6 - t * 0.4, 0.8, 0.5);
+  } else {
+    writeHsl(out, o, 0.2 - (t - 0.5) * 0.4, 0.8, 0.5);
+  }
+}
+
+/** The "by radius" ramp at normalized radius `t` in [0, 1] — inner = warm,
+ * outer = cool. Single definition, shared exactly like the height ramp. */
+function writeRadiusColor(out: Float32Array, o: number, t: number): void {
+  writeHsl(out, o, t * 0.7, 0.85, 0.55);
+}
+
+/** The "uniform" mode's cyan, shared by `buildColors` and the solid render. */
+export const UNIFORM_POINT_COLOR: Vec3 = [0.4, 0.8, 1.0];
+
+/** How "by position" maps a normalized coordinate to a channel: compressed
+ * into [0.2, 1.0] so no axis ever fades fully to black. Shared constants for
+ * the same no-drift reason as the ramp writers. */
+export const POSITION_COLOR_SCALE = 0.8;
+export const POSITION_COLOR_OFFSET = 0.2;
+
+/**
+ * A 256-entry interleaved-RGB lookup table over the height or radius ramp —
+ * for hot loops that need a ramp color per iteration without `writeHsl`'s
+ * trigonometry-free-but-branchy work in the inner loop (the solid render's
+ * `accumulateVoxels`). Entry `i` is the ramp at `t = i / 255`; quantizing to
+ * 256 steps matches the flame's palette LUT precision.
+ */
+export function buildColorModeLUT(mode: "height" | "radius"): Float32Array {
+  const lut = new Float32Array(256 * 3);
+  const write = mode === "height" ? writeHeightColor : writeRadiusColor;
+  for (let i = 0; i < 256; i++) {
+    write(lut, i * 3, i / 255);
+  }
+  return lut;
+}
+
+/**
  * Build the per-point color buffer for a generated cloud. Each {@link ColorMode}
  * maps a point's transform, height, radius, position, or generation order to an
  * sRGB color, mirroring the original viewer's palettes.
@@ -107,12 +153,7 @@ export function buildColors(
       for (let i = 0; i < count; i++) {
         const py = positions[i * 3 + 1];
         const t = (py - bounds.minY) / rangeY;
-        const o = i * 3;
-        if (t < 0.5) {
-          writeHsl(colors, o, 0.6 - t * 0.4, 0.8, 0.5);
-        } else {
-          writeHsl(colors, o, 0.2 - (t - 0.5) * 0.4, 0.8, 0.5);
-        }
+        writeHeightColor(colors, i * 3, t);
       }
       break;
     }
@@ -125,7 +166,7 @@ export function buildColors(
         const pz = positions[o + 2];
         const r = Math.sqrt(px * px + py * py + pz * pz);
         const t = (r - bounds.minR) / rangeR;
-        writeHsl(colors, o, t * 0.7, 0.85, 0.55);
+        writeRadiusColor(colors, o, t);
       }
       break;
     }
@@ -133,18 +174,25 @@ export function buildColors(
       // XYZ → RGB.
       for (let i = 0; i < count; i++) {
         const o = i * 3;
-        colors[o] = ((positions[o] - bounds.minX) / rangeX) * 0.8 + 0.2;
-        colors[o + 1] = ((positions[o + 1] - bounds.minY) / rangeY) * 0.8 + 0.2;
-        colors[o + 2] = ((positions[o + 2] - bounds.minZ) / rangeZ) * 0.8 + 0.2;
+        colors[o] =
+          ((positions[o] - bounds.minX) / rangeX) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
+        colors[o + 1] =
+          ((positions[o + 1] - bounds.minY) / rangeY) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
+        colors[o + 2] =
+          ((positions[o + 2] - bounds.minZ) / rangeZ) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
       }
       break;
     }
     case "uniform":
     default: {
+      const [ur, ug, ub] = UNIFORM_POINT_COLOR;
       for (let i = 0; i < count * 3; i += 3) {
-        colors[i] = 0.4;
-        colors[i + 1] = 0.8;
-        colors[i + 2] = 1.0;
+        colors[i] = ur;
+        colors[i + 1] = ug;
+        colors[i + 2] = ub;
       }
       break;
     }

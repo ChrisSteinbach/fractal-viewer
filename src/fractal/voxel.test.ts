@@ -8,7 +8,11 @@ import {
 } from "./voxel";
 import type { VoxelBounds } from "./voxel";
 import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
-import { transformColors } from "./color";
+import {
+  UNIFORM_POINT_COLOR,
+  buildColorModeLUT,
+  transformColors,
+} from "./color";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -23,9 +27,24 @@ function fixedPointSystem(point: Vec3): Transform[] {
   return [{ id: 0, position: point, rotation: [0, 0, 0], scale: [0, 0, 0] }];
 }
 
-/** A symmetric cube around the origin, so voxel indices are easy to predict. */
+/** A symmetric cube around the origin, so voxel indices are easy to predict;
+ * color extents match the cube (radius 0..half) so mode tests can compute
+ * their expected normalized coordinates by hand. */
 function unitishBounds(half: number): VoxelBounds {
-  return { min: [-half, -half, -half], max: [half, half, half] };
+  return {
+    min: [-half, -half, -half],
+    max: [half, half, half],
+    color: {
+      minX: -half,
+      maxX: half,
+      minY: -half,
+      maxY: half,
+      minZ: -half,
+      maxZ: half,
+      minR: 0,
+      maxR: half,
+    },
+  };
 }
 
 describe("createVoxelGrid", () => {
@@ -67,6 +86,20 @@ describe("computeVoxelBounds", () => {
     expect((bounds.min[2] + bounds.max[2]) / 2).toBeCloseTo(3, 6);
     // Floored away from zero so the world-to-voxel mapping stays invertible.
     expect(bounds.max[0] - bounds.min[0]).toBeGreaterThan(0);
+  });
+
+  it("reports the attractor's own trimmed extents for color normalization", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([1, 2, 3]));
+    const bounds = computeVoxelBounds(prepared, mulberry32(5), 1000);
+
+    // A single-point attractor: every extent collapses onto the point.
+    expect(bounds.color.minY).toBeCloseTo(2, 9);
+    expect(bounds.color.maxY).toBeCloseTo(2, 9);
+    expect(bounds.color.minX).toBeCloseTo(1, 9);
+    expect(bounds.color.maxZ).toBeCloseTo(3, 9);
+    const r = Math.sqrt(1 + 4 + 9);
+    expect(bounds.color.minR).toBeCloseTo(r, 9);
+    expect(bounds.color.maxR).toBeCloseTo(r, 9);
   });
 
   it("trims rare outliers instead of stretching the grid to reach them", () => {
@@ -134,6 +167,111 @@ describe("accumulateVoxels bucketing", () => {
     expect(grid.maxDensity).toBe(0);
     // The orbit still advanced — the next chunk resumes from the attractor.
     expect(grid.orbit).toEqual([5, 5, 5]);
+  });
+});
+
+describe("accumulateVoxels color modes (fr-c1d)", () => {
+  it("colors by the height ramp at the point's normalized height", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
+    const grid = createVoxelGrid(4, unitishBounds(1));
+
+    accumulateVoxels(
+      prepared,
+      grid,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "height",
+    );
+
+    // y = 0 in a [-1, 1] color range: t = 0.5 → LUT index (0.5*255+0.5)|0.
+    const lut = buildColorModeLUT("height");
+    const li = ((0.5 * 255 + 0.5) | 0) * 3;
+    const o = (2 * 16 + 2 * 4 + 2) * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(lut[li], 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(lut[li + 1], 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(lut[li + 2], 6);
+  });
+
+  it("colors by the radius ramp at the point's normalized radius", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0.5, 0, 0]));
+    const grid = createVoxelGrid(4, unitishBounds(1));
+
+    accumulateVoxels(
+      prepared,
+      grid,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "radius",
+    );
+
+    // r = 0.5 with color extents 0..1: t = 0.5. Voxel: x floor(1.5*2)=3, y=z=2.
+    const lut = buildColorModeLUT("radius");
+    const li = ((0.5 * 255 + 0.5) | 0) * 3;
+    const o = (2 * 16 + 2 * 4 + 3) * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(lut[li], 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(lut[li + 1], 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(lut[li + 2], 6);
+  });
+
+  it("colors by normalized position mapped into the compressed RGB range", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
+    const grid = createVoxelGrid(4, unitishBounds(1));
+
+    accumulateVoxels(
+      prepared,
+      grid,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "position",
+    );
+
+    // Every axis: t = 0.5 → 0.5 * 0.8 + 0.2 = 0.6, matching buildColors.
+    const o = (2 * 16 + 2 * 4 + 2) * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(0.6, 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(0.6, 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(0.6, 6);
+  });
+
+  it("colors uniform mode with the explorer's flat cyan", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
+    const grid = createVoxelGrid(4, unitishBounds(1));
+
+    accumulateVoxels(
+      prepared,
+      grid,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "uniform",
+    );
+
+    const o = (2 * 16 + 2 * 4 + 2) * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(UNIFORM_POINT_COLOR[0], 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(UNIFORM_POINT_COLOR[1], 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(UNIFORM_POINT_COLOR[2], 6);
+  });
+
+  it("leaves the orbit (and thus density) byte-identical across color modes", () => {
+    // Coloring must never consume rng: the same seed has to trace the same
+    // attractor regardless of how it is painted.
+    const transforms = sierpinskiTetrahedron();
+    const palette = transformColors(transforms.length);
+    const run = (mode: "transform" | "height"): Float32Array => {
+      const grid = createVoxelGrid(8, unitishBounds(2));
+      accumulateVoxels(
+        prepareChaosGame(transforms),
+        grid,
+        1000,
+        mulberry32(42),
+        palette,
+        mode,
+      );
+      return grid.density;
+    };
+    expect(run("height")).toEqual(run("transform"));
   });
 });
 

@@ -30,14 +30,28 @@ import {
   plotPoint,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
+import {
+  POSITION_COLOR_OFFSET,
+  POSITION_COLOR_SCALE,
+  UNIFORM_POINT_COLOR,
+  buildColorModeLUT,
+} from "./color";
 import type { Rng } from "./rng";
-import type { Vec3 } from "./types";
+import type { Bounds, ColorMode, Vec3 } from "./types";
 
 /** World-space cube the voxel grid covers (equal extent per axis, so voxels
  * are isotropic and the raymarcher's gradient normals aren't skewed). */
 export interface VoxelBounds {
   min: Vec3;
   max: Vec3;
+  /**
+   * The attractor's own trimmed extents (per-axis plus radial), BEFORE the
+   * cube-ification and margin that shape `min`/`max`. Color modes normalize
+   * against these — the same way `buildColors` normalizes against the point
+   * cloud's `ChaosGameResult.bounds` — so a flat attractor's height ramp
+   * spans its real y-range, not the (much taller) cube the grid needs.
+   */
+  color: Bounds;
 }
 
 /**
@@ -77,6 +91,7 @@ export function computeVoxelBounds(
   const xs = new Float64Array(samples);
   const ys = new Float64Array(samples);
   const zs = new Float64Array(samples);
+  const rs = new Float64Array(samples);
 
   let x = rng() - 0.5;
   let y = rng() - 0.5;
@@ -96,11 +111,13 @@ export function computeVoxelBounds(
     xs[i] = px;
     ys[i] = py;
     zs[i] = pz;
+    rs[i] = Math.sqrt(px * px + py * py + pz * pz);
   }
 
   xs.sort();
   ys.sort();
   zs.sort();
+  rs.sort();
   const lo = Math.floor(BOUNDS_QUANTILE * samples);
   const hi = Math.max(lo, samples - 1 - lo);
 
@@ -120,6 +137,18 @@ export function computeVoxelBounds(
   return {
     min: [cx - half, cy - half, cz - half],
     max: [cx + half, cy + half, cz + half],
+    // The un-cubed, un-padded trimmed extents — what color normalization
+    // wants (see the VoxelBounds.color doc).
+    color: {
+      minX: xs[lo],
+      maxX: xs[hi],
+      minY: ys[lo],
+      maxY: ys[hi],
+      minZ: zs[lo],
+      maxZ: zs[hi],
+      minR: rs[lo],
+      maxR: rs[hi],
+    },
   };
 }
 
@@ -213,13 +242,46 @@ const FALLBACK_R = 1;
 const FALLBACK_G = 1;
 const FALLBACK_B = 1;
 
+// Integer codes for the color-mode dispatch inside accumulateVoxels' hot
+// loop — a couple of compares per iteration instead of string equality.
+const MODE_TRANSFORM = 0;
+const MODE_HEIGHT = 1;
+const MODE_RADIUS = 2;
+const MODE_POSITION = 3;
+const MODE_UNIFORM = 4;
+
+function colorModeCode(mode: ColorMode): number {
+  switch (mode) {
+    case "height":
+      return MODE_HEIGHT;
+    case "radius":
+      return MODE_RADIUS;
+    case "position":
+      return MODE_POSITION;
+    case "uniform":
+      return MODE_UNIFORM;
+    default:
+      return MODE_TRANSFORM;
+  }
+}
+
 /**
  * Accumulate `iterations` more chaos-game steps into a voxel grid. Each
  * plotted point (`stepOrbit` + `plotPoint`, exactly as the point-cloud and
  * flame paths compute them) that lands inside `grid.bounds` increments its
- * voxel's hit count and folds `palette[transformIndex]` into that voxel's
+ * voxel's hit count and folds the point's color into that voxel's
  * running-mean color; points outside the bounds are skipped, exactly like a
  * flame point outside the frame.
+ *
+ * **Coloring** follows the explorer's `colorMode` (fr-c1d), using the exact
+ * hue formulas `buildColors` uses (shared via `color.ts`, so the two can't
+ * drift): `"transform"` (the default) is `palette[transformIndex]`;
+ * `"height"`/`"radius"` index the shared ramp at the point's normalized
+ * coordinate; `"position"` maps normalized xyz to rgb; `"uniform"` is the
+ * flat cyan. Normalization uses {@link VoxelBounds.color} — the attractor's
+ * own trimmed extents, the voxel counterpart of `buildColors`' cloud bounds.
+ * Coloring never touches `rng`, so a given seed produces the byte-identical
+ * orbit (and thus identical `density`) in every mode.
  *
  * **Progressive**: pass the same grid back in to keep converging it — the
  * orbit resumes from where it left off (see {@link VoxelGrid.orbit}), so a
@@ -238,10 +300,31 @@ export function accumulateVoxels(
   iterations: number,
   rng: Rng,
   palette: Vec3[],
+  colorMode: ColorMode = "transform",
 ): VoxelGrid {
   const { affines, variations, finalAffine, finalWarp } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
+
+  // Color-mode dispatch, hoisted like buildColors': an integer code, a
+  // prebuilt ramp LUT for height/radius (256 entries once per call, not
+  // per iteration), and precomputed normalization factors. The `|| 1`
+  // degenerate-range guard mirrors buildColors'.
+  const mode = colorModeCode(colorMode);
+  const lut =
+    mode === MODE_HEIGHT || mode === MODE_RADIUS
+      ? buildColorModeLUT(mode === MODE_HEIGHT ? "height" : "radius")
+      : null;
+  const cb = grid.bounds.color;
+  const cMinX = cb.minX;
+  const cMinY = cb.minY;
+  const cMinZ = cb.minZ;
+  const cMinR = cb.minR;
+  const invRangeX = 1 / (cb.maxX - cb.minX || 1);
+  const invRangeY = 1 / (cb.maxY - cb.minY || 1);
+  const invRangeZ = 1 / (cb.maxZ - cb.minZ || 1);
+  const invRangeR = 1 / (cb.maxR - cb.minR || 1);
+  const [uniR, uniG, uniB] = UNIFORM_POINT_COLOR;
 
   const minX = grid.bounds.min[0];
   const minY = grid.bounds.min[1];
@@ -347,10 +430,44 @@ export function accumulateVoxels(
     density[bucket] = d;
     if (d > maxDensity) maxDensity = d;
 
-    const rgb = palette[idx];
-    const r = rgb === undefined ? FALLBACK_R : rgb[0];
-    const g = rgb === undefined ? FALLBACK_G : rgb[1];
-    const b = rgb === undefined ? FALLBACK_B : rgb[2];
+    let r: number;
+    let g: number;
+    let b: number;
+    if (mode === MODE_TRANSFORM) {
+      const rgb = palette[idx];
+      r = rgb === undefined ? FALLBACK_R : rgb[0];
+      g = rgb === undefined ? FALLBACK_G : rgb[1];
+      b = rgb === undefined ? FALLBACK_B : rgb[2];
+    } else if (lut !== null) {
+      // height or radius: the shared ramp at the normalized coordinate.
+      // Unlike buildColors' exact point-cloud bounds, the trimmed pilot
+      // extents CAN be (slightly) exceeded by a live point, so clamp t.
+      const t =
+        mode === MODE_HEIGHT
+          ? (py - cMinY) * invRangeY
+          : (Math.sqrt(px * px + py * py + pz * pz) - cMinR) * invRangeR;
+      const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+      r = lut[li];
+      g = lut[li + 1];
+      b = lut[li + 2];
+    } else if (mode === MODE_POSITION) {
+      const tx = (px - cMinX) * invRangeX;
+      const ty = (py - cMinY) * invRangeY;
+      const tz = (pz - cMinZ) * invRangeZ;
+      r =
+        (tx <= 0 ? 0 : tx >= 1 ? 1 : tx) * POSITION_COLOR_SCALE +
+        POSITION_COLOR_OFFSET;
+      g =
+        (ty <= 0 ? 0 : ty >= 1 ? 1 : ty) * POSITION_COLOR_SCALE +
+        POSITION_COLOR_OFFSET;
+      b =
+        (tz <= 0 ? 0 : tz >= 1 ? 1 : tz) * POSITION_COLOR_SCALE +
+        POSITION_COLOR_OFFSET;
+    } else {
+      r = uniR;
+      g = uniG;
+      b = uniB;
+    }
     const o = bucket * 3;
     const inv = 1 / d;
     avgRGB[o] += (r - avgRGB[o]) * inv;

@@ -18,6 +18,7 @@ function startCommand(
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     resolution: 32,
+    colorMode: "transform",
     iterationsBudget: 500,
     seed: 1,
     ...overrides,
@@ -141,6 +142,28 @@ describe("VoxelWorkerSession start", () => {
       effective: null,
       requested: 32,
     });
+  });
+
+  it("carries the color mode into the packed voxel colors (fr-c1d)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ colorMode: "uniform", iterationsBudget: 2000 }),
+    );
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    const texture = grids[grids.length - 1].texture;
+    // Uniform mode paints every hit voxel the explorer's flat cyan
+    // (0.4, 0.8, 1.0 → 102, 204, 255); empty voxels stay transparent black.
+    let colored = 0;
+    for (let i = 0; i < texture.length; i += 4) {
+      if (texture[i + 3] === 0) continue;
+      colored++;
+      expect(texture[i]).toBe(102);
+      expect(texture[i + 1]).toBe(204);
+      expect(texture[i + 2]).toBe(255);
+    }
+    expect(colored).toBeGreaterThan(0);
   });
 
   it("is reproducible: the same seed yields byte-identical final textures", () => {
