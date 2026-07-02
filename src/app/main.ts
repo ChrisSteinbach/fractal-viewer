@@ -27,6 +27,11 @@ import {
   setNumPoints,
   setPanelOpen,
   setPointSize,
+  setRaymarchActive,
+  setRaymarchIterations,
+  setRaymarchMaxDistance,
+  setRaymarchMaxSteps,
+  setRaymarchPower,
   setRenderStyle,
   setShowGuides,
   setTransforms,
@@ -161,6 +166,7 @@ function main(): void {
   // fresh worker. Called only from the Render button — never automatically —
   // so the explorer stays the default, always-interactive experience.
   function enterFlameMode(): void {
+    if (state.raymarchActive) exitRaymarchMode(); // the two render modes are mutually exclusive.
     flameWorker?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker.
     const { width, height } = scene.flameRenderSize();
     const projection = scene.flameProjectionMatrix();
@@ -216,6 +222,24 @@ function main(): void {
     ui.setFlameSupersampleNote(null);
     flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
     state = setFlameActive(state, false);
+    refreshUi();
+  }
+
+  // Freeze the current camera and switch to the GPU raymarch renderer (fr-yor).
+  // Like the flame render this is invoked only from its button, never
+  // automatically, so the explorer stays the default. The two render modes are
+  // mutually exclusive; entering this one tears down any active flame render.
+  function enterRaymarchMode(): void {
+    if (state.flameActive) exitFlameMode();
+    scene.setRaymarchParams(state.raymarch);
+    state = setRaymarchActive(state, true);
+    refreshUi();
+  }
+
+  // Return to the live explorer, exactly as it was left (the camera was never
+  // touched while rendering).
+  function exitRaymarchMode(): void {
+    state = setRaymarchActive(state, false);
     refreshUi();
   }
 
@@ -325,9 +349,11 @@ function main(): void {
       // captureFlameFrame) — and hand it to the browser as a timestamped
       // download.
       const link = document.createElement("a");
-      link.href = state.flameActive
-        ? scene.captureFlameFrame()
-        : scene.captureFrame();
+      link.href = state.raymarchActive
+        ? scene.captureRaymarchFrame()
+        : state.flameActive
+          ? scene.captureFlameFrame()
+          : scene.captureFrame();
       link.download = `fractal-${Date.now()}.png`;
       link.click();
     },
@@ -480,6 +506,34 @@ function main(): void {
       });
       scheduleSave();
     },
+    onEnterRaymarchRender: () => enterRaymarchMode(),
+    onExitRaymarchRender: () => exitRaymarchMode(),
+    // The raymarch params are all live-reactive: push them to the shader and
+    // the animation loop redraws the frozen view with the new value next frame.
+    onRaymarchPowerInput: (value) => {
+      state = setRaymarchPower(state, value);
+      ui.updateLabels(state);
+      scene.setRaymarchParams(state.raymarch);
+      scheduleSave();
+    },
+    onRaymarchIterationsInput: (value) => {
+      state = setRaymarchIterations(state, value);
+      ui.updateLabels(state);
+      scene.setRaymarchParams(state.raymarch);
+      scheduleSave();
+    },
+    onRaymarchMaxStepsInput: (value) => {
+      state = setRaymarchMaxSteps(state, value);
+      ui.updateLabels(state);
+      scene.setRaymarchParams(state.raymarch);
+      scheduleSave();
+    },
+    onRaymarchMaxDistanceInput: (value) => {
+      state = setRaymarchMaxDistance(state, value);
+      ui.updateLabels(state);
+      scene.setRaymarchParams(state.raymarch);
+      scheduleSave();
+    },
   });
 
   attachInteractions(scene, orbit, {
@@ -529,6 +583,13 @@ function main(): void {
       } else {
         scene.render();
       }
+      return;
+    }
+    if (state.raymarchActive) {
+      // Re-march the frozen camera every frame (the shader is the whole
+      // renderer; live param edits show up here immediately). No orbit input
+      // is applied while active, so the view stays frozen.
+      scene.renderRaymarch();
       return;
     }
     scene.applyCamera(orbit);

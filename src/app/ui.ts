@@ -72,6 +72,16 @@ export interface UiHandlers {
   onFlameEstimatorRadiusInput: (value: number) => void;
   onFlameEstimatorMinimumRadiusInput: (value: number) => void;
   onFlameEstimatorCurveInput: (value: number) => void;
+  /** "Raymarch Current View" was clicked: freeze the camera and start a
+   * distance-estimator render (fr-yor). */
+  onEnterRaymarchRender: () => void;
+  /** "Back to Explorer" was clicked in the raymarch panel. */
+  onExitRaymarchRender: () => void;
+  /** Raymarch parameter sliders — all live-reactive (re-render, no restart). */
+  onRaymarchPowerInput: (value: number) => void;
+  onRaymarchIterationsInput: (value: number) => void;
+  onRaymarchMaxStepsInput: (value: number) => void;
+  onRaymarchMaxDistanceInput: (value: number) => void;
 }
 
 /**
@@ -307,6 +317,18 @@ export class Ui {
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
+  private readonly raymarchBtn: HTMLButtonElement;
+  private readonly raymarchControls: HTMLElement;
+  private readonly raymarchPowerLabel: HTMLElement;
+  private readonly raymarchPowerSlider: HTMLInputElement;
+  private readonly raymarchIterationsLabel: HTMLElement;
+  private readonly raymarchIterationsSlider: HTMLInputElement;
+  private readonly raymarchStepsLabel: HTMLElement;
+  private readonly raymarchStepsSlider: HTMLInputElement;
+  private readonly raymarchDistanceLabel: HTMLElement;
+  private readonly raymarchDistanceSlider: HTMLInputElement;
+  private readonly exitRaymarchBtn: HTMLButtonElement;
+
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
@@ -362,6 +384,17 @@ export class Ui {
     this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
+    this.raymarchBtn = this.byId("raymarchBtn");
+    this.raymarchControls = this.byId("raymarchControls");
+    this.raymarchPowerLabel = this.byId("raymarchPowerLabel");
+    this.raymarchPowerSlider = this.byId("raymarchPowerSlider");
+    this.raymarchIterationsLabel = this.byId("raymarchIterationsLabel");
+    this.raymarchIterationsSlider = this.byId("raymarchIterationsSlider");
+    this.raymarchStepsLabel = this.byId("raymarchStepsLabel");
+    this.raymarchStepsSlider = this.byId("raymarchStepsSlider");
+    this.raymarchDistanceLabel = this.byId("raymarchDistanceLabel");
+    this.raymarchDistanceSlider = this.byId("raymarchDistanceSlider");
+    this.exitRaymarchBtn = this.byId("exitRaymarchBtn");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -448,6 +481,28 @@ export class Ui {
         Number(this.flameEstimatorCurveSlider.value),
       ),
     );
+    this.raymarchBtn.addEventListener("click", () =>
+      handlers.onEnterRaymarchRender(),
+    );
+    this.exitRaymarchBtn.addEventListener("click", () =>
+      handlers.onExitRaymarchRender(),
+    );
+    this.raymarchPowerSlider.addEventListener("input", () =>
+      handlers.onRaymarchPowerInput(Number(this.raymarchPowerSlider.value)),
+    );
+    this.raymarchIterationsSlider.addEventListener("input", () =>
+      handlers.onRaymarchIterationsInput(
+        Number(this.raymarchIterationsSlider.value),
+      ),
+    );
+    this.raymarchStepsSlider.addEventListener("input", () =>
+      handlers.onRaymarchMaxStepsInput(Number(this.raymarchStepsSlider.value)),
+    );
+    this.raymarchDistanceSlider.addEventListener("input", () =>
+      handlers.onRaymarchMaxDistanceInput(
+        Number(this.raymarchDistanceSlider.value),
+      ),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -489,17 +544,34 @@ export class Ui {
       state.flame.estimatorCurve.toFixed(2);
     this.flameEstimatorCurveSlider.value = String(state.flame.estimatorCurve);
 
-    // The flame render takes over the panel — editing controls that have no
-    // effect on a frozen, already-plotted image would just be confusing —
-    // and the explorer's own hints (drag/orbit/scale) no longer apply since
-    // the camera and geometry are frozen for the render.
-    this.explorerControls.classList.toggle("hidden", state.flameActive);
-    this.renderBtn.classList.toggle("hidden", state.flameActive);
+    this.raymarchPowerLabel.textContent = state.raymarch.power.toFixed(1);
+    this.raymarchPowerSlider.value = String(state.raymarch.power);
+    this.raymarchIterationsLabel.textContent = `${state.raymarch.iterations} iterations`;
+    this.raymarchIterationsSlider.value = String(state.raymarch.iterations);
+    this.raymarchStepsLabel.textContent = String(state.raymarch.maxSteps);
+    this.raymarchStepsSlider.value = String(state.raymarch.maxSteps);
+    this.raymarchDistanceLabel.textContent =
+      state.raymarch.maxDistance.toFixed(1);
+    this.raymarchDistanceSlider.value = String(state.raymarch.maxDistance);
+
+    // Either render mode takes over the panel — editing controls that have no
+    // effect on a frozen render would just be confusing — and the explorer's
+    // own hints (drag/orbit/scale) no longer apply since the camera and
+    // geometry are frozen. The two modes are mutually exclusive, so each one's
+    // controls show only while it is the active render.
+    const rendering = state.flameActive || state.raymarchActive;
+    this.explorerControls.classList.toggle("hidden", rendering);
+    this.renderBtn.classList.toggle("hidden", rendering);
+    this.raymarchBtn.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
+    this.raymarchControls.classList.toggle("hidden", !state.raymarchActive);
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
       this.setHelpLines(["Rendering the frozen camera view…"]);
+    } else if (state.raymarchActive) {
+      this.helpTitle.textContent = "Raymarch Render";
+      this.setHelpLines(["Raymarching the frozen camera view…"]);
     } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
       this.setHelpLines(

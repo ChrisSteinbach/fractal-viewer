@@ -40,6 +40,12 @@ function noopHandlers(): UiHandlers {
     onFlameEstimatorRadiusInput: vi.fn(),
     onFlameEstimatorMinimumRadiusInput: vi.fn(),
     onFlameEstimatorCurveInput: vi.fn(),
+    onEnterRaymarchRender: vi.fn(),
+    onExitRaymarchRender: vi.fn(),
+    onRaymarchPowerInput: vi.fn(),
+    onRaymarchIterationsInput: vi.fn(),
+    onRaymarchMaxStepsInput: vi.fn(),
+    onRaymarchMaxDistanceInput: vi.fn(),
   };
 }
 
@@ -940,5 +946,122 @@ describe("Ui.setFlameSupersampleNote", () => {
     ui.setFlameSupersampleNote(null);
     expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+  });
+});
+
+describe("Ui raymarch render controls", () => {
+  function raymarchBtn(): HTMLButtonElement {
+    return document.getElementById("raymarchBtn") as HTMLButtonElement;
+  }
+  function exitRaymarchBtn(): HTMLButtonElement {
+    return document.getElementById("exitRaymarchBtn") as HTMLButtonElement;
+  }
+  function raymarchControls(): HTMLElement {
+    return document.getElementById("raymarchControls") as HTMLElement;
+  }
+  function explorerControls(): HTMLElement {
+    return document.getElementById("explorerControls") as HTMLElement;
+  }
+
+  it("shows the explorer panel and both render buttons while inactive", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), raymarchActive: false });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(false);
+    expect(raymarchBtn().classList.contains("hidden")).toBe(false);
+    expect(raymarchControls().classList.contains("hidden")).toBe(true);
+  });
+
+  it("swaps to the raymarch controls and hides the explorer panel while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), raymarchActive: true });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(raymarchBtn().classList.contains("hidden")).toBe(true);
+    // The flame Render button is hidden too — the modes are mutually exclusive.
+    expect(
+      document.getElementById("renderBtn")?.classList.contains("hidden"),
+    ).toBe(true);
+    expect(raymarchControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("names the raymarch mode in the help box while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), raymarchActive: true });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "Raymarch Render",
+    );
+  });
+
+  it("fires onEnterRaymarchRender when Raymarch Current View is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    raymarchBtn().click();
+    expect(handlers.onEnterRaymarchRender).toHaveBeenCalledOnce();
+  });
+
+  it("fires onExitRaymarchRender when Back to Explorer is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    exitRaymarchBtn().click();
+    expect(handlers.onExitRaymarchRender).toHaveBeenCalledOnce();
+  });
+
+  it("reflects the power and detail params into their sliders and labels", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      raymarch: {
+        ...initialState(true).raymarch,
+        power: 6,
+        iterations: 12,
+      },
+    });
+
+    const power = document.getElementById(
+      "raymarchPowerSlider",
+    ) as HTMLInputElement;
+    expect(power.value).toBe("6");
+    expect(document.getElementById("raymarchPowerLabel")?.textContent).toBe(
+      "6.0",
+    );
+
+    const detail = document.getElementById(
+      "raymarchIterationsSlider",
+    ) as HTMLInputElement;
+    expect(detail.value).toBe("12");
+    expect(
+      document.getElementById("raymarchIterationsLabel")?.textContent,
+    ).toBe("12 iterations");
+  });
+
+  it("reports the power slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "raymarchPowerSlider",
+    ) as HTMLInputElement;
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onRaymarchPowerInput).toHaveBeenCalledWith(10);
+  });
+
+  it("reports the max-steps slider's numeric value on input", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "raymarchStepsSlider",
+    ) as HTMLInputElement;
+    slider.value = "160";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onRaymarchMaxStepsInput).toHaveBeenCalledWith(160);
   });
 });

@@ -259,6 +259,64 @@
           ← Back to Explorer
         </button>
       </div>
+
+      <h3>Raymarch Render</h3>
+      <button class="btn btn-blue" id="raymarchBtn" type="button">
+        ◈ Raymarch Current View
+      </button>
+      <div id="raymarchControls" class="hidden">
+        <p class="flame-hint">
+          GPU distance-estimator render of a Mandelbulb through the frozen
+          camera, with real lighting. The live view is paused until you go back.
+        </p>
+        <label class="select-label">
+          Power: <span id="raymarchPowerLabel">8.0</span>
+          <input
+            type="range"
+            id="raymarchPowerSlider"
+            min="2"
+            max="16"
+            step="0.5"
+            value="8"
+          />
+        </label>
+        <label class="select-label">
+          Detail: <span id="raymarchIterationsLabel">8 iterations</span>
+          <input
+            type="range"
+            id="raymarchIterationsSlider"
+            min="1"
+            max="20"
+            step="1"
+            value="8"
+          />
+        </label>
+        <label class="select-label">
+          Max steps: <span id="raymarchStepsLabel">96</span>
+          <input
+            type="range"
+            id="raymarchStepsSlider"
+            min="16"
+            max="256"
+            step="8"
+            value="96"
+          />
+        </label>
+        <label class="select-label">
+          Max distance: <span id="raymarchDistanceLabel">12.0</span>
+          <input
+            type="range"
+            id="raymarchDistanceSlider"
+            min="2"
+            max="40"
+            step="0.5"
+            value="12"
+          />
+        </label>
+        <button class="btn btn-ghost" id="exitRaymarchBtn" type="button">
+          ← Back to Explorer
+        </button>
+      </div>
     </div>
 
     <script type="module" src="./main.ts"></script>
