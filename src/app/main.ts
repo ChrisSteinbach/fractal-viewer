@@ -120,6 +120,14 @@ function main(): void {
   // needs): the worker keeps its big oversampled histogram entirely to
   // itself and only ever transfers back a small display-resolution image.
   let flameWorker: Worker | null = null;
+  // True once the CURRENT session's first "progress" image has arrived.
+  // Spinning up a worker (and the round trip to its first accumulate +
+  // downsample + tone-map) takes real time, unlike fr-o7s's synchronous
+  // first stepFlame call — animate() uses this to keep showing the frozen
+  // explorer view for that gap instead of a flash of the flame canvas's
+  // stale contents (blank on a first-ever render, or the PREVIOUS render's
+  // image on a repeat one, since neither enter nor exit clears it).
+  let flameHasImage = false;
 
   function postFlame(command: FlameWorkerCommand): void {
     flameWorker?.postMessage(command);
@@ -130,6 +138,7 @@ function main(): void {
       case "progress":
         scene.setFlameImage(event.image, event.width, event.height);
         ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
+        flameHasImage = true;
         break;
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
@@ -152,6 +161,8 @@ function main(): void {
     const { width, height } = scene.flameRenderSize();
     const projection = scene.flameProjectionMatrix();
     ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh worker reports its own.
+    ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
+    flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
 
     flameWorker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
@@ -195,6 +206,7 @@ function main(): void {
     flameWorker?.terminate();
     flameWorker = null;
     ui.setFlameSupersampleNote(null);
+    flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
     state = setFlameActive(state, false);
     refreshUi();
   }
@@ -464,7 +476,15 @@ function main(): void {
   function animate(): void {
     requestAnimationFrame(animate);
     if (state.flameActive) {
-      scene.renderFlame();
+      // Keep drawing the frozen explorer view (already-applied camera, no
+      // further orbit input while flameActive) until the worker's first
+      // image lands, then switch over — avoids a flash of the flame
+      // canvas's stale contents during the worker startup gap.
+      if (flameHasImage) {
+        scene.renderFlame();
+      } else {
+        scene.render();
+      }
       return;
     }
     scene.applyCamera(orbit);
