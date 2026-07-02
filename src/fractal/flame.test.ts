@@ -15,6 +15,7 @@ import type {
 } from "./flame";
 import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
 import { transformColors } from "./color";
+import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -70,6 +71,8 @@ describe("createFlameHistogram", () => {
     expect(hist.sumRGB).toHaveLength(36);
     expect(Array.from(hist.hits).every((h) => h === 0)).toBe(true);
     expect(hist.maxHits).toBe(0);
+    // The color coordinate starts mid-gradient (flam3's convention).
+    expect(hist.orbitColor).toBe(0.5);
   });
 
   // Regression: sumRGB must stay Float64Array, matching hits. A hot bucket's
@@ -388,6 +391,185 @@ describe("accumulateFlame vs. stepOrbit/plotPoint (correctness oracle)", () => {
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
+  });
+});
+
+describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
+  it("matches a reference loop that tracks the color coordinate the same way", () => {
+    // The colorLUT counterpart to the oracle above: the color coordinate `c`
+    // rides the orbit (init 0.5, blended halfway toward the picked transform's
+    // slot each step) and indexes the gradient. Because updating `c` consumes
+    // no rng, the orbit — and thus `hits` — is byte-identical to the legacy
+    // path; only sumRGB differs, and this pins it to the same rule the inlined
+    // loop uses.
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+    };
+    const prepared = prepareChaosGame(transforms, finalTransform);
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const projection = ORTHOGRAPHIC;
+    const n = transforms.length;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(42),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    const rng = mulberry32(42);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    let c = 0.5;
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const slot = n > 1 ? s.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      expected.sumRGB[o] += colorLUT[li];
+      expected.sumRGB[o + 1] += colorLUT[li + 1];
+      expected.sumRGB[o + 2] += colorLUT[li + 2];
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitColor = c;
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitColor).toBe(expected.orbitColor);
+  });
+
+  it("threads the color coordinate across chunks (progressive == single-shot)", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const palette = transformColors(4);
+    const colorLUT = buildPaletteLUT("ember");
+    if (!colorLUT) throw new Error("ember should have a LUT");
+    const width = 32;
+    const height = 32;
+
+    const chunkedRng = mulberry32(11);
+    let chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      400,
+      chunkedRng,
+      palette,
+      undefined,
+      colorLUT,
+    );
+    chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      600,
+      chunkedRng,
+      palette,
+      chunked,
+      colorLUT,
+    );
+
+    const singleShot = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      1000,
+      mulberry32(11),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    expect(Array.from(chunked.sumRGB)).toEqual(Array.from(singleShot.sumRGB));
+    expect(chunked.orbitColor).toBe(singleShot.orbitColor);
+  });
+
+  it("colors by the gradient instead of the per-transform palette, without changing the orbit", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const legacy = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      16,
+      16,
+      1000,
+      mulberry32(3),
+      transformColors(4),
+    );
+    // The legacy (no-LUT) path never touches the color coordinate.
+    expect(legacy.orbitColor).toBe(0.5);
+
+    const colorLUT = buildPaletteLUT("aurora");
+    if (!colorLUT) throw new Error("aurora should have a LUT");
+    const colored = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      16,
+      16,
+      1000,
+      mulberry32(3),
+      transformColors(4),
+      undefined,
+      colorLUT,
+    );
+
+    expect(colored.orbitColor).not.toBe(0.5);
+    // Same seed, same orbit → identical hits whether or not a LUT is supplied.
+    expect(Array.from(colored.hits)).toEqual(Array.from(legacy.hits));
+    // ...but the accumulated colors differ (gradient vs per-transform hue).
+    expect(Array.from(colored.sumRGB)).not.toEqual(Array.from(legacy.sumRGB));
   });
 });
 
