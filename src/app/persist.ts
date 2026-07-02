@@ -10,9 +10,11 @@
  */
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
-import { COLOR_MODES, VARIATION_TYPES } from "../fractal/types";
+import { COLOR_MODES, SYMMETRY_AXES, VARIATION_TYPES } from "../fractal/types";
 import type {
   ColorMode,
+  SymmetryAxis,
+  SymmetryParams,
   Transform,
   Variation,
   VariationType,
@@ -34,6 +36,8 @@ import {
   DEFAULT_SOLID_LIGHT_ELEVATION,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_ORDER,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
   MAX_ESTIMATOR_RADIUS,
@@ -48,6 +52,7 @@ import {
   MAX_SOLID_LIGHT_ELEVATION,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
+  MAX_SYMMETRY_ORDER,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -62,6 +67,7 @@ import {
   MIN_SOLID_LIGHT_ELEVATION,
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
+  MIN_SYMMETRY_ORDER,
   RENDER_STYLES,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
@@ -91,6 +97,12 @@ export interface SceneSnapshot {
   /** Solid render settings (see {@link AppState.solid}); like `flame`,
    * `solidActive` is intentionally NOT part of this snapshot. */
   solid: SolidParams;
+  /**
+   * Rotational/mirror symmetry (fr-6im, see {@link AppState.symmetry}).
+   * Persists like `colorMode`/`renderStyle` — always present, unlike the
+   * optional `finalTransform`.
+   */
+  symmetry: SymmetryParams;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -120,6 +132,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     showGuides: state.showGuides,
     flame: state.flame,
     solid: state.solid,
+    symmetry: state.symmetry,
   };
 }
 
@@ -159,6 +172,9 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
 
 /** Exact set of valid flame palette ids (see `palette.ts`'s `FLAME_PALETTES`). */
 const VALID_FLAME_PALETTES = new Set<string>(FLAME_PALETTE_IDS);
+
+/** Exact set of valid SymmetryAxis values. */
+const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
 
 /**
  * Cap on variations per transform when decoding untrusted input. There are only
@@ -466,6 +482,42 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
   };
 }
 
+/**
+ * Validate the untrusted `symmetry` block (fr-6im). Unlike `flame`/`solid`, a
+ * malformed field never rejects the whole scene: `order` coerces and clamps
+ * (an out-of-range or non-finite request quietly becomes the nearest valid
+ * value, the same spirit as `weight`'s clamp) and an unrecognized/missing
+ * `axis` quietly becomes `"y"` (the same quiet-fallback `flame.paletteId`
+ * uses for an unknown enum, generalized to this field too) — a kaleidoscope
+ * order/axis is cosmetic geometry, not a value worth losing an otherwise-
+ * valid shared link over. An absent block, or a block missing a field,
+ * defaults quietly to `{ order: 1, axis: "y" }`; order 1 is today's
+ * unreplicated system, so an old link (which never carried this field
+ * either) renders identically either way.
+ */
+function decodeSymmetry(raw: unknown): SymmetryParams {
+  if (typeof raw !== "object" || raw === null) {
+    return { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS };
+  }
+  const s = raw as Record<string, unknown>;
+
+  let order = DEFAULT_SYMMETRY_ORDER;
+  const rawOrder = Number(s.order);
+  if (Number.isFinite(rawOrder)) order = rawOrder;
+
+  const axis: SymmetryAxis =
+    typeof s.axis === "string" && VALID_SYMMETRY_AXES.has(s.axis)
+      ? (s.axis as SymmetryAxis)
+      : DEFAULT_SYMMETRY_AXIS;
+
+  return {
+    order: Math.round(
+      Math.max(MIN_SYMMETRY_ORDER, Math.min(MAX_SYMMETRY_ORDER, order)),
+    ),
+    axis,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -519,6 +571,7 @@ export function encodeScene(s: SceneSnapshot): string {
     showGuides: boolean;
     flame: FlameParams;
     solid: SolidParams;
+    symmetry: SymmetryParams;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -548,6 +601,10 @@ export function encodeScene(s: SceneSnapshot): string {
       lightElevation: round4(s.solid.lightElevation),
       ambient: round4(s.solid.ambient),
     },
+    symmetry: {
+      order: Math.round(s.symmetry.order),
+      axis: s.symmetry.axis,
+    },
   };
   // Written only when present, so old links stay byte-identical (they never
   // carried the field) and lens-free systems keep their short URLs.
@@ -575,7 +632,10 @@ export function encodeScene(s: SceneSnapshot): string {
  * [{@link MIN_ESTIMATOR_MINIMUM_RADIUS}, {@link MAX_ESTIMATOR_MINIMUM_RADIUS}],
  * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
  * {@link MAX_ESTIMATOR_CURVE}]. An unknown/missing flame.paletteId falls back
- * to `"legacy"` (see {@link decodeFlameParams}).
+ * to `"legacy"` (see {@link decodeFlameParams}). Likewise, symmetry.order
+ * clamps to [{@link MIN_SYMMETRY_ORDER}, {@link MAX_SYMMETRY_ORDER}] and an
+ * unrecognized/missing symmetry.axis falls back to `"y"` — neither ever
+ * rejects the scene on malformed input (see {@link decodeSymmetry}).
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -638,6 +698,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     const solid = decodeSolidParams(o.solid);
     if (solid === null) return null;
 
+    // symmetry: never rejects — a missing block or malformed field quietly
+    // falls back to its default. See decodeSymmetry.
+    const symmetry = decodeSymmetry(o.symmetry);
+
     return {
       transforms,
       finalTransform,
@@ -648,6 +712,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       showGuides: Boolean(o.showGuides),
       flame,
       solid,
+      symmetry,
     };
   } catch {
     return null;

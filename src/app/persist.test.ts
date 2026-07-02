@@ -19,6 +19,8 @@ import {
   DEFAULT_SOLID_LIGHT_ELEVATION,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_ORDER,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
@@ -27,6 +29,7 @@ import {
   MAX_FLAME_SUPERSAMPLE,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
+  MAX_SYMMETRY_ORDER,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
@@ -34,6 +37,7 @@ import {
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_RESOLUTION,
+  MIN_SYMMETRY_ORDER,
 } from "./state";
 
 // ---------------------------------------------------------------------------
@@ -80,6 +84,7 @@ function baseSnapshot(): SceneSnapshot {
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
     },
+    symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
   };
 }
 
@@ -1038,6 +1043,83 @@ describe("decodeScene solid params", () => {
     expect(
       decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid.resolution,
     ).toBe(MIN_SOLID_RESOLUTION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Symmetry params (fr-6im) — deliberately MORE lenient than flame/solid: a
+// malformed field never rejects the scene, it just falls back to a default.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene symmetry", () => {
+  it("round-trips a non-default order and axis", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      symmetry: { order: 6, axis: "z" },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.symmetry).toEqual({ order: 6, axis: "z" });
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `symmetry` key at all — exactly what
+    // every link looked like before fr-6im.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.symmetry).toEqual({
+      order: DEFAULT_SYMMETRY_ORDER,
+      axis: DEFAULT_SYMMETRY_AXIS,
+    });
+  });
+
+  it("does not reject the scene for a non-finite order, defaulting it instead", () => {
+    // Unlike flame/solid's numeric fields, a malformed order is cosmetic
+    // geometry, not corruption — the scene survives.
+    const raw = {
+      ...baseSnapshot(),
+      symmetry: { order: "nonsense", axis: "y" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.symmetry.order).toBe(DEFAULT_SYMMETRY_ORDER);
+  });
+
+  it("clamps an out-of-range order above the maximum down to the max", () => {
+    const raw = { ...baseSnapshot(), symmetry: { order: 999, axis: "y" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.order).toBe(MAX_SYMMETRY_ORDER);
+  });
+
+  it("clamps an out-of-range order below the minimum up to the min", () => {
+    const raw = { ...baseSnapshot(), symmetry: { order: -5, axis: "y" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.order).toBe(MIN_SYMMETRY_ORDER);
+  });
+
+  it("rounds a fractional order to the nearest integer", () => {
+    const raw = { ...baseSnapshot(), symmetry: { order: 4.6, axis: "y" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.order).toBe(5);
+  });
+
+  it("falls back to y for an unrecognized axis instead of rejecting the scene", () => {
+    // Unlike every other block, an unknown axis does NOT nuke the whole
+    // scene — mirrors flame.paletteId's fallback-to-legacy behavior.
+    const raw = { ...baseSnapshot(), symmetry: { order: 3, axis: "w" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.symmetry.axis).toBe("y");
+    expect(result!.transforms).toHaveLength(1);
   });
 });
 
