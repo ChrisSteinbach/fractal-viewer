@@ -1,6 +1,7 @@
 import {
   DEFAULT_GAMMA_THRESHOLD,
   accumulateFlame,
+  clampSupersampleToBudget,
   createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
@@ -834,5 +835,46 @@ describe("downsampleFlame", () => {
     const corner = out.hits[0];
     const center = out.hits[1 * 3 + 1];
     expect(corner).toBeCloseTo(center, 6);
+  });
+});
+
+describe("clampSupersampleToBudget", () => {
+  it("returns the requested factor unchanged when it already fits", () => {
+    // 100x100 at 2x = 40 000 buckets, comfortably under a 1 000 000 budget.
+    expect(clampSupersampleToBudget(100, 100, 2, 1_000_000)).toBe(2);
+  });
+
+  it("reduces to the largest factor that fits when the requested one does not", () => {
+    // 1000x1000 at 3x = 9 000 000 buckets; at 2x = 4 000 000; budget 5 000 000
+    // rules out 3x but allows 2x.
+    expect(clampSupersampleToBudget(1000, 1000, 3, 5_000_000)).toBe(2);
+  });
+
+  it("never returns less than 1, even when 1x itself exceeds the budget", () => {
+    expect(clampSupersampleToBudget(1000, 1000, 3, 1)).toBe(1);
+  });
+
+  it("returns 1 unchanged when the requested factor is already 1", () => {
+    expect(clampSupersampleToBudget(100, 100, 1, 1_000_000_000)).toBe(1);
+  });
+
+  it("reproduces the hi-DPI OOM scenario: a Retina drawing buffer clamps 3x down", () => {
+    // 2880x1800 (1440x900 CSS @ devicePixelRatio 2) at 3x is ~46.7M buckets;
+    // a ~300 MiB / 32-bytes-per-bucket budget (~9.8M buckets) must reject it.
+    const width = 2880;
+    const height = 1800;
+    const budget = Math.floor((300 * 1024 * 1024) / 32);
+    const clamped = clampSupersampleToBudget(width, height, 3, budget);
+    expect(clamped).toBeLessThan(3);
+    expect(width * clamped * (height * clamped)).toBeLessThanOrEqual(budget);
+  });
+
+  it("floors a fractional requested factor before searching", () => {
+    expect(clampSupersampleToBudget(10, 10, 2.9, 1_000_000)).toBe(2);
+  });
+
+  it("treats a non-positive width or height as unconstrained (nothing to divide by)", () => {
+    expect(clampSupersampleToBudget(0, 100, 3, 10)).toBe(3);
+    expect(clampSupersampleToBudget(100, 0, 3, 10)).toBe(3);
   });
 });

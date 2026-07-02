@@ -106,7 +106,11 @@ export const MIN_FLAME_EXPOSURE = 0.2;
 export const MAX_FLAME_EXPOSURE = 4;
 export const MIN_FLAME_ITERATIONS = 1_000_000;
 export const MAX_FLAME_ITERATIONS = 100_000_000;
-/** Neutral gamma — fr-o7s's original log-density curve, unreshaped. */
+/**
+ * A moderately "punchy" default — MIN_FLAME_GAMMA (1) is the neutral point
+ * that leaves fr-o7s's original log-density curve unreshaped; 2.4 pushes
+ * faint/sparse detail brighter, the classic flame look (see TonemapParams.gamma).
+ */
 export const DEFAULT_FLAME_GAMMA = 2.4;
 export const MIN_FLAME_GAMMA = 1;
 export const MAX_FLAME_GAMMA = 6;
@@ -114,12 +118,20 @@ export const MAX_FLAME_GAMMA = 6;
 export const DEFAULT_FLAME_VIBRANCY = 1;
 export const MIN_FLAME_VIBRANCY = 0;
 export const MAX_FLAME_VIBRANCY = 1;
-/** No supersampling — accumulate straight at display resolution. */
+/** A modest 2x2 antialiasing oversample — MIN_FLAME_SUPERSAMPLE (1) is what
+ * "no supersampling, accumulate straight at display resolution" means. */
 export const DEFAULT_FLAME_SUPERSAMPLE = 2;
 export const MIN_FLAME_SUPERSAMPLE = 1;
-/** Memory is O(supersample^2): a Float64 hits + Float64x3 sumRGB bucket is 32
- * bytes, so 3x at 1080p is already ~373 MB — capped well short of where a
- * casual slider drag could exhaust a phone's memory. */
+/**
+ * Memory is O(supersample^2): a Float64 hits + Float64x3 sumRGB bucket is 32
+ * bytes, so 3x at a 1920x1080 accumulation target is already ~597 MB — and
+ * that target can be considerably larger than the CSS window size, since
+ * `flameRenderSize()` returns the devicePixelRatio-scaled drawing buffer
+ * (scene.ts caps the ratio at 2x, so a "1080p" *window* can already mean a
+ * ~2160p buffer *before* supersample multiplies it again). This cap alone
+ * does not prevent an OOM on a hi-DPI display; see `main.ts`'s
+ * `clampSupersampleToBudget` use for the byte-budget guard that does.
+ */
 export const MAX_FLAME_SUPERSAMPLE = 3;
 
 export function initialState(panelOpen: boolean): AppState {

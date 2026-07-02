@@ -286,6 +286,7 @@ export class Ui {
   private readonly flameVibrancySlider: HTMLInputElement;
   private readonly flameSupersampleLabel: HTMLElement;
   private readonly flameSupersampleSlider: HTMLInputElement;
+  private readonly flameSupersampleNote: HTMLElement;
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
@@ -330,6 +331,7 @@ export class Ui {
     this.flameVibrancySlider = this.byId("flameVibrancySlider");
     this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
     this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
+    this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
   }
@@ -491,6 +493,28 @@ export class Ui {
     const done = (iterationsDone / 1_000_000).toFixed(1);
     const budget = (iterationsBudget / 1_000_000).toFixed(1);
     this.flameProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+  }
+
+  /**
+   * Reflect whether the supersample slider's requested value had to be
+   * reduced to stay under the accumulation memory budget (see main.ts's
+   * `clampSupersampleToBudget`) — a runtime, device-dependent fact that
+   * isn't part of AppState, so (like {@link setFlameProgress}) this is a
+   * targeted setter main.ts calls directly rather than something
+   * `updateLabels` derives from state. Pass `null` when running at the
+   * requested value unclamped, to hide the note.
+   */
+  setFlameSupersampleNote(effective: number | null, requested?: number): void {
+    if (effective === null) {
+      this.flameSupersampleNote.textContent = "";
+      this.flameSupersampleNote.classList.add("hidden");
+      return;
+    }
+    this.flameSupersampleNote.textContent =
+      requested !== undefined
+        ? `Reduced to ${effective}× (from ${requested}×) to fit available memory.`
+        : `Reduced to ${effective}× to fit available memory.`;
+    this.flameSupersampleNote.classList.remove("hidden");
   }
 
   /**

@@ -789,3 +789,32 @@ describe("Ui.setFlameProgress", () => {
     );
   });
 });
+
+describe("Ui.setFlameSupersampleNote", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("flameSupersampleNote");
+  }
+
+  it("is hidden with empty text by default", () => {
+    new Ui(document);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows a reduced-from message and un-hides when passed an effective value", () => {
+    const ui = new Ui(document);
+    ui.setFlameSupersampleNote(1, 3);
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.textContent).toBe(
+      "Reduced to 1× (from 3×) to fit available memory.",
+    );
+  });
+
+  it("hides again when passed null", () => {
+    const ui = new Ui(document);
+    ui.setFlameSupersampleNote(1, 3);
+    ui.setFlameSupersampleNote(null);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+});

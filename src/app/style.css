@@ -460,6 +460,16 @@ input[type="range"] {
   text-align: center;
 }
 
+/* Shown only when the supersample slider's value had to be reduced to fit
+   the memory budget (see main.ts's clampSupersampleToBudget) — --bad flags
+   it as "not quite what you asked for" without being alarm-red. */
+.flame-note {
+  margin: -6px 0 10px;
+  color: var(--bad);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;

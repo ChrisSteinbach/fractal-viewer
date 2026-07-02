@@ -97,6 +97,37 @@ export function createFlameHistogram(
   };
 }
 
+/**
+ * Largest integer supersample factor `<= requested` (and always `>= 1`)
+ * whose accumulation buckets — `(width * ss) * (height * ss)` — fit within
+ * `maxBuckets`. `width`/`height` are the DISPLAY resolution (already
+ * whatever the device's pixel ratio made it — see the app layer's
+ * `flameRenderSize`), so supersample multiplies an already-device-scaled
+ * size; on a hi-DPI display this can demand a single, huge `Float64Array`
+ * allocation before the user-chosen supersample factor even applies. This
+ * caps that proactively — a fixed byte budget divided among what
+ * `createFlameHistogram` actually allocates (`hits` + `sumRGB`, both
+ * `Float64`) turns into a bucket-count ceiling the caller passes in.
+ *
+ * A tiny loop, not a closed-form `sqrt`, because `requested` is always a
+ * small integer (a handful at most) in practice — clearer to read as "try
+ * each size down from what was asked" than to reason about rounding at a
+ * `Math.sqrt` boundary.
+ */
+export function clampSupersampleToBudget(
+  width: number,
+  height: number,
+  requested: number,
+  maxBuckets: number,
+): number {
+  const start = Math.max(1, Math.floor(requested));
+  if (width <= 0 || height <= 0) return start;
+  for (let ss = start; ss > 1; ss--) {
+    if (width * ss * (height * ss) <= maxBuckets) return ss;
+  }
+  return 1;
+}
+
 /** Color for a transform index outside `palette` — shouldn't happen; mirrors `buildColors`' fallback. */
 const FALLBACK_COLOR: Vec3 = [1, 1, 1];
 

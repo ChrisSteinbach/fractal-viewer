@@ -8,6 +8,7 @@ import { buildColors, transformColors } from "../fractal/color";
 import {
   DEFAULT_GAMMA_THRESHOLD,
   accumulateFlame,
+  clampSupersampleToBudget,
   downsampleFlame,
   tonemapFlame,
 } from "../fractal/flame";
@@ -76,6 +77,33 @@ const FLAME_FILTER_RADIUS = 0.4;
  * frame both bypass this — see `stepFlame`.
  */
 const FLAME_REDISPLAY_INTERVAL_MS = 150;
+
+/**
+ * Bytes each accumulation bucket costs: `hits` is one Float64 (8 bytes),
+ * `sumRGB` is three Float64 (24 bytes) — see `FlameHistogram`'s doc for why
+ * both are Float64. Used only to turn {@link MAX_FLAME_ACCUM_BYTES} into a
+ * bucket-count budget for {@link clampSupersampleToBudget}.
+ */
+const BYTES_PER_ACCUM_BUCKET = 32;
+/**
+ * Memory ceiling for one accumulation histogram's `hits` + `sumRGB` arrays
+ * combined. `flameRenderSize()` returns the devicePixelRatio-scaled drawing
+ * buffer (scene.ts caps the ratio at 2x) — supersample then multiplies THAT,
+ * so a hi-DPI display combined with a high supersample can otherwise demand
+ * a single 1+ GB allocation (e.g. a 1440x900 CSS window at devicePixelRatio
+ * 2 is a 2880x1800 buffer; at 3x supersample that's ~46.7M buckets, ~1.5 GB).
+ * 300 MiB is chosen to comfortably survive on a memory-constrained phone —
+ * this app is explicitly served to phones (see the `dev` script) — while
+ * still allowing normal desktop supersampling in the common case. See
+ * `clampSupersampleToBudget`'s use in `startFlameAccumulation` for the
+ * proactive guard this enables, and `stepFlame`'s accumulate try/catch for
+ * the reactive one that backs it up if 300 MiB still isn't conservative
+ * enough for a particular device.
+ */
+const MAX_FLAME_ACCUM_BYTES = 300 * 1024 * 1024;
+const MAX_FLAME_ACCUM_BUCKETS = Math.floor(
+  MAX_FLAME_ACCUM_BYTES / BYTES_PER_ACCUM_BUCKET,
+);
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -173,16 +201,29 @@ function main(): void {
   let flameHistogram: FlameHistogram | null = null;
   let flameDisplayHistogram: FlameHistogram | null = null;
   // Display resolution — fixed for the life of a render (the frozen camera's
-  // size). flameAccumWidth/Height are this scaled by the CURRENT
+  // size). flameAccumWidth/Height are this scaled by the CURRENT EFFECTIVE
   // supersample and are what accumulateFlame actually targets.
   let flameWidth = 0;
   let flameHeight = 0;
   let flameAccumWidth = 0;
   let flameAccumHeight = 0;
-  // The supersample factor flameHistogram was created at — compared against
-  // state.flame.supersample every stepFlame to detect a live change (see
-  // startFlameAccumulation).
-  let flameSupersampleUsed = 1;
+  // The EFFECTIVE (post-budget-clamp) supersample factor flameHistogram was
+  // created at — compared against a freshly recomputed effective value every
+  // stepFlame to detect a live change (see startFlameAccumulation). Not
+  // necessarily state.flame.supersample: see clampSupersampleToBudget.
+  let flameEffectiveSupersample = 1;
+  // Ratchets DOWN (never up) when an accumulation allocation actually fails
+  // at some size — see stepFlame's catch block. Learned once per page
+  // lifetime: a device's real memory ceiling doesn't improve between
+  // renders, so re-attempting a size that just failed would just fail again.
+  // Applied as an extra cap in computeEffectiveSupersample, on top of
+  // clampSupersampleToBudget's own (proactive, estimate-based) one.
+  let flameMaxSafeSupersample = Infinity;
+  // The requested (slider) value the note was last worded against — tracked
+  // separately from flameEffectiveSupersample so the note's "(from Nx)"
+  // wording stays current even on a slider change that doesn't itself
+  // trigger a restart (see stepFlame).
+  let flameLastRequestedSupersample: number | undefined;
   let flameIterationsDone = 0;
   let flameLastExposure: number | undefined;
   let flameLastGamma: number | undefined;
@@ -192,15 +233,33 @@ function main(): void {
   let flameLastDownsampleAt: number | undefined;
   let flameChunkSize = FLAME_CHUNK_INITIAL;
 
-  // (Re)size the accumulator for state.flame.supersample and discard any
-  // progress: shared by entering flame mode and by a live supersample
-  // change mid-render, both of which need a from-scratch histogram at a new
-  // size. Assumes flameWidth/flameHeight (the display size) are already set.
+  // The supersample factor to actually accumulate at for a given requested
+  // (slider) value: the larger of clampSupersampleToBudget's proactive,
+  // size-estimate-based cap and flameMaxSafeSupersample's reactive,
+  // learned-from-an-actual-failure one — whichever is stricter wins.
+  function computeEffectiveSupersample(requested: number): number {
+    const budgeted = clampSupersampleToBudget(
+      flameWidth,
+      flameHeight,
+      requested,
+      MAX_FLAME_ACCUM_BUCKETS,
+    );
+    return Math.min(budgeted, flameMaxSafeSupersample);
+  }
+
+  // (Re)size the accumulator for state.flame.supersample (clamped to what
+  // fits the memory budget) and discard any progress: shared by entering
+  // flame mode, a live supersample change mid-render, and the allocation
+  // fallback in stepFlame — all three need a from-scratch histogram at a
+  // (possibly new) size. Assumes flameWidth/flameHeight (the display size)
+  // are already set.
   function startFlameAccumulation(): void {
-    const supersample = state.flame.supersample;
-    flameAccumWidth = flameWidth * supersample;
-    flameAccumHeight = flameHeight * supersample;
-    flameSupersampleUsed = supersample;
+    const requested = state.flame.supersample;
+    const effective = computeEffectiveSupersample(requested);
+    flameAccumWidth = flameWidth * effective;
+    flameAccumHeight = flameHeight * effective;
+    flameEffectiveSupersample = effective;
+    flameLastRequestedSupersample = requested;
     flameHistogram = null;
     flameDisplayHistogram = null;
     flameIterationsDone = 0;
@@ -209,6 +268,10 @@ function main(): void {
     flameLastVibrancy = undefined;
     flameLastDownsampleAt = undefined;
     flameChunkSize = FLAME_CHUNK_INITIAL;
+    ui.setFlameSupersampleNote(
+      effective < requested ? effective : null,
+      requested,
+    );
   }
 
   // Freeze the current camera and start converging a flame render of it.
@@ -236,6 +299,7 @@ function main(): void {
     flameProjection = null;
     flameHistogram = null;
     flameDisplayHistogram = null;
+    ui.setFlameSupersampleNote(null);
     state = setFlameActive(state, false);
     refreshUi();
   }
@@ -501,9 +565,27 @@ function main(): void {
     // The supersample slider is live-editable mid-render (it lives in the
     // same panel as exposure/iterations), but changes the accumulator's
     // dimensions, so there is nothing to carry forward — restart flat.
-    if (state.flame.supersample !== flameSupersampleUsed) {
+    // Compares EFFECTIVE values (post-budget-clamp), not the raw slider, so
+    // e.g. dragging 2x -> 3x on a device where both already clamp to the
+    // same effective size is correctly a no-op, not a pointless restart.
+    const requestedSupersample = state.flame.supersample;
+    const newEffectiveSupersample =
+      computeEffectiveSupersample(requestedSupersample);
+    if (newEffectiveSupersample !== flameEffectiveSupersample) {
       startFlameAccumulation();
+    } else if (requestedSupersample !== flameLastRequestedSupersample) {
+      // The effective size didn't change, but the slider itself did (e.g.
+      // both 2x and 3x already clamp to the same 1x here) — no restart
+      // needed, but the note's "(from Nx)" wording would otherwise go stale,
+      // still naming whatever was requested the last time a restart ran.
+      ui.setFlameSupersampleNote(
+        newEffectiveSupersample < requestedSupersample
+          ? newEffectiveSupersample
+          : null,
+        requestedSupersample,
+      );
     }
+    flameLastRequestedSupersample = requestedSupersample;
 
     let needsRedraw = false;
 
@@ -512,17 +594,58 @@ function main(): void {
         flameChunkSize,
         state.flame.iterations - flameIterationsDone,
       );
+      // Only the FIRST accumulate call for a given histogram allocates
+      // (createFlameHistogram, inside accumulateFlame) — a later call
+      // resuming an already-allocated histogram isn't expected to newly
+      // fail for memory reasons, so only a fresh-start failure gets the
+      // shrink-and-retry treatment below; anything else is a real bug and
+      // should surface, not be silently swallowed.
+      const wasFreshStart = flameHistogram === null;
       const start = performance.now();
-      flameHistogram = accumulateFlame(
-        flamePrepared,
-        flameProjection,
-        flameAccumWidth,
-        flameAccumHeight,
-        chunk,
-        Math.random,
-        flamePalette,
-        flameHistogram ?? undefined,
-      );
+      try {
+        flameHistogram = accumulateFlame(
+          flamePrepared,
+          flameProjection,
+          flameAccumWidth,
+          flameAccumHeight,
+          chunk,
+          Math.random,
+          flamePalette,
+          flameHistogram ?? undefined,
+        );
+      } catch (e) {
+        if (wasFreshStart && flameEffectiveSupersample > 1) {
+          // The proactive budget estimate (clampSupersampleToBudget) wasn't
+          // conservative enough for this device at this size — learn that
+          // and retry smaller next frame, rather than throwing every frame
+          // forever (state.flame.supersample itself is untouched: this is a
+          // capability ceiling, not the user's request).
+          console.warn(
+            `Flame accumulation failed to allocate at ${flameEffectiveSupersample}x supersample (${flameAccumWidth}x${flameAccumHeight}); reducing and retrying.`,
+            e,
+          );
+          flameMaxSafeSupersample = flameEffectiveSupersample - 1;
+          startFlameAccumulation();
+          // Nothing has been uploaded to the flame texture yet this attempt
+          // (the failure was in accumulateFlame, before downsample/tonemap
+          // ever ran) — skip renderFlame() rather than redrawing a texture
+          // that was never given real image data; the retry next frame
+          // renders normally once it actually has something to show.
+        } else {
+          // Nothing smaller left to fall back to (already at 1x), or this
+          // wasn't even a fresh allocation — return to the explorer rather
+          // than re-throwing from inside the animation loop every frame.
+          // exitFlameMode() flips state.flameActive off; the next animate()
+          // tick takes the non-flame branch and calls scene.render() itself,
+          // so there is nothing to render from here.
+          console.error(
+            "Flame render failed to accumulate; returning to explorer.",
+            e,
+          );
+          exitFlameMode();
+        }
+        return;
+      }
       const elapsed = performance.now() - start;
       flameIterationsDone += chunk;
 
