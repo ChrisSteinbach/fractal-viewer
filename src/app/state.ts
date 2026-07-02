@@ -52,6 +52,22 @@ export interface FlameParams {
    * dimensions change, so there is nothing to keep.
    */
   supersample: number;
+  /**
+   * Widest per-cell blur radius (output pixels), used for near-zero-density
+   * cells — see `flame.ts`'s `DensityEstimatorParams.estimatorRadius`. Only
+   * ever applied to the finished/paused frame (the adaptive pass is too
+   * costly to run on every progressive preview); a change while a render is
+   * still accumulating takes effect once it finishes, and re-runs just that
+   * pass (not a re-accumulate) if it already had.
+   */
+  estimatorRadius: number;
+  /** Narrowest per-cell blur radius, used for fully-sampled cells; 0 leaves
+   * them pin-sharp. Live-reactive like `estimatorRadius`. */
+  estimatorMinimumRadius: number;
+  /** Shapes how quickly the radius narrows as density rises — see
+   * `flame.ts`'s `DensityEstimatorParams.estimatorCurve`. Live-reactive like
+   * `estimatorRadius`. */
+  estimatorCurve: number;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -133,6 +149,23 @@ export const MIN_FLAME_SUPERSAMPLE = 1;
  * `clampSupersampleToBudget` use for the byte-budget guard that does.
  */
 export const MAX_FLAME_SUPERSAMPLE = 3;
+/**
+ * Defaults for the adaptive density-estimation blur (fr-17t; see
+ * `flame.ts`'s `DensityEstimatorParams`). estimatorCurve's range and default
+ * follow that type's doc ("flam3-ish values sit around 0.3-0.6"); the MIN is
+ * a small positive floor, not 0 — `(1 - density) ** 0` is 1 regardless of
+ * density, which would make the whole "adaptive" part of the pass inert.
+ */
+export const DEFAULT_ESTIMATOR_RADIUS = 6;
+export const MIN_ESTIMATOR_RADIUS = 1;
+export const MAX_ESTIMATOR_RADIUS = 15;
+/** 0 = pin-sharp at full density, flam3's usual choice and this app's default. */
+export const DEFAULT_ESTIMATOR_MINIMUM_RADIUS = 0;
+export const MIN_ESTIMATOR_MINIMUM_RADIUS = 0;
+export const MAX_ESTIMATOR_MINIMUM_RADIUS = 15;
+export const DEFAULT_ESTIMATOR_CURVE = 0.4;
+export const MIN_ESTIMATOR_CURVE = 0.1;
+export const MAX_ESTIMATOR_CURVE = 3;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -151,6 +184,9 @@ export function initialState(panelOpen: boolean): AppState {
       gamma: DEFAULT_FLAME_GAMMA,
       vibrancy: DEFAULT_FLAME_VIBRANCY,
       supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
     },
     flameActive: false,
   };
@@ -329,6 +365,64 @@ export function setFlameSupersample(
           MIN_FLAME_SUPERSAMPLE,
           Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
         ),
+      ),
+    },
+  };
+}
+
+/**
+ * Set the flame render's widest adaptive-blur radius, clamped to a sane
+ * range. Live-reactive, but only in the sense `main.ts` re-runs the
+ * (done-frame-only) adaptive pass against the existing accumulation when the
+ * render has already finished — like gamma/vibrancy it never re-accumulates.
+ */
+export function setFlameEstimatorRadius(
+  state: AppState,
+  estimatorRadius: number,
+): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      estimatorRadius: Math.max(
+        MIN_ESTIMATOR_RADIUS,
+        Math.min(MAX_ESTIMATOR_RADIUS, estimatorRadius),
+      ),
+    },
+  };
+}
+
+/** Set the flame render's narrowest adaptive-blur radius, clamped to a sane
+ * range. Live-reactive like {@link setFlameEstimatorRadius}. */
+export function setFlameEstimatorMinimumRadius(
+  state: AppState,
+  estimatorMinimumRadius: number,
+): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      estimatorMinimumRadius: Math.max(
+        MIN_ESTIMATOR_MINIMUM_RADIUS,
+        Math.min(MAX_ESTIMATOR_MINIMUM_RADIUS, estimatorMinimumRadius),
+      ),
+    },
+  };
+}
+
+/** Set the flame render's adaptive-blur falloff curve, clamped to a sane
+ * range. Live-reactive like {@link setFlameEstimatorRadius}. */
+export function setFlameEstimatorCurve(
+  state: AppState,
+  estimatorCurve: number,
+): AppState {
+  return {
+    ...state,
+    flame: {
+      ...state.flame,
+      estimatorCurve: Math.max(
+        MIN_ESTIMATOR_CURVE,
+        Math.min(MAX_ESTIMATOR_CURVE, estimatorCurve),
       ),
     },
   };

@@ -1,5 +1,8 @@
 import {
   addTransform,
+  DEFAULT_ESTIMATOR_CURVE,
+  DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+  DEFAULT_ESTIMATOR_RADIUS,
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_ITERATIONS,
@@ -7,11 +10,17 @@ import {
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_POINT_SIZE,
   initialState,
+  MAX_ESTIMATOR_CURVE,
+  MAX_ESTIMATOR_MINIMUM_RADIUS,
+  MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MIN_ESTIMATOR_CURVE,
+  MIN_ESTIMATOR_MINIMUM_RADIUS,
+  MIN_ESTIMATOR_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_GAMMA,
   MIN_FLAME_ITERATIONS,
@@ -22,6 +31,9 @@ import {
   selectTransform,
   setFinalTransform,
   setFlameActive,
+  setFlameEstimatorCurve,
+  setFlameEstimatorMinimumRadius,
+  setFlameEstimatorRadius,
   setFlameExposure,
   setFlameGamma,
   setFlameIterations,
@@ -61,6 +73,9 @@ describe("initialState", () => {
       gamma: DEFAULT_FLAME_GAMMA,
       vibrancy: DEFAULT_FLAME_VIBRANCY,
       supersample: DEFAULT_FLAME_SUPERSAMPLE,
+      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
+      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
     });
   });
 
@@ -284,6 +299,73 @@ describe("setFlameSupersample", () => {
     expect(setFlameSupersample(initialState(true), 0).flame.supersample).toBe(
       MIN_FLAME_SUPERSAMPLE,
     );
+  });
+});
+
+describe("setFlameEstimatorRadius", () => {
+  it("sets the widest adaptive-blur radius immutably", () => {
+    const state = initialState(true);
+    const next = setFlameEstimatorRadius(state, 9);
+    expect(next.flame.estimatorRadius).toBe(9);
+    expect(state.flame.estimatorRadius).toBe(DEFAULT_ESTIMATOR_RADIUS);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setFlameEstimatorRadius(initialState(true), 999).flame.estimatorRadius,
+    ).toBe(MAX_ESTIMATOR_RADIUS);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setFlameEstimatorRadius(initialState(true), -5).flame.estimatorRadius,
+    ).toBe(MIN_ESTIMATOR_RADIUS);
+  });
+});
+
+describe("setFlameEstimatorMinimumRadius", () => {
+  it("sets the narrowest adaptive-blur radius immutably", () => {
+    const state = initialState(true);
+    const next = setFlameEstimatorMinimumRadius(state, 2);
+    expect(next.flame.estimatorMinimumRadius).toBe(2);
+    expect(state.flame.estimatorMinimumRadius).toBe(
+      DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+    );
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setFlameEstimatorMinimumRadius(initialState(true), 999).flame
+        .estimatorMinimumRadius,
+    ).toBe(MAX_ESTIMATOR_MINIMUM_RADIUS);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setFlameEstimatorMinimumRadius(initialState(true), -5).flame
+        .estimatorMinimumRadius,
+    ).toBe(MIN_ESTIMATOR_MINIMUM_RADIUS);
+  });
+});
+
+describe("setFlameEstimatorCurve", () => {
+  it("sets the adaptive-blur falloff curve immutably", () => {
+    const state = initialState(true);
+    const next = setFlameEstimatorCurve(state, 1.2);
+    expect(next.flame.estimatorCurve).toBe(1.2);
+    expect(state.flame.estimatorCurve).toBe(DEFAULT_ESTIMATOR_CURVE);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setFlameEstimatorCurve(initialState(true), 999).flame.estimatorCurve,
+    ).toBe(MAX_ESTIMATOR_CURVE);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setFlameEstimatorCurve(initialState(true), -5).flame.estimatorCurve,
+    ).toBe(MIN_ESTIMATOR_CURVE);
   });
 });
 
