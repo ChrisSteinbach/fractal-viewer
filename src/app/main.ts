@@ -249,6 +249,9 @@ function main(): void {
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
+      case "estimating":
+        ui.setFlameEstimating();
+        break;
       case "error":
         console.error(
           "Flame render failed to accumulate; returning to explorer.",

@@ -931,7 +931,7 @@ describe("Ui.setFlameProgress", () => {
     const ui = new Ui(document);
     ui.setFlameProgress(12_345_000, 20_000_000);
     expect(document.getElementById("flameProgress")?.textContent).toBe(
-      "12.3M / 20.0M iterations (62%)",
+      "12.3M / 20.0M iterations (61%)",
     );
   });
 
@@ -940,6 +940,40 @@ describe("Ui.setFlameProgress", () => {
     ui.setFlameProgress(25_000_000, 20_000_000);
     expect(document.getElementById("flameProgress")?.textContent).toContain(
       "(100%)",
+    );
+  });
+
+  it("does not claim 100% for a nearly-done progressive frame (fr-99z)", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(19_950_000, 20_000_000); // 99.75% — would round to 100.
+    expect(document.getElementById("flameProgress")?.textContent).toContain(
+      "(99%)",
+    );
+  });
+
+  it("clears the estimating busy state set by setFlameEstimating (fr-99z)", () => {
+    const ui = new Ui(document);
+    ui.setFlameEstimating();
+
+    ui.setFlameProgress(20_000_000, 20_000_000);
+
+    const progress = document.getElementById("flameProgress");
+    expect(progress?.classList.contains("flame-progress-estimating")).toBe(
+      false,
+    );
+    expect(progress?.textContent).toBe("20.0M / 20.0M iterations (100%)");
+  });
+});
+
+describe("Ui.setFlameEstimating", () => {
+  it("shows the busy label and adds the estimating modifier class (fr-99z)", () => {
+    const ui = new Ui(document);
+    ui.setFlameEstimating();
+
+    const progress = document.getElementById("flameProgress");
+    expect(progress?.textContent).toBe("applying density estimate…");
+    expect(progress?.classList.contains("flame-progress-estimating")).toBe(
+      true,
     );
   });
 });
@@ -1230,7 +1264,7 @@ describe("Ui.setSolidProgress", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(12_345_000, 20_000_000);
     expect(document.getElementById("solidProgress")?.textContent).toBe(
-      "12.3M / 20.0M iterations (62%)",
+      "12.3M / 20.0M iterations (61%)",
     );
   });
 
