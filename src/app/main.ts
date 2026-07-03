@@ -408,6 +408,8 @@ function main(): void {
       // Math.random) can't cross postMessage — which as a side effect makes
       // a render a reproducible pure function of its inputs.
       seed: Math.floor(Math.random() * 0xffffffff),
+      order: state.symmetry.order,
+      axis: state.symmetry.axis,
     });
 
     state = selectTransform(state, null);
@@ -571,6 +573,11 @@ function main(): void {
         order: state.symmetry.order,
         axis: state.symmetry.axis,
       });
+      postVoxel({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
       scheduleSave();
     },
     onSymmetryAxisChange: (axis) => {
@@ -578,6 +585,11 @@ function main(): void {
       ui.updateLabels(state);
       if (state.autoUpdate) regenerate();
       postFlame({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
+      postVoxel({
         type: "setSymmetry",
         order: state.symmetry.order,
         axis: state.symmetry.axis,

@@ -376,6 +376,105 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.maxDensity).toBe(expected.maxDensity);
     expect(actual.orbit).toEqual([x, y, z]);
   });
+
+  it("matches the same oracle when the prepared system has rotated copies (fr-6im)", () => {
+    // Same shape as the plain oracle above, but `prepared` is built with
+    // symmetry: stepOrbit already rotates a picked slot's full affine +
+    // variation output (see chaos-game.test.ts), so if accumulateVoxels'
+    // hand-inlined loop ever drifts from that — including its post-rotation
+    // and BASE-index handling for "By Transform" coloring — this is what
+    // catches it.
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, variations: [{ type: "sinusoidal" as const, weight: 0.7 }] }
+        : t,
+    );
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.1, 0, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1, 1, 1],
+    };
+    const symmetry = { order: 4 as const, axis: "y" as const };
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 2000;
+
+    const prepared = prepareChaosGame(transforms, finalTransform, symmetry);
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(prepared, actual, iterations, mulberry32(99), palette);
+
+    const rng = mulberry32(99);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let n = 0; n < iterations; n++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      // s.index is already the BASE map (see chaos-game.ts's stepOrbit), so
+      // this indexes `palette` (sized to transforms.length) exactly like the
+      // no-symmetry oracle above.
+      const rgb = palette[s.index];
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * inv;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+  });
+
+  it("produces a differently-shaped grid than the same seed without symmetry", () => {
+    const transforms = sierpinskiTetrahedron();
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 2000;
+
+    const withoutSymmetry = accumulateVoxels(
+      prepareChaosGame(transforms),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(1),
+      palette,
+    );
+    const withSymmetry = accumulateVoxels(
+      prepareChaosGame(transforms, null, { order: 5, axis: "x" }),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(1),
+      palette,
+    );
+
+    expect(Array.from(withSymmetry.density)).not.toEqual(
+      Array.from(withoutSymmetry.density),
+    );
+  });
 });
 
 describe("voxelTextureData", () => {
