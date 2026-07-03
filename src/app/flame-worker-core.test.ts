@@ -147,6 +147,12 @@ function noteEvents(
   return events.filter((e) => e.type === "supersampleNote");
 }
 
+function estimatingEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "estimating" }>[] {
+  return events.filter((e) => e.type === "estimating");
+}
+
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -354,6 +360,18 @@ describe("FlameWorkerSession setIterationsBudget", () => {
     const last = progressEvents(events).at(-1)!;
     expect(last.iterationsDone).toBe(10); // what actually accumulated, unchanged.
     expect(last.iterationsBudget).toBe(5); // the new (already-met) target.
+  });
+
+  it("emits an estimating event before the resulting frame when a lowered budget ends the render early (fr-99z)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    scheduler.step(); // one chunk in (10 done).
+
+    session.handle({ type: "setIterationsBudget", iterations: 5 });
+
+    const last = events.slice(-2);
+    expect(last[0]).toEqual({ type: "estimating" });
+    expect(last[1].type).toBe("progress");
   });
 
   it("applies the finished-frame adaptive estimate when a lowered budget ends the render early", () => {
@@ -795,6 +813,46 @@ describe("FlameWorkerSession adaptive density-estimation blur", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Busy indicator for the adaptive pass (fr-99z): an "estimating" event
+// queued right before the synchronous adaptive downsample, so the main
+// thread can show a busy label while the worker is still crunching it.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession estimating event", () => {
+  it("emits an estimating event before the finished frame's progress event", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 500 }));
+    scheduler.drain();
+
+    const estimatingIndex = events.findIndex((e) => e.type === "estimating");
+    const progressIndex = events.findIndex((e) => e.type === "progress");
+    expect(estimatingIndex).toBeGreaterThanOrEqual(0);
+    expect(progressIndex).toBeGreaterThan(estimatingIndex);
+  });
+
+  it("does not emit an estimating event for a progressive (not-yet-finished) redisplay", () => {
+    // Same setup as the chunking suite's "redisplays more than just the
+    // first and last chunk" test (clock crosses the throttle interval every
+    // chunk, so several progressive redisplays happen before the budget is
+    // met) but stopped short of the budget: since the adaptive pass only
+    // ever runs on the finished frame, none of these progressive redisplays
+    // should have emitted "estimating".
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 10,
+      now: fakeClock(200), // > FLAME_REDISPLAY_INTERVAL_MS (150) between every chunk.
+    });
+    session.handle(startCommand({ iterationsBudget: 250_000 }));
+    scheduler.step();
+    scheduler.step();
+    scheduler.step(); // several due redisplays, still short of the budget.
+
+    expect(progressEvents(events).length).toBeGreaterThan(1);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBeLessThan(250_000);
+    expect(estimatingEvents(events)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Live estimator params (fr-17t): mirrors "live tone-map params" above, but
 // a change re-runs the adaptive downsample itself (not just a re-tonemap of
 // the existing displayHistogram), since estimatorParams feed that pass, not
@@ -837,6 +895,18 @@ describe("FlameWorkerSession live estimator params", () => {
     });
     session.handle({ type: "setEstimatorCurve", estimatorCurve: 1.5 });
     expect(progressEvents(events)).toHaveLength(doneCount + 3);
+  });
+
+  it("emits an estimating event immediately before the resulting progress event when a param changes after accumulation is done (fr-99z)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
+
+    const last = events.slice(-2);
+    expect(last[0]).toEqual({ type: "estimating" });
+    expect(last[1].type).toBe("progress");
   });
 
   it("does not re-accumulate for a live estimator param change once done", () => {

@@ -462,6 +462,30 @@ input[type="range"] {
   text-align: center;
 }
 
+/* Busy indicator (fr-99z) while the worker runs its synchronous adaptive
+   density-estimation pass — cleared as soon as the next progress/sharedFrame
+   event calls setFlameProgress. */
+.flame-progress-estimating {
+  animation: flame-progress-pulse 1s ease-in-out infinite;
+}
+
+@keyframes flame-progress-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flame-progress-estimating {
+    animation: none;
+  }
+}
+
 /* Shown only when the supersample slider's value had to be reduced to fit
    the memory budget (see main.ts's clampSupersampleToBudget) — --bad flags
    it as "not quite what you asked for" without being alarm-red. */

@@ -740,15 +740,34 @@ export class Ui {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
   }
 
-  /** Reflect flame-render progress as an iteration count and percentage. */
+  /** Reflect flame-render progress as an iteration count and percentage.
+   * Also clears the busy state {@link setFlameEstimating} set — every
+   * `progress`/`sharedFrame` event from the worker is what ends an
+   * "estimating" spell (fr-99z), whichever one arrives next. */
   setFlameProgress(iterationsDone: number, iterationsBudget: number): void {
+    // floor, not round: a 99.7%-done progressive frame must not claim
+    // "(100%)" — reading 100% while the image is still not final is exactly
+    // the ambiguity fr-99z exists to remove.
     const pct =
       iterationsBudget > 0
-        ? Math.min(100, Math.round((iterationsDone / iterationsBudget) * 100))
+        ? Math.min(100, Math.floor((iterationsDone / iterationsBudget) * 100))
         : 100;
     const done = (iterationsDone / 1_000_000).toFixed(1);
     const budget = (iterationsBudget / 1_000_000).toFixed(1);
+    this.flameProgress.classList.remove("flame-progress-estimating");
     this.flameProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+  }
+
+  /**
+   * Busy indicator for the worker's synchronous adaptive density-estimation
+   * pass (fr-99z): shown right when the worker posts `estimating`, i.e.
+   * while it is still crunching that multi-second pass with no other
+   * feedback otherwise on screen. Cleared by the next {@link setFlameProgress}
+   * call, which the following `progress`/`sharedFrame` event always triggers.
+   */
+  setFlameEstimating(): void {
+    this.flameProgress.textContent = "applying density estimate…";
+    this.flameProgress.classList.add("flame-progress-estimating");
   }
 
   /**
@@ -777,7 +796,7 @@ export class Ui {
   setSolidProgress(iterationsDone: number, iterationsBudget: number): void {
     const pct =
       iterationsBudget > 0
-        ? Math.min(100, Math.round((iterationsDone / iterationsBudget) * 100))
+        ? Math.min(100, Math.floor((iterationsDone / iterationsBudget) * 100))
         : 100;
     const done = (iterationsDone / 1_000_000).toFixed(1);
     const budget = (iterationsBudget / 1_000_000).toFixed(1);

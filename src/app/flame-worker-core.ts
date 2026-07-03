@@ -161,7 +161,18 @@ export type FlameWorkerEvent =
       effective: number | null;
       requested?: number;
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      /**
+       * Emitted right before the synchronous, unchunked adaptive
+       * density-estimation pass (fr-17t) — on the finished frame, and again
+       * on every live estimator-param/budget change that re-runs it once
+       * done (fr-99z). `postMessage` queues immediately, so this reaches the
+       * main thread while the worker is still crunching that pass; the next
+       * `progress`/`sharedFrame` event clears whatever busy state it set.
+       */
+      type: "estimating";
+    };
 
 /**
  * Environment the session runs in, injected so the state machine has no
@@ -714,6 +725,11 @@ export class FlameWorkerSession {
    */
   private rebuildDisplay(adaptive: boolean): void {
     if (!this.histogram) return;
+    // Queued ahead of the synchronous pass below (fr-99z) so the main thread
+    // sees it while the worker is still crunching, not after — see the
+    // FlameWorkerEvent variant's doc. Progressive redisplays (adaptive ===
+    // false) never take long enough to need this.
+    if (adaptive) this.emit({ type: "estimating" });
     this.lastDisplaySlot = this.nextDisplaySlot;
     const out = this.displaySlots[this.nextDisplaySlot];
     this.nextDisplaySlot =
