@@ -13,9 +13,11 @@
  * Unlike the flame session there are no live tone-map commands: everything
  * visual downstream of the grid (isosurface threshold, light direction,
  * ambient) is a GPU uniform the main thread changes without touching the
- * worker. Only the iteration budget and the symmetry (fr-6im — it reshapes
- * the geometry itself, not a tone-map param, so it restarts accumulation
- * like the flame session's `setSymmetry`) are live here.
+ * worker. Only the iteration budget, the palette (fr-1kt — restarts
+ * accumulation the same way, since baked-in colors can't be reapplied live),
+ * and the symmetry (fr-6im — it reshapes the geometry itself, not a
+ * tone-map param, so it restarts accumulation like the flame session's
+ * `setSymmetry`) are live here.
  */
 import {
   accumulateVoxels,
@@ -28,6 +30,8 @@ import type { VoxelBounds, VoxelGrid } from "../fractal/voxel";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
+import { buildPaletteLUT } from "../fractal/palette";
+import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import type {
@@ -52,6 +56,9 @@ export type VoxelWorkerCommand =
       /** The explorer's active color mode, carried into the voxel colors
        * (fr-c1d) — see `accumulateVoxels`' coloring doc. */
       colorMode: ColorMode;
+      /** Structural-coloring palette (fr-1kt, mirroring the flame's fr-6us);
+       * "legacy" = the existing colorMode-driven coloring. */
+      paletteId: FlamePaletteId;
       iterationsBudget: number;
       /** Explicit numeric seed (not a live `Rng`, which can't cross
        * postMessage) — also makes a render a reproducible pure function of
@@ -62,6 +69,7 @@ export type VoxelWorkerCommand =
       axis: SymmetryAxis;
     }
   | { type: "setIterationsBudget"; iterations: number }
+  | { type: "setPalette"; paletteId: FlamePaletteId }
   | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
 
 /** Worker → main thread. */
@@ -187,6 +195,9 @@ export class VoxelWorkerSession {
   private palette: ReturnType<typeof transformColors> = [];
   private rng: Rng = Math.random;
   private colorMode: ColorMode = "transform";
+  /** Gradient lookup table for structural coloring, or `null` for the
+   * colorMode-driven `"legacy"` palette — see `voxel.ts`'s `accumulateVoxels`. */
+  private colorLUT: Float32Array | null = null;
   private grid: VoxelGrid | null = null;
   private bounds: VoxelBounds | null = null;
 
@@ -264,6 +275,9 @@ export class VoxelWorkerSession {
         }
         break;
       }
+      case "setPalette":
+        this.setPalette(command.paletteId);
+        break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.axis);
         break;
@@ -282,6 +296,8 @@ export class VoxelWorkerSession {
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
+    // null for "legacy" — accumulateVoxels then falls back to colorMode.
+    this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
@@ -292,6 +308,20 @@ export class VoxelWorkerSession {
       this.rng,
       this.boundsSamples,
     );
+    this.startAccumulation();
+  }
+
+  /**
+   * Live palette change (fr-1kt, mirroring the flame session's `setPalette`):
+   * avgRGB has the OLD palette's colors baked in as a running mean, so —
+   * unlike a GPU-uniform param — this can't be re-applied to the existing
+   * accumulation; it has to accumulate afresh. Bounds/resolution are
+   * unchanged, so this reallocates an identical-size grid at the same bounds
+   * — the same restart path setSymmetry uses.
+   */
+  private setPalette(paletteId: FlamePaletteId): void {
+    if (!this.prepared || !this.bounds) return; // no active session yet.
+    this.colorLUT = buildPaletteLUT(paletteId);
     this.startAccumulation();
   }
 
@@ -390,6 +420,7 @@ export class VoxelWorkerSession {
       this.rng,
       this.palette,
       this.colorMode,
+      this.colorLUT ?? undefined,
     );
     const t1 = this.now();
     this.iterationsDone += chunk;

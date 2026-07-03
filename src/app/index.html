@@ -291,8 +291,9 @@
       <div id="solidControls" class="hidden">
         <p class="flame-hint">
           Builds a lit, shadowed solid from the attractor&#8217;s density,
-          colored by the explorer&#8217;s Color Mode. Keep orbiting while it
-          converges — the light and surface react live.
+          colored by the explorer&#8217;s Color Mode or a smooth gradient
+          palette. Keep orbiting while it converges — the light and surface
+          react live.
         </p>
         <label class="select-label">
           Surface level: <span id="solidThresholdLabel">0.30</span>
@@ -337,6 +338,19 @@
             step="0.05"
             value="0.25"
           />
+        </label>
+        <label class="select-label">
+          Palette (restarts render)
+          <select id="solidPalette">
+            <option value="legacy">By Color Mode (legacy)</option>
+            <option value="spectrum">Spectrum</option>
+            <option value="sunset">Sunset</option>
+            <option value="dusk">Dusk</option>
+            <option value="lagoon">Lagoon</option>
+            <option value="ember">Ember</option>
+            <option value="aurora">Aurora</option>
+            <option value="moss">Moss</option>
+          </select>
         </label>
         <label class="select-label">
           Quality: <span id="solidIterationsLabel">20M iterations</span>

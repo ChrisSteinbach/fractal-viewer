@@ -34,6 +34,7 @@ import {
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
   DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
@@ -170,8 +171,10 @@ const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
 /** Exact set of valid VariationType values. */
 const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
 
-/** Exact set of valid flame palette ids (see `palette.ts`'s `FLAME_PALETTES`). */
-const VALID_FLAME_PALETTES = new Set<string>(FLAME_PALETTE_IDS);
+/** Exact set of valid palette ids (see `palette.ts`'s `FLAME_PALETTES`),
+ * shared by the flame (`flame.paletteId`) and solid (`solid.paletteId`,
+ * fr-1kt) validators. */
+const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
 
 /** Exact set of valid SymmetryAxis values. */
 const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
@@ -368,7 +371,7 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
   // paletteId: unknown or missing quietly becomes "legacy" (see the doc above)
   // rather than rejecting the scene.
   const paletteId: FlamePaletteId =
-    typeof f.paletteId === "string" && VALID_FLAME_PALETTES.has(f.paletteId)
+    typeof f.paletteId === "string" && VALID_PALETTE_IDS.has(f.paletteId)
       ? (f.paletteId as FlamePaletteId)
       : DEFAULT_FLAME_PALETTE;
 
@@ -418,6 +421,10 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
  * present-but-malformed (non-finite) value rejects the whole scene. Finite
  * values are clamped into range; `resolution` is additionally snapped to the
  * voxel step and `iterations` rounded, matching their setters.
+ *
+ * `paletteId` (fr-1kt) is the one exception to the reject-on-malformed rule,
+ * mirroring `flame.paletteId`: an unknown or missing id decodes to `"legacy"`
+ * rather than rejecting the scene.
  */
 function decodeSolidParams(raw: unknown): SolidParams | null {
   const defaults: SolidParams = {
@@ -427,13 +434,14 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
     lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
     lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
     ambient: DEFAULT_SOLID_AMBIENT,
+    paletteId: DEFAULT_SOLID_PALETTE,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
 
   const out = { ...defaults };
-  const numeric: (keyof SolidParams)[] = [
+  const numeric: Exclude<keyof SolidParams, "paletteId">[] = [
     "resolution",
     "iterations",
     "threshold",
@@ -447,6 +455,13 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
     if (!Number.isFinite(value)) return null;
     out[key] = value;
   }
+
+  // paletteId (fr-1kt): unknown or missing quietly becomes "legacy" — same
+  // quiet-fallback contract as flame.paletteId (see decodeFlameParams).
+  const paletteId: FlamePaletteId =
+    typeof s.paletteId === "string" && VALID_PALETTE_IDS.has(s.paletteId)
+      ? (s.paletteId as FlamePaletteId)
+      : DEFAULT_SOLID_PALETTE;
 
   return {
     resolution: Math.max(
@@ -479,6 +494,7 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
       MIN_SOLID_AMBIENT,
       Math.min(MAX_SOLID_AMBIENT, out.ambient),
     ),
+    paletteId,
   };
 }
 
@@ -600,6 +616,7 @@ export function encodeScene(s: SceneSnapshot): string {
       lightAzimuth: round4(s.solid.lightAzimuth),
       lightElevation: round4(s.solid.lightElevation),
       ambient: round4(s.solid.ambient),
+      paletteId: s.solid.paletteId,
     },
     symmetry: {
       order: Math.round(s.symmetry.order),

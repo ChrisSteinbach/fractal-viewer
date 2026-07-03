@@ -192,9 +192,21 @@ export interface VoxelGrid {
    * chunked render matches a single long call given the same `rng` instance.
    */
   orbit: Vec3 | null;
+  /**
+   * The orbit's color coordinate (flam3 semantics, fr-1kt) — the voxel
+   * counterpart of `flame.ts`'s `FlameHistogram.orbitColor`: a value in
+   * `[0, 1]` that blends toward the picked transform's slot each step,
+   * indexing a smooth gradient palette when {@link accumulateVoxels} is given
+   * a `colorLUT`. Kept on the grid — alongside {@link orbit} — so a chunked
+   * render resumes the exact same color walk; only read/written on the
+   * `colorLUT` path (it stays at its `0.5` default in every other color mode).
+   * NOT folded into `orbit` because it is not a spatial coordinate.
+   */
+  orbitColor: number;
 }
 
-/** A fresh, empty grid over `bounds`: every voxel at zero, orbit not started. */
+/** A fresh, empty grid over `bounds`: every voxel at zero, orbit not started,
+ * color coordinate at its mid-gradient default. */
 export function createVoxelGrid(size: number, bounds: VoxelBounds): VoxelGrid {
   return {
     size,
@@ -203,6 +215,7 @@ export function createVoxelGrid(size: number, bounds: VoxelBounds): VoxelGrid {
     avgRGB: new Float32Array(size * size * size * 3),
     maxDensity: 0,
     orbit: null,
+    orbitColor: 0.5,
   };
 }
 
@@ -273,30 +286,44 @@ function colorModeCode(mode: ColorMode): number {
  * running-mean color; points outside the bounds are skipped, exactly like a
  * flame point outside the frame.
  *
- * **Coloring** follows the explorer's `colorMode` (fr-c1d), using the exact
- * hue formulas `buildColors` uses (shared via `color.ts`, so the two can't
- * drift): `"transform"` (the default) is `palette[transformIndex]`;
- * `"height"`/`"radius"` index the shared ramp at the point's normalized
- * coordinate; `"position"` maps normalized xyz to rgb; `"uniform"` is the
- * flat cyan. Normalization uses {@link VoxelBounds.color} — the attractor's
- * own trimmed extents, the voxel counterpart of `buildColors`' cloud bounds.
- * Coloring never touches `rng`, so a given seed produces the byte-identical
- * orbit (and thus identical `density`) in every mode.
+ * **Coloring** has two modes (fr-1kt, mirroring `flame.ts`'s `accumulateFlame`).
+ * By default (`colorLUT` omitted) it follows the explorer's `colorMode`
+ * (fr-c1d), using the exact hue formulas `buildColors` uses (shared via
+ * `color.ts`, so the two can't drift): `"transform"` (the default) is
+ * `palette[transformIndex]`; `"height"`/`"radius"` index the shared ramp at
+ * the point's normalized coordinate; `"position"` maps normalized xyz to rgb;
+ * `"uniform"` is the flat cyan. Normalization uses {@link VoxelBounds.color} —
+ * the attractor's own trimmed extents, the voxel counterpart of
+ * `buildColors`' cloud bounds.
+ *
+ * Pass a `colorLUT` (a `256 * 3` interleaved RGB table from `palette.ts`'s
+ * `buildPaletteLUT`) to switch to flam3-style structural coloring instead,
+ * taking over from `colorMode`/`palette` entirely: a color coordinate `c` in
+ * `[0, 1]` rides along the orbit — initialised to `0.5` and, each step,
+ * blended halfway toward the picked transform's slot (`c = (c + i / (n - 1))
+ * / 2`, or `0.5` for a single-transform system) — and the LUT color at `c` is
+ * painted into the voxel's running mean, so color flows continuously along
+ * the structure instead of in flat per-mode regions. Updating `c` consumes NO
+ * `rng`, so a given seed produces the byte-identical orbit (and thus
+ * identical `density`) whether or not a `colorLUT` is supplied, and in every
+ * `colorMode`. An escape-reseed resets `c` to `0.5` alongside the point.
  *
  * **Progressive**: pass the same grid back in to keep converging it — the
- * orbit resumes from where it left off (see {@link VoxelGrid.orbit}), so a
- * chunked render (one call per worker chunk) produces the identical grid to
- * one long call, given the same `rng` *instance* threaded through every
- * call. A fresh grid (orbit `null`) draws a new random seed point and warms
- * it up for {@link WARMUP_ITERATIONS} steps first (unrecorded), exactly like
+ * orbit (and its color coordinate) resumes from where it left off (see
+ * {@link VoxelGrid.orbit} / {@link VoxelGrid.orbitColor}), so a chunked render
+ * (one call per worker chunk) produces the identical grid to one long call,
+ * given the same `rng` *instance* threaded through every call. A fresh grid
+ * (orbit `null`) draws a new random seed point and warms it up for
+ * {@link WARMUP_ITERATIONS} steps first (unrecorded), exactly like
  * `runChaosGame`.
  *
  * **Symmetry** (fr-6im): when `prepared` was built with rotated copies (see
  * `chaos-game.ts`'s `prepareChaosGame`), this hand-inlined loop mirrors
  * `stepOrbit`'s handling exactly — the picked slot's rotation bends the
- * orbit-feedback point, and the `"transform"` coloring keys on the BASE map a
- * slot is a copy of, never the expanded slot — so a converged solid shows the
- * same kaleidoscope as the live point cloud and a flame render of it.
+ * orbit-feedback point, and the `"transform"` coloring / colorLUT's color
+ * slot both key on the BASE map a slot is a copy of, never the expanded slot
+ * — so a converged solid shows the same kaleidoscope as the live point cloud
+ * and a flame render of it.
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the worker
  * passes a `mulberry32` seeded by the start command.
@@ -308,6 +335,7 @@ export function accumulateVoxels(
   rng: Rng,
   palette: Vec3[],
   colorMode: ColorMode = "transform",
+  colorLUT?: Float32Array,
 ): VoxelGrid {
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -334,6 +362,19 @@ export function accumulateVoxels(
   const invRangeZ = 1 / (cb.maxZ - cb.minZ || 1);
   const invRangeR = 1 / (cb.maxR - cb.minR || 1);
   const [uniR, uniG, uniB] = UNIFORM_POINT_COLOR;
+
+  // Structural coloring (fr-1kt, mirroring accumulateFlame's colorLUT path
+  // from fr-6us): when colorLUT is supplied, `c` rides the orbit and indexes
+  // the gradient; otherwise every `colorLUT !== undefined` branch below is
+  // skipped and the colorMode dispatch above runs unchanged. `colorDenom` is
+  // `n - 1` (0 for a single-transform system, which pins the coordinate at
+  // 0.5) — the divisor mapping a transform index to its [0, 1] color slot.
+  // Keyed on `baseTransformCount`, not the expanded transform count (fr-6im):
+  // with symmetry, every rotated copy of a base map shares that map's slot,
+  // so the gradient repeats around the kaleidoscope instead of smearing
+  // continuously across copies that are geometrically the same map.
+  const colorDenom = baseTransformCount > 1 ? baseTransformCount - 1 : 0;
+  let c = grid.orbitColor;
 
   const minX = grid.bounds.min[0];
   const minY = grid.bounds.min[1];
@@ -371,6 +412,13 @@ export function accumulateVoxels(
     // expanded `idx`, so it keeps meaning "logical map" (and stays in range
     // for `palette`, which is sized to the base count).
     const baseIdx = idx % baseTransformCount;
+    // Blend the color coordinate halfway toward this transform's slot. No
+    // rng is consumed, so the orbit (and `density`) stays identical to the
+    // no-colorLUT path.
+    if (colorLUT !== undefined) {
+      const slot = colorDenom > 0 ? baseIdx / colorDenom : 0.5;
+      c = (c + slot) * 0.5;
+    }
     const aff = affines[idx];
     const m = aff.m;
     const t = aff.t;
@@ -419,6 +467,8 @@ export function accumulateVoxels(
       nx = rng() - 0.5;
       ny = rng() - 0.5;
       nz = rng() - 0.5;
+      // The orbit restarts, so its color coordinate does too.
+      if (colorLUT !== undefined) c = 0.5;
     }
     x = nx;
     y = ny;
@@ -463,7 +513,13 @@ export function accumulateVoxels(
     let r: number;
     let g: number;
     let b: number;
-    if (mode === MODE_TRANSFORM) {
+    if (colorLUT !== undefined) {
+      // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      r = colorLUT[li];
+      g = colorLUT[li + 1];
+      b = colorLUT[li + 2];
+    } else if (mode === MODE_TRANSFORM) {
       const rgb = palette[baseIdx];
       r = rgb === undefined ? FALLBACK_R : rgb[0];
       g = rgb === undefined ? FALLBACK_G : rgb[1];
@@ -506,6 +562,7 @@ export function accumulateVoxels(
   }
 
   grid.orbit = [x, y, z];
+  grid.orbitColor = c;
   grid.maxDensity = maxDensity;
   return grid;
 }

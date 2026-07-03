@@ -13,6 +13,7 @@ import {
   buildColorModeLUT,
   transformColors,
 } from "./color";
+import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -56,6 +57,8 @@ describe("createVoxelGrid", () => {
     expect(Array.from(grid.density).every((d) => d === 0)).toBe(true);
     expect(grid.maxDensity).toBe(0);
     expect(grid.orbit).toBeNull();
+    // The color coordinate starts mid-gradient (flam3's convention).
+    expect(grid.orbitColor).toBe(0.5);
   });
 });
 
@@ -377,6 +380,93 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.orbit).toEqual([x, y, z]);
   });
 
+  it("matches a reference loop that tracks the color coordinate the same way (colorLUT, fr-1kt)", () => {
+    // The colorLUT counterpart to the oracle above: the color coordinate `c`
+    // rides the orbit (init 0.5, blended halfway toward the picked
+    // transform's slot each step) and indexes the gradient. Because updating
+    // `c` consumes no rng, the orbit — and thus `density` — is byte-identical
+    // to the no-colorLUT path; only avgRGB differs, and this pins it to the
+    // same rule the inlined loop uses.
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, variations: [{ type: "sinusoidal" as const, weight: 0.7 }] }
+        : t,
+    );
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.1, 0, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1, 1, 1],
+    };
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 2000;
+    const n = transforms.length;
+
+    const prepared = prepareChaosGame(transforms, finalTransform);
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepared,
+      actual,
+      iterations,
+      mulberry32(99),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    const rng = mulberry32(99);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    let c = 0.5;
+    for (let n2 = 0; n2 < iterations; n2++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const slot = n > 1 ? s.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (colorLUT[li] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] +=
+        (colorLUT[li + 1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] +=
+        (colorLUT[li + 2] - expected.avgRGB[o + 2]) * inv;
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitColor = c;
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitColor).toBe(expected.orbitColor);
+  });
+
   it("matches the same oracle when the prepared system has rotated copies (fr-6im)", () => {
     // Same shape as the plain oracle above, but `prepared` is built with
     // symmetry: stepOrbit already rotates a picked slot's full affine +
@@ -449,6 +539,91 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.orbit).toEqual([x, y, z]);
   });
 
+  it("matches the structural-coloring (colorLUT) oracle when the prepared system has rotated copies (fr-1kt + fr-6im)", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, variations: [{ type: "sinusoidal" as const, weight: 0.7 }] }
+        : t,
+    );
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.1, 0, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1, 1, 1],
+    };
+    const symmetry = { order: 4 as const, axis: "y" as const };
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("ember");
+    if (!colorLUT) throw new Error("ember should have a LUT");
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 2000;
+    // BASE count — colorDenom keys on this, not the expanded slot count (see
+    // voxel.ts's accumulateVoxels), so every rotated copy of a base map
+    // repeats that map's gradient slot instead of smearing across copies.
+    const n = transforms.length;
+
+    const prepared = prepareChaosGame(transforms, finalTransform, symmetry);
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepared,
+      actual,
+      iterations,
+      mulberry32(99),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    const rng = mulberry32(99);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    let c = 0.5;
+    for (let n2 = 0; n2 < iterations; n2++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const slot = n > 1 ? s.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (colorLUT[li] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] +=
+        (colorLUT[li + 1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] +=
+        (colorLUT[li + 2] - expected.avgRGB[o + 2]) * inv;
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitColor = c;
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitColor).toBe(expected.orbitColor);
+  });
+
   it("produces a differently-shaped grid than the same seed without symmetry", () => {
     const transforms = sierpinskiTetrahedron();
     const palette = transformColors(transforms.length);
@@ -474,6 +649,91 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(Array.from(withSymmetry.density)).not.toEqual(
       Array.from(withoutSymmetry.density),
     );
+  });
+});
+
+describe("accumulateVoxels structural coloring (colorLUT, fr-1kt)", () => {
+  it("threads the color coordinate across chunks (progressive == single-shot)", () => {
+    const transforms = sierpinskiTetrahedron();
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("lagoon");
+    if (!colorLUT) throw new Error("lagoon should have a LUT");
+    const bounds = unitishBounds(2);
+    const size = 8;
+
+    const chunkedRng = mulberry32(11);
+    const prepared = prepareChaosGame(transforms);
+    const chunked = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepared,
+      chunked,
+      400,
+      chunkedRng,
+      palette,
+      "transform",
+      colorLUT,
+    );
+    accumulateVoxels(
+      prepared,
+      chunked,
+      600,
+      chunkedRng,
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    const singleShot = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      singleShot,
+      1000,
+      mulberry32(11),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    expect(chunked.avgRGB).toEqual(singleShot.avgRGB);
+    expect(chunked.orbitColor).toBe(singleShot.orbitColor);
+  });
+
+  it("colors by the gradient instead of colorMode, without changing the orbit", () => {
+    const transforms = sierpinskiTetrahedron();
+    const bounds = unitishBounds(2);
+    const size = 8;
+
+    const legacy = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      legacy,
+      1000,
+      mulberry32(3),
+      transformColors(transforms.length),
+      "height",
+    );
+    // The no-colorLUT path never touches the color coordinate.
+    expect(legacy.orbitColor).toBe(0.5);
+
+    const colorLUT = buildPaletteLUT("aurora");
+    if (!colorLUT) throw new Error("aurora should have a LUT");
+    const colored = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      colored,
+      1000,
+      mulberry32(3),
+      transformColors(transforms.length),
+      "height",
+      colorLUT,
+    );
+
+    expect(colored.orbitColor).not.toBe(0.5);
+    // Same seed, same orbit → identical density whether or not a LUT is
+    // supplied, regardless of colorMode.
+    expect(colored.density).toEqual(legacy.density);
+    // ...but the accumulated colors differ (gradient vs colorMode ramp).
+    expect(colored.avgRGB).not.toEqual(legacy.avgRGB);
   });
 });
 

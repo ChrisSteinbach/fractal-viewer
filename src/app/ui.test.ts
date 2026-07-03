@@ -46,6 +46,7 @@ function noopHandlers(): UiHandlers {
     onSolidLightAzimuthInput: vi.fn(),
     onSolidLightElevationInput: vi.fn(),
     onSolidAmbientInput: vi.fn(),
+    onSolidPaletteChange: vi.fn(),
     onSolidIterationsInput: vi.fn(),
     onSolidResolutionInput: vi.fn(),
     onSymmetryOrderInput: vi.fn(),
@@ -1172,6 +1173,36 @@ describe("Ui solid render controls", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onSolidResolutionInput).toHaveBeenCalledWith(224);
+  });
+
+  it("offers exactly the registered palettes, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#solidPalette option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...FLAME_PALETTE_IDS]);
+  });
+
+  it("reflects the palette id into the select", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      solid: { ...initialState(true).solid, paletteId: "aurora" },
+    });
+    expect(
+      (document.getElementById("solidPalette") as HTMLSelectElement).value,
+    ).toBe("aurora");
+  });
+
+  it("reports the selected palette id on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("solidPalette") as HTMLSelectElement;
+    select.value = "spectrum";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onSolidPaletteChange).toHaveBeenCalledWith("spectrum");
   });
 });
 

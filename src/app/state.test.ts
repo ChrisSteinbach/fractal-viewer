@@ -14,6 +14,7 @@ import {
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
   DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
@@ -70,6 +71,7 @@ import {
   setSolidIterations,
   setSolidLightAzimuth,
   setSolidLightElevation,
+  setSolidPaletteId,
   setSolidResolution,
   setSolidThreshold,
   setSymmetryAxis,
@@ -124,6 +126,7 @@ describe("initialState", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
 
@@ -583,6 +586,23 @@ describe("setSolidAmbient", () => {
     expect(setSolidAmbient(initialState(true), -5).solid.ambient).toBe(
       MIN_SOLID_AMBIENT,
     );
+  });
+});
+
+describe("setSolidPaletteId", () => {
+  it("sets the palette id immutably", () => {
+    const state = initialState(true);
+    const next = setSolidPaletteId(state, "spectrum");
+    expect(next.solid.paletteId).toBe("spectrum");
+    expect(state.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+  });
+
+  it("leaves the other solid params untouched", () => {
+    const state = initialState(true);
+    const next = setSolidPaletteId(state, "ember");
+    expect(next.solid.threshold).toBe(state.solid.threshold);
+    expect(next.solid.resolution).toBe(state.solid.resolution);
+    expect(next.solid.iterations).toBe(state.solid.iterations);
   });
 });
 
