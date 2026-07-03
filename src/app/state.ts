@@ -179,6 +179,8 @@ export interface AppState {
 /** An IFS needs at least one map. */
 export const MIN_TRANSFORMS = 1;
 export const DEFAULT_NUM_POINTS = 100_000;
+export const MAX_NUM_POINTS = 5_000_000;
+export const MIN_NUM_POINTS = 1_000;
 /** Point-size multiplier; 1 renders each style at its authored size. */
 export const DEFAULT_POINT_SIZE = 1;
 /** Neutral brightness multiplier for a freshly started flame render. */
