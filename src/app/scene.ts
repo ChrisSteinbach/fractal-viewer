@@ -33,6 +33,7 @@ const BASE_POINT_SIZE = 0.02; // depthFade + aerial
 const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
+const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 
 function color(rgb: Vec3): THREE.Color {
   return new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]);
@@ -301,7 +302,7 @@ export class FractalScene {
       size: GLOW_POINT_SIZE,
       map: glowTexture(),
       transparent: true,
-      opacity: 0.28,
+      opacity: GLOW_BASE_OPACITY,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
@@ -590,6 +591,14 @@ export class FractalScene {
     this.discMaterial.size = DISC_POINT_SIZE * multiplier;
     this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
     this.dofMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
+  }
+
+  /**
+   * Scale the glow material's opacity by a density-adaptive exposure factor.
+   * Called per frame while the glow style is active; pass 1 to reset.
+   */
+  setGlowExposure(factor: number): void {
+    this.glowMaterial.opacity = GLOW_BASE_OPACITY * factor;
   }
 
   /**
