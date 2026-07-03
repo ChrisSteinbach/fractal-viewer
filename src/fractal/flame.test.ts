@@ -1335,7 +1335,7 @@ describe("adaptiveDownsampleFlame", () => {
     const adaptive = adaptiveDownsampleFlame(hist, 3, 3, {
       estimatorRadius: radius,
       estimatorMinimumRadius: radius,
-      estimatorCurve: 0.4, // irrelevant when max == min: (1-d)**curve is always multiplied by a zero span.
+      estimatorCurve: 0.4, // irrelevant when max == min: whatever radius a count maps to is clamped to the same constant.
     });
     const fixed = downsampleFlame(hist, 3, 3, radius);
 
@@ -1351,64 +1351,96 @@ describe("adaptiveDownsampleFlame", () => {
   // Each of these compares a cell's OWN reading (how much its raw value
   // survives being pooled with its — empty, in every scenario below —
   // neighbors) across two scenarios that differ only in what radius that
-  // cell's own local density resolves to: the WIDER the radius a cell
+  // cell's own local hit count resolves to: the WIDER the radius a cell
   // gathers with, the more it dilutes its own peak by averaging in more
   // (zero) neighbors. That is the directly observable effect of radius
   // choice — not, e.g., how far a DIFFERENT cell's influence spreads (a
   // neighboring empty cell's OWN radius depends on ITS OWN — always zero —
-  // local density, not on how dense a nearby source happens to be, so it
+  // local count, not on how dense a nearby source happens to be, so it
   // is always the widest possible regardless of what is next to it).
 
-  it("dilutes a sparse cell's own reading more than a dense cell's, at the same raw hit count", () => {
+  it("dilutes a low-count cell's own reading proportionally more than a high-count cell's", () => {
     const width = 60;
     const height = 1;
     const bucket = 30;
     const params: DensityEstimatorParams = {
       estimatorRadius: 8,
       estimatorMinimumRadius: 0,
-      estimatorCurve: 1,
+      estimatorCurve: 0.4,
     };
 
-    // Scenario A: this cell IS the histogram's peak (normalizedDensity ==
-    // 1, "dense") -> narrowest radius -> minimal dilution.
-    const dense = createFlameHistogram(width, height);
-    dense.hits[bucket] = 100;
-    dense.sumRGB[bucket * 3] = 100;
-    dense.maxHits = 100;
-
-    // Scenario B: the identical raw hit count, but read against a much
-    // higher peak recorded elsewhere in the render (set directly on maxHits
-    // — no competing bucket actually holding it, so there is nothing at
-    // that position for a kernel to geometrically pick up; maxHits is a
-    // pure normalization reference, not a spatial one) -> lower
-    // normalizedDensity -> wider radius -> more dilution.
+    // 5 hits: barely sampled — radius 8 / 5 ** 0.4 ~= 4.2px, a wide gather
+    // that spreads most of the cell's own mass away.
     const sparse = createFlameHistogram(width, height);
-    sparse.hits[bucket] = 100;
-    sparse.sumRGB[bucket * 3] = 100;
-    sparse.maxHits = 1_000_000;
+    sparse.hits[bucket] = 5;
+    sparse.sumRGB[bucket * 3] = 5;
+    sparse.maxHits = 5;
 
-    const denseOut = adaptiveDownsampleFlame(dense, width, height, params);
+    // 50,000 hits: thoroughly sampled — radius 8 / 50_000 ** 0.4 ~= 0.1px,
+    // which quantizes to the sharp end of the kernel cache.
+    const dense = createFlameHistogram(width, height);
+    dense.hits[bucket] = 50_000;
+    dense.sumRGB[bucket * 3] = 50_000;
+    dense.maxHits = 50_000;
+
     const sparseOut = adaptiveDownsampleFlame(sparse, width, height, params);
+    const denseOut = adaptiveDownsampleFlame(dense, width, height, params);
 
-    expect(denseOut.hits[bucket]).toBeGreaterThan(sparseOut.hits[bucket]);
-    // The dense case is close to its raw 100 (small correction only from
-    // MIN_ADAPTIVE_FILTER_SIGMA's floor — see that constant's doc); the
-    // sparse case is diluted to a small fraction of it.
-    expect(denseOut.hits[bucket]).toBeGreaterThan(90);
-    expect(sparseOut.hits[bucket]).toBeLessThan(50);
+    // Compare the FRACTION of each cell's own raw count that survives, so
+    // the two scenarios' different absolute counts cancel out.
+    expect(denseOut.hits[bucket] / 50_000).toBeGreaterThan(0.9);
+    expect(sparseOut.hits[bucket] / 5).toBeLessThan(0.5);
   });
 
-  it("keeps a fully-saturated cell's own reading close to its raw value", () => {
-    // normalizedDensity is exactly log1p(maxHits)/log1p(maxHits) == 1, so
-    // (1 - 1) ** curve is exactly 0 regardless of curve and radius collapses
-    // to estimatorMinimumRadius exactly, provably (not just empirically) —
-    // but estimatorMinimumRadius: 0 does not mean the radius used to BUILD
-    // the kernel is literally 0 (see MIN_ADAPTIVE_FILTER_SIGMA's doc for
-    // why), so this checks "close to raw", not bit-exact pass-through.
+  it("keeps a well-sampled cell sharp regardless of how hot the image's peak is elsewhere (fr-rq6)", () => {
+    // The bug this pins against: the original mapping normalized a cell's
+    // density against the histogram's PEAK on a log scale, so a
+    // well-converged 1000-hit cell sitting in an image whose hottest bucket
+    // was 1,000,000 still resolved to a near-maximum radius — the whole
+    // finished frame blurred to mush. The radius must depend on the cell's
+    // own absolute count only: identical histograms that differ ONLY in the
+    // recorded peak (set directly on maxHits — a pure normalization
+    // reference, nothing at that position for a kernel to pick up) must
+    // produce byte-identical output.
+    const width = 60;
+    const height = 1;
+    const bucket = 30;
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 8,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    };
+
+    const ownPeak = createFlameHistogram(width, height);
+    ownPeak.hits[bucket] = 1000;
+    ownPeak.sumRGB[bucket * 3] = 1000;
+    ownPeak.maxHits = 1000;
+
+    const hotterElsewhere = createFlameHistogram(width, height);
+    hotterElsewhere.hits[bucket] = 1000;
+    hotterElsewhere.sumRGB[bucket * 3] = 1000;
+    hotterElsewhere.maxHits = 1_000_000;
+
+    const a = adaptiveDownsampleFlame(ownPeak, width, height, params);
+    const b = adaptiveDownsampleFlame(hotterElsewhere, width, height, params);
+
+    expect(Array.from(a.hits)).toEqual(Array.from(b.hits));
+    expect(Array.from(a.sumRGB)).toEqual(Array.from(b.sumRGB));
+    // And "sharp" in absolute terms: 1000 hits resolves to a ~0.5px radius,
+    // so most of the cell's own reading survives instead of being spread
+    // across a near-maximum kernel.
+    expect(a.hits[bucket]).toBeGreaterThan(700);
+  });
+
+  it("keeps a heavily-sampled cell's own reading close to its raw value", () => {
+    // 200,000 hits resolves to estimatorRadius / 200_000 ** 0.4 ~= 0.08px,
+    // which quantizes below MIN_ADAPTIVE_FILTER_SIGMA's floor — but that
+    // floor does not mean the kernel is literally a 1-cell passthrough (see
+    // that constant's doc), so this checks "close to raw", not bit-exact.
     const hist = createFlameHistogram(5, 5);
-    hist.hits[12] = 500; // center bucket, and the histogram's only hits.
-    hist.sumRGB[12 * 3] = 500;
-    hist.maxHits = 500;
+    hist.hits[12] = 200_000; // center bucket, and the histogram's only hits.
+    hist.sumRGB[12 * 3] = 200_000;
+    hist.maxHits = 200_000;
 
     const out = adaptiveDownsampleFlame(hist, 5, 5, {
       estimatorRadius: 10,
@@ -1416,25 +1448,23 @@ describe("adaptiveDownsampleFlame", () => {
       estimatorCurve: 0.4,
     });
 
-    expect(out.hits[12]).toBeGreaterThan(475); // within 5% of the raw 500.
-    expect(out.hits[12]).toBeLessThanOrEqual(500);
+    expect(out.hits[12]).toBeGreaterThan(190_000); // within 5% of the raw count.
+    expect(out.hits[12]).toBeLessThanOrEqual(200_000);
   });
 
-  it("shapes the falloff with estimatorCurve: a lower curve dilutes a mid-density cell more than a higher curve does", () => {
-    // (1 - 0.5) ** curve is LARGER for curve < 1 than curve > 1 (0.5 ** 0.3
-    // ~= 0.81 vs 0.5 ** 3 ~= 0.125), so a mid-density cell's OWN radius (and
-    // therefore its own dilution) should be visibly wider at the low curve.
+  it("shapes the falloff with estimatorCurve: a lower curve dilutes a mid-count cell more than a higher curve does", () => {
+    // radius = estimatorRadius / count ** curve, so at 1000 hits a curve of
+    // 0.3 leaves 8 / 1000 ** 0.3 ~= 1.0px of blur while a curve of 3
+    // collapses to the sharp floor — the cell's own dilution should be
+    // visibly larger at the low curve.
     const width = 30;
     const height = 4;
     const hist = createFlameHistogram(width, height);
     const midBucket = 2 * width + 5;
-    // maxHits chosen so this single cell's log-density sits near the curve's
-    // midpoint: log1p(hits) / log1p(maxHits) ~= 0.5.
-    const maxHits = 1_000_000;
-    const midHits = Math.round(Math.expm1(0.5 * Math.log1p(maxHits)));
+    const midHits = 1000;
     hist.hits[midBucket] = midHits;
     hist.sumRGB[midBucket * 3] = midHits;
-    hist.maxHits = maxHits;
+    hist.maxHits = midHits;
 
     const wideAtMid = adaptiveDownsampleFlame(hist, width, height, {
       estimatorRadius: 8,
@@ -1681,6 +1711,38 @@ describe("adaptiveDownsampleFlame into a reused out histogram", () => {
     expect(() =>
       adaptiveDownsampleFlame(source, 3, 3, params, createFlameHistogram(2, 3)),
     ).toThrow(RangeError);
+  });
+
+  it("overwrites dirty buckets with zeros where the kernel footprint is provably empty", () => {
+    // A single distant hot cell in an otherwise empty source: output cells
+    // whose entire (even widest-radius) footprint holds no hits take the
+    // empty-footprint fast path, which must still WRITE its zeros — a
+    // reused dirty target would otherwise leak stale garbage exactly where
+    // the skip saved the gather (see fr-rq6's occupancy skip).
+    const size = 96; // several occupancy tiles across, so far cells' tile queries are genuinely empty.
+    const source = createFlameHistogram(size, size);
+    source.hits[0] = 500; // top-left corner.
+    source.sumRGB[0] = 500;
+    source.maxHits = 500;
+
+    const params: DensityEstimatorParams = {
+      estimatorRadius: 2,
+      estimatorMinimumRadius: 0,
+      estimatorCurve: 0.4,
+    };
+    const fresh = adaptiveDownsampleFlame(source, size, size, params);
+
+    const dirty = createFlameHistogram(size, size);
+    dirty.hits.fill(123);
+    dirty.sumRGB.fill(-7);
+    dirty.maxHits = 999_999;
+    adaptiveDownsampleFlame(source, size, size, params, dirty);
+
+    const farCorner = size * size - 1; // bottom-right — many tiles from the hot cell.
+    expect(fresh.hits[farCorner]).toBe(0);
+    expect(dirty.hits[farCorner]).toBe(0);
+    expect(Array.from(dirty.hits)).toEqual(Array.from(fresh.hits));
+    expect(Array.from(dirty.sumRGB)).toEqual(Array.from(fresh.sumRGB));
   });
 });
 

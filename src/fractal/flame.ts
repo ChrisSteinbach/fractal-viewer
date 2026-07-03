@@ -752,16 +752,17 @@ export interface DensityEstimatorParams {
   /** Blur radius (output pixels) for a cell with ~zero local density — the
    * widest the kernel ever gets, filling gaps in sparse/noisy regions. */
   estimatorRadius: number;
-  /** Blur radius (output pixels) for a cell at full local density; 0 leaves
-   * fully-sampled regions pin-sharp. Clamped to `estimatorRadius` if given a
+  /** Floor for the radius a densely-sampled cell narrows to; 0 leaves
+   * well-sampled regions pin-sharp. Clamped to `estimatorRadius` if given a
    * larger value, so "minimum" can never exceed "maximum". */
   estimatorMinimumRadius: number;
-  /** Shapes how quickly the radius narrows as density rises from 0 to 1 (see
-   * {@link adaptiveDownsampleFlame}'s doc for the exact curve). Below 1,
-   * radius stays close to `estimatorRadius` until density is nearly maxed
-   * out, then narrows sharply; above 1, it narrows quickly even at modest
-   * density and stays close to `estimatorMinimumRadius` the rest of the way.
-   * flam3-ish values sit around 0.3-0.6. */
+  /** Shapes how quickly the radius narrows as a cell's own hit count grows
+   * (see {@link adaptiveDownsampleFlame}'s doc for the exact curve —
+   * `estimatorRadius / count ** estimatorCurve`, flam3's own formula and
+   * parameter). Below 1, the radius narrows gently with count, so even
+   * moderately-sampled cells keep some smoothing; above 1, it collapses to
+   * `estimatorMinimumRadius` after just a few hits. flam3-ish values sit
+   * around 0.3-0.6. */
   estimatorCurve: number;
 }
 
@@ -769,6 +770,13 @@ export interface DensityEstimatorParams {
  * {@link adaptiveDownsampleFlame} — see its doc for why radii are quantized
  * into a small cache instead of every cell building its own kernel. */
 const RADIUS_QUANTUM = 0.5;
+
+/** Side length (source cells) of one occupancy tile in
+ * {@link adaptiveDownsampleFlame}'s empty-footprint skip — see the
+ * summed-area-table paragraph in its doc. Small enough that a tile is a
+ * fine-grained emptiness probe, large enough that the table stays tiny
+ * (~1/256th of the histogram's cell count). */
+const OCCUPANCY_TILE = 16;
 
 /**
  * Floor for {@link adaptiveDownsampleFlame}'s kernel sigma — DELIBERATELY
@@ -787,8 +795,8 @@ const RADIUS_QUANTUM = 0.5;
  * the phase-shifted peak) underflows to precisely 0.0 in double precision —
  * `weightSum` for that output cell is then also exactly 0, and the
  * `weightSum > 0` guard silently skips writing it, leaving a BLACK HOLE at
- * exactly the densest, most important part of the image (density 1 is what
- * maps to `estimatorMinimumRadius` in the first place). 0.3 keeps the
+ * exactly the densest, most important part of the image (a high sample count
+ * is what maps to `estimatorMinimumRadius` in the first place). 0.3 keeps the
  * weight at a half-cell offset comfortably away from underflow (`exp(-0.25 /
  * (2 * (0.3 * 2) ** 2))` ~= 0.7, not ~0) while still being narrow enough
  * that "pin-sharp" reads as sharp — this only changes anything for a radius
@@ -824,18 +832,31 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  *    output cell's 1:1 region — not a single source cell, which on its own
  *    is far too noisy (Monte-Carlo shot noise) to drive a stable radius
  *    choice; summing a small neighborhood first is what flam3 does too.
- * 2. Normalize that count against the histogram's peak (`log1p`, the same
- *    density concept {@link tonemapFlame} already uses, so "well-sampled"
- *    here lines up with "bright" there) and map it to a radius: `1` maps to
- *    `estimatorMinimumRadius`, `0` to `estimatorRadius`, interpolated by
- *    `estimatorCurve` — `estimatorMinimumRadius + (estimatorRadius -
- *    estimatorMinimumRadius) * (1 - density) ** estimatorCurve`.
+ * 2. Map that count to a radius the way flam3 does — `estimatorRadius /
+ *    max(1, count) ** estimatorCurve`, clamped to `[estimatorMinimumRadius,
+ *    estimatorRadius]`. The count is the cell's own ABSOLUTE sample count,
+ *    because that is what Monte-Carlo noise actually depends on (relative
+ *    error falls as `1 / sqrt(count)`): a few hundred hits is a clean signal
+ *    worth keeping sharp no matter how much hotter the image's hottest
+ *    bucket happens to be. Normalizing against the histogram's peak instead
+ *    (as this function originally did — fr-rq6) puts nearly every cell of a
+ *    log-distributed histogram far below the max, so the whole image—
+ *    converged structure included — got near-`estimatorRadius` blur, turning
+ *    the finished frame into a featureless smear (and, since wide kernels
+ *    ran everywhere, taking minutes to do it).
  * 3. Gather a Gaussian kernel of THAT radius. Building one with `Math.exp`
  *    fresh for every one of `width * height` cells would dominate the cost,
  *    so radii are quantized to the nearest {@link RADIUS_QUANTUM} output
  *    pixels and cached — a real render needs at most a few dozen distinct
  *    radius classes regardless of image size, turning "exp per cell" into
  *    "array lookup per cell, exp per class".
+ *
+ * Cells whose entire kernel footprint is provably empty are skipped outright
+ * (their output written as zeros — exactly what gathering would produce):
+ * a summed-area table over coarse {@link OCCUPANCY_TILE}-sized occupancy
+ * tiles answers "any hits within this bounding box?" in O(1), so the empty
+ * background — often most of a flame's frame, and always requesting the
+ * widest kernel — costs a table lookup instead of a widest-kernel gather.
  *
  * Deliberately NOT separable (two 1-D passes): a spatially-varying-width
  * Gaussian isn't exactly separable in the first place (a true two-pass
@@ -847,9 +868,13 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  * `downsampleFlame`'s own proven loop shape) is worth its extra cost here.
  *
  * COST: still O(width * height * radius^2) in the worst case (a maximally
- * sparse image, every cell requesting the widest kernel) — expensive enough
+ * sparse image with hits scattered everywhere, every cell requesting the
+ * widest kernel and no footprint empty enough to skip) — expensive enough
  * that it belongs on a finished/paused render, not every progressive frame;
  * see the worker's `runChunk` for how the two functions divide that work.
+ * In practice the absolute-count radius mapping keeps converged structure on
+ * small kernels and the occupancy skip makes empty background ~free, so a
+ * typical finished frame costs a small multiple of a fixed-radius pass.
  *
  * `oversized`'s dimensions must be an exact positive-integer multiple of
  * `outWidth` / `outHeight`, exactly like `downsampleFlame`. Throws
@@ -872,7 +897,6 @@ export function adaptiveDownsampleFlame(
     height: srcHeight,
     hits: srcHits,
     sumRGB: srcRGB,
-    maxHits: srcMaxHits,
   } = oversized;
   if (
     outWidth <= 0 ||
@@ -902,11 +926,6 @@ export function adaptiveDownsampleFlame(
     Math.max(0, params.estimatorMinimumRadius),
   );
   const estimatorCurve = params.estimatorCurve;
-  // log1p(0) is 0, so a histogram with no hits anywhere (srcMaxHits <= 0)
-  // falls out naturally: every cell's normalizedDensity below is 0 / 0 ->
-  // guarded to 0 -> every cell gets the widest (estimatorRadius) kernel,
-  // same as downsampleFlame would with nothing to distinguish cells by.
-  const logMax = srcMaxHits > 0 ? Math.log1p(srcMaxHits) : 0;
 
   // The same constant per-axis phase downsampleFlame relies on (see its
   // doc) — every output cell's footprint center sits at this fixed
@@ -952,6 +971,35 @@ export function adaptiveDownsampleFlame(
     return built;
   }
 
+  // Occupancy summed-area table (see the doc's skip paragraph): occ[(ty + 1)
+  // * satStride + (tx + 1)] holds the number of occupied (any-hits) tiles in
+  // the rectangle of tiles from (0, 0) through (tx, ty) inclusive, with a
+  // zero border row/column so queries never need edge special cases. Built
+  // in one O(srcWidth * srcHeight) scan + one O(tiles) prefix pass — trivial
+  // next to even a single widest-kernel gather row.
+  const tilesX = Math.ceil(srcWidth / OCCUPANCY_TILE);
+  const tilesY = Math.ceil(srcHeight / OCCUPANCY_TILE);
+  const satStride = tilesX + 1;
+  const occupancy = new Int32Array(satStride * (tilesY + 1));
+  for (let sy = 0; sy < srcHeight; sy++) {
+    const rowBase = sy * srcWidth;
+    const tileRow = (((sy / OCCUPANCY_TILE) | 0) + 1) * satStride;
+    for (let sx = 0; sx < srcWidth; sx++) {
+      if (srcHits[rowBase + sx] > 0) {
+        occupancy[tileRow + ((sx / OCCUPANCY_TILE) | 0) + 1] = 1;
+      }
+    }
+  }
+  for (let ty = 1; ty <= tilesY; ty++) {
+    for (let tx = 1; tx <= tilesX; tx++) {
+      const i = ty * satStride + tx;
+      occupancy[i] +=
+        occupancy[i - 1] +
+        occupancy[i - satStride] -
+        occupancy[i - satStride - 1];
+    }
+  }
+
   let maxHits = 0;
   for (let oy = 0; oy < outHeight; oy++) {
     const baseY = oy * scaleY; // exact integer: the output cell's home row.
@@ -967,19 +1015,46 @@ export function adaptiveDownsampleFlame(
           localCount += srcHits[rowBase + baseX + i];
         }
       }
-      // A home block's summed count can exceed the single-cell srcMaxHits,
-      // so this is clamped to 1 rather than trusted to land there naturally.
-      const normalizedDensity =
-        logMax > 0 ? Math.min(1, Math.log1p(localCount) / logMax) : 0;
-
-      // Step 2: map density to a radius.
-      const radius =
-        estimatorMinimumRadius +
-        (estimatorRadius - estimatorMinimumRadius) *
-          (1 - normalizedDensity) ** estimatorCurve;
+      // Step 2: map the cell's own absolute count to a radius (see the doc's
+      // ALGORITHM section for why absolute, not relative-to-peak — fr-rq6).
+      // max(1, count) keeps an empty cell at exactly the widest radius
+      // instead of dividing by 0 ** curve.
+      const radius = Math.min(
+        estimatorRadius,
+        Math.max(
+          estimatorMinimumRadius,
+          estimatorRadius / Math.max(1, localCount) ** estimatorCurve,
+        ),
+      );
 
       // Step 3: gather the (cached-by-quantized-radius) kernel.
       const { kernelX, kernelY, radiusX, radiusY } = kernelFor(radius);
+
+      // Empty-footprint skip: if no occupancy tile overlapping the kernel's
+      // bounding box holds any hits, gathering would sum zeros — write the
+      // zeros directly (a reused `out` may be dirty; see downsampleFlame).
+      const dstBucket = oy * outWidth + ox;
+      const dOff = dstBucket * 3;
+      if (localCount <= 0) {
+        const txLo = (Math.max(0, baseX - radiusX) / OCCUPANCY_TILE) | 0;
+        const tyLo = (Math.max(0, baseY - radiusY) / OCCUPANCY_TILE) | 0;
+        const txHi =
+          ((Math.min(srcWidth - 1, baseX + radiusX) / OCCUPANCY_TILE) | 0) + 1;
+        const tyHi =
+          ((Math.min(srcHeight - 1, baseY + radiusY) / OCCUPANCY_TILE) | 0) + 1;
+        const occupied =
+          occupancy[tyHi * satStride + txHi] -
+          occupancy[tyLo * satStride + txHi] -
+          occupancy[tyHi * satStride + txLo] +
+          occupancy[tyLo * satStride + txLo];
+        if (occupied === 0) {
+          dstHits[dstBucket] = 0;
+          dstRGB[dOff] = 0;
+          dstRGB[dOff + 1] = 0;
+          dstRGB[dOff + 2] = 0;
+          continue;
+        }
+      }
 
       let weightSum = 0;
       let hitSum = 0;
@@ -1009,8 +1084,6 @@ export function adaptiveDownsampleFlame(
       // always in-bounds since baseX/baseY are themselves in-bounds source
       // coordinates) — guarded anyway, matching downsampleFlame and this
       // codebase's general habit of guarding "essentially impossible" cases.
-      const dstBucket = oy * outWidth + ox;
-      const dOff = dstBucket * 3;
       if (weightSum > 0) {
         const norm = 1 / weightSum;
         const hVal = hitSum * norm;
