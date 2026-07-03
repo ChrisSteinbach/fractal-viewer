@@ -113,6 +113,16 @@ export interface SolidParams {
   /** Fill-light floor in [0, 1]: how bright fully shadowed/occluded surfaces
    * stay. Live-reactive. */
   ambient: number;
+  /**
+   * Structural-coloring palette (fr-1kt; shares fr-6us's `FlamePaletteId`
+   * enum — see `palette.ts`). `"legacy"` (the default) keeps the existing
+   * colorMode-driven coloring (fr-c1d), so existing scenes/renders are
+   * unchanged; a cosine-gradient id paints continuous color along the orbit
+   * instead, overriding colorMode entirely. Changing it restarts
+   * accumulation — the accumulated avgRGB bakes in the palette, so there is
+   * nothing to keep (see `main.ts`).
+   */
+  paletteId: FlamePaletteId;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -266,6 +276,13 @@ export const MAX_SOLID_LIGHT_ELEVATION = 85;
 export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
+/**
+ * Default solid-render palette. `"legacy"` is the colorMode-driven coloring
+ * that predates this feature (fr-1kt), so a scene that predates it (or a
+ * fresh one) renders exactly as before until the user picks a gradient
+ * palette.
+ */
+export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "legacy";
 /** 1 = off: today's unreplicated system, unchanged until symmetry is turned on. */
 export const DEFAULT_SYMMETRY_ORDER = 1;
 export const MIN_SYMMETRY_ORDER = 1;
@@ -311,6 +328,7 @@ export function initialState(panelOpen: boolean): AppState {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
     },
     solidActive: false,
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
@@ -688,6 +706,19 @@ export function setSolidAmbient(state: AppState, ambient: number): AppState {
       ),
     },
   };
+}
+
+/**
+ * Set the solid render's structural-coloring palette. Not clamped — it is an
+ * enum (see `palette.ts`), and the UI only offers valid ids (persistence
+ * validates untrusted input in `decodeScene`). Restarts accumulation in the
+ * worker when it changes; see `main.ts`.
+ */
+export function setSolidPaletteId(
+  state: AppState,
+  paletteId: FlamePaletteId,
+): AppState {
+  return { ...state, solid: { ...state.solid, paletteId } };
 }
 
 /** Enter or exit the solid render (session-only, like {@link setFlameActive}). */

@@ -34,12 +34,13 @@ interface CosinePalette {
 }
 
 /**
- * Every selectable flame palette, in UI order. This is the SINGLE SOURCE OF
+ * Every selectable palette, in UI order. This is the SINGLE SOURCE OF
  * TRUTH for the {@link FlamePaletteId} union, the persistence validator
- * (`VALID_FLAME_PALETTES` in `persist.ts`), and the `<select>` options in
- * `index.html` (ui.test.ts pins the options to {@link FLAME_PALETTE_IDS}), so
- * adding a palette is one edit and none of those can silently drift — the same
- * discipline `VARIATION_TYPES` / `COLOR_MODES` use in `types.ts`.
+ * (`VALID_PALETTE_IDS` in `persist.ts`, shared by the flame and solid
+ * blocks), and the `<select>` options in `index.html` (ui.test.ts pins the
+ * options to {@link FLAME_PALETTE_IDS}), so adding a palette is one edit and
+ * none of those can silently drift — the same discipline `VARIATION_TYPES` /
+ * `COLOR_MODES` use in `types.ts`.
  *
  * `"legacy"` maps to `null`, not a coefficient set: it is the reserved
  * sentinel for the original per-transform-hue behavior (each histogram bucket

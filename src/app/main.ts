@@ -42,6 +42,7 @@ import {
   setSolidIterations,
   setSolidLightAzimuth,
   setSolidLightElevation,
+  setSolidPaletteId,
   setSolidResolution,
   setSolidThreshold,
   setSymmetryAxis,
@@ -403,6 +404,7 @@ function main(): void {
       // The explorer's Color Mode carries into the voxel colors (fr-c1d);
       // entering the mode snapshots it, exactly like the transform set.
       colorMode: state.colorMode,
+      paletteId: state.solid.paletteId,
       iterationsBudget: state.solid.iterations,
       // A worker needs an explicit numeric seed — a live Rng (like
       // Math.random) can't cross postMessage — which as a side effect makes
@@ -757,6 +759,15 @@ function main(): void {
       state = setSolidAmbient(state, value);
       ui.updateLabels(state);
       scene.setSolidParams(state.solid);
+      scheduleSave();
+    },
+    onSolidPaletteChange: (paletteId) => {
+      // Like resolution this restarts accumulation in the worker (the
+      // colors bake into avgRGB); the worker owns that restart, so this
+      // just updates state + label and forwards the new palette.
+      state = setSolidPaletteId(state, paletteId);
+      ui.updateLabels(state);
+      postVoxel({ type: "setPalette", paletteId: state.solid.paletteId });
       scheduleSave();
     },
     onSolidIterationsInput: (value) => {

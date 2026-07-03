@@ -84,6 +84,9 @@ export interface UiHandlers {
   onSolidLightAzimuthInput: (value: number) => void;
   onSolidLightElevationInput: (value: number) => void;
   onSolidAmbientInput: (value: number) => void;
+  /** The solid palette dropdown changed — the app restarts accumulation (the
+   * accumulated colors bake in the palette). */
+  onSolidPaletteChange: (paletteId: FlamePaletteId) => void;
   onSolidIterationsInput: (value: number) => void;
   /** The resolution slider changed — the app restarts accumulation. */
   onSolidResolutionInput: (value: number) => void;
@@ -342,6 +345,7 @@ export class Ui {
   private readonly solidLightElevationSlider: HTMLInputElement;
   private readonly solidAmbientLabel: HTMLElement;
   private readonly solidAmbientSlider: HTMLInputElement;
+  private readonly solidPalette: HTMLSelectElement;
   private readonly solidIterationsLabel: HTMLElement;
   private readonly solidIterationsSlider: HTMLInputElement;
   private readonly solidResolutionLabel: HTMLElement;
@@ -419,6 +423,7 @@ export class Ui {
     this.solidLightElevationSlider = this.byId("solidLightElevationSlider");
     this.solidAmbientLabel = this.byId("solidAmbientLabel");
     this.solidAmbientSlider = this.byId("solidAmbientSlider");
+    this.solidPalette = this.byId("solidPalette");
     this.solidIterationsLabel = this.byId("solidIterationsLabel");
     this.solidIterationsSlider = this.byId("solidIterationsSlider");
     this.solidResolutionLabel = this.byId("solidResolutionLabel");
@@ -542,6 +547,9 @@ export class Ui {
     this.solidAmbientSlider.addEventListener("input", () =>
       handlers.onSolidAmbientInput(Number(this.solidAmbientSlider.value)),
     );
+    this.solidPalette.addEventListener("change", () =>
+      handlers.onSolidPaletteChange(this.solidPalette.value as FlamePaletteId),
+    );
     this.solidIterationsSlider.addEventListener("input", () =>
       handlers.onSolidIterationsInput(Number(this.solidIterationsSlider.value)),
     );
@@ -613,6 +621,7 @@ export class Ui {
     this.solidLightElevationSlider.value = String(state.solid.lightElevation);
     this.solidAmbientLabel.textContent = `${Math.round(state.solid.ambient * 100)}%`;
     this.solidAmbientSlider.value = String(state.solid.ambient);
+    this.solidPalette.value = state.solid.paletteId;
     this.solidIterationsLabel.textContent = `${(
       state.solid.iterations / 1_000_000
     ).toFixed(0)}M iterations`;

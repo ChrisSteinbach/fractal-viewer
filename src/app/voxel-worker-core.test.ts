@@ -19,6 +19,7 @@ function startCommand(
     finalTransform: null,
     resolution: 32,
     colorMode: "transform",
+    paletteId: "legacy",
     iterationsBudget: 500,
     seed: 1,
     order: 1,
@@ -241,6 +242,56 @@ describe("VoxelWorkerSession setIterationsBudget", () => {
       iterationsDone: 200,
       iterationsBudget: 100,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Palette: live setPalette command (fr-1kt)
+// ---------------------------------------------------------------------------
+
+describe("VoxelWorkerSession setPalette", () => {
+  it("restarts a finished render so it re-accumulates in the new palette", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 100 });
+    session.handle(
+      startCommand({ iterationsBudget: 200, paletteId: "legacy" }),
+    );
+    scheduler.drain();
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const gridsBefore = gridEvents(events).length;
+
+    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    scheduler.drain();
+
+    // A finished render produces no more grids on its own; that it climbs
+    // back to the budget AND emits new grid events proves it reset to zero
+    // and re-ran.
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
+  });
+
+  it("colors differently under a gradient palette than legacy for the same seed", () => {
+    function finalTexture(paletteId: "legacy" | "spectrum"): Uint8Array {
+      const { session, events, scheduler } = harness();
+      session.handle(
+        startCommand({ seed: 7, iterationsBudget: 2000, paletteId }),
+      );
+      scheduler.drain();
+      return gridEvents(events).at(-1)!.texture;
+    }
+    // Same seed → identical orbit and density; only the baked-in colors
+    // differ, so the packed texture must differ once a gradient palette is
+    // in play.
+    expect(Array.from(finalTexture("spectrum"))).not.toEqual(
+      Array.from(finalTexture("legacy")),
+    );
+  });
+
+  it("is a no-op and does not throw when sent before any start", () => {
+    const { session, events } = harness();
+    expect(() =>
+      session.handle({ type: "setPalette", paletteId: "spectrum" }),
+    ).not.toThrow();
+    expect(events).toHaveLength(0);
   });
 });
 

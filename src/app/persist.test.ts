@@ -17,6 +17,7 @@ import {
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
   DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
@@ -83,6 +84,7 @@ function baseSnapshot(): SceneSnapshot {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
   };
@@ -125,6 +127,7 @@ describe("encodeScene / decodeScene round-trip", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
 
@@ -937,6 +940,7 @@ describe("decodeScene solid params", () => {
         lightAzimuth: -45,
         lightElevation: 70,
         ambient: 0.5,
+        paletteId: "spectrum",
       },
     };
     const result = decodeScene(encodeScene(s));
@@ -947,6 +951,7 @@ describe("decodeScene solid params", () => {
       lightAzimuth: -45,
       lightElevation: 70,
       ambient: 0.5,
+      paletteId: "spectrum",
     });
   });
 
@@ -971,6 +976,7 @@ describe("decodeScene solid params", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
 
@@ -1043,6 +1049,44 @@ describe("decodeScene solid params", () => {
     expect(
       decodeScene("v1=" + b64url(JSON.stringify(raw)))!.solid.resolution,
     ).toBe(MIN_SOLID_RESOLUTION);
+  });
+
+  it("round-trips a non-default paletteId", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, paletteId: "spectrum" },
+    };
+    expect(decodeScene(encodeScene(s))!.solid.paletteId).toBe("spectrum");
+  });
+
+  it("falls back to legacy for an unknown paletteId instead of rejecting the scene", () => {
+    // Unlike every other solid field, an unknown palette does NOT nuke the
+    // whole scene — mirrors flame.paletteId's fallback-to-legacy behavior.
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, paletteId: "chartreuse" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.solid.paletteId).toBe("legacy");
+  });
+
+  it("defaults paletteId to legacy for a link encoded before fr-1kt existed", () => {
+    // A solid block carrying every field except paletteId.
+    const raw = {
+      ...baseSnapshot(),
+      solid: {
+        resolution: 192,
+        iterations: 30_000_000,
+        threshold: 0.4,
+        lightAzimuth: 100,
+        lightElevation: 60,
+        ambient: 0.3,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.solid.paletteId).toBe("legacy");
   });
 });
 
