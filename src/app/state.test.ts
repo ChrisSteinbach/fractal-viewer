@@ -9,6 +9,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_POINT_SIZE,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
@@ -28,6 +29,7 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_GLOW_BRIGHTNESS,
   MAX_SOLID_AMBIENT,
   MAX_SOLID_ITERATIONS,
   MAX_SOLID_LIGHT_AZIMUTH,
@@ -43,6 +45,7 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_GLOW_BRIGHTNESS,
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_LIGHT_AZIMUTH,
@@ -64,6 +67,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setGlowBrightness,
   setPointSize,
   setRenderStyle,
   setSolidActive,
@@ -95,6 +99,7 @@ describe("initialState", () => {
     expect(state.renderStyle).toBe("depthFade");
     expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
     expect(state.panelOpen).toBe(true);
+    expect(state.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
   });
 
   // The app always boots into the live explorer, never straight into a
@@ -663,5 +668,26 @@ describe("setSymmetryAxis", () => {
     expect(next.symmetry.order).toBe(state.symmetry.order);
     expect(next.transforms).toBe(state.transforms);
     expect(next.flame).toBe(state.flame);
+  });
+});
+
+describe("setGlowBrightness", () => {
+  it("sets the manual glow brightness immutably", () => {
+    const state = initialState(true);
+    const next = setGlowBrightness(state, 2);
+    expect(next.glowBrightness).toBe(2);
+    expect(state.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setGlowBrightness(initialState(true), 999).glowBrightness).toBe(
+      MAX_GLOW_BRIGHTNESS,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setGlowBrightness(initialState(true), -5).glowBrightness).toBe(
+      MIN_GLOW_BRIGHTNESS,
+    );
   });
 });

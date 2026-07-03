@@ -174,6 +174,15 @@ export interface AppState {
    * `regenerate()` threads it into `runChaosGame`.
    */
   symmetry: SymmetryParams;
+  /**
+   * Manual brightness multiplier for the glow render style (fr-8b1):
+   * multiplies the density-adaptive auto-exposure every frame (see
+   * `main.ts`'s `animate` and `exposure.ts`'s `glowExposure`). Persists like
+   * `colorMode` / `renderStyle` / `symmetry` — not session-only, and not
+   * nested under a render-settings block like `flame` / `solid` since it has
+   * no other fields.
+   */
+  glowBrightness: number;
 }
 
 /** An IFS needs at least one map. */
@@ -299,6 +308,17 @@ export const MIN_SYMMETRY_ORDER = 1;
  */
 export const MAX_SYMMETRY_ORDER = 12;
 export const DEFAULT_SYMMETRY_AXIS: SymmetryAxis = "y";
+/**
+ * Manual brightness multiplier for the glow render style (fr-8b1), applied on
+ * top of the density-adaptive auto-exposure computed every frame in
+ * `main.ts` (see `exposure.ts`'s `glowExposure`). Local density can vary by
+ * orders of magnitude in ways that the coarse, average-density estimate can't
+ * see, so this is the user's manual override; 1 = neutral (auto-exposure
+ * alone, unchanged).
+ */
+export const DEFAULT_GLOW_BRIGHTNESS = 1;
+export const MIN_GLOW_BRIGHTNESS = 0.1;
+export const MAX_GLOW_BRIGHTNESS = 3;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -334,6 +354,7 @@ export function initialState(panelOpen: boolean): AppState {
     },
     solidActive: false,
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
+    glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
 }
 
@@ -757,4 +778,24 @@ export function setSymmetryOrder(state: AppState, order: number): AppState {
  */
 export function setSymmetryAxis(state: AppState, axis: SymmetryAxis): AppState {
   return { ...state, symmetry: { ...state.symmetry, axis } };
+}
+
+/**
+ * Set the glow render's manual brightness override, clamped to a sane range.
+ * Multiplies the density-adaptive auto-exposure every frame (see
+ * `main.ts`'s `animate` and `exposure.ts`'s `glowExposure`) rather than
+ * replacing it, so the auto-exposure's coarse density compensation and this
+ * slider's fine manual control combine.
+ */
+export function setGlowBrightness(
+  state: AppState,
+  glowBrightness: number,
+): AppState {
+  return {
+    ...state,
+    glowBrightness: Math.max(
+      MIN_GLOW_BRIGHTNESS,
+      Math.min(MAX_GLOW_BRIGHTNESS, glowBrightness),
+    ),
+  };
 }

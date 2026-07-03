@@ -33,6 +33,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setGlowBrightness,
   setNumPoints,
   setPanelOpen,
   setPointSize,
@@ -532,6 +533,13 @@ function main(): void {
       ui.updateLabels(state);
       scheduleSave();
     },
+    onGlowBrightnessInput: (value) => {
+      // No direct scene push needed: animate()'s per-frame glow-exposure
+      // calculation already reads state.glowBrightness as a multiplier.
+      state = setGlowBrightness(state, value);
+      ui.updateLabels(state);
+      scheduleSave();
+    },
     onRegenerate: () => regenerate(),
     onSavePng: () => {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
@@ -564,6 +572,10 @@ function main(): void {
       scene.setRenderStyle(style);
       // Reset glow exposure so no stale factor sticks when switching away.
       if (style !== "glow") scene.setGlowExposure(1);
+      // Refresh labels so the glow-brightness row (fr-8b1) shows/hides
+      // immediately — previously nothing in this handler depended on
+      // renderStyle-conditional DOM, so the sync was never needed here.
+      ui.updateLabels(state);
       scheduleSave();
     },
     onToggleAutoUpdate: (checked) => {
@@ -865,7 +877,10 @@ function main(): void {
     }
     scene.applyCamera(orbit);
     scene.updateFog();
-    // Density-adaptive glow brightness: dim dense clouds, brighten sparse ones.
+    // Density-adaptive glow brightness: dim dense clouds, brighten sparse
+    // ones. state.glowBrightness (fr-8b1) then layers the user's manual
+    // override on top — auto-exposure only sees the *average* screen
+    // density, so local density swings still need a hand-tuned correction.
     if (state.renderStyle === "glow" && lastResult) {
       const b = lastResult.bounds;
       const dx = b.maxX - b.minX;
@@ -879,7 +894,7 @@ function main(): void {
           orbit.spherical.radius,
           (scene.camera.fov * Math.PI) / 180,
           scene.renderer.domElement.clientHeight,
-        ),
+        ) * state.glowBrightness,
       );
     }
     scene.render();

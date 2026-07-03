@@ -13,6 +13,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
@@ -28,6 +29,7 @@ import {
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
+  MAX_GLOW_BRIGHTNESS,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
@@ -35,6 +37,7 @@ import {
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
+  MIN_GLOW_BRIGHTNESS,
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_RESOLUTION,
@@ -87,6 +90,7 @@ function baseSnapshot(): SceneSnapshot {
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
+    glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
 }
 
@@ -1164,6 +1168,62 @@ describe("decodeScene symmetry", () => {
     expect(result).not.toBeNull();
     expect(result!.symmetry.axis).toBe("y");
     expect(result!.transforms).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Glow brightness (fr-8b1) — same lenient, never-rejects contract as
+// symmetry above: a malformed value falls back to the default instead of
+// nuking the whole scene.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene glow brightness", () => {
+  it("round-trips a non-default glow brightness", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), glowBrightness: 2.25 };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.glowBrightness).toBeCloseTo(2.25, 4);
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `glowBrightness` key at all — exactly
+    // what every link looked like before fr-8b1.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
+  });
+
+  it("does not reject the scene for a non-finite value, defaulting it instead", () => {
+    // Unlike flame/solid's numeric fields, a malformed glowBrightness is a
+    // cosmetic override, not corruption — the scene survives.
+    const raw = { ...baseSnapshot(), glowBrightness: "bright" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
+  });
+
+  it("clamps an out-of-range value above the maximum down to the max", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), glowBrightness: 999 };
+    expect(decodeScene(encodeScene(s))!.glowBrightness).toBe(
+      MAX_GLOW_BRIGHTNESS,
+    );
+  });
+
+  it("clamps an out-of-range value below the minimum up to the min", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), glowBrightness: -5 };
+    expect(decodeScene(encodeScene(s))!.glowBrightness).toBe(
+      MIN_GLOW_BRIGHTNESS,
+    );
   });
 });
 
