@@ -17,6 +17,7 @@ function noopHandlers(): UiHandlers {
     onPreset: vi.fn(),
     onNumPointsInput: vi.fn(),
     onPointSizeInput: vi.fn(),
+    onGlowBrightnessInput: vi.fn(),
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
     onToggleGuides: vi.fn(),
@@ -203,6 +204,24 @@ describe("Ui point size slider", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onPointSizeInput).toHaveBeenCalledWith(1.75);
+  });
+});
+
+describe("Ui glow brightness slider", () => {
+  function glowBrightnessRow(): HTMLElement {
+    return document.getElementById("glowBrightnessRow") as HTMLElement;
+  }
+
+  it("is hidden while the render style is not glow", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderStyle: "depthFade" });
+    expect(glowBrightnessRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("is shown while the render style is glow", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderStyle: "glow" });
+    expect(glowBrightnessRow().classList.contains("hidden")).toBe(false);
   });
 });
 

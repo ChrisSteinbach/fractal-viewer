@@ -30,6 +30,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
@@ -47,6 +48,7 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_GLOW_BRIGHTNESS,
   MAX_SOLID_AMBIENT,
   MAX_SOLID_ITERATIONS,
   MAX_SOLID_LIGHT_AZIMUTH,
@@ -62,6 +64,7 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_GLOW_BRIGHTNESS,
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_LIGHT_AZIMUTH,
@@ -105,6 +108,12 @@ export interface SceneSnapshot {
    * optional `finalTransform`.
    */
   symmetry: SymmetryParams;
+  /**
+   * Manual glow-brightness override (fr-8b1, see {@link AppState.glowBrightness}).
+   * Persists like `colorMode`/`renderStyle`/`symmetry` — always present, not
+   * session-only.
+   */
+  glowBrightness: number;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -135,6 +144,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     flame: state.flame,
     solid: state.solid,
     symmetry: state.symmetry,
+    glowBrightness: state.glowBrightness,
   };
 }
 
@@ -589,6 +599,7 @@ export function encodeScene(s: SceneSnapshot): string {
     flame: FlameParams;
     solid: SolidParams;
     symmetry: SymmetryParams;
+    glowBrightness: number;
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -623,6 +634,9 @@ export function encodeScene(s: SceneSnapshot): string {
       order: Math.round(s.symmetry.order),
       axis: s.symmetry.axis,
     },
+    // Always written, like symmetry — a small, always-present setting, not a
+    // per-transform optional feature like finalTransform/weight/shear.
+    glowBrightness: round4(s.glowBrightness),
   };
   // Written only when present, so old links stay byte-identical (they never
   // carried the field) and lens-free systems keep their short URLs.
@@ -653,7 +667,11 @@ export function encodeScene(s: SceneSnapshot): string {
  * to `"legacy"` (see {@link decodeFlameParams}). Likewise, symmetry.order
  * clamps to [{@link MIN_SYMMETRY_ORDER}, {@link MAX_SYMMETRY_ORDER}] and an
  * unrecognized/missing symmetry.axis falls back to `"y"` — neither ever
- * rejects the scene on malformed input (see {@link decodeSymmetry}).
+ * rejects the scene on malformed input (see {@link decodeSymmetry}). Same
+ * spirit for glowBrightness: it clamps to [{@link MIN_GLOW_BRIGHTNESS},
+ * {@link MAX_GLOW_BRIGHTNESS}], falling back to
+ * {@link DEFAULT_GLOW_BRIGHTNESS} when absent or non-finite rather than
+ * rejecting the scene.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -720,6 +738,21 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // falls back to its default. See decodeSymmetry.
     const symmetry = decodeSymmetry(o.symmetry);
 
+    // glowBrightness (fr-8b1): manual override on top of the glow render's
+    // density-adaptive auto-exposure (see exposure.ts's glowExposure). Like
+    // symmetry.order, an absent or non-finite value falls back to the
+    // neutral default (1) rather than rejecting the scene — a brightness
+    // override is a cosmetic tweak, not structural data worth losing an
+    // otherwise-valid shared link over. A finite-but-out-of-range value
+    // clamps instead.
+    let glowBrightness = DEFAULT_GLOW_BRIGHTNESS;
+    const rawGlowBrightness = Number(o.glowBrightness);
+    if (Number.isFinite(rawGlowBrightness)) glowBrightness = rawGlowBrightness;
+    glowBrightness = Math.max(
+      MIN_GLOW_BRIGHTNESS,
+      Math.min(MAX_GLOW_BRIGHTNESS, glowBrightness),
+    );
+
     return {
       transforms,
       finalTransform,
@@ -731,6 +764,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       flame,
       solid,
       symmetry,
+      glowBrightness,
     };
   } catch {
     return null;

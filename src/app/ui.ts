@@ -41,6 +41,10 @@ export interface UiHandlers {
   onPreset: (preset: Preset) => void;
   onNumPointsInput: (value: number) => void;
   onPointSizeInput: (value: number) => void;
+  /** The glow-brightness slider changed — a manual multiplier on top of the
+   * glow render's per-frame auto-exposure (see main.ts's `animate`). Only
+   * shown while `renderStyle === "glow"`. */
+  onGlowBrightnessInput: (value: number) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
   onToggleGuides: (checked: boolean) => void;
@@ -323,6 +327,9 @@ export class Ui {
   private readonly numPointsSlider: HTMLInputElement;
   private readonly pointSizeLabel: HTMLElement;
   private readonly pointSizeSlider: HTMLInputElement;
+  private readonly glowBrightnessRow: HTMLElement;
+  private readonly glowBrightnessLabel: HTMLElement;
+  private readonly glowBrightnessSlider: HTMLInputElement;
   private readonly showGuides: HTMLInputElement;
   private readonly colorMode: HTMLSelectElement;
   private readonly renderStyle: HTMLSelectElement;
@@ -399,6 +406,9 @@ export class Ui {
     this.numPointsSlider = this.byId("numPointsSlider");
     this.pointSizeLabel = this.byId("pointSizeLabel");
     this.pointSizeSlider = this.byId("pointSizeSlider");
+    this.glowBrightnessRow = this.byId("glowBrightnessRow");
+    this.glowBrightnessLabel = this.byId("glowBrightnessLabel");
+    this.glowBrightnessSlider = this.byId("glowBrightnessSlider");
     this.showGuides = this.byId("showGuides");
     this.colorMode = this.byId("colorMode");
     this.renderStyle = this.byId("renderStyle");
@@ -485,6 +495,9 @@ export class Ui {
     );
     this.pointSizeSlider.addEventListener("input", () =>
       handlers.onPointSizeInput(Number(this.pointSizeSlider.value)),
+    );
+    this.glowBrightnessSlider.addEventListener("input", () =>
+      handlers.onGlowBrightnessInput(Number(this.glowBrightnessSlider.value)),
     );
     this.showGuides.addEventListener("change", () =>
       handlers.onToggleGuides(this.showGuides.checked),
@@ -591,6 +604,8 @@ export class Ui {
     this.numPointsSlider.value = String(numPointsToSlider(state.numPoints));
     this.pointSizeLabel.textContent = `${state.pointSize.toFixed(2)}×`;
     this.pointSizeSlider.value = String(state.pointSize);
+    this.glowBrightnessLabel.textContent = `${state.glowBrightness.toFixed(2)}×`;
+    this.glowBrightnessSlider.value = String(state.glowBrightness);
     this.colorMode.value = state.colorMode;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
@@ -664,6 +679,13 @@ export class Ui {
     this.solidBtn.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
+    // The manual brightness override only means anything for the glow render
+    // style, so — like the flame/solid sub-panels above — it's hidden
+    // whenever that style isn't the active one.
+    this.glowBrightnessRow.classList.toggle(
+      "hidden",
+      state.renderStyle !== "glow",
+    );
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
