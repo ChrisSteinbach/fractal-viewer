@@ -8,6 +8,7 @@ import {
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
+import { glowExposure } from "./exposure";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
@@ -561,6 +562,8 @@ function main(): void {
     onRenderStyle: (style) => {
       state = setRenderStyle(state, style);
       scene.setRenderStyle(style);
+      // Reset glow exposure so no stale factor sticks when switching away.
+      if (style !== "glow") scene.setGlowExposure(1);
       scheduleSave();
     },
     onToggleAutoUpdate: (checked) => {
@@ -862,6 +865,23 @@ function main(): void {
     }
     scene.applyCamera(orbit);
     scene.updateFog();
+    // Density-adaptive glow brightness: dim dense clouds, brighten sparse ones.
+    if (state.renderStyle === "glow" && lastResult) {
+      const b = lastResult.bounds;
+      const dx = b.maxX - b.minX;
+      const dy = b.maxY - b.minY;
+      const dz = b.maxZ - b.minZ;
+      const boundsRadius = Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5;
+      scene.setGlowExposure(
+        glowExposure(
+          lastResult.count,
+          boundsRadius,
+          orbit.spherical.radius,
+          (scene.camera.fov * Math.PI) / 180,
+          scene.renderer.domElement.clientHeight,
+        ),
+      );
+    }
     scene.render();
   }
   animate();
