@@ -351,6 +351,7 @@ describe("VoxelWorkerSession memory guards", () => {
           avgRGB: new Float32Array(size ** 3 * 3),
           maxDensity: 0,
           orbit: null,
+          orbitColor: 0.5,
         };
       },
     });

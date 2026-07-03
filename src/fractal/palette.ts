@@ -1,22 +1,25 @@
 /**
- * Smooth cosine gradient palettes for the flame renderer's structural
- * coloring (fr-6us). Inigo Quilez's cosine-gradient formula — one continuous
- * curve per RGB channel:
+ * Smooth cosine gradient palettes for structural coloring (fr-6us), shared by
+ * the flame renderer and the solid/voxel renderer (fr-1kt). Inigo Quilez's
+ * cosine-gradient formula — one continuous curve per RGB channel:
  *
  *   channel(t) = clamp01(a + b * cos(2π (c * t + d)))
  *
  * — where `t` is the orbit's color coordinate in `[0, 1]` (see
- * `flame.ts`'s `accumulateFlame`). A single coefficient set `[a, b, c, d]`
- * (each an `[r, g, b]` triple) defines a whole palette: `a` is the channel's
- * midpoint, `b` its amplitude, `c` how many colour cycles span the gradient,
- * and `d` the per-channel phase that separates the three channels into a hue
- * sweep. Because colour flows continuously with `t`, blending `t` along the
- * chaos-game orbit paints the classic flame iridescence along the structure
- * instead of the flat per-transform hues of the `"legacy"` mode.
+ * `flame.ts`'s `accumulateFlame` and `voxel.ts`'s `accumulateVoxels`). A
+ * single coefficient set `[a, b, c, d]` (each an `[r, g, b]` triple) defines a
+ * whole palette: `a` is the channel's midpoint, `b` its amplitude, `c` how
+ * many colour cycles span the gradient, and `d` the per-channel phase that
+ * separates the three channels into a hue sweep. Because colour flows
+ * continuously with `t`, blending `t` along the chaos-game orbit paints the
+ * classic flame iridescence along the structure instead of the flat
+ * per-transform hues (or per-`colorMode` regions, for the solid renderer) of
+ * the `"legacy"` mode.
  *
  * Pure and dependency-free (like the rest of `src/fractal/`): no Three.js, no
  * DOM. The app layer builds a lookup table once per render
- * ({@link buildPaletteLUT}) and the flame hot loop indexes it per iteration.
+ * ({@link buildPaletteLUT}) and each renderer's hot loop indexes it per
+ * iteration.
  */
 
 /** A readonly RGB coefficient triple — one value per channel. */
