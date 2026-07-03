@@ -69,6 +69,7 @@ import {
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
   MIN_SYMMETRY_ORDER,
+  MAX_NUM_POINTS,
   RENDER_STYLES,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
@@ -637,7 +638,7 @@ export function encodeScene(s: SceneSnapshot): string {
  *
  * Validates strictly: requires the `v1=` prefix; 1..MAX_TRANSFORMS transforms
  * each with valid Vec3 fields; an optional finalTransform validated the same
- * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, 500 000],
+ * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, MAX_NUM_POINTS],
  * pointSize to [0.25, 4], flame.exposure to [{@link MIN_FLAME_EXPOSURE},
  * {@link MAX_FLAME_EXPOSURE}], flame.iterations to
  * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}], flame.gamma to
@@ -697,10 +698,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     )
       return null;
 
-    // numPoints: coerce, reject non-finite, clamp to [0, 500 000]. ------------
+    // numPoints: coerce, reject non-finite, clamp to [0, MAX_NUM_POINTS]. ------
     const rawNumPoints = Number(o.numPoints);
     if (!Number.isFinite(rawNumPoints)) return null;
-    const numPoints = Math.max(0, Math.min(500_000, rawNumPoints));
+    const numPoints = Math.max(0, Math.min(MAX_NUM_POINTS, rawNumPoints));
 
     // pointSize: coerce, reject non-finite, clamp to [0.25, 4]. ---------------
     const rawPointSize = Number(o.pointSize);

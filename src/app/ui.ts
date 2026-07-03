@@ -13,6 +13,7 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
+import { MAX_NUM_POINTS, MIN_NUM_POINTS } from "./state";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -214,6 +215,28 @@ function weightToSlider(weight: number): number {
 }
 function sliderToWeight(slider: number): number {
   return 10 ** slider;
+}
+
+/**
+ * Point-count slider: log-scaled so the low end (1k–100k) has fine control
+ * while the top end (100k–5M) is still reachable without a 5000-step slider.
+ * The HTML range goes 0–1000; these helpers convert between that and real
+ * point counts.
+ */
+const NUM_POINTS_SLIDER_MAX = 1000;
+const LOG_MIN = Math.log(MIN_NUM_POINTS);
+const LOG_MAX = Math.log(MAX_NUM_POINTS);
+function numPointsToSlider(n: number): number {
+  const clamped = Math.max(MIN_NUM_POINTS, Math.min(MAX_NUM_POINTS, n));
+  return (
+    ((Math.log(clamped) - LOG_MIN) / (LOG_MAX - LOG_MIN)) *
+    NUM_POINTS_SLIDER_MAX
+  );
+}
+function sliderToNumPoints(s: number): number {
+  const t = s / NUM_POINTS_SLIDER_MAX;
+  // Round to the nearest 1000 so the label reads cleanly.
+  return Math.round(Math.exp(LOG_MIN + t * (LOG_MAX - LOG_MIN)) / 1000) * 1000;
 }
 
 /**
@@ -456,7 +479,9 @@ export class Ui {
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
     this.numPointsSlider.addEventListener("input", () =>
-      handlers.onNumPointsInput(Number(this.numPointsSlider.value)),
+      handlers.onNumPointsInput(
+        sliderToNumPoints(Number(this.numPointsSlider.value)),
+      ),
     );
     this.pointSizeSlider.addEventListener("input", () =>
       handlers.onPointSizeInput(Number(this.pointSizeSlider.value)),
@@ -563,7 +588,7 @@ export class Ui {
     this.transformCount.textContent = String(state.transforms.length);
     this.removeBtn.disabled = state.transforms.length <= 1;
     this.numPointsLabel.textContent = state.numPoints.toLocaleString();
-    this.numPointsSlider.value = String(state.numPoints);
+    this.numPointsSlider.value = String(numPointsToSlider(state.numPoints));
     this.pointSizeLabel.textContent = `${state.pointSize.toFixed(2)}×`;
     this.pointSizeSlider.value = String(state.pointSize);
     this.colorMode.value = state.colorMode;

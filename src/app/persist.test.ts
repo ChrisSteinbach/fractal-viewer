@@ -1172,11 +1172,11 @@ describe("decodeScene symmetry", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeScene clamping", () => {
-  it("clamps numPoints above 500 000 down to 500 000", () => {
+  it("clamps numPoints above 5 000 000 down to 5 000 000", () => {
     const result = decodeScene(
-      encodeScene({ ...baseSnapshot(), numPoints: 1_000_000 }),
+      encodeScene({ ...baseSnapshot(), numPoints: 10_000_000 }),
     );
-    expect(result!.numPoints).toBe(500_000);
+    expect(result!.numPoints).toBe(5_000_000);
   });
 
   it("clamps numPoints below 0 up to 0", () => {
