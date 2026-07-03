@@ -236,13 +236,14 @@ export const MAX_FLAME_SUPERSAMPLE = 3;
  * Defaults for the adaptive density-estimation blur (fr-17t; see
  * `flame.ts`'s `DensityEstimatorParams`). estimatorCurve's range and default
  * follow that type's doc ("flam3-ish values sit around 0.3-0.6"); the MIN is
- * a small positive floor, not 0 — `(1 - density) ** 0` is 1 regardless of
- * density, which would make the whole "adaptive" part of the pass inert.
+ * a small positive floor, not 0 — `count ** 0` is 1 regardless of count,
+ * which would pin every cell at the widest radius and make the whole
+ * "adaptive" part of the pass inert.
  */
 export const DEFAULT_ESTIMATOR_RADIUS = 6;
 export const MIN_ESTIMATOR_RADIUS = 1;
 export const MAX_ESTIMATOR_RADIUS = 15;
-/** 0 = pin-sharp at full density, flam3's usual choice and this app's default. */
+/** 0 = pin-sharp where well-sampled, flam3's usual choice and this app's default. */
 export const DEFAULT_ESTIMATOR_MINIMUM_RADIUS = 0;
 export const MIN_ESTIMATOR_MINIMUM_RADIUS = 0;
 export const MAX_ESTIMATOR_MINIMUM_RADIUS = 15;
