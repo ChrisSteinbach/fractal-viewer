@@ -1,12 +1,14 @@
 import {
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
+  effectiveSymmetryOrder,
   plotPoint,
   prepareChaosGame,
   runChaosGame,
   stepOrbit,
 } from "./chaos-game";
-import { applyAffine, composeAffine } from "./affine";
+import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
+import { composeVariations } from "./variations";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform } from "./types";
@@ -419,6 +421,221 @@ describe("driving stepOrbit/plotPoint by hand", () => {
     expect(Array.from(positions)).toEqual(Array.from(expected.positions));
     expect(Array.from(transformIndices)).toEqual(
       Array.from(expected.transformIndices),
+    );
+  });
+});
+
+describe("effectiveSymmetryOrder", () => {
+  it("returns the requested order unchanged when it fits", () => {
+    expect(effectiveSymmetryOrder(5, 10)).toBe(5);
+  });
+
+  it("reduces to the largest order that fits MAX_TRANSFORMS", () => {
+    expect(effectiveSymmetryOrder(12, 30)).toBe(8); // floor(256 / 30) === 8
+  });
+
+  it("fits exactly at the issue's own Jerusalem Cube example (20 maps x 12-fold = 240 <= 256)", () => {
+    expect(effectiveSymmetryOrder(12, 20)).toBe(12);
+  });
+
+  it("never returns less than 1, even when a single copy would already overflow", () => {
+    expect(effectiveSymmetryOrder(1, 300)).toBe(1);
+  });
+
+  it("floors a fractional requested order", () => {
+    expect(effectiveSymmetryOrder(3.9, 10)).toBe(3);
+  });
+
+  it("treats a non-finite request as 1 rather than propagating NaN", () => {
+    expect(effectiveSymmetryOrder(NaN, 10)).toBe(1);
+  });
+});
+
+describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
+  function fixedRng(value: number) {
+    return () => value;
+  }
+
+  // Base map 0 is pure affine; base map 1 carries a (deterministic, RNG-free)
+  // variation, so tests below can exercise "rotate the FULL output" against
+  // both the affine-only and the affine+variation case.
+  const twoMaps: Transform[] = [
+    {
+      id: 0,
+      position: [0.1, 0.05, -0.05],
+      rotation: [0.1, 0.2, 0.05],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 1,
+      position: [-0.1, 0.05, 0.1],
+      rotation: [0, 0.1, 0.2],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "swirl", weight: 1 }],
+    },
+  ];
+
+  it("order 1 leaves the prepared system byte-identical to omitting symmetry, for any axis", () => {
+    const withDefault = prepareChaosGame(twoMaps);
+    const explicitOrderOne = prepareChaosGame(twoMaps, null, {
+      order: 1,
+      axis: "z",
+    });
+    expect(explicitOrderOne.transformCount).toBe(withDefault.transformCount);
+    expect(explicitOrderOne.baseTransformCount).toBe(
+      withDefault.baseTransformCount,
+    );
+    expect(explicitOrderOne.affines).toEqual(withDefault.affines);
+    expect(explicitOrderOne.postRotations).toEqual(withDefault.postRotations);
+    expect(explicitOrderOne.postRotations.every((p) => p === null)).toBe(true);
+  });
+
+  it("expands to order * n slots, k-major, sharing each copy's base affine/variation by reference", () => {
+    const prepared = prepareChaosGame(twoMaps, null, { order: 3, axis: "y" });
+    expect(prepared.transformCount).toBe(6);
+    expect(prepared.baseTransformCount).toBe(2);
+    // Copy 0 (slots 0-1) is always unrotated.
+    expect(prepared.postRotations[0]).toBeNull();
+    expect(prepared.postRotations[1]).toBeNull();
+    // Copies 1 and 2 (slots 2-3, 4-5) are rotated, and reuse — not
+    // recompute — their base map's composed affine/variation.
+    expect(prepared.postRotations[2]).not.toBeNull();
+    expect(prepared.postRotations[4]).not.toBeNull();
+    expect(prepared.affines[2]).toBe(prepared.affines[0]);
+    expect(prepared.affines[4]).toBe(prepared.affines[0]);
+    expect(prepared.variations[3]).toBe(prepared.variations[1]);
+  });
+
+  it("clamps the effective order to fit MAX_TRANSFORMS, matching effectiveSymmetryOrder", () => {
+    const transforms = makeTransforms(20);
+    expect(effectiveSymmetryOrder(20, 20)).toBe(12);
+    const prepared = prepareChaosGame(transforms, null, {
+      order: 20,
+      axis: "y",
+    });
+    expect(prepared.transformCount).toBe(12 * 20);
+  });
+
+  it("rotates a slot's FULL affine+variation output, not just its affine (critical ordering)", () => {
+    // transformCount = 6 for order 3 over 2 maps: slots [0,1]=k0, [2,3]=k1,
+    // [4,5]=k2. Force the single pickIndex draw onto slot 3 (k=1, base map
+    // 1 — the one with a variation) via a fixed rng() in [3/6, 4/6).
+    const order = 3;
+    const prepared = prepareChaosGame(twoMaps, null, { order, axis: "y" });
+    const rng = fixedRng(0.55); // floor(0.55 * 6) === 3
+    const x = 0.2;
+    const y = -0.15;
+    const z = 0.1;
+
+    const step = stepOrbit(prepared, x, y, z, rng);
+
+    const baseAffine = composeAffine(twoMaps[1]);
+    const warp = composeVariations(twoMaps[1].variations);
+    if (warp === null) throw new Error("expected map 1 to have a variation");
+    const [ax, ay, az] = applyAffine(baseAffine, x, y, z);
+    const [fx, fy, fz] = warp(ax, ay, az, rng);
+    const r = rotationMatrixXYZ(0, (2 * Math.PI * 1) / order, 0);
+    const expectedX = r[0] * fx + r[1] * fy + r[2] * fz;
+    const expectedY = r[3] * fx + r[4] * fy + r[5] * fz;
+    const expectedZ = r[6] * fx + r[7] * fy + r[8] * fz;
+
+    expect(step.x).toBeCloseTo(expectedX, 12);
+    expect(step.y).toBeCloseTo(expectedY, 12);
+    expect(step.z).toBeCloseTo(expectedZ, 12);
+    // Recorded index is the BASE map (1), not the expanded slot (3).
+    expect(step.index).toBe(1);
+  });
+
+  it("rotates a pure-affine slot's output too — post is never baked into the affine", () => {
+    const order = 4;
+    const prepared = prepareChaosGame(twoMaps, null, { order, axis: "z" });
+    // transformCount = 8: slots [0,1]=k0 [2,3]=k1 [4,5]=k2 [6,7]=k3. Force
+    // slot 6 (k=3, base map 0 — pure affine) via rng() in [6/8, 7/8).
+    const rng = fixedRng(0.8);
+    const x = 0.2;
+    const y = -0.1;
+    const z = 0.05;
+
+    const step = stepOrbit(prepared, x, y, z, rng);
+
+    const baseAffine = composeAffine(twoMaps[0]);
+    const [fx, fy, fz] = applyAffine(baseAffine, x, y, z);
+    const r = rotationMatrixXYZ(0, 0, (2 * Math.PI * 3) / order);
+    const expectedX = r[0] * fx + r[1] * fy + r[2] * fz;
+    const expectedY = r[3] * fx + r[4] * fy + r[5] * fz;
+    const expectedZ = r[6] * fx + r[7] * fy + r[8] * fz;
+
+    expect(step.x).toBeCloseTo(expectedX, 12);
+    expect(step.y).toBeCloseTo(expectedY, 12);
+    expect(step.z).toBeCloseTo(expectedZ, 12);
+    expect(step.index).toBe(0);
+  });
+
+  it("gives every copy an equal share of its base map's weight (3:1 stays 3:1)", () => {
+    const weighted: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        weight: 3,
+      },
+      {
+        id: 1,
+        position: [-0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        weight: 1,
+      },
+    ];
+    const result = runChaosGame(weighted, 8000, mulberry32(5), null, {
+      order: 4,
+      axis: "y",
+    });
+    let zero = 0;
+    for (const idx of result.transformIndices) if (idx === 0) zero++;
+    const share = zero / result.count;
+    // Same 3:1 ratio as the unsymmetric weighting test ("draws maps in
+    // proportion to their weights") — symmetry replicates geometry, not bias.
+    expect(share).toBeGreaterThan(0.7);
+    expect(share).toBeLessThan(0.8);
+  });
+
+  it("keeps every recorded transform index a valid BASE index, never an expanded slot", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron(), null, {
+      order: 5,
+      axis: "x",
+    });
+    const rng = mulberry32(21);
+    let x = 0.1;
+    let y = -0.1;
+    let z = 0.2;
+    for (let i = 0; i < 500; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      expect(s.index).toBeGreaterThanOrEqual(0);
+      expect(s.index).toBeLessThan(sierpinskiTetrahedron().length);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+  });
+
+  it("keeps the whole cloud finite and produces a differently-shaped attractor than order 1", () => {
+    const unsymmetric = runChaosGame(
+      sierpinskiTetrahedron(),
+      3000,
+      mulberry32(3),
+    );
+    const symmetric = runChaosGame(
+      sierpinskiTetrahedron(),
+      3000,
+      mulberry32(3),
+      null,
+      { order: 6, axis: "y" },
+    );
+    for (const v of symmetric.positions) expect(Number.isFinite(v)).toBe(true);
+    expect(Array.from(symmetric.positions)).not.toEqual(
+      Array.from(unsymmetric.positions),
     );
   });
 });

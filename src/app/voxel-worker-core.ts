@@ -13,7 +13,9 @@
  * Unlike the flame session there are no live tone-map commands: everything
  * visual downstream of the grid (isosurface threshold, light direction,
  * ambient) is a GPU uniform the main thread changes without touching the
- * worker. Only the iteration budget is live here.
+ * worker. Only the iteration budget and the symmetry (fr-6im — it reshapes
+ * the geometry itself, not a tone-map param, so it restarts accumulation
+ * like the flame session's `setSymmetry`) are live here.
  */
 import {
   accumulateVoxels,
@@ -28,7 +30,12 @@ import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { ColorMode, Transform, Vec3 } from "../fractal/types";
+import type {
+  ColorMode,
+  SymmetryAxis,
+  Transform,
+  Vec3,
+} from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -50,8 +57,12 @@ export type VoxelWorkerCommand =
        * postMessage) — also makes a render a reproducible pure function of
        * its inputs. */
       seed: number;
+      /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
+      order: number;
+      axis: SymmetryAxis;
     }
-  | { type: "setIterationsBudget"; iterations: number };
+  | { type: "setIterationsBudget"; iterations: number }
+  | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
 
 /** Worker → main thread. */
 export type VoxelWorkerEvent =
@@ -179,6 +190,18 @@ export class VoxelWorkerSession {
   private grid: VoxelGrid | null = null;
   private bounds: VoxelBounds | null = null;
 
+  /** The raw (un-rotated) transforms/finalTransform from the last "start" —
+   * retained so setSymmetry can re-prepare with a NEW symmetry without the
+   * main thread resending the whole transform list. */
+  private baseTransforms: Transform[] = [];
+  private baseFinalTransform: Transform | null = null;
+  /** The symmetry actually baked into `this.prepared` right now — lets
+   * setSymmetry no-op a repeat value instead of restarting for nothing (the
+   * order slider fires "input" continuously while dragging, and can report
+   * the same integer step's value more than once in a row). */
+  private symmetryOrder = 1;
+  private symmetryAxis: SymmetryAxis = "y";
+
   /** The effective (post-budget-clamp) resolution the grid was created at. */
   private effectiveResolution = 0;
   /** Ratchets DOWN (never up) when a grid allocation actually fails at some
@@ -241,11 +264,21 @@ export class VoxelWorkerSession {
         }
         break;
       }
+      case "setSymmetry":
+        this.setSymmetry(command.order, command.axis);
+        break;
     }
   }
 
   private start(cmd: Extract<VoxelWorkerCommand, { type: "start" }>): void {
-    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform);
+    this.baseTransforms = cmd.transforms;
+    this.baseFinalTransform = cmd.finalTransform;
+    this.symmetryOrder = cmd.order;
+    this.symmetryAxis = cmd.axis;
+    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
+      order: cmd.order,
+      axis: cmd.axis,
+    });
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
@@ -254,6 +287,31 @@ export class VoxelWorkerSession {
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
     // The bounds pilot is part of the same seeded run, so a given seed
     // produces one reproducible render, bounds included.
+    this.bounds = computeVoxelBounds(
+      this.prepared,
+      this.rng,
+      this.boundsSamples,
+    );
+    this.startAccumulation();
+  }
+
+  private setSymmetry(order: number, axis: SymmetryAxis): void {
+    if (!this.prepared || !this.bounds) return; // no active session yet.
+    if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
+    this.symmetryOrder = order;
+    this.symmetryAxis = axis;
+    this.prepared = prepareChaosGame(
+      this.baseTransforms,
+      this.baseFinalTransform,
+      { order, axis },
+    );
+    // Symmetry changes the attractor's spatial extent — a kaleidoscope can be
+    // considerably wider than the base system — so the bounds pilot has to
+    // rerun too, not just the accumulation (unlike setIterationsBudget above,
+    // which never touches geometry). Reuses `this.rng` where it currently
+    // sits, same as `start()` uses it fresh — a restart was never meant to be
+    // bit-for-bit replayable against the original seed, only internally
+    // consistent from here on.
     this.bounds = computeVoxelBounds(
       this.prepared,
       this.rng,

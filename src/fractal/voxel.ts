@@ -291,6 +291,13 @@ function colorModeCode(mode: ColorMode): number {
  * it up for {@link WARMUP_ITERATIONS} steps first (unrecorded), exactly like
  * `runChaosGame`.
  *
+ * **Symmetry** (fr-6im): when `prepared` was built with rotated copies (see
+ * `chaos-game.ts`'s `prepareChaosGame`), this hand-inlined loop mirrors
+ * `stepOrbit`'s handling exactly — the picked slot's rotation bends the
+ * orbit-feedback point, and the `"transform"` coloring keys on the BASE map a
+ * slot is a copy of, never the expanded slot — so a converged solid shows the
+ * same kaleidoscope as the live point cloud and a flame render of it.
+ *
  * Pass a seeded {@link Rng} for reproducible output (tests); the worker
  * passes a `mulberry32` seeded by the start command.
  */
@@ -302,7 +309,9 @@ export function accumulateVoxels(
   palette: Vec3[],
   colorMode: ColorMode = "transform",
 ): VoxelGrid {
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
 
@@ -356,6 +365,12 @@ export function accumulateVoxels(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
+    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
+    // 1. The "By Transform" coloring below keys on this, never the raw
+    // expanded `idx`, so it keeps meaning "logical map" (and stays in range
+    // for `palette`, which is sized to the base count).
+    const baseIdx = idx % baseTransformCount;
     const aff = affines[idx];
     const m = aff.m;
     const t = aff.t;
@@ -376,6 +391,21 @@ export function accumulateVoxels(
       nx = q[0];
       ny = q[1];
       nz = q[2];
+    }
+
+    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // see `chaos-game.ts`'s `stepOrbit`, which this mirrors exactly. `null`
+    // (order 1, and every unrotated copy-0 slot at any order) skips this, so
+    // the orbit stays byte-identical to the pre-symmetry loop exactly where
+    // there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz;
+      const ry = post[3] * nx + post[4] * ny + post[5] * nz;
+      const rz = post[6] * nx + post[7] * ny + post[8] * nz;
+      nx = rx;
+      ny = ry;
+      nz = rz;
     }
 
     if (
@@ -434,7 +464,7 @@ export function accumulateVoxels(
     let g: number;
     let b: number;
     if (mode === MODE_TRANSFORM) {
-      const rgb = palette[idx];
+      const rgb = palette[baseIdx];
       r = rgb === undefined ? FALLBACK_R : rgb[0];
       g = rgb === undefined ? FALLBACK_G : rgb[1];
       b = rgb === undefined ? FALLBACK_B : rgb[2];

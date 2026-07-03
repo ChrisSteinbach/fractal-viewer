@@ -16,6 +16,8 @@ import {
   DEFAULT_SOLID_LIGHT_ELEVATION,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_ORDER,
   initialState,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
@@ -31,6 +33,7 @@ import {
   MAX_SOLID_LIGHT_ELEVATION,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
+  MAX_SYMMETRY_ORDER,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -45,6 +48,7 @@ import {
   MIN_SOLID_LIGHT_ELEVATION,
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
+  MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
@@ -68,6 +72,8 @@ import {
   setSolidLightElevation,
   setSolidResolution,
   setSolidThreshold,
+  setSymmetryAxis,
+  setSymmetryOrder,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -124,6 +130,16 @@ describe("initialState", () => {
   // The startup fractal must match a menu preset so it can be reselected.
   it("starts with the 'default' preset's system", () => {
     expect(initialState(true).transforms).toEqual(presetTransforms("default"));
+  });
+
+  // Symmetry defaults to off (order 1) so a fresh scene renders exactly like
+  // the unreplicated system it always has been.
+  it("boots with symmetry off, at the default axis", () => {
+    const state = initialState(true);
+    expect(state.symmetry).toEqual({
+      order: DEFAULT_SYMMETRY_ORDER,
+      axis: DEFAULT_SYMMETRY_AXIS,
+    });
   });
 });
 
@@ -577,5 +593,55 @@ describe("setSolidActive", () => {
     expect(next.solidActive).toBe(true);
     expect(state.solidActive).toBe(false);
     expect(next.solid).toBe(state.solid);
+  });
+});
+
+describe("setSymmetryOrder", () => {
+  it("sets the replica count immutably", () => {
+    const state = initialState(true);
+    const next = setSymmetryOrder(state, 4);
+    expect(next.symmetry.order).toBe(4);
+    expect(state.symmetry.order).toBe(DEFAULT_SYMMETRY_ORDER);
+  });
+
+  it("rounds to the nearest integer", () => {
+    expect(setSymmetryOrder(initialState(true), 4.6).symmetry.order).toBe(5);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSymmetryOrder(initialState(true), 0).symmetry.order).toBe(
+      MIN_SYMMETRY_ORDER,
+    );
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSymmetryOrder(initialState(true), 99).symmetry.order).toBe(
+      MAX_SYMMETRY_ORDER,
+    );
+  });
+
+  it("leaves the axis and the rest of state untouched", () => {
+    const state = initialState(true);
+    const next = setSymmetryOrder(state, 6);
+    expect(next.symmetry.axis).toBe(state.symmetry.axis);
+    expect(next.transforms).toBe(state.transforms);
+    expect(next.flame).toBe(state.flame);
+  });
+});
+
+describe("setSymmetryAxis", () => {
+  it("sets the axis immutably", () => {
+    const state = initialState(true);
+    const next = setSymmetryAxis(state, "x");
+    expect(next.symmetry.axis).toBe("x");
+    expect(state.symmetry.axis).toBe(DEFAULT_SYMMETRY_AXIS);
+  });
+
+  it("leaves the order and the rest of state untouched", () => {
+    const state = initialState(true);
+    const next = setSymmetryAxis(state, "z");
+    expect(next.symmetry.order).toBe(state.symmetry.order);
+    expect(next.transforms).toBe(state.transforms);
+    expect(next.flame).toBe(state.flame);
   });
 });

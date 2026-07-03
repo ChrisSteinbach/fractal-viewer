@@ -204,6 +204,13 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * `runChaosGame`, so the orbit is already on the attractor before anything
  * is plotted.
  *
+ * **Symmetry** (fr-6im): when `prepared` was built with rotated copies (see
+ * `chaos-game.ts`'s `prepareChaosGame`), this hand-inlined loop mirrors
+ * `stepOrbit`'s handling exactly — the picked slot's rotation bends the
+ * orbit-feedback point, and `palette`/the colorLUT slot both key on the
+ * BASE map a slot is a copy of, never the expanded slot — so a converged
+ * flame render shows the same kaleidoscope as the live point cloud.
+ *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
  */
@@ -230,7 +237,9 @@ export function accumulateFlame(
     );
   }
 
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
@@ -239,9 +248,11 @@ export function accumulateFlame(
   // branch below is skipped and the per-transform `palette` path runs
   // unchanged. `colorDenom` is `n - 1` (0 for a single-transform system, which
   // pins the coordinate at 0.5) — the divisor mapping a transform index to its
-  // [0, 1] color slot.
-  const colorDenom =
-    prepared.transformCount > 1 ? prepared.transformCount - 1 : 0;
+  // [0, 1] color slot. Keyed on `baseTransformCount`, not `transformCount`
+  // (fr-6im): with symmetry, every rotated copy of a base map shares that
+  // map's slot, so the gradient repeats around the kaleidoscope instead of
+  // smearing continuously across copies that are geometrically the same map.
+  const colorDenom = baseTransformCount > 1 ? baseTransformCount - 1 : 0;
   let c = hist.orbitColor;
 
   let x: number;
@@ -281,10 +292,16 @@ export function accumulateFlame(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
+    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
+    // 1. Anything keyed to "which logical map" (the color slot below, and the
+    // legacy `palette` lookup at the bottom of the loop) uses this, never the
+    // raw expanded `idx`.
+    const baseIdx = idx % baseTransformCount;
     // Blend the color coordinate halfway toward this transform's slot. No rng
     // is consumed, so the orbit (and `hits`) stays identical to the legacy path.
     if (colorLUT !== undefined) {
-      const slot = colorDenom > 0 ? idx / colorDenom : 0.5;
+      const slot = colorDenom > 0 ? baseIdx / colorDenom : 0.5;
       c = (c + slot) * 0.5;
     }
     const aff = affines[idx];
@@ -307,6 +324,21 @@ export function accumulateFlame(
       nx = q[0];
       ny = q[1];
       nz = q[2];
+    }
+
+    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // see `chaos-game.ts`'s `stepOrbit`, which this mirrors exactly. `null`
+    // (order 1, and every unrotated copy-0 slot at any order) skips this, so
+    // the orbit stays byte-identical to the pre-symmetry loop exactly where
+    // there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz;
+      const ry = post[3] * nx + post[4] * ny + post[5] * nz;
+      const rz = post[6] * nx + post[7] * ny + post[8] * nz;
+      nx = rx;
+      ny = ry;
+      nz = rz;
     }
 
     if (
@@ -373,7 +405,7 @@ export function accumulateFlame(
       sumRGB[o + 1] += colorLUT[li + 1];
       sumRGB[o + 2] += colorLUT[li + 2];
     } else {
-      const rgb = palette[idx] ?? FALLBACK_COLOR;
+      const rgb = palette[baseIdx] ?? FALLBACK_COLOR;
       sumRGB[o] += rgb[0];
       sumRGB[o + 1] += rgb[1];
       sumRGB[o + 2] += rgb[2];

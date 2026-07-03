@@ -301,6 +301,7 @@ input[type="range"] {
 #presetSelect,
 #colorMode,
 #renderStyle,
+#symmetryAxis,
 .variation-add {
   width: 100%;
   margin-top: 5px;
@@ -316,6 +317,7 @@ input[type="range"] {
 #presetSelect:focus-visible,
 #colorMode:focus-visible,
 #renderStyle:focus-visible,
+#symmetryAxis:focus-visible,
 .variation-add:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

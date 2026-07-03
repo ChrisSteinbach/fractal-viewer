@@ -104,3 +104,29 @@ export interface Bounds {
   minR: number;
   maxR: number;
 }
+
+/**
+ * Axes {@link SymmetryParams} can rotate copies about. This array is the
+ * single source of truth for both the {@link SymmetryAxis} type and the
+ * persistence validator (`VALID_SYMMETRY_AXES` in `persist.ts`), so adding an
+ * axis is one edit and the runtime guard can never silently drift from the
+ * type.
+ */
+export const SYMMETRY_AXES = ["x", "y", "z"] as const;
+
+/** One axis a kaleidoscope's rotated copies can turn about. */
+export type SymmetryAxis = (typeof SYMMETRY_AXES)[number];
+
+/**
+ * Rotational/mirror symmetry (fr-6im): replicate the whole transform set
+ * `order` times, each copy rotated by an additional `2π / order` about
+ * `axis`, producing a kaleidoscope — see `chaos-game.ts`'s
+ * `prepareChaosGame`. `order: 1` is the identity regardless of `axis`: today's
+ * system, unreplicated.
+ */
+export interface SymmetryParams {
+  /** Number of rotated copies, including the unrotated original. `1` = off. */
+  order: number;
+  /** Axis the copies are rotated about. */
+  axis: SymmetryAxis;
+}

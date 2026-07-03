@@ -44,6 +44,8 @@ import {
   setSolidLightElevation,
   setSolidResolution,
   setSolidThreshold,
+  setSymmetryAxis,
+  setSymmetryOrder,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -116,6 +118,7 @@ function main(): void {
       state.numPoints,
       Math.random,
       state.finalTransform ?? null,
+      state.symmetry,
     );
     const colors = buildColors(lastResult, state.transforms, state.colorMode);
     scene.setPoints(lastResult.positions, colors);
@@ -300,6 +303,8 @@ function main(): void {
       estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
       estimatorCurve: state.flame.estimatorCurve,
       paletteId: state.flame.paletteId,
+      order: state.symmetry.order,
+      axis: state.symmetry.axis,
       // SAB-backed views structured-clone by SHARING their buffers — the
       // worker sees the same memory these frames wrap, nothing is copied.
       sharedFrames: flameShared?.frames,
@@ -403,6 +408,8 @@ function main(): void {
       // Math.random) can't cross postMessage — which as a side effect makes
       // a render a reproducible pure function of its inputs.
       seed: Math.floor(Math.random() * 0xffffffff),
+      order: state.symmetry.order,
+      axis: state.symmetry.axis,
     });
 
     state = selectTransform(state, null);
@@ -556,6 +563,38 @@ function main(): void {
     },
     onToggleAutoUpdate: (checked) => {
       state = setAutoUpdate(state, checked);
+    },
+    onSymmetryOrderInput: (value) => {
+      state = setSymmetryOrder(state, value);
+      ui.updateLabels(state);
+      if (state.autoUpdate) regenerate();
+      postFlame({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
+      postVoxel({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
+      scheduleSave();
+    },
+    onSymmetryAxisChange: (axis) => {
+      state = setSymmetryAxis(state, axis);
+      ui.updateLabels(state);
+      if (state.autoUpdate) regenerate();
+      postFlame({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
+      postVoxel({
+        type: "setSymmetry",
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+      });
+      scheduleSave();
     },
     onSelect: (index) => {
       state = selectTransform(state, index);

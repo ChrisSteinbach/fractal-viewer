@@ -1,7 +1,12 @@
 import { appendTransform, defaultTransforms } from "../fractal/presets";
 import type { FlamePaletteId } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
-import type { ColorMode, Transform } from "../fractal/types";
+import type {
+  ColorMode,
+  SymmetryAxis,
+  SymmetryParams,
+  Transform,
+} from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 
 /**
@@ -150,6 +155,15 @@ export interface AppState {
    * {@link flameActive} — the app always boots into the explorer.
    */
   solidActive: boolean;
+  /**
+   * Rotational/mirror symmetry (fr-6im): replicate `transforms` into rotated
+   * copies for every render — see `fractal/types.ts`'s `SymmetryParams`.
+   * Unlike {@link flameActive} / {@link solidActive} this is NOT session-only:
+   * it persists like `colorMode` / `renderStyle`, and it shapes the live
+   * explorer's point cloud too, not just the flame/solid renders — `main.ts`'s
+   * `regenerate()` threads it into `runChaosGame`.
+   */
+  symmetry: SymmetryParams;
 }
 
 /** An IFS needs at least one map. */
@@ -252,6 +266,20 @@ export const MAX_SOLID_LIGHT_ELEVATION = 85;
 export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
+/** 1 = off: today's unreplicated system, unchanged until symmetry is turned on. */
+export const DEFAULT_SYMMETRY_ORDER = 1;
+export const MIN_SYMMETRY_ORDER = 1;
+/**
+ * Deliberately WIDER than the UI slider will expose (the slider caps at 9,
+ * a practical range) — 12 is the ceiling because `effectiveSymmetryOrder` in
+ * `chaos-game.ts` already clamps the actually-used order down to fit
+ * `MAX_TRANSFORMS` (256), and 12 is exactly enough for e.g. a 20-map preset's
+ * 12-fold symmetry (20*12=240<=256) without silently losing a value a shared
+ * URL might carry. So this stored/persisted value has its own, more generous
+ * ceiling than the slider widget does.
+ */
+export const MAX_SYMMETRY_ORDER = 12;
+export const DEFAULT_SYMMETRY_AXIS: SymmetryAxis = "y";
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -285,6 +313,7 @@ export function initialState(panelOpen: boolean): AppState {
       ambient: DEFAULT_SOLID_AMBIENT,
     },
     solidActive: false,
+    symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
   };
 }
 
@@ -667,4 +696,32 @@ export function setSolidActive(
   solidActive: boolean,
 ): AppState {
   return { ...state, solidActive };
+}
+
+/**
+ * Set the kaleidoscope's replica count, rounded to the nearest integer and
+ * clamped to a sane range, exactly like {@link setFlameSupersample}. Persists
+ * and reshapes the live explorer's point cloud as well as the flame/solid
+ * renders — see {@link AppState.symmetry}.
+ */
+export function setSymmetryOrder(state: AppState, order: number): AppState {
+  return {
+    ...state,
+    symmetry: {
+      ...state.symmetry,
+      order: Math.round(
+        Math.max(MIN_SYMMETRY_ORDER, Math.min(MAX_SYMMETRY_ORDER, order)),
+      ),
+    },
+  };
+}
+
+/**
+ * Set the axis the kaleidoscope's copies rotate about. Not clamped — it is
+ * an enum (see `fractal/types.ts`'s `SymmetryAxis`), and the UI only offers
+ * valid values (persistence validates untrusted input in `decodeScene`), like
+ * {@link setFlamePaletteId}.
+ */
+export function setSymmetryAxis(state: AppState, axis: SymmetryAxis): AppState {
+  return { ...state, symmetry: { ...state.symmetry, axis } };
 }

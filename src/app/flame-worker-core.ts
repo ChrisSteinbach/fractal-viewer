@@ -53,7 +53,7 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { Transform } from "../fractal/types";
+import type { SymmetryAxis, Transform } from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -101,6 +101,9 @@ export type FlameWorkerCommand =
       estimatorCurve: number;
       /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
       paletteId: FlamePaletteId;
+      /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
+      order: number;
+      axis: SymmetryAxis;
       /**
        * Two SAB-backed display-resolution frame slots (fr-96i), present only
        * when the page is cross-origin isolated (the main thread gates the
@@ -121,7 +124,8 @@ export type FlameWorkerCommand =
   | { type: "setEstimatorRadius"; estimatorRadius: number }
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
   | { type: "setEstimatorCurve"; estimatorCurve: number }
-  | { type: "setPalette"; paletteId: FlamePaletteId };
+  | { type: "setPalette"; paletteId: FlamePaletteId }
+  | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
 
 /** Worker → main thread. */
 export type FlameWorkerEvent =
@@ -265,6 +269,18 @@ export class FlameWorkerSession {
   /** Gradient lookup table for structural coloring, or `null` for the
    * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
   private colorLUT: Float32Array | null = null;
+  /** The raw (un-rotated) transforms/finalTransform from the last "start" —
+   * retained so setSymmetry can re-prepare with a NEW symmetry without the
+   * main thread resending the whole transform list. */
+  private baseTransforms: Transform[] = [];
+  private baseFinalTransform: Transform | null = null;
+  /** The symmetry actually baked into `this.prepared` right now — lets
+   * setSymmetry no-op a repeat value instead of restarting for nothing (the
+   * order slider fires "input" continuously while dragging, and can report
+   * the same integer step's value more than once in a row — the same class of
+   * problem computeEffectiveSupersample's restart guard handles). */
+  private symmetryOrder = 1;
+  private symmetryAxis: SymmetryAxis = "y";
   private rng: Rng = Math.random;
 
   /** The real progressive accumulator, at accumWidth x accumHeight (display
@@ -403,11 +419,21 @@ export class FlameWorkerSession {
       case "setPalette":
         this.setPalette(command.paletteId);
         break;
+      case "setSymmetry":
+        this.setSymmetry(command.order, command.axis);
+        break;
     }
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
-    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform);
+    this.baseTransforms = cmd.transforms;
+    this.baseFinalTransform = cmd.finalTransform;
+    this.symmetryOrder = cmd.order;
+    this.symmetryAxis = cmd.axis;
+    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
+      order: cmd.order,
+      axis: cmd.axis,
+    });
     this.projection = cmd.projection;
     this.palette = transformColors(cmd.transforms.length);
     // null for "legacy" — accumulateFlame then colors by transform (palette).
@@ -541,6 +567,27 @@ export class FlameWorkerSession {
     // tone-map param — this can't be re-applied to the existing accumulation;
     // it has to accumulate afresh. Same restart path setSupersample uses (the
     // size is unchanged, so this reallocates an identical-size histogram).
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
+  private setSymmetry(order: number, axis: SymmetryAxis): void {
+    if (!this.prepared || !this.projection) return; // no active session yet.
+    if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
+    this.symmetryOrder = order;
+    this.symmetryAxis = axis;
+    this.prepared = prepareChaosGame(
+      this.baseTransforms,
+      this.baseFinalTransform,
+      { order, axis },
+    );
+    // The accumulated color sums (and the slot layout itself) assume the OLD
+    // geometry — symmetry changes which slots exist, not just a tone-map
+    // parameter — so, like setPalette, this can't be re-applied to the
+    // existing accumulation; it has to accumulate afresh. Same restart path
+    // setSupersample/setPalette use (the display size is unchanged, so this
+    // reallocates an identical-size histogram).
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,
     );
