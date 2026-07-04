@@ -71,6 +71,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setFourDActive,
   setGlowBrightness,
   setPointSize,
   setRenderStyle,
@@ -623,6 +624,28 @@ describe("setSolidActive", () => {
     expect(next.solidActive).toBe(true);
     expect(state.solidActive).toBe(false);
     expect(next.solid).toBe(state.solid);
+  });
+});
+
+describe("setFourDActive", () => {
+  it("toggles the 4D projection overlay immutably", () => {
+    const state = initialState(true);
+    const next = setFourDActive(state, true);
+    expect(next.fourDActive).toBe(true);
+    expect(state.fourDActive).toBe(false);
+  });
+
+  // Entering 4D hides the 3D guide boxes, so — like a preset load — the
+  // selection must drop back to camera mode or a drag would target a box the
+  // user can no longer see.
+  it("returns to camera mode when activated, clearing a numeric selection", () => {
+    const state = selectTransform(initialState(true), 2);
+    expect(setFourDActive(state, true).selectedTransform).toBeNull();
+  });
+
+  it("leaves the selection untouched when deactivated", () => {
+    const state = selectTransform(initialState(true), 2);
+    expect(setFourDActive(state, false).selectedTransform).toBe(2);
   });
 });
 

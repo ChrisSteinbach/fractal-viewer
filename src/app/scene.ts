@@ -6,7 +6,7 @@ import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
 import { transformColors } from "../fractal/color";
 import { clone3 } from "../fractal/vec";
-import type { Transform, Vec3 } from "../fractal/types";
+import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import type { RenderStyle, SolidParams } from "./state";
@@ -131,6 +131,75 @@ const DOF_FRAGMENT = /* glsl */ `
   }
 `;
 
+// 4D projection point shader (fr-cbg spike). A 4D IFS cloud is rotated in 4D
+// about its own center, then orthographically projected to 3D (drop the rotated
+// w), and colored in-shader by that rotated w. Modeled on DOF_VERTEX's raw
+// ShaderMaterial pipeline (there is deliberately no onBeforeCompile in this
+// codebase). The color MUST live in the shader, not a CPU-baked `color` buffer:
+// it depends on the LIVE uRot4 uniform, so a baked buffer would go stale the
+// moment the rotation advances a frame.
+const FOUR_D_VERTEX = /* glsl */ `
+  uniform mat4 uRot4;
+  uniform vec4 uCenter4;
+  uniform float uInvRadius4;
+  uniform float uSize;
+  uniform float uHalfHeight;
+  attribute float w;
+  varying vec3 vColor;
+
+  // A GLSL port of color.ts's hue2rgb/hslToRgb (THREE.Color.setHSL's algorithm),
+  // so the 4D w-ramp is a sibling of the height/radius ramps: w = -radius maps
+  // to cool blue-violet, w = +radius to warm red.
+  float hue2rgb(float q, float p, float t) {
+    if (t < 0.0) t += 1.0;
+    if (t > 1.0) t -= 1.0;
+    if (t < 1.0 / 6.0) return q + (p - q) * 6.0 * t;
+    if (t < 1.0 / 2.0) return p;
+    if (t < 2.0 / 3.0) return q + (p - q) * 6.0 * (2.0 / 3.0 - t);
+    return q;
+  }
+  vec3 hsl2rgb(float h, float s, float l) {
+    h = fract(h);
+    if (s == 0.0) return vec3(l);
+    float p = l <= 0.5 ? l * (1.0 + s) : l + s - l * s;
+    float q = 2.0 * l - p;
+    return vec3(
+      hue2rgb(q, p, h + 1.0 / 3.0),
+      hue2rgb(q, p, h),
+      hue2rgb(q, p, h - 1.0 / 3.0)
+    );
+  }
+
+  void main() {
+    // Rotate about the cloud's 4D center so the projection tumbles in place,
+    // then project orthographically to 3D by dropping the rotated w.
+    vec4 q = uRot4 * (vec4(position, w) - uCenter4);
+    vec3 projected = q.xyz + uCenter4.xyz;
+
+    // Color by the rotated w. |q| = |p - center| <= radius is rotation-
+    // invariant, so t stays within [0, 1] at every tumble angle and never
+    // needs re-normalizing as the view turns.
+    float t = clamp(0.5 + 0.5 * q.w * uInvRadius4, 0.0, 1.0);
+    vColor = hsl2rgb(0.7 * (1.0 - t), 0.85, 0.55);
+
+    // The exact modelView/projection/gl_PointSize pipeline DOF_VERTEX uses,
+    // minus its circle-of-confusion term: the same size-attenuation formula.
+    vec4 mv = modelViewMatrix * vec4(projected, 1.0);
+    float dist = -mv.z;
+    gl_PointSize = uSize * (uHalfHeight / dist);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+// Opaque square points matching baseMaterial's plain look: no map, no
+// transparency, default depth write, no fog.
+const FOUR_D_FRAGMENT = /* glsl */ `
+  varying vec3 vColor;
+  void main() {
+    gl_FragColor = vec4(vColor, 1.0);
+  }
+`;
+
 // Eye-dome lighting: a screen-space pass that darkens each pixel in proportion
 // to how much its neighbours sit *in front* of it, carving silhouettes and
 // creases so the cloud reads as solid without any lights. (Potree's technique.)
@@ -210,6 +279,10 @@ export class FractalScene {
   private readonly discMaterial: THREE.PointsMaterial; // edl
   private readonly glowMaterial: THREE.PointsMaterial; // glow
   private readonly dofMaterial: THREE.ShaderMaterial; // dof
+  private readonly fourDMaterial: THREE.ShaderMaterial; // 4D projection (fr-cbg)
+  // True while the 4D projection owns the point cloud, so setRenderStyle records
+  // the requested style without clobbering fourDMaterial (see setFourDActive).
+  private fourDActive = false;
 
   private readonly fog: THREE.Fog;
   private readonly darkBackground: THREE.Texture;
@@ -322,6 +395,17 @@ export class FractalScene {
       transparent: true,
       depthWrite: false,
     });
+    this.fourDMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uRot4: { value: new THREE.Matrix4() },
+        uCenter4: { value: new THREE.Vector4() },
+        uInvRadius4: { value: 1 },
+        uSize: { value: DOF_POINT_SIZE },
+        uHalfHeight: { value: buffer.y * 0.5 },
+      },
+      vertexShader: FOUR_D_VERTEX,
+      fragmentShader: FOUR_D_FRAGMENT,
+    });
 
     this.pointGeometry = new THREE.BufferGeometry();
     this.pointCloud = new THREE.Points(this.pointGeometry, this.baseMaterial);
@@ -402,7 +486,52 @@ export class FractalScene {
       "color",
       new THREE.BufferAttribute(colors, 3),
     );
+    // Drop any 4D `w` attribute left over from the projection view, so a stale
+    // (possibly shorter) w buffer never lingers on the 3D cloud.
+    this.pointGeometry.deleteAttribute("w");
     this.pointGeometry.computeBoundingSphere();
+  }
+
+  /**
+   * Upload a freshly generated 4D cloud (fr-cbg spike): the projected-to-3D
+   * `xyz` positions plus the separate `w` coordinate the shader colors by, and
+   * the 4D `center`/`radius` that drive the shader's rotation pivot and w-color
+   * normalization. The 4D shader reads no `color` attribute (color is computed
+   * from `w` and the live rotation), so any stale one is dropped.
+   */
+  setPoints4(
+    positions: Float32Array,
+    w: Float32Array,
+    center: Vec4,
+    radius: number,
+  ): void {
+    this.pointGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(positions, 3),
+    );
+    this.pointGeometry.setAttribute("w", new THREE.BufferAttribute(w, 1));
+    this.pointGeometry.deleteAttribute("color");
+
+    const u = this.fourDMaterial.uniforms;
+    (u.uCenter4.value as THREE.Vector4).set(
+      center[0],
+      center[1],
+      center[2],
+      center[3],
+    );
+    u.uInvRadius4.value = 1 / Math.max(radius, 1e-6);
+
+    // Set the bounding sphere MANUALLY rather than computeBoundingSphere(): the
+    // raw xyz attribute only bounds the un-rotated projection and underestimates
+    // where the shader moves points as the cloud tumbles. But the 4D ball of
+    // `radius` around `center` is rotation-invariant, and its orthographic
+    // projection always sits inside the SAME xyz sphere (center, radius), so a
+    // sphere there bounds the projection at EVERY tumble angle — frustum culling
+    // stays correct throughout. (1.001 is a hair of slack against Float32 round.)
+    this.pointGeometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(center[0], center[1], center[2]),
+      radius * 1.001,
+    );
   }
 
   /**
@@ -551,6 +680,11 @@ export class FractalScene {
    */
   setRenderStyle(style: RenderStyle): void {
     this.renderStyle = style;
+    // While the 4D projection owns the point cloud, record the requested style
+    // (so exiting 4D can restore it) but don't overwrite fourDMaterial. main.ts
+    // also guards its onRenderStyle handler, but the scene must not be
+    // corruptible from here either.
+    if (this.fourDActive) return;
     switch (style) {
       case "depthFade":
         this.pointCloud.material = this.baseMaterial;
@@ -583,6 +717,42 @@ export class FractalScene {
   }
 
   /**
+   * Enter or exit the 4D projection view (fr-cbg spike). Swaps the point cloud
+   * to fourDMaterial on entry; on exit, restores the current render style's
+   * material by re-running {@link setRenderStyle} (which owns the style→material
+   * mapping) rather than duplicating it here.
+   */
+  setFourDActive(active: boolean): void {
+    this.fourDActive = active;
+    if (active) {
+      this.pointCloud.material = this.fourDMaterial;
+    } else {
+      // fourDActive is now false, so this restores the recorded style's
+      // material (and its fog/background) instead of being guarded out.
+      this.setRenderStyle(this.renderStyle);
+    }
+  }
+
+  /**
+   * Set the 4D rotation uniform (fr-cbg spike). `m` is a row-major 16-entry
+   * array — the format affine4.ts's `rotationMatrix4` produces.
+   * `THREE.Matrix4.set()` takes its arguments in row-major order and stores them
+   * column-major internally (exactly the WebGL layout the shader's `mat4 uRot4`
+   * expects), so handing the row-major array straight to `set()` is the correct
+   * pairing.
+   */
+  setRot4(m: number[]): void {
+    const uRot4 = this.fourDMaterial.uniforms.uRot4.value as THREE.Matrix4;
+    // prettier-ignore
+    uRot4.set(
+      m[0],  m[1],  m[2],  m[3],
+      m[4],  m[5],  m[6],  m[7],
+      m[8],  m[9],  m[10], m[11],
+      m[12], m[13], m[14], m[15],
+    );
+  }
+
+  /**
    * Scale every render style's points by `multiplier` (1 = authored size).
    * Applied to all materials at once so switching styles preserves the choice.
    */
@@ -591,6 +761,7 @@ export class FractalScene {
     this.discMaterial.size = DISC_POINT_SIZE * multiplier;
     this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
     this.dofMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
+    this.fourDMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
   }
 
   /**
@@ -630,9 +801,19 @@ export class FractalScene {
     this.edlTarget.setSize(buffer.x, buffer.y);
     this.edlResolution.set(buffer.x, buffer.y);
     this.dofMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
+    this.fourDMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
   }
 
   render(): void {
+    // The 4D projection (fr-cbg spike) always renders plain: its material is
+    // designed to look like the base style, and layering the recorded render
+    // style's post-processing (bloom / EDL / DOF focus) over it would restyle
+    // the projection unpredictably — including in captureFrame's PNG export.
+    // The recorded style still drives fog/background until the user exits.
+    if (this.fourDActive) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     switch (this.renderStyle) {
       case "glow":
         this.composer.render();

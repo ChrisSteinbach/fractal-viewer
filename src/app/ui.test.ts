@@ -56,6 +56,8 @@ function noopHandlers(): UiHandlers {
     onSolidResolutionInput: vi.fn(),
     onSymmetryOrderInput: vi.fn(),
     onSymmetryAxisChange: vi.fn(),
+    onEnterFourD: vi.fn(),
+    onExitFourD: vi.fn(),
   };
 }
 
@@ -1603,6 +1605,114 @@ describe("Ui solid render controls", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(handlers.onSolidPaletteChange).toHaveBeenCalledWith("spectrum");
+  });
+});
+
+describe("Ui 4D projection controls (fr-cbg)", () => {
+  function pentatopeButton(): HTMLButtonElement {
+    return document.getElementById("pentatopeButton") as HTMLButtonElement;
+  }
+  function spiral4Button(): HTMLButtonElement {
+    return document.getElementById("spiral4Button") as HTMLButtonElement;
+  }
+  function exitFourDButton(): HTMLButtonElement {
+    return document.getElementById("exitFourDButton") as HTMLButtonElement;
+  }
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("shows the 4D entry and hides the 4D controls while inactive", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fourDActive: false });
+
+    expect(el("fourDEntry").classList.contains("hidden")).toBe(false);
+    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the 3D editing/restyling controls and shows the 4D controls while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fourDActive: true });
+
+    // The 4D controls take over; the 4D entry and the 3D-editing/restyling
+    // sub-blocks all hide.
+    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
+    expect(el("fourDEntry").classList.contains("hidden")).toBe(true);
+    expect(el("flameEntry").classList.contains("hidden")).toBe(true);
+    expect(el("solidEntry").classList.contains("hidden")).toBe(true);
+    expect(el("transformsSection").classList.contains("hidden")).toBe(true);
+    expect(el("presetSection").classList.contains("hidden")).toBe(true);
+    expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
+    expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
+    expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
+    expect(el("transformEditSection").classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the point-size, regenerate, and guides controls live in 4D", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fourDActive: true });
+
+    // explorerControls stays visible (its wrapper is not hidden), so the
+    // kept-live controls inside it remain interactive.
+    expect(el("explorerControls").classList.contains("hidden")).toBe(false);
+    expect(el("pointSizeSlider").classList.contains("hidden")).toBe(false);
+    expect(el("regenerateBtn").classList.contains("hidden")).toBe(false);
+    expect(el("showGuides").classList.contains("hidden")).toBe(false);
+  });
+
+  it("restores the 3D editing controls after leaving 4D", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fourDActive: true });
+    ui.updateLabels({ ...initialState(true), fourDActive: false });
+
+    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("fourDEntry").classList.contains("hidden")).toBe(false);
+    expect(el("transformsSection").classList.contains("hidden")).toBe(false);
+    expect(el("presetSection").classList.contains("hidden")).toBe(false);
+    expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
+    expect(el("transformEditSection").classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the color legend while the 4D projection is active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      fourDActive: true,
+    });
+    expect(el("legend").classList.contains("hidden")).toBe(true);
+  });
+
+  it("names the 4D projection in the help box while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fourDActive: true });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "4D Projection",
+    );
+  });
+
+  it("fires onEnterFourD('pentatope') when the Pentatope Gasket button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    pentatopeButton().click();
+    expect(handlers.onEnterFourD).toHaveBeenCalledWith("pentatope");
+  });
+
+  it("fires onEnterFourD('spiral') when the Double-Rotation Spiral button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    spiral4Button().click();
+    expect(handlers.onEnterFourD).toHaveBeenCalledWith("spiral");
+  });
+
+  it("fires onExitFourD when Back to 3D is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    exitFourDButton().click();
+    expect(handlers.onExitFourD).toHaveBeenCalledOnce();
   });
 });
 

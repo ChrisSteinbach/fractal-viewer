@@ -68,9 +68,14 @@ export function doubleRotationSpiral(): Transform4[] {
     },
     {
       // Seed: a small copy offset in both the xy (via x) and zw (via w) planes.
+      // The w offset is deliberately comparable to the x offset so the cloud's
+      // w-spread rivals its xy-spread: the renderer normalizes w-color by the
+      // rotation-invariant 4D radius, so a system with only a sliver of w
+      // amplitude would sit near the middle of the ramp (all green) at most
+      // tumble angles.
       scale: [0.22, 0.22, 0.22, 0.22],
       rotation: {},
-      position: [0.85, 0, 0, 0.4],
+      position: [0.85, 0, 0, 0.75],
       weight: 1,
     },
   ];

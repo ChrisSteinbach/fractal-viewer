@@ -174,6 +174,15 @@ export interface AppState {
    */
   solidActive: boolean;
   /**
+   * Whether the 4D projection view (fr-cbg spike) is showing in place of the
+   * live 3D point cloud: a 4D IFS auto-tumbling through a double rotation,
+   * orthographically projected to 3D. Session-only and never persisted,
+   * exactly like {@link flameActive} / {@link solidActive} — the app always
+   * boots into the 3D explorer (see `persist.ts`'s `SceneSnapshot`, which omits
+   * this field).
+   */
+  fourDActive: boolean;
+  /**
    * Rotational/mirror symmetry (fr-6im): replicate `transforms` into rotated
    * copies for every render — see `fractal/types.ts`'s `SymmetryParams`.
    * Unlike {@link flameActive} / {@link solidActive} this is NOT session-only:
@@ -375,6 +384,7 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     solidActive: false,
+    fourDActive: false,
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
@@ -789,6 +799,25 @@ export function setSolidActive(
   solidActive: boolean,
 ): AppState {
   return { ...state, solidActive };
+}
+
+/**
+ * Enter or exit the 4D projection view (fr-cbg spike; session-only, like
+ * {@link setFlameActive} / {@link setSolidActive}). Activating also resets
+ * `selectedTransform` to `null` — back to camera mode — for the same reason
+ * {@link setTransforms} does: the 3D guide boxes are hidden in 4D, and
+ * `interactions.ts` keys off a null selection to route every drag to the
+ * camera. Deactivating leaves the selection untouched.
+ */
+export function setFourDActive(
+  state: AppState,
+  fourDActive: boolean,
+): AppState {
+  return {
+    ...state,
+    fourDActive,
+    selectedTransform: fourDActive ? null : state.selectedTransform,
+  };
 }
 
 /**

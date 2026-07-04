@@ -74,6 +74,14 @@ Transform** sliders that appear in the panel while a transform is selected.
   **✦ Final Transform** row under **Select to Edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
+- **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
+  a _4D_ IFS, shown as a slowly auto-tumbling orthographic projection (an XY+ZW
+  double rotation; point color = the rotated 4th coordinate, blue −w → red +w).
+  The camera orbits the projection as usual, and Points / Point Size /
+  Regenerate / guides / Save PNG stay live; everything that edits or restyles
+  the 3D system is hidden, and the view is session-only (never persisted).
+  **← Back to 3D** restores the previous scene exactly. See
+  [4d-exploration.md](4d-exploration.md) for the design.
 
 ## Sharing & persistence
 

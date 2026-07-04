@@ -111,6 +111,11 @@ export interface UiHandlers {
   /** The symmetry axis dropdown changed — same reach as
    * {@link onSymmetryOrderInput}. */
   onSymmetryAxisChange: (axis: SymmetryAxis) => void;
+  /** A 4D-system button was clicked (fr-cbg spike): enter the 4D projection
+   * view on the chosen preset system. */
+  onEnterFourD: (kind: "pentatope" | "spiral") => void;
+  /** The 4D projection's "Back to 3D" button was clicked. */
+  onExitFourD: () => void;
 }
 
 /**
@@ -460,6 +465,22 @@ export class Ui {
   private readonly solidProgress: HTMLElement;
   private readonly exitSolidBtn: HTMLButtonElement;
 
+  // 4D projection view (fr-cbg spike). The entry block + its two system
+  // buttons, the in-4D controls block + its exit button, and the explorer
+  // sub-blocks hidden while 4D is active (wrappers added to index.html so each
+  // block hides cleanly — see updateLabels).
+  private readonly fourDEntry: HTMLElement;
+  private readonly pentatopeButton: HTMLButtonElement;
+  private readonly spiral4Button: HTMLButtonElement;
+  private readonly fourDControls: HTMLElement;
+  private readonly exitFourDButton: HTMLButtonElement;
+  private readonly transformsSection: HTMLElement;
+  private readonly presetSection: HTMLElement;
+  private readonly colorModeRow: HTMLElement;
+  private readonly renderStyleRow: HTMLElement;
+  private readonly symmetrySection: HTMLElement;
+  private readonly transformEditSection: HTMLElement;
+
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
@@ -553,6 +574,17 @@ export class Ui {
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
     this.exitSolidBtn = this.byId("exitSolidBtn");
+    this.fourDEntry = this.byId("fourDEntry");
+    this.pentatopeButton = this.byId("pentatopeButton");
+    this.spiral4Button = this.byId("spiral4Button");
+    this.fourDControls = this.byId("fourDControls");
+    this.exitFourDButton = this.byId("exitFourDButton");
+    this.transformsSection = this.byId("transformsSection");
+    this.presetSection = this.byId("presetSection");
+    this.colorModeRow = this.byId("colorModeRow");
+    this.renderStyleRow = this.byId("renderStyleRow");
+    this.symmetrySection = this.byId("symmetrySection");
+    this.transformEditSection = this.byId("transformEditSection");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -689,6 +721,15 @@ export class Ui {
     this.solidResolutionSlider.addEventListener("input", () =>
       handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
     );
+    this.pentatopeButton.addEventListener("click", () =>
+      handlers.onEnterFourD("pentatope"),
+    );
+    this.spiral4Button.addEventListener("click", () =>
+      handlers.onEnterFourD("spiral"),
+    );
+    this.exitFourDButton.addEventListener("click", () =>
+      handlers.onExitFourD(),
+    );
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -767,26 +808,48 @@ export class Ui {
     this.solidResolutionSlider.value = String(state.solid.resolution);
 
     // Either render mode takes over the panel — editing controls that can't
-    // affect the in-progress render would just be confusing. The two modes
-    // are mutually exclusive by construction: each mode's entry button is
-    // hidden while the other is active.
+    // affect the in-progress render would just be confusing. The three
+    // non-explorer modes (flame, solid, 4D) are mutually exclusive by
+    // construction: each mode's entry button is hidden while any other is
+    // active.
     const rendering = state.flameActive || state.solidActive;
+    const fourD = state.fourDActive;
+    // A flame/solid render replaces the WHOLE explorer; the 4D projection keeps
+    // a few live controls (points/size/regenerate/guides) but hides everything
+    // that edits or restyles the 3D system. So explorerControls itself hides
+    // only for a render, while the 4D-hidden sub-blocks below add `fourD`.
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.flameEntry.classList.toggle("hidden", rendering);
-    this.solidEntry.classList.toggle("hidden", rendering);
+    this.flameEntry.classList.toggle("hidden", rendering || fourD);
+    this.solidEntry.classList.toggle("hidden", rendering || fourD);
+    this.fourDEntry.classList.toggle("hidden", rendering || fourD);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
+    this.fourDControls.classList.toggle("hidden", !fourD);
+    // 3D-editing / restyling sub-blocks: hidden while the 4D projection is up
+    // (they'd edit a system that isn't on screen). They already vanish during a
+    // flame/solid render by sitting inside the hidden explorerControls, so
+    // `fourD` is the only extra condition each needs here.
+    this.transformsSection.classList.toggle("hidden", fourD);
+    // The whole Presets block (heading, 3D preset select, Surprise Me): a 3D
+    // preset can't load into the 4D projection, and a visible-but-inert
+    // control would just look broken.
+    this.presetSection.classList.toggle("hidden", fourD);
+    this.colorModeRow.classList.toggle("hidden", fourD);
+    this.renderStyleRow.classList.toggle("hidden", fourD);
+    this.symmetrySection.classList.toggle("hidden", fourD);
+    this.transformEditSection.classList.toggle("hidden", fourD);
     // The manual brightness override only means anything for the glow render
-    // style, so — like the flame/solid sub-panels above — it's hidden
-    // whenever that style isn't the active one.
+    // style, so — like the flame/solid sub-panels above — it's hidden whenever
+    // that style isn't the active one (and always in 4D).
     this.glowBrightnessRow.classList.toggle(
       "hidden",
-      state.renderStyle !== "glow",
+      fourD || state.renderStyle !== "glow",
     );
-    // Contrast only means anything for the coordinate-normalized color modes.
+    // Contrast only means anything for the coordinate-normalized color modes
+    // (and never in 4D, whose color comes straight from the 4th coordinate).
     this.colorGammaRow.classList.toggle(
       "hidden",
-      !colorModeUsesGamma(state.colorMode),
+      fourD || !colorModeUsesGamma(state.colorMode),
     );
     this.updateLegend(state);
 
@@ -801,6 +864,15 @@ export class Ui {
         this.mouse
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+      );
+    } else if (state.fourDActive) {
+      // The 4D projection auto-tumbles on its own; the camera orbits the
+      // projected cloud exactly like camera mode.
+      this.helpTitle.textContent = "4D Projection";
+      this.setHelpLines(
+        this.mouse
+          ? ["Auto-tumbling 4D IFS", "Drag: Orbit", "Scroll: Zoom"]
+          : ["Auto-tumbling 4D IFS", "1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
@@ -863,6 +935,9 @@ export class Ui {
     const hidden =
       mode === "uniform" ||
       state.flameActive ||
+      // The 4D projection colors by its 4th coordinate in-shader (see
+      // scene.ts), not by any Color Mode, so this legend can't describe it.
+      state.fourDActive ||
       (state.solidActive && state.solid.paletteId !== "legacy");
     this.legend.classList.toggle("hidden", hidden);
     if (hidden) return;
