@@ -4,6 +4,8 @@ import type { UiHandlers } from "./ui";
 import { initialState, MAX_COLOR_GAMMA } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
+import { buildColorModeLUT } from "../fractal/color";
+import { to255 } from "../fractal/vec";
 import type { Transform } from "../fractal/types";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
@@ -281,6 +283,256 @@ describe("Ui color contrast slider", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(handlers.onColorGammaInput).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("Ui color legend (fr-dsz)", () => {
+  function legend(): HTMLElement {
+    return document.getElementById("legend") as HTMLElement;
+  }
+  function legendBar(): HTMLElement {
+    return document.getElementById("legendBar") as HTMLElement;
+  }
+  function legendLabelLow(): HTMLElement {
+    return document.getElementById("legendLabelLow") as HTMLElement;
+  }
+  function legendLabelHigh(): HTMLElement {
+    return document.getElementById("legendLabelHigh") as HTMLElement;
+  }
+  function legendSwatches(): HTMLElement {
+    return document.getElementById("legendSwatches") as HTMLElement;
+  }
+  function legendText(): HTMLElement {
+    return document.getElementById("legendText") as HTMLElement;
+  }
+  /** The CSS `rgb()` string for LUT entry `index` (0-255) — the same
+   * byte-conversion the legend itself uses (color management is disabled,
+   * so these bytes match the rendered cloud exactly). */
+  function lutRgb(lut: Float32Array, index: number): string {
+    const o = index * 3;
+    return `rgb(${to255(lut[o])}, ${to255(lut[o + 1])}, ${to255(lut[o + 2])})`;
+  }
+
+  it("shows a gradient bar for height mode, blue at the low end and red at the high end", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendText().classList.contains("hidden")).toBe(true);
+    expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelHigh().textContent).toBe("high");
+
+    // Endpoints derived from the shared ramp (color.ts's writeHeightColor via
+    // buildColorModeLUT) rather than hardcoded, so a ramp tweak can't leave
+    // this assertion silently checking the wrong colors.
+    const lut = buildColorModeLUT("height", 1);
+    const background = legendBar().style.backgroundImage;
+    const lowRgb = lutRgb(lut, 0);
+    const highRgb = lutRgb(lut, 255);
+    expect(background).toContain(lowRgb);
+    expect(background).toContain(highRgb);
+    // Not just present — in this order. A flipped (high→low) gradient would
+    // still contain both colors, so containment alone can't catch that.
+    expect(background.indexOf(lowRgb)).toBeLessThan(
+      background.indexOf(highRgb),
+    );
+  });
+
+  it("shows a gradient bar for radius mode, warm at the center and cool at the edge", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "radius" });
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelLow().textContent).toBe("center");
+    expect(legendLabelHigh().textContent).toBe("edge");
+
+    const lut = buildColorModeLUT("radius", 1);
+    const background = legendBar().style.backgroundImage;
+    const centerRgb = lutRgb(lut, 0);
+    const edgeRgb = lutRgb(lut, 255);
+    expect(background).toContain(centerRgb);
+    expect(background).toContain(edgeRgb);
+    // Not just present — in this order. A flipped (edge→center) gradient
+    // would still contain both colors, so containment alone can't catch that.
+    expect(background.indexOf(centerRgb)).toBeLessThan(
+      background.indexOf(edgeRgb),
+    );
+  });
+
+  it("reshapes a mid gradient stop under a non-1 colorGamma while the endpoints stay fixed", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      colorGamma: 1,
+    });
+    const neutralBackground = legendBar().style.backgroundImage;
+
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      colorGamma: 3,
+    });
+    const gammaBackground = legendBar().style.backgroundImage;
+
+    // The bar as a whole looks different under the reshaped ramp…
+    expect(gammaBackground).not.toBe(neutralBackground);
+    // …but applyColorGamma always fixes t=0 and t=1, so the two endpoint
+    // colors are identical regardless of gamma — only the interior moves.
+    const lut = buildColorModeLUT("height", 1);
+    expect(gammaBackground).toContain(lutRgb(lut, 0));
+    expect(gammaBackground).toContain(lutRgb(lut, 255));
+  });
+
+  it("shows text instead of a bar for position mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "position" });
+
+    expect(legendBar().classList.contains("hidden")).toBe(true);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendText().classList.contains("hidden")).toBe(false);
+    expect(legendText().textContent).toBe("X→R Y→G Z→B");
+  });
+
+  it("shows one swatch per transform, tracking transforms.length after add/remove", () => {
+    const ui = new Ui(document);
+    const three = Array.from({ length: 3 }, () => defaultTransforms()[0]);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "transform",
+      transforms: three,
+    });
+    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(3);
+
+    const five = Array.from({ length: 5 }, () => defaultTransforms()[0]);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "transform",
+      transforms: five,
+    });
+    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(5);
+
+    const two = Array.from({ length: 2 }, () => defaultTransforms()[0]);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "transform",
+      transforms: two,
+    });
+    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(2);
+  });
+
+  it("caps transform swatches at 12 and folds the rest into a '+N' indicator", () => {
+    const ui = new Ui(document);
+    const thirteen = Array.from({ length: 13 }, () => defaultTransforms()[0]);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "transform",
+      transforms: thirteen,
+    });
+
+    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(
+      12,
+    );
+    expect(legendSwatches().querySelector(".legend-more")?.textContent).toBe(
+      "+1",
+    );
+  });
+
+  it("hides the legend entirely for uniform coloring", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "uniform" });
+    expect(legend().classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the legend while a flame render is active, even in a mode that normally shows one", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      flameActive: true,
+    });
+    expect(legend().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the legend again after returning from a flame render", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      flameActive: true,
+    });
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      flameActive: false,
+    });
+    expect(legend().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the legend while the solid render is active with a non-legacy palette", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: true,
+      solid: { ...initialState(true).solid, paletteId: "aurora" },
+    });
+    // voxel.ts's accumulateVoxels colors from the palette's LUT instead of
+    // colorMode once a non-"legacy" palette is picked, so the legend would
+    // be describing colors the render no longer uses.
+    expect(legend().classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the legend visible and accurate while the solid render is active with the legacy palette", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: true,
+      solid: { ...initialState(true).solid, paletteId: "legacy" },
+    });
+    // The "legacy" solid palette follows colorMode/colorGamma exactly, so
+    // the legend (and its gradient bar) stays accurate here.
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+  });
+
+  it("re-hides the legend when the active solid palette changes from legacy to a gradient", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: true,
+      solid: { ...initialState(true).solid, paletteId: "legacy" },
+    });
+    expect(legend().classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: true,
+      solid: { ...initialState(true).solid, paletteId: "spectrum" },
+    });
+    expect(legend().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the legend again after returning from a solid render", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: true,
+      solid: { ...initialState(true).solid, paletteId: "aurora" },
+    });
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      solidActive: false,
+      solid: { ...initialState(true).solid, paletteId: "aurora" },
+    });
+    expect(legend().classList.contains("hidden")).toBe(false);
   });
 });
 

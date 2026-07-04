@@ -1,5 +1,9 @@
 import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
-import { colorModeUsesGamma, transformColors } from "../fractal/color";
+import {
+  buildColorModeLUT,
+  colorModeUsesGamma,
+  transformColors,
+} from "../fractal/color";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
@@ -294,6 +298,43 @@ function variationSummary(t: Transform): string[] {
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
 }
 
+/**
+ * Number of evenly spaced {@link buildColorModeLUT} samples used to build the
+ * legend's CSS gradient (fr-dsz) — more than a coarse 8-stop bar so a non-1
+ * `colorGamma` curve (fr-8sk) still reads accurately in the legend, not just
+ * at its two (always-fixed) endpoints.
+ */
+const LEGEND_GRADIENT_STOPS = 16;
+
+/** Cap on individual swatches shown in the "by transform" legend before the
+ * remainder folds into a single "+N" indicator — an uncapped strip would
+ * grow arbitrarily wide for a many-transform system. */
+const LEGEND_MAX_SWATCHES = 12;
+
+/** Format a normalized `[0, 1]` sRGB triple as a CSS `rgb()` string. Color
+ * management is disabled (`scene.ts`), so these byte values match the
+ * rendered cloud exactly. */
+function cssRgb(r: number, g: number, b: number): string {
+  return `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`;
+}
+
+/**
+ * Build the legend's CSS `linear-gradient` for the height/radius color modes
+ * by sampling {@link buildColorModeLUT} — the same lookup table the solid
+ * render's hot loop uses, so the legend bar can never drift from the actual
+ * ramp (or from the current color-contrast setting).
+ */
+function legendGradient(mode: "height" | "radius", colorGamma: number): string {
+  const lut = buildColorModeLUT(mode, colorGamma);
+  const stops: string[] = [];
+  for (let i = 0; i < LEGEND_GRADIENT_STOPS; i++) {
+    const lutIndex = Math.round((i / (LEGEND_GRADIENT_STOPS - 1)) * 255);
+    const o = lutIndex * 3;
+    stops.push(cssRgb(lut[o], lut[o + 1], lut[o + 2]));
+  }
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
 interface AxisControl {
   slider: HTMLInputElement;
   readout: HTMLElement;
@@ -334,6 +375,13 @@ export class Ui {
   private readonly helpTitle: HTMLElement;
   private readonly helpText: HTMLElement;
   private readonly pointCount: HTMLElement;
+  private readonly legend: HTMLElement;
+  private readonly legendBar: HTMLElement;
+  private readonly legendLabels: HTMLElement;
+  private readonly legendLabelLow: HTMLElement;
+  private readonly legendLabelHigh: HTMLElement;
+  private readonly legendSwatches: HTMLElement;
+  private readonly legendText: HTMLElement;
   private readonly menuToggle: HTMLElement;
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
@@ -419,6 +467,13 @@ export class Ui {
     this.helpTitle = this.byId("helpTitle");
     this.helpText = this.byId("helpText");
     this.pointCount = this.byId("pointCount");
+    this.legend = this.byId("legend");
+    this.legendBar = this.byId("legendBar");
+    this.legendLabels = this.byId("legendLabels");
+    this.legendLabelLow = this.byId("legendLabelLow");
+    this.legendLabelHigh = this.byId("legendLabelHigh");
+    this.legendSwatches = this.byId("legendSwatches");
+    this.legendText = this.byId("legendText");
     this.menuToggle = this.byId("menuToggle");
     this.backdrop = this.byId("backdrop");
     this.panel = this.byId("panel");
@@ -733,6 +788,7 @@ export class Ui {
       "hidden",
       !colorModeUsesGamma(state.colorMode),
     );
+    this.updateLegend(state);
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
@@ -785,6 +841,71 @@ export class Ui {
 
   setPointCount(count: number): void {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
+  }
+
+  /**
+   * Reflect the color legend (fr-dsz): an unobtrusive key for what the active
+   * Color Mode's colors mean. Height/radius get a gradient bar sampled from
+   * {@link buildColorModeLUT} (so it can never drift from the rendered ramp,
+   * or from the current color-contrast setting) with low/high or
+   * center/edge labels; position gets a short axis-mapping note instead of a
+   * bar (the mapping is xyz→rgb, not a single ramp); transform gets one
+   * swatch per transform. Hidden entirely for uniform coloring (nothing to
+   * key), while a flame render is active (it colors by palette, not by Color
+   * Mode), and while the solid render is active with a non-"legacy" palette
+   * (voxel.ts's accumulateVoxels then colors from that palette's LUT instead
+   * of colorMode, exactly like the flame case — but solid's `"legacy"`
+   * palette DOES follow colorMode/colorGamma faithfully, so the legend stays
+   * accurate and visible for that one case).
+   */
+  private updateLegend(state: AppState): void {
+    const mode = state.colorMode;
+    const hidden =
+      mode === "uniform" ||
+      state.flameActive ||
+      (state.solidActive && state.solid.paletteId !== "legacy");
+    this.legend.classList.toggle("hidden", hidden);
+    if (hidden) return;
+
+    const isGradient = mode === "height" || mode === "radius";
+    this.legendBar.classList.toggle("hidden", !isGradient);
+    this.legendLabels.classList.toggle("hidden", !isGradient);
+    this.legendSwatches.classList.toggle("hidden", mode !== "transform");
+    this.legendText.classList.toggle("hidden", mode !== "position");
+
+    if (mode === "height" || mode === "radius") {
+      this.legendBar.style.backgroundImage = legendGradient(
+        mode,
+        state.colorGamma,
+      );
+      this.legendLabelLow.textContent = mode === "height" ? "low" : "center";
+      this.legendLabelHigh.textContent = mode === "height" ? "high" : "edge";
+    } else if (mode === "position") {
+      this.legendText.textContent = "X→R Y→G Z→B";
+    } else if (mode === "transform") {
+      this.renderLegendSwatches(state.transforms.length);
+    }
+  }
+
+  /** Rebuild the "by transform" swatch strip from the current palette,
+   * capped at {@link LEGEND_MAX_SWATCHES} with a trailing "+N" indicator. */
+  private renderLegendSwatches(count: number): void {
+    this.legendSwatches.replaceChildren();
+    const palette = transformColors(count);
+    const shown = Math.min(count, LEGEND_MAX_SWATCHES);
+    for (let i = 0; i < shown; i++) {
+      const [r, g, b] = palette[i];
+      const swatch = this.doc.createElement("span");
+      swatch.className = "legend-swatch";
+      swatch.style.backgroundColor = cssRgb(r, g, b);
+      this.legendSwatches.appendChild(swatch);
+    }
+    if (count > LEGEND_MAX_SWATCHES) {
+      const more = this.doc.createElement("span");
+      more.className = "legend-more";
+      more.textContent = `+${count - LEGEND_MAX_SWATCHES}`;
+      this.legendSwatches.appendChild(more);
+    }
   }
 
   /** Reflect flame-render progress as an iteration count and percentage.
