@@ -10,6 +10,7 @@ import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
+import { randomSystem } from "../fractal/random-system";
 import { OrbitCamera } from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
@@ -524,6 +525,15 @@ function main(): void {
     onPreset: (preset) =>
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
+      }, "always"),
+    onSurprise: () =>
+      applyEdit(() => {
+        const sys = randomSystem(Math.random);
+        state = setTransforms(state, sys.transforms);
+        // sys.finalTransform is Transform | null; setFinalTransform treats
+        // null as "clear" (stores undefined), so a previous session's lens
+        // never survives a roll that landed on no final transform.
+        state = setFinalTransform(state, sys.finalTransform);
       }, "always"),
     onNumPointsInput: (value) => {
       state = setNumPoints(state, value);

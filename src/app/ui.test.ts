@@ -15,6 +15,7 @@ function noopHandlers(): UiHandlers {
     onAdd: vi.fn(),
     onRemove: vi.fn(),
     onPreset: vi.fn(),
+    onSurprise: vi.fn(),
     onNumPointsInput: vi.fn(),
     onPointSizeInput: vi.fn(),
     onGlowBrightnessInput: vi.fn(),
@@ -250,6 +251,20 @@ describe("Ui preset menu", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(handlers.onPreset).not.toHaveBeenCalled();
+  });
+});
+
+describe("Ui surprise button", () => {
+  function surpriseBtn(): HTMLButtonElement {
+    return document.getElementById("surpriseBtn") as HTMLButtonElement;
+  }
+
+  it("fires onSurprise when Surprise Me is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    surpriseBtn().click();
+    expect(handlers.onSurprise).toHaveBeenCalledOnce();
   });
 });
 
