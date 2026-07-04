@@ -728,8 +728,9 @@ export class FractalScene {
   /**
    * Save-PNG source while a flame render is active. Composites the flame
    * canvas (which has transparent pixels where the histogram was never hit)
-   * over an opaque dark background so the exported PNG matches the on-screen
-   * appearance instead of having a transparent background.
+   * over opaque black so the exported PNG matches the on-screen appearance:
+   * the flame quad's material is opaque (alpha ignored), and `tonemapFlame`
+   * leaves zero-hit pixels black, so on screen the backdrop is pure black.
    */
   captureFlameFrame(): string {
     const { width, height } = this.flameCanvas;
@@ -737,7 +738,7 @@ export class FractalScene {
     out.width = width;
     out.height = height;
     const ctx = out.getContext("2d")!;
-    ctx.fillStyle = `#${BACKGROUND.toString(16).padStart(6, "0")}`;
+    ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(this.flameCanvas, 0, 0);
     return out.toDataURL("image/png");
