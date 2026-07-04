@@ -841,6 +841,10 @@ function main(): void {
 
   window.addEventListener("resize", () => {
     scene.resize(window.innerWidth, window.innerHeight);
+    // Backdrop visibility depends on the viewport width (mobile scrim), so
+    // crossing MOBILE_BREAKPOINT — e.g. rotating a phone to landscape with
+    // the panel open — must re-sync it or the scrim sticks around.
+    ui.updateLabels(state);
   });
 
   const loading = document.getElementById("loading");
