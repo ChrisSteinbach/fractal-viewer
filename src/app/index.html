@@ -49,6 +49,10 @@
             − Remove
           </button>
         </div>
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoUpdate" checked />
+          Auto-update on change
+        </label>
 
         <h3>Presets</h3>
         <select id="presetSelect" aria-label="Load a preset">
@@ -72,45 +76,32 @@
           Surprise Me
         </button>
 
-        <h3>Points: <span id="numPointsLabel">100,000</span></h3>
-        <input
-          type="range"
-          id="numPointsSlider"
-          min="0"
-          max="1000"
-          step="1"
-          value="540"
-        />
+        <h3>Appearance</h3>
+        <label class="select-label">
+          Points: <span id="numPointsLabel">100,000</span>
+          <input
+            type="range"
+            id="numPointsSlider"
+            min="0"
+            max="1000"
+            step="1"
+            value="540"
+          />
+        </label>
         <button class="btn btn-blue" id="regenerateBtn" type="button">
           Regenerate Points
         </button>
 
-        <h3>Point Size: <span id="pointSizeLabel">1.00×</span></h3>
-        <input
-          type="range"
-          id="pointSizeSlider"
-          min="0.25"
-          max="4"
-          step="0.05"
-          value="1"
-        />
-
-        <div id="glowBrightnessRow" class="hidden">
-          <h3>Glow Brightness: <span id="glowBrightnessLabel">1.00×</span></h3>
+        <label class="select-label">
+          Point Size: <span id="pointSizeLabel">1.00×</span>
           <input
             type="range"
-            id="glowBrightnessSlider"
-            min="0.1"
-            max="3"
+            id="pointSizeSlider"
+            min="0.25"
+            max="4"
             step="0.05"
             value="1"
           />
-        </div>
-
-        <h3>Display Options</h3>
-        <label class="checkbox-label">
-          <input type="checkbox" id="showGuides" checked />
-          Show Guides
         </label>
 
         <label class="select-label">
@@ -135,14 +126,28 @@
           </select>
         </label>
 
+        <div id="glowBrightnessRow" class="hidden">
+          <label class="select-label">
+            Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
+            <input
+              type="range"
+              id="glowBrightnessSlider"
+              min="0.1"
+              max="3"
+              step="0.05"
+              value="1"
+            />
+          </label>
+        </div>
+
         <label class="checkbox-label">
-          <input type="checkbox" id="autoUpdate" checked />
-          Auto-update on change
+          <input type="checkbox" id="showGuides" checked />
+          Show guides
         </label>
 
+        <h3>Symmetry</h3>
         <label class="select-label">
-          Symmetry
-          <span id="symmetryOrderLabel">1-fold</span>
+          Order: <span id="symmetryOrderLabel">1-fold</span>
           <input
             type="range"
             id="symmetryOrderSlider"
@@ -153,7 +158,7 @@
           />
         </label>
         <label class="select-label">
-          Symmetry Axis
+          Axis
           <select id="symmetryAxis">
             <option value="x">X</option>
             <option value="y" selected>Y</option>
@@ -203,17 +208,6 @@
           />
         </label>
         <label class="select-label">
-          Quality: <span id="flameIterationsLabel">20M iterations</span>
-          <input
-            type="range"
-            id="flameIterationsSlider"
-            min="1000000"
-            max="100000000"
-            step="1000000"
-            value="20000000"
-          />
-        </label>
-        <label class="select-label">
           Gamma: <span id="flameGammaLabel">2.40</span>
           <input
             type="range"
@@ -236,6 +230,51 @@
           />
         </label>
         <label class="select-label">
+          Blur Radius: <span id="flameEstimatorRadiusLabel">6.0px</span>
+          <input
+            type="range"
+            id="flameEstimatorRadiusSlider"
+            min="1"
+            max="15"
+            step="0.5"
+            value="6"
+          />
+        </label>
+        <label class="select-label">
+          Sharp Radius:
+          <span id="flameEstimatorMinimumRadiusLabel">0.0px</span>
+          <input
+            type="range"
+            id="flameEstimatorMinimumRadiusSlider"
+            min="0"
+            max="15"
+            step="0.5"
+            value="0"
+          />
+        </label>
+        <label class="select-label">
+          Blur Falloff: <span id="flameEstimatorCurveLabel">0.40</span>
+          <input
+            type="range"
+            id="flameEstimatorCurveSlider"
+            min="0.1"
+            max="3"
+            step="0.05"
+            value="0.4"
+          />
+        </label>
+        <label class="select-label">
+          Quality: <span id="flameIterationsLabel">20M iterations</span>
+          <input
+            type="range"
+            id="flameIterationsSlider"
+            min="1000000"
+            max="100000000"
+            step="1000000"
+            value="20000000"
+          />
+        </label>
+        <label class="select-label">
           Palette (restarts render)
           <select id="flamePalette">
             <option value="legacy">By Transform (legacy)</option>
@@ -249,8 +288,8 @@
           </select>
         </label>
         <label class="select-label">
-          Supersample:
-          <span id="flameSupersampleLabel">2× (restarts render)</span>
+          Supersample (restarts render):
+          <span id="flameSupersampleLabel">2×</span>
           <input
             type="range"
             id="flameSupersampleSlider"
@@ -261,40 +300,6 @@
           />
         </label>
         <p id="flameSupersampleNote" class="flame-note hidden"></p>
-        <label class="select-label">
-          Blur radius: <span id="flameEstimatorRadiusLabel">6.0px</span>
-          <input
-            type="range"
-            id="flameEstimatorRadiusSlider"
-            min="1"
-            max="15"
-            step="0.5"
-            value="6"
-          />
-        </label>
-        <label class="select-label">
-          Sharp radius:
-          <span id="flameEstimatorMinimumRadiusLabel">0.0px</span>
-          <input
-            type="range"
-            id="flameEstimatorMinimumRadiusSlider"
-            min="0"
-            max="15"
-            step="0.5"
-            value="0"
-          />
-        </label>
-        <label class="select-label">
-          Blur falloff: <span id="flameEstimatorCurveLabel">0.40</span>
-          <input
-            type="range"
-            id="flameEstimatorCurveSlider"
-            min="0.1"
-            max="3"
-            step="0.05"
-            value="0.4"
-          />
-        </label>
         <div id="flameProgress" class="flame-progress">0%</div>
         <button class="btn btn-ghost" id="exitRenderBtn" type="button">
           ← Back to Explorer
@@ -315,7 +320,7 @@
           react live.
         </p>
         <label class="select-label">
-          Surface level: <span id="solidThresholdLabel">0.30</span>
+          Surface Level: <span id="solidThresholdLabel">0.30</span>
           <input
             type="range"
             id="solidThresholdSlider"
@@ -326,7 +331,7 @@
           />
         </label>
         <label class="select-label">
-          Light angle: <span id="solidLightAzimuthLabel">135°</span>
+          Light Angle: <span id="solidLightAzimuthLabel">135°</span>
           <input
             type="range"
             id="solidLightAzimuthSlider"
@@ -337,7 +342,7 @@
           />
         </label>
         <label class="select-label">
-          Light height: <span id="solidLightElevationLabel">50°</span>
+          Light Height: <span id="solidLightElevationLabel">50°</span>
           <input
             type="range"
             id="solidLightElevationSlider"
@@ -359,6 +364,17 @@
           />
         </label>
         <label class="select-label">
+          Quality: <span id="solidIterationsLabel">20M iterations</span>
+          <input
+            type="range"
+            id="solidIterationsSlider"
+            min="1000000"
+            max="100000000"
+            step="1000000"
+            value="20000000"
+          />
+        </label>
+        <label class="select-label">
           Palette (restarts render)
           <select id="solidPalette">
             <option value="legacy">By Color Mode (legacy)</option>
@@ -372,18 +388,8 @@
           </select>
         </label>
         <label class="select-label">
-          Quality: <span id="solidIterationsLabel">20M iterations</span>
-          <input
-            type="range"
-            id="solidIterationsSlider"
-            min="1000000"
-            max="100000000"
-            step="1000000"
-            value="20000000"
-          />
-        </label>
-        <label class="select-label">
-          Detail: <span id="solidResolutionLabel">192³ (restarts render)</span>
+          Detail (restarts render):
+          <span id="solidResolutionLabel">192³</span>
           <input
             type="range"
             id="solidResolutionSlider"

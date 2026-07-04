@@ -648,7 +648,7 @@ export class Ui {
     this.flameGammaSlider.value = String(state.flame.gamma);
     this.flameVibrancyLabel.textContent = `${Math.round(state.flame.vibrancy * 100)}%`;
     this.flameVibrancySlider.value = String(state.flame.vibrancy);
-    this.flameSupersampleLabel.textContent = `${state.flame.supersample}× (restarts render)`;
+    this.flameSupersampleLabel.textContent = `${state.flame.supersample}×`;
     this.flameSupersampleSlider.value = String(state.flame.supersample);
     this.flamePalette.value = state.flame.paletteId;
 
@@ -675,7 +675,7 @@ export class Ui {
       state.solid.iterations / 1_000_000
     ).toFixed(0)}M iterations`;
     this.solidIterationsSlider.value = String(state.solid.iterations);
-    this.solidResolutionLabel.textContent = `${state.solid.resolution}³ (restarts render)`;
+    this.solidResolutionLabel.textContent = `${state.solid.resolution}³`;
     this.solidResolutionSlider.value = String(state.solid.resolution);
 
     // Either render mode takes over the panel — editing controls that can't
