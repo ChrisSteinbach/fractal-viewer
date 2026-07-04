@@ -514,6 +514,24 @@ input[type="range"] {
   visibility: visible;
 }
 
+/* On phones the open panel covers most of the viewport (86vw), and the
+   backdrop scrim dims what little is left — together they hide the render
+   the controls are live-updating (fr-8x4). Ease both so the fractal stays
+   visible: a thinner surface + lighter blur on the panel, and a scrim that
+   only hints "tap to close" instead of blacking out the scene.
+   Breakpoint must match MOBILE_BREAKPOINT in constants.ts. */
+@media (width <= 640px) {
+  #panel {
+    background: rgb(20 22 33 / 52%);
+    backdrop-filter: blur(7px);
+  }
+
+  #backdrop {
+    background: rgb(8 9 14 / 18%);
+    backdrop-filter: none;
+  }
+}
+
 #panelClose {
   display: flex;
   position: absolute;
