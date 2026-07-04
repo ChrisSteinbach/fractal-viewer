@@ -5,6 +5,7 @@ import {
   tonemapFlame,
   viewFlameHistogram,
 } from "../fractal/flame";
+import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
@@ -395,6 +396,14 @@ function main(): void {
       // a render a reproducible pure function of its inputs.
       seed: Math.floor(Math.random() * 0xffffffff),
       requestedSupersample: state.flame.supersample,
+      // Device-aware memory budget for the supersampled accumulator (fr-7c8).
+      // Computed here because its inputs — deviceMemory (Chromium-only,
+      // hence the cast; absent from TS's DOM lib) and pointer coarseness —
+      // are main-thread/window facilities a worker can't reliably read.
+      maxAccumBuckets: flameAccumBudgetBuckets(
+        (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+        window.matchMedia("(pointer: coarse)").matches,
+      ),
       iterationsBudget: state.flame.iterations,
       exposure: state.flame.exposure,
       gamma: state.flame.gamma,

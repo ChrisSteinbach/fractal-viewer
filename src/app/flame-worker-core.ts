@@ -91,6 +91,13 @@ export type FlameWorkerCommand =
       seed: number;
       /** Raw (un-clamped) slider value; the session computes its own effective one. */
       requestedSupersample: number;
+      /**
+       * Accumulation-memory ceiling in buckets, computed by the main thread
+       * via {@link flameAccumBudgetBuckets} — the device signals it reads
+       * (`navigator.deviceMemory`, pointer coarseness) only exist there.
+       * Omitted, the session falls back to the phone-safe floor.
+       */
+      maxAccumBuckets?: number;
       iterationsBudget: number;
       exposure: number;
       gamma: number;
@@ -191,8 +198,9 @@ export interface FlameWorkerDeps {
   /** Defaults to the real {@link accumulateFlame}; overridable so a test can
    * force the OOM-retry path without a real allocation failure. */
   accumulate?: typeof accumulateFlame;
-  /** Defaults to the real (300 MiB-derived) bucket budget; overridable so a
-   * test can trigger the proactive `clampSupersampleToBudget` guard with
+  /** Fallback bucket budget for `start` commands that don't carry their own
+   * `maxAccumBuckets` (defaults to the phone-safe 300 MiB floor); overridable
+   * so a test can trigger the proactive `clampSupersampleToBudget` guard with
    * small, cheap-to-allocate dimensions instead of needing genuinely huge
    * ones to cross the real-world ceiling. */
   maxAccumBuckets?: number;
@@ -232,18 +240,66 @@ const FLAME_REDISPLAY_INTERVAL_MS = 150;
 
 /** Bytes per accumulation bucket: one Float64 `hits` + three Float64 `sumRGB`. */
 const BYTES_PER_ACCUM_BUCKET = 32;
+const MIB = 1024 * 1024;
 /**
- * Memory ceiling for one accumulation histogram's `hits` + `sumRGB` combined.
- * 300 MiB is chosen to comfortably survive on a memory-constrained phone
- * (this app is explicitly served to phones) while still allowing normal
- * desktop supersampling in the common case — see `clampSupersampleToBudget`'s
- * use in `startAccumulation` for the proactive guard this enables, and
- * `runChunk`'s accumulate try/catch for the reactive one that backs it up.
+ * Phone-safe floor (and no-better-information default) for one accumulation
+ * histogram's `hits` + `sumRGB` combined. 300 MiB is chosen to comfortably
+ * survive on a memory-constrained phone (this app is explicitly served to
+ * phones), where over-committing doesn't fail politely: mobile OSes kill the
+ * whole tab before an allocation ever throws, so `runChunk`'s reactive
+ * accumulate try/catch never gets a say. Desktops, whose failure mode is a
+ * catchable allocation error (or, worst case, swap), get a larger budget via
+ * {@link flameAccumBudgetBuckets}.
  */
-const MAX_FLAME_ACCUM_BYTES = 300 * 1024 * 1024;
-const MAX_FLAME_ACCUM_BUCKETS = Math.floor(
-  MAX_FLAME_ACCUM_BYTES / BYTES_PER_ACCUM_BUCKET,
+const FLAME_ACCUM_FLOOR_BYTES = 300 * MIB;
+const FLAME_ACCUM_FLOOR_BUCKETS = Math.floor(
+  FLAME_ACCUM_FLOOR_BYTES / BYTES_PER_ACCUM_BUCKET,
 );
+/** Desktop budget scale: accumulation bytes allowed per GiB of *reported*
+ * device memory. 320 MiB/GiB lands an 8-GiB report exactly on the ceiling. */
+const FLAME_ACCUM_BYTES_PER_GIB = 320 * MIB;
+/**
+ * Desktop budget ceiling. 2.5 GiB covers the worst realistic ask — 3×
+ * supersample of a 4K drawing buffer is ~2.23 GiB — while staying a modest
+ * slice of any machine `navigator.deviceMemory` reports as 8 GiB (its cap,
+ * meaning "8 or more"). Well under every engine's per-TypedArray limit.
+ */
+const FLAME_ACCUM_MAX_BYTES = 2560 * MIB;
+
+/**
+ * The accumulation-memory budget (in buckets — see
+ * {@link BYTES_PER_ACCUM_BUCKET}) for the device we're actually running on,
+ * from the two signals only the MAIN thread can read; it computes this and
+ * ships the result in the `start` command (fr-7c8). Before this, the budget
+ * was a flat 300 MiB sized for phones, which on any display larger than
+ * ~1920×1280 device pixels clamped supersampling to 1× no matter how much
+ * RAM the machine had — a 64 GB desktop with a 1440p/4K monitor was capped
+ * *harder* than a 1080p laptop.
+ *
+ * - `coarsePointer` (from `matchMedia("(pointer: coarse)")`) marks
+ *   phone/tablet-class devices: they keep the flat floor, and their
+ *   `deviceMemory` is deliberately IGNORED — flagship phones report the
+ *   capped maximum of 8 despite being exactly the devices the conservative
+ *   floor exists for (see {@link FLAME_ACCUM_FLOOR_BYTES}).
+ * - `deviceMemoryGiB` (`navigator.deviceMemory`: Chromium-only, quantized,
+ *   capped at 8) scales the desktop budget. Where it's unavailable
+ *   (Firefox/Safari) a fine-pointer device is assumed desktop-class (8):
+ *   optimistic, but desktops fail catchably, and a genuinely weaker machine
+ *   is still protected by `runChunk`'s reactive OOM fallback plus the
+ *   session's learned {@link maxSafeSupersample} ceiling.
+ */
+export function flameAccumBudgetBuckets(
+  deviceMemoryGiB: number | undefined,
+  coarsePointer: boolean,
+): number {
+  if (coarsePointer) return FLAME_ACCUM_FLOOR_BUCKETS;
+  const bytes = (deviceMemoryGiB ?? 8) * FLAME_ACCUM_BYTES_PER_GIB;
+  const clamped = Math.min(
+    FLAME_ACCUM_MAX_BYTES,
+    Math.max(FLAME_ACCUM_FLOOR_BYTES, bytes),
+  );
+  return Math.floor(clamped / BYTES_PER_ACCUM_BUCKET);
+}
 
 function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -271,7 +327,12 @@ export class FlameWorkerSession {
   private readonly schedule: (fn: () => void) => void;
   private readonly emit: (event: FlameWorkerEvent) => void;
   private readonly accumulate: typeof accumulateFlame;
-  private readonly maxAccumBuckets: number;
+  /** Fallback budget for starts that don't carry one — see FlameWorkerDeps. */
+  private readonly defaultMaxAccumBuckets: number;
+  /** The budget the CURRENT session runs under: the `start` command's
+   * device-aware value (see {@link flameAccumBudgetBuckets}), or the
+   * fallback when the command carried none. */
+  private maxAccumBuckets: number;
   private readonly initialChunkSize: number;
 
   private prepared: PreparedChaosGame | null = null;
@@ -369,7 +430,9 @@ export class FlameWorkerSession {
     this.schedule = deps.schedule;
     this.emit = deps.emit;
     this.accumulate = deps.accumulate ?? accumulateFlame;
-    this.maxAccumBuckets = deps.maxAccumBuckets ?? MAX_FLAME_ACCUM_BUCKETS;
+    this.defaultMaxAccumBuckets =
+      deps.maxAccumBuckets ?? FLAME_ACCUM_FLOOR_BUCKETS;
+    this.maxAccumBuckets = this.defaultMaxAccumBuckets;
     this.initialChunkSize = deps.initialChunkSize ?? FLAME_CHUNK_INITIAL;
     this.chunkSize = this.initialChunkSize;
   }
@@ -478,6 +541,7 @@ export class FlameWorkerSession {
       estimatorCurve: cmd.estimatorCurve,
     };
     this.maxSafeSupersample = Infinity; // a fresh session has no learned ceiling yet.
+    this.maxAccumBuckets = cmd.maxAccumBuckets ?? this.defaultMaxAccumBuckets;
     this.startAccumulation(cmd.requestedSupersample);
   }
 

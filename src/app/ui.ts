@@ -781,8 +781,9 @@ export class Ui {
 
   /**
    * Reflect whether the supersample slider's requested value had to be
-   * reduced to stay under the accumulation memory budget (see main.ts's
-   * `clampSupersampleToBudget`) — a runtime, device-dependent fact that
+   * reduced to stay under the accumulation memory budget (see the flame
+   * worker's `clampSupersampleToBudget` use in `flame-worker-core.ts`) — a
+   * runtime, device-dependent fact that
    * isn't part of AppState, so (like {@link setFlameProgress}) this is a
    * targeted setter main.ts calls directly rather than something
    * `updateLabels` derives from state. Pass `null` when running at the

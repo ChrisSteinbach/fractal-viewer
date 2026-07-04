@@ -228,8 +228,9 @@ export const MIN_FLAME_SUPERSAMPLE = 1;
  * `flameRenderSize()` returns the devicePixelRatio-scaled drawing buffer
  * (scene.ts caps the ratio at 2x, so a "1080p" *window* can already mean a
  * ~2160p buffer *before* supersample multiplies it again). This cap alone
- * does not prevent an OOM on a hi-DPI display; see `main.ts`'s
- * `clampSupersampleToBudget` use for the byte-budget guard that does.
+ * does not prevent an OOM on a hi-DPI display; the flame worker's
+ * device-aware byte-budget guard does that (see `flame-worker-core.ts`'s
+ * `flameAccumBudgetBuckets` + `clampSupersampleToBudget`).
  */
 export const MAX_FLAME_SUPERSAMPLE = 3;
 /**
