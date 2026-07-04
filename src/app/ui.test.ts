@@ -641,6 +641,9 @@ describe("Ui flame render controls", () => {
   function explorerControls(): HTMLElement {
     return document.getElementById("explorerControls") as HTMLElement;
   }
+  function flameEntry(): HTMLElement {
+    return document.getElementById("flameEntry") as HTMLElement;
+  }
   function flameControls(): HTMLElement {
     return document.getElementById("flameControls") as HTMLElement;
   }
@@ -650,7 +653,7 @@ describe("Ui flame render controls", () => {
     ui.updateLabels({ ...initialState(true), flameActive: false });
 
     expect(explorerControls().classList.contains("hidden")).toBe(false);
-    expect(renderBtn().classList.contains("hidden")).toBe(false);
+    expect(flameEntry().classList.contains("hidden")).toBe(false);
     expect(flameControls().classList.contains("hidden")).toBe(true);
   });
 
@@ -659,8 +662,16 @@ describe("Ui flame render controls", () => {
     ui.updateLabels({ ...initialState(true), flameActive: true });
 
     expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(renderBtn().classList.contains("hidden")).toBe(true);
+    expect(flameEntry().classList.contains("hidden")).toBe(true);
     expect(flameControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the Flame Render heading along with its button while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), flameActive: true });
+
+    expect(flameEntry().querySelector("h3")?.textContent).toBe("Flame Render");
+    expect(flameEntry().classList.contains("hidden")).toBe(true);
   });
 
   it("names the render mode in the help box while active", () => {
@@ -1032,6 +1043,9 @@ describe("Ui solid render controls", () => {
   function explorerControls(): HTMLElement {
     return document.getElementById("explorerControls") as HTMLElement;
   }
+  function solidEntry(): HTMLElement {
+    return document.getElementById("solidEntry") as HTMLElement;
+  }
   function solidControls(): HTMLElement {
     return document.getElementById("solidControls") as HTMLElement;
   }
@@ -1041,7 +1055,7 @@ describe("Ui solid render controls", () => {
     ui.updateLabels({ ...initialState(true), solidActive: false });
 
     expect(explorerControls().classList.contains("hidden")).toBe(false);
-    expect(solidBtn().classList.contains("hidden")).toBe(false);
+    expect(solidEntry().classList.contains("hidden")).toBe(false);
     expect(solidControls().classList.contains("hidden")).toBe(true);
   });
 
@@ -1050,8 +1064,16 @@ describe("Ui solid render controls", () => {
     ui.updateLabels({ ...initialState(true), solidActive: true });
 
     expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(solidBtn().classList.contains("hidden")).toBe(true);
+    expect(solidEntry().classList.contains("hidden")).toBe(true);
     expect(solidControls().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the Solid Render heading along with its button while active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), solidActive: true });
+
+    expect(solidEntry().querySelector("h3")?.textContent).toBe("Solid Render");
+    expect(solidEntry().classList.contains("hidden")).toBe(true);
   });
 
   it("names the render mode in the help box while active", () => {
@@ -1062,11 +1084,11 @@ describe("Ui solid render controls", () => {
     );
   });
 
-  it("also hides the Render Current View button while the solid render is active", () => {
+  it("also hides the Flame Render heading and button while the solid render is active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), solidActive: true });
     expect(
-      document.getElementById("renderBtn")?.classList.contains("hidden"),
+      document.getElementById("flameEntry")?.classList.contains("hidden"),
     ).toBe(true);
   });
 
