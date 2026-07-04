@@ -117,6 +117,105 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Color-mode legend (bottom-left, fr-dsz) ──────────────────────────────
+   A bare gradient or swatch strip doesn't say which end is high, or whether
+   warm is the center or the edge — this is the key. Mirrors #help's chip
+   styling so the two overlays read as one visual language. */
+#legend {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  max-width: 220px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#legendBar {
+  width: 140px;
+  height: 12px;
+  border-radius: 6px;
+}
+
+#legendLabels {
+  display: flex;
+  justify-content: space-between;
+  width: 140px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+#legendSwatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 140px;
+}
+
+/* `#legendLabels`/`#legendSwatches` set their own `display` for layout, which
+   (being ID selectors) outranks the generic `.hidden` utility class on
+   specificity alone — restate `display: none` at matching specificity so
+   `Ui.updateLegend`'s hidden toggle always wins regardless of stylesheet
+   order. */
+#legendLabels.hidden,
+#legendSwatches.hidden {
+  display: none;
+}
+
+.legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.legend-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Breakpoint must match MOBILE_BREAKPOINT in constants.ts. */
+@media (width <= 640px) {
+  #legend {
+    bottom: 12px;
+    left: 12px;
+    max-width: 160px;
+    padding: 8px 10px;
+  }
+
+  #legendBar,
+  #legendLabels {
+    width: 120px;
+  }
+
+  #legendSwatches {
+    max-width: 120px;
+  }
+}
+
+/* Short viewports (any width — e.g. a phone in landscape, which is often
+   wider than MOBILE_BREAKPOINT) don't have enough vertical room for both the
+   help box and the legend without risking overlap — hide the legend rather
+   than crowd the screen; the color mode stays discoverable from the panel. */
+@media (height <= 380px) {
+  #legend {
+    display: none;
+  }
+}
+
 /* ── Floating buttons (open / close panel) ────────────────────────────────── */
 #menuToggle {
   display: flex;
