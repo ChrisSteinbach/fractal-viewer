@@ -39,6 +39,8 @@ export interface UiHandlers {
   onAdd: () => void;
   onRemove: () => void;
   onPreset: (preset: Preset) => void;
+  /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
+  onSurprise: () => void;
   onNumPointsInput: (value: number) => void;
   onPointSizeInput: (value: number) => void;
   /** The glow-brightness slider changed — a manual multiplier on top of the
@@ -321,6 +323,7 @@ export class Ui {
   private readonly addBtn: HTMLButtonElement;
   private readonly removeBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
+  private readonly surpriseBtn: HTMLButtonElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
@@ -400,6 +403,7 @@ export class Ui {
     this.addBtn = this.byId("addBtn");
     this.removeBtn = this.byId("removeBtn");
     this.presetSelect = this.byId("presetSelect");
+    this.surpriseBtn = this.byId("surpriseBtn");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
     this.numPointsLabel = this.byId("numPointsLabel");
@@ -486,6 +490,7 @@ export class Ui {
       this.presetSelect.value = "";
       if (preset) handlers.onPreset(preset as Preset);
     });
+    this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
     this.numPointsSlider.addEventListener("input", () =>
