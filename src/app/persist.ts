@@ -21,6 +21,7 @@ import type {
   Vec3,
 } from "../fractal/types";
 import {
+  DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
   DEFAULT_ESTIMATOR_RADIUS,
@@ -40,6 +41,7 @@ import {
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
+  MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
   MAX_ESTIMATOR_RADIUS,
@@ -56,6 +58,7 @@ import {
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
+  MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -91,6 +94,12 @@ export interface SceneSnapshot {
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
+  /**
+   * Color-contrast exponent (fr-8sk, see {@link AppState.colorGamma}).
+   * Persists like `colorMode`/`renderStyle`/`glowBrightness` — always
+   * present, not session-only.
+   */
+  colorGamma: number;
   renderStyle: RenderStyle;
   showGuides: boolean;
   /**
@@ -139,6 +148,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
+    colorGamma: state.colorGamma,
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
     flame: state.flame,
@@ -594,6 +604,7 @@ export function encodeScene(s: SceneSnapshot): string {
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
+    colorGamma: number;
     renderStyle: RenderStyle;
     showGuides: boolean;
     flame: FlameParams;
@@ -605,6 +616,9 @@ export function encodeScene(s: SceneSnapshot): string {
     numPoints: s.numPoints,
     pointSize: round4(s.pointSize),
     colorMode: s.colorMode,
+    // Always written, like glowBrightness — a small, always-present setting,
+    // not a per-transform optional feature like finalTransform/weight/shear.
+    colorGamma: round4(s.colorGamma),
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
     // Always written, like numPoints/pointSize (not conditionally omitted
@@ -671,6 +685,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * spirit for glowBrightness: it clamps to [{@link MIN_GLOW_BRIGHTNESS},
  * {@link MAX_GLOW_BRIGHTNESS}], falling back to
  * {@link DEFAULT_GLOW_BRIGHTNESS} when absent or non-finite rather than
+ * rejecting the scene. colorGamma (fr-8sk) follows the identical contract:
+ * clamps to [{@link MIN_COLOR_GAMMA}, {@link MAX_COLOR_GAMMA}], falling back
+ * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
  * rejecting the scene.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
@@ -753,12 +770,25 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       Math.min(MAX_GLOW_BRIGHTNESS, glowBrightness),
     );
 
+    // colorGamma (fr-8sk): color-contrast exponent for the height/radius/
+    // position color modes (see color.ts's colorModeUsesGamma). Same
+    // never-rejects contract as glowBrightness just above — a contrast tweak
+    // is cosmetic, not worth losing a shared link over.
+    let colorGamma = DEFAULT_COLOR_GAMMA;
+    const rawColorGamma = Number(o.colorGamma);
+    if (Number.isFinite(rawColorGamma)) colorGamma = rawColorGamma;
+    colorGamma = Math.max(
+      MIN_COLOR_GAMMA,
+      Math.min(MAX_COLOR_GAMMA, colorGamma),
+    );
+
     return {
       transforms,
       finalTransform,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,
+      colorGamma,
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
       flame,

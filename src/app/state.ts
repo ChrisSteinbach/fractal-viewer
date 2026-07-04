@@ -145,6 +145,14 @@ export interface AppState {
   selectedTransform: number | "final" | null;
   showGuides: boolean;
   colorMode: ColorMode;
+  /**
+   * Contrast exponent applied to the normalized coordinate in the
+   * height/radius/position color modes (fr-8sk, see `color.ts`'s
+   * `colorModeUsesGamma`): `t' = t ** colorGamma`. `1` = linear (today's
+   * mapping, unreshaped). Persists like `colorMode` / `renderStyle` /
+   * `glowBrightness` — not session-only.
+   */
+  colorGamma: number;
   renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
@@ -321,6 +329,17 @@ export const DEFAULT_SYMMETRY_AXIS: SymmetryAxis = "y";
 export const DEFAULT_GLOW_BRIGHTNESS = 1;
 export const MIN_GLOW_BRIGHTNESS = 0.1;
 export const MAX_GLOW_BRIGHTNESS = 3;
+/**
+ * Color-contrast exponent (fr-8sk) defaults and range — see
+ * `AppState.colorGamma`. `1` is neutral (today's linear mapping).
+ * Log-symmetric around 1 (`MIN_COLOR_GAMMA === 1 / MAX_COLOR_GAMMA`) so the
+ * UI's log-scale slider puts neutral exactly at its center; 5 is generous
+ * enough to sharply favor either end of a coordinate's range without ever
+ * fully collapsing the other end to a single color.
+ */
+export const DEFAULT_COLOR_GAMMA = 1;
+export const MIN_COLOR_GAMMA = 0.2;
+export const MAX_COLOR_GAMMA = 5;
 
 export function initialState(panelOpen: boolean): AppState {
   return {
@@ -330,6 +349,7 @@ export function initialState(panelOpen: boolean): AppState {
     selectedTransform: null,
     showGuides: true,
     colorMode: "transform",
+    colorGamma: DEFAULT_COLOR_GAMMA,
     renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
@@ -429,6 +449,23 @@ export function setPointSize(state: AppState, pointSize: number): AppState {
 
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
   return { ...state, colorMode };
+}
+
+/**
+ * Set the color-contrast exponent, clamped to a sane range. Reshapes the
+ * height/radius/position color modes' normalized-coordinate mapping (see
+ * `color.ts`'s `buildColors`); meaningless for `"transform"`/`"uniform"`, but
+ * stored regardless so it's ready the moment the user switches back to a
+ * mode it applies to.
+ */
+export function setColorGamma(state: AppState, colorGamma: number): AppState {
+  return {
+    ...state,
+    colorGamma: Math.max(
+      MIN_COLOR_GAMMA,
+      Math.min(MAX_COLOR_GAMMA, colorGamma),
+    ),
+  };
 }
 
 export function setRenderStyle(

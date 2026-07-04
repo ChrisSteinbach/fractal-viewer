@@ -120,6 +120,20 @@
           </select>
         </label>
 
+        <div id="colorGammaRow" class="hidden">
+          <label class="select-label">
+            Color Contrast: <span id="colorGammaLabel">1.00</span>
+            <input
+              type="range"
+              id="colorGammaSlider"
+              min="-1"
+              max="1"
+              step="0.01"
+              value="0"
+            />
+          </label>
+        </div>
+
         <label class="select-label">
           Depth Style
           <select id="renderStyle">

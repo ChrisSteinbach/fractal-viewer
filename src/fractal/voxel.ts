@@ -327,6 +327,16 @@ function colorModeCode(mode: ColorMode): number {
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the worker
  * passes a `mulberry32` seeded by the start command.
+ *
+ * `colorGamma` (fr-8sk) is the color-contrast exponent from `color.ts`,
+ * reshaping the same normalized coordinates `colorMode`'s height/radius/
+ * position branches use (ignored by `"transform"`/`"uniform"` and by the
+ * `colorLUT` path, none of which have a coordinate to reshape). For height
+ * and radius it is baked once into `lut` via `buildColorModeLUT` — zero
+ * per-iteration cost — so it MUST be the same value the caller's
+ * `buildColors` uses, or the solid render's voxels and the explorer's points
+ * would drift apart (see `color.ts`'s `colorModeUsesGamma`). `1` (the
+ * default) is neutral and never calls `**`.
  */
 export function accumulateVoxels(
   prepared: PreparedChaosGame,
@@ -336,6 +346,7 @@ export function accumulateVoxels(
   palette: Vec3[],
   colorMode: ColorMode = "transform",
   colorLUT?: Float32Array,
+  colorGamma = 1,
 ): VoxelGrid {
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -350,7 +361,10 @@ export function accumulateVoxels(
   const mode = colorModeCode(colorMode);
   const lut =
     mode === MODE_HEIGHT || mode === MODE_RADIUS
-      ? buildColorModeLUT(mode === MODE_HEIGHT ? "height" : "radius")
+      ? buildColorModeLUT(
+          mode === MODE_HEIGHT ? "height" : "radius",
+          colorGamma,
+        )
       : null;
   const cb = grid.bounds.color;
   const cMinX = cb.minX;
@@ -540,14 +554,22 @@ export function accumulateVoxels(
       const tx = (px - cMinX) * invRangeX;
       const ty = (py - cMinY) * invRangeY;
       const tz = (pz - cMinZ) * invRangeZ;
+      // Clamp to [0, 1] BEFORE applying gamma (unlike buildColors' exact
+      // point-cloud bounds, the trimmed pilot extents CAN be exceeded by a
+      // live point) — a negative base raised to colorGamma's fractional
+      // exponent is NaN, whereas clamping first is a no-op at colorGamma 1
+      // (matches the pre-gamma clamp-then-scale below exactly).
+      const cx = tx <= 0 ? 0 : tx >= 1 ? 1 : tx;
+      const cy = ty <= 0 ? 0 : ty >= 1 ? 1 : ty;
+      const cz = tz <= 0 ? 0 : tz >= 1 ? 1 : tz;
       r =
-        (tx <= 0 ? 0 : tx >= 1 ? 1 : tx) * POSITION_COLOR_SCALE +
+        (colorGamma === 1 ? cx : cx ** colorGamma) * POSITION_COLOR_SCALE +
         POSITION_COLOR_OFFSET;
       g =
-        (ty <= 0 ? 0 : ty >= 1 ? 1 : ty) * POSITION_COLOR_SCALE +
+        (colorGamma === 1 ? cy : cy ** colorGamma) * POSITION_COLOR_SCALE +
         POSITION_COLOR_OFFSET;
       b =
-        (tz <= 0 ? 0 : tz >= 1 ? 1 : tz) * POSITION_COLOR_SCALE +
+        (colorGamma === 1 ? cz : cz ** colorGamma) * POSITION_COLOR_SCALE +
         POSITION_COLOR_OFFSET;
     } else {
       r = uniR;

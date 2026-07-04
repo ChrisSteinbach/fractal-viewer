@@ -1,5 +1,6 @@
 import {
   addTransform,
+  DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
   DEFAULT_ESTIMATOR_RADIUS,
@@ -21,6 +22,7 @@ import {
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
   initialState,
+  MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
   MAX_ESTIMATOR_RADIUS,
@@ -37,6 +39,7 @@ import {
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
+  MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_ESTIMATOR_RADIUS,
@@ -56,6 +59,7 @@ import {
   MIN_TRANSFORMS,
   removeTransform,
   selectTransform,
+  setColorGamma,
   setFinalTransform,
   setFlameActive,
   setFlameEstimatorCurve,
@@ -100,6 +104,7 @@ describe("initialState", () => {
     expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
     expect(state.panelOpen).toBe(true);
     expect(state.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
+    expect(state.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
   });
 
   // The app always boots into the live explorer, never straight into a
@@ -688,6 +693,27 @@ describe("setGlowBrightness", () => {
   it("clamps below the minimum", () => {
     expect(setGlowBrightness(initialState(true), -5).glowBrightness).toBe(
       MIN_GLOW_BRIGHTNESS,
+    );
+  });
+});
+
+describe("setColorGamma", () => {
+  it("sets the color-contrast exponent immutably", () => {
+    const state = initialState(true);
+    const next = setColorGamma(state, 2.5);
+    expect(next.colorGamma).toBe(2.5);
+    expect(state.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setColorGamma(initialState(true), 999).colorGamma).toBe(
+      MAX_COLOR_GAMMA,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setColorGamma(initialState(true), -5).colorGamma).toBe(
+      MIN_COLOR_GAMMA,
     );
   });
 });

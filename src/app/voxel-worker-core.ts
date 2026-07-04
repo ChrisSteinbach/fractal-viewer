@@ -56,6 +56,9 @@ export type VoxelWorkerCommand =
       /** The explorer's active color mode, carried into the voxel colors
        * (fr-c1d) — see `accumulateVoxels`' coloring doc. */
       colorMode: ColorMode;
+      /** Contrast exponent for the coordinate-normalized color modes
+       * (fr-8sk) — snapshotted at render entry exactly like `colorMode`. */
+      colorGamma: number;
       /** Structural-coloring palette (fr-1kt, mirroring the flame's fr-6us);
        * "legacy" = the existing colorMode-driven coloring. */
       paletteId: FlamePaletteId;
@@ -195,6 +198,9 @@ export class VoxelWorkerSession {
   private palette: ReturnType<typeof transformColors> = [];
   private rng: Rng = Math.random;
   private colorMode: ColorMode = "transform";
+  /** Contrast exponent for the coordinate-normalized color modes (fr-8sk) —
+   * see `voxel.ts`'s `accumulateVoxels`. */
+  private colorGamma = 1;
   /** Gradient lookup table for structural coloring, or `null` for the
    * colorMode-driven `"legacy"` palette — see `voxel.ts`'s `accumulateVoxels`. */
   private colorLUT: Float32Array | null = null;
@@ -296,6 +302,7 @@ export class VoxelWorkerSession {
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
+    this.colorGamma = cmd.colorGamma;
     // null for "legacy" — accumulateVoxels then falls back to colorMode.
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.iterationsBudget = cmd.iterationsBudget;
@@ -421,6 +428,7 @@ export class VoxelWorkerSession {
       this.palette,
       this.colorMode,
       this.colorLUT ?? undefined,
+      this.colorGamma,
     );
     const t1 = this.now();
     this.iterationsDone += chunk;

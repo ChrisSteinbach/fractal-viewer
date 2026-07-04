@@ -29,6 +29,7 @@ import {
   removeTransform,
   selectTransform,
   setAutoUpdate,
+  setColorGamma,
   setColorMode,
   setFinalTransform,
   setFlameActive,
@@ -132,7 +133,12 @@ function main(): void {
       state.finalTransform ?? null,
       state.symmetry,
     );
-    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    const colors = buildColors(
+      lastResult,
+      state.transforms,
+      state.colorMode,
+      state.colorGamma,
+    );
     scene.setPoints(lastResult.positions, colors);
     ui.setPointCount(lastResult.count);
   }
@@ -142,7 +148,12 @@ function main(): void {
   // mode recolors the same shape instantly. No-op before the first generation.
   function recolor(): void {
     if (!lastResult) return;
-    const colors = buildColors(lastResult, state.transforms, state.colorMode);
+    const colors = buildColors(
+      lastResult,
+      state.transforms,
+      state.colorMode,
+      state.colorGamma,
+    );
     scene.setColors(colors);
   }
 
@@ -512,6 +523,9 @@ function main(): void {
       // The explorer's Color Mode carries into the voxel colors (fr-c1d);
       // entering the mode snapshots it, exactly like the transform set.
       colorMode: state.colorMode,
+      // Snapshotted alongside colorMode (fr-8sk) so the solid render's
+      // baked-in LUT/position coloring matches the explorer's contrast.
+      colorGamma: state.colorGamma,
       paletteId: state.solid.paletteId,
       iterationsBudget: state.solid.iterations,
       // A worker needs an explicit numeric seed — a live Rng (like
@@ -683,6 +697,16 @@ function main(): void {
     },
     onColorMode: (mode) => {
       state = setColorMode(state, mode);
+      // The color-contrast row's visibility (fr-8sk) depends on colorMode —
+      // same rationale as onRenderStyle's updateLabels call below for the
+      // glow-brightness row.
+      ui.updateLabels(state);
+      recolor();
+      scheduleSave();
+    },
+    onColorGammaInput: (value) => {
+      state = setColorGamma(state, value);
+      ui.updateLabels(state);
       recolor();
       scheduleSave();
     },
