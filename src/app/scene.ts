@@ -224,9 +224,9 @@ export class FractalScene {
 
   // The flame render (fr-o7s): a plain 2D canvas holds the tone-mapped RGBA
   // image (see `setFlameImage`) and doubles as both the CanvasTexture source
-  // for on-screen display AND the Save-PNG export source (`captureFlameFrame`)
-  // — unlike the WebGL canvas, a 2D canvas keeps true alpha, so the exported
-  // PNG has a transparent background wherever the histogram was never hit.
+  // for on-screen display AND the Save-PNG export source (`captureFlameFrame`).
+  // The 2D canvas retains true per-pixel alpha (transparent where the histogram
+  // was never hit); captureFlameFrame composites it over the background color.
   private readonly flameCanvas: HTMLCanvasElement;
   private readonly flameCtx: CanvasRenderingContext2D;
   private readonly flameTexture: THREE.CanvasTexture;
@@ -726,13 +726,21 @@ export class FractalScene {
   }
 
   /**
-   * Save-PNG source while a flame render is active: the flame image's own 2D
-   * canvas rather than the WebGL canvas, so the exported PNG keeps the true
-   * per-pixel alpha `tonemapFlame` produced (an opaque WebGL round-trip would
-   * flatten it against the renderer's clear color).
+   * Save-PNG source while a flame render is active. Composites the flame
+   * canvas (which has transparent pixels where the histogram was never hit)
+   * over an opaque dark background so the exported PNG matches the on-screen
+   * appearance instead of having a transparent background.
    */
   captureFlameFrame(): string {
-    return this.flameCanvas.toDataURL("image/png");
+    const { width, height } = this.flameCanvas;
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    const ctx = out.getContext("2d")!;
+    ctx.fillStyle = `#${BACKGROUND.toString(16).padStart(6, "0")}`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(this.flameCanvas, 0, 0);
+    return out.toDataURL("image/png");
   }
 
   /**
