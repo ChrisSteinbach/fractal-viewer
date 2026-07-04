@@ -56,7 +56,7 @@ Transform** sliders that appear in the panel while a transform is selected.
   Points** (or immediately on other edits when auto-update is on).
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
-- **Show Guides** — toggle the grid, axes, and transform boxes.
+- **Show guides** — toggle the grid, axes, and transform boxes.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
 - **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting.
