@@ -1,12 +1,16 @@
 import {
   accumulateFlame,
+  clampSupersampleToBudget,
   tonemapFlame,
   viewFlameHistogram,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
 import type { Mat4 } from "../fractal/flame";
 import { sierpinskiTetrahedron } from "../fractal/presets";
-import { FlameWorkerSession } from "./flame-worker-core";
+import {
+  flameAccumBudgetBuckets,
+  FlameWorkerSession,
+} from "./flame-worker-core";
 import type {
   FlameWorkerCommand,
   FlameWorkerDeps,
@@ -415,10 +419,76 @@ describe("FlameWorkerSession setIterationsBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Device-aware accumulation budget policy (fr-7c8)
+// ---------------------------------------------------------------------------
+
+describe("flameAccumBudgetBuckets", () => {
+  /** MiB → buckets, restating the contract: one bucket = 32 bytes (one
+   * Float64 hit + three Float64 color channels). */
+  const buckets = (mib: number) => Math.floor((mib * 1024 * 1024) / 32);
+
+  it("keeps the flat 300 MiB phone floor on coarse-pointer devices, ignoring reported memory", () => {
+    // Flagship phones report the capped deviceMemory maximum of 8 — exactly
+    // the devices the conservative floor exists for, so the report is ignored.
+    expect(flameAccumBudgetBuckets(8, true)).toBe(buckets(300));
+  });
+
+  it("scales the desktop budget with reported device memory", () => {
+    expect(flameAccumBudgetBuckets(4, false)).toBe(buckets(1280));
+  });
+
+  it("assumes a desktop-class budget when deviceMemory is unavailable (Firefox/Safari)", () => {
+    expect(flameAccumBudgetBuckets(undefined, false)).toBe(buckets(2560));
+  });
+
+  it("never drops below the phone-safe floor on tiny-memory desktops", () => {
+    expect(flameAccumBudgetBuckets(0.25, false)).toBe(buckets(300));
+  });
+
+  it("caps the budget even if a future UA reports more than 8 GiB", () => {
+    expect(flameAccumBudgetBuckets(64, false)).toBe(buckets(2560));
+  });
+
+  it("lets a desktop run 3x supersample on a full 4K drawing buffer", () => {
+    // The original complaint (fr-7c8): under the old flat 300 MiB budget a
+    // 64 GB desktop with a big monitor couldn't even get 2x.
+    const budget = flameAccumBudgetBuckets(8, false);
+    expect(clampSupersampleToBudget(3840, 2160, 3, budget)).toBe(3);
+  });
+
+  it("still pins a hi-DPI phone to 1x, unchanged from the flat-budget behavior", () => {
+    const budget = flameAccumBudgetBuckets(8, true);
+    expect(clampSupersampleToBudget(1080, 2340, 3, budget)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Supersample: proactive budget clamp
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession proactive supersample budget", () => {
+  it("clamps against the start command's own budget when it carries one", () => {
+    // Same 10x10 @ 3x geometry as the deps-budget test below, but the budget
+    // rides in the start command — the path main.ts actually uses (fr-7c8).
+    // Without it, the built-in floor (millions of buckets) would clamp nothing.
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        width: 10,
+        height: 10,
+        requestedSupersample: 3,
+        maxAccumBuckets: 450,
+      }),
+    );
+    scheduler.drain();
+
+    expect(noteEvents(events)[0]).toEqual({
+      type: "supersampleNote",
+      effective: 2,
+      requested: 3,
+    });
+  });
+
   it("clamps to the largest supersample that fits a small injected budget", () => {
     // width * height = 100; requested 3x = 900 buckets (too big for a 450
     // budget); 2x = 400 buckets (fits) -> effective 2.
