@@ -1,4 +1,5 @@
-import type { Vec3 } from "../fractal/types";
+import type { Bounds, Vec3 } from "../fractal/types";
+import { clamp } from "../fractal/vec";
 
 export const MIN_RADIUS = 1;
 export const MAX_RADIUS = 100;
@@ -6,6 +7,15 @@ export const MIN_PHI = 0.01;
 export const MAX_PHI = Math.PI - 0.01;
 /** Radians of orbit per pixel of drag. */
 export const ROTATE_SPEED = 0.01;
+
+/**
+ * Camera position at boot (see `main.ts`'s `new OrbitCamera(BOOT_CAMERA_POSITION)`).
+ * Exported so {@link fitRadius} can fall back to its radius when a system's
+ * bounds are degenerate — there is no box to measure a fit distance from —
+ * without the two files drifting out of sync.
+ */
+export const BOOT_CAMERA_POSITION: Vec3 = [5, 4, 5];
+const BOOT_RADIUS = Math.hypot(...BOOT_CAMERA_POSITION);
 
 /** Spherical coordinates in Three.js's convention (phi measured from +Y). */
 export interface Spherical {
@@ -92,4 +102,61 @@ export class OrbitCamera {
       this.target[2] + offset[2],
     ];
   }
+}
+
+// --- Auto-fit (fr-0b8): frame a freshly-generated attractor in view ---------
+//
+// Triggered only on whole-system replacement (a preset load or "Surprise Me"),
+// never on a geometry edit or Regenerate — see the call sites in main.ts.
+
+/** Midpoint of a point cloud's axis-aligned bounding box. */
+export function boundsCenter(bounds: Bounds): Vec3 {
+  return [
+    (bounds.minX + bounds.maxX) / 2,
+    (bounds.minY + bounds.maxY) / 2,
+    (bounds.minZ + bounds.maxZ) / 2,
+  ];
+}
+
+/**
+ * Camera distance that frames `bounds` entirely within a `fovYRadians` x
+ * `aspect` perspective frustum, with `margin` breathing room (1.25 = a 25%
+ * pad beyond a snug fit).
+ *
+ * Treats the box as a bounding sphere of radius `r` (half its diagonal) and
+ * solves `r * margin = distance * tan(halfAngle)` for distance, using
+ * whichever of the vertical/horizontal half-angles is narrower — the wider
+ * one always has room to spare, so the narrower one is what actually
+ * constrains the fit in a viewport that isn't square.
+ *
+ * A near-zero `r` (an empty or collapsed cloud has nothing to measure a fit
+ * distance from) falls back to the boot camera's own radius instead of
+ * producing a degenerate (zero or NaN) distance.
+ */
+export function fitRadius(
+  bounds: Bounds,
+  fovYRadians: number,
+  aspect: number,
+  margin = 1.25,
+): number {
+  const dx = bounds.maxX - bounds.minX;
+  const dy = bounds.maxY - bounds.minY;
+  const dz = bounds.maxZ - bounds.minZ;
+  const r = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (r < 1e-6) return clampRadius(BOOT_RADIUS);
+
+  const halfFovY = fovYRadians / 2;
+  const halfFovX = Math.atan(Math.tan(halfFovY) * aspect);
+  const halfAngle = Math.min(halfFovY, halfFovX);
+  return clampRadius((r * margin) / Math.tan(halfAngle));
+}
+
+/**
+ * Cubic ease with a clamped input: 0 at `x <= 0`, 1 at `x >= 1`, smooth
+ * (zero slope at both ends) in between. Used to animate the camera tween's
+ * progress ratio (`elapsed / durationMs`) in `main.ts`'s `animate()`.
+ */
+export function smoothstep(x: number): number {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
 }

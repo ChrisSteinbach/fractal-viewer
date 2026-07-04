@@ -11,7 +11,13 @@ import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
 import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
 import { randomSystem } from "../fractal/random-system";
-import { OrbitCamera } from "./orbit";
+import {
+  BOOT_CAMERA_POSITION,
+  boundsCenter,
+  fitRadius,
+  OrbitCamera,
+  smoothstep,
+} from "./orbit";
 import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
@@ -56,6 +62,7 @@ import {
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
+import type { Vec3 } from "../fractal/types";
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -105,7 +112,7 @@ function main(): void {
   let state: AppState = saved
     ? fromSnapshot(saved, initialState(panelOpen))
     : initialState(panelOpen);
-  const orbit = new OrbitCamera([5, 4, 5]);
+  const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
 
   // The most recent chaos-game run, cached so a color-mode change can recolor
@@ -137,6 +144,92 @@ function main(): void {
     const colors = buildColors(lastResult, state.transforms, state.colorMode);
     scene.setColors(colors);
   }
+
+  // Auto-fit the camera to a freshly-generated attractor (fr-0b8): a
+  // whole-system replacement (preset load / Surprise Me) can leave the
+  // previous camera pointed at empty space or buried inside the new cloud,
+  // so glide target/radius to frame it instead of leaving first impressions
+  // to luck. theta/phi are left untouched — only the distance and the point
+  // being orbited move, so the fractal swaps in place and the camera glides
+  // to meet it. Never triggered by Regenerate or a geometry edit (those
+  // would fight the user's own framing) — call sites are onPreset/onSurprise
+  // below, right after `applyEdit`'s synchronous regenerate lands a fresh
+  // `lastResult`.
+  interface CameraTween {
+    startMs: number;
+    fromRadius: number;
+    toRadius: number;
+    fromTarget: Vec3;
+    toTarget: Vec3;
+  }
+  const CAMERA_TWEEN_MS = 600;
+  let cameraTween: CameraTween | null = null;
+
+  function fitCameraToAttractor(): void {
+    if (!lastResult) return;
+    const toTarget = boundsCenter(lastResult.bounds);
+    const toRadius = fitRadius(
+      lastResult.bounds,
+      (scene.camera.fov * Math.PI) / 180,
+      scene.camera.aspect,
+    );
+    const reducedMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    if (reducedMotion) {
+      orbit.target[0] = toTarget[0];
+      orbit.target[1] = toTarget[1];
+      orbit.target[2] = toTarget[2];
+      orbit.spherical.radius = toRadius;
+      cameraTween = null;
+      return;
+    }
+    cameraTween = {
+      startMs: performance.now(),
+      fromRadius: orbit.spherical.radius,
+      toRadius,
+      fromTarget: [orbit.target[0], orbit.target[1], orbit.target[2]],
+      toTarget,
+    };
+  }
+
+  // Advance the in-flight camera tween, if any; called from animate() before
+  // applyCamera so the frame it takes effect on is the one that gets drawn.
+  function advanceCameraTween(): void {
+    if (!cameraTween) return;
+    const { startMs, fromRadius, toRadius, fromTarget, toTarget } = cameraTween;
+    const t = smoothstep((performance.now() - startMs) / CAMERA_TWEEN_MS);
+    orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
+    orbit.target[0] = fromTarget[0] + (toTarget[0] - fromTarget[0]) * t;
+    orbit.target[1] = fromTarget[1] + (toTarget[1] - fromTarget[1]) * t;
+    orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
+    if (t >= 1) cameraTween = null;
+  }
+
+  // Grabbing the camera mid-glide should feel like a normal orbit, not a
+  // fight with the animation — cancel outright on the next user gesture.
+  // Capture phase so this runs before interactions.ts's own (bubble-phase)
+  // listeners on the same canvas. COORDINATION: the idle-turntable bead
+  // (fr-1yn, not yet implemented) needs an identical "last canvas input"
+  // listener — if it lands, merge into one shared helper here instead of two
+  // separate listener sets.
+  function cancelCameraTween(): void {
+    cameraTween = null;
+  }
+  const cancelTweenOptions: AddEventListenerOptions = {
+    capture: true,
+    passive: true,
+  };
+  scene.canvas.addEventListener(
+    "pointerdown",
+    cancelCameraTween,
+    cancelTweenOptions,
+  );
+  scene.canvas.addEventListener("wheel", cancelCameraTween, cancelTweenOptions);
+  scene.canvas.addEventListener(
+    "touchstart",
+    cancelCameraTween,
+    cancelTweenOptions,
+  );
 
   // Flame render session (fr-o7s/fr-ucs/fr-73y): a Web Worker owns the
   // supersampled accumulation, the OOM guard, the throttled downsample, and
@@ -522,11 +615,13 @@ function main(): void {
       applyEdit(() => {
         state = removeTransform(state);
       }),
-    onPreset: (preset) =>
+    onPreset: (preset) => {
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
-      }, "always"),
-    onSurprise: () =>
+      }, "always");
+      fitCameraToAttractor();
+    },
+    onSurprise: () => {
       applyEdit(() => {
         const sys = randomSystem(Math.random);
         state = setTransforms(state, sys.transforms);
@@ -534,7 +629,9 @@ function main(): void {
         // null as "clear" (stores undefined), so a previous session's lens
         // never survives a roll that landed on no final transform.
         state = setFinalTransform(state, sys.finalTransform);
-      }, "always"),
+      }, "always");
+      fitCameraToAttractor();
+    },
     onNumPointsInput: (value) => {
       state = setNumPoints(state, value);
       ui.updateLabels(state);
@@ -864,6 +961,7 @@ function main(): void {
   // image was most recently uploaded via scene.setFlameImage.
   function animate(): void {
     requestAnimationFrame(animate);
+    advanceCameraTween();
     if (state.solidActive) {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
