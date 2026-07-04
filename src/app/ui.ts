@@ -345,6 +345,7 @@ export class Ui {
   private readonly transformEditor: HTMLElement;
 
   private readonly explorerControls: HTMLElement;
+  private readonly flameEntry: HTMLElement;
   private readonly renderBtn: HTMLButtonElement;
   private readonly flameControls: HTMLElement;
   private readonly flameExposureLabel: HTMLElement;
@@ -368,6 +369,7 @@ export class Ui {
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
+  private readonly solidEntry: HTMLElement;
   private readonly solidBtn: HTMLButtonElement;
   private readonly solidControls: HTMLElement;
   private readonly solidThresholdLabel: HTMLElement;
@@ -424,6 +426,7 @@ export class Ui {
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
+    this.flameEntry = this.byId("flameEntry");
     this.renderBtn = this.byId("renderBtn");
     this.flameControls = this.byId("flameControls");
     this.flameExposureLabel = this.byId("flameExposureLabel");
@@ -450,6 +453,7 @@ export class Ui {
     this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
+    this.solidEntry = this.byId("solidEntry");
     this.solidBtn = this.byId("solidBtn");
     this.solidControls = this.byId("solidControls");
     this.solidThresholdLabel = this.byId("solidThresholdLabel");
@@ -680,8 +684,8 @@ export class Ui {
     // hidden while the other is active.
     const rendering = state.flameActive || state.solidActive;
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.renderBtn.classList.toggle("hidden", rendering);
-    this.solidBtn.classList.toggle("hidden", rendering);
+    this.flameEntry.classList.toggle("hidden", rendering);
+    this.solidEntry.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
     // The manual brightness override only means anything for the glow render
