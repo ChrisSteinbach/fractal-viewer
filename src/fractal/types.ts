@@ -1,6 +1,9 @@
 /** A 3-component vector: `[x, y, z]`. */
 export type Vec3 = [number, number, number];
 
+/** A 4-component vector: `[x, y, z, w]` (the 4D spike — see `affine4.ts`). */
+export type Vec4 = [number, number, number, number];
+
 /**
  * The nonlinear variation functions, in UI order. Borrowed from the fractal
  * flame algorithm: each warps space in a distinctive way *after* a transform's
@@ -129,4 +132,55 @@ export interface SymmetryParams {
   order: number;
   /** Axis the copies are rotated about. */
   axis: SymmetryAxis;
+}
+
+/**
+ * Rotation of a 4D map (fr-cbg spike), one optional angle in radians per
+ * coordinate plane. A 4D rotation has SIX independent planes (vs. three axes in
+ * 3D — in 4D you rotate *in a plane*, not *about an axis*): the three planes of
+ * the embedded 3D space (`xy`, `xz`, `yz`) plus the three that mix in the fourth
+ * coordinate (`xw`, `yw`, `zw`). Each field is the angle of `R_ab` as defined in
+ * `affine4.ts` (rotating the `+a` axis toward `+b`). A missing/undefined field is
+ * exactly 0 — see {@link Transform4}. All absent ⇒ the identity rotation.
+ */
+export interface Rotation4 {
+  xy?: number;
+  xz?: number;
+  yz?: number;
+  xw?: number;
+  yw?: number;
+  zw?: number;
+}
+
+/**
+ * One affine map of a 4D IFS (fr-cbg spike). Deliberately the MINIMAL 4D map
+ * shape: position, per-axis scale, and an optional plane-angle {@link Rotation4}
+ * — no `id`, no shear, and no variations (all of which the 3D {@link Transform}
+ * carries). The spike is about proving out the 4D chaos-game path and its
+ * renderer, not reaching feature parity; those fields can be added later without
+ * disturbing this core. See `affine4.ts` (`composeAffine4`) and
+ * `chaos-game-4d.ts`.
+ */
+export interface Transform4 {
+  position: Vec4;
+  scale: Vec4;
+  /** Plane rotation; omitted ⇒ no rotation (identity linear part before scale). */
+  rotation?: Rotation4;
+  /**
+   * Relative selection weight for the 4D chaos game, mirroring
+   * {@link Transform.weight}. Omitted ⇒ 1.
+   */
+  weight?: number;
+}
+
+/** Axis-aligned extent of a 4D point cloud (the 4D analogue of {@link Bounds}). */
+export interface Bounds4 {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+  minW: number;
+  maxW: number;
 }
