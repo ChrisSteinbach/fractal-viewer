@@ -4,6 +4,7 @@ import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import {
+  DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
   DEFAULT_ESTIMATOR_RADIUS,
@@ -23,6 +24,7 @@ import {
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
+  MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
   MAX_FLAME_EXPOSURE,
@@ -33,6 +35,7 @@ import {
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
+  MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
@@ -67,6 +70,7 @@ function baseSnapshot(): SceneSnapshot {
     numPoints: 100_000,
     pointSize: 1,
     colorMode: "transform",
+    colorGamma: DEFAULT_COLOR_GAMMA,
     renderStyle: "depthFade",
     showGuides: true,
     flame: {
@@ -1224,6 +1228,59 @@ describe("decodeScene glow brightness", () => {
     expect(decodeScene(encodeScene(s))!.glowBrightness).toBe(
       MIN_GLOW_BRIGHTNESS,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Color contrast (fr-8sk) — same lenient, never-rejects contract as
+// glowBrightness above: a malformed value falls back to the default instead
+// of nuking the whole scene.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene color contrast", () => {
+  it("round-trips a non-default color gamma", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), colorGamma: 2.5 };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.colorGamma).toBeCloseTo(2.5, 4);
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `colorGamma` key at all — exactly what
+    // every link looked like before fr-8sk.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
+  });
+
+  it("does not reject the scene for a non-finite value, defaulting it instead", () => {
+    // Like glowBrightness's numeric field, a malformed colorGamma is a
+    // cosmetic tweak, not corruption — the scene survives.
+    const raw = { ...baseSnapshot(), colorGamma: "contrasty" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
+  });
+
+  it("clamps an out-of-range value above the maximum down to the max", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), colorGamma: 999 };
+    expect(decodeScene(encodeScene(s))!.colorGamma).toBe(MAX_COLOR_GAMMA);
+  });
+
+  it("clamps an out-of-range value below the minimum up to the min", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), colorGamma: -5 };
+    expect(decodeScene(encodeScene(s))!.colorGamma).toBe(MIN_COLOR_GAMMA);
   });
 });
 

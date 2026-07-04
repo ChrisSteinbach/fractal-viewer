@@ -99,17 +99,48 @@ export const POSITION_COLOR_SCALE = 0.8;
 export const POSITION_COLOR_OFFSET = 0.2;
 
 /**
+ * Apply the color-contrast exponent (fr-8sk) to a normalized coordinate `t`
+ * that is expected to sit in `[0, 1]`: `t' = t ** colorGamma`. `colorGamma <
+ * 1` spreads out the low end of the distribution (more contrast among
+ * sparse/faint values), `> 1` spreads the high end; the endpoints `t = 0` and
+ * `t = 1` are fixed either way. `colorGamma === 1` (the default) skips the
+ * `**` call entirely and returns `t` unchanged, so that path is guaranteed
+ * bit-identical to the pre-gamma code and pays nothing for the feature.
+ *
+ * Clamps to `[0, 1]` before raising to a non-1 power: `t` can drift a hair
+ * outside that range (e.g. `buildColors`' bounds are float64 but the plotted
+ * positions are read back from a `Float32Array`, so the point that defined
+ * the bound can round to a value a hair past it) — harmless when `t` is only
+ * ever blended linearly, as every ramp here was before this feature, but a
+ * barely-negative base raised to a fractional power is `NaN`.
+ */
+function applyColorGamma(t: number, colorGamma: number): number {
+  if (colorGamma === 1) return t;
+  const c = t <= 0 ? 0 : t >= 1 ? 1 : t;
+  return c ** colorGamma;
+}
+
+/**
  * A 256-entry interleaved-RGB lookup table over the height or radius ramp —
  * for hot loops that need a ramp color per iteration without `writeHsl`'s
  * trigonometry-free-but-branchy work in the inner loop (the solid render's
- * `accumulateVoxels`). Entry `i` is the ramp at `t = i / 255`; quantizing to
- * 256 steps matches the flame's palette LUT precision.
+ * `accumulateVoxels`). Entry `i` is the ramp at `t = (i / 255) ** colorGamma`
+ * (see {@link applyColorGamma}; `colorGamma` defaults to `1`, today's linear
+ * mapping); quantizing to 256 steps matches the flame's palette LUT precision.
+ *
+ * `colorGamma` MUST be the same value the caller's `buildColors` uses for the
+ * same render (see {@link colorModeUsesGamma}) — this LUT and `buildColors`'
+ * height/radius branches are the ONE ramp definition, shared so the solid
+ * render's voxel colors and the explorer's point colors can never drift apart.
  */
-export function buildColorModeLUT(mode: "height" | "radius"): Float32Array {
+export function buildColorModeLUT(
+  mode: "height" | "radius",
+  colorGamma = 1,
+): Float32Array {
   const lut = new Float32Array(256 * 3);
   const write = mode === "height" ? writeHeightColor : writeRadiusColor;
   for (let i = 0; i < 256; i++) {
-    write(lut, i * 3, i / 255);
+    write(lut, i * 3, applyColorGamma(i / 255, colorGamma));
   }
   return lut;
 }
@@ -122,11 +153,20 @@ export function buildColorModeLUT(mode: "height" | "radius"): Float32Array {
  * The mode dispatch is hoisted outside the loop and each branch writes channels
  * directly into the output `Float32Array`, keeping allocations O(1) per call
  * regardless of point count.
+ *
+ * `colorGamma` (fr-8sk) is a contrast exponent applied to the normalized
+ * coordinate in the `"height"`/`"radius"`/`"position"` modes — see
+ * {@link colorModeUsesGamma} and {@link applyColorGamma} for the exact
+ * mapping and its `NaN`-avoiding clamp. `1` (the default) is neutral —
+ * today's linear mapping, applied via a short-circuit that never calls `**`
+ * — and `"transform"`/`"uniform"` ignore it entirely, having no coordinate
+ * to reshape.
  */
 export function buildColors(
   result: ChaosGameResult,
   transforms: Transform[],
   mode: ColorMode,
+  colorGamma = 1,
 ): Float32Array {
   const { positions, transformIndices, count, bounds } = result;
   const colors = new Float32Array(count * 3);
@@ -135,6 +175,7 @@ export function buildColors(
   const rangeY = bounds.maxY - bounds.minY || 1;
   const rangeZ = bounds.maxZ - bounds.minZ || 1;
   const rangeR = bounds.maxR - bounds.minR || 1;
+  const g = colorGamma;
 
   switch (mode) {
     case "transform": {
@@ -153,7 +194,7 @@ export function buildColors(
       for (let i = 0; i < count; i++) {
         const py = positions[i * 3 + 1];
         const t = (py - bounds.minY) / rangeY;
-        writeHeightColor(colors, i * 3, t);
+        writeHeightColor(colors, i * 3, applyColorGamma(t, g));
       }
       break;
     }
@@ -166,23 +207,27 @@ export function buildColors(
         const pz = positions[o + 2];
         const r = Math.sqrt(px * px + py * py + pz * pz);
         const t = (r - bounds.minR) / rangeR;
-        writeRadiusColor(colors, o, t);
+        writeRadiusColor(colors, o, applyColorGamma(t, g));
       }
       break;
     }
     case "position": {
-      // XYZ → RGB.
+      // XYZ → RGB. Gamma is applied to each normalized coordinate BEFORE the
+      // compressed-range scale/offset, exactly like the height/radius ramps.
       for (let i = 0; i < count; i++) {
         const o = i * 3;
-        colors[o] =
-          ((positions[o] - bounds.minX) / rangeX) * POSITION_COLOR_SCALE +
-          POSITION_COLOR_OFFSET;
-        colors[o + 1] =
-          ((positions[o + 1] - bounds.minY) / rangeY) * POSITION_COLOR_SCALE +
-          POSITION_COLOR_OFFSET;
-        colors[o + 2] =
-          ((positions[o + 2] - bounds.minZ) / rangeZ) * POSITION_COLOR_SCALE +
-          POSITION_COLOR_OFFSET;
+        const tx = applyColorGamma((positions[o] - bounds.minX) / rangeX, g);
+        const ty = applyColorGamma(
+          (positions[o + 1] - bounds.minY) / rangeY,
+          g,
+        );
+        const tz = applyColorGamma(
+          (positions[o + 2] - bounds.minZ) / rangeZ,
+          g,
+        );
+        colors[o] = tx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        colors[o + 1] = ty * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        colors[o + 2] = tz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
       }
       break;
     }
@@ -199,4 +244,11 @@ export function buildColors(
   }
 
   return colors;
+}
+
+/** True for the color modes that normalize a point coordinate against the
+ * cloud bounds — the modes the color-contrast (gamma) control applies to.
+ * Single source of truth: the UI's slider-row visibility keys on this. */
+export function colorModeUsesGamma(mode: ColorMode): boolean {
+  return mode === "height" || mode === "radius" || mode === "position";
 }

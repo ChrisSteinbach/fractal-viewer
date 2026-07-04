@@ -58,6 +58,9 @@ Transform** sliders that appear in the panel while a transform is selected.
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
+- **Color Contrast** — visible for the Height/Radius/Position color modes; a
+  log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
+  the dense low end, right (>1) in the high end, center = linear.
 - **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.

@@ -1,6 +1,7 @@
 import {
   buildColorModeLUT,
   buildColors,
+  colorModeUsesGamma,
   hslToRgb,
   transformColors,
 } from "./color";
@@ -89,6 +90,150 @@ describe("buildColors", () => {
   });
 });
 
+describe("buildColors color contrast (fr-8sk)", () => {
+  const result = runChaosGame(defaultTransforms(), 300, mulberry32(5));
+
+  // A small hand-built cloud whose points span the full [0, 1] normalized
+  // range on every axis and radius, so gamma's effect on the interior points
+  // (0.5, 0.625, 0.75, …) is easy to tell apart from the endpoints (which
+  // gamma always leaves fixed).
+  function spanningCloud(): ChaosGameResult {
+    return {
+      // (0,0,0), (1,1,1), (-1,-1,-1), (0.5, 0.25, 0.75)
+      positions: new Float32Array([
+        0, 0, 0, 1, 1, 1, -1, -1, -1, 0.5, 0.25, 0.75,
+      ]),
+      transformIndices: new Uint8Array(4),
+      count: 4,
+      bounds: {
+        minX: -1,
+        maxX: 1,
+        minY: -1,
+        maxY: 1,
+        minZ: -1,
+        maxZ: 1,
+        minR: 0,
+        maxR: Math.sqrt(3),
+      },
+    };
+  }
+
+  it("omitting gamma matches an explicit gamma of 1 for transform mode", () => {
+    expect(buildColors(result, defaultTransforms(), "transform")).toEqual(
+      buildColors(result, defaultTransforms(), "transform", 1),
+    );
+  });
+
+  it("omitting gamma matches an explicit gamma of 1 for height mode", () => {
+    expect(buildColors(result, defaultTransforms(), "height")).toEqual(
+      buildColors(result, defaultTransforms(), "height", 1),
+    );
+  });
+
+  it("omitting gamma matches an explicit gamma of 1 for radius mode", () => {
+    expect(buildColors(result, defaultTransforms(), "radius")).toEqual(
+      buildColors(result, defaultTransforms(), "radius", 1),
+    );
+  });
+
+  it("omitting gamma matches an explicit gamma of 1 for position mode", () => {
+    expect(buildColors(result, defaultTransforms(), "position")).toEqual(
+      buildColors(result, defaultTransforms(), "position", 1),
+    );
+  });
+
+  it("omitting gamma matches an explicit gamma of 1 for uniform mode", () => {
+    expect(buildColors(result, defaultTransforms(), "uniform")).toEqual(
+      buildColors(result, defaultTransforms(), "uniform", 1),
+    );
+  });
+
+  it("gamma 2 changes height mode's output relative to gamma 1", () => {
+    const cloud = spanningCloud();
+    const linear = buildColors(cloud, defaultTransforms(), "height", 1);
+    const contrasty = buildColors(cloud, defaultTransforms(), "height", 2);
+    expect(Array.from(contrasty)).not.toEqual(Array.from(linear));
+  });
+
+  it("gamma 2 changes radius mode's output relative to gamma 1", () => {
+    const cloud = spanningCloud();
+    const linear = buildColors(cloud, defaultTransforms(), "radius", 1);
+    const contrasty = buildColors(cloud, defaultTransforms(), "radius", 2);
+    expect(Array.from(contrasty)).not.toEqual(Array.from(linear));
+  });
+
+  it("gamma 2 changes position mode's output relative to gamma 1", () => {
+    const cloud = spanningCloud();
+    const linear = buildColors(cloud, defaultTransforms(), "position", 1);
+    const contrasty = buildColors(cloud, defaultTransforms(), "position", 2);
+    expect(Array.from(contrasty)).not.toEqual(Array.from(linear));
+  });
+
+  it("gamma 2 leaves transform mode byte-identical to gamma 1", () => {
+    const linear = buildColors(result, defaultTransforms(), "transform", 1);
+    const contrasty = buildColors(result, defaultTransforms(), "transform", 2);
+    expect(contrasty).toEqual(linear);
+  });
+
+  it("gamma 2 leaves uniform mode byte-identical to gamma 1", () => {
+    const linear = buildColors(result, defaultTransforms(), "uniform", 1);
+    const contrasty = buildColors(result, defaultTransforms(), "uniform", 2);
+    expect(contrasty).toEqual(linear);
+  });
+
+  // Pins the exact mapping AND its direction: a point at normalized height
+  // 0.25 under gamma 2 must land on the very same ramp color as a point at
+  // 0.0625 (= 0.25 ** 2, exact in binary) under the linear mapping — gamma
+  // above 1 pushes interior values DOWN the ramp. An inverted implementation
+  // (t ** (1/gamma)) would pass every "output differs" test above but fail
+  // this one.
+  it("maps a normalized coordinate to exactly t ** gamma, not an inverted exponent", () => {
+    function pointAtHeight(py: number): ChaosGameResult {
+      return {
+        positions: new Float32Array([0, py, 0]),
+        transformIndices: new Uint8Array(1),
+        count: 1,
+        bounds: {
+          minX: -1,
+          maxX: 1,
+          minY: 0,
+          maxY: 1,
+          minZ: -1,
+          maxZ: 1,
+          minR: 0,
+          maxR: 2,
+        },
+      };
+    }
+    const contrasty = buildColors(
+      pointAtHeight(0.25),
+      defaultTransforms(),
+      "height",
+      2,
+    );
+    const linear = buildColors(
+      pointAtHeight(0.0625),
+      defaultTransforms(),
+      "height",
+      1,
+    );
+    expect(contrasty).toEqual(linear);
+  });
+});
+
+describe("colorModeUsesGamma", () => {
+  it("is true for height, radius, and position", () => {
+    expect(colorModeUsesGamma("height")).toBe(true);
+    expect(colorModeUsesGamma("radius")).toBe(true);
+    expect(colorModeUsesGamma("position")).toBe(true);
+  });
+
+  it("is false for transform and uniform", () => {
+    expect(colorModeUsesGamma("transform")).toBe(false);
+    expect(colorModeUsesGamma("uniform")).toBe(false);
+  });
+});
+
 function zeroRangeBounds(): Bounds {
   return {
     minX: 1,
@@ -160,5 +305,35 @@ describe("buildColorModeLUT", () => {
         [lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]],
       );
     });
+  });
+
+  it("reshapes the height ramp for a non-default gamma, but pins both endpoints", () => {
+    const linear = buildColorModeLUT("height", 1);
+    const contrasty = buildColorModeLUT("height", 2);
+    expect(Array.from(contrasty)).not.toEqual(Array.from(linear));
+    expectRgbClose(
+      [contrasty[0], contrasty[1], contrasty[2]],
+      [linear[0], linear[1], linear[2]],
+    );
+    const last = 255 * 3;
+    expectRgbClose(
+      [contrasty[last], contrasty[last + 1], contrasty[last + 2]],
+      [linear[last], linear[last + 1], linear[last + 2]],
+    );
+  });
+
+  it("reshapes the radius ramp for a non-default gamma, but pins both endpoints", () => {
+    const linear = buildColorModeLUT("radius", 1);
+    const contrasty = buildColorModeLUT("radius", 2);
+    expect(Array.from(contrasty)).not.toEqual(Array.from(linear));
+    expectRgbClose(
+      [contrasty[0], contrasty[1], contrasty[2]],
+      [linear[0], linear[1], linear[2]],
+    );
+    const last = 255 * 3;
+    expectRgbClose(
+      [contrasty[last], contrasty[last + 1], contrasty[last + 2]],
+      [linear[last], linear[last + 1], linear[last + 2]],
+    );
   });
 });

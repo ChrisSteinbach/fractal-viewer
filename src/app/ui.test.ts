@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
-import { initialState } from "./state";
+import { initialState, MAX_COLOR_GAMMA } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
 import type { Transform } from "../fractal/types";
@@ -23,6 +23,7 @@ function noopHandlers(): UiHandlers {
     onSavePng: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
+    onColorGammaInput: vi.fn(),
     onRenderStyle: vi.fn(),
     onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
@@ -223,6 +224,63 @@ describe("Ui glow brightness slider", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderStyle: "glow" });
     expect(glowBrightnessRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
+describe("Ui color contrast slider", () => {
+  function colorGammaRow(): HTMLElement {
+    return document.getElementById("colorGammaRow") as HTMLElement;
+  }
+
+  it("is hidden while the color mode is transform", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "transform" });
+    expect(colorGammaRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("is hidden while the color mode is uniform", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "uniform" });
+    expect(colorGammaRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("is shown while the color mode is height", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(colorGammaRow().classList.contains("hidden")).toBe(false);
+  });
+
+  // The slider element holds a log-scale POSITION in [-1, 1], not the gamma —
+  // these pin the two ends of that contract: full right is MAX_COLOR_GAMMA,
+  // dead center is exactly neutral 1 (no float fuzz — 5 ** 0 === 1), so the
+  // default slider state can never drift the persisted gamma off its
+  // backwards-compatible linear value.
+  it("reports MAX_COLOR_GAMMA when dragged to the far right", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "colorGammaSlider",
+    ) as HTMLInputElement;
+    slider.value = "1";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onColorGammaInput).toHaveBeenCalledWith(MAX_COLOR_GAMMA);
+  });
+
+  it("reports exactly neutral gamma 1 at the slider's center", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "colorGammaSlider",
+    ) as HTMLInputElement;
+    slider.value = "0";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onColorGammaInput).toHaveBeenCalledWith(1);
   });
 });
 

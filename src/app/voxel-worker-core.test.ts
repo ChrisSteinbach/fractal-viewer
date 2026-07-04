@@ -19,6 +19,7 @@ function startCommand(
     finalTransform: null,
     resolution: 32,
     colorMode: "transform",
+    colorGamma: 1,
     paletteId: "legacy",
     iterationsBudget: 500,
     seed: 1,

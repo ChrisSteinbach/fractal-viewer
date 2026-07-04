@@ -1,5 +1,5 @@
 import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
-import { transformColors } from "../fractal/color";
+import { colorModeUsesGamma, transformColors } from "../fractal/color";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
@@ -13,7 +13,7 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
-import { MAX_NUM_POINTS, MIN_NUM_POINTS } from "./state";
+import { MAX_COLOR_GAMMA, MAX_NUM_POINTS, MIN_NUM_POINTS } from "./state";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -51,6 +51,10 @@ export interface UiHandlers {
   onSavePng: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
+  /** The color-contrast slider changed (fr-8sk) — the value passed is the
+   * actual gamma, already converted from the slider's log-scale position.
+   * Only shown while the active color mode is height/radius/position. */
+  onColorGammaInput: (value: number) => void;
   onRenderStyle: (style: RenderStyle) => void;
   onToggleAutoUpdate: (checked: boolean) => void;
   onSelect: (index: EditTarget) => void;
@@ -246,6 +250,22 @@ function sliderToNumPoints(s: number): number {
 }
 
 /**
+ * Log-scale mapping for the color-contrast slider (fr-8sk): position `v` in
+ * `[-1, 1]` maps to gamma in `[MIN_COLOR_GAMMA, MAX_COLOR_GAMMA]` via
+ * `MAX_COLOR_GAMMA ** v`. Works because `MIN_COLOR_GAMMA === 1 /
+ * MAX_COLOR_GAMMA`, which puts neutral gamma `1.0` exactly at the slider's
+ * center (`v = 0`) and mirrors the low/high halves logarithmically, so
+ * "spread the low end" and "spread the high end" get equal-feeling ranges of
+ * travel either side of neutral.
+ */
+function sliderToColorGamma(v: number): number {
+  return MAX_COLOR_GAMMA ** v;
+}
+function colorGammaToSlider(gamma: number): number {
+  return Math.log(gamma) / Math.log(MAX_COLOR_GAMMA);
+}
+
+/**
  * Variation blend-weight slider bounds. Linear (not log like selection weight):
  * a variation's strength reads naturally as a `0…2` coefficient, with 0 meaning
  * "remove it" — which is exactly what the row's × button does.
@@ -333,6 +353,9 @@ export class Ui {
   private readonly glowBrightnessRow: HTMLElement;
   private readonly glowBrightnessLabel: HTMLElement;
   private readonly glowBrightnessSlider: HTMLInputElement;
+  private readonly colorGammaRow: HTMLElement;
+  private readonly colorGammaLabel: HTMLElement;
+  private readonly colorGammaSlider: HTMLInputElement;
   private readonly showGuides: HTMLInputElement;
   private readonly colorMode: HTMLSelectElement;
   private readonly renderStyle: HTMLSelectElement;
@@ -415,6 +438,9 @@ export class Ui {
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.glowBrightnessLabel = this.byId("glowBrightnessLabel");
     this.glowBrightnessSlider = this.byId("glowBrightnessSlider");
+    this.colorGammaRow = this.byId("colorGammaRow");
+    this.colorGammaLabel = this.byId("colorGammaLabel");
+    this.colorGammaSlider = this.byId("colorGammaSlider");
     this.showGuides = this.byId("showGuides");
     this.colorMode = this.byId("colorMode");
     this.renderStyle = this.byId("renderStyle");
@@ -507,6 +533,11 @@ export class Ui {
     );
     this.glowBrightnessSlider.addEventListener("input", () =>
       handlers.onGlowBrightnessInput(Number(this.glowBrightnessSlider.value)),
+    );
+    this.colorGammaSlider.addEventListener("input", () =>
+      handlers.onColorGammaInput(
+        sliderToColorGamma(Number(this.colorGammaSlider.value)),
+      ),
     );
     this.showGuides.addEventListener("change", () =>
       handlers.onToggleGuides(this.showGuides.checked),
@@ -615,6 +646,8 @@ export class Ui {
     this.pointSizeSlider.value = String(state.pointSize);
     this.glowBrightnessLabel.textContent = `${state.glowBrightness.toFixed(2)}×`;
     this.glowBrightnessSlider.value = String(state.glowBrightness);
+    this.colorGammaLabel.textContent = state.colorGamma.toFixed(2);
+    this.colorGammaSlider.value = String(colorGammaToSlider(state.colorGamma));
     this.colorMode.value = state.colorMode;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
@@ -694,6 +727,11 @@ export class Ui {
     this.glowBrightnessRow.classList.toggle(
       "hidden",
       state.renderStyle !== "glow",
+    );
+    // Contrast only means anything for the coordinate-normalized color modes.
+    this.colorGammaRow.classList.toggle(
+      "hidden",
+      !colorModeUsesGamma(state.colorMode),
     );
 
     if (state.flameActive) {

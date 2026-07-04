@@ -125,6 +125,14 @@ and seed-determinism with a stochastic lens.
 `scene.ts`), so these authored sRGB values are sent to the GPU verbatim instead of
 being round-tripped through linear space — a predictable, testable pipeline.
 
+The `height`/`radius`/`position` modes additionally take a **color contrast**
+exponent (fr-8sk, `colorModeUsesGamma`): each mode's normalized coordinate `t`
+is reshaped to `t ** colorGamma` before mapping to a color (1 = linear, today's
+mapping; below 1 spreads out the low end of the range, above 1 the high end).
+The solid render's voxel LUT (`buildColorModeLUT` in `voxel.ts`) is built with
+the exact same gamma, so a converged solid's colors and the live explorer's
+point colors can never drift apart.
+
 ## Data flow
 
 ```
@@ -150,11 +158,12 @@ applies the orbit camera, retightens the fog, and renders.
 ## Scene persistence
 
 `persist.ts` keeps the viewer share-ready. The persistent subset of `AppState`
-(transforms, point count/size, color mode, depth style, guide visibility) is
-serialized to a compact `v1=<base64url>` payload and written to both the URL hash
-(`history.replaceState`, so edits don't pile up in the back-button stack) and
-`localStorage`, debounced so slider drags don't thrash. On load the hash wins
-over storage — a pasted link beats the last local session.
+(transforms, point count/size, color mode, color contrast, depth style, guide
+visibility) is serialized to a compact `v1=<base64url>` payload and written to
+both the URL hash (`history.replaceState`, so edits don't pile up in the
+back-button stack) and `localStorage`, debounced so slider drags don't thrash.
+On load the hash wins over storage — a pasted link beats the last local
+session.
 
 `decodeScene` is the one place that ingests untrusted input (a URL someone
 pastes), so it is a strict, **never-throwing** boundary: it rejects an unknown

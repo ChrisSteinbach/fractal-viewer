@@ -278,6 +278,55 @@ describe("accumulateVoxels color modes (fr-c1d)", () => {
   });
 });
 
+describe("accumulateVoxels color contrast (fr-8sk)", () => {
+  it("reshapes height-mode colors without changing density at all", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
+    const palette = transformColors(1);
+
+    const linear = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(prepared, linear, 10, mulberry32(1), palette, "height");
+
+    const contrasty = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(
+      prepared,
+      contrasty,
+      10,
+      mulberry32(1),
+      palette,
+      "height",
+      undefined,
+      2,
+    );
+
+    // Gamma repaints, but must never touch which voxels were hit.
+    expect(contrasty.density).toEqual(linear.density);
+    expect(contrasty.avgRGB).not.toEqual(linear.avgRGB);
+  });
+
+  it("reshapes position-mode colors without changing density at all", () => {
+    const prepared = prepareChaosGame(fixedPointSystem([0.5, 0, 0]));
+    const palette = transformColors(1);
+
+    const linear = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(prepared, linear, 10, mulberry32(1), palette, "position");
+
+    const contrasty = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(
+      prepared,
+      contrasty,
+      10,
+      mulberry32(1),
+      palette,
+      "position",
+      undefined,
+      2,
+    );
+
+    expect(contrasty.density).toEqual(linear.density);
+    expect(contrasty.avgRGB).not.toEqual(linear.avgRGB);
+  });
+});
+
 describe("accumulateVoxels progressive accumulation", () => {
   it("produces the identical grid whether run as one call or resumed across chunks", () => {
     const transforms = sierpinskiTetrahedron();
