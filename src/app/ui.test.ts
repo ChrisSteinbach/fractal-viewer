@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
-import type { FourDEditParam, FourDMapParams, UiHandlers } from "./ui";
+import type { UiHandlers } from "./ui";
 import { initialState, MAX_COLOR_GAMMA } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
@@ -56,15 +56,10 @@ function noopHandlers(): UiHandlers {
     onSolidResolutionInput: vi.fn(),
     onSymmetryOrderInput: vi.fn(),
     onSymmetryAxisChange: vi.fn(),
-    onEnterFourD: vi.fn(),
-    onExitFourD: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
-    onEmbedCurrentSystem: vi.fn(),
-    onFourDMapSelect: vi.fn(),
-    onFourDParamInput: vi.fn(),
   };
 }
 
@@ -1615,49 +1610,55 @@ describe("Ui solid render controls", () => {
   });
 });
 
-describe("Ui 4D projection controls (fr-cbg)", () => {
-  function pentatopeButton(): HTMLButtonElement {
-    return document.getElementById("pentatopeButton") as HTMLButtonElement;
-  }
-  function spiral4Button(): HTMLButtonElement {
-    return document.getElementById("spiral4Button") as HTMLButtonElement;
-  }
-  function exitFourDButton(): HTMLButtonElement {
-    return document.getElementById("exitFourDButton") as HTMLButtonElement;
-  }
+// "4D" is a DERIVED property of the system (fr-bf6): there is no fourDActive
+// flag to flip in AppState anymore, so these tests build a state whose
+// transform list actually carries a non-trivial `w` block — exactly what
+// systemIsNonFlat (and so the panel gating) reads.
+function nonFlatTransforms(): Transform[] {
+  return [{ ...defaultTransforms()[0], w: { position: 0.5 } }];
+}
+
+describe("Ui 4D view gating (fr-bf6)", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("shows the 4D entry and hides the 4D controls while inactive", () => {
+  it("hides the 4D controls for a flat system", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), fourDActive: false });
+    ui.updateLabels(initialState(true));
 
-    expect(el("fourDEntry").classList.contains("hidden")).toBe(false);
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
   });
 
-  it("hides the 3D editing/restyling controls and shows the 4D controls while active", () => {
+  it("shows the 4D controls and hides flame/solid/symmetry/color/style for a non-flat system", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), fourDActive: true });
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
-    // The 4D controls take over; the 4D entry and the 3D-editing/restyling
-    // sub-blocks all hide.
     expect(el("fourDControls").classList.contains("hidden")).toBe(false);
-    expect(el("fourDEntry").classList.contains("hidden")).toBe(true);
     expect(el("flameEntry").classList.contains("hidden")).toBe(true);
     expect(el("solidEntry").classList.contains("hidden")).toBe(true);
-    expect(el("transformsSection").classList.contains("hidden")).toBe(true);
-    expect(el("presetSection").classList.contains("hidden")).toBe(true);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
-    expect(el("transformEditSection").classList.contains("hidden")).toBe(true);
   });
 
-  it("keeps the point-size, regenerate, and guides controls live in 4D", () => {
+  // The crucial inversion from the old 4D MODE (fr-bf6): unlike the retired
+  // fourDActive flag, which hid the whole editing surface, a non-flat system
+  // keeps its presets/transform-list/editor exactly as live and visible as a
+  // flat one — only the controls that are genuinely inert while viewing the
+  // 4D shader path hide (see the previous test).
+  it("keeps the presets block, transform list, and editor visible for a non-flat system", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), fourDActive: true });
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+
+    expect(el("presetSection").classList.contains("hidden")).toBe(false);
+    expect(el("transformsSection").classList.contains("hidden")).toBe(false);
+    expect(el("transformEditSection").classList.contains("hidden")).toBe(false);
+  });
+
+  it("keeps the point-size, regenerate, and guides controls live for a non-flat system", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     // explorerControls stays visible (its wrapper is not hidden), so the
     // kept-live controls inside it remain interactive.
@@ -1667,60 +1668,58 @@ describe("Ui 4D projection controls (fr-cbg)", () => {
     expect(el("showGuides").classList.contains("hidden")).toBe(false);
   });
 
-  it("restores the 3D editing controls after leaving 4D", () => {
+  it("restores flame/solid/color/style controls once the system is flat again", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), fourDActive: true });
-    ui.updateLabels({ ...initialState(true), fourDActive: false });
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+    ui.updateLabels(initialState(true));
 
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
-    expect(el("fourDEntry").classList.contains("hidden")).toBe(false);
-    expect(el("transformsSection").classList.contains("hidden")).toBe(false);
-    expect(el("presetSection").classList.contains("hidden")).toBe(false);
+    expect(el("flameEntry").classList.contains("hidden")).toBe(false);
+    expect(el("solidEntry").classList.contains("hidden")).toBe(false);
+    expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
+    expect(el("renderStyleRow").classList.contains("hidden")).toBe(false);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
-    expect(el("transformEditSection").classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the color legend while the 4D projection is active", () => {
+  it("hides the color legend for a non-flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      fourDActive: true,
+      transforms: nonFlatTransforms(),
     });
     expect(el("legend").classList.contains("hidden")).toBe(true);
   });
 
-  it("names the 4D projection in the help box while active", () => {
+  it("names the 4D projection in the help box for a non-flat system", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), fourDActive: true });
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "4D Projection",
     );
   });
 
-  it("fires onEnterFourD('pentatope') when the Pentatope Gasket button is clicked", () => {
-    const handlers = noopHandlers();
+  // Unlike the old 4D mode (which forced selectedTransform back to camera
+  // mode on entry), a non-flat system's transform list stays selectable — but
+  // there is still no draggable guide box in the projection, so the canvas
+  // help text stays the 4D one regardless of which transform is selected.
+  it("keeps the 4D projection help text even with a transform selected", () => {
     const ui = new Ui(document);
-    ui.bind(handlers);
-    pentatopeButton().click();
-    expect(handlers.onEnterFourD).toHaveBeenCalledWith("pentatope");
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      selectedTransform: 0,
+    });
+    expect(document.getElementById("helpTitle")?.textContent).toBe(
+      "4D Projection",
+    );
   });
+});
 
-  it("fires onEnterFourD('spiral') when the Double-Rotation Spiral button is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    spiral4Button().click();
-    expect(handlers.onEnterFourD).toHaveBeenCalledWith("spiral");
-  });
-
-  it("fires onExitFourD when Back to 3D is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    exitFourDButton().click();
-    expect(handlers.onExitFourD).toHaveBeenCalledOnce();
-  });
+describe("Ui 4D slice controls (fr-6x2)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
 
   it("reveals the slice-position row and fires the handler when the w-slice is toggled on", () => {
     const handlers = noopHandlers();
@@ -1831,133 +1830,6 @@ describe("Ui 4D tumble controls (fr-woc)", () => {
     expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("1");
     expect(el("fourDTumbleSpeedLabel").textContent).toBe("1.0×");
-  });
-});
-
-describe("Ui 4D parameter editing (fr-2ou)", () => {
-  function el(id: string): HTMLElement {
-    return document.getElementById(id) as HTMLElement;
-  }
-
-  it("fires onEmbedCurrentSystem when Current System → 4D is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    (el("embed3Button") as HTMLButtonElement).click();
-    expect(handlers.onEmbedCurrentSystem).toHaveBeenCalledOnce();
-  });
-
-  it("keeps the embed button enabled even for a system carrying shear and variations (fr-hy8)", () => {
-    // fr-hy8 made the 3D → 4D embed total, so the button no longer gates on
-    // embeddability — even a map with both shear AND an enabled variation embeds.
-    const ui = new Ui(document);
-    const complex: Transform = {
-      id: 0,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [0.5, 0.5, 0.5],
-      shear: [0.5, 0, 0],
-      variations: [{ type: "swirl", weight: 1 }],
-    };
-    ui.updateLabels({ ...initialState(true), transforms: [complex] });
-
-    expect((el("embed3Button") as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("renderFourDEditor populates one option per map and fills the selected map's sliders", () => {
-    const ui = new Ui(document);
-    ui.bind(noopHandlers());
-    const maps: FourDMapParams[] = [
-      { posW: 0.5, scaleW: 0.8, xw: 0, yw: 0, zw: 0 },
-      { posW: -0.3, scaleW: 1.2, xw: Math.PI / 4, yw: 0, zw: 0 },
-      { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
-    ];
-    ui.renderFourDEditor(maps, 1);
-
-    const select = el("fourDMapSelect") as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
-      "Transform 1",
-      "Transform 2",
-      "Transform 3",
-    ]);
-    expect(select.value).toBe("1");
-
-    // Filled from maps[1].
-    expect((el("fourDPosWSlider") as HTMLInputElement).value).toBe("-0.3");
-    expect(el("fourDPosWLabel").textContent).toBe("-0.30");
-    expect((el("fourDScaleWSlider") as HTMLInputElement).value).toBe("1.2");
-    expect(el("fourDScaleWLabel").textContent).toBe("1.20");
-    // π/4 rad shows as 45° in both the slider position and the readout.
-    expect((el("fourDRotXWSlider") as HTMLInputElement).value).toBe("45");
-    expect(el("fourDRotXWLabel").textContent).toBe("45°");
-  });
-
-  it("fires onFourDMapSelect with the chosen map index on change", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    ui.renderFourDEditor(
-      [
-        { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
-        { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
-      ],
-      0,
-    );
-
-    const select = el("fourDMapSelect") as HTMLSelectElement;
-    select.value = "1";
-    select.dispatchEvent(new Event("change"));
-
-    expect(handlers.onFourDMapSelect).toHaveBeenCalledWith(1);
-  });
-
-  it("reports the Position W slider's raw value and updates its label", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    const slider = el("fourDPosWSlider") as HTMLInputElement;
-    slider.value = "0.75";
-    slider.dispatchEvent(new Event("input"));
-
-    expect(handlers.onFourDParamInput).toHaveBeenCalledWith("posW", 0.75);
-    expect(el("fourDPosWLabel").textContent).toBe("0.75");
-  });
-
-  it("reports the Scale W slider's raw value and updates its label", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    const slider = el("fourDScaleWSlider") as HTMLInputElement;
-    slider.value = "0.5";
-    slider.dispatchEvent(new Event("input"));
-
-    expect(handlers.onFourDParamInput).toHaveBeenCalledWith("scaleW", 0.5);
-    expect(el("fourDScaleWLabel").textContent).toBe("0.50");
-  });
-
-  it("converts each rotation slider from degrees to radians and shows degrees", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-
-    const cases: Array<[string, string, FourDEditParam, number, number]> = [
-      ["fourDRotXWSlider", "fourDRotXWLabel", "xw", 90, Math.PI / 2],
-      ["fourDRotYWSlider", "fourDRotYWLabel", "yw", -45, -Math.PI / 4],
-      ["fourDRotZWSlider", "fourDRotZWLabel", "zw", 180, Math.PI],
-    ];
-    for (const [sliderId, labelId, param, deg, rad] of cases) {
-      const slider = el(sliderId) as HTMLInputElement;
-      slider.value = String(deg);
-      slider.dispatchEvent(new Event("input"));
-
-      expect(el(labelId).textContent).toBe(`${deg}°`);
-      const call = vi
-        .mocked(handlers.onFourDParamInput)
-        .mock.calls.find((c) => c[0] === param);
-      expect(call?.[1]).toBeCloseTo(rad);
-    }
   });
 });
 

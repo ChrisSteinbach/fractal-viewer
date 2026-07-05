@@ -17,7 +17,12 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
-import { MAX_COLOR_GAMMA, MAX_NUM_POINTS, MIN_NUM_POINTS } from "./state";
+import {
+  MAX_COLOR_GAMMA,
+  MAX_NUM_POINTS,
+  MIN_NUM_POINTS,
+  systemIsNonFlat,
+} from "./state";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -38,28 +43,6 @@ type FinalGeometry = Omit<Geometry, "weight">;
 
 /** The current edit target: a transform index, the final transform, or none. */
 type EditTarget = number | "final" | null;
-
-/**
- * The five NEW degrees of freedom a 4D map exposes over its embedded 3D self
- * (fr-2ou): the fourth position/scale component and the three `w`-mixing
- * rotation planes. The familiar x/y/z params are edited in the 3D editor before
- * embedding, so they are deliberately absent here.
- */
-export type FourDEditParam = "posW" | "scaleW" | "xw" | "yw" | "zw";
-
-/**
- * A 4D map's editable `w`-parameters, projected out of a `Transform4` for the
- * in-4D editor (see {@link Ui.renderFourDEditor}). The three plane angles are in
- * RADIANS (the same unit `Transform4.rotation` stores); the editor's sliders
- * display them as degrees.
- */
-export interface FourDMapParams {
-  posW: number;
-  scaleW: number;
-  xw: number;
-  yw: number;
-  zw: number;
-}
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -133,11 +116,6 @@ export interface UiHandlers {
   /** The symmetry axis dropdown changed — same reach as
    * {@link onSymmetryOrderInput}. */
   onSymmetryAxisChange: (axis: SymmetryAxis) => void;
-  /** A 4D-system button was clicked (fr-cbg spike): enter the 4D projection
-   * view on the chosen preset system. */
-  onEnterFourD: (kind: "pentatope" | "spiral") => void;
-  /** The 4D projection's "Back to 3D" button was clicked. */
-  onExitFourD: () => void;
   /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
   onFourDSliceToggle: (checked: boolean) => void;
   /** The 4D slice-position slider moved: `value` is the slice center in
@@ -147,16 +125,6 @@ export interface UiHandlers {
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
-  /** "Current System → 4D" was clicked (fr-2ou): embed the live 3D system at
-   * w = 0 and enter the 4D projection on it. */
-  onEmbedCurrentSystem: () => void;
-  /** The 4D editor's Transform dropdown changed: `index` is the 0-based map to edit. */
-  onFourDMapSelect: (index: number) => void;
-  /** A 4D per-map param slider moved (fr-2ou). For `posW`/`scaleW`, `value` is
-   * the raw slider number; for the `xw`/`yw`/`zw` rotation planes, `value` is in
-   * RADIANS — the slider shows degrees and the Ui converts here, mirroring the
-   * 3D rotation editor's degree→radian boundary. */
-  onFourDParamInput: (param: FourDEditParam, value: number) => void;
 }
 
 /**
@@ -506,15 +474,13 @@ export class Ui {
   private readonly solidProgress: HTMLElement;
   private readonly exitSolidBtn: HTMLButtonElement;
 
-  // 4D projection view (fr-cbg spike). The entry block + its two system
-  // buttons, the in-4D controls block + its exit button, and the explorer
-  // sub-blocks hidden while 4D is active (wrappers added to index.html so each
-  // block hides cleanly — see updateLabels).
-  private readonly fourDEntry: HTMLElement;
-  private readonly pentatopeButton: HTMLButtonElement;
-  private readonly spiral4Button: HTMLButtonElement;
+  // 4D VIEW controls (fr-cbg/fr-woc/fr-6x2). "4D" is a DERIVED property of the
+  // system now (fr-bf6, see affine4.ts's systemIsFlat/state.ts's
+  // systemIsNonFlat) rather than a mode with its own entry/exit button, so only
+  // the tumble/slice block remains here; its visibility (and the sub-blocks
+  // that hide alongside it — see updateLabels) is a VIEW gate keyed on that
+  // same non-flatness, not a separate on/off the user toggles.
   private readonly fourDControls: HTMLElement;
-  private readonly exitFourDButton: HTMLButtonElement;
   private readonly fourDSliceToggle: HTMLInputElement;
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
@@ -525,27 +491,9 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
-  // "Current System → 4D" entry button (fr-2ou). Always enabled: fr-hy8 made the
-  // 3D → 4D embed total, so there is no "not embeddable" state left to gate on.
-  private readonly embed3Button: HTMLButtonElement;
-  // In-4D per-map editor (fr-2ou): the Map select and the five w-param sliders.
-  private readonly fourDMapSelect: HTMLSelectElement;
-  private readonly fourDPosWSlider: HTMLInputElement;
-  private readonly fourDPosWLabel: HTMLElement;
-  private readonly fourDScaleWSlider: HTMLInputElement;
-  private readonly fourDScaleWLabel: HTMLElement;
-  private readonly fourDRotXWSlider: HTMLInputElement;
-  private readonly fourDRotXWLabel: HTMLElement;
-  private readonly fourDRotYWSlider: HTMLInputElement;
-  private readonly fourDRotYWLabel: HTMLElement;
-  private readonly fourDRotZWSlider: HTMLInputElement;
-  private readonly fourDRotZWLabel: HTMLElement;
-  private readonly transformsSection: HTMLElement;
-  private readonly presetSection: HTMLElement;
   private readonly colorModeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
-  private readonly transformEditSection: HTMLElement;
 
   private editor: EditorState | null = null;
 
@@ -640,11 +588,7 @@ export class Ui {
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
     this.exitSolidBtn = this.byId("exitSolidBtn");
-    this.fourDEntry = this.byId("fourDEntry");
-    this.pentatopeButton = this.byId("pentatopeButton");
-    this.spiral4Button = this.byId("spiral4Button");
     this.fourDControls = this.byId("fourDControls");
-    this.exitFourDButton = this.byId("exitFourDButton");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
@@ -653,24 +597,9 @@ export class Ui {
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
-    this.embed3Button = this.byId("embed3Button");
-    this.fourDMapSelect = this.byId("fourDMapSelect");
-    this.fourDPosWSlider = this.byId("fourDPosWSlider");
-    this.fourDPosWLabel = this.byId("fourDPosWLabel");
-    this.fourDScaleWSlider = this.byId("fourDScaleWSlider");
-    this.fourDScaleWLabel = this.byId("fourDScaleWLabel");
-    this.fourDRotXWSlider = this.byId("fourDRotXWSlider");
-    this.fourDRotXWLabel = this.byId("fourDRotXWLabel");
-    this.fourDRotYWSlider = this.byId("fourDRotYWSlider");
-    this.fourDRotYWLabel = this.byId("fourDRotYWLabel");
-    this.fourDRotZWSlider = this.byId("fourDRotZWSlider");
-    this.fourDRotZWLabel = this.byId("fourDRotZWLabel");
-    this.transformsSection = this.byId("transformsSection");
-    this.presetSection = this.byId("presetSection");
     this.colorModeRow = this.byId("colorModeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
-    this.transformEditSection = this.byId("transformEditSection");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -807,15 +736,6 @@ export class Ui {
     this.solidResolutionSlider.addEventListener("input", () =>
       handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
     );
-    this.pentatopeButton.addEventListener("click", () =>
-      handlers.onEnterFourD("pentatope"),
-    );
-    this.spiral4Button.addEventListener("click", () =>
-      handlers.onEnterFourD("spiral"),
-    );
-    this.exitFourDButton.addEventListener("click", () =>
-      handlers.onExitFourD(),
-    );
     this.fourDTumbleToggle.addEventListener("change", () => {
       const on = this.fourDTumbleToggle.checked;
       // The speed slider only means anything while the tumble is running —
@@ -842,39 +762,6 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
-    this.embed3Button.addEventListener("click", () =>
-      handlers.onEmbedCurrentSystem(),
-    );
-    this.fourDMapSelect.addEventListener("change", () =>
-      handlers.onFourDMapSelect(Number(this.fourDMapSelect.value)),
-    );
-    this.fourDPosWSlider.addEventListener("input", () => {
-      const value = Number(this.fourDPosWSlider.value);
-      this.fourDPosWLabel.textContent = value.toFixed(2);
-      handlers.onFourDParamInput("posW", value);
-    });
-    this.fourDScaleWSlider.addEventListener("input", () => {
-      const value = Number(this.fourDScaleWSlider.value);
-      this.fourDScaleWLabel.textContent = value.toFixed(2);
-      handlers.onFourDParamInput("scaleW", value);
-    });
-    // Rotation sliders show degrees but the handler (and Transform4) wants
-    // radians — convert here, exactly as the 3D rotation editor does.
-    this.fourDRotXWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotXWSlider.value);
-      this.fourDRotXWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("xw", degToRad(deg));
-    });
-    this.fourDRotYWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotYWSlider.value);
-      this.fourDRotYWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("yw", degToRad(deg));
-    });
-    this.fourDRotZWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotZWSlider.value);
-      this.fourDRotZWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("zw", degToRad(deg));
-    });
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -894,38 +781,6 @@ export class Ui {
     this.fourDTumbleRow.classList.toggle("hidden", !on);
     this.fourDTumbleSpeedSlider.value = "1";
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
-  }
-
-  /**
-   * (Re)build the in-4D per-map editor (fr-2ou): rebuild the Transform dropdown
-   * as "Transform 1"…"Transform N", select `selected`, and fill the five w-param sliders +
-   * labels from `maps[selected]`. Called by main.ts on 4D entry and whenever
-   * the selected map changes — NOT on a slider edit, since the sliders are
-   * already the live source of that value. Rotation angles arrive in radians
-   * and are shown as degrees, matching the 3D rotation editor.
-   */
-  renderFourDEditor(maps: FourDMapParams[], selected: number): void {
-    this.fourDMapSelect.replaceChildren();
-    maps.forEach((_, i) => {
-      const option = this.doc.createElement("option");
-      option.value = String(i);
-      option.textContent = `Transform ${i + 1}`;
-      this.fourDMapSelect.appendChild(option);
-    });
-    this.fourDMapSelect.value = String(selected);
-
-    const map = maps[selected];
-    if (!map) return; // defensive: a 4D system always has ≥ 1 map.
-    this.fourDPosWSlider.value = String(map.posW);
-    this.fourDPosWLabel.textContent = map.posW.toFixed(2);
-    this.fourDScaleWSlider.value = String(map.scaleW);
-    this.fourDScaleWLabel.textContent = map.scaleW.toFixed(2);
-    this.fourDRotXWSlider.value = String(displayDegrees(map.xw));
-    this.fourDRotXWLabel.textContent = `${displayDegrees(map.xw)}°`;
-    this.fourDRotYWSlider.value = String(displayDegrees(map.yw));
-    this.fourDRotYWLabel.textContent = `${displayDegrees(map.yw)}°`;
-    this.fourDRotZWSlider.value = String(displayDegrees(map.zw));
-    this.fourDRotZWLabel.textContent = `${displayDegrees(map.zw)}°`;
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -1004,53 +859,45 @@ export class Ui {
     this.solidResolutionSlider.value = String(state.solid.resolution);
 
     // Either render mode takes over the panel — editing controls that can't
-    // affect the in-progress render would just be confusing. The three
-    // non-explorer modes (flame, solid, 4D) are mutually exclusive by
-    // construction: each mode's entry button is hidden while any other is
-    // active.
+    // affect the in-progress render would just be confusing.
     const rendering = state.flameActive || state.solidActive;
-    const fourD = state.fourDActive;
-    // A flame/solid render replaces the WHOLE explorer; the 4D projection keeps
-    // a few live controls (points/size/regenerate/guides) but hides everything
-    // that edits or restyles the 3D system. So explorerControls itself hides
-    // only for a render, while the 4D-hidden sub-blocks below add `fourD`.
+    // "4D" is a DERIVED property of the system now (fr-bf6, see affine4.ts's
+    // systemIsFlat via state.ts's systemIsNonFlat) rather than a mode with its
+    // own entry/exit — so this is a VIEW gate, not a separate on/off. Unlike
+    // the OLD 4D mode, the presets block, transform list, and editor all STAY
+    // VISIBLE and live for a non-flat system exactly as for a flat one — only
+    // the controls that are genuinely meaningless while viewing the 4D shader
+    // path (flame/solid entry, symmetry, color mode/contrast, depth style —
+    // none of them reach the 4D projection or its own w-driven coloring) hide,
+    // and the tumble/slice block takes their place. Flame/solid entry and the
+    // 4D view are mutually exclusive by construction: each hides while either
+    // of the others is active.
+    const nonFlat = systemIsNonFlat(state);
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.flameEntry.classList.toggle("hidden", rendering || fourD);
-    this.solidEntry.classList.toggle("hidden", rendering || fourD);
-    this.fourDEntry.classList.toggle("hidden", rendering || fourD);
+    this.flameEntry.classList.toggle("hidden", rendering || nonFlat);
+    this.solidEntry.classList.toggle("hidden", rendering || nonFlat);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
-    this.fourDControls.classList.toggle("hidden", !fourD);
-    // 3D-editing / restyling sub-blocks: hidden while the 4D projection is up
-    // (they'd edit a system that isn't on screen). They already vanish during a
-    // flame/solid render by sitting inside the hidden explorerControls, so
-    // `fourD` is the only extra condition each needs here.
-    this.transformsSection.classList.toggle("hidden", fourD);
-    // The whole Presets block (heading, 3D preset select, Surprise Me): a 3D
-    // preset can't load into the 4D projection, and a visible-but-inert
-    // control would just look broken.
-    this.presetSection.classList.toggle("hidden", fourD);
-    this.colorModeRow.classList.toggle("hidden", fourD);
-    this.renderStyleRow.classList.toggle("hidden", fourD);
-    this.symmetrySection.classList.toggle("hidden", fourD);
-    this.transformEditSection.classList.toggle("hidden", fourD);
+    this.fourDControls.classList.toggle("hidden", !nonFlat);
+    this.colorModeRow.classList.toggle("hidden", nonFlat);
+    this.renderStyleRow.classList.toggle("hidden", nonFlat);
+    this.symmetrySection.classList.toggle("hidden", nonFlat);
     // The manual brightness override only means anything for the glow render
     // style, so — like the flame/solid sub-panels above — it's hidden whenever
-    // that style isn't the active one (and always in 4D).
+    // that style isn't the active one (and always while non-flat, since
+    // renderStyle itself never reaches the 4D projection either).
     this.glowBrightnessRow.classList.toggle(
       "hidden",
-      fourD || state.renderStyle !== "glow",
+      nonFlat || state.renderStyle !== "glow",
     );
     // Contrast only means anything for the coordinate-normalized color modes
-    // (and never in 4D, whose color comes straight from the 4th coordinate).
+    // (and never while non-flat, whose color comes straight from the rotated
+    // 4th coordinate in-shader instead of colorMode).
     this.colorGammaRow.classList.toggle(
       "hidden",
-      fourD || !colorModeUsesGamma(state.colorMode),
+      nonFlat || !colorModeUsesGamma(state.colorMode),
     );
-    // "Current System → 4D" always stays enabled: fr-hy8 made the embed total
-    // (shear, variations and the final-transform lens all carry into 4D), so
-    // there is no longer any system it must refuse.
-    this.updateLegend(state);
+    this.updateLegend(state, nonFlat);
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
@@ -1064,13 +911,17 @@ export class Ui {
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
-    } else if (state.fourDActive) {
+    } else if (nonFlat) {
       // The 4D projection tumbles on its own (pause/speed in the panel); the
       // camera orbits the projected cloud exactly like camera mode, and Shift
       // retargets drag/scroll to the hidden w-planes (fr-woc) — the help box
       // is the most visible gesture surface, so the Shift line lives here as
       // well as in the panel hint. Touch has no Shift; it keeps the orbit
-      // lines only.
+      // lines only. Takes priority over a transform/final-lens selection
+      // (fr-bf6, unlike the OLD 4D mode's forced-null selection) — there is no
+      // draggable guide box in the projection no matter which transform is
+      // selected in the (still-live) list, so the canvas gesture is always
+      // this one; only the panel's own editor responds to the selection.
       this.helpTitle.textContent = "4D Projection";
       this.setHelpLines(
         this.mouse
@@ -1138,15 +989,19 @@ export class Ui {
    * of colorMode, exactly like the flame case — but solid's `"legacy"`
    * palette DOES follow colorMode/colorGamma faithfully, so the legend stays
    * accurate and visible for that one case).
+   *
+   * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
+   * than recomputing `systemIsNonFlat` here, so the two never risk reading a
+   * different answer within the same refresh.
    */
-  private updateLegend(state: AppState): void {
+  private updateLegend(state: AppState, nonFlat: boolean): void {
     const mode = state.colorMode;
     const hidden =
       mode === "uniform" ||
       state.flameActive ||
-      // The 4D projection colors by its 4th coordinate in-shader (see
+      // The 4D view colors by the rotated 4th coordinate in-shader (see
       // scene.ts), not by any Color Mode, so this legend can't describe it.
-      state.fourDActive ||
+      nonFlat ||
       (state.solidActive && state.solid.paletteId !== "legacy");
     this.legend.classList.toggle("hidden", hidden);
     if (hidden) return;

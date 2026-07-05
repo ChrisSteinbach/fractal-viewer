@@ -563,6 +563,28 @@ export function pentatope(): Transform[] {
 }
 
 /**
+ * The 5-cell's wireframe scaffold: all C(5,2) = 10 edges of the regular
+ * 4-simplex whose vertices anchor {@link pentatope}'s lifted maps (see
+ * `affine4.ts`'s `toTransform4`: each map's fixed point is `2 · position`,
+ * including the lifted `w`, which is exactly a {@link pentatopeVertices}
+ * entry). Rendered as a projected, tumbling wireframe it is the legibility
+ * cue for the 4D view — a rigid 4D rotation bends the PROJECTED edge lengths
+ * and angles through changes no rigid 3D motion could produce, which is
+ * exactly what makes classic rotating-tesseract renders read as 4D. See
+ * {@link PRESET_SCAFFOLDS}.
+ */
+export function pentatopeWireframe(): [Vec4, Vec4][] {
+  const v = pentatopeVertices();
+  const edges: [Vec4, Vec4][] = [];
+  for (let i = 0; i < v.length; i++) {
+    for (let j = i + 1; j < v.length; j++) {
+      edges.push([v[i], v[j]]);
+    }
+  }
+  return edges;
+}
+
+/**
  * A double-rotation spiral — a structure with NO 3D counterpart, expressed as
  * ordinary {@link Transform}s. The dominant "swirl" map contracts while
  * rotating simultaneously in two ORTHOGONAL planes at incommensurate angles:
@@ -634,6 +656,20 @@ const PRESETS = {
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
+
+/**
+ * Legibility scaffolds a preset can carry — projected, tumbling wireframes
+ * the 4D view renders alongside the cloud (see `scene.ts`'s
+ * `setFourDScaffold`). Most presets — including flat ones and `doubleRotation`
+ * — have no natural 4D wireframe and are simply absent here; `pentatope`'s
+ * 5-cell is the one shape whose vertices are exactly its maps' fixed points,
+ * so it is the one entry. Keyed by {@link Preset} (not a parallel enum) so
+ * `main.ts` can look one up by the same name `presetTransforms` just used,
+ * with no second mapping to keep in sync.
+ */
+export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
+  pentatope: pentatopeWireframe,
+};
 
 /** Build the transform set for a named preset. */
 export function presetTransforms(preset: Preset): Transform[] {

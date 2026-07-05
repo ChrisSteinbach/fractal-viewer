@@ -1,12 +1,7 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
-import { embedTransform3 } from "../fractal/affine4";
-import {
-  doubleRotationSpiral,
-  pentatopeGasket,
-  pentatopeWireframe,
-} from "../fractal/presets4";
+import { toTransform4 } from "../fractal/affine4";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { RotorPair } from "./rotor4";
 import { buildColors } from "../fractal/color";
@@ -20,7 +15,11 @@ import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
-import { defaultFinalTransform, presetTransforms } from "../fractal/presets";
+import {
+  defaultFinalTransform,
+  PRESET_SCAFFOLDS,
+  presetTransforms,
+} from "../fractal/presets";
 import { randomSystem } from "../fractal/random-system";
 import {
   BOOT_CAMERA_POSITION,
@@ -33,7 +32,6 @@ import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
-import type { FourDMapParams } from "./ui";
 import {
   addTransform,
   initialState,
@@ -53,7 +51,6 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
-  setFourDActive,
   setGlowBrightness,
   setNumPoints,
   setPanelOpen,
@@ -71,12 +68,13 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
+  systemIsNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
 import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
-import type { Bounds, Transform4, Vec3, Vec4 } from "../fractal/types";
+import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -108,14 +106,6 @@ function prefersReducedMotion(): boolean {
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true
   );
 }
-
-/** The two 4D preset systems (fr-cbg spike), keyed by the UI button that loads
- * each. */
-const FOUR_D_SYSTEMS = {
-  pentatope: pentatopeGasket,
-  spiral: doubleRotationSpiral,
-} as const;
-type FourDKind = keyof typeof FOUR_D_SYSTEMS;
 
 /**
  * Auto-tumble BASE rates for the 4D projection (fr-cbg spike): the XY- and
@@ -186,46 +176,108 @@ function main(): void {
   // a brand-new random sample of the attractor.
   let lastResult: ChaosGameResult | null = null;
 
-  // 4D projection view state (fr-cbg spike). `fourDSystem` is the loaded 4D IFS
-  // (null in 3D mode), `fourDResult` its last chaos-game run.
-  let fourDSystem: Transform4[] | null = null;
+  // Whether the CURRENT system needs the 4D projection view — a DERIVED
+  // property of state.transforms/finalTransform (fr-bf6; see state.ts's
+  // systemIsNonFlat), not a mode the user enters/exits. Cached here (rather
+  // than recomputed on every animation frame or pointer move) by regenerate(),
+  // its only writer; animate()'s tumble tick, the interactions predicate, and
+  // guide-box suppression all read it.
+  let viewIs4D = false;
+
+  // The most recent 4D chaos-game run — mirrors `lastResult` for the 3D path,
+  // so a whole-system replacement (preset load / Surprise Me) can auto-frame
+  // the camera on it right after regenerate() lands a fresh run (see
+  // fitCameraToAttractor). Null whenever the view isn't showing 4D.
   let fourDResult: ChaosGame4Result | null = null;
-  // The plot-time lens for the 4D run (fr-hy8): the embedded 3D final transform
-  // when entering via "Current System → 4D", else null (the preset systems carry
-  // no lens). Set on every 4D entry, reset on exit, passed to runChaosGame4.
-  let fourDFinal: Transform4 | null = null;
   // The accumulated 4D VIEW rotation (fr-woc): tumble ticks and Shift-drag/
   // Shift-wheel deltas all compose into this one quaternion pair (see
   // rotor4.ts), converted to a matrix only where scene.setRot4 needs it. That
   // single accumulator is what makes pausing freeze the exact current
   // orientation and what lets a drag mid-tumble just add on top, instead of
   // fighting a separately-tracked clock. Session-only, like the slice below:
-  // reset to identity on every 4D entry, never persisted.
+  // reset to identity by resetFourDView() whenever the view starts showing a
+  // genuinely new 4D system, never persisted.
   let fourDPair: RotorPair = identityRotorPair();
   let fourDTumbleOn = true;
   let fourDTumbleSpeed = 1;
   let fourDLastTickMs = 0;
-  // The soft w-slice (fr-6x2): session-only view state, reset on every entry.
+  // The soft w-slice (fr-6x2): session-only view state, reset by
+  // resetFourDView() alongside the rotor pair above.
   let fourDSliceOn = false;
   let fourDSliceCenter = 0;
-  // The 4D per-map editor's selected map index (fr-2ou): session-only, reset to
-  // 0 on every 4D entry. Indexes into `fourDSystem`.
-  let fourDSelected = 0;
+
+  // Reset the 4D VIEW state to a "fresh visit" baseline — rotor pair to
+  // identity, tumble running (paused under reduced motion, but pre-seeded on
+  // one generic orientation so the projection still reads as 4D at a glance),
+  // default speed, slice off and centered. Extracted from the old per-mode
+  // entry sequence (fr-cbg/fr-woc/fr-6x2): now that "4D" is a property of the
+  // system rather than a mode, this fires from regenerate() on (a) a
+  // flat→non-flat transition and (b) a whole-system replacement (preset load
+  // / Surprise Me) that lands on a non-flat system — never on a subsequent
+  // edit to an already-4D system, so nudging a slider can't throw away an
+  // in-progress tumble/slice.
+  function resetFourDView(): void {
+    fourDPair = identityRotorPair();
+    const reducedMotion = prefersReducedMotion();
+    fourDTumbleOn = !reducedMotion;
+    fourDTumbleSpeed = 1;
+    fourDLastTickMs = performance.now();
+    if (reducedMotion) {
+      fourDPair = rotateInPlane(fourDPair, "xy", 0.6);
+      fourDPair = rotateInPlane(fourDPair, "zw", 0.9);
+    }
+    fourDSliceOn = false;
+    fourDSliceCenter = 0;
+    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    ui.resetFourDSlice();
+    ui.resetFourDTumble(fourDTumbleOn);
+  }
 
   // Re-run the chaos game: the only path that touches the RNG and changes point
   // positions. Use this for geometry edits, add/remove, presets, and explicit
   // regenerate — never for a mere palette change.
-  function regenerate(): void {
-    // 4D projection path (fr-cbg spike): run the 4D chaos game and upload the
-    // projected xyz + separate w. Leaves `lastResult` (the 3D cloud) untouched
-    // so exiting 4D restores the 3D path cleanly; color lives in the shader, so
+  //
+  // Routes on the system's FLATNESS (fr-bf6; see affine4.ts's systemIsFlat/
+  // isFlatTransform via state.ts's systemIsNonFlat): a flat system — no
+  // transform's `w` block in play, final transform included per its own
+  // enabled semantics — takes the untouched 3D path, bit-identical to before
+  // this system ever had a `w` extension; a non-flat one lifts every
+  // transform (and the final lens, if enabled) through toTransform4 and runs
+  // the 4D chaos game instead. `replaced` marks a WHOLE-SYSTEM replacement
+  // (preset load / Surprise Me, via applyEdit's "always" effect) as opposed
+  // to a mere geometry edit or an explicit Regenerate click, so a freshly
+  // loaded non-flat system always gets resetFourDView()'s "fresh visit"
+  // treatment even when the PREVIOUS system was already non-flat too (e.g.
+  // switching from the double-rotation spiral straight to the pentatope).
+  function regenerate(replaced = false): void {
+    const nonFlat = systemIsNonFlat(state);
+    const wasNonFlat = viewIs4D;
+    viewIs4D = nonFlat;
+    if (nonFlat !== wasNonFlat) scene.setFourDActive(nonFlat);
+
+    if (nonFlat && (replaced || !wasNonFlat)) {
+      resetFourDView();
+    } else if (!nonFlat && wasNonFlat) {
+      // scene.setFourDActive(false) (just above) restores the 3D material/
+      // fog/background, but does NOT touch the scaffold — a separate scene
+      // object that otherwise keeps tumbling over the 3D cloud forever.
+      scene.setFourDScaffold(null);
+    }
+
+    // 4D projection path: run the 4D chaos game and upload the projected xyz +
+    // separate w. Leaves `lastResult` (the 3D cloud) untouched so a later
+    // flat edit restores the 3D path cleanly; color lives in the shader, so
     // there is no color buffer to build here.
-    if (state.fourDActive && fourDSystem) {
+    if (nonFlat) {
+      const transforms4 = state.transforms.map(toTransform4);
+      const final4 = state.finalTransform
+        ? toTransform4(state.finalTransform)
+        : null;
       fourDResult = runChaosGame4(
-        fourDSystem,
+        transforms4,
         state.numPoints,
         Math.random,
-        fourDFinal,
+        final4,
       );
       const b4 = fourDResult.bounds;
       scene.setPoints4(
@@ -266,7 +318,7 @@ function main(): void {
   function recolor(): void {
     // In 4D the point color is computed in the shader from the rotated w, so
     // there is no CPU color buffer to rebuild.
-    if (state.fourDActive) return;
+    if (viewIs4D) return;
     if (!lastResult) return;
     const colors = buildColors(
       lastResult,
@@ -286,7 +338,7 @@ function main(): void {
   // to meet it. Never triggered by Regenerate or a geometry edit (those
   // would fight the user's own framing) — call sites are onPreset/onSurprise
   // below, right after `applyEdit`'s synchronous regenerate lands a fresh
-  // `lastResult`.
+  // `lastResult`/`fourDResult`.
   interface CameraTween {
     startMs: number;
     fromRadius: number;
@@ -298,7 +350,7 @@ function main(): void {
   let cameraTween: CameraTween | null = null;
 
   // The bounds-consuming core of the auto-fit, shared by the 3D path (below,
-  // passing lastResult.bounds) and the 4D path (enterFourD, passing a
+  // passing lastResult.bounds) and fitCameraToAttractor's 4D branch (passing a
   // synthesized box — see fourDFramingBounds).
   function fitCameraToBounds(bounds: Bounds): void {
     const toTarget = boundsCenter(bounds);
@@ -325,6 +377,16 @@ function main(): void {
   }
 
   function fitCameraToAttractor(): void {
+    if (viewIs4D) {
+      // radius is rotation-invariant, so framing the synthesized box once
+      // holds at every tumble angle (see fourDFramingBounds/fitCameraToBounds).
+      if (fourDResult) {
+        fitCameraToBounds(
+          fourDFramingBounds(fourDResult.center, fourDResult.radius),
+        );
+      }
+      return;
+    }
     if (!lastResult) return;
     fitCameraToBounds(lastResult.bounds);
   }
@@ -679,126 +741,12 @@ function main(): void {
     refreshUi();
   }
 
-  // Project the live 4D system into the per-map editor shape (fr-2ou): the five
-  // NEW degrees of freedom each map exposes over its 3D self. Absent rotation
-  // planes read as 0 (Rotation4's absent-means-zero convention).
-  function fourDEditorParams(): FourDMapParams[] {
-    if (!fourDSystem) return [];
-    return fourDSystem.map((t) => ({
-      posW: t.position[3],
-      scaleW: t.scale[3],
-      xw: t.rotation?.xw ?? 0,
-      yw: t.rotation?.yw ?? 0,
-      zw: t.rotation?.zw ?? 0,
-    }));
-  }
-
-  // Shared entry sequence for BOTH 4D entries (a preset system and the embedded
-  // current system — fr-cbg spike + fr-2ou). Loads `system` + its optional
-  // wireframe scaffold and optional plot-time lens (`final`, fr-hy8), starts the
-  // tumble clock, activates the mode, resets the slice and the per-map editor,
-  // generates the cloud, and auto-frames it. The two entry points below must
-  // never drift in this tail, so it lives here once. Nothing persisted changes,
-  // so there is no scheduleSave.
-  function enterFourDWith(
-    system: Transform4[],
-    scaffoldEdges: [Vec4, Vec4][] | null,
-    final: Transform4 | null = null,
-  ): void {
-    fourDSystem = system;
-    fourDFinal = final;
-    state = setFourDActive(state, true);
-    scene.setFourDActive(true);
-    // The tumbling scaffold (Show guides toggles it with the grid/axes) — the
-    // pentatope has a natural 5-cell wireframe; the spiral and embedded systems
-    // get none.
-    scene.setFourDScaffold(scaffoldEdges);
-    // Fresh visit, fresh slice: off and centered, in scene and panel alike.
-    fourDSliceOn = false;
-    fourDSliceCenter = 0;
-    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
-    ui.resetFourDSlice();
-    // Fresh visit, fresh view rotation (fr-woc): identity pair and a fresh
-    // tumble clock every time — the pair accumulates BOTH the auto-tumble and
-    // Shift-drag/Shift-wheel deltas (see the fourDPair declaration above), so
-    // resetting it here is what makes every 4D visit start from the same
-    // neutral orientation. Reduced motion starts PAUSED (not hard-frozen, as
-    // before fr-woc) on one generic view — both rotation planes engaged once,
-    // so the projection still reads as 4D at a glance — composed directly
-    // into the pair; the checkbox still lets the user opt into motion
-    // explicitly, and Shift-drags always work since user-initiated motion is
-    // exactly what prefers-reduced-motion permits.
-    fourDPair = identityRotorPair();
-    const reducedMotion = prefersReducedMotion();
-    fourDTumbleOn = !reducedMotion;
-    fourDTumbleSpeed = 1;
-    fourDLastTickMs = performance.now();
-    if (reducedMotion) {
-      fourDPair = rotateInPlane(fourDPair, "xy", 0.6);
-      fourDPair = rotateInPlane(fourDPair, "zw", 0.9);
-    }
-    ui.resetFourDTumble(fourDTumbleOn);
-    // Fresh visit, fresh editor: select the first map and fill its sliders.
-    fourDSelected = 0;
-    ui.renderFourDEditor(fourDEditorParams(), fourDSelected);
-    regenerate();
-    refreshGuides();
-    refreshUi();
-    // Auto-frame the projection. radius is rotation-invariant, so framing the
-    // synthesized box once holds at every tumble angle (see fitCameraToBounds).
-    if (fourDResult) {
-      fitCameraToBounds(
-        fourDFramingBounds(fourDResult.center, fourDResult.radius),
-      );
-    }
-  }
-
-  // Enter the 4D projection view on `kind`'s preset system (fr-cbg spike).
-  function enterFourD(kind: FourDKind): void {
-    enterFourDWith(
-      FOUR_D_SYSTEMS[kind](),
-      kind === "pentatope" ? pentatopeWireframe() : null,
-    );
-  }
-
-  // Embed the CURRENT 3D system at w = 0 and enter 4D on it (fr-2ou/fr-hy8).
-  // Since fr-hy8 completed the Transform4 parameterization, embedTransform3 is
-  // total — every 3D map (shear, variations and all) embeds faithfully, so there
-  // is no "not embeddable" gate; the only guard left is the belt-and-braces
-  // "don't double-enter" one. An enabled final-transform lens embeds too and
-  // rides along as the 4D plot-time lens. An embedded 3D system has no natural 4D
-  // wireframe, so it gets no scaffold.
-  function enterFourDEmbedded(): void {
-    if (state.fourDActive) return;
-    enterFourDWith(
-      state.transforms.map(embedTransform3),
-      null,
-      state.finalTransform ? embedTransform3(state.finalTransform) : null,
-    );
-  }
-
-  // Leave the 4D projection and restore the 3D scene exactly as it was left.
-  function exitFourD(): void {
-    state = setFourDActive(state, false);
-    fourDSystem = null;
-    fourDResult = null;
-    fourDFinal = null; // hygiene: next entry sets this too, but don't leave a stale lens.
-    fourDSelected = 0; // hygiene: next entry resets this too, but don't leave it stale.
-    scene.setFourDScaffold(null);
-    scene.setFourDActive(false);
-    scene.setRenderStyle(state.renderStyle);
-    regenerate();
-    refreshGuides();
-    refreshUi();
-    fitCameraToAttractor();
-  }
-
   // The lens has no guide box, so map its selection (like camera) to "nothing
   // highlighted" — only a numbered transform highlights a box or is draggable.
   function selectedBox(): number | null {
     // No draggable 3D guide boxes exist in the 4D projection, so a raycast drag
     // must never grab a now-hidden one.
-    if (state.fourDActive) return null;
+    if (viewIs4D) return null;
     return typeof state.selectedTransform === "number"
       ? state.selectedTransform
       : null;
@@ -807,7 +755,7 @@ function main(): void {
   function refreshGuides(): void {
     // No guide boxes in the 4D projection (an empty list; scene handles it).
     scene.updateGuides(
-      state.fourDActive ? [] : state.transforms,
+      viewIs4D ? [] : state.transforms,
       selectedBox(),
       state.showGuides,
     );
@@ -862,6 +810,21 @@ function main(): void {
    *   "always" — always regenerate regardless of autoUpdate (preset loads must
    *               rebuild because the entire transform set is replaced)
    *
+   * "always" also marks the regenerate() call as a whole-system replacement
+   * (its `replaced` flag — see regenerate()'s doc), so a freshly loaded
+   * non-flat preset always gets resetFourDView()'s "fresh visit" treatment,
+   * even switching directly between two non-flat presets.
+   *
+   * regenerate() runs BEFORE refreshGuides()/refreshUi() (not after, as the
+   * names might suggest) — deliberately: regenerate() is the only place that
+   * updates `viewIs4D`, and refreshGuides() reads it to decide whether to
+   * show guide boxes at all. Refreshing guides first would read the flatness
+   * of the PREVIOUS system for one tick — invisible for an ordinary 3D edit,
+   * but a freshly-loaded preset that flips flatness (in either direction)
+   * would flash the wrong guide state (or, before fr-bf6, this could never
+   * happen: a preset/Surprise-Me load was guarded out entirely while
+   * `fourDActive`).
+   *
    * After applying the reducer, every geometry edit refreshes the guide boxes
    * and the UI, then schedules a debounced save.
    */
@@ -870,38 +833,44 @@ function main(): void {
     effect: "auto" | "always" = "auto",
   ): void {
     applyReducer();
+    if (effect === "always" || state.autoUpdate) {
+      regenerate(effect === "always");
+    }
     refreshGuides();
     refreshUi();
-    if (effect === "always" || state.autoUpdate) regenerate();
     scheduleSave();
   }
 
-  // Many handlers early-return while the 4D projection is active. Their
-  // controls are already hidden in 4D (see ui.ts's updateLabels), so these
-  // guards are belt-and-braces — they keep a stray call from mutating or
-  // restyling the 3D system that isn't even on screen.
+  // Only a handful of handlers below still guard on the view being 4D — the
+  // ones whose controls are hidden while it is (flame/solid entry, symmetry,
+  // color mode/contrast, depth style — see ui.ts's updateLabels), kept
+  // belt-and-braces so a stray call can't mutate a 3D-only concern that isn't
+  // even on screen. Everything that edits the system, loads a preset/
+  // Surprise-Me system, or selects a transform is UNGUARDED (fr-bf6): the
+  // single editor and transform list are live for a non-flat system exactly
+  // like a flat one.
   ui.bind({
     onAdd: () => {
-      if (state.fourDActive) return;
       applyEdit(() => {
         state = addTransform(state);
       });
     },
     onRemove: () => {
-      if (state.fourDActive) return;
       applyEdit(() => {
         state = removeTransform(state);
       });
     },
     onPreset: (preset) => {
-      if (state.fourDActive) return;
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
       }, "always");
+      // The tumbling scaffold (Show guides toggles it with the grid/axes) —
+      // only `pentatope` carries one; every other preset (flat or non-flat)
+      // clears whatever the previous preset left behind.
+      scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
       fitCameraToAttractor();
     },
     onSurprise: () => {
-      if (state.fourDActive) return;
       applyEdit(() => {
         const sys = randomSystem(Math.random);
         state = setTransforms(state, sys.transforms);
@@ -910,6 +879,9 @@ function main(): void {
         // never survives a roll that landed on no final transform.
         state = setFinalTransform(state, sys.finalTransform);
       }, "always");
+      // randomSystem never rolls a `w` extension, but a preset scaffold from
+      // an earlier visit could still be showing — clear it unconditionally.
+      scene.setFourDScaffold(null);
       fitCameraToAttractor();
     },
     onNumPointsInput: (value) => {
@@ -953,7 +925,9 @@ function main(): void {
       scheduleSave();
     },
     onColorMode: (mode) => {
-      if (state.fourDActive) return;
+      // colorModeRow hides while non-flat (the shader colors from the rotated
+      // w instead) — belt-and-braces.
+      if (viewIs4D) return;
       state = setColorMode(state, mode);
       // The color-contrast row's visibility (fr-8sk) depends on colorMode —
       // same rationale as onRenderStyle's updateLabels call below for the
@@ -963,14 +937,16 @@ function main(): void {
       scheduleSave();
     },
     onColorGammaInput: (value) => {
-      if (state.fourDActive) return;
+      if (viewIs4D) return;
       state = setColorGamma(state, value);
       ui.updateLabels(state);
       recolor();
       scheduleSave();
     },
     onRenderStyle: (style) => {
-      if (state.fourDActive) return;
+      // renderStyleRow hides while non-flat (the 4D material/render path
+      // ignores renderStyle entirely) — belt-and-braces.
+      if (viewIs4D) return;
       state = setRenderStyle(state, style);
       scene.setRenderStyle(style);
       // Reset glow exposure so no stale factor sticks when switching away.
@@ -985,7 +961,9 @@ function main(): void {
       state = setAutoUpdate(state, checked);
     },
     onSymmetryOrderInput: (value) => {
-      if (state.fourDActive) return;
+      // symmetrySection hides while non-flat (the 4D chaos game has no
+      // symmetry parameter at all) — belt-and-braces.
+      if (viewIs4D) return;
       state = setSymmetryOrder(state, value);
       ui.updateLabels(state);
       if (state.autoUpdate) regenerate();
@@ -1002,7 +980,7 @@ function main(): void {
       scheduleSave();
     },
     onSymmetryAxisChange: (axis) => {
-      if (state.fourDActive) return;
+      if (viewIs4D) return;
       state = setSymmetryAxis(state, axis);
       ui.updateLabels(state);
       if (state.autoUpdate) regenerate();
@@ -1019,13 +997,11 @@ function main(): void {
       scheduleSave();
     },
     onSelect: (index) => {
-      if (state.fourDActive) return;
       state = selectTransform(state, index);
       refreshGuides();
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
-      if (state.fourDActive) return;
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
       ui.renderTransformList(
@@ -1037,7 +1013,6 @@ function main(): void {
       scheduleSave();
     },
     onToggleFinalTransform: (checked) => {
-      if (state.fourDActive) return;
       applyEdit(() => {
         if (checked) {
           // Enable a default (identity, no-op) lens and jump straight to its
@@ -1056,7 +1031,6 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
-      if (state.fourDActive) return;
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
         state.transforms,
@@ -1075,7 +1049,8 @@ function main(): void {
       ui.updateLabels(state);
     },
     onEnterFlameRender: () => {
-      if (state.fourDActive) return;
+      // flameEntry hides while non-flat — belt-and-braces.
+      if (viewIs4D) return;
       enterFlameMode();
     },
     onExitFlameRender: () => exitFlameMode(),
@@ -1164,7 +1139,8 @@ function main(): void {
       scheduleSave();
     },
     onEnterSolidRender: () => {
-      if (state.fourDActive) return;
+      // solidEntry hides while non-flat — belt-and-braces.
+      if (viewIs4D) return;
       enterSolidMode();
     },
     onExitSolidRender: () => exitSolidMode(),
@@ -1224,8 +1200,6 @@ function main(): void {
         enterSolidMode();
       }
     },
-    onEnterFourD: (kind) => enterFourD(kind),
-    onExitFourD: () => exitFourD(),
     // Slice state is session-only view state (like the tumble clock): it never
     // touches AppState or persistence, so these write straight to the scene.
     onFourDSliceToggle: (checked) => {
@@ -1245,39 +1219,6 @@ function main(): void {
     onFourDTumbleSpeedInput: (value) => {
       fourDTumbleSpeed = value;
     },
-    onEmbedCurrentSystem: () => enterFourDEmbedded(),
-    onFourDMapSelect: (index) => {
-      if (!fourDSystem) return;
-      fourDSelected = Math.max(0, Math.min(fourDSystem.length - 1, index));
-      // Refill the sliders from the newly-selected map (the sliders are the
-      // live source for edits, so nothing else needs to re-render).
-      ui.renderFourDEditor(fourDEditorParams(), fourDSelected);
-    },
-    // A 4D per-map w-param slider moved (fr-2ou): mutate the selected map of the
-    // live 4D system in place, then regenerate — the 4D branch re-runs the chaos
-    // game and re-uploads points/center/radius, so nothing else is needed. The
-    // 4D view is session-only, so (like the slice) there is no scheduleSave.
-    onFourDParamInput: (param, value) => {
-      if (!fourDSystem) return;
-      const map = fourDSystem[fourDSelected];
-      if (!map) return;
-      switch (param) {
-        case "posW":
-          map.position[3] = value;
-          break;
-        case "scaleW":
-          map.scale[3] = value;
-          break;
-        case "xw":
-        case "yw":
-        case "zw":
-          // ui.ts already converted degrees → radians, so store verbatim.
-          if (!map.rotation) map.rotation = {};
-          map.rotation[param] = value;
-          break;
-      }
-      regenerate();
-    },
   });
 
   attachInteractions(scene, orbit, {
@@ -1294,9 +1235,9 @@ function main(): void {
       if (state.autoUpdate) regenerate();
       scheduleSave();
     },
-    fourDActive: () => state.fourDActive,
+    fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
-      if (!state.fourDActive) return; // belt-and-braces, same as the ui handlers
+      if (!viewIs4D) return; // belt-and-braces, same as the ui handlers
       if (xw !== 0) fourDPair = rotateInPlane(fourDPair, "xw", xw);
       if (yw !== 0) fourDPair = rotateInPlane(fourDPair, "yw", yw);
       if (zw !== 0) fourDPair = rotateInPlane(fourDPair, "zw", zw);
@@ -1316,11 +1257,14 @@ function main(): void {
   if (loading) loading.style.display = "none";
   scene.setRenderStyle(state.renderStyle);
   scene.setPointSize(state.pointSize);
+  // regenerate() first (see applyEdit's doc comment for why): it decides
+  // `viewIs4D` for a possibly-restored non-flat scene, and refreshGuides()
+  // right after needs that to already be current, not defaulted to `false`.
+  regenerate();
   refreshGuides();
   // Match grid/axes to the initial (possibly restored) guide visibility, since
   // refreshGuides only governs the per-transform boxes.
   scene.setGuidesVisible(state.showGuides);
-  regenerate();
   refreshUi();
 
   // While a flame render is active, accumulation/downsample/tone-map all
@@ -1360,7 +1304,7 @@ function main(): void {
     }
     scene.applyCamera(orbit);
     scene.updateFog();
-    if (state.fourDActive) {
+    if (viewIs4D) {
       const now = performance.now();
       // Clamp dt: a backgrounded tab suspends RAF, and an unclamped catch-up
       // delta would violently snap the orientation on refocus.

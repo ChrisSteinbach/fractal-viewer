@@ -1,3 +1,4 @@
+import { isFlatTransform, systemIsFlat } from "../fractal/affine4";
 import { appendTransform, defaultTransforms } from "../fractal/presets";
 import type { FlamePaletteId } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
@@ -173,15 +174,6 @@ export interface AppState {
    * {@link flameActive} — the app always boots into the explorer.
    */
   solidActive: boolean;
-  /**
-   * Whether the 4D projection view (fr-cbg spike) is showing in place of the
-   * live 3D point cloud: a 4D IFS auto-tumbling through a double rotation,
-   * orthographically projected to 3D. Session-only and never persisted,
-   * exactly like {@link flameActive} / {@link solidActive} — the app always
-   * boots into the 3D explorer (see `persist.ts`'s `SceneSnapshot`, which omits
-   * this field).
-   */
-  fourDActive: boolean;
   /**
    * Rotational/mirror symmetry (fr-6im): replicate `transforms` into rotated
    * copies for every render — see `fractal/types.ts`'s `SymmetryParams`.
@@ -407,7 +399,6 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     solidActive: false,
-    fourDActive: false,
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
@@ -825,22 +816,28 @@ export function setSolidActive(
 }
 
 /**
- * Enter or exit the 4D projection view (fr-cbg spike; session-only, like
- * {@link setFlameActive} / {@link setSolidActive}). Activating also resets
- * `selectedTransform` to `null` — back to camera mode — for the same reason
- * {@link setTransforms} does: the 3D guide boxes are hidden in 4D, and
- * `interactions.ts` keys off a null selection to route every drag to the
- * camera. Deactivating leaves the selection untouched.
+ * Whether the CURRENT system needs the 4D projection view — the derived
+ * condition (fr-bf6) that makes "4D" a property of `state.transforms` /
+ * `state.finalTransform` rather than a separate mode the user enters/exits
+ * (see `affine4.ts`'s `systemIsFlat`/`isFlatTransform`, the underlying
+ * flatness predicates). The final transform counts only per its own enabled
+ * semantics: a disabled lens (`finalTransform` undefined) never makes an
+ * otherwise-flat system non-flat, but an enabled one is checked exactly like
+ * any numbered transform.
+ *
+ * `main.ts`'s `regenerate()` calls this once per generation and caches the
+ * result (its `viewIs4D`) rather than re-deriving it in every per-frame or
+ * per-pointer-move read; `ui.ts`'s `updateLabels` calls it directly instead
+ * (it runs far less often), then passes the one result on to `updateLegend`.
+ * Either way there is exactly one formula, so the routing decision, the
+ * panel's gating, and the legend can never drift apart.
  */
-export function setFourDActive(
-  state: AppState,
-  fourDActive: boolean,
-): AppState {
-  return {
-    ...state,
-    fourDActive,
-    selectedTransform: fourDActive ? null : state.selectedTransform,
-  };
+export function systemIsNonFlat(state: AppState): boolean {
+  return (
+    !systemIsFlat(state.transforms) ||
+    (state.finalTransform !== undefined &&
+      !isFlatTransform(state.finalTransform))
+  );
 }
 
 /**

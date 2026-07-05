@@ -16,6 +16,7 @@ import {
   nextId,
   octahedronFlake,
   pentatope,
+  pentatopeWireframe,
   PRESET_NAMES,
   presetTransforms,
   radiolarian,
@@ -375,6 +376,32 @@ describe("pentatope (unified 4D preset)", () => {
       for (let j = i + 1; j < vertices.length; j++) {
         expect(dot4(vertices[i], vertices[j])).toBeCloseTo(-0.25, 12);
       }
+    }
+  });
+});
+
+describe("pentatopeWireframe (legibility scaffold)", () => {
+  it("has the 5-cell's ten edges, all of the regular simplex's edge length", () => {
+    const edges = pentatopeWireframe();
+    expect(edges).toHaveLength(10);
+    // Unit-circumradius regular 4-simplex edge: |a − b|² = 2 − 2·(a·b) = 2.5.
+    for (const [a, b] of edges) {
+      const d: Vec4 = [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
+      expect(Math.sqrt(dot4(d, d))).toBeCloseTo(Math.sqrt(2.5), 12);
+    }
+  });
+
+  // Adapted for the unified factory (fr-bf6): the wireframe's vertices must be
+  // exactly the LIFTED gasket's fixed points, not the native-Transform4
+  // pentatopeGasket's — the fixed point of a lifted map (scale ½) is
+  // 2 · position, INCLUDING the lifted w (position[3]).
+  it("uses exactly the lifted gasket's fixed points", () => {
+    const fixed = pentatope()
+      .map(toTransform4)
+      .map((m) => m.position.map((p) => p * 2).join());
+    for (const [a, b] of pentatopeWireframe()) {
+      expect(fixed).toContain(a.join());
+      expect(fixed).toContain(b.join());
     }
   });
 });

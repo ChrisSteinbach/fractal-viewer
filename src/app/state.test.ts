@@ -71,7 +71,6 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
-  setFourDActive,
   setGlowBrightness,
   setPointSize,
   setRenderStyle,
@@ -86,6 +85,7 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
+  systemIsNonFlat,
   updateTransform,
 } from "./state";
 import {
@@ -94,6 +94,7 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import { mulberry32 } from "../fractal/rng";
+import type { Transform } from "../fractal/types";
 
 describe("initialState", () => {
   it("starts in camera mode with the default system", () => {
@@ -627,25 +628,64 @@ describe("setSolidActive", () => {
   });
 });
 
-describe("setFourDActive", () => {
-  it("toggles the 4D projection overlay immutably", () => {
+describe("systemIsNonFlat", () => {
+  // A transform's `w` block absent or all-zero is flat (see affine4.ts's
+  // isFlatTransform) — the default system carries none, so it stays flat.
+  it("is false for the default (flat) system with no final transform", () => {
+    expect(systemIsNonFlat(initialState(true))).toBe(false);
+  });
+
+  it("is true when any transform carries a non-trivial w block", () => {
     const state = initialState(true);
-    const next = setFourDActive(state, true);
-    expect(next.fourDActive).toBe(true);
-    expect(state.fourDActive).toBe(false);
+    const nonFlat: Transform = { ...state.transforms[0], w: { position: 0.5 } };
+    expect(
+      systemIsNonFlat({
+        ...state,
+        transforms: [nonFlat, ...state.transforms.slice(1)],
+      }),
+    ).toBe(true);
   });
 
-  // Entering 4D hides the 3D guide boxes, so — like a preset load — the
-  // selection must drop back to camera mode or a drag would target a box the
-  // user can no longer see.
-  it("returns to camera mode when activated, clearing a numeric selection", () => {
-    const state = selectTransform(initialState(true), 2);
-    expect(setFourDActive(state, true).selectedTransform).toBeNull();
+  it("is false when a transform's w block is present but all-zero", () => {
+    const state = initialState(true);
+    const stillFlat: Transform = {
+      ...state.transforms[0],
+      w: { position: 0, scale: 0 },
+    };
+    expect(
+      systemIsNonFlat({
+        ...state,
+        transforms: [stillFlat, ...state.transforms.slice(1)],
+      }),
+    ).toBe(false);
   });
 
-  it("leaves the selection untouched when deactivated", () => {
-    const state = selectTransform(initialState(true), 2);
-    expect(setFourDActive(state, false).selectedTransform).toBe(2);
+  // The final transform counts only per its own enabled semantics: a
+  // disabled lens (finalTransform undefined) never makes an otherwise-flat
+  // system read as non-flat, no matter what a stale `w` block on it would say.
+  it("ignores a non-flat final transform while the lens is disabled", () => {
+    const state = initialState(true);
+    expect(systemIsNonFlat({ ...state, finalTransform: undefined })).toBe(
+      false,
+    );
+  });
+
+  it("is true when an ENABLED final transform carries a non-trivial w block", () => {
+    const state = initialState(true);
+    const lens = defaultFinalTransform();
+    expect(
+      systemIsNonFlat({
+        ...state,
+        finalTransform: { ...lens, w: { position: 0.5 } },
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for an enabled but flat final transform", () => {
+    const state = initialState(true);
+    expect(
+      systemIsNonFlat({ ...state, finalTransform: defaultFinalTransform() }),
+    ).toBe(false);
   });
 });
 

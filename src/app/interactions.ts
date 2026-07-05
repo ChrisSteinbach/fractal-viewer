@@ -24,9 +24,11 @@ export interface InteractionCallbacks {
    * comment on teardown) — this just short-circuits their effect.
    */
   frozen: () => boolean;
-  /** True while the 4D projection is active: Shift retargets rotate-drags and
-   * the wheel from the 3D camera to the three w-plane rotations (fr-woc). */
-  fourDActive: () => boolean;
+  /** True while the view is showing the 4D projection (a DERIVED property of
+   * the system — fr-bf6 — cached by `main.ts`, not a mode flag): Shift
+   * retargets rotate-drags and the wheel from the 3D camera to the three
+   * w-plane rotations (fr-woc). */
+  fourDView: () => boolean;
   /** A Shift-retargeted gesture turned the 4D view: plane-angle deltas in
    * radians (zero for planes the gesture doesn't touch). */
   onFourDRotate: (delta: { xw: number; yw: number; zw: number }) => void;
@@ -192,10 +194,12 @@ export function attachInteractions(
       // Checked per-move (not latched at pointerdown), so pressing/releasing
       // Shift mid-drag switches live between orbiting and w-turning — both
       // are incremental deltas, so there is no jump on the switch. Touch
-      // events have no shiftKey, so touch always orbits (mobile drives the
-      // w-planes via the per-map sliders instead — see index.html).
+      // events have no shiftKey, so touch always orbits; touch has no other
+      // way to turn the w-planes directly (there is no per-map w editor —
+      // fr-bf6 unified "4D" into the ordinary transform editor, which does not
+      // yet expose the `w` fields themselves), only the auto-tumble.
       const mouse = touchOf(event) ? null : (event as MouseEvent);
-      if (callbacks.fourDActive() && mouse?.shiftKey) {
+      if (callbacks.fourDView() && mouse?.shiftKey) {
         // Dragging toward +screen-x rolls the world +x axis into +w; screen y
         // points down while world y points up, hence the dy negation for yw
         // (a feel default — each sign is trivially negatable).
@@ -283,7 +287,7 @@ export function attachInteractions(
     if (callbacks.frozen()) return;
     const selected = callbacks.selectedTransform();
     if (selected === null) {
-      if (callbacks.fourDActive() && event.shiftKey) {
+      if (callbacks.fourDView() && event.shiftKey) {
         // Chrome (Win/Linux) remaps Shift+vertical-wheel to deltaX — read
         // whichever axis moved.
         const raw = event.deltaY !== 0 ? event.deltaY : event.deltaX;
