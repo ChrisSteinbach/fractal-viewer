@@ -48,16 +48,21 @@ export interface ChaosGame4Result {
   transformIndices: Uint8Array;
   /** Number of points generated. */
   count: number;
-  /** Axis-aligned extent of the cloud (all four coordinates). */
+  /**
+   * Axis-aligned extent of the cloud (all four coordinates). The box's
+   * half-extents also drive the shader's rotation-covariant w-colour
+   * amplitude (fr-9bk).
+   */
   bounds: Bounds4;
   /** Center of the bounds box. */
   center: Vec4;
   /**
    * EXACT maximum Euclidean 4D distance from {@link center} over every emitted
-   * point (not the box half-diagonal bound). The renderer normalises the
-   * shader-side `w`-colour by this radius, and a max-distance-from-center is
-   * invariant under any 4D view rotation about `center` — so colour
-   * normalisation and camera framing never need to re-run as the view tumbles.
+   * point (not the box half-diagonal bound). Rotation-invariant under any 4D
+   * view rotation about `center`, so a bounding sphere of this radius stays
+   * valid — and the camera can frame it once — at every tumble angle without
+   * re-running as the view turns (frustum culling in `setPoints4`, framing in
+   * `main.ts`'s `fourDFramingBounds`).
    */
   radius: number;
 }

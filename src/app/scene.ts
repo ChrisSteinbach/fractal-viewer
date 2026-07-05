@@ -9,6 +9,7 @@ import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
+import { wSupport } from "./rotor4";
 import type { RenderStyle, SolidParams } from "./state";
 import {
   configureVoxelTexture,
@@ -169,7 +170,7 @@ const DOF_FRAGMENT = /* glsl */ `
 const FOUR_D_VERTEX = /* glsl */ `
   uniform mat4 uRot4;
   uniform vec4 uCenter4;
-  uniform float uInvRadius4;
+  uniform float uInvWAmp4;
   uniform float uSize;
   uniform float uHalfHeight;
   uniform float uIntensity;
@@ -186,14 +187,21 @@ const FOUR_D_VERTEX = /* glsl */ `
     vec4 q = uRot4 * (vec4(position, w) - uCenter4);
     vec3 projected = q.xyz + uCenter4.xyz;
 
-    // Signed, normalized rotated w. |q| = |p - center| <= radius is rotation-
-    // invariant, so s stays within [-1, 1] at every tumble angle and never
-    // needs re-normalizing as the view turns.
-    float s = clamp(q.w * uInvRadius4, -1.0, 1.0);
+    // Signed rotated w, normalized by the LARGEST |rotated w| the cloud's 4D
+    // bounds box allows at THIS rotation (its support function in the
+    // rotated-w direction — recomputed CPU-side whenever the tumble advances,
+    // see updateWAmp4). Dividing by the rotation-INVARIANT 4D radius instead
+    // would never need updating, but anisotropic clouds (w-spread far below
+    // xyz-spread) would hug s = 0 at most tumble angles and wash out to gray
+    // (fr-9bk); the support bound keeps the full diverging ramp in play at
+    // every angle. The clamp only swallows Float32 rounding dust — the
+    // support function bounds every stored point.
+    float s = clamp(q.w * uInvWAmp4, -1.0, 1.0);
 
     // Diverging palette: sign picks the side, magnitude drives saturation AND
-    // brightness (the 0.6 exponent saturates the mid-range early, since an
-    // anisotropic cloud rarely pushes |s| near 1). Near-zero w — the part of
+    // brightness (the 0.6 exponent lifts the mid-range, where heavy-tailed
+    // w-distributions still cluster even after the support normalization
+    // spreads the cloud over the full [-1, 1]). Near-zero w — the part of
     // the cloud passing through our own 3-space — stays dim gray and recedes.
     float m = pow(abs(s), 0.6);
     vec3 side = s < 0.0 ? vec3(0.30, 0.60, 1.00) : vec3(1.00, 0.50, 0.18);
@@ -320,6 +328,9 @@ export class FractalScene {
   private fourDScaffoldEdges: [Vec4, Vec4][] = [];
   // prettier-ignore
   private fourDRot: number[] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  // Half-extents of the current 4D cloud's bounds box, the other input (with
+  // fourDRot) to the w-color amplitude — see updateWAmp4.
+  private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
 
   private readonly fog: THREE.Fog;
   private readonly darkBackground: THREE.Texture;
@@ -436,7 +447,7 @@ export class FractalScene {
       uniforms: {
         uRot4: { value: new THREE.Matrix4() },
         uCenter4: { value: new THREE.Vector4() },
-        uInvRadius4: { value: 1 },
+        uInvWAmp4: { value: 1 },
         uSize: { value: DOF_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
         uIntensity: { value: FOUR_D_BASE_INTENSITY },
@@ -542,15 +553,18 @@ export class FractalScene {
   /**
    * Upload a freshly generated 4D cloud (fr-cbg spike): the projected-to-3D
    * `xyz` positions plus the separate `w` coordinate the shader colors by, and
-   * the 4D `center`/`radius` that drive the shader's rotation pivot and w-color
-   * normalization. The 4D shader reads no `color` attribute (color is computed
-   * from `w` and the live rotation), so any stale one is dropped.
+   * the 4D `center`/`halfExtents` that drive the shader's rotation pivot and
+   * w-color normalization. `radius` is now only the rotation-invariant
+   * bounding sphere used for frustum culling. The 4D shader reads no `color`
+   * attribute (color is computed from `w` and the live rotation), so any
+   * stale one is dropped.
    */
   setPoints4(
     positions: Float32Array,
     w: Float32Array,
     center: Vec4,
     radius: number,
+    halfExtents: Vec4,
   ): void {
     this.pointGeometry.setAttribute(
       "position",
@@ -566,7 +580,8 @@ export class FractalScene {
       center[2],
       center[3],
     );
-    u.uInvRadius4.value = 1 / Math.max(radius, 1e-6);
+    this.fourDHalfExtents = halfExtents;
+    this.updateWAmp4();
 
     // Set the bounding sphere MANUALLY rather than computeBoundingSphere(): the
     // raw xyz attribute only bounds the un-rotated projection and underestimates
@@ -806,6 +821,7 @@ export class FractalScene {
     // field comment). `rotationMatrix4` hands us a fresh array every call, so
     // keeping the reference is safe.
     this.fourDRot = m;
+    this.updateWAmp4();
     this.updateFourDScaffoldPositions();
   }
 
@@ -880,12 +896,27 @@ export class FractalScene {
     attr.needsUpdate = true;
   }
 
+  /** Re-aim the w-color normalization at the current rotation: 1 / (the 4D
+   * bounds box's support in the rotated-w direction) — the exact max
+   * |rotated w| any stored point can reach at this tumble angle (fr-9bk).
+   * Called on every rotation change and cloud upload; four |m_wi|*h_i terms,
+   * so the per-frame cost is noise next to the scaffold re-pose that shares
+   * the trigger. The 1e-6 floor covers empty or w-flat clouds, whose q.w is
+   * 0 anyway (s = 0, the palette's neutral gray). */
+  private updateWAmp4(): void {
+    this.fourDMaterial.uniforms.uInvWAmp4.value =
+      1 / Math.max(wSupport(this.fourDRot, this.fourDHalfExtents), 1e-6);
+  }
+
   /**
    * Configure the soft w-slice (fr-6x2): a Gaussian opacity window around
    * `center` in SIGNED normalized rotated-w units (the [-1, 1] range the
    * shader's diverging palette uses), with a fixed width and a visibility floor
-   * so the unsliced projection stays as ghost context. One uniform write, so
-   * sweeping the slider costs nothing per frame.
+   * so the unsliced projection stays as ghost context. The normalization
+   * tracks the cloud's w-amplitude at the current rotation (fr-9bk), so
+   * [-1, 1] always spans the occupied w-range — the slider has no dead zones
+   * on anisotropic clouds. One uniform write, so sweeping the slider costs
+   * nothing per frame.
    */
   setFourDSlice(on: boolean, center: number): void {
     this.fourDMaterial.uniforms.uSliceOn.value = on ? 1 : 0;

@@ -1,4 +1,4 @@
-import type { Rotation4 } from "../fractal/types";
+import type { Rotation4, Vec4 } from "../fractal/types";
 
 /**
  * # SO(4) as a quaternion pair — the app-side rotor for the 4D view (fr-woc)
@@ -211,4 +211,21 @@ export function rotorMatrix(pair: RotorPair): number[] {
     m[3 * 4 + c] = v[0]; // w row ← scalar component
   }
   return m;
+}
+
+/**
+ * The largest |rotated w| any point of an axis-aligned 4D box centered on the
+ * rotation pivot can reach under `m` (row-major, the `rotorMatrix` layout):
+ * the box's support function in the rotated-w direction, sum_i |m_w,i| * h_i.
+ * Feeds the 4D shader's w-color amplitude (fr-9bk): rotation-COVARIANT, so an
+ * anisotropic cloud spans the full palette at every tumble angle, where the
+ * rotation-invariant 4D radius would wash it out toward gray.
+ */
+export function wSupport(m: number[], halfExtents: Vec4): number {
+  return (
+    Math.abs(m[12]) * halfExtents[0] +
+    Math.abs(m[13]) * halfExtents[1] +
+    Math.abs(m[14]) * halfExtents[2] +
+    Math.abs(m[15]) * halfExtents[3]
+  );
 }

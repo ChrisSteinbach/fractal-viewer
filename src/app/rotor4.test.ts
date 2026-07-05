@@ -1,6 +1,11 @@
-import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
+import {
+  identityRotorPair,
+  rotateInPlane,
+  rotorMatrix,
+  wSupport,
+} from "./rotor4";
 import { rotationMatrix4 } from "../fractal/affine4";
-import type { Rotation4 } from "../fractal/types";
+import type { Rotation4, Vec4 } from "../fractal/types";
 
 const PLANES: (keyof Rotation4)[] = ["xy", "xz", "yz", "xw", "yw", "zw"];
 
@@ -115,5 +120,46 @@ describe("rotateInPlane drift and purity", () => {
 
     expect(original.p).toEqual(snapshotP);
     expect(original.q).toEqual(snapshotQ);
+  });
+});
+
+describe("wSupport", () => {
+  it("equals the w half-extent under the identity rotation", () => {
+    const m = rotorMatrix(identityRotorPair());
+    expect(wSupport(m, [2, 3, 5, 0.25])).toBeCloseTo(0.25);
+  });
+
+  it("equals the max |rotated w| over the box's 16 corners under a composed tumble", () => {
+    const pair = rotateInPlane(
+      rotateInPlane(rotateInPlane(identityRotorPair(), "xy", 0.6), "zw", 0.9),
+      "xw",
+      0.4,
+    );
+    const m = rotorMatrix(pair);
+    const h: Vec4 = [2, 3, 5, 0.25];
+
+    let maxCorner = 0;
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          for (const sw of [-1, 1]) {
+            const rotatedW = Math.abs(
+              m[12] * (sx * h[0]) +
+                m[13] * (sy * h[1]) +
+                m[14] * (sz * h[2]) +
+                m[15] * (sw * h[3]),
+            );
+            maxCorner = Math.max(maxCorner, rotatedW);
+          }
+        }
+      }
+    }
+
+    expect(maxCorner).toBeCloseTo(wSupport(m, h));
+  });
+
+  it("is 0 for zero half-extents under a non-identity rotation", () => {
+    const m = rotorMatrix(rotateInPlane(identityRotorPair(), "xw", 0.7));
+    expect(wSupport(m, [0, 0, 0, 0])).toBe(0);
   });
 });

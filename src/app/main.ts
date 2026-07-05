@@ -227,11 +227,18 @@ function main(): void {
         Math.random,
         fourDFinal,
       );
+      const b4 = fourDResult.bounds;
       scene.setPoints4(
         fourDResult.positions,
         fourDResult.w,
         fourDResult.center,
         fourDResult.radius,
+        [
+          (b4.maxX - b4.minX) / 2,
+          (b4.maxY - b4.minY) / 2,
+          (b4.maxZ - b4.minZ) / 2,
+          (b4.maxW - b4.minW) / 2,
+        ],
       );
       ui.setPointCount(fourDResult.count);
       return;
