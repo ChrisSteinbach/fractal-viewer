@@ -3,7 +3,6 @@ import {
   applyAffine4,
   composeAffine4,
   embedTransform3,
-  isEmbeddable3,
   rotationMatrix4,
 } from "./affine4";
 import { mulberry32 } from "./rng";
@@ -183,6 +182,50 @@ describe("composeAffine4", () => {
       }
     }
   });
+
+  it("with identity rotation and unit scale, a pure shear composes to exactly U", () => {
+    // M = R·diag(scale)·U with R = I and scale = 1 is just U — the unit
+    // upper-triangular matrix whose above-diagonal entries are the six shear
+    // fields at row index(a), column index(b). Pinned to a hand-written U.
+    const a = composeAffine4({
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      shear: { xy: 2, xz: 3, xw: 4, yz: 5, yw: 6, zw: 7 },
+    });
+    // prettier-ignore
+    expect(a.m).toEqual([
+      1, 2, 3, 4,
+      0, 1, 5, 6,
+      0, 0, 1, 7,
+      0, 0, 0, 1,
+    ]);
+  });
+
+  it("folds shear as a right-multiply M = R·diag(scale)·U (vs. an explicit product)", () => {
+    // Independent check that the in-place descending-column fold equals the
+    // honest matrix product B·U, for a rotated + non-uniformly scaled B and a
+    // full six-entry shear.
+    const rotation = { xy: 0.4, zw: 0.9, xw: -0.3 };
+    const scale: [number, number, number, number] = [1.5, 0.7, 2.1, 0.5];
+    const shear = { xy: 0.2, xz: -0.4, yz: 0.6, xw: 0.3, yw: -0.5, zw: 0.8 };
+    // B = R·diag(scale): compose with NO shear, then multiply by U by hand.
+    const B = composeAffine4({ position: [0, 0, 0, 0], scale, rotation }).m;
+    // prettier-ignore
+    const U = [
+      1, shear.xy, shear.xz, shear.xw,
+      0, 1,        shear.yz, shear.yw,
+      0, 0,        1,        shear.zw,
+      0, 0,        0,        1,
+    ];
+    const expected = mul4(B, U);
+    const a = composeAffine4({
+      position: [0, 0, 0, 0],
+      scale,
+      rotation,
+      shear,
+    });
+    expectVecClose(a.m, expected);
+  });
 });
 
 describe("applyAffine4", () => {
@@ -214,25 +257,32 @@ describe("embedTransform3", () => {
     };
   }
 
-  it("matches composeAffine's linear part in the upper-left 3x3 for random affine-only maps", () => {
+  it("matches composeAffine's linear part in the upper-left 3x3 for random affine maps WITH shear", () => {
     for (const seed of [3, 21, 77, 2024]) {
       const rng = mulberry32(seed);
       const t = transform({
         position: [(rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2],
         rotation: [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3],
         scale: [rng() + 0.3, rng() + 0.3, rng() + 0.3],
+        // Random shear too (fr-hy8): the embed now carries it, so the fold must
+        // still agree with the 3D composeAffine in the upper-left 3x3.
+        shear: [(rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2],
       });
       const a3 = composeAffine(t);
       const a4 = composeAffine4(embedTransform3(t));
       expectVecClose(upperLeft3x3(a4.m), a3.m);
       // The w row is exactly [0, 0, 0, mean spatial contraction] — the embed
       // contracts w at the map's mean 3D rate so 4D edits stay contractive
-      // (see embedTransform3's JSDoc). Translation gains an exact 0 fourth
+      // (see embedTransform3's JSDoc). The embedded shear's w-column entries are
+      // absent, so the shear fold never touches the w row/column: it stays
+      // exactly [0, 0, 0, meanContraction]. Translation gains an exact 0 fourth
       // entry. Scales here are positive, so the mean needs no abs and both
       // computations are the identical fp expression (exact equality holds).
       const meanContraction = (t.scale[0] + t.scale[1] + t.scale[2]) / 3;
       expect([a4.m[12], a4.m[13], a4.m[14]]).toEqual([0, 0, 0]);
       expect(a4.m[15]).toBe(meanContraction);
+      // w-column linear entries (rows 0-2) also stay 0.
+      expect([a4.m[3], a4.m[7], a4.m[11]]).toEqual([0, 0, 0]);
       expect(a4.t).toEqual([t.position[0], t.position[1], t.position[2], 0]);
     }
   });
@@ -242,71 +292,38 @@ describe("embedTransform3", () => {
     expect(embedTransform3(transform({})).weight).toBeUndefined();
   });
 
-  it("throws on a non-zero shear (not representable in the 4D spike)", () => {
-    expect(() => embedTransform3(transform({ shear: [0.5, 0, 0] }))).toThrow(
-      RangeError,
-    );
+  it("carries a non-zero shear into { xy, xz, yz } with the w-column entries absent", () => {
+    const embedded = embedTransform3(transform({ shear: [0.5, -0.3, 0.2] }));
+    expect(embedded.shear).toEqual({ xy: 0.5, xz: -0.3, yz: 0.2 });
+    // The w-column shear entries are absent (the embed lives in the w = 0 slice).
+    expect(embedded.shear?.xw).toBeUndefined();
+    expect(embedded.shear?.yw).toBeUndefined();
+    expect(embedded.shear?.zw).toBeUndefined();
   });
 
-  it("throws on an enabled variation (not representable in the 4D spike)", () => {
-    expect(() =>
-      embedTransform3(
-        transform({ variations: [{ type: "swirl", weight: 1 }] }),
-      ),
-    ).toThrow(RangeError);
+  it("leaves shear absent for an unsheared (or explicitly zero-shear) map", () => {
+    expect(embedTransform3(transform({})).shear).toBeUndefined();
+    expect(
+      embedTransform3(transform({ shear: [0, 0, 0] })).shear,
+    ).toBeUndefined();
   });
 
-  it("allows a zero-shear / zero-weight variation (nothing to drop)", () => {
-    expect(() =>
-      embedTransform3(transform({ shear: [0, 0, 0] })),
-    ).not.toThrow();
-    expect(() =>
-      embedTransform3(
-        transform({ variations: [{ type: "swirl", weight: 0 }] }),
-      ),
-    ).not.toThrow();
-  });
-});
-
-describe("isEmbeddable3", () => {
-  function transform(overrides: Partial<Transform>): Transform {
-    return {
-      id: 0,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      ...overrides,
-    };
-  }
-
-  it("is true for a plain affine transform", () => {
-    expect(isEmbeddable3(transform({}))).toBe(true);
+  it("copies the variation list verbatim (into a fresh array)", () => {
+    const variations = [
+      { type: "spherical" as const, weight: 0.6 },
+      { type: "swirl" as const, weight: 0.4 },
+    ];
+    const embedded = embedTransform3(transform({ variations }));
+    expect(embedded.variations).toEqual(variations);
+    // A fresh array + fresh entries, so later edits can't alias through.
+    expect(embedded.variations).not.toBe(variations);
+    expect(embedded.variations?.[0]).not.toBe(variations[0]);
   });
 
-  // The two false cases are each pinned together with embedTransform3 throwing:
-  // the predicate is the single source of truth for that reject condition, so
-  // asserting both here means they can never silently drift apart.
-  it("is false for a non-zero shear — exactly when embedTransform3 throws", () => {
-    const t = transform({ shear: [0.5, 0, 0] });
-    expect(isEmbeddable3(t)).toBe(false);
-    expect(() => embedTransform3(t)).toThrow(RangeError);
-  });
-
-  it("is false for an enabled variation — exactly when embedTransform3 throws", () => {
-    const t = transform({ variations: [{ type: "swirl", weight: 1 }] });
-    expect(isEmbeddable3(t)).toBe(false);
-    expect(() => embedTransform3(t)).toThrow(RangeError);
-  });
-
-  it("is true for an explicit all-zero shear (nothing to drop, no throw)", () => {
-    const t = transform({ shear: [0, 0, 0] });
-    expect(isEmbeddable3(t)).toBe(true);
-    expect(() => embedTransform3(t)).not.toThrow();
-  });
-
-  it("is true when every variation is at weight 0 (nothing to drop, no throw)", () => {
-    const t = transform({ variations: [{ type: "swirl", weight: 0 }] });
-    expect(isEmbeddable3(t)).toBe(true);
-    expect(() => embedTransform3(t)).not.toThrow();
+  it("leaves variations absent for a map with none", () => {
+    expect(embedTransform3(transform({})).variations).toBeUndefined();
+    expect(
+      embedTransform3(transform({ variations: [] })).variations,
+    ).toBeUndefined();
   });
 });

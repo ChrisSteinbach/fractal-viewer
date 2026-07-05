@@ -1,11 +1,7 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
-import {
-  embedTransform3,
-  isEmbeddable3,
-  rotationMatrix4,
-} from "../fractal/affine4";
+import { embedTransform3, rotationMatrix4 } from "../fractal/affine4";
 import {
   doubleRotationSpiral,
   pentatopeGasket,
@@ -193,6 +189,10 @@ function main(): void {
   // on entry (so the animate loop needn't re-query matchMedia every frame).
   let fourDSystem: Transform4[] | null = null;
   let fourDResult: ChaosGame4Result | null = null;
+  // The plot-time lens for the 4D run (fr-hy8): the embedded 3D final transform
+  // when entering via "Current System → 4D", else null (the preset systems carry
+  // no lens). Set on every 4D entry, reset on exit, passed to runChaosGame4.
+  let fourDFinal: Transform4 | null = null;
   let fourDStartMs = 0;
   let fourDReducedMotion = false;
   // The soft w-slice (fr-6x2): session-only view state, reset on every entry.
@@ -211,7 +211,12 @@ function main(): void {
     // so exiting 4D restores the 3D path cleanly; color lives in the shader, so
     // there is no color buffer to build here.
     if (state.fourDActive && fourDSystem) {
-      fourDResult = runChaosGame4(fourDSystem, state.numPoints, Math.random);
+      fourDResult = runChaosGame4(
+        fourDSystem,
+        state.numPoints,
+        Math.random,
+        fourDFinal,
+      );
       scene.setPoints4(
         fourDResult.positions,
         fourDResult.w,
@@ -673,15 +678,18 @@ function main(): void {
 
   // Shared entry sequence for BOTH 4D entries (a preset system and the embedded
   // current system — fr-cbg spike + fr-2ou). Loads `system` + its optional
-  // wireframe scaffold, starts the tumble clock, activates the mode, resets the
-  // slice and the per-map editor, generates the cloud, and auto-frames it. The
-  // two entry points below must never drift in this tail, so it lives here once.
-  // Nothing persisted changes, so there is no scheduleSave.
+  // wireframe scaffold and optional plot-time lens (`final`, fr-hy8), starts the
+  // tumble clock, activates the mode, resets the slice and the per-map editor,
+  // generates the cloud, and auto-frames it. The two entry points below must
+  // never drift in this tail, so it lives here once. Nothing persisted changes,
+  // so there is no scheduleSave.
   function enterFourDWith(
     system: Transform4[],
     scaffoldEdges: [Vec4, Vec4][] | null,
+    final: Transform4 | null = null,
   ): void {
     fourDSystem = system;
+    fourDFinal = final;
     fourDStartMs = performance.now();
     fourDReducedMotion = prefersReducedMotion();
     state = setFourDActive(state, true);
@@ -723,15 +731,20 @@ function main(): void {
     );
   }
 
-  // Embed the CURRENT 3D system at w = 0 and enter 4D on it (fr-2ou). Both
-  // guards are belt-and-braces: the button is disabled while 4D is active and
-  // whenever the system isn't embeddable, but a stray call must never
-  // double-enter or hand embedTransform3 a shear/variation it would throw on.
-  // An embedded 3D system has no natural 4D wireframe, so it gets no scaffold.
+  // Embed the CURRENT 3D system at w = 0 and enter 4D on it (fr-2ou/fr-hy8).
+  // Since fr-hy8 completed the Transform4 parameterization, embedTransform3 is
+  // total — every 3D map (shear, variations and all) embeds faithfully, so there
+  // is no "not embeddable" gate; the only guard left is the belt-and-braces
+  // "don't double-enter" one. An enabled final-transform lens embeds too and
+  // rides along as the 4D plot-time lens. An embedded 3D system has no natural 4D
+  // wireframe, so it gets no scaffold.
   function enterFourDEmbedded(): void {
     if (state.fourDActive) return;
-    if (!state.transforms.every(isEmbeddable3)) return;
-    enterFourDWith(state.transforms.map(embedTransform3), null);
+    enterFourDWith(
+      state.transforms.map(embedTransform3),
+      null,
+      state.finalTransform ? embedTransform3(state.finalTransform) : null,
+    );
   }
 
   // Leave the 4D projection and restore the 3D scene exactly as it was left.
@@ -739,6 +752,7 @@ function main(): void {
     state = setFourDActive(state, false);
     fourDSystem = null;
     fourDResult = null;
+    fourDFinal = null; // hygiene: next entry sets this too, but don't leave a stale lens.
     fourDSelected = 0; // hygiene: next entry resets this too, but don't leave it stale.
     scene.setFourDScaffold(null);
     scene.setFourDActive(false);

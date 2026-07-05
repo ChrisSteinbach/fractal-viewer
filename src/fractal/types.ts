@@ -153,12 +153,41 @@ export interface Rotation4 {
 }
 
 /**
- * One affine map of a 4D IFS (fr-cbg spike). Deliberately the MINIMAL 4D map
- * shape: position, per-axis scale, and an optional plane-angle {@link Rotation4}
- * — no `id`, no shear, and no variations (all of which the 3D {@link Transform}
- * carries). The spike is about proving out the 4D chaos-game path and its
- * renderer, not reaching feature parity; those fields can be added later without
- * disturbing this core. See `affine4.ts` (`composeAffine4`) and
+ * Shear of a 4D map (fr-hy8): the six above-diagonal entries of a 4x4 unit
+ * upper-triangular matrix `U`, the direct 4D extension of {@link Transform.shear}
+ * (a `Vec3` `[xy, xz, yz]` in 3D). Each field `ab` sits at row `index(a)`, column
+ * `index(b)` of `U` (with `x=0, y=1, z=2, w=3`), row-major:
+ *
+ *     U = | 1 xy xz xw |
+ *         | 0  1 yz yw |
+ *         | 0  0  1 zw |
+ *         | 0  0  0  1 |
+ *
+ * The three 3D-plane entries (`xy`, `xz`, `yz`) occupy exactly the slots
+ * `affine.ts`'s `shearMatrix` fills from a `Vec3`; the three `w`-column entries
+ * (`xw`, `yw`, `zw`) are the new degrees of freedom the fourth coordinate adds.
+ * A missing/undefined field is exactly 0 — mirroring {@link Rotation4}. All
+ * absent ⇒ the identity (no shear). `U` is right-multiplied into `R·diag(scale)`
+ * — see `affine4.ts` (`composeAffine4`).
+ */
+export interface Shear4 {
+  xy?: number;
+  xz?: number;
+  yz?: number;
+  xw?: number;
+  yw?: number;
+  zw?: number;
+}
+
+/**
+ * One affine map of a 4D IFS (fr-cbg spike; completed in fr-hy8). With shear and
+ * variations it now parameterizes the FULL 20-dimensional affine group of R⁴ —
+ * 4 position + 4 scale + 6 rotation ({@link Rotation4}) + 6 shear
+ * ({@link Shear4}) — the exact `M = R · diag(scale) · U` (QR-style) picture of
+ * the 3D {@link Transform} one dimension up, plus the same post-affine nonlinear
+ * {@link Variation} blend. Every field but `position`/`scale` is optional and
+ * absent ⇒ its identity, so a plain contraction stays a two-field object and
+ * embeds/composes bit-identically. See `affine4.ts` (`composeAffine4`) and
  * `chaos-game-4d.ts`.
  */
 export interface Transform4 {
@@ -166,6 +195,18 @@ export interface Transform4 {
   scale: Vec4;
   /** Plane rotation; omitted ⇒ no rotation (identity linear part before scale). */
   rotation?: Rotation4;
+  /**
+   * Unit upper-triangular shear factor `U`, right-multiplied as
+   * `M = R · diag(scale) · U` (see {@link Shear4}); omitted ⇒ no shear. The 4D
+   * analogue of {@link Transform.shear}, completing the affine parameterization.
+   */
+  shear?: Shear4;
+  /**
+   * Nonlinear variations blended in after the affine part, same
+   * weighted-sum semantics as {@link Transform.variations} (see
+   * `variations4.ts`). Omitted or empty ⇒ the map stays purely affine.
+   */
+  variations?: Variation[];
   /**
    * Relative selection weight for the 4D chaos game, mirroring
    * {@link Transform.weight}. Omitted ⇒ 1.

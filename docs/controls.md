@@ -77,9 +77,10 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
   a _4D_ IFS, shown as a slowly auto-tumbling orthographic projection (an XY+ZW
   double rotation). **Current System → 4D** instead takes the system you built in
-  the 3D editor into 4D, embedding every map at w = 0 — available only when the
-  system is free of shear and variations, which the 4D core cannot yet represent
-  (a note explains when it is disabled). The rendering is built to make the
+  the 3D editor into 4D, embedding every map at w = 0 — any system embeds
+  faithfully now, including shear, variations, and an enabled final-transform
+  lens (all carried across so the w = 0 slice is exactly your 3D fractal). The
+  rendering is built to make the
   fourth dimension legible: a diverging palette on the rotated 4th coordinate
   (cool blue = −w, warm orange = +w, dim gray ≈ our own 3-space), additive
   translucency so the w-layers a projection folds together stay _visible_ and sum

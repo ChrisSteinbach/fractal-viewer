@@ -1,4 +1,4 @@
-import type { Rotation4, Transform, Transform4, Vec4 } from "./types";
+import type { Rotation4, Shear4, Transform, Transform4, Vec4 } from "./types";
 
 /**
  * A composed 4D affine map (fr-cbg spike), stored as a row-major 4x4 linear part
@@ -121,11 +121,14 @@ export function rotationMatrix4(rotation: Rotation4): number[] {
 }
 
 /**
- * Compose a {@link Transform4} into an {@link Affine4} (`M = R · diag(scale)`).
- * Each column `c` of the rotation is scaled by `scale[c]` — the exact
- * column-scaling pattern of `affine.ts`'s `composeAffine` (`m[r*4+c] *=
- * scale[c]`), one dimension up. No shear: the spike's {@link Transform4} has no
- * shear field, so unlike the 3D `composeAffine` there is nothing to fold in.
+ * Compose a {@link Transform4} into an {@link Affine4}
+ * (`M = R · diag(scale) · U`). Each column `c` of the rotation is scaled by
+ * `scale[c]` — the exact column-scaling pattern of `affine.ts`'s `composeAffine`
+ * (`m[r*4+c] *= scale[c]`), one dimension up — then the unit upper-triangular
+ * {@link Shear4} factor `U` is folded in by column operations, exactly as the 3D
+ * `composeAffine` does (see {@link foldShear4}). Skipped entirely when `shear` is
+ * absent or all-zero, so an unsheared system composes bit-identically to before
+ * fr-hy8.
  */
 export function composeAffine4(transform: Transform4): Affine4 {
   // rotationMatrix4 returns a fresh array, so scaling it in place is safe.
@@ -136,7 +139,49 @@ export function composeAffine4(transform: Transform4): Affine4 {
       m[r * 4 + c] *= s[c];
     }
   }
+  if (transform.shear) foldShear4(m, transform.shear);
   return { m, t: [...transform.position] };
+}
+
+/**
+ * Right-multiply a row-major 4x4 `B = R · diag(scale)` (in place) by the unit
+ * upper-triangular {@link Shear4} factor `U`, giving `M = B · U`. With `U` as
+ * documented on {@link Shear4}, column `j` of `M` is `B · (column j of U)`:
+ *
+ *     col0 = b0                              (unchanged)
+ *     col1 = b1 + xy·b0
+ *     col2 = b2 + xz·b0 + yz·b1
+ *     col3 = b3 + xw·b0 + yw·b1 + zw·b2
+ *
+ * — every mix uses the ORIGINAL earlier columns. Updating columns in DESCENDING
+ * order (3, then 2, then 1; col0 is never touched) is what makes that hold in
+ * place: when col3 reads col1/col2 they are still original, and when col2 reads
+ * col1 it is still original. This is the direct 4D extension of `affine.ts`'s
+ * `composeAffine` shear fold (whose 3D `U` uses `[xy, xz, yz]` in exactly these
+ * slots), and the whole point of the {@link Transform4} affine parameterization:
+ * the remaining six degrees of freedom that let a 4D map express ANY affine map.
+ */
+function foldShear4(m: number[], shear: Shear4): void {
+  const xy = shear.xy ?? 0;
+  const xz = shear.xz ?? 0;
+  const yz = shear.yz ?? 0;
+  const xw = shear.xw ?? 0;
+  const yw = shear.yw ?? 0;
+  const zw = shear.zw ?? 0;
+  if (xy === 0 && xz === 0 && yz === 0 && xw === 0 && yw === 0 && zw === 0) {
+    return;
+  }
+  for (let r = 0; r < 4; r++) {
+    const c0 = m[r * 4];
+    const c1 = m[r * 4 + 1];
+    const c2 = m[r * 4 + 2];
+    // Descending order: col3 first (mixes original col0/1/2), then col2
+    // (original col0/1), then col1 (original col0). Reading the saved c0/c1/c2
+    // makes the "original earlier column" requirement explicit.
+    m[r * 4 + 3] += xw * c0 + yw * c1 + zw * c2;
+    m[r * 4 + 2] += xz * c0 + yz * c1;
+    m[r * 4 + 1] += xy * c0;
+  }
 }
 
 /** Apply a 4D affine map to a point: returns `m · (x, y, z, w) + t`. Hand-
@@ -158,32 +203,15 @@ export function applyAffine4(
 }
 
 /**
- * Whether a 3D {@link Transform} can be embedded into the 4D spike — i.e. it
- * carries no non-zero shear and no enabled (weight > 0) variation. These are
- * EXACTLY the two conditions {@link embedTransform3} rejects with a
- * `RangeError`; the two are a matched pair (embedTransform3 calls this), so a
- * caller can gate the embed on `isEmbeddable3(t)` and never trip the throw. An
- * explicit all-zero shear or an all-weight-0 variation list is embeddable —
- * there is nothing to drop.
- */
-export function isEmbeddable3(t: Transform): boolean {
-  const { shear } = t;
-  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
-    return false;
-  }
-  if (t.variations && t.variations.some((v) => v.weight > 0)) {
-    return false;
-  }
-  return true;
-}
-
-/**
  * # The 3D → 4D bridge
  *
  * Embed a 3D {@link Transform} as a {@link Transform4} living in the `w = 0`
  * slice: position gains a `0` fourth coordinate, scale gains the map's MEAN
- * spatial contraction `(|sx|+|sy|+|sz|)/3` (below), and the Euler-XYZ rotation
- * is rewritten as three plane angles.
+ * spatial contraction `(|sx|+|sy|+|sz|)/3` (below), the Euler-XYZ rotation is
+ * rewritten as three plane angles, and — since fr-hy8 completed the
+ * {@link Transform4} parameterization — the 3D shear and variations carry across
+ * verbatim. The embed is now TOTAL: every 3D {@link Transform} is representable,
+ * so there is no reject condition and no throw.
  *
  * ## Why `scale_w` is the mean contraction, not `1`
  *
@@ -216,20 +244,15 @@ export function isEmbeddable3(t: Transform): boolean {
  * ulp-level, not bitwise — the tests pin 1e-12), and its `w` row/column stay
  * exactly `[0,0,0,1]`.
  *
- * Shear and variations are NOT representable in the spike's {@link Transform4},
- * so rather than silently drop them (a wrong embed that looks right) this throws
- * a `RangeError` when the source transform carries a non-zero shear or any
- * enabled (weight > 0) variation. That reject condition is EXACTLY
- * {@link isEmbeddable3} returning `false` — the two are a matched pair (this
- * calls that predicate), so gate a call with `isEmbeddable3(t)` to avoid the
- * throw.
+ * Shear and variations carry across into the identical-meaning
+ * {@link Transform4} fields: the 3D shear `[xy, xz, yz]` becomes `{ xy, xz, yz }`
+ * (the three `w`-column entries `xw`/`yw`/`zw` absent, i.e. 0 — the embedded map
+ * shears only within the `w = 0` slice), and the variation list is copied as-is
+ * (its 4D lift reproduces the 3D warp bit-for-bit on the `w = 0` slice — see
+ * `variations4.ts`). So the `w = 0` slice of the embedded 4D system is exactly
+ * the source 3D fractal, shear, variations and all.
  */
 export function embedTransform3(t: Transform): Transform4 {
-  if (!isEmbeddable3(t)) {
-    throw new RangeError(
-      "embedTransform3: shear and enabled variations are not representable in the 4D spike's Transform4 (see isEmbeddable3)",
-    );
-  }
   const [rx, ry, rz] = t.rotation;
   const [px, py, pz] = t.position;
   const [sx, sy, sz] = t.scale;
@@ -240,6 +263,18 @@ export function embedTransform3(t: Transform): Transform4 {
     // yz = rx, xz = −ry (the RY sign flip above), xy = rz.
     rotation: { yz: rx, xz: -ry, xy: rz },
   };
+  // Carry the 3D shear into the w = 0 slice: [xy, xz, yz] → { xy, xz, yz },
+  // leaving the w-column entries absent. Only when present (unsheared maps stay
+  // a shearless Transform4 so composeAffine4 keeps its fast path).
+  const { shear } = t;
+  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
+    embedded.shear = { xy: shear[0], xz: shear[1], yz: shear[2] };
+  }
+  // Copy the variation list verbatim (its 4D lift is w = 0-exact). A fresh array
+  // so later edits to either transform can't alias through.
+  if (t.variations && t.variations.length > 0) {
+    embedded.variations = t.variations.map((v) => ({ ...v }));
+  }
   if (t.weight !== undefined) embedded.weight = t.weight;
   return embedded;
 }

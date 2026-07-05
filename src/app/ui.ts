@@ -1,5 +1,4 @@
 import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
-import { isEmbeddable3 } from "../fractal/affine4";
 import {
   buildColorModeLUT,
   colorModeUsesGamma,
@@ -516,9 +515,9 @@ export class Ui {
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
-  // "Current System → 4D" entry button + its "why disabled" note (fr-2ou).
+  // "Current System → 4D" entry button (fr-2ou). Always enabled: fr-hy8 made the
+  // 3D → 4D embed total, so there is no "not embeddable" state left to gate on.
   private readonly embed3Button: HTMLButtonElement;
-  private readonly embed3Note: HTMLElement;
   // In-4D per-map editor (fr-2ou): the Map select and the five w-param sliders.
   private readonly fourDMapSelect: HTMLSelectElement;
   private readonly fourDPosWSlider: HTMLInputElement;
@@ -641,7 +640,6 @@ export class Ui {
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
     this.embed3Button = this.byId("embed3Button");
-    this.embed3Note = this.byId("embed3Note");
     this.fourDMapSelect = this.byId("fourDMapSelect");
     this.fourDPosWSlider = this.byId("fourDPosWSlider");
     this.fourDPosWLabel = this.byId("fourDPosWLabel");
@@ -1012,16 +1010,9 @@ export class Ui {
       "hidden",
       fourD || !colorModeUsesGamma(state.colorMode),
     );
-    // "Current System → 4D" embeds the live 3D system at w = 0, which
-    // embedTransform3 refuses for shear/variations — so disable it (with a
-    // one-line note) whenever any current transform isn't embeddable, and let
-    // that track live edits (this runs on every refresh). Skipped during a
-    // flame/solid render, when the whole 4D entry block is hidden anyway.
-    if (!rendering) {
-      const embeddable = state.transforms.every(isEmbeddable3);
-      this.embed3Button.disabled = !embeddable;
-      this.embed3Note.classList.toggle("hidden", embeddable);
-    }
+    // "Current System → 4D" always stays enabled: fr-hy8 made the embed total
+    // (shear, variations and the final-transform lens all carry into 4D), so
+    // there is no longer any system it must refuse.
     this.updateLegend(state);
 
     if (state.flameActive) {

@@ -1,10 +1,10 @@
-import { embedTransform3 } from "./affine4";
+import { applyAffine4, composeAffine4, embedTransform3 } from "./affine4";
 import { ESCAPE_LIMIT, MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { pentatopeGasket } from "./presets4";
 import { sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Transform4 } from "./types";
+import type { Transform, Transform4 } from "./types";
 
 function makeMaps(count: number): Transform4[] {
   return Array.from({ length: count }, (): Transform4 => ({
@@ -136,6 +136,156 @@ describe("runChaosGame4 embedding a 3D system (structural equivalence)", () => {
     expect(four.bounds.maxY).toBeCloseTo(three.bounds.maxY, 1);
     expect(four.bounds.minZ).toBeCloseTo(three.bounds.minZ, 1);
     expect(four.bounds.maxZ).toBeCloseTo(three.bounds.maxZ, 1);
+  });
+});
+
+describe("runChaosGame4 with variations", () => {
+  it("stays bounded and reproducible with a spherical variation and a seed", () => {
+    // Two contractive maps, one carrying a nonlinear spherical warp (the full 4D
+    // radius genuinely participates). The warp can send a near-origin point far
+    // out; the escape guard — which now runs AFTER the warp — must keep every
+    // recorded coordinate finite and within the escape limit.
+    const maps: Transform4[] = [
+      {
+        position: [0.3, 0.1, -0.2, 0.15],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        variations: [{ type: "spherical", weight: 0.6 }],
+      },
+      { position: [-0.3, 0.2, 0.15, -0.1], scale: [0.5, 0.5, 0.5, 0.5] },
+    ];
+    const a = runChaosGame4(maps, 5000, mulberry32(7));
+    const b = runChaosGame4(maps, 5000, mulberry32(7));
+    // Byte-for-byte reproducible for a given seed (the warp draws no RNG, but the
+    // path is otherwise identical run to run).
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.w)).toEqual(Array.from(b.w));
+    for (let i = 0; i < a.count; i++) {
+      for (const c of [
+        a.positions[i * 3],
+        a.positions[i * 3 + 1],
+        a.positions[i * 3 + 2],
+        a.w[i],
+      ]) {
+        expect(Number.isFinite(c)).toBe(true);
+        expect(Math.abs(c)).toBeLessThanOrEqual(ESCAPE_LIMIT);
+      }
+    }
+  });
+});
+
+describe("runChaosGame4 embedding a 3D system WITH variations (anchor property end-to-end)", () => {
+  it("collapses w onto the w = 0 slice while reproducing the warped xyz attractor", () => {
+    // A Sierpinski tetrahedron with a spherical variation on one map — a system
+    // that genuinely HAS a nonlinear warp. Because the 4D lift is w = 0-exact
+    // (the anchor property), the embedded system's w = 0 slice warps bit-for-bit
+    // like the native 3D path: w decays geometrically onto 0 (the map contracts
+    // w at its mean spatial rate), and the xyz attractor matches a 3D run of the
+    // identical warped system (a different RNG stream, so bounds agree only to
+    // within sampling slop of the shared attractor).
+    const system: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 0 ? { ...t, variations: [{ type: "spherical", weight: 0.6 }] } : t,
+    );
+    const embedded = system.map(embedTransform3);
+    const four = runChaosGame4(embedded, 50000, mulberry32(11));
+
+    // The whole cloud has collapsed onto w = 0 (far below Float32 precision),
+    // so bounds.minW/maxW — the extremes of w — bound every recorded point.
+    expect(Math.abs(four.bounds.minW)).toBeLessThan(1e-25);
+    expect(Math.abs(four.bounds.maxW)).toBeLessThan(1e-25);
+    expect(Math.abs(four.center[3])).toBeLessThan(1e-25);
+
+    const three = runChaosGame(system, 50000, mulberry32(23));
+    expect(four.bounds.minX).toBeCloseTo(three.bounds.minX, 1);
+    expect(four.bounds.maxX).toBeCloseTo(three.bounds.maxX, 1);
+    expect(four.bounds.minY).toBeCloseTo(three.bounds.minY, 1);
+    expect(four.bounds.maxY).toBeCloseTo(three.bounds.maxY, 1);
+    expect(four.bounds.minZ).toBeCloseTo(three.bounds.minZ, 1);
+    expect(four.bounds.maxZ).toBeCloseTo(three.bounds.maxZ, 1);
+  });
+});
+
+describe("runChaosGame4 with a final-transform lens", () => {
+  it("bends the plotted cloud through the lens without feeding back into the orbit", () => {
+    // A pure-affine lens consumes no RNG, so the underlying orbit — and thus the
+    // transform indices — stay identical to a run without it; only the plotted
+    // positions change, each the orbit point run through the lens affine. That
+    // pins all three properties at once: applied at plot time, applied to the
+    // orbit point (not fed back), and RNG-neutral when it has no variation.
+    const lens: Transform4 = {
+      position: [1, -2, 0.5, 0.3],
+      scale: [2, 2, 2, 2],
+    };
+    const base = runChaosGame4(pentatopeGasket(), 2000, mulberry32(9));
+    const lensed = runChaosGame4(pentatopeGasket(), 2000, mulberry32(9), lens);
+
+    expect(Array.from(lensed.transformIndices)).toEqual(
+      Array.from(base.transformIndices),
+    );
+    // The bent cloud really moved: its bounds differ from the un-lensed run.
+    expect(lensed.bounds).not.toEqual(base.bounds);
+
+    const F = composeAffine4(lens);
+    for (let i = 0; i < base.count; i++) {
+      const [ex, ey, ez, ew] = applyAffine4(
+        F,
+        base.positions[i * 3],
+        base.positions[i * 3 + 1],
+        base.positions[i * 3 + 2],
+        base.w[i],
+      );
+      expect(lensed.positions[i * 3]).toBeCloseTo(ex, 4);
+      expect(lensed.positions[i * 3 + 1]).toBeCloseTo(ey, 4);
+      expect(lensed.positions[i * 3 + 2]).toBeCloseTo(ez, 4);
+      expect(lensed.w[i]).toBeCloseTo(ew, 4);
+    }
+  });
+
+  it("leaves the cloud unchanged for an identity lens", () => {
+    const identity: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+    };
+    const without = runChaosGame4(pentatopeGasket(), 1000, mulberry32(4));
+    const withIdentity = runChaosGame4(
+      pentatopeGasket(),
+      1000,
+      mulberry32(4),
+      identity,
+    );
+    expect(Array.from(withIdentity.positions)).toEqual(
+      Array.from(without.positions),
+    );
+    expect(Array.from(withIdentity.w)).toEqual(Array.from(without.w));
+  });
+
+  it("keeps every coordinate finite when the lens diverges at a singularity", () => {
+    // spherical inverts through the origin, sending points near it to infinity;
+    // the finite guard must plot the un-bent orbit point rather than leak NaN/∞.
+    const lens: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      variations: [{ type: "spherical", weight: 1 }],
+    };
+    const { positions, w } = runChaosGame4(
+      pentatopeGasket(),
+      3000,
+      mulberry32(4),
+      lens,
+    );
+    for (const v of positions) expect(Number.isFinite(v)).toBe(true);
+    for (const v of w) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it("is deterministic for a seed even with a stochastic (julia) lens", () => {
+    const lens: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      variations: [{ type: "julia", weight: 1 }],
+    };
+    const a = runChaosGame4(pentatopeGasket(), 500, mulberry32(9), lens);
+    const b = runChaosGame4(pentatopeGasket(), 500, mulberry32(9), lens);
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.w)).toEqual(Array.from(b.w));
   });
 });
 

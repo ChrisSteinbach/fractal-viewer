@@ -1779,27 +1779,21 @@ describe("Ui 4D parameter editing (fr-2ou)", () => {
     expect(handlers.onEmbedCurrentSystem).toHaveBeenCalledOnce();
   });
 
-  it("disables the embed button and shows the note when a transform carries shear", () => {
+  it("keeps the embed button enabled even for a system carrying shear and variations (fr-hy8)", () => {
+    // fr-hy8 made the 3D → 4D embed total, so the button no longer gates on
+    // embeddability — even a map with both shear AND an enabled variation embeds.
     const ui = new Ui(document);
-    const sheared: Transform = {
+    const complex: Transform = {
       id: 0,
       position: [0, 0, 0],
       rotation: [0, 0, 0],
       scale: [0.5, 0.5, 0.5],
       shear: [0.5, 0, 0],
+      variations: [{ type: "swirl", weight: 1 }],
     };
-    ui.updateLabels({ ...initialState(true), transforms: [sheared] });
-
-    expect((el("embed3Button") as HTMLButtonElement).disabled).toBe(true);
-    expect(el("embed3Note").classList.contains("hidden")).toBe(false);
-  });
-
-  it("enables the embed button and hides the note for a plain (embeddable) system", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), transforms: defaultTransforms() });
+    ui.updateLabels({ ...initialState(true), transforms: [complex] });
 
     expect((el("embed3Button") as HTMLButtonElement).disabled).toBe(false);
-    expect(el("embed3Note").classList.contains("hidden")).toBe(true);
   });
 
   it("renderFourDEditor populates one option per map and fills the selected map's sliders", () => {
