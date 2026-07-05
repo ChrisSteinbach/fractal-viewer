@@ -3,7 +3,7 @@ import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import { initialState, MAX_COLOR_GAMMA } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
-import { FLAME_PALETTE_IDS } from "../fractal/palette";
+import { FLAME_PALETTE_IDS, buildPaletteLUT } from "../fractal/palette";
 import { buildColorModeLUT } from "../fractal/color";
 import { to255 } from "../fractal/vec";
 import type { Transform } from "../fractal/types";
@@ -310,6 +310,9 @@ describe("Ui color legend (fr-dsz)", () => {
   function legendLabelLow(): HTMLElement {
     return document.getElementById("legendLabelLow") as HTMLElement;
   }
+  function legendLabelMid(): HTMLElement {
+    return document.getElementById("legendLabelMid") as HTMLElement;
+  }
   function legendLabelHigh(): HTMLElement {
     return document.getElementById("legendLabelHigh") as HTMLElement;
   }
@@ -460,14 +463,54 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(true);
   });
 
-  it("hides the legend while a flame render is active, even in a mode that normally shows one", () => {
+  it("hides the legend while a flame render uses the legacy palette", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
       flameActive: true,
+      flame: { ...initialState(true).flame, paletteId: "legacy" },
     });
+    // Legacy flame color is per-producing-transform along the orbit — not a
+    // 1D ramp — so there is no strip the legend could truthfully draw.
     expect(legend().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the active palette strip while a flame render uses a gradient palette", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      // uniform would hide the colorMode legend — proving the palette strip
+      // doesn't come from colorMode at all.
+      colorMode: "uniform",
+      flameActive: true,
+      // Not "spectrum": its c coefficients (palette.ts) are all integers, so
+      // the cosine ramp is exactly periodic and t=0/t=1 land on the identical
+      // color — useless for an endpoint-ordering assertion below. "ember" has
+      // a non-integer c on two channels, so its ends genuinely differ.
+      flame: { ...initialState(true).flame, paletteId: "ember" },
+    });
+
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendText().classList.contains("hidden")).toBe(true);
+    expect(legendLabelLow().textContent).toBe("");
+    expect(legendLabelMid().textContent).toBe("Ember palette");
+    expect(legendLabelHigh().textContent).toBe("");
+
+    // Endpoints derived from the very LUT the flame render indexes
+    // (buildPaletteLUT), in left-to-right order — the fr-dsz can't-drift bar.
+    const lut = buildPaletteLUT("ember");
+    if (lut === null) throw new Error("ember must have a LUT");
+    const background = legendBar().style.backgroundImage;
+    const lowRgb = lutRgb(lut, 0);
+    const highRgb = lutRgb(lut, 255);
+    expect(background).toContain(lowRgb);
+    expect(background).toContain(highRgb);
+    expect(background.indexOf(lowRgb)).toBeLessThan(
+      background.indexOf(highRgb),
+    );
   });
 
   it("shows the legend again after returning from a flame render", () => {
@@ -485,7 +528,7 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the legend while the solid render is active with a non-legacy palette", () => {
+  it("shows the active palette strip while the solid render uses a gradient palette", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -493,10 +536,15 @@ describe("Ui color legend (fr-dsz)", () => {
       solidActive: true,
       solid: { ...initialState(true).solid, paletteId: "aurora" },
     });
+
     // voxel.ts's accumulateVoxels colors from the palette's LUT instead of
-    // colorMode once a non-"legacy" palette is picked, so the legend would
-    // be describing colors the render no longer uses.
-    expect(legend().classList.contains("hidden")).toBe(true);
+    // colorMode once a non-"legacy" palette is picked — so the legend shows
+    // that palette's strip, named, rather than the colorMode ramp.
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelMid().textContent).toBe("Aurora palette");
+    expect(legendLabelLow().textContent).toBe("");
+    expect(legendLabelHigh().textContent).toBe("");
   });
 
   it("keeps the legend visible and accurate while the solid render is active with the legacy palette", () => {
@@ -513,7 +561,7 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendBar().classList.contains("hidden")).toBe(false);
   });
 
-  it("re-hides the legend when the active solid palette changes from legacy to a gradient", () => {
+  it("swaps the colorMode legend for the palette strip when the solid palette leaves legacy", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -522,6 +570,9 @@ describe("Ui color legend (fr-dsz)", () => {
       solid: { ...initialState(true).solid, paletteId: "legacy" },
     });
     expect(legend().classList.contains("hidden")).toBe(false);
+    // Legacy solid follows colorMode/colorGamma exactly, so this is still the
+    // height ramp's own low/high label, not a palette caption.
+    expect(legendLabelLow().textContent).toBe("low");
 
     ui.updateLabels({
       ...initialState(true),
@@ -529,7 +580,9 @@ describe("Ui color legend (fr-dsz)", () => {
       solidActive: true,
       solid: { ...initialState(true).solid, paletteId: "spectrum" },
     });
-    expect(legend().classList.contains("hidden")).toBe(true);
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendLabelMid().textContent).toBe("Spectrum palette");
+    expect(legendLabelLow().textContent).toBe("");
   });
 
   it("shows the legend again after returning from a solid render", () => {
@@ -547,6 +600,75 @@ describe("Ui color legend (fr-dsz)", () => {
       solid: { ...initialState(true).solid, paletteId: "aurora" },
     });
     expect(legend().classList.contains("hidden")).toBe(false);
+  });
+
+  /** A state whose first transform carries a non-trivial `w` block, making
+   * the system non-flat (affine4.ts's isFlatTransform) and routing the view
+   * to the 4D projection. */
+  function fourDState(): ReturnType<typeof initialState> {
+    const state = initialState(true);
+    const [first, ...rest] = state.transforms;
+    return {
+      ...state,
+      transforms: [{ ...first, w: { position: 0.5 } }, ...rest],
+    };
+  }
+
+  it("shows the diverging w ramp with signed end labels for a 4D system", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(fourDState());
+
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendText().classList.contains("hidden")).toBe(true);
+    expect(legendLabelLow().textContent).toBe("−w");
+    expect(legendLabelMid().textContent).toBe("in our 3-space");
+    expect(legendLabelHigh().textContent).toBe("+w");
+
+    // Hardcoded on purpose: these pin the legend to FOUR_D_VERTEX's GLSL
+    // constants (scene.ts), which a TS test cannot import. At s = −1 the
+    // shader yields the pure blue side (0.30, 0.60, 1.00), at s = +1 the
+    // pure orange side (1.00, 0.50, 0.18), and at s = 0 the dim gray notch
+    // 0.38 * 0.30 = 0.114 per channel. If the shader palette changes, this
+    // test must change with it — that is the keep-in-sync contract.
+    const background = legendBar().style.backgroundImage;
+    const blue = "rgb(77, 153, 255)";
+    const gray = "rgb(29, 29, 29)";
+    const orange = "rgb(255, 128, 46)";
+    expect(background).toContain(blue);
+    expect(background).toContain(gray);
+    expect(background).toContain(orange);
+    expect(background.indexOf(blue)).toBeLessThan(background.indexOf(gray));
+    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(orange));
+  });
+
+  it("shows the 4D legend even in uniform color mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...fourDState(), colorMode: "uniform" });
+    // The 4D view colors by the rotated w in-shader; colorMode — including
+    // uniform's "nothing to key" — simply doesn't apply.
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendLabelMid().textContent).toBe("in our 3-space");
+  });
+
+  it("keeps the 4D w ramp fixed as color contrast changes", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...fourDState(), colorGamma: 1 });
+    const neutral = legendBar().style.backgroundImage;
+    ui.updateLabels({ ...fourDState(), colorGamma: MAX_COLOR_GAMMA });
+    // Unlike the height/radius ramps (fr-8sk), the shader never applies
+    // colorGamma to the w palette — the legend must not pretend it does.
+    expect(legendBar().style.backgroundImage).toBe(neutral);
+  });
+
+  it("clears the 4D labels when the system returns to flat", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(fourDState());
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelMid().textContent).toBe("");
+    expect(legendLabelHigh().textContent).toBe("high");
   });
 });
 
@@ -1901,14 +2023,19 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the color legend for a non-flat system", () => {
+  it("shows the color legend's diverging w ramp for a non-flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
       transforms: nonFlatTransforms(),
     });
-    expect(el("legend").classList.contains("hidden")).toBe(true);
+    // fr-a3q: a non-flat system routes the legend to the 4D projection's
+    // diverging w ramp instead of hiding it — colorMode is irrelevant here
+    // (color comes from the rotated w in-shader). See the full w-ramp
+    // assertions in the "Ui color legend (fr-dsz)" describe block.
+    expect(el("legend").classList.contains("hidden")).toBe(false);
+    expect(el("legendLabelMid").textContent).toBe("in our 3-space");
   });
 
   it("names the 4D projection in the help box for a non-flat system", () => {
