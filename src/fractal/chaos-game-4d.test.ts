@@ -112,20 +112,22 @@ describe("runChaosGame4 weighting", () => {
 });
 
 describe("runChaosGame4 embedding a 3D system (structural equivalence)", () => {
-  it("keeps an embedded 3D system in a single w-slice while reproducing its xyz attractor", () => {
-    // A 3D transform embeds with scale w = 1 and w-row [0,0,0,1], so w is
-    // PRESERVED exactly at its seed — the orbit never leaves the w-slice it
-    // started in (no map re-introduces w). We assert that exactly (maxW ===
-    // minW, to the last bit), and that the xyz attractor matches a native 3D
-    // run of the same preset (a different RNG stream, so bounds agree only to
-    // within the sampling slop of the shared attractor).
+  it("attracts an embedded 3D system to the w = 0 slice while reproducing its xyz attractor", () => {
+    // A 3D transform embeds with scale w = its mean spatial contraction (see
+    // embedTransform3's JSDoc — this is what keeps later 4D parameter edits
+    // contractive), so the seed's w decays geometrically: ~2^-100 after the
+    // warmup alone for these ½-scale maps. The attractor genuinely lives in
+    // the w = 0 slice, and the xyz attractor matches a native 3D run of the
+    // same preset (a different RNG stream, so bounds agree only to within the
+    // sampling slop of the shared attractor).
     const embedded = sierpinskiTetrahedron().map(embedTransform3);
     const four = runChaosGame4(embedded, 50000, mulberry32(11));
 
-    // The whole cloud lives in one w = const slice, exactly.
-    expect(four.bounds.maxW).toBe(four.bounds.minW);
-    // center.w absorbs that constant, so w never inflates the framing radius.
-    expect(four.center[3]).toBe(four.bounds.minW);
+    // The whole cloud has collapsed onto w = 0 (far below Float32 precision).
+    expect(Math.abs(four.bounds.minW)).toBeLessThan(1e-25);
+    expect(Math.abs(four.bounds.maxW)).toBeLessThan(1e-25);
+    // center.w follows, so w never inflates the framing radius.
+    expect(Math.abs(four.center[3])).toBeLessThan(1e-25);
 
     const three = runChaosGame(sierpinskiTetrahedron(), 50000, mulberry32(23));
     expect(four.bounds.minX).toBeCloseTo(three.bounds.minX, 1);

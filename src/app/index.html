@@ -452,6 +452,12 @@
         <button class="btn btn-blue" id="spiral4Button" type="button">
           Double-Rotation Spiral
         </button>
+        <button class="btn btn-blue" id="embed3Button" type="button">
+          Current System → 4D
+        </button>
+        <p id="embed3Note" class="flame-note hidden">
+          Remove shear and variations to take this system into 4D.
+        </p>
         <p class="flame-hint">
           4D iterated function systems, orthographically projected to 3D.
         </p>
@@ -478,6 +484,72 @@
               value="0"
             />
           </label>
+        </div>
+        <div id="fourDEditSection">
+          <h3>4D Transform Params</h3>
+          <label class="select-label">
+            Map
+            <select id="fourDMapSelect" aria-label="4D map to edit"></select>
+          </label>
+          <label class="select-label">
+            Position W: <span id="fourDPosWLabel">0.00</span>
+            <input
+              type="range"
+              id="fourDPosWSlider"
+              min="-1.5"
+              max="1.5"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Scale W: <span id="fourDScaleWLabel">1.00</span>
+            <input
+              type="range"
+              id="fourDScaleWSlider"
+              min="0.05"
+              max="1.5"
+              step="0.01"
+              value="1"
+            />
+          </label>
+          <label class="select-label">
+            Rotation XW: <span id="fourDRotXWLabel">0°</span>
+            <input
+              type="range"
+              id="fourDRotXWSlider"
+              min="-180"
+              max="180"
+              step="1"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Rotation YW: <span id="fourDRotYWLabel">0°</span>
+            <input
+              type="range"
+              id="fourDRotYWSlider"
+              min="-180"
+              max="180"
+              step="1"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Rotation ZW: <span id="fourDRotZWLabel">0°</span>
+            <input
+              type="range"
+              id="fourDRotZWSlider"
+              min="-180"
+              max="180"
+              step="1"
+              value="0"
+            />
+          </label>
+          <p class="flame-hint">
+            Position/rotation/scale in X, Y, Z are edited in the 3D editor
+            before embedding. These 4D edits are session-only (not saved).
+          </p>
         </div>
         <button class="btn btn-ghost" id="exitFourDButton" type="button">
           ← Back to 3D

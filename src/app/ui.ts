@@ -1,4 +1,5 @@
 import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { isEmbeddable3 } from "../fractal/affine4";
 import {
   buildColorModeLUT,
   colorModeUsesGamma,
@@ -38,6 +39,28 @@ type FinalGeometry = Omit<Geometry, "weight">;
 
 /** The current edit target: a transform index, the final transform, or none. */
 type EditTarget = number | "final" | null;
+
+/**
+ * The five NEW degrees of freedom a 4D map exposes over its embedded 3D self
+ * (fr-2ou): the fourth position/scale component and the three `w`-mixing
+ * rotation planes. The familiar x/y/z params are edited in the 3D editor before
+ * embedding, so they are deliberately absent here.
+ */
+export type FourDEditParam = "posW" | "scaleW" | "xw" | "yw" | "zw";
+
+/**
+ * A 4D map's editable `w`-parameters, projected out of a `Transform4` for the
+ * in-4D editor (see {@link Ui.renderFourDEditor}). The three plane angles are in
+ * RADIANS (the same unit `Transform4.rotation` stores); the editor's sliders
+ * display them as degrees.
+ */
+export interface FourDMapParams {
+  posW: number;
+  scaleW: number;
+  xw: number;
+  yw: number;
+  zw: number;
+}
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -121,6 +144,16 @@ export interface UiHandlers {
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
+  /** "Current System → 4D" was clicked (fr-2ou): embed the live 3D system at
+   * w = 0 and enter the 4D projection on it. */
+  onEmbedCurrentSystem: () => void;
+  /** The 4D editor's Map dropdown changed: `index` is the 0-based map to edit. */
+  onFourDMapSelect: (index: number) => void;
+  /** A 4D per-map param slider moved (fr-2ou). For `posW`/`scaleW`, `value` is
+   * the raw slider number; for the `xw`/`yw`/`zw` rotation planes, `value` is in
+   * RADIANS — the slider shows degrees and the Ui converts here, mirroring the
+   * 3D rotation editor's degree→radian boundary. */
+  onFourDParamInput: (param: FourDEditParam, value: number) => void;
 }
 
 /**
@@ -483,6 +516,21 @@ export class Ui {
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
+  // "Current System → 4D" entry button + its "why disabled" note (fr-2ou).
+  private readonly embed3Button: HTMLButtonElement;
+  private readonly embed3Note: HTMLElement;
+  // In-4D per-map editor (fr-2ou): the Map select and the five w-param sliders.
+  private readonly fourDMapSelect: HTMLSelectElement;
+  private readonly fourDPosWSlider: HTMLInputElement;
+  private readonly fourDPosWLabel: HTMLElement;
+  private readonly fourDScaleWSlider: HTMLInputElement;
+  private readonly fourDScaleWLabel: HTMLElement;
+  private readonly fourDRotXWSlider: HTMLInputElement;
+  private readonly fourDRotXWLabel: HTMLElement;
+  private readonly fourDRotYWSlider: HTMLInputElement;
+  private readonly fourDRotYWLabel: HTMLElement;
+  private readonly fourDRotZWSlider: HTMLInputElement;
+  private readonly fourDRotZWLabel: HTMLElement;
   private readonly transformsSection: HTMLElement;
   private readonly presetSection: HTMLElement;
   private readonly colorModeRow: HTMLElement;
@@ -592,6 +640,19 @@ export class Ui {
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
+    this.embed3Button = this.byId("embed3Button");
+    this.embed3Note = this.byId("embed3Note");
+    this.fourDMapSelect = this.byId("fourDMapSelect");
+    this.fourDPosWSlider = this.byId("fourDPosWSlider");
+    this.fourDPosWLabel = this.byId("fourDPosWLabel");
+    this.fourDScaleWSlider = this.byId("fourDScaleWSlider");
+    this.fourDScaleWLabel = this.byId("fourDScaleWLabel");
+    this.fourDRotXWSlider = this.byId("fourDRotXWSlider");
+    this.fourDRotXWLabel = this.byId("fourDRotXWLabel");
+    this.fourDRotYWSlider = this.byId("fourDRotYWSlider");
+    this.fourDRotYWLabel = this.byId("fourDRotYWLabel");
+    this.fourDRotZWSlider = this.byId("fourDRotZWSlider");
+    this.fourDRotZWLabel = this.byId("fourDRotZWLabel");
     this.transformsSection = this.byId("transformsSection");
     this.presetSection = this.byId("presetSection");
     this.colorModeRow = this.byId("colorModeRow");
@@ -756,6 +817,39 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
+    this.embed3Button.addEventListener("click", () =>
+      handlers.onEmbedCurrentSystem(),
+    );
+    this.fourDMapSelect.addEventListener("change", () =>
+      handlers.onFourDMapSelect(Number(this.fourDMapSelect.value)),
+    );
+    this.fourDPosWSlider.addEventListener("input", () => {
+      const value = Number(this.fourDPosWSlider.value);
+      this.fourDPosWLabel.textContent = value.toFixed(2);
+      handlers.onFourDParamInput("posW", value);
+    });
+    this.fourDScaleWSlider.addEventListener("input", () => {
+      const value = Number(this.fourDScaleWSlider.value);
+      this.fourDScaleWLabel.textContent = value.toFixed(2);
+      handlers.onFourDParamInput("scaleW", value);
+    });
+    // Rotation sliders show degrees but the handler (and Transform4) wants
+    // radians — convert here, exactly as the 3D rotation editor does.
+    this.fourDRotXWSlider.addEventListener("input", () => {
+      const deg = Number(this.fourDRotXWSlider.value);
+      this.fourDRotXWLabel.textContent = `${deg}°`;
+      handlers.onFourDParamInput("xw", degToRad(deg));
+    });
+    this.fourDRotYWSlider.addEventListener("input", () => {
+      const deg = Number(this.fourDRotYWSlider.value);
+      this.fourDRotYWLabel.textContent = `${deg}°`;
+      handlers.onFourDParamInput("yw", degToRad(deg));
+    });
+    this.fourDRotZWSlider.addEventListener("input", () => {
+      const deg = Number(this.fourDRotZWSlider.value);
+      this.fourDRotZWLabel.textContent = `${deg}°`;
+      handlers.onFourDParamInput("zw", degToRad(deg));
+    });
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -765,6 +859,38 @@ export class Ui {
     this.fourDSliceRow.classList.add("hidden");
     this.fourDSliceSlider.value = "0";
     this.fourDSliceLabel.textContent = "0.00";
+  }
+
+  /**
+   * (Re)build the in-4D per-map editor (fr-2ou): rebuild the Map dropdown as
+   * "Map 1"…"Map N", select `selected`, and fill the five w-param sliders +
+   * labels from `maps[selected]`. Called by main.ts on 4D entry and whenever
+   * the selected map changes — NOT on a slider edit, since the sliders are
+   * already the live source of that value. Rotation angles arrive in radians
+   * and are shown as degrees, matching the 3D rotation editor.
+   */
+  renderFourDEditor(maps: FourDMapParams[], selected: number): void {
+    this.fourDMapSelect.replaceChildren();
+    maps.forEach((_, i) => {
+      const option = this.doc.createElement("option");
+      option.value = String(i);
+      option.textContent = `Map ${i + 1}`;
+      this.fourDMapSelect.appendChild(option);
+    });
+    this.fourDMapSelect.value = String(selected);
+
+    const map = maps[selected];
+    if (!map) return; // defensive: a 4D system always has ≥ 1 map.
+    this.fourDPosWSlider.value = String(map.posW);
+    this.fourDPosWLabel.textContent = map.posW.toFixed(2);
+    this.fourDScaleWSlider.value = String(map.scaleW);
+    this.fourDScaleWLabel.textContent = map.scaleW.toFixed(2);
+    this.fourDRotXWSlider.value = String(displayDegrees(map.xw));
+    this.fourDRotXWLabel.textContent = `${displayDegrees(map.xw)}°`;
+    this.fourDRotYWSlider.value = String(displayDegrees(map.yw));
+    this.fourDRotYWLabel.textContent = `${displayDegrees(map.yw)}°`;
+    this.fourDRotZWSlider.value = String(displayDegrees(map.zw));
+    this.fourDRotZWLabel.textContent = `${displayDegrees(map.zw)}°`;
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -886,6 +1012,16 @@ export class Ui {
       "hidden",
       fourD || !colorModeUsesGamma(state.colorMode),
     );
+    // "Current System → 4D" embeds the live 3D system at w = 0, which
+    // embedTransform3 refuses for shear/variations — so disable it (with a
+    // one-line note) whenever any current transform isn't embeddable, and let
+    // that track live edits (this runs on every refresh). Skipped during a
+    // flame/solid render, when the whole 4D entry block is hidden anyway.
+    if (!rendering) {
+      const embeddable = state.transforms.every(isEmbeddable3);
+      this.embed3Button.disabled = !embeddable;
+      this.embed3Note.classList.toggle("hidden", embeddable);
+    }
     this.updateLegend(state);
 
     if (state.flameActive) {

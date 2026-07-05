@@ -1,7 +1,11 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
-import { rotationMatrix4 } from "../fractal/affine4";
+import {
+  embedTransform3,
+  isEmbeddable3,
+  rotationMatrix4,
+} from "../fractal/affine4";
 import {
   doubleRotationSpiral,
   pentatopeGasket,
@@ -31,6 +35,7 @@ import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
+import type { FourDMapParams } from "./ui";
 import {
   addTransform,
   initialState,
@@ -193,6 +198,9 @@ function main(): void {
   // The soft w-slice (fr-6x2): session-only view state, reset on every entry.
   let fourDSliceOn = false;
   let fourDSliceCenter = 0;
+  // The 4D per-map editor's selected map index (fr-2ou): session-only, reset to
+  // 0 on every 4D entry. Indexes into `fourDSystem`.
+  let fourDSelected = 0;
 
   // Re-run the chaos game: the only path that touches the RNG and changes point
   // positions. Use this for geometry edits, add/remove, presets, and explicit
@@ -649,23 +657,47 @@ function main(): void {
     refreshUi();
   }
 
-  // Enter the 4D projection view on `kind`'s system (fr-cbg spike). The 4D
-  // chaos game runs through regenerate()'s branch and the auto-tumble is driven
-  // from animate(). Nothing persisted changes, so there is no scheduleSave.
-  function enterFourD(kind: FourDKind): void {
-    fourDSystem = FOUR_D_SYSTEMS[kind]();
+  // Project the live 4D system into the per-map editor shape (fr-2ou): the five
+  // NEW degrees of freedom each map exposes over its 3D self. Absent rotation
+  // planes read as 0 (Rotation4's absent-means-zero convention).
+  function fourDEditorParams(): FourDMapParams[] {
+    if (!fourDSystem) return [];
+    return fourDSystem.map((t) => ({
+      posW: t.position[3],
+      scaleW: t.scale[3],
+      xw: t.rotation?.xw ?? 0,
+      yw: t.rotation?.yw ?? 0,
+      zw: t.rotation?.zw ?? 0,
+    }));
+  }
+
+  // Shared entry sequence for BOTH 4D entries (a preset system and the embedded
+  // current system — fr-cbg spike + fr-2ou). Loads `system` + its optional
+  // wireframe scaffold, starts the tumble clock, activates the mode, resets the
+  // slice and the per-map editor, generates the cloud, and auto-frames it. The
+  // two entry points below must never drift in this tail, so it lives here once.
+  // Nothing persisted changes, so there is no scheduleSave.
+  function enterFourDWith(
+    system: Transform4[],
+    scaffoldEdges: [Vec4, Vec4][] | null,
+  ): void {
+    fourDSystem = system;
     fourDStartMs = performance.now();
     fourDReducedMotion = prefersReducedMotion();
     state = setFourDActive(state, true);
     scene.setFourDActive(true);
-    // The tumbling 5-cell scaffold (Show guides toggles it with the grid/axes)
-    // — only the pentatope has a natural wireframe; the spiral gets none.
-    scene.setFourDScaffold(kind === "pentatope" ? pentatopeWireframe() : null);
+    // The tumbling scaffold (Show guides toggles it with the grid/axes) — the
+    // pentatope has a natural 5-cell wireframe; the spiral and embedded systems
+    // get none.
+    scene.setFourDScaffold(scaffoldEdges);
     // Fresh visit, fresh slice: off and centered, in scene and panel alike.
     fourDSliceOn = false;
     fourDSliceCenter = 0;
     scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
     ui.resetFourDSlice();
+    // Fresh visit, fresh editor: select the first map and fill its sliders.
+    fourDSelected = 0;
+    ui.renderFourDEditor(fourDEditorParams(), fourDSelected);
     if (fourDReducedMotion) {
       // No auto-tumble under reduced motion: freeze on one generic 4D view
       // (both rotation planes engaged) so the projection still reads as 4D.
@@ -683,11 +715,31 @@ function main(): void {
     }
   }
 
+  // Enter the 4D projection view on `kind`'s preset system (fr-cbg spike).
+  function enterFourD(kind: FourDKind): void {
+    enterFourDWith(
+      FOUR_D_SYSTEMS[kind](),
+      kind === "pentatope" ? pentatopeWireframe() : null,
+    );
+  }
+
+  // Embed the CURRENT 3D system at w = 0 and enter 4D on it (fr-2ou). Both
+  // guards are belt-and-braces: the button is disabled while 4D is active and
+  // whenever the system isn't embeddable, but a stray call must never
+  // double-enter or hand embedTransform3 a shear/variation it would throw on.
+  // An embedded 3D system has no natural 4D wireframe, so it gets no scaffold.
+  function enterFourDEmbedded(): void {
+    if (state.fourDActive) return;
+    if (!state.transforms.every(isEmbeddable3)) return;
+    enterFourDWith(state.transforms.map(embedTransform3), null);
+  }
+
   // Leave the 4D projection and restore the 3D scene exactly as it was left.
   function exitFourD(): void {
     state = setFourDActive(state, false);
     fourDSystem = null;
     fourDResult = null;
+    fourDSelected = 0; // hygiene: next entry resets this too, but don't leave it stale.
     scene.setFourDScaffold(null);
     scene.setFourDActive(false);
     scene.setRenderStyle(state.renderStyle);
@@ -1139,6 +1191,39 @@ function main(): void {
     onFourDSliceInput: (value) => {
       fourDSliceCenter = value;
       scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    },
+    onEmbedCurrentSystem: () => enterFourDEmbedded(),
+    onFourDMapSelect: (index) => {
+      if (!fourDSystem) return;
+      fourDSelected = Math.max(0, Math.min(fourDSystem.length - 1, index));
+      // Refill the sliders from the newly-selected map (the sliders are the
+      // live source for edits, so nothing else needs to re-render).
+      ui.renderFourDEditor(fourDEditorParams(), fourDSelected);
+    },
+    // A 4D per-map w-param slider moved (fr-2ou): mutate the selected map of the
+    // live 4D system in place, then regenerate — the 4D branch re-runs the chaos
+    // game and re-uploads points/center/radius, so nothing else is needed. The
+    // 4D view is session-only, so (like the slice) there is no scheduleSave.
+    onFourDParamInput: (param, value) => {
+      if (!fourDSystem) return;
+      const map = fourDSystem[fourDSelected];
+      if (!map) return;
+      switch (param) {
+        case "posW":
+          map.position[3] = value;
+          break;
+        case "scaleW":
+          map.scale[3] = value;
+          break;
+        case "xw":
+        case "yw":
+        case "zw":
+          // ui.ts already converted degrees → radians, so store verbatim.
+          if (!map.rotation) map.rotation = {};
+          map.rotation[param] = value;
+          break;
+      }
+      regenerate();
     },
   });
 

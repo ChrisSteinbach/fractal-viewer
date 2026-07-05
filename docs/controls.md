@@ -76,17 +76,24 @@ Transform** sliders that appear in the panel while a transform is selected.
   is meaningless for a map applied to every point. Untick to remove it.
 - **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
   a _4D_ IFS, shown as a slowly auto-tumbling orthographic projection (an XY+ZW
-  double rotation). The rendering is built to make the fourth dimension
-  legible: a diverging palette on the rotated 4th coordinate (cool blue = −w,
-  warm orange = +w, dim gray ≈ our own 3-space), additive translucency so the
-  w-layers a projection folds together stay _visible_ and sum toward white
-  where they cross, and — with **Show guides** on — the 5-cell's wireframe
-  tumbling through the same rotation. **W slice** carves a soft Gaussian
+  double rotation). **Current System → 4D** instead takes the system you built in
+  the 3D editor into 4D, embedding every map at w = 0 — available only when the
+  system is free of shear and variations, which the 4D core cannot yet represent
+  (a note explains when it is disabled). The rendering is built to make the
+  fourth dimension legible: a diverging palette on the rotated 4th coordinate
+  (cool blue = −w, warm orange = +w, dim gray ≈ our own 3-space), additive
+  translucency so the w-layers a projection folds together stay _visible_ and sum
+  toward white where they cross, and — with **Show guides** on — the 5-cell's
+  wireframe tumbling through the same rotation. **W slice** carves a soft Gaussian
   cross-section out of the cloud (the rest stays as ghost context) and its
   position slider sweeps along w — each position is a genuinely different 3D
-  fractal. The camera orbits the projection as usual, and Points / Point Size /
-  Regenerate / guides / Save PNG stay live; everything that edits or restyles
-  the 3D system is hidden, and the view is session-only (never persisted).
+  fractal. **4D Transform Params** edits, per map (the **Map** dropdown), the five
+  new degrees of freedom the fourth dimension adds — **Position W**, **Scale W**,
+  and the **Rotation XW / YW / ZW** planes — live, like the 3D editor; the x/y/z
+  parameters are still edited in the 3D editor before embedding. The camera orbits
+  the projection as usual, and Points / Point Size / Regenerate / guides / Save
+  PNG stay live; everything that edits or restyles the 3D system is hidden, and
+  the view (including these 4D edits) is session-only (never persisted).
   **← Back to 3D** restores the previous scene exactly. See
   [4d-exploration.md](4d-exploration.md) for the design.
 

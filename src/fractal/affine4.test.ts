@@ -3,6 +3,7 @@ import {
   applyAffine4,
   composeAffine4,
   embedTransform3,
+  isEmbeddable3,
   rotationMatrix4,
 } from "./affine4";
 import { mulberry32 } from "./rng";
@@ -224,8 +225,14 @@ describe("embedTransform3", () => {
       const a3 = composeAffine(t);
       const a4 = composeAffine4(embedTransform3(t));
       expectVecClose(upperLeft3x3(a4.m), a3.m);
-      // w row is exactly [0,0,0,1]; translation gains an exact 0 fourth entry.
-      expect([a4.m[12], a4.m[13], a4.m[14], a4.m[15]]).toEqual([0, 0, 0, 1]);
+      // The w row is exactly [0, 0, 0, mean spatial contraction] — the embed
+      // contracts w at the map's mean 3D rate so 4D edits stay contractive
+      // (see embedTransform3's JSDoc). Translation gains an exact 0 fourth
+      // entry. Scales here are positive, so the mean needs no abs and both
+      // computations are the identical fp expression (exact equality holds).
+      const meanContraction = (t.scale[0] + t.scale[1] + t.scale[2]) / 3;
+      expect([a4.m[12], a4.m[13], a4.m[14]]).toEqual([0, 0, 0]);
+      expect(a4.m[15]).toBe(meanContraction);
       expect(a4.t).toEqual([t.position[0], t.position[1], t.position[2], 0]);
     }
   });
@@ -258,5 +265,48 @@ describe("embedTransform3", () => {
         transform({ variations: [{ type: "swirl", weight: 0 }] }),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("isEmbeddable3", () => {
+  function transform(overrides: Partial<Transform>): Transform {
+    return {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      ...overrides,
+    };
+  }
+
+  it("is true for a plain affine transform", () => {
+    expect(isEmbeddable3(transform({}))).toBe(true);
+  });
+
+  // The two false cases are each pinned together with embedTransform3 throwing:
+  // the predicate is the single source of truth for that reject condition, so
+  // asserting both here means they can never silently drift apart.
+  it("is false for a non-zero shear — exactly when embedTransform3 throws", () => {
+    const t = transform({ shear: [0.5, 0, 0] });
+    expect(isEmbeddable3(t)).toBe(false);
+    expect(() => embedTransform3(t)).toThrow(RangeError);
+  });
+
+  it("is false for an enabled variation — exactly when embedTransform3 throws", () => {
+    const t = transform({ variations: [{ type: "swirl", weight: 1 }] });
+    expect(isEmbeddable3(t)).toBe(false);
+    expect(() => embedTransform3(t)).toThrow(RangeError);
+  });
+
+  it("is true for an explicit all-zero shear (nothing to drop, no throw)", () => {
+    const t = transform({ shear: [0, 0, 0] });
+    expect(isEmbeddable3(t)).toBe(true);
+    expect(() => embedTransform3(t)).not.toThrow();
+  });
+
+  it("is true when every variation is at weight 0 (nothing to drop, no throw)", () => {
+    const t = transform({ variations: [{ type: "swirl", weight: 0 }] });
+    expect(isEmbeddable3(t)).toBe(true);
+    expect(() => embedTransform3(t)).not.toThrow();
   });
 });

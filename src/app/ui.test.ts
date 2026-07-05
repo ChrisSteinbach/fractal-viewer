@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
-import type { UiHandlers } from "./ui";
+import type { FourDEditParam, FourDMapParams, UiHandlers } from "./ui";
 import { initialState, MAX_COLOR_GAMMA } from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
@@ -60,6 +60,9 @@ function noopHandlers(): UiHandlers {
     onExitFourD: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
+    onEmbedCurrentSystem: vi.fn(),
+    onFourDMapSelect: vi.fn(),
+    onFourDParamInput: vi.fn(),
   };
 }
 
@@ -1760,6 +1763,139 @@ describe("Ui 4D projection controls (fr-cbg)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("0");
     expect(el("fourDSliceLabel").textContent).toBe("0.00");
+  });
+});
+
+describe("Ui 4D parameter editing (fr-2ou)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("fires onEmbedCurrentSystem when Current System → 4D is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    (el("embed3Button") as HTMLButtonElement).click();
+    expect(handlers.onEmbedCurrentSystem).toHaveBeenCalledOnce();
+  });
+
+  it("disables the embed button and shows the note when a transform carries shear", () => {
+    const ui = new Ui(document);
+    const sheared: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      shear: [0.5, 0, 0],
+    };
+    ui.updateLabels({ ...initialState(true), transforms: [sheared] });
+
+    expect((el("embed3Button") as HTMLButtonElement).disabled).toBe(true);
+    expect(el("embed3Note").classList.contains("hidden")).toBe(false);
+  });
+
+  it("enables the embed button and hides the note for a plain (embeddable) system", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), transforms: defaultTransforms() });
+
+    expect((el("embed3Button") as HTMLButtonElement).disabled).toBe(false);
+    expect(el("embed3Note").classList.contains("hidden")).toBe(true);
+  });
+
+  it("renderFourDEditor populates one option per map and fills the selected map's sliders", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const maps: FourDMapParams[] = [
+      { posW: 0.5, scaleW: 0.8, xw: 0, yw: 0, zw: 0 },
+      { posW: -0.3, scaleW: 1.2, xw: Math.PI / 4, yw: 0, zw: 0 },
+      { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
+    ];
+    ui.renderFourDEditor(maps, 1);
+
+    const select = el("fourDMapSelect") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "Map 1",
+      "Map 2",
+      "Map 3",
+    ]);
+    expect(select.value).toBe("1");
+
+    // Filled from maps[1].
+    expect((el("fourDPosWSlider") as HTMLInputElement).value).toBe("-0.3");
+    expect(el("fourDPosWLabel").textContent).toBe("-0.30");
+    expect((el("fourDScaleWSlider") as HTMLInputElement).value).toBe("1.2");
+    expect(el("fourDScaleWLabel").textContent).toBe("1.20");
+    // π/4 rad shows as 45° in both the slider position and the readout.
+    expect((el("fourDRotXWSlider") as HTMLInputElement).value).toBe("45");
+    expect(el("fourDRotXWLabel").textContent).toBe("45°");
+  });
+
+  it("fires onFourDMapSelect with the chosen map index on change", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderFourDEditor(
+      [
+        { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
+        { posW: 0, scaleW: 1, xw: 0, yw: 0, zw: 0 },
+      ],
+      0,
+    );
+
+    const select = el("fourDMapSelect") as HTMLSelectElement;
+    select.value = "1";
+    select.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDMapSelect).toHaveBeenCalledWith(1);
+  });
+
+  it("reports the Position W slider's raw value and updates its label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = el("fourDPosWSlider") as HTMLInputElement;
+    slider.value = "0.75";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFourDParamInput).toHaveBeenCalledWith("posW", 0.75);
+    expect(el("fourDPosWLabel").textContent).toBe("0.75");
+  });
+
+  it("reports the Scale W slider's raw value and updates its label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = el("fourDScaleWSlider") as HTMLInputElement;
+    slider.value = "0.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFourDParamInput).toHaveBeenCalledWith("scaleW", 0.5);
+    expect(el("fourDScaleWLabel").textContent).toBe("0.50");
+  });
+
+  it("converts each rotation slider from degrees to radians and shows degrees", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const cases: Array<[string, string, FourDEditParam, number, number]> = [
+      ["fourDRotXWSlider", "fourDRotXWLabel", "xw", 90, Math.PI / 2],
+      ["fourDRotYWSlider", "fourDRotYWLabel", "yw", -45, -Math.PI / 4],
+      ["fourDRotZWSlider", "fourDRotZWLabel", "zw", 180, Math.PI],
+    ];
+    for (const [sliderId, labelId, param, deg, rad] of cases) {
+      const slider = el(sliderId) as HTMLInputElement;
+      slider.value = String(deg);
+      slider.dispatchEvent(new Event("input"));
+
+      expect(el(labelId).textContent).toBe(`${deg}°`);
+      const call = vi
+        .mocked(handlers.onFourDParamInput)
+        .mock.calls.find((c) => c[0] === param);
+      expect(call?.[1]).toBeCloseTo(rad);
+    }
   });
 });
 

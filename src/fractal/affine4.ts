@@ -158,11 +158,45 @@ export function applyAffine4(
 }
 
 /**
+ * Whether a 3D {@link Transform} can be embedded into the 4D spike — i.e. it
+ * carries no non-zero shear and no enabled (weight > 0) variation. These are
+ * EXACTLY the two conditions {@link embedTransform3} rejects with a
+ * `RangeError`; the two are a matched pair (embedTransform3 calls this), so a
+ * caller can gate the embed on `isEmbeddable3(t)` and never trip the throw. An
+ * explicit all-zero shear or an all-weight-0 variation list is embeddable —
+ * there is nothing to drop.
+ */
+export function isEmbeddable3(t: Transform): boolean {
+  const { shear } = t;
+  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
+    return false;
+  }
+  if (t.variations && t.variations.some((v) => v.weight > 0)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * # The 3D → 4D bridge
  *
  * Embed a 3D {@link Transform} as a {@link Transform4} living in the `w = 0`
- * slice: position gains a `0` fourth coordinate, scale a `1`, and the Euler-XYZ
- * rotation is rewritten as three plane angles.
+ * slice: position gains a `0` fourth coordinate, scale gains the map's MEAN
+ * spatial contraction `(|sx|+|sy|+|sz|)/3` (below), and the Euler-XYZ rotation
+ * is rewritten as three plane angles.
+ *
+ * ## Why `scale_w` is the mean contraction, not `1`
+ *
+ * `scale_w = 1` looks like the natural "leave w alone" choice, but it makes the
+ * embedded system an ISOMETRY in w — no attractor in that direction. Untouched,
+ * that merely leaves the cloud parked in whatever slice the seed landed in; the
+ * moment a 4D edit (fr-2ou) gives the map a w-translation, `w' = w + t_w` has
+ * no fixed point, w ratchets off to the escape limit, and the cloud "vanishes"
+ * into constant reseeds. Contracting w at the map's mean spatial rate keeps ANY
+ * 4D parameter edit a contraction, and makes the pure embed genuinely attract
+ * to `w = 0` (the true 3D slice) rather than float wherever it was seeded. An
+ * isotropic map embeds exactly like its native-4D counterpart — a ½-scale
+ * flake map gets `scale_w = ½`, precisely the pentatope gasket's maps.
  *
  * The mapping of the 3D rotation is the subtle part. `affine.ts`'s
  * `rotationMatrixXYZ` is `RX(x) · RY(y) · RZ(z)`. In plane terms
@@ -185,26 +219,24 @@ export function applyAffine4(
  * Shear and variations are NOT representable in the spike's {@link Transform4},
  * so rather than silently drop them (a wrong embed that looks right) this throws
  * a `RangeError` when the source transform carries a non-zero shear or any
- * enabled (weight > 0) variation.
+ * enabled (weight > 0) variation. That reject condition is EXACTLY
+ * {@link isEmbeddable3} returning `false` — the two are a matched pair (this
+ * calls that predicate), so gate a call with `isEmbeddable3(t)` to avoid the
+ * throw.
  */
 export function embedTransform3(t: Transform): Transform4 {
-  const { shear } = t;
-  if (shear && (shear[0] !== 0 || shear[1] !== 0 || shear[2] !== 0)) {
+  if (!isEmbeddable3(t)) {
     throw new RangeError(
-      "embedTransform3: shear is not representable in the 4D spike's Transform4",
-    );
-  }
-  if (t.variations && t.variations.some((v) => v.weight > 0)) {
-    throw new RangeError(
-      "embedTransform3: variations are not representable in the 4D spike's Transform4",
+      "embedTransform3: shear and enabled variations are not representable in the 4D spike's Transform4 (see isEmbeddable3)",
     );
   }
   const [rx, ry, rz] = t.rotation;
   const [px, py, pz] = t.position;
   const [sx, sy, sz] = t.scale;
+  const meanContraction = (Math.abs(sx) + Math.abs(sy) + Math.abs(sz)) / 3;
   const embedded: Transform4 = {
     position: [px, py, pz, 0],
-    scale: [sx, sy, sz, 1],
+    scale: [sx, sy, sz, meanContraction],
     // yz = rx, xz = −ry (the RY sign flip above), xy = rz.
     rotation: { yz: rx, xz: -ry, xy: rz },
   };
