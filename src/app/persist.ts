@@ -8,6 +8,7 @@
  * All browser globals are accessed through injectable `PersistDeps` so the
  * module stays fully testable without a real DOM.
  */
+import { isFlatTransform } from "../fractal/affine4";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { COLOR_MODES, SYMMETRY_AXES, VARIATION_TYPES } from "../fractal/types";
@@ -19,6 +20,7 @@ import type {
   Variation,
   VariationType,
   Vec3,
+  WExtension,
 } from "../fractal/types";
 import {
   DEFAULT_COLOR_GAMMA,
@@ -75,6 +77,14 @@ import {
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
   MIN_SYMMETRY_ORDER,
+  MAX_W_ANGLE,
+  MAX_W_POSITION,
+  MAX_W_SCALE,
+  MAX_W_SHEAR,
+  MIN_W_ANGLE,
+  MIN_W_POSITION,
+  MIN_W_SCALE,
+  MIN_W_SHEAR,
   MAX_NUM_POINTS,
   RENDER_STYLES,
 } from "./state";
@@ -270,11 +280,61 @@ function decodeVariations(raw: unknown): Variation[] | null {
 }
 
 /**
+ * Decode one optional numeric leaf inside an untrusted `w` block — a
+ * position, a scale, or a single rotation/shear w-plane angle. All four kinds
+ * share the identical "coerce, reject non-finite, clamp into `[min, max]`"
+ * contract (just with different bounds), so {@link decodeTransform}'s `w`
+ * handling and {@link decodeWPlanes} both funnel through here.
+ *
+ * `null` is special-cased to reject rather than falling into the generic
+ * finite check: `Number(null)` is `0`, a deceptively finite value that would
+ * otherwise silently accept a field a hand-crafted payload explicitly set to
+ * `null` instead of omitting. Returns the clamped value, or `null` to tell
+ * the caller to reject the whole scene — unambiguous, since a successfully
+ * decoded value is always a `number`.
+ */
+function decodeWField(raw: unknown, min: number, max: number): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * Decode one optional w-plane sub-object — `w.rotation` or `w.shear`, which
+ * share the exact `{ xw?, yw?, zw? }` shape (see {@link WExtension}). Must be
+ * a non-null object; each of `xw`/`yw`/`zw` is decoded independently via
+ * {@link decodeWField} when present (clamped to `[min, max]`), and absent
+ * entries stay absent. Returns `null` to reject the whole scene, or the
+ * sparse object of whatever entries validated — possibly empty, which
+ * {@link decodeTransform} treats as "omit the sub-object", no different from
+ * it never having been present at all.
+ */
+function decodeWPlanes(
+  raw: unknown,
+  min: number,
+  max: number,
+): NonNullable<WExtension["rotation"]> | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const planes: NonNullable<WExtension["rotation"]> = {};
+  for (const key of ["xw", "yw", "zw"] as const) {
+    if (r[key] === undefined) continue;
+    const value = decodeWField(r[key], min, max);
+    if (value === null) return null;
+    planes[key] = value;
+  }
+  return planes;
+}
+
+/**
  * Validate one untrusted transform into a {@link Transform} with the given `id`,
  * or `null` when anything is malformed so the caller rejects the whole scene.
- * Requires three valid Vec3 fields; `weight` / `shear` / `variations` are
- * optional and validated exactly as they encode. Shared by the transform list
- * (id = array index) and the final transform (id = 0) so neither can drift.
+ * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
+ * optional and validated exactly as they encode (`w`'s own presence/clamp
+ * contract is spelled out inline below, in {@link WExtension}'s terms). Shared
+ * by the transform list (id = array index) and the final transform (id = 0)
+ * so neither can drift — including the `w` (4D lens) support this adds.
  */
 function decodeTransform(raw: unknown, id: number): Transform | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -307,6 +367,63 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     const variations = decodeVariations(tf.variations);
     if (variations === null) return null;
     if (variations.length > 0) decoded.variations = variations;
+  }
+  // w: optional 4D extension (see WExtension). Absent ⇒ the decoded transform
+  // has no `w` key at all — flat, exactly like a pre-4D link (isFlatTransform
+  // agrees: an absent block is always flat). Present ⇒ must be a non-null
+  // plain object — beware `typeof null === "object"`, the same explicit check
+  // this function's own head uses above — else the whole scene rejects.
+  //
+  // Each field is validated/clamped independently against the shared
+  // MIN_W_*/MAX_W_* range (state.ts — the same constants the upcoming
+  // single-editor UI will use for its sliders) and ONLY set when it actually
+  // arrived: sparseness is preserved faithfully, so a present-but-exactly-0
+  // value is kept rather than treated as absent. It is `encodeTransform`'s
+  // isFlatTransform-driven canonicalization that collapses an all-zero block
+  // back to fully absent on the NEXT encode — not this decode step, which
+  // stays a faithful mirror of whatever arrived. If nothing in the block
+  // survives validation (`w: {}`, or every sub-object validates to empty),
+  // `w` is omitted from the decoded transform entirely, matching how an
+  // all-zero-weight `variations` array decodes to undefined above. Unknown
+  // extra keys inside `w` are ignored, exactly like this function already
+  // ignores unknown keys on the transform itself.
+  if (tf.w !== undefined) {
+    if (typeof tf.w !== "object" || tf.w === null) return null;
+    const rawW = tf.w as Record<string, unknown>;
+    // Named `wExt`, not `w` — this function already uses `w` as the local for
+    // the coerced `weight` value a few lines up (a different block scope, so
+    // it wouldn't collide, but a distinct name keeps the two unmistakable).
+    const wExt: WExtension = {};
+
+    if (rawW.position !== undefined) {
+      const position = decodeWField(
+        rawW.position,
+        MIN_W_POSITION,
+        MAX_W_POSITION,
+      );
+      if (position === null) return null;
+      wExt.position = position;
+    }
+    // scale: absent means DERIVED (see WExtension.scale's doc), so this only
+    // fires when the field actually arrived — an explicit value (even one
+    // that happens to equal what would have been derived) is preserved.
+    if (rawW.scale !== undefined) {
+      const scale = decodeWField(rawW.scale, MIN_W_SCALE, MAX_W_SCALE);
+      if (scale === null) return null;
+      wExt.scale = scale;
+    }
+    if (rawW.rotation !== undefined) {
+      const rotation = decodeWPlanes(rawW.rotation, MIN_W_ANGLE, MAX_W_ANGLE);
+      if (rotation === null) return null;
+      if (Object.keys(rotation).length > 0) wExt.rotation = rotation;
+    }
+    if (rawW.shear !== undefined) {
+      const shear = decodeWPlanes(rawW.shear, MIN_W_SHEAR, MAX_W_SHEAR);
+      if (shear === null) return null;
+      if (Object.keys(shear).length > 0) wExt.shear = shear;
+    }
+
+    if (Object.keys(wExt).length > 0) decoded.w = wExt;
   }
   return decoded;
 }
@@ -559,7 +676,12 @@ function decodeSymmetry(raw: unknown): SymmetryParams {
 // Encode / decode
 // ---------------------------------------------------------------------------
 
-/** The compact wire form of one transform: `id` dropped, floats rounded. */
+/**
+ * The compact wire form of one transform: `id` dropped, floats rounded. `w`
+ * mirrors {@link WExtension} field-for-field (same optional sub-object
+ * shape) — see `encodeTransform`'s canonicalization rule for when it's
+ * present at all.
+ */
 interface EncodedTransform {
   position: number[];
   rotation: number[];
@@ -567,6 +689,7 @@ interface EncodedTransform {
   weight?: number;
   shear?: number[];
   variations?: { type: VariationType; weight: number }[];
+  w?: WExtension;
 }
 
 /**
@@ -574,6 +697,22 @@ interface EncodedTransform {
  * short and old links decode unchanged: `id` (reassigned on decode), a weight
  * of 1, an all-zero shear, and zero-weight variations are all omitted. Shared
  * by the transform list and the final transform so their wire forms can't drift.
+ *
+ * `w` (the optional 4D extension — see {@link WExtension}) follows the same
+ * "drop the identity" spirit, but keyed on ONE shared predicate rather than a
+ * per-field check: {@link isFlatTransform}, the exact test the runtime itself
+ * uses to decide whether a system needs the 4D path at all. Omitting `w`
+ * whenever the transform is flat means "all-identity ⇒ absent" can never
+ * drift from what the app considers flat — a flat system's encoded bytes stay
+ * byte-identical to a pre-4D link, canonical down to the byte.
+ *
+ * For a NON-flat transform, `position` and each rotation/shear w-plane are
+ * included only when defined && non-zero — the same omit-the-identity-value
+ * convention `weight`/`shear` use above — but `scale` is included whenever
+ * DEFINED, regardless of value: its presence is semantic (absent means
+ * "derive from the 3D scale at lift time", see `WExtension.scale`'s doc), so
+ * an explicitly authored value that happens to equal the derived mean must
+ * still survive the round trip rather than silently reverting to "derived".
  */
 function encodeTransform(t: Transform): EncodedTransform {
   const e: EncodedTransform = {
@@ -588,6 +727,33 @@ function encodeTransform(t: Transform): EncodedTransform {
       .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
       .map((v) => ({ type: v.type, weight: round4(v.weight) }));
     if (active.length > 0) e.variations = active;
+  }
+  if (!isFlatTransform(t)) {
+    // Safe: isFlatTransform only returns false when `t.w` is present (an
+    // absent block is always flat — see its doc).
+    const tw = t.w as WExtension;
+    const w: WExtension = {};
+    if (tw.position !== undefined && tw.position !== 0) {
+      w.position = round4(tw.position);
+    }
+    if (tw.scale !== undefined) w.scale = round4(tw.scale);
+    if (tw.rotation) {
+      const { xw, yw, zw } = tw.rotation;
+      const rotation: NonNullable<WExtension["rotation"]> = {};
+      if (xw !== undefined && xw !== 0) rotation.xw = round4(xw);
+      if (yw !== undefined && yw !== 0) rotation.yw = round4(yw);
+      if (zw !== undefined && zw !== 0) rotation.zw = round4(zw);
+      if (Object.keys(rotation).length > 0) w.rotation = rotation;
+    }
+    if (tw.shear) {
+      const { xw, yw, zw } = tw.shear;
+      const shear: NonNullable<WExtension["shear"]> = {};
+      if (xw !== undefined && xw !== 0) shear.xw = round4(xw);
+      if (yw !== undefined && yw !== 0) shear.yw = round4(yw);
+      if (zw !== undefined && zw !== 0) shear.zw = round4(zw);
+      if (Object.keys(shear).length > 0) w.shear = shear;
+    }
+    e.w = w;
   }
   return e;
 }

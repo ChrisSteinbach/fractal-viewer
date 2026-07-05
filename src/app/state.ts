@@ -349,6 +349,29 @@ export const MAX_GLOW_BRIGHTNESS = 3;
 export const DEFAULT_COLOR_GAMMA = 1;
 export const MIN_COLOR_GAMMA = 0.2;
 export const MAX_COLOR_GAMMA = 5;
+/**
+ * 4D per-map extension (fr-cbg spike) ranges — see `fractal/types.ts`'s
+ * `WExtension`. Nothing in THIS module uses them yet: `persist.ts` imports
+ * them now to clamp `w` fields on decode, and the upcoming single-editor task
+ * will import these same constants for its own sliders, so the wire format
+ * and the widget that edits it share one source and can never drift apart.
+ *
+ * `MIN`/`MAX_W_POSITION`, `_SCALE`, and `_ANGLE` are the retired 4D per-map
+ * editor's slider ranges (`index.html`'s `fourDPosWSlider`/`fourDScaleWSlider`
+ * /`fourDRotXWSlider` (`YW`/`ZW`)): position ±1.5, scale 0.05-1.5, and the
+ * three w-mixing plane angles ±180° — stored here in radians (±π), matching
+ * how every other angle in this codebase is represented once off a slider.
+ * `MIN`/`MAX_W_SHEAR` has no retired slider to inherit from, so it instead
+ * matches the 3D shear channel's own range (`ui.ts`'s `CHANNELS.shear`, ±2).
+ */
+export const MIN_W_POSITION = -1.5;
+export const MAX_W_POSITION = 1.5;
+export const MIN_W_SCALE = 0.05;
+export const MAX_W_SCALE = 1.5;
+export const MIN_W_ANGLE = -Math.PI;
+export const MAX_W_ANGLE = Math.PI;
+export const MIN_W_SHEAR = -2;
+export const MAX_W_SHEAR = 2;
 
 export function initialState(panelOpen: boolean): AppState {
   return {

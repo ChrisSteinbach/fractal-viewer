@@ -35,6 +35,10 @@ import {
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
+  MAX_W_ANGLE,
+  MAX_W_POSITION,
+  MAX_W_SCALE,
+  MAX_W_SHEAR,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
@@ -45,6 +49,8 @@ import {
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_RESOLUTION,
   MIN_SYMMETRY_ORDER,
+  MIN_W_POSITION,
+  MIN_W_SCALE,
 } from "./state";
 
 // ---------------------------------------------------------------------------
@@ -626,6 +632,280 @@ describe("decodeScene final transform", () => {
       },
     };
     expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-transform w (optional 4D extension, fr-bf6.1 — see fractal/types.ts's
+// WExtension). Follows the weight/shear/variations discipline: absent stays
+// quietly flat, present-but-malformed rejects the whole scene, finite values
+// clamp into range, and an all-identity block is canonicalized away on encode
+// (isFlatTransform-driven) so a flat system's bytes never change.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene transform w (4D extension)", () => {
+  it("round-trips all four w field kinds losslessly, including sparse absence", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { position: 0.3 },
+        },
+        {
+          id: 1,
+          position: [1, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { rotation: { zw: -0.75 } },
+        },
+        {
+          id: 2,
+          position: [0, 1, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: 1.25, shear: { xw: 0.6 } },
+        },
+        {
+          id: 3,
+          position: [0, 0, 1],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+
+    expect(result!.transforms[0].w).toStrictEqual({ position: 0.3 });
+    expect(result!.transforms[1].w).toStrictEqual({
+      rotation: { zw: -0.75 },
+    });
+    expect(result!.transforms[2].w).toStrictEqual({
+      scale: 1.25,
+      shear: { xw: 0.6 },
+    });
+    expect(result!.transforms[3]).not.toHaveProperty("w");
+  });
+
+  it("decodes a pre-4D payload (no w on any transform) with no w key at all", () => {
+    // baseSnapshot() has no `w` on its transform — exactly today's wire
+    // format, predating this feature entirely.
+    const result = decodeScene(encodeScene(baseSnapshot()));
+    expect(result!.transforms[0]).not.toHaveProperty("w");
+  });
+
+  it("returns null when w is present but not an object", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: 5,
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when w is present but null", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: null,
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when w.rotation is present but not an object", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { rotation: 3 },
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when w.position is present but non-numeric (Number → NaN)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { position: "abc" },
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when w.scale is present but null", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: null },
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps an out-of-range w.position above the maximum down to the max", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { position: 99 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({
+      position: MAX_W_POSITION,
+    });
+  });
+
+  it("clamps an out-of-range w.position below the minimum up to the min", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { position: -99 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({
+      position: MIN_W_POSITION,
+    });
+  });
+
+  it("clamps an out-of-range w.scale above the maximum down to the max", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: 9 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({ scale: MAX_W_SCALE });
+  });
+
+  it("clamps an out-of-range w.scale below the minimum up to the min", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: 0.001 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({ scale: MIN_W_SCALE });
+  });
+
+  it("clamps an out-of-range w.rotation.zw down to the max angle", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { rotation: { zw: 7 } },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({
+      rotation: { zw: MAX_W_ANGLE },
+    });
+  });
+
+  it("clamps an out-of-range w.shear.xw down to the max shear", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { shear: { xw: 5 } },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({
+      shear: { xw: MAX_W_SHEAR },
+    });
+  });
+
+  it("encodes an all-identity w block exactly like no w block at all (byte-identical)", () => {
+    const flat = baseSnapshot();
+    const withIdentityW: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          ...baseSnapshot().transforms[0],
+          w: { position: 0, rotation: {} },
+        },
+      ],
+    };
+    expect(encodeScene(withIdentityW)).toBe(encodeScene(flat));
+  });
+
+  it("round-trips a final transform carrying a w block (4D lens support comes free)", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        w: { position: 0.3, shear: { yw: -0.75 } },
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.finalTransform!.w).toStrictEqual({
+      position: 0.3,
+      shear: { yw: -0.75 },
+    });
   });
 });
 
