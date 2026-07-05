@@ -1,5 +1,9 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
-import { VoxelWorkerSession } from "./voxel-worker-core";
+import { clampVoxelResolution } from "../fractal/voxel";
+import {
+  voxelAccumBudgetVoxels,
+  VoxelWorkerSession,
+} from "./voxel-worker-core";
 import type {
   VoxelWorkerCommand,
   VoxelWorkerDeps,
@@ -62,6 +66,27 @@ function fakeClock(step = 0): () => number {
     const now = t;
     t += step;
     return now;
+  };
+}
+
+/**
+ * A clock that replays a hand-computed sequence of timestamps, one per call —
+ * for tests that need to control not just a uniform step but WHICH calls
+ * represent accumulate time vs. pack time (see the pack-duty-throttle tests
+ * below, where `runChunk` calls `now()` twice per chunk normally and a third
+ * time, after `sendGrid`, on any chunk that actually packs). Throws if a test
+ * under-anticipated a call, so a wrong call count fails loudly instead of
+ * silently returning `undefined`.
+ */
+function scriptedClock(values: number[]): () => number {
+  let i = 0;
+  return () => {
+    if (i >= values.length) {
+      throw new Error(
+        `scriptedClock: now() called more times (${i + 1}) than the ${values.length} scripted values`,
+      );
+    }
+    return values[i++];
   };
 }
 
@@ -392,6 +417,24 @@ describe("VoxelWorkerSession memory guards", () => {
     expect(grids[grids.length - 1].size).toBe(32);
   });
 
+  it("clamps against the start command's own budget when it carries one", () => {
+    // Same 64 -> 32 clamp as the deps-budget test above, but the budget
+    // rides in the start command — the path main.ts actually uses (fr-8x7).
+    // Without it, the built-in floor (256^3 worth of voxels) would clamp
+    // nothing at a mere 64^3 request.
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ resolution: 64, maxVoxels: 32 * 32 * 32 }));
+    scheduler.drain();
+
+    expect(noteEvents(events)[0]).toEqual({
+      type: "resolutionNote",
+      effective: 32,
+      requested: 64,
+    });
+    const grids = gridEvents(events);
+    expect(grids[grids.length - 1].size).toBe(32);
+  });
+
   it("shrinks and retries when the grid allocation actually fails", () => {
     const { session, events, scheduler } = harness({
       createGrid: (size, bounds) => {
@@ -438,6 +481,53 @@ describe("VoxelWorkerSession memory guards", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Device-aware accumulation budget policy (fr-8x7)
+// ---------------------------------------------------------------------------
+
+describe("voxelAccumBudgetVoxels", () => {
+  /** MiB → voxels, restating the contract: one voxel is 20 bytes (Float32
+   * density + Float32 RGB running mean + the RGBA8 texture texel). */
+  const voxels = (mib: number) => Math.floor((mib * 1024 * 1024) / 20);
+
+  it("keeps the flat 320 MiB phone floor on coarse-pointer devices, ignoring reported memory", () => {
+    // Flagship phones report the capped deviceMemory maximum of 8 — exactly
+    // the devices the conservative floor exists for, so the report is
+    // ignored. Also pins today's exact ceiling (256^3) so phones see no
+    // regression from raising the desktop slider max.
+    expect(voxelAccumBudgetVoxels(8, true)).toBe(voxels(320));
+    expect(voxelAccumBudgetVoxels(8, true)).toBe(256 ** 3);
+  });
+
+  it("scales the desktop budget with reported device memory", () => {
+    expect(voxelAccumBudgetVoxels(4, false)).toBe(voxels(1280));
+  });
+
+  it("assumes a desktop-class budget when deviceMemory is unavailable (Firefox/Safari)", () => {
+    expect(voxelAccumBudgetVoxels(undefined, false)).toBe(voxels(2560));
+  });
+
+  it("never drops below the phone-safe floor on tiny-memory desktops", () => {
+    expect(voxelAccumBudgetVoxels(0.25, false)).toBe(voxels(320));
+  });
+
+  it("caps the budget even if a future UA reports more than 8 GiB", () => {
+    expect(voxelAccumBudgetVoxels(64, false)).toBe(voxels(2560));
+  });
+
+  it("lets a desktop run the full 512^3 slider maximum", () => {
+    expect(clampVoxelResolution(512, voxelAccumBudgetVoxels(8, false))).toBe(
+      512,
+    );
+  });
+
+  it("still pins a phone asking for 512^3 to the old 256^3 ceiling", () => {
+    expect(clampVoxelResolution(512, voxelAccumBudgetVoxels(8, true))).toBe(
+      256,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Texture throttling
 // ---------------------------------------------------------------------------
 
@@ -458,5 +548,131 @@ describe("VoxelWorkerSession texture throttling", () => {
     expect(grids.length).toBeGreaterThan(1); // progressive, not one-shot…
     expect(grids.length).toBeLessThan(50); // …but throttled well below 100.
     expect(grids[grids.length - 1].iterationsDone).toBe(1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pack-aware texture throttle (fr-8x7): the refresh interval stretches when
+// packing itself is slow, so a big grid can't spend nearly all its time
+// re-packing instead of accumulating — see VOXEL_TEXTURE_PACK_DUTY's doc.
+// ---------------------------------------------------------------------------
+
+describe("VoxelWorkerSession texture pack throttling", () => {
+  it("stretches the refresh interval when packing is slow, keeping packing a bounded fraction of worker time", () => {
+    // 10 equal chunks: initialChunkSize is set to VOXEL_CHUNK_MIN (100,000)
+    // itself, so adaptChunkSize's floor never perturbs it; every chunk's
+    // accumulate also takes exactly 8 fake-ms (t1 - t0 = 8), which equals
+    // VOXEL_FRAME_BUDGET_MS, pinning the adaptive multiplier at exactly 1 so
+    // chunkSize never drifts from there either — 1,000,000 iterations / 10
+    // chunks of 100,000.
+    //
+    // runChunk calls now() twice per chunk (t0, t1) normally, plus a third
+    // time (t2) right after sendGrid on any chunk that actually packs (see
+    // `this.lastPackMs = this.now() - t1`). Chunk 1 is always due
+    // (lastTextureAt starts undefined); scripting its pack at 400 fake-ms
+    // makes lastPackMs 400, so the throttle stretches to
+    // VOXEL_TEXTURE_PACK_DUTY(3) * 400 = 1200 ms — bigger than the flat
+    // 250 ms floor, so the stretch actually governs from here on.
+    //
+    // Chunks 2-9 cost 8 ms each and nothing packs again in between, so their
+    // gap-since-chunk-1's-pack (t1 - 8) merely climbs 408, 416, 424, 432,
+    // 440, 448, 456, 464 — all comfortably under the 1200 ms stretched
+    // threshold, so none of them re-pack.
+    //
+    // Chunk 10 finishes the budget, which forces a send regardless of the
+    // throttle.
+    //
+    // So only chunks 1 and 10 emit a grid: 2 total. Contrast with a flat
+    // 250 ms stride under this SAME pack cost: a 400 ms pack pushes the very
+    // next chunk's gap to 400 + 8 = 408 ms, already >= 250 ms — so EVERY one
+    // of the 10 chunks would re-pack (fr-8x7's exact bug: lastTextureAt is
+    // stamped at pack START, so a slow-enough pack makes every subsequent
+    // chunk immediately "due" again).
+    const values = [
+      0,
+      8,
+      408, // chunk 1: t0, t1, t2 (400 ms pack) -> due, lastPackMs=400
+      408,
+      416, // chunk 2: t0, t1 -> gap 408 < 1200, not due
+      416,
+      424, // chunk 3 -> gap 416 < 1200
+      424,
+      432, // chunk 4 -> gap 424 < 1200
+      432,
+      440, // chunk 5 -> gap 432 < 1200
+      440,
+      448, // chunk 6 -> gap 440 < 1200
+      448,
+      456, // chunk 7 -> gap 448 < 1200
+      456,
+      464, // chunk 8 -> gap 456 < 1200
+      464,
+      472, // chunk 9 -> gap 464 < 1200
+      472,
+      480,
+      880, // chunk 10: t0, t1 (finished -> forced due), t2 (pack)
+    ];
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 100_000,
+      now: scriptedClock(values),
+    });
+    session.handle(startCommand({ iterationsBudget: 1_000_000 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.length).toBe(2); // hand-computed above: only chunks 1 and 10.
+    expect(grids.length).toBeLessThan(10); // a flat 250 ms stride would have re-packed on every chunk.
+    expect(grids[grids.length - 1].iterationsDone).toBe(1_000_000);
+  });
+
+  it("keeps today's flat 250 ms schedule when packing is fast (3x cost stays under the floor)", () => {
+    // Identical structure to the slow-pack case above, but the pack costs
+    // only 10 fake-ms: VOXEL_TEXTURE_PACK_DUTY(3) * 10 = 30, which loses to
+    // the Math.max against the flat VOXEL_TEXTURE_INTERVAL_MS (250) — so the
+    // throttle threshold is 250 ms throughout, exactly as it was before
+    // fr-8x7 introduced the stretch (today's <=256^3 sizes, where packing is
+    // fast). With only 10 chunks of 8 ms each, the gap since chunk 1's pack
+    // (18, 26, 34, 42, 50, 58, 66, 74 minus 8) never climbs anywhere near
+    // 250 ms either, so — like the slow-pack case — only the always-due
+    // first and last chunks emit.
+    //
+    // The exact count (not a loose range) is what would catch a regression
+    // that dropped the `Math.max` floor: a bare `3 * lastPackMs` (30 ms)
+    // threshold, with no floor, is already crossed by chunk 4's 34 ms gap —
+    // which would inflate this count well past 2.
+    const values = [
+      0,
+      8,
+      18, // chunk 1: t0, t1, t2 (10 ms pack) -> due, lastPackMs=10
+      18,
+      26, // chunk 2: t0, t1 -> gap 18 < 250, not due
+      26,
+      34, // chunk 3 -> gap 26 < 250
+      34,
+      42, // chunk 4 -> gap 34 < 250
+      42,
+      50, // chunk 5 -> gap 42 < 250
+      50,
+      58, // chunk 6 -> gap 50 < 250
+      58,
+      66, // chunk 7 -> gap 58 < 250
+      66,
+      74, // chunk 8 -> gap 66 < 250
+      74,
+      82, // chunk 9 -> gap 74 < 250
+      82,
+      90,
+      100, // chunk 10: t0, t1 (finished -> forced due), t2 (pack)
+    ];
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 100_000,
+      now: scriptedClock(values),
+    });
+    session.handle(startCommand({ iterationsBudget: 1_000_000 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.length).toBe(2); // same forced first/last as the flat stride would give at this scale.
+    expect(grids[grids.length - 1].iterationsDone).toBe(1_000_000);
   });
 });

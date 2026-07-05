@@ -1329,6 +1329,16 @@ describe("decodeScene solid params", () => {
     ).toBe(MAX_SOLID_RESOLUTION);
   });
 
+  it("round-trips the raised 512 resolution ceiling (fr-8x7)", () => {
+    // Before fr-8x7 raised MAX_SOLID_RESOLUTION from 256 to 512, this value
+    // would have been clamped down to 256 on decode.
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, resolution: 512 },
+    };
+    expect(decodeScene(encodeScene(s))!.solid.resolution).toBe(512);
+  });
+
   it("clamps resolution below the minimum up to the min", () => {
     const raw = {
       ...baseSnapshot(),
