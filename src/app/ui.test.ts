@@ -1834,6 +1834,22 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
   });
 
+  // The panel's own heading tells the truth per generation (fr-9uw): the
+  // system's dimensionality is a live property since fr-bf6, not a fixed
+  // claim about the app.
+  it("titles the panel by the system's dimensionality", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels(initialState(true));
+    expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
+
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+    expect(el("panelTitle").textContent).toBe("4D IFS Fractal");
+
+    ui.updateLabels(initialState(true));
+    expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
+  });
+
   it("shows the 4D controls and hides flame/solid/symmetry/color/style for a non-flat system", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });

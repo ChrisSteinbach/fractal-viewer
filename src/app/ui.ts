@@ -458,6 +458,11 @@ export class Ui {
   private handlers: UiHandlers | null = null;
 
   private readonly helpTitle: HTMLElement;
+  /** The panel's own heading. Since fr-bf6 the system's dimensionality is a
+   * live property, so the title tells the truth per generation — "3D IFS
+   * Fractal" for a flat system, "4D IFS Fractal" once any map's `w`
+   * extension is in play (fr-9uw). */
+  private readonly panelTitle: HTMLElement;
   private readonly helpText: HTMLElement;
   private readonly pointCount: HTMLElement;
   private readonly legend: HTMLElement;
@@ -571,6 +576,7 @@ export class Ui {
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
+    this.panelTitle = this.byId("panelTitle");
     this.helpText = this.byId("helpText");
     this.pointCount = this.byId("pointCount");
     this.legend = this.byId("legend");
@@ -944,6 +950,7 @@ export class Ui {
     // 4D view are mutually exclusive by construction: each hides while either
     // of the others is active.
     const nonFlat = systemIsNonFlat(state);
+    this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
     this.flameEntry.classList.toggle("hidden", rendering || nonFlat);
     this.solidEntry.classList.toggle("hidden", rendering || nonFlat);
