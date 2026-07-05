@@ -24,10 +24,10 @@ clamped to `[1, 100]` — see `src/app/orbit.ts`.
 
 ## 4D projection
 
-While the 4D projection is active (see **4D — Experimental** below), plain
-gestures still orbit/pan/zoom the 3D projection exactly as above. Holding
-**Shift** retargets the left-drag and the wheel to turn the two hidden
-rotation planes instead — Hanson's "rolling ball" scheme, restricted to
+While the current system is non-flat (see **4D View** below), the point cloud
+renders as a 4D projection; plain gestures still orbit/pan/zoom it exactly as
+above. Holding **Shift** retargets the left-drag and the wheel to turn the two
+hidden rotation planes instead — Hanson's "rolling ball" scheme, restricted to
 coordinate planes:
 
 | Input               | Action                          |
@@ -35,8 +35,9 @@ coordinate planes:
 | Shift + left-drag   | Turn the XW (↔) / YW (↕) planes |
 | Shift + mouse wheel | Turn the ZW plane               |
 
-Touch devices have no Shift key, so touch always orbits; turn the w-planes
-from the **4D Transform Params** sliders instead.
+Touch devices have no Shift key, so touch always orbits; turn a map's own
+w-planes instead from its **4D** editor group, or sweep **4D View**'s **W
+slice** slider.
 
 ## Transform mode
 
@@ -90,31 +91,37 @@ Transform** sliders that appear in the panel while a transform is selected.
   **✦ Final Transform** row under **Select to Edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
-- **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
-  a _4D_ IFS, shown as an orthographic projection of a slow double rotation
-  (XY+ZW). **Auto-tumble (XY+ZW)** pauses/resumes that motion (it starts
-  paused when the OS asks for reduced motion, though the Shift-drag/
-  Shift-wheel gestures above always work regardless) and **Tumble speed**
-  scales its rate from 0.1× to 3×. **Current System → 4D** instead takes the
-  system you built in the 3D editor into 4D, embedding every map at w = 0 —
-  any system embeds faithfully now, including shear, variations, and an
-  enabled final-transform lens (all carried across so the w = 0 slice is
-  exactly your 3D fractal). The rendering is built to make the
-  fourth dimension legible: a diverging palette on the rotated 4th coordinate
-  (cool blue = −w, warm orange = +w, dim gray ≈ our own 3-space), additive
-  translucency so the w-layers a projection folds together stay _visible_ and sum
-  toward white where they cross, and — with **Show guides** on — the 5-cell's
-  wireframe tumbling through the same rotation. **W slice** carves a soft Gaussian
-  cross-section out of the cloud (the rest stays as ghost context) and its
-  position slider sweeps along w — each position is a genuinely different 3D
-  fractal. **4D Transform Params** edits, per map (the **Map** dropdown), the five
-  new degrees of freedom the fourth dimension adds — **Position W**, **Scale W**,
-  and the **Rotation XW / YW / ZW** planes — live, like the 3D editor; the x/y/z
-  parameters are still edited in the 3D editor before embedding. The camera orbits
-  the projection as usual, and Points / Point Size / Regenerate / guides / Save
-  PNG stay live; everything that edits or restyles the 3D system is hidden, and
-  the view (including these 4D edits) is session-only (never persisted).
-  **← Back to 3D** restores the previous scene exactly. See
+- **4D View** — appears once the current system is _non-flat_ (see
+  [architecture.md](architecture.md#the-4d-extension)): the point cloud
+  becomes an orthographic projection of a slow double rotation (XY+ZW),
+  colored by a diverging palette on the rotated 4th coordinate — cool blue
+  toward −w, warm orange toward +w, dim gray ≈ our own 3-space, spelled out
+  right in the panel — with additive translucency so the w-layers a
+  projection folds together stay _visible_ and sum toward white where they
+  cross. Load **Pentatope Gasket** or **Double-Rotation Spiral** from the
+  Presets dropdown's **4D** group to see one immediately (with, for the
+  pentatope and **Show guides** on, the 5-cell's wireframe tumbling through
+  the same rotation) — or turn any flat system non-flat yourself: every
+  transform's (and the final lens's) editor ends with a collapsed **4D**
+  group, with **Position W**, **Scale W** (tracks the map's live mean 3D
+  contraction with an "(auto)" marker until set explicitly), and the
+  **Rotation XW/YW/ZW** and **Shear XW/YW/ZW** planes editable exactly like
+  the 3D sliders — zero every field in the group and the system drops back to
+  the 3D path live. **Auto-tumble (XY+ZW)** pauses/resumes the rotation
+  (starting paused when the OS asks for reduced motion, though the
+  Shift-drag/Shift-wheel gestures above always work regardless) and **Tumble
+  speed** scales its rate from 0.1× to 3×. **W slice** carves a soft Gaussian
+  cross-section out of the cloud (the rest stays as ghost context), its
+  position slider sweeping along w — each position is a genuinely different
+  3D fractal. The camera orbits the projection as usual, and Points / Point
+  Size / Regenerate / guides / Save PNG stay live, as do the transform list
+  and every transform's editor; **Color Mode**, **Color Contrast**, **Depth
+  Style**, the Flame/Solid Render entries, and **Symmetry** all hide, since
+  none of them reach the 4D shader path. The tumble/slice view is
+  session-only (never persisted) and resets to a fresh baseline only when the
+  system flips from flat to non-flat, or a whole new system replaces it
+  (preset load / Surprise Me) — never on a later edit, so an in-progress
+  tumble/slice survives ordinary parameter tweaks. See
   [4d-exploration.md](4d-exploration.md) for the design.
 
 ## Sharing & persistence

@@ -77,6 +77,22 @@ export interface Transform {
    * purely affine, leaving every existing system byte-for-byte unchanged.
    */
   variations?: Variation[];
+  /**
+   * Optional 4D extension (see {@link WExtension}): the degrees of freedom
+   * that let this map act in 4-space — a `w` position, an independent `w`
+   * scale, and the three w-mixing rotation/shear planes — without promoting
+   * the map to a full {@link Transform4}. This is what makes "4D" a property
+   * of a SYSTEM (some transform's `w` block is present and non-trivial)
+   * rather than a separate mode the whole system opts into. Omitted (or
+   * present with every field absent/exactly `0`) ⇒ the map lives flat in the
+   * `w = 0` slice, leaving existing systems byte-for-byte unchanged — the
+   * same absent-means-identity convention as {@link Transform.weight}/
+   * {@link Transform.shear}/{@link Transform.variations}. See `affine4.ts`'s
+   * `isFlatTransform`/`systemIsFlat` (the flatness predicates) and
+   * `toTransform4` (the lift that splices these overrides onto
+   * `embedTransform3`'s embedding).
+   */
+  w?: WExtension;
 }
 
 /**
@@ -177,6 +193,49 @@ export interface Shear4 {
   xw?: number;
   yw?: number;
   zw?: number;
+}
+
+/**
+ * Optional 4D extension a {@link Transform} can carry (its `w` field): the
+ * degrees of freedom that let a 3D map act in 4-space — a translation along
+ * `w`, an independent `w` scale, and the three w-mixing rotation/shear planes
+ * — without promoting the map to a full {@link Transform4}. This is what lets
+ * "4D" be a property of a SYSTEM (some transform's `w` block is present and
+ * non-trivial) rather than a separate mode the whole system opts into — see
+ * `affine4.ts`'s `isFlatTransform`/`systemIsFlat` (the flatness predicates)
+ * and `toTransform4` (the lift that applies these overrides on top of
+ * `embedTransform3`'s `w = 0` embedding).
+ *
+ * The rotation/shear fields are literally `Pick`s of {@link Rotation4}'s and
+ * {@link Shear4}'s w-mixing entries, so their meaning is exactly the `R_ab`/
+ * `U` convention documented there — this block never invents its own angle or
+ * shear semantics, it just exposes the three w-planes each already defines.
+ * Every field is independently optional, and absent ⇒ its embed default (see
+ * each field below); a block with every field absent, or present and exactly
+ * `0`, is equivalent to no block at all.
+ */
+export interface WExtension {
+  /** The fourth position coordinate, `t_w`. Absent ⇒ `0`, the `w = 0` slice. */
+  position?: number;
+  /**
+   * The fourth scale factor, `scale_w`. Absent ⇒ DERIVED — recomputed at lift
+   * time as the map's mean spatial contraction `(|sx|+|sy|+|sz|)/3` (the same
+   * value a plain 3D embed gets), rather than materialised once, so `scale_w`
+   * keeps tracking later scale-X/Y/Z edits instead of freezing a stale mean.
+   * Set it explicitly to pin `scale_w` independent of the 3D scale.
+   */
+  scale?: number;
+  /**
+   * The three w-mixing rotation planes (`R_ab` convention — see
+   * {@link Rotation4}): rotating `+x`/`+y`/`+z` toward `+w`. A missing field
+   * is exactly 0, matching {@link Rotation4} itself.
+   */
+  rotation?: Pick<Rotation4, "xw" | "yw" | "zw">;
+  /**
+   * The three w-column entries of {@link Shear4}'s unit upper-triangular `U`.
+   * A missing field is exactly 0, matching {@link Shear4} itself.
+   */
+  shear?: Pick<Shear4, "xw" | "yw" | "zw">;
 }
 
 /**

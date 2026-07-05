@@ -155,6 +155,93 @@ in `state.ts`, and after each change calls the relevant refreshers
 boxes; `refreshUi` → update labels and the transform list). The animation loop
 applies the orbit camera, retightens the fog, and renders.
 
+## The 4D extension
+
+Every `Transform` can carry an optional `w?: WExtension` block (`fractal/types.ts`):
+a `w` position, an independent `w` scale, and the three rotation/shear planes that
+mix `w` into the other three coordinates (`xw`, `yw`, `zw`). A block that's absent,
+or present with every field absent or exactly `0`, means the map lives flat in the
+`w = 0` slice — the same absent-means-identity convention `weight`/`shear`/
+`variations` already use. `w.scale` defaults to DERIVED rather than `1`: left
+unset, it's recomputed at lift time as the map's mean spatial contraction
+`(|sx|+|sy|+|sz|)/3`, so it keeps tracking later scale edits instead of freezing a
+value that was only ever true once. `affine4.ts`'s `isFlatTransform`/`systemIsFlat`
+turn this into a predicate over a whole system, and `state.ts`'s `systemIsNonFlat`
+extends it to the final transform (per its own enabled semantics) — together this
+is the entire definition of "4D": a property DERIVED from `state.transforms` /
+`state.finalTransform`, not a stored mode.
+
+`toTransform4` lifts a `Transform` into a `Transform4` — 4 position + 4 scale + up
+to 6 rotation planes + 6 shear planes + variations + weight, the full
+20-dimensional affine group of ℝ⁴ one dimension up from `Transform`'s 12 — by
+starting from `embedTransform3`'s `w = 0` embedding (built across the earlier
+fr-2ou/fr-hy8 spikes, untouched by the unification) and splicing in whatever `w`
+overrides the transform carries. The embed rewrites `composeAffine`'s Euler-XYZ
+rotation as three of `Transform4`'s six plane angles (`{ yz: rx, xz: −ry, xy: rz }`
+— the sign flip on `xz` corrects for `RY`'s opposite handedness from the `R_xz`
+plane convention), agreeing with `rotationMatrixXYZ` to within floating-point
+rounding (tests pin it at 1e-12) while keeping the embedding's `w` row/column
+exactly `[0,0,0,1]`, and carries shear/variations across unchanged — so a lifted
+3D system's `w = 0` slice renders as its source 3D fractal. The splice itself is
+sparse: a transform with no `w` block returns exactly `embedTransform3(t)`, same
+shape, same absent fields, which is what lets `w.scale` keep meaning "derived"
+until a user or a preset actually sets it.
+
+`chaos-game-4d.ts`'s `runChaosGame4` is the 4D sibling of `runChaosGame`: the same
+warm-up/escape/reseed/bounds shape extended to four coordinates, the same
+per-transform nonlinear-variation blend, and the same optional plot-time
+final-transform lens as the 3D path. Its own header explains why it's a
+hand-unrolled DUPLICATE rather than an n-generic abstraction over the 3D path —
+the hot loop rewards branch-predictable, register-friendly, unrolled coordinates
+over a dimension-generic one — sharing only the genuinely-common constants
+(`WARMUP_ITERATIONS`, `ESCAPE_LIMIT`, `MAX_TRANSFORMS`). `variations4.ts` lifts the
+same twelve variation functions `variations.ts` documents, by the identical
+convention one dimension up (angular warps carry `z` AND `w` through unchanged;
+radial warps and `swirl` use the full 4D radius `x²+y²+z²+w²`), with an anchor
+property stronger than the rotation embed's: at `w = 0` every lifted function
+reproduces its 3D counterpart bit-for-bit (not just to rounding), so an embedded
+3D system's `w = 0` slice warps exactly like the native 3D path.
+
+`main.ts`'s `regenerate()` is where the two paths fork. It computes
+`systemIsNonFlat(state)` once per generation and caches the result (`viewIs4D`)
+for the hot paths — the animation loop, the interaction callbacks, guide-box
+suppression — that would otherwise re-derive it every frame or pointer move. A
+flat system takes the untouched `runChaosGame` path, byte-identical to before
+this feature existed; a non-flat one lifts every transform (and the enabled final
+transform, if any) through `toTransform4` and calls `runChaosGame4` instead,
+uploading the result with `scene.setPoints4` rather than `scene.setPoints` — there
+is no CPU color buffer to build, since 4D color is computed in the shader. Flame,
+solid, and rotational symmetry stay 3D-only by design — a recorded decision
+(fr-bf6), not an oversight — and simply hide their controls whenever the system
+is non-flat rather than being generalized to a fourth dimension.
+
+Seeing the result is a separate concern from generating it. `scene.ts` renders a
+non-flat cloud with a dedicated shader material: the vertex shader rotates each
+point about the cloud's 4D center by a `uRot4` uniform, drops the rotated `w` to
+project orthographically, and colors the point in-shader from the signed rotated
+`w`, normalized by the cloud's 4D bounding box's support in the rotated-w
+direction (`rotor4.ts`'s `wSupport`, rotation-covariant so anisotropic clouds
+never wash out toward gray) — a diverging palette, cool blue toward `−w`, warm
+orange toward `+w`, dim gray near `w = 0`, rendered with additive blending so the
+several w-layers an orthographic projection folds onto the same screen pixel stay
+visible and sum toward white where they overlap, instead of the nearest layer
+hiding the rest. `uRot4` is driven from `rotor4.ts`, which represents the
+accumulated 4D VIEW rotation as a pair of unit quaternions (`RotorPair`) — the
+SO(4)-as-quaternion-pair identity `x ↦ p·x·q̄` — rather than an accumulated matrix,
+so the slow auto-tumble and the Shift-drag/Shift-wheel gestures
+(`interactions.ts`) can compose new deltas on top and renormalize cheaply over an
+arbitrarily long session; it never touches the chaos game itself, which composes
+`rotationMatrix4` once per transform at generation time instead. This view
+state — the rotor pair, tumble on/off and speed, and an optional soft w-slice (a
+Gaussian opacity window around a chosen `w`, so a cross-section fades in without
+hard-culling the points outside it) — is session-only and resets to a fresh
+baseline only on a flat-to-non-flat transition or a whole-system replacement,
+never on an ordinary parameter edit. A couple of presets (`pentatope`,
+`doubleRotation` in `presets.ts` — the earlier standalone `presets4.ts` is gone,
+merged into the same factory record every other preset lives in) also carry a
+legibility scaffold, the pentatope's 5-cell wireframe, tumbled through the
+identical rotation so the projection's motion reads as genuinely 4D at a glance.
+
 ## Scene persistence
 
 `persist.ts` keeps the viewer share-ready. The persistent subset of `AppState`

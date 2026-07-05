@@ -480,6 +480,14 @@ input[type="range"] {
   font-weight: 600;
 }
 
+/* The "4D" group is a native <details>/<summary> disclosure (fr-bf6.3): the
+   marker triangle is the built-in collapsed/expanded affordance, so this just
+   makes the summary read as clickable like every other panel control. */
+summary.editor-group-title {
+  cursor: pointer;
+  user-select: none;
+}
+
 .editor-row {
   display: flex;
   align-items: center;

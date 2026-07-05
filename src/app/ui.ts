@@ -13,11 +13,25 @@ import type {
   Variation,
   VariationType,
   Vec3,
+  WExtension,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
-import { MAX_COLOR_GAMMA, MAX_NUM_POINTS, MIN_NUM_POINTS } from "./state";
+import {
+  MAX_COLOR_GAMMA,
+  MAX_NUM_POINTS,
+  MAX_W_ANGLE,
+  MAX_W_POSITION,
+  MAX_W_SCALE,
+  MAX_W_SHEAR,
+  MIN_NUM_POINTS,
+  MIN_W_ANGLE,
+  MIN_W_POSITION,
+  MIN_W_SCALE,
+  MIN_W_SHEAR,
+  systemIsNonFlat,
+} from "./state";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -26,10 +40,14 @@ import {
 
 export type { Preset };
 
-/** The geometry (and weight/variations) a transform editor edits. */
+/** The geometry (and weight/variations) a transform editor edits. `w` is the
+ * optional 4D extension (fr-bf6.3, see `types.ts`'s `WExtension`) — included
+ * here so the single editor can be the one UI that creates/edits it, but see
+ * {@link Ui.emitGeometry} for why it's only ever present on the emitted
+ * object when the working copy actually has one. */
 type Geometry = Pick<
   Transform,
-  "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
+  "position" | "rotation" | "scale" | "weight" | "shear" | "variations" | "w"
 >;
 
 /** The final transform's geometry — the same, minus the selection weight, which
@@ -38,28 +56,6 @@ type FinalGeometry = Omit<Geometry, "weight">;
 
 /** The current edit target: a transform index, the final transform, or none. */
 type EditTarget = number | "final" | null;
-
-/**
- * The five NEW degrees of freedom a 4D map exposes over its embedded 3D self
- * (fr-2ou): the fourth position/scale component and the three `w`-mixing
- * rotation planes. The familiar x/y/z params are edited in the 3D editor before
- * embedding, so they are deliberately absent here.
- */
-export type FourDEditParam = "posW" | "scaleW" | "xw" | "yw" | "zw";
-
-/**
- * A 4D map's editable `w`-parameters, projected out of a `Transform4` for the
- * in-4D editor (see {@link Ui.renderFourDEditor}). The three plane angles are in
- * RADIANS (the same unit `Transform4.rotation` stores); the editor's sliders
- * display them as degrees.
- */
-export interface FourDMapParams {
-  posW: number;
-  scaleW: number;
-  xw: number;
-  yw: number;
-  zw: number;
-}
 
 export interface UiHandlers {
   onAdd: () => void;
@@ -133,11 +129,6 @@ export interface UiHandlers {
   /** The symmetry axis dropdown changed — same reach as
    * {@link onSymmetryOrderInput}. */
   onSymmetryAxisChange: (axis: SymmetryAxis) => void;
-  /** A 4D-system button was clicked (fr-cbg spike): enter the 4D projection
-   * view on the chosen preset system. */
-  onEnterFourD: (kind: "pentatope" | "spiral") => void;
-  /** The 4D projection's "Back to 3D" button was clicked. */
-  onExitFourD: () => void;
   /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
   onFourDSliceToggle: (checked: boolean) => void;
   /** The 4D slice-position slider moved: `value` is the slice center in
@@ -147,16 +138,6 @@ export interface UiHandlers {
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
-  /** "Current System → 4D" was clicked (fr-2ou): embed the live 3D system at
-   * w = 0 and enter the 4D projection on it. */
-  onEmbedCurrentSystem: () => void;
-  /** The 4D editor's Transform dropdown changed: `index` is the 0-based map to edit. */
-  onFourDMapSelect: (index: number) => void;
-  /** A 4D per-map param slider moved (fr-2ou). For `posW`/`scaleW`, `value` is
-   * the raw slider number; for the `xw`/`yw`/`zw` rotation planes, `value` is in
-   * RADIANS — the slider shows degrees and the Ui converts here, mirroring the
-   * 3D rotation editor's degree→radian boundary. */
-  onFourDParamInput: (param: FourDEditParam, value: number) => void;
 }
 
 /**
@@ -262,6 +243,44 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
 };
 
 const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale", "shear"];
+
+/**
+ * Deep-copy a transform's optional `w` extension (fr-bf6.3, see `types.ts`'s
+ * `WExtension`) so the editor's mutable working copy and the transform's own
+ * stored one never alias — the `w`-shaped counterpart to `clone3` for the
+ * plain Vec3 channels (position/rotation/scale/shear). `undefined` in,
+ * `undefined` out; only fields actually present are copied, so a sparse block
+ * stays exactly as sparse in the copy.
+ */
+function cloneW(w: WExtension | undefined): WExtension | undefined {
+  if (!w) return undefined;
+  const clone: WExtension = {};
+  if (w.position !== undefined) clone.position = w.position;
+  if (w.scale !== undefined) clone.scale = w.scale;
+  if (w.rotation) clone.rotation = { ...w.rotation };
+  if (w.shear) clone.shear = { ...w.shear };
+  return clone;
+}
+
+/**
+ * The Scale W value implied while `w.scale` is UNSET: the mean spatial
+ * contraction `(|sx|+|sy|+|sz|)/3` — the exact formula `affine4.ts`'s
+ * `embedTransform3` uses for the lift (see its JSDoc for why the MEAN
+ * contraction, not `1`, is what keeps a later 4D edit contractive).
+ * Duplicated here rather than imported: this is a UI-only PREVIEW of that
+ * value for the editor's "(auto)" label, not the lift itself, which always
+ * recomputes it fresh from whatever the transform's scale is at lift time.
+ */
+function derivedScaleW(scale: Vec3): number {
+  return (Math.abs(scale[0]) + Math.abs(scale[1]) + Math.abs(scale[2])) / 3;
+}
+
+/** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
+ * `types.ts`'s `Rotation4`/`Shear4`), in the 4D group's row order. One array
+ * drives both the Rotation W and Shear W row-builders below since the two
+ * genuinely share the same three plane keys. */
+const W_PLANES = ["xw", "yw", "zw"] as const;
+const W_PLANE_LABELS = ["XW", "YW", "ZW"];
 
 /**
  * The weight editor is log-scaled, so the slider sits at centre for the default
@@ -386,6 +405,19 @@ interface AxisControl {
   readout: HTMLElement;
 }
 
+/**
+ * Live handles into the collapsed "4D" group's eight rows (fr-bf6.3) — one
+ * per {@link WExtension} field, since unlike the plain Vec3 channels each
+ * binds to an independently-optional field rather than a shared indexed
+ * array. Rotation/Shear W hold their XW/YW/ZW rows in that order.
+ */
+interface FourDControls {
+  positionW: AxisControl;
+  scaleW: AxisControl;
+  rotationW: AxisControl[];
+  shearW: AxisControl[];
+}
+
 /** Live handles into a built editor so external edits can re-sync the sliders. */
 interface EditorState {
   /** What the editor edits: a transform index or the final transform. */
@@ -396,6 +428,10 @@ interface EditorState {
     scale: Vec3;
     shear: Vec3;
     weight: number;
+    /** Working copy of the transform's optional 4D extension (fr-bf6.3);
+     * `undefined` exactly when the transform has none AND the user hasn't
+     * touched the 4D group yet — see {@link Ui.mutateW}/{@link Ui.emitGeometry}. */
+    w: WExtension | undefined;
   };
   controls: Record<Channel, AxisControl[]>;
   /** The selection-weight control, or `null` for the final transform (no weight). */
@@ -406,6 +442,9 @@ interface EditorState {
   variationList: HTMLElement;
   /** The "add variation" dropdown, whose options exclude already-added types. */
   variationAdd: HTMLSelectElement;
+  /** The collapsed "4D" group's row controls (fr-bf6.3) — always built,
+   * whether or not this transform currently carries a `w` block. */
+  fourD: FourDControls;
 }
 
 /**
@@ -419,6 +458,11 @@ export class Ui {
   private handlers: UiHandlers | null = null;
 
   private readonly helpTitle: HTMLElement;
+  /** The panel's own heading. Since fr-bf6 the system's dimensionality is a
+   * live property, so the title tells the truth per generation — "3D IFS
+   * Fractal" for a flat system, "4D IFS Fractal" once any map's `w`
+   * extension is in play (fr-9uw). */
+  private readonly panelTitle: HTMLElement;
   private readonly helpText: HTMLElement;
   private readonly pointCount: HTMLElement;
   private readonly legend: HTMLElement;
@@ -506,15 +550,13 @@ export class Ui {
   private readonly solidProgress: HTMLElement;
   private readonly exitSolidBtn: HTMLButtonElement;
 
-  // 4D projection view (fr-cbg spike). The entry block + its two system
-  // buttons, the in-4D controls block + its exit button, and the explorer
-  // sub-blocks hidden while 4D is active (wrappers added to index.html so each
-  // block hides cleanly — see updateLabels).
-  private readonly fourDEntry: HTMLElement;
-  private readonly pentatopeButton: HTMLButtonElement;
-  private readonly spiral4Button: HTMLButtonElement;
+  // 4D VIEW controls (fr-cbg/fr-woc/fr-6x2). "4D" is a DERIVED property of the
+  // system now (fr-bf6, see affine4.ts's systemIsFlat/state.ts's
+  // systemIsNonFlat) rather than a mode with its own entry/exit button, so only
+  // the tumble/slice block remains here; its visibility (and the sub-blocks
+  // that hide alongside it — see updateLabels) is a VIEW gate keyed on that
+  // same non-flatness, not a separate on/off the user toggles.
   private readonly fourDControls: HTMLElement;
-  private readonly exitFourDButton: HTMLButtonElement;
   private readonly fourDSliceToggle: HTMLInputElement;
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
@@ -525,33 +567,16 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
-  // "Current System → 4D" entry button (fr-2ou). Always enabled: fr-hy8 made the
-  // 3D → 4D embed total, so there is no "not embeddable" state left to gate on.
-  private readonly embed3Button: HTMLButtonElement;
-  // In-4D per-map editor (fr-2ou): the Map select and the five w-param sliders.
-  private readonly fourDMapSelect: HTMLSelectElement;
-  private readonly fourDPosWSlider: HTMLInputElement;
-  private readonly fourDPosWLabel: HTMLElement;
-  private readonly fourDScaleWSlider: HTMLInputElement;
-  private readonly fourDScaleWLabel: HTMLElement;
-  private readonly fourDRotXWSlider: HTMLInputElement;
-  private readonly fourDRotXWLabel: HTMLElement;
-  private readonly fourDRotYWSlider: HTMLInputElement;
-  private readonly fourDRotYWLabel: HTMLElement;
-  private readonly fourDRotZWSlider: HTMLInputElement;
-  private readonly fourDRotZWLabel: HTMLElement;
-  private readonly transformsSection: HTMLElement;
-  private readonly presetSection: HTMLElement;
   private readonly colorModeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
-  private readonly transformEditSection: HTMLElement;
 
   private editor: EditorState | null = null;
 
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
+    this.panelTitle = this.byId("panelTitle");
     this.helpText = this.byId("helpText");
     this.pointCount = this.byId("pointCount");
     this.legend = this.byId("legend");
@@ -640,11 +665,7 @@ export class Ui {
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
     this.exitSolidBtn = this.byId("exitSolidBtn");
-    this.fourDEntry = this.byId("fourDEntry");
-    this.pentatopeButton = this.byId("pentatopeButton");
-    this.spiral4Button = this.byId("spiral4Button");
     this.fourDControls = this.byId("fourDControls");
-    this.exitFourDButton = this.byId("exitFourDButton");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
@@ -653,24 +674,9 @@ export class Ui {
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
-    this.embed3Button = this.byId("embed3Button");
-    this.fourDMapSelect = this.byId("fourDMapSelect");
-    this.fourDPosWSlider = this.byId("fourDPosWSlider");
-    this.fourDPosWLabel = this.byId("fourDPosWLabel");
-    this.fourDScaleWSlider = this.byId("fourDScaleWSlider");
-    this.fourDScaleWLabel = this.byId("fourDScaleWLabel");
-    this.fourDRotXWSlider = this.byId("fourDRotXWSlider");
-    this.fourDRotXWLabel = this.byId("fourDRotXWLabel");
-    this.fourDRotYWSlider = this.byId("fourDRotYWSlider");
-    this.fourDRotYWLabel = this.byId("fourDRotYWLabel");
-    this.fourDRotZWSlider = this.byId("fourDRotZWSlider");
-    this.fourDRotZWLabel = this.byId("fourDRotZWLabel");
-    this.transformsSection = this.byId("transformsSection");
-    this.presetSection = this.byId("presetSection");
     this.colorModeRow = this.byId("colorModeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
-    this.transformEditSection = this.byId("transformEditSection");
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -807,15 +813,6 @@ export class Ui {
     this.solidResolutionSlider.addEventListener("input", () =>
       handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
     );
-    this.pentatopeButton.addEventListener("click", () =>
-      handlers.onEnterFourD("pentatope"),
-    );
-    this.spiral4Button.addEventListener("click", () =>
-      handlers.onEnterFourD("spiral"),
-    );
-    this.exitFourDButton.addEventListener("click", () =>
-      handlers.onExitFourD(),
-    );
     this.fourDTumbleToggle.addEventListener("change", () => {
       const on = this.fourDTumbleToggle.checked;
       // The speed slider only means anything while the tumble is running —
@@ -842,39 +839,6 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
-    this.embed3Button.addEventListener("click", () =>
-      handlers.onEmbedCurrentSystem(),
-    );
-    this.fourDMapSelect.addEventListener("change", () =>
-      handlers.onFourDMapSelect(Number(this.fourDMapSelect.value)),
-    );
-    this.fourDPosWSlider.addEventListener("input", () => {
-      const value = Number(this.fourDPosWSlider.value);
-      this.fourDPosWLabel.textContent = value.toFixed(2);
-      handlers.onFourDParamInput("posW", value);
-    });
-    this.fourDScaleWSlider.addEventListener("input", () => {
-      const value = Number(this.fourDScaleWSlider.value);
-      this.fourDScaleWLabel.textContent = value.toFixed(2);
-      handlers.onFourDParamInput("scaleW", value);
-    });
-    // Rotation sliders show degrees but the handler (and Transform4) wants
-    // radians — convert here, exactly as the 3D rotation editor does.
-    this.fourDRotXWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotXWSlider.value);
-      this.fourDRotXWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("xw", degToRad(deg));
-    });
-    this.fourDRotYWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotYWSlider.value);
-      this.fourDRotYWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("yw", degToRad(deg));
-    });
-    this.fourDRotZWSlider.addEventListener("input", () => {
-      const deg = Number(this.fourDRotZWSlider.value);
-      this.fourDRotZWLabel.textContent = `${deg}°`;
-      handlers.onFourDParamInput("zw", degToRad(deg));
-    });
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -894,38 +858,6 @@ export class Ui {
     this.fourDTumbleRow.classList.toggle("hidden", !on);
     this.fourDTumbleSpeedSlider.value = "1";
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
-  }
-
-  /**
-   * (Re)build the in-4D per-map editor (fr-2ou): rebuild the Transform dropdown
-   * as "Transform 1"…"Transform N", select `selected`, and fill the five w-param sliders +
-   * labels from `maps[selected]`. Called by main.ts on 4D entry and whenever
-   * the selected map changes — NOT on a slider edit, since the sliders are
-   * already the live source of that value. Rotation angles arrive in radians
-   * and are shown as degrees, matching the 3D rotation editor.
-   */
-  renderFourDEditor(maps: FourDMapParams[], selected: number): void {
-    this.fourDMapSelect.replaceChildren();
-    maps.forEach((_, i) => {
-      const option = this.doc.createElement("option");
-      option.value = String(i);
-      option.textContent = `Transform ${i + 1}`;
-      this.fourDMapSelect.appendChild(option);
-    });
-    this.fourDMapSelect.value = String(selected);
-
-    const map = maps[selected];
-    if (!map) return; // defensive: a 4D system always has ≥ 1 map.
-    this.fourDPosWSlider.value = String(map.posW);
-    this.fourDPosWLabel.textContent = map.posW.toFixed(2);
-    this.fourDScaleWSlider.value = String(map.scaleW);
-    this.fourDScaleWLabel.textContent = map.scaleW.toFixed(2);
-    this.fourDRotXWSlider.value = String(displayDegrees(map.xw));
-    this.fourDRotXWLabel.textContent = `${displayDegrees(map.xw)}°`;
-    this.fourDRotYWSlider.value = String(displayDegrees(map.yw));
-    this.fourDRotYWLabel.textContent = `${displayDegrees(map.yw)}°`;
-    this.fourDRotZWSlider.value = String(displayDegrees(map.zw));
-    this.fourDRotZWLabel.textContent = `${displayDegrees(map.zw)}°`;
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -1004,53 +936,46 @@ export class Ui {
     this.solidResolutionSlider.value = String(state.solid.resolution);
 
     // Either render mode takes over the panel — editing controls that can't
-    // affect the in-progress render would just be confusing. The three
-    // non-explorer modes (flame, solid, 4D) are mutually exclusive by
-    // construction: each mode's entry button is hidden while any other is
-    // active.
+    // affect the in-progress render would just be confusing.
     const rendering = state.flameActive || state.solidActive;
-    const fourD = state.fourDActive;
-    // A flame/solid render replaces the WHOLE explorer; the 4D projection keeps
-    // a few live controls (points/size/regenerate/guides) but hides everything
-    // that edits or restyles the 3D system. So explorerControls itself hides
-    // only for a render, while the 4D-hidden sub-blocks below add `fourD`.
+    // "4D" is a DERIVED property of the system now (fr-bf6, see affine4.ts's
+    // systemIsFlat via state.ts's systemIsNonFlat) rather than a mode with its
+    // own entry/exit — so this is a VIEW gate, not a separate on/off. Unlike
+    // the OLD 4D mode, the presets block, transform list, and editor all STAY
+    // VISIBLE and live for a non-flat system exactly as for a flat one — only
+    // the controls that are genuinely meaningless while viewing the 4D shader
+    // path (flame/solid entry, symmetry, color mode/contrast, depth style —
+    // none of them reach the 4D projection or its own w-driven coloring) hide,
+    // and the tumble/slice block takes their place. Flame/solid entry and the
+    // 4D view are mutually exclusive by construction: each hides while either
+    // of the others is active.
+    const nonFlat = systemIsNonFlat(state);
+    this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.flameEntry.classList.toggle("hidden", rendering || fourD);
-    this.solidEntry.classList.toggle("hidden", rendering || fourD);
-    this.fourDEntry.classList.toggle("hidden", rendering || fourD);
+    this.flameEntry.classList.toggle("hidden", rendering || nonFlat);
+    this.solidEntry.classList.toggle("hidden", rendering || nonFlat);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
-    this.fourDControls.classList.toggle("hidden", !fourD);
-    // 3D-editing / restyling sub-blocks: hidden while the 4D projection is up
-    // (they'd edit a system that isn't on screen). They already vanish during a
-    // flame/solid render by sitting inside the hidden explorerControls, so
-    // `fourD` is the only extra condition each needs here.
-    this.transformsSection.classList.toggle("hidden", fourD);
-    // The whole Presets block (heading, 3D preset select, Surprise Me): a 3D
-    // preset can't load into the 4D projection, and a visible-but-inert
-    // control would just look broken.
-    this.presetSection.classList.toggle("hidden", fourD);
-    this.colorModeRow.classList.toggle("hidden", fourD);
-    this.renderStyleRow.classList.toggle("hidden", fourD);
-    this.symmetrySection.classList.toggle("hidden", fourD);
-    this.transformEditSection.classList.toggle("hidden", fourD);
+    this.fourDControls.classList.toggle("hidden", !nonFlat);
+    this.colorModeRow.classList.toggle("hidden", nonFlat);
+    this.renderStyleRow.classList.toggle("hidden", nonFlat);
+    this.symmetrySection.classList.toggle("hidden", nonFlat);
     // The manual brightness override only means anything for the glow render
     // style, so — like the flame/solid sub-panels above — it's hidden whenever
-    // that style isn't the active one (and always in 4D).
+    // that style isn't the active one (and always while non-flat, since
+    // renderStyle itself never reaches the 4D projection either).
     this.glowBrightnessRow.classList.toggle(
       "hidden",
-      fourD || state.renderStyle !== "glow",
+      nonFlat || state.renderStyle !== "glow",
     );
     // Contrast only means anything for the coordinate-normalized color modes
-    // (and never in 4D, whose color comes straight from the 4th coordinate).
+    // (and never while non-flat, whose color comes straight from the rotated
+    // 4th coordinate in-shader instead of colorMode).
     this.colorGammaRow.classList.toggle(
       "hidden",
-      fourD || !colorModeUsesGamma(state.colorMode),
+      nonFlat || !colorModeUsesGamma(state.colorMode),
     );
-    // "Current System → 4D" always stays enabled: fr-hy8 made the embed total
-    // (shear, variations and the final-transform lens all carry into 4D), so
-    // there is no longer any system it must refuse.
-    this.updateLegend(state);
+    this.updateLegend(state, nonFlat);
 
     if (state.flameActive) {
       this.helpTitle.textContent = "Flame Render";
@@ -1064,13 +989,17 @@ export class Ui {
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
-    } else if (state.fourDActive) {
+    } else if (nonFlat) {
       // The 4D projection tumbles on its own (pause/speed in the panel); the
       // camera orbits the projected cloud exactly like camera mode, and Shift
       // retargets drag/scroll to the hidden w-planes (fr-woc) — the help box
       // is the most visible gesture surface, so the Shift line lives here as
       // well as in the panel hint. Touch has no Shift; it keeps the orbit
-      // lines only.
+      // lines only. Takes priority over a transform/final-lens selection
+      // (fr-bf6, unlike the OLD 4D mode's forced-null selection) — there is no
+      // draggable guide box in the projection no matter which transform is
+      // selected in the (still-live) list, so the canvas gesture is always
+      // this one; only the panel's own editor responds to the selection.
       this.helpTitle.textContent = "4D Projection";
       this.setHelpLines(
         this.mouse
@@ -1138,15 +1067,19 @@ export class Ui {
    * of colorMode, exactly like the flame case — but solid's `"legacy"`
    * palette DOES follow colorMode/colorGamma faithfully, so the legend stays
    * accurate and visible for that one case).
+   *
+   * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
+   * than recomputing `systemIsNonFlat` here, so the two never risk reading a
+   * different answer within the same refresh.
    */
-  private updateLegend(state: AppState): void {
+  private updateLegend(state: AppState, nonFlat: boolean): void {
     const mode = state.colorMode;
     const hidden =
       mode === "uniform" ||
       state.flameActive ||
-      // The 4D projection colors by its 4th coordinate in-shader (see
+      // The 4D view colors by the rotated 4th coordinate in-shader (see
       // scene.ts), not by any Color Mode, so this legend can't describe it.
-      state.fourDActive ||
+      nonFlat ||
       (state.solidActive && state.solid.paletteId !== "legacy");
     this.legend.classList.toggle("hidden", hidden);
     if (hidden) return;
@@ -1392,6 +1325,7 @@ export class Ui {
       scale: clone3(transform.scale),
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
+      w: cloneW(transform.w),
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -1450,6 +1384,12 @@ export class Ui {
     const weightControl =
       target === "final" ? null : this.buildWeightControl(geometry.weight);
     const { list, add } = this.buildVariationsGroup();
+    // Placed last (after Variations): a deliberate choice to leave the
+    // existing layout for every ordinary (flat) transform undisturbed — this
+    // is purely an opt-in extension appended at the end, always built (never
+    // conditionally omitted) so add/remove/selection keep working uniformly
+    // whether or not this transform (or system) is currently non-flat.
+    const fourD = this.buildFourDGroup(transform);
 
     this.editor = {
       target,
@@ -1459,6 +1399,7 @@ export class Ui {
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
       variationAdd: add,
+      fourD,
     };
     this.renderVariationRows();
     this.refreshAddOptions();
@@ -1625,6 +1566,277 @@ export class Ui {
     this.emitGeometry();
   }
 
+  /**
+   * Build one row of the 4D group: the same shape as the per-axis rows the
+   * Position/Rotation/Scale/Shear loop and {@link buildWeightControl} build
+   * (axis label, slider, live readout) — factored out here because each of
+   * the eight 4D rows binds to a different, independently-optional field of
+   * a transform's `w` block (see `WExtension`) rather than a shared indexed
+   * array, so the generic per-channel loop above doesn't fit them directly.
+   */
+  private buildFourDRow(
+    container: HTMLElement,
+    axisLabel: string,
+    ariaLabel: string,
+    min: number,
+    max: number,
+    step: number,
+    initialModel: number,
+    toSlider: (model: number) => number,
+    fromSlider: (slider: number) => number,
+    format: (model: number) => string,
+    onModelChange: (model: number) => void,
+  ): AxisControl {
+    const row = this.doc.createElement("div");
+    row.className = "editor-row";
+
+    const name = this.doc.createElement("span");
+    name.className = "axis";
+    name.textContent = axisLabel;
+
+    const slider = this.doc.createElement("input");
+    slider.type = "range";
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.value = String(toSlider(initialModel));
+    slider.setAttribute("aria-label", ariaLabel);
+
+    const readout = this.doc.createElement("span");
+    readout.className = "value";
+    readout.textContent = format(initialModel);
+
+    slider.addEventListener("input", () => {
+      const model = fromSlider(Number(slider.value));
+      readout.textContent = format(model);
+      onModelChange(model);
+    });
+
+    row.append(name, slider, readout);
+    container.appendChild(row);
+    return { slider, readout };
+  }
+
+  /** Append a titled sub-group (a plain div, NOT collapsible on its own) to
+   * `details` — the 4D group's internal structure mirrors the outer editor's
+   * own group-title-then-rows pattern, just nested one level inside the
+   * `<details>` so Position W/Scale W/Rotation W/Shear W stay visually
+   * distinct from one another. */
+  private appendFourDSubGroup(
+    details: HTMLElement,
+    title: string,
+  ): HTMLElement {
+    const group = this.doc.createElement("div");
+    group.className = "editor-group";
+    const heading = this.doc.createElement("div");
+    heading.className = "editor-group-title";
+    heading.textContent = title;
+    group.appendChild(heading);
+    details.appendChild(group);
+    return group;
+  }
+
+  /**
+   * Build the collapsed "4D" group (fr-bf6.3): the only UI that can create or
+   * edit a transform's optional `w` extension (see `types.ts`'s
+   * `WExtension`). Always built — never conditionally omitted — so every
+   * other editor interaction keeps working uniformly whether or not this
+   * particular transform is currently non-flat.
+   *
+   * `<details>`'s native open/closed state is the entire "collapsed by
+   * default" affordance: open only when `transform.w` is already present
+   * (regardless of whether it happens to be flat/trivial), so a system
+   * authored via preset or URL hash shows its 4D values immediately instead
+   * of hiding them a click away. Only {@link buildEditor} (a fresh selection)
+   * decides this — {@link syncFourDControls} never touches `.open`, so a
+   * user's manual toggle is never fought mid-session.
+   */
+  private buildFourDGroup(transform: Transform): FourDControls {
+    const details = this.doc.createElement("details");
+    details.className = "editor-group";
+    details.open = transform.w !== undefined;
+
+    const summary = this.doc.createElement("summary");
+    summary.className = "editor-group-title";
+    summary.textContent = "4D";
+    details.appendChild(summary);
+
+    const w = transform.w;
+
+    const positionGroup = this.appendFourDSubGroup(details, "Position W");
+    const positionW = this.buildFourDRow(
+      positionGroup,
+      "W",
+      "Position W",
+      MIN_W_POSITION,
+      MAX_W_POSITION,
+      0.01,
+      w?.position ?? 0,
+      (v) => v,
+      (v) => v,
+      (v) => v.toFixed(2),
+      (model) => {
+        this.mutateW((block) => {
+          block.position = model;
+        });
+        this.emitGeometry();
+      },
+    );
+
+    const scaleGroup = this.appendFourDSubGroup(details, "Scale W");
+    const scaleWAuto = w?.scale === undefined;
+    const scaleWInitial = w?.scale ?? derivedScaleW(transform.scale);
+    const scaleW = this.buildFourDRow(
+      scaleGroup,
+      "W",
+      "Scale W",
+      MIN_W_SCALE,
+      MAX_W_SCALE,
+      0.01,
+      scaleWInitial,
+      (v) => v,
+      (v) => v,
+      (v) => v.toFixed(2),
+      (model) => {
+        this.mutateW((block) => {
+          block.scale = model;
+        });
+        this.emitGeometry();
+      },
+    );
+    // The row above always formats as a plain number — patch in the "(auto)"
+    // marker here, once, for the derived starting value. The row's own
+    // listener (buildFourDRow) already reformats with the plain `format` the
+    // instant the user actually moves it, so nothing else needs to know
+    // about the marker; {@link refreshScaleWIfAuto} re-applies it live while
+    // a 3D scale slider moves and this one stays untouched.
+    if (scaleWAuto) {
+      scaleW.readout.textContent = `${scaleWInitial.toFixed(2)} (auto)`;
+    }
+
+    // Rotation/Shear W share the same three plane keys (see W_PLANES) and the
+    // same MIN_W_ANGLE/MAX_W_ANGLE range persist.ts clamps against on decode
+    // (state.ts's doc) — deriving the slider's degree bounds from those
+    // radian constants, rather than repeating -180/180 as a bare literal,
+    // keeps the wire format and this widget sharing one source.
+    const rotationGroup = this.appendFourDSubGroup(details, "Rotation W");
+    const minAngleDeg = radToDeg(MIN_W_ANGLE);
+    const maxAngleDeg = radToDeg(MAX_W_ANGLE);
+    const rotationW = W_PLANES.map((plane, i) =>
+      this.buildFourDRow(
+        rotationGroup,
+        W_PLANE_LABELS[i],
+        `Rotation ${W_PLANE_LABELS[i]}`,
+        minAngleDeg,
+        maxAngleDeg,
+        1,
+        w?.rotation?.[plane] ?? 0,
+        displayDegrees,
+        degToRad,
+        (v) => `${displayDegrees(v)}°`,
+        (model) => {
+          this.mutateW((block) => {
+            const rotation: NonNullable<WExtension["rotation"]> =
+              block.rotation ?? {};
+            rotation[plane] = model;
+            block.rotation = rotation;
+          });
+          this.emitGeometry();
+        },
+      ),
+    );
+
+    const shearGroup = this.appendFourDSubGroup(details, "Shear W");
+    const shearW = W_PLANES.map((plane, i) =>
+      this.buildFourDRow(
+        shearGroup,
+        W_PLANE_LABELS[i],
+        `Shear ${W_PLANE_LABELS[i]}`,
+        MIN_W_SHEAR,
+        MAX_W_SHEAR,
+        0.01,
+        w?.shear?.[plane] ?? 0,
+        (v) => v,
+        (v) => v,
+        (v) => v.toFixed(2),
+        (model) => {
+          this.mutateW((block) => {
+            const shear: NonNullable<WExtension["shear"]> = block.shear ?? {};
+            shear[plane] = model;
+            block.shear = shear;
+          });
+          this.emitGeometry();
+        },
+      ),
+    );
+
+    this.transformEditor.appendChild(details);
+    return { positionW, scaleW, rotationW, shearW };
+  }
+
+  /**
+   * Ensure the working `w` block exists, then run `mutate` to set exactly the
+   * one field the fired slider owns — the sparse-write contract (fr-bf6.3):
+   * untouched fields must never be materialized, since their absence is what
+   * keeps an unrelated edit from dragging a flat transform's `w` into
+   * existence, and what lets `w.scale` keep meaning "derived" until the user
+   * actually sets it (see `WExtension.scale`'s doc).
+   */
+  private mutateW(mutate: (w: WExtension) => void): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const w: WExtension = editor.geometry.w ?? {};
+    mutate(w);
+    editor.geometry.w = w;
+  }
+
+  /**
+   * Keep the Scale W row tracking the live mean 3D contraction while
+   * `w.scale` is UNSET (see `WExtension.scale`'s doc) — called after every 3D
+   * scale slider edit; a no-op once the user has set an explicit Scale W,
+   * since then it no longer derives from the 3D scale at all.
+   */
+  private refreshScaleWIfAuto(): void {
+    const editor = this.editor;
+    if (!editor || editor.geometry.w?.scale !== undefined) return;
+    const derived = derivedScaleW(editor.geometry.scale);
+    editor.fourD.scaleW.slider.value = String(derived);
+    editor.fourD.scaleW.readout.textContent = `${derived.toFixed(2)} (auto)`;
+  }
+
+  /** Re-sync the 4D group's sliders/readouts to the current working geometry
+   * — the fr-bf6.3 counterpart to the Position/Rotation/Scale/Shear loop and
+   * the weight control's own re-sync in {@link syncEditor}. Never touches the
+   * `<details>` open/closed state — see {@link buildFourDGroup}'s doc. */
+  private syncFourDControls(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const { w } = editor.geometry;
+    const { fourD } = editor;
+
+    const posV = w?.position ?? 0;
+    fourD.positionW.slider.value = String(posV);
+    fourD.positionW.readout.textContent = posV.toFixed(2);
+
+    const scaleAuto = w?.scale === undefined;
+    const scaleV = w?.scale ?? derivedScaleW(editor.geometry.scale);
+    fourD.scaleW.slider.value = String(scaleV);
+    fourD.scaleW.readout.textContent = scaleAuto
+      ? `${scaleV.toFixed(2)} (auto)`
+      : scaleV.toFixed(2);
+
+    W_PLANES.forEach((plane, i) => {
+      const rad = w?.rotation?.[plane] ?? 0;
+      fourD.rotationW[i].slider.value = String(displayDegrees(rad));
+      fourD.rotationW[i].readout.textContent = `${displayDegrees(rad)}°`;
+    });
+    W_PLANES.forEach((plane, i) => {
+      const val = w?.shear?.[plane] ?? 0;
+      fourD.shearW[i].slider.value = String(val);
+      fourD.shearW[i].readout.textContent = val.toFixed(2);
+    });
+  }
+
   private syncEditor(transform: Transform): void {
     const editor = this.editor;
     if (!editor) return;
@@ -1634,6 +1846,7 @@ export class Ui {
       scale: clone3(transform.scale),
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
+      w: cloneW(transform.w),
     };
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
@@ -1648,6 +1861,7 @@ export class Ui {
       editor.weightControl.slider.value = String(weightToSlider(weight));
       editor.weightControl.readout.textContent = weight.toFixed(2);
     }
+    this.syncFourDControls();
 
     // Variations rarely change under a stable selection (drags don't touch
     // them), so only rebuild the rows when they actually differ.
@@ -1670,6 +1884,9 @@ export class Ui {
     const model = spec.fromSlider(sliderValue);
     editor.geometry[channel][axis] = model;
     editor.controls[channel][axis].readout.textContent = spec.format(model);
+    // Scale W tracks the live mean 3D contraction while unset (see
+    // WExtension.scale's doc) — keep it in sync with every 3D scale edit.
+    if (channel === "scale") this.refreshScaleWIfAuto();
     this.emitGeometry();
   }
 
@@ -1695,6 +1912,16 @@ export class Ui {
       scale: clone3(editor.geometry.scale),
       shear: clone3(editor.geometry.shear),
       variations: editor.variations.map((v) => ({ ...v })),
+      // Sparse by construction (fr-bf6.3): only include `w` when the working
+      // copy actually has one, so a transform the user never touched the 4D
+      // group on emits geometry with NO `w` key at all — not `undefined`,
+      // not `{}` — keeping it byte-identical through an unrelated edit (see
+      // WExtension's docs: absence is the flat/identity state). Cloned again
+      // here (like the plain Vec3 channels above) so the emitted object never
+      // aliases the editor's own live-mutated working copy.
+      ...(editor.geometry.w !== undefined
+        ? { w: cloneW(editor.geometry.w) }
+        : {}),
     };
     if (editor.target === "final") {
       this.handlers?.onFinalTransformGeometry(base);

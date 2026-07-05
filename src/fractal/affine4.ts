@@ -278,3 +278,97 @@ export function embedTransform3(t: Transform): Transform4 {
   if (t.weight !== undefined) embedded.weight = t.weight;
   return embedded;
 }
+
+/**
+ * Lift a 3D {@link Transform} to a {@link Transform4}: start from its flat
+ * {@link embedTransform3} embedding, then splice in whatever `w` overrides the
+ * transform carries (its optional `w` block). This is the general 3D → 4D
+ * bridge for a system where "4D" is a per-transform, DERIVED property (see
+ * {@link isFlatTransform}/{@link systemIsFlat}) rather than a separate mode —
+ * every transform lifts through here, whether or not it actually carries any
+ * `w` overrides.
+ *
+ * The splice is SPARSE: only fields actually present on `t.w` are touched, so
+ * a transform with no `w` block returns EXACTLY `embedTransform3(t)` — same
+ * object shape, same absent fields. In particular, `w.scale` absent leaves the
+ * embed's derived mean spatial contraction untouched, which is the whole point
+ * of leaving it derivable rather than materialised: it keeps tracking the
+ * map's CURRENT scale-X/Y/Z (recomputed by `embedTransform3` on every call)
+ * instead of freezing whatever the mean was when `w` was first added — see
+ * `embedTransform3`'s JSDoc for why that derived contraction, not `1`, is what
+ * keeps a later 4D edit contractive.
+ */
+export function toTransform4(t: Transform): Transform4 {
+  const embedded = embedTransform3(t);
+  const { w } = t;
+  if (!w) return embedded;
+
+  if (w.position !== undefined) embedded.position[3] = w.position;
+  if (w.scale !== undefined) embedded.scale[3] = w.scale;
+
+  if (w.rotation) {
+    const { xw, yw, zw } = w.rotation;
+    // embedTransform3 always sets `rotation` (even with every angle at its
+    // default), so there is always an object here to splice the w-planes onto.
+    const rotation = embedded.rotation;
+    if (rotation) {
+      if (xw !== undefined) rotation.xw = xw;
+      if (yw !== undefined) rotation.yw = yw;
+      if (zw !== undefined) rotation.zw = zw;
+    }
+  }
+
+  if (w.shear) {
+    const { xw, yw, zw } = w.shear;
+    if (xw !== undefined || yw !== undefined || zw !== undefined) {
+      // embedTransform3 only sets `shear` for a non-zero 3D shear, so an
+      // unsheared base needs a fresh object to hold the w-only entries.
+      const shear = embedded.shear ?? {};
+      if (xw !== undefined) shear.xw = xw;
+      if (yw !== undefined) shear.yw = yw;
+      if (zw !== undefined) shear.zw = zw;
+      embedded.shear = shear;
+    }
+  }
+
+  return embedded;
+}
+
+/**
+ * Whether a transform's optional `w` block ({@link Transform.w}) is absent or
+ * trivial, i.e. the map has no 4D degrees of freedom in play and lives flat in
+ * the `w = 0` slice. Mirrors {@link rotationMatrix4}'s skip-zero-factors
+ * discipline: a field only disqualifies flatness when it is PRESENT and
+ * non-zero — `w: {}` and `w: { scale: 0 }` are both flat, `w: { scale: 0.5 }`
+ * is not — so a system round-tripped through explicit-zero `w` fields stays
+ * exactly as flat as one with no `w` block at all.
+ */
+export function isFlatTransform(t: Transform): boolean {
+  const { w } = t;
+  if (!w) return true;
+  if (w.position !== undefined && w.position !== 0) return false;
+  if (w.scale !== undefined && w.scale !== 0) return false;
+  if (w.rotation) {
+    const { xw, yw, zw } = w.rotation;
+    if (xw !== undefined && xw !== 0) return false;
+    if (yw !== undefined && yw !== 0) return false;
+    if (zw !== undefined && zw !== 0) return false;
+  }
+  if (w.shear) {
+    const { xw, yw, zw } = w.shear;
+    if (xw !== undefined && xw !== 0) return false;
+    if (yw !== undefined && yw !== 0) return false;
+    if (zw !== undefined && zw !== 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether every transform in a system is flat (see {@link isFlatTransform}) —
+ * the derived condition that lets the app treat "4D" as a property of a
+ * system (do any of its maps have 4D degrees of freedom in play?) rather than
+ * a separate mode the whole system opts into.
+ */
+export function systemIsFlat(transforms: readonly Transform[]): boolean {
+  return transforms.every(isFlatTransform);
+}

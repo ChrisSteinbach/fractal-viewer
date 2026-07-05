@@ -1,10 +1,25 @@
-import { applyAffine4, composeAffine4, embedTransform3 } from "./affine4";
+import {
+  applyAffine4,
+  composeAffine4,
+  embedTransform3,
+  toTransform4,
+} from "./affine4";
 import { ESCAPE_LIMIT, MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
-import { pentatopeGasket } from "./presets4";
-import { sierpinskiTetrahedron } from "./presets";
+import { pentatope, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Transform4 } from "./types";
+
+// presets4.ts (the fr-cbg spike's native-Transform4 preset module) was
+// deleted once fr-bf6 unified "4D" into an ordinary Transform's optional `w`
+// block: `presets.ts`'s `pentatope` + `toTransform4` now produce the
+// bit-identical Transform4[] its old `pentatopeGasket` did (composeAffine4
+// skips the lift's all-zero rotation exactly like an absent one — see
+// presets.test.ts), so this local alias keeps every assertion below
+// unchanged.
+function pentatopeGasket(): Transform4[] {
+  return pentatope().map(toTransform4);
+}
 
 function makeMaps(count: number): Transform4[] {
   return Array.from({ length: count }, (): Transform4 => ({

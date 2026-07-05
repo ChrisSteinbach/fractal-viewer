@@ -49,7 +49,7 @@ export default defineConfig({
       manifest: {
         name: APP_NAME,
         short_name: APP_NAME,
-        description: "Interactive 3D IFS fractal viewer built with Three.js",
+        description: "Interactive 3D/4D IFS fractal viewer built with Three.js",
         theme_color: "#1a1a2e",
         background_color: "#1a1a2e",
         display: "standalone",

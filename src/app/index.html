@@ -11,7 +11,7 @@
     <title>Fractal Viewer</title>
     <meta
       name="description"
-      content="Interactive 3D IFS fractal viewer — design iterated function systems and watch the chaos game render their attractors in real time."
+      content="Interactive 3D/4D IFS fractal viewer — design iterated function systems and watch the chaos game render their attractors in real time."
     />
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -49,7 +49,7 @@
       <button id="panelClose" type="button" aria-label="Close controls">
         ✕
       </button>
-      <h2>3D IFS Fractal</h2>
+      <h2 id="panelTitle">3D IFS Fractal</h2>
 
       <h3>Export</h3>
       <button class="btn btn-ghost" id="savePngBtn" type="button">
@@ -91,6 +91,10 @@
             <option value="curling">Curling Fern</option>
             <option value="radiolarian">Radiolarian (flame)</option>
             <option value="swirl">Swirl (flame)</option>
+            <optgroup label="4D">
+              <option value="pentatope">Pentatope Gasket</option>
+              <option value="doubleRotation">Double-Rotation Spiral</option>
+            </optgroup>
           </select>
           <button class="btn btn-blue" id="surpriseBtn" type="button">
             Surprise Me
@@ -444,22 +448,8 @@
         </button>
       </div>
 
-      <div id="fourDEntry">
-        <h3>4D — Experimental</h3>
-        <button class="btn btn-blue" id="pentatopeButton" type="button">
-          Pentatope Gasket
-        </button>
-        <button class="btn btn-blue" id="spiral4Button" type="button">
-          Double-Rotation Spiral
-        </button>
-        <button class="btn btn-blue" id="embed3Button" type="button">
-          Current System → 4D
-        </button>
-        <p class="flame-hint">
-          4D iterated function systems, orthographically projected to 3D.
-        </p>
-      </div>
       <div id="fourDControls" class="hidden">
+        <h3>4D View</h3>
         <p class="flame-hint">
           Color = side of our 3-space: <strong>blue −w · orange +w</strong> ·
           gray ≈ w 0. Layers add up where the projection overlaps itself.
@@ -500,78 +490,6 @@
             />
           </label>
         </div>
-        <div id="fourDEditSection">
-          <h3>4D Transform Params</h3>
-          <label class="select-label">
-            Transform
-            <select
-              id="fourDMapSelect"
-              aria-label="4D transform to edit"
-            ></select>
-          </label>
-          <label class="select-label">
-            Position W: <span id="fourDPosWLabel">0.00</span>
-            <input
-              type="range"
-              id="fourDPosWSlider"
-              min="-1.5"
-              max="1.5"
-              step="0.01"
-              value="0"
-            />
-          </label>
-          <label class="select-label">
-            Scale W: <span id="fourDScaleWLabel">1.00</span>
-            <input
-              type="range"
-              id="fourDScaleWSlider"
-              min="0.05"
-              max="1.5"
-              step="0.01"
-              value="1"
-            />
-          </label>
-          <label class="select-label">
-            Rotation XW: <span id="fourDRotXWLabel">0°</span>
-            <input
-              type="range"
-              id="fourDRotXWSlider"
-              min="-180"
-              max="180"
-              step="1"
-              value="0"
-            />
-          </label>
-          <label class="select-label">
-            Rotation YW: <span id="fourDRotYWLabel">0°</span>
-            <input
-              type="range"
-              id="fourDRotYWSlider"
-              min="-180"
-              max="180"
-              step="1"
-              value="0"
-            />
-          </label>
-          <label class="select-label">
-            Rotation ZW: <span id="fourDRotZWLabel">0°</span>
-            <input
-              type="range"
-              id="fourDRotZWSlider"
-              min="-180"
-              max="180"
-              step="1"
-              value="0"
-            />
-          </label>
-          <p class="flame-hint">
-            Position/rotation/scale in X, Y, Z are edited in the 3D editor
-            before embedding. These 4D edits are session-only (not saved).
-          </p>
-        </div>
-        <button class="btn btn-ghost" id="exitFourDButton" type="button">
-          ← Back to 3D
-        </button>
       </div>
     </div>
 
