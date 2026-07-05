@@ -1,5 +1,7 @@
 import { composeAffine } from "./affine";
+import { toTransform4 } from "./affine4";
 import { runChaosGame } from "./chaos-game";
+import { runChaosGame4 } from "./chaos-game-4d";
 import {
   appendTransform,
   barnsleyFern,
@@ -7,11 +9,13 @@ import {
   curlingFern,
   defaultTransforms,
   dodecahedronFlake,
+  doubleRotation,
   icosahedronFlake,
   jerusalemCube,
   mengerSponge,
   nextId,
   octahedronFlake,
+  pentatope,
   PRESET_NAMES,
   presetTransforms,
   radiolarian,
@@ -21,6 +25,7 @@ import {
   swirlFlame,
 } from "./presets";
 import { mulberry32 } from "./rng";
+import type { Vec4 } from "./types";
 
 describe("presets", () => {
   it("defaultTransforms has four maps", () => {
@@ -336,5 +341,86 @@ describe("appendTransform", () => {
     const a = appendTransform(defaultTransforms(), mulberry32(2));
     const b = appendTransform(defaultTransforms(), mulberry32(2));
     expect(a[4].position).toEqual(b[4].position);
+  });
+});
+
+function dot4(a: Vec4, b: Vec4): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+}
+
+describe("pentatope (unified 4D preset)", () => {
+  it("lifts to five half-scale contractions of all of 4-space (w scale derived)", () => {
+    const lifted = pentatope().map(toTransform4);
+    expect(lifted).toHaveLength(5);
+    // scale[3] is exactly 0.5 because it is DERIVED — the mean contraction of
+    // [½, ½, ½] — not because the preset pins it (w.scale stays absent).
+    for (const m of lifted) expect(m.scale).toEqual([0.5, 0.5, 0.5, 0.5]);
+    for (const t of pentatope()) expect(t.w?.scale).toBeUndefined();
+  });
+
+  it("places its lifted fixed points on a unit regular 4-simplex (|v| = 1, pairwise dot −1/4)", () => {
+    // Each lifted map's fixed point is v = 2·position (scale ½ ⇒ x* = 2·position).
+    const vertices = pentatope()
+      .map(toTransform4)
+      .map((m): Vec4 => [
+        m.position[0] * 2,
+        m.position[1] * 2,
+        m.position[2] * 2,
+        m.position[3] * 2,
+      ]);
+    for (const v of vertices) {
+      expect(Math.sqrt(dot4(v, v))).toBeCloseTo(1, 12);
+    }
+    for (let i = 0; i < vertices.length; i++) {
+      for (let j = i + 1; j < vertices.length; j++) {
+        expect(dot4(vertices[i], vertices[j])).toBeCloseTo(-0.25, 12);
+      }
+    }
+  });
+});
+
+describe("doubleRotation (unified 4D preset)", () => {
+  it("lifts the Euler-z swirl and the zw w-rotation into one double rotation", () => {
+    // Individual fields, not whole-object equality: the embed also writes the
+    // flat planes (yz: rx, xz: −ry), whose −0/0 distinctions are noise here.
+    const [swirlMap] = doubleRotation().map(toTransform4);
+    expect(swirlMap.rotation?.xy).toBe(0.55);
+    expect(swirlMap.rotation?.zw).toBe(0.34);
+  });
+
+  it("lifts the seed map's w offset", () => {
+    const seed = toTransform4(doubleRotation()[1]);
+    expect(seed.position[3]).toBe(0.75);
+  });
+
+  it("lifts to contractive maps only, derived w scales included", () => {
+    const lifted = doubleRotation().map(toTransform4);
+    for (const m of lifted) {
+      for (const s of m.scale) expect(Math.abs(s)).toBeLessThan(1);
+    }
+    // The derived w scales are each map's mean spatial contraction.
+    expect(lifted[0].scale[3]).toBeCloseTo(0.93, 12);
+    expect(lifted[1].scale[3]).toBeCloseTo(0.22, 12);
+  });
+
+  it("fills all four dimensions, stays bounded, and carries visible w structure", () => {
+    const result = runChaosGame4(
+      doubleRotation().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    // Genuinely 4D: every coordinate opens up, not collapsed to a lower flat.
+    expect(maxX - minX).toBeGreaterThan(0.2);
+    expect(maxY - minY).toBeGreaterThan(0.2);
+    expect(maxZ - minZ).toBeGreaterThan(0.2);
+    expect(maxW - minW).toBeGreaterThan(0.2);
+    // Bounded (contractive maps never let it run away).
+    expect(result.radius).toBeLessThan(3);
+    // The double-rotation signature: the zw-plane spin pushes points well off
+    // the w = 0 slice a 3D system could never leave.
+    let farW = 0;
+    for (const w of result.w) farW = Math.max(farW, Math.abs(w));
+    expect(farW).toBeGreaterThan(0.15);
   });
 });

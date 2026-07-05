@@ -1,5 +1,5 @@
 import type { Rng } from "./rng";
-import type { Transform, Variation, Vec3 } from "./types";
+import type { Transform, Variation, Vec3, Vec4 } from "./types";
 
 const HALF = 0.5;
 
@@ -515,6 +515,94 @@ export function swirlFlame(): Transform[] {
 }
 
 /**
+ * Circumradius-1 vertices of the regular 4-simplex (5-cell / pentatope): an
+ * alternated-cube tetrahedron sitting in the `w = −1/4` hyperplane plus the
+ * apex on the `+w` axis. With `s = √5/4` each vertex is a unit vector and
+ * every pair meets at the regular-simplex angle `arccos(−1/4)` (verified in
+ * presets.test.ts).
+ */
+function pentatopeVertices(): Vec4[] {
+  const s = Math.sqrt(5) / 4;
+  return [
+    [s, s, s, -1 / 4],
+    [s, -s, -s, -1 / 4],
+    [-s, s, -s, -1 / 4],
+    [-s, -s, s, -1 / 4],
+    [0, 0, 0, 1],
+  ];
+}
+
+/**
+ * The pentatope (5-cell) gasket — the true 4D successor of the Sierpinski
+ * tetrahedron, and the first NON-FLAT preset: five maps, each contracting all
+ * of 4-space by ½ toward one vertex of a regular 4-simplex (circumradius 1,
+ * centered at the origin), expressed as ordinary {@link Transform}s whose `w`
+ * extension carries the fourth coordinate. Its attractor has Hausdorff
+ * dimension `log 5 / log 2 ≈ 2.32` (five ½-scale copies), just as the
+ * Sierpinski tetrahedron's is `log 4 / log 2 = 2`.
+ *
+ * Each map fixes its vertex `v`: with scale ½, the fixed point of
+ * `x ↦ ½·x + position` is `2·position`, so `position = v/2` — the same
+ * `position = v·(1 − ratio)` construction as {@link flake}, one dimension up.
+ * The four base maps land at `w.position = −1/8`, the apex map at `+1/2`.
+ *
+ * `w.scale` is deliberately ABSENT — the showcase of absent-means-derived:
+ * `toTransform4` derives `scale_w` as the mean spatial contraction of
+ * `[½, ½, ½]`, which is exactly the `½` the native-4D original carried, so
+ * every lifted map contracts all of 4-space by ½ with nothing pinned and
+ * nothing to go stale.
+ */
+export function pentatope(): Transform[] {
+  return pentatopeVertices().map((v, i): Transform => ({
+    id: i,
+    position: [v[0] * HALF, v[1] * HALF, v[2] * HALF],
+    rotation: [0, 0, 0],
+    scale: [HALF, HALF, HALF],
+    w: { position: v[3] * HALF },
+  }));
+}
+
+/**
+ * A double-rotation spiral — a structure with NO 3D counterpart, expressed as
+ * ordinary {@link Transform}s. The dominant "swirl" map contracts while
+ * rotating simultaneously in two ORTHOGONAL planes at incommensurate angles:
+ * its `xy` spin is the plain Euler-z rotation (`embedTransform3` relabels
+ * `rz` → the `xy` plane angle verbatim), and its `zw` spin rides the `w`
+ * extension (`w.rotation.zw`). A true 4D double rotation has no fixed axis
+ * (unlike every 3D rotation), so the orbit winds through all four dimensions
+ * at once instead of spiralling about a line. The small, heavily
+ * out-weighted seed map keeps injecting points off-center in both planes
+ * (`x = 0.85` for `xy`, `w.position = 0.75` for `zw`) for the swirl to draw
+ * into filaments.
+ *
+ * The constants are tuned so the attractor is genuinely 4D (all four
+ * coordinate extents open up) yet bounded, and carries visible `w` structure
+ * — see the acceptance test in presets.test.ts. Both maps stay contractive,
+ * including the derived `w` scales (0.93 / 0.22, the mean of each map's
+ * uniform spatial scale — `w.scale` stays absent here too).
+ */
+export function doubleRotation(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0.55],
+      scale: [0.93, 0.93, 0.93],
+      weight: 6,
+      w: { rotation: { zw: 0.34 } },
+    },
+    {
+      id: 1,
+      position: [0.85, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.22, 0.22, 0.22],
+      weight: 1,
+      w: { position: 0.75 },
+    },
+  ];
+}
+
+/**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
  * {@link defaultTransforms}); listing it here keeps the startup fractal
@@ -540,6 +628,9 @@ const PRESETS = {
   curling: curlingFern,
   radiolarian,
   swirl: swirlFlame,
+  // The first non-flat presets (fr-bf6): systems whose w extension is in play.
+  pentatope,
+  doubleRotation,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
