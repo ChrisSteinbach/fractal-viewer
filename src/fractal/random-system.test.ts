@@ -1,15 +1,23 @@
 import {
   isAcceptableSystem,
+  isAcceptableSystem4,
   MIN_OCCUPIED_CELLS,
   occupiedCellCount,
   randomSystem,
 } from "./random-system";
+import { systemIsFlat, toTransform4 } from "./affine4";
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
-import { sierpinskiTetrahedron } from "./presets";
+import { runChaosGame4 } from "./chaos-game-4d";
+import { doubleRotation, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Bounds, Transform } from "./types";
+import type { Bounds, Bounds4, Transform } from "./types";
 
 const SEED_SAMPLE_SIZE = 50;
+/** Larger batch for the 4D-roll tests (fr-bf6.5): the roll only hits ~1/4 of
+ * the time, so a bigger sample is needed for both the fraction check and to
+ * reliably surface at least one of each sparse-`w` shape (position-only,
+ * rotation-only, two-plane rotation, the flat-roll force-fallback). */
+const FOUR_D_SEED_SAMPLE_SIZE = 200;
 
 describe("randomSystem", () => {
   it("is deterministic for a given seed, including the quality gate's probes", () => {
@@ -106,6 +114,106 @@ describe("randomSystem", () => {
   });
 });
 
+describe("randomSystem's 4D extension (fr-bf6.5)", () => {
+  it("is deterministic for a seed that rolls a non-flat system, including identical w blocks", () => {
+    // Seed 7 is confirmed (empirically) to roll a non-flat system, so this
+    // exercises the w-block equality path rather than incidentally passing
+    // because neither run touched `w` at all.
+    const a = randomSystem(mulberry32(7));
+    const b = randomSystem(mulberry32(7));
+    expect(systemIsFlat(a.transforms)).toBe(false);
+    expect(a).toEqual(b);
+  });
+
+  it("lands a non-flat system on roughly one 'Surprise Me' roll in four", () => {
+    let nonFlatCount = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      if (!systemIsFlat(transforms)) nonFlatCount++;
+    }
+    const fraction = nonFlatCount / FOUR_D_SEED_SAMPLE_SIZE;
+    // Generous band around the ¼ design target (FOUR_D_PROBABILITY): loose
+    // enough to never flake, tight enough to catch a broken or always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.12);
+    expect(fraction).toBeLessThanOrEqual(0.4);
+  });
+
+  it("carries no w key on any transform when a roll comes out flat", () => {
+    let flatSystemsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      if (!systemIsFlat(transforms)) continue;
+      flatSystemsSeen++;
+      for (const t of transforms) {
+        expect("w" in t).toBe(false);
+      }
+    }
+    expect(flatSystemsSeen).toBeGreaterThan(0);
+  });
+
+  it("never attaches a w block to the final transform, flat or non-flat", () => {
+    let finalTransformsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { finalTransform } = randomSystem(mulberry32(seed));
+      if (finalTransform === null) continue;
+      finalTransformsSeen++;
+      expect("w" in finalTransform).toBe(false);
+    }
+    expect(finalTransformsSeen).toBeGreaterThan(0);
+  });
+
+  it("keeps every rolled w block sparse: no scale, no shear, position and rotation within their documented ranges", () => {
+    let wBlocksSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      for (const t of transforms) {
+        if (!t.w) continue;
+        wBlocksSeen++;
+        expect(t.w.scale).toBeUndefined();
+        expect(t.w.shear).toBeUndefined();
+        if (t.w.position !== undefined) {
+          expect(t.w.position).toBeGreaterThanOrEqual(-0.5);
+          expect(t.w.position).toBeLessThanOrEqual(0.5);
+        }
+        if (t.w.rotation) {
+          const angles = Object.values(t.w.rotation);
+          expect(angles.length).toBeGreaterThanOrEqual(1);
+          expect(angles.length).toBeLessThanOrEqual(2);
+          for (const angle of angles) {
+            expect(angle).toBeGreaterThanOrEqual(-0.7);
+            expect(angle).toBeLessThanOrEqual(0.7);
+          }
+        }
+      }
+    }
+    expect(wBlocksSeen).toBeGreaterThan(0);
+  });
+
+  it("re-probing a batch's non-flat systems confirms the 4D gate's own promises: bounded radius and genuine w-extent", () => {
+    let nonFlatSystemsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const system = randomSystem(mulberry32(seed));
+      if (systemIsFlat(system.transforms)) continue;
+      nonFlatSystemsSeen++;
+      const finalTransform4 = system.finalTransform
+        ? toTransform4(system.finalTransform)
+        : null;
+      // A fresh, independent rng stream -- not a replay of the internal
+      // generation-time probe -- so this genuinely re-verifies the system
+      // rather than trivially repeating the check that already accepted it.
+      const result = runChaosGame4(
+        system.transforms.map(toTransform4),
+        6000,
+        mulberry32(seed * 7919 + 1),
+        finalTransform4,
+      );
+      expect(result.bounds.maxW - result.bounds.minW).toBeGreaterThan(0.1);
+      expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
+    }
+    expect(nonFlatSystemsSeen).toBeGreaterThan(0);
+  });
+});
+
 function makeBounds(overrides: Partial<Bounds> = {}): Bounds {
   return {
     minX: 0,
@@ -179,6 +287,115 @@ describe("isAcceptableSystem", () => {
   });
 });
 
+function makeBounds4(overrides: Partial<Bounds4> = {}): Bounds4 {
+  return {
+    minX: 0,
+    maxX: 0,
+    minY: 0,
+    maxY: 0,
+    minZ: 0,
+    maxZ: 0,
+    minW: 0,
+    maxW: 0,
+    ...overrides,
+  };
+}
+
+describe("isAcceptableSystem4", () => {
+  it("rejects bounds collapsed to a point (every x/y/z extent near zero)", () => {
+    const bounds = makeBounds4({
+      minX: 0,
+      maxX: 0.001,
+      minY: 0,
+      maxY: 0.001,
+      minZ: 0,
+      maxZ: 0.001,
+      minW: 0,
+      maxW: 1,
+    });
+    expect(isAcceptableSystem4(bounds, 1)).toBe(false);
+  });
+
+  it("rejects bounds collapsed to a line (only one of x/y/z has meaningful extent)", () => {
+    const bounds = makeBounds4({
+      minX: -2,
+      maxX: 2,
+      minY: 0,
+      maxY: 0.001,
+      minZ: 0,
+      maxZ: 0.001,
+      minW: 0,
+      maxW: 1,
+    });
+    expect(isAcceptableSystem4(bounds, 2)).toBe(false);
+  });
+
+  it("accepts a system planar in x/y/z (two large extents, one near zero) provided w opens up too", () => {
+    const bounds = makeBounds4({
+      minX: -2,
+      maxX: 2,
+      minY: -1.5,
+      maxY: 1.5,
+      minZ: 0,
+      maxZ: 0.001,
+      minW: -0.5,
+      maxW: 0.5,
+    });
+    expect(isAcceptableSystem4(bounds, 2.5)).toBe(true);
+  });
+
+  it("rejects a w-extent at or below the 0.1 floor even with healthy x/y/z extents", () => {
+    const bounds = makeBounds4({
+      minX: -2,
+      maxX: 2,
+      minY: -1.5,
+      maxY: 1.5,
+      minZ: -1,
+      maxZ: 1,
+      minW: 0,
+      maxW: 0.1,
+    });
+    expect(isAcceptableSystem4(bounds, 2.5)).toBe(false);
+  });
+
+  it("rejects bounds hugging the escape wall on the w axis", () => {
+    const bounds = makeBounds4({
+      minX: -1,
+      maxX: 1,
+      minY: -1,
+      maxY: 1,
+      minZ: -1,
+      maxZ: 1,
+      minW: -1,
+      maxW: ESCAPE_LIMIT * 0.95,
+    });
+    expect(isAcceptableSystem4(bounds, 10)).toBe(false);
+  });
+
+  it("rejects a radius at or past the documented cap (half of ESCAPE_LIMIT) even with otherwise sane bounds", () => {
+    const bounds = makeBounds4({
+      minX: -2,
+      maxX: 2,
+      minY: -1.5,
+      maxY: 1.5,
+      minZ: -1,
+      maxZ: 1,
+      minW: -1,
+      maxW: 1,
+    });
+    expect(isAcceptableSystem4(bounds, ESCAPE_LIMIT * 0.5)).toBe(false);
+  });
+
+  it("accepts a healthy non-flat attractor's probe bounds (doubleRotation)", () => {
+    const result = runChaosGame4(
+      doubleRotation().map(toTransform4),
+      4000,
+      mulberry32(4),
+    );
+    expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
+  });
+});
+
 describe("occupiedCellCount", () => {
   it("counts a repeated point as a single occupied cell", () => {
     const positions = new Float32Array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
@@ -241,5 +458,31 @@ describe("occupiedCellCount", () => {
     expect(
       occupiedCellCount(healthy.positions, healthy.count, healthy.bounds),
     ).toBeGreaterThanOrEqual(MIN_OCCUPIED_CELLS);
+  });
+
+  it("accepts a Bounds4 directly, for the 4D probe's projected-xyz occupancy check (fr-bf6.5)", () => {
+    // The 8 corners of the unit cube again, but handed a Bounds4 (minW/maxW
+    // included and ignored) instead of a Bounds -- occupiedCellCount only
+    // ever reads the six x/y/z fields the two types share.
+    const positions = new Float32Array(
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 1, 0],
+        [1, 0, 1],
+        [0, 1, 1],
+        [1, 1, 1],
+      ].flat(),
+    );
+    const bounds4 = makeBounds4({
+      maxX: 1,
+      maxY: 1,
+      maxZ: 1,
+      minW: -3,
+      maxW: 3,
+    });
+    expect(occupiedCellCount(positions, 8, bounds4)).toBe(8);
   });
 });

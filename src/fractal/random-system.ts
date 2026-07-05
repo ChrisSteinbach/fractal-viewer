@@ -1,16 +1,26 @@
+import { systemIsFlat, toTransform4 } from "./affine4";
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
+import { runChaosGame4 } from "./chaos-game-4d";
 import type { Rng } from "./rng";
 import { VARIATION_TYPES } from "./types";
 import type {
   Bounds,
+  Bounds4,
   Transform,
   Variation,
   Vec3,
   VariationType,
+  WExtension,
 } from "./types";
 
 /** A freshly rolled system: the base maps, plus an optional final-transform
- * lens (see {@link Transform} and `AppState.finalTransform`). */
+ * lens (see {@link Transform} and `AppState.finalTransform`). Rare spice
+ * (fr-bf6.5): roughly one roll in four ({@link FOUR_D_PROBABILITY}) also
+ * gives some of the base maps a sparse `w` extension (see
+ * {@link Transform.w}), landing a genuinely non-flat system that the app
+ * renders through its tumbling 4D projection instead of the flat point
+ * cloud. The final transform never carries a `w` block — see
+ * {@link randomFinalTransform}. */
 export interface RandomSystem {
   transforms: Transform[];
   finalTransform: Transform | null;
@@ -71,9 +81,63 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
   "julia",
 ];
 
+/**
+ * Rare-spice roll (fr-bf6.5): one system-level draw deciding whether THIS
+ * candidate gets a `w` extension at all — no UI dial, just an occasional
+ * surprise. A miss costs exactly this one `rng()` draw: every subsequent
+ * roll takes the same path, and consumes the rng identically, as before this
+ * feature existed. A hit always yields a non-flat system (the force-
+ * fallback in {@link randomTransforms} guarantees it), so this is also, in
+ * practice, the fraction of "Surprise Me" rolls that land in the tumbling 4D
+ * projection view instead of the flat cloud.
+ */
+const FOUR_D_PROBABILITY = 0.25;
+/** Per-map odds of a rolled `w.position` (see {@link randomWExtension}) once
+ * a candidate has hit {@link FOUR_D_PROBABILITY} — independent of the
+ * rotation roll below and of the existing weight/variation rolls (fr-d61:
+ * coupling a 4D roll to map weight would skew which maps get the
+ * selection spotlight). */
+const FOUR_D_POSITION_PROBABILITY = 0.6;
+/** `w.position` uniform range: comfortably inside the editor's ±1.5 clamp,
+ * so a hit's structure stays near the `w = 0` slice rather than flung to
+ * the edge of the range. */
+const FOUR_D_POSITION_RANGE = 0.5;
+/** Per-map odds of a rolled w-rotation kick — one plane, occasionally two
+ * (see {@link randomWExtension}). */
+const FOUR_D_ROTATION_PROBABILITY = 0.6;
+/** Odds of a SECOND, distinct w-rotation plane once the first has landed:
+ * most hits stay single-plane, a double mix is the occasional extra
+ * flourish (the same "mostly one, sometimes a second" shape as
+ * {@link SECOND_VARIATION_PROBABILITY}). */
+const FOUR_D_SECOND_ROTATION_PROBABILITY = 0.25;
+/** w-rotation angle range (radians), tuned so a hit reliably clears the 4D
+ * quality gate (see {@link isAcceptableSystem4} and random-system.test.ts):
+ * wide enough to visibly mix `w` into the projection, narrow enough that a
+ * rotation kick alone rarely pushes an otherwise-contractive system toward
+ * the escape wall. */
+const FOUR_D_ROTATION_RANGE = 0.7;
+/** The three w-mixing rotation planes a hit can pick from (see
+ * {@link WExtension}'s `rotation` field). */
+const W_ROTATION_PLANES = ["xw", "yw", "zw"] as const;
+/**
+ * Fallback range for forcing map 0's `w.position` non-flat (see
+ * {@link randomTransforms}), used on the rare roll where every map's
+ * independent `w` sub-rolls miss — or land on exactly `0` — and a "hit"
+ * candidate would otherwise come out flat despite paying for the roll.
+ * Half-open away from `0` (unlike the free ±0.5 roll range) so the fallback
+ * is non-flat BY CONSTRUCTION: it never depends on missing the one unlucky
+ * value that would cancel it back to flat.
+ */
+const FOUR_D_FORCE_POSITION_MIN = 0.15;
+const FOUR_D_FORCE_POSITION_MAX = 0.5;
+
 /** Probe size for the quality gate: large enough for a candidate's bounds to
  * settle onto its attractor and to populate the occupancy grid, small enough
- * that rerolling is cheap. */
+ * that rerolling is cheap. Shared by the flat (`runChaosGame`) and non-flat
+ * (`runChaosGame4`) probes (see {@link randomSystem}) — a larger sample was
+ * tried for the 4D branch during tuning and didn't meaningfully change the
+ * gate's tail behavior (see {@link FOUR_D_RADIUS_CAP}'s doc for why), so
+ * there was nothing 4D-specific to justify a separate budget here. */
 const PROBE_POINTS = 4000;
 /** Total candidates tried before giving up and returning the last one. */
 const MAX_ATTEMPTS = 40;
@@ -91,6 +155,45 @@ const OCCUPANCY_GRID = 24;
  * orbit piles onto a handful of micro-clusters stop claiming new cells at
  * this resolution, while genuine fractal structure keeps resolving. */
 export const MIN_OCCUPIED_CELLS = 280;
+/** Below this, a non-flat candidate's `w` extent reads as visually flat in
+ * the projection view — no better than not rolling `w` at all — so
+ * {@link isAcceptableSystem4} rejects it and a fresh candidate is rolled
+ * instead (see {@link randomSystem}). */
+const FOUR_D_MIN_W_EXTENT = 0.1;
+/**
+ * Sane upper bound on a 4D probe's `radius` (the exact Euclidean distance
+ * from the cloud's center — see `chaos-game-4d.ts`'s `ChaosGame4Result`),
+ * used by {@link isAcceptableSystem4} as the 4D boundedness signal.
+ * `runChaosGame4` exposes no reset/escape counter to read directly, so —
+ * mirroring the bounds/radius discipline the `doubleRotation` preset's own
+ * acceptance test uses (presets.test.ts, `radius < 3`) — this catches a
+ * candidate that never technically hugs the {@link ESCAPE_LIMIT} wall on any
+ * single axis but is still too sprawling to read as a contained shape once
+ * framed by that radius.
+ *
+ * Set to HALF of `ESCAPE_LIMIT` rather than something doubleRotation-sized:
+ * unlike that hand-tuned preset, this generator's own contractive ranges
+ * (position up to ±0.9, scale as weak as 0.35 — i.e. contraction ratio up to
+ * 0.65) LEGITIMATELY produce bounded, non-escaping attractors with a radius
+ * up to the high teens/low twenties fairly often (measured across a
+ * 5000-seed sample: median ≈ 2, p90 ≈ 5, p99 ≈ 20) — a translation-heavy,
+ * weakly-contracting map has a genuinely large fixed-point spread, not a
+ * sampling fluke. A cap near `doubleRotation`'s 3 would reject a large slice
+ * of perfectly good rolls. Half the hard escape threshold keeps this a
+ * genuine backstop against outliers while comfortably covering the
+ * generator's real range.
+ *
+ * No finite-sample cap fully closes the gap between "accepted at generation
+ * time" and "would still look bounded under a differently-seeded probe" —
+ * {@link PROBE_POINTS} is a small sample of a chaotic orbit, so a rare,
+ * only-marginally-contractive candidate can occasionally pass on a lucky
+ * draw and read larger on a fresh one. That is not new here: an equivalent
+ * check against the EXISTING flat/3D gate (random-system.test.ts) shows the
+ * same phenomenon at a higher rate (its escape-wall threshold is a much
+ * more permissive `ESCAPE_LIMIT * ESCAPE_WALL_FRACTION` ≈ 45). This cap is
+ * tuned to keep that already-inherent tail rare, not to eliminate it.
+ */
+const FOUR_D_RADIUS_CAP = ESCAPE_LIMIT * 0.5;
 
 function uniform(rng: Rng, min: number, max: number): number {
   return min + rng() * (max - min);
@@ -169,8 +272,59 @@ function randomVariations(rng: Rng): Variation[] | undefined {
   return variations;
 }
 
-function randomTransform(rng: Rng, id: number, baseScale: number): Transform {
+/**
+ * Roll a sparse per-map `w` extension for a system that hit
+ * {@link FOUR_D_PROBABILITY}: independently, a `w.position` offset
+ * ({@link FOUR_D_POSITION_PROBABILITY}) and a w-rotation kick — one plane,
+ * occasionally two ({@link FOUR_D_ROTATION_PROBABILITY} /
+ * {@link FOUR_D_SECOND_ROTATION_PROBABILITY}). Deliberately independent of
+ * `weight`/`variations` (fr-d61's weight-skew caution: coupling a 4D roll to
+ * either would bias which maps get chosen or how they're already warped).
+ *
+ * `w.scale` is NEVER rolled: left absent, `toTransform4` derives it as the
+ * map's mean spatial contraction, which is already inside this generator's
+ * contractive scale bounds — so there is no new escape risk from leaving it
+ * derived, and nothing goes stale as the map's own scale is edited later.
+ * `w.shear` is NEVER rolled either: it adds little visible variety in the
+ * projection view for the extra sparse-roll complexity it would cost.
+ *
+ * Returns `undefined` when both sub-rolls miss, so a transform with no
+ * genuine 4D degrees of freedom carries no `w` key at all — the same
+ * absent-means-flat convention `affine4.ts`'s `isFlatTransform` relies on.
+ */
+function randomWExtension(rng: Rng): WExtension | undefined {
+  const w: WExtension = {};
+  if (rng() < FOUR_D_POSITION_PROBABILITY) {
+    w.position = uniform(rng, -FOUR_D_POSITION_RANGE, FOUR_D_POSITION_RANGE);
+  }
+  if (rng() < FOUR_D_ROTATION_PROBABILITY) {
+    const first =
+      W_ROTATION_PLANES[Math.floor(rng() * W_ROTATION_PLANES.length)];
+    const rotation: NonNullable<WExtension["rotation"]> = {
+      [first]: uniform(rng, -FOUR_D_ROTATION_RANGE, FOUR_D_ROTATION_RANGE),
+    };
+    if (rng() < FOUR_D_SECOND_ROTATION_PROBABILITY) {
+      const remaining = W_ROTATION_PLANES.filter((plane) => plane !== first);
+      const second = remaining[Math.floor(rng() * remaining.length)];
+      rotation[second] = uniform(
+        rng,
+        -FOUR_D_ROTATION_RANGE,
+        FOUR_D_ROTATION_RANGE,
+      );
+    }
+    w.rotation = rotation;
+  }
+  return Object.keys(w).length > 0 ? w : undefined;
+}
+
+function randomTransform(
+  rng: Rng,
+  id: number,
+  baseScale: number,
+  fourD: boolean,
+): Transform {
   const variations = randomVariations(rng);
+  const w = fourD ? randomWExtension(rng) : undefined;
   return {
     id,
     position: randomVec3(rng, -POSITION_RANGE, POSITION_RANGE),
@@ -179,23 +333,51 @@ function randomTransform(rng: Rng, id: number, baseScale: number): Transform {
     weight: randomWeight(rng),
     shear: randomShear(rng),
     ...(variations ? { variations } : {}),
+    ...(w ? { w } : {}),
   };
 }
 
-function randomTransforms(rng: Rng): Transform[] {
+/**
+ * Roll the system's base maps. `fourD` (see {@link FOUR_D_PROBABILITY})
+ * gates whether each map also rolls a sparse `w` extension
+ * ({@link randomWExtension}); when it does and every map's independent w
+ * rolls happen to miss (or land on exactly `0` — possible, if unlikely, with
+ * a continuous uniform draw), the resulting system would come out flat
+ * despite having paid for the roll, so map 0's `w.position` is force-set
+ * into {@link FOUR_D_FORCE_POSITION_MIN}..{@link FOUR_D_FORCE_POSITION_MAX}
+ * instead — a `fourD` hit always yields a non-flat system.
+ */
+function randomTransforms(rng: Rng, fourD: boolean): Transform[] {
   const count = MIN_MAP_COUNT + Math.floor(rng() * MAP_COUNT_SPAN);
   const dimension = uniform(rng, TARGET_DIMENSION_MIN, TARGET_DIMENSION_MAX);
   const baseScale = Math.pow(count, -1 / dimension);
-  return Array.from({ length: count }, (_, id) =>
-    randomTransform(rng, id, baseScale),
+  const transforms = Array.from({ length: count }, (_, id) =>
+    randomTransform(rng, id, baseScale, fourD),
   );
+  if (fourD && systemIsFlat(transforms)) {
+    transforms[0] = {
+      ...transforms[0],
+      w: {
+        position: uniform(
+          rng,
+          FOUR_D_FORCE_POSITION_MIN,
+          FOUR_D_FORCE_POSITION_MAX,
+        ),
+      },
+    };
+  }
+  return transforms;
 }
 
 /**
  * Roll the optional final-transform lens: absent with probability
  * `FINAL_TRANSFORM_NULL_PROBABILITY`; otherwise the identity affine
  * (mirrors `defaultFinalTransform`) plus one variation from the four
- * "lens-flavored" types, at a weight in `[0.6, 1.2]`.
+ * "lens-flavored" types, at a weight in `[0.6, 1.2]`. Never carries a `w`
+ * block (fr-bf6.5), even when the system it lenses is non-flat: a rolled
+ * lens is rare enough already, and a non-flat lens would bend the WHOLE
+ * cloud through an extra, hidden 4th-dimension feature the roll never
+ * surfaces anywhere else.
  */
 function randomFinalTransform(rng: Rng): Transform | null {
   if (rng() < FINAL_TRANSFORM_NULL_PROBABILITY) return null;
@@ -219,9 +401,18 @@ function randomFinalTransform(rng: Rng): Transform | null {
   };
 }
 
+/**
+ * Roll a full candidate: the base maps plus the optional final-transform
+ * lens. The {@link FOUR_D_PROBABILITY} roll is deliberately the FIRST draw
+ * of a candidate — a single leading `rng()` call — so a miss leaves every
+ * subsequent roll's sequence (and the rng values it consumes) exactly as it
+ * was before this feature existed; only a hit spends any further draws on
+ * `w`.
+ */
 function randomCandidate(rng: Rng): RandomSystem {
+  const fourD = rng() < FOUR_D_PROBABILITY;
   return {
-    transforms: randomTransforms(rng),
+    transforms: randomTransforms(rng, fourD),
     finalTransform: randomFinalTransform(rng),
   };
 }
@@ -267,6 +458,70 @@ export function isAcceptableSystem(bounds: Bounds): boolean {
 }
 
 /**
+ * The 4D analogue of {@link isAcceptableSystem}, probed via `runChaosGame4`
+ * instead of `runChaosGame` for a non-flat candidate (see
+ * {@link randomSystem}). `ChaosGame4Result` carries no reset/escape counter
+ * to read directly, so boundedness is read from the two signals
+ * `chaos-game-4d.ts` DOES expose:
+ *
+ * - the same per-axis wall-hugging check as {@link isAcceptableSystem},
+ *   extended to the fourth axis (`bounds.minW`/`maxW` join the six 3D
+ *   bounds against the same {@link ESCAPE_LIMIT} · {@link ESCAPE_WALL_FRACTION}
+ *   threshold);
+ * - a cap on `radius` ({@link FOUR_D_RADIUS_CAP}) — the exact Euclidean
+ *   distance from the cloud's center — mirroring the pattern the
+ *   `doubleRotation` preset's own acceptance test uses to assert "stays
+ *   bounded" (presets.test.ts).
+ *
+ * The degenerate check is {@link isAcceptableSystem}'s unchanged (only the
+ * second-largest of the x/y/z extents matters — a flat-in-3D system is
+ * still a fine attractor). On top of it, a "4D surprise" also needs a
+ * genuine w-extent: `maxW - minW` at or below {@link FOUR_D_MIN_W_EXTENT}
+ * reads as visually flat in projection — no better than not rolling `w` at
+ * all — so it is rejected here too.
+ */
+export function isAcceptableSystem4(bounds: Bounds4, radius: number): boolean {
+  const extents = [
+    bounds.maxX - bounds.minX,
+    bounds.maxY - bounds.minY,
+    bounds.maxZ - bounds.minZ,
+  ].sort((a, b) => b - a);
+  if (extents[1] < DEGENERATE_EXTENT_THRESHOLD) return false;
+
+  if (bounds.maxW - bounds.minW <= FOUR_D_MIN_W_EXTENT) return false;
+
+  const wall = ESCAPE_LIMIT * ESCAPE_WALL_FRACTION;
+  const axisBounds4 = [
+    bounds.minX,
+    bounds.maxX,
+    bounds.minY,
+    bounds.maxY,
+    bounds.minZ,
+    bounds.maxZ,
+    bounds.minW,
+    bounds.maxW,
+  ];
+  if (axisBounds4.some((b) => Math.abs(b) >= wall)) return false;
+
+  if (radius >= FOUR_D_RADIUS_CAP) return false;
+
+  return true;
+}
+
+/**
+ * The six axis-aligned fields {@link occupiedCellCount} actually reads.
+ * {@link Bounds} and {@link Bounds4} both satisfy this structurally, so the
+ * same occupancy grid serves the 3D probe and the 4D probe's projected-xyz
+ * occupancy check (fr-bf6.5: the user judges structure by what shows up in
+ * the projection, i.e. the xyz the 4D cloud carries) without
+ * `occupiedCellCount` caring which result shape it was handed.
+ */
+type SpatialExtent = Pick<
+  Bounds,
+  "minX" | "maxX" | "minY" | "maxY" | "minZ" | "maxZ"
+>;
+
+/**
  * How many cells of a 24³ grid stretched over `bounds` (each axis normalized
  * to its own extent, so flat systems aren't penalized) contain at least one
  * probe point. This is a box-count at a single scale: a healthy attractor
@@ -278,7 +533,7 @@ export function isAcceptableSystem(bounds: Bounds): boolean {
 export function occupiedCellCount(
   positions: Float32Array,
   count: number,
-  bounds: Bounds,
+  bounds: SpatialExtent,
 ): number {
   const minExtent = 1e-9;
   const spanX = Math.max(bounds.maxX - bounds.minX, minExtent);
@@ -312,14 +567,27 @@ export function occupiedCellCount(
  * Generate a random IFS: 2-4 affine maps with weighted selection, shear, and
  * nonlinear variations, plus a chance of a final-transform lens — everything
  * the core supports, so "Surprise Me" can reach anywhere the manual editor
- * can. Each candidate is probed with a short `runChaosGame` run and must
- * pass two checks: {@link isAcceptableSystem} (sane bounds — not collapsed,
- * not hugging the escape wall) and {@link occupiedCellCount} ≥
- * `MIN_OCCUPIED_CELLS` (enough spatial detail to read as a shape rather than
- * dust). A rejected candidate is discarded and a fresh one rolled, for up to
- * `MAX_ATTEMPTS` candidates total. Always returns something — the
+ * can — and, occasionally ({@link FOUR_D_PROBABILITY}), a sparse `w`
+ * extension on some of the base maps (fr-bf6.5), landing a genuinely 4D
+ * system.
+ *
+ * Each candidate is probed and must pass a quality gate before it's
+ * returned; a rejected candidate is discarded and a fresh one rolled, for up
+ * to `MAX_ATTEMPTS` candidates total. Always returns something — the
  * last-rolled candidate survives even if every one failed the gate — so the
- * UI never needs a failure path.
+ * UI never needs a failure path. The gate itself branches on the
+ * candidate's flatness (`affine4.ts`'s `systemIsFlat`):
+ *
+ * - a FLAT candidate takes the exact probe this function always has: a
+ *   short `runChaosGame` run, gated by {@link isAcceptableSystem} (sane
+ *   bounds — not collapsed, not hugging the escape wall) and
+ *   {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS` (enough spatial detail
+ *   to read as a shape rather than dust);
+ * - a NON-FLAT candidate is instead probed by lifting every map through
+ *   `toTransform4` and running `runChaosGame4`, gated by
+ *   {@link isAcceptableSystem4} (the 4D analogue: bounded, and with a
+ *   genuine w-extent) plus the same {@link occupiedCellCount} ≥
+ *   `MIN_OCCUPIED_CELLS` check over the result's projected xyz positions.
  *
  * Takes only an injected {@link Rng} and never touches `Math.random`, so a
  * fixed seed reproduces the exact same system, gate probes included.
@@ -328,17 +596,35 @@ export function randomSystem(rng: Rng): RandomSystem {
   let candidate = randomCandidate(rng);
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) candidate = randomCandidate(rng);
-    const { positions, count, bounds } = runChaosGame(
-      candidate.transforms,
-      PROBE_POINTS,
-      rng,
-      candidate.finalTransform,
-    );
-    if (
-      isAcceptableSystem(bounds) &&
-      occupiedCellCount(positions, count, bounds) >= MIN_OCCUPIED_CELLS
-    )
-      return candidate;
+
+    if (systemIsFlat(candidate.transforms)) {
+      const { positions, count, bounds } = runChaosGame(
+        candidate.transforms,
+        PROBE_POINTS,
+        rng,
+        candidate.finalTransform,
+      );
+      if (
+        isAcceptableSystem(bounds) &&
+        occupiedCellCount(positions, count, bounds) >= MIN_OCCUPIED_CELLS
+      )
+        return candidate;
+    } else {
+      const finalTransform4 = candidate.finalTransform
+        ? toTransform4(candidate.finalTransform)
+        : null;
+      const { positions, count, bounds, radius } = runChaosGame4(
+        candidate.transforms.map(toTransform4),
+        PROBE_POINTS,
+        rng,
+        finalTransform4,
+      );
+      if (
+        isAcceptableSystem4(bounds, radius) &&
+        occupiedCellCount(positions, count, bounds) >= MIN_OCCUPIED_CELLS
+      )
+        return candidate;
+    }
   }
   return candidate;
 }
