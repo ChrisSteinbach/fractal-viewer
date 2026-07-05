@@ -1876,9 +1876,9 @@ describe("Ui 4D parameter editing (fr-2ou)", () => {
 
     const select = el("fourDMapSelect") as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
-      "Map 1",
-      "Map 2",
-      "Map 3",
+      "Transform 1",
+      "Transform 2",
+      "Transform 3",
     ]);
     expect(select.value).toBe("1");
 
