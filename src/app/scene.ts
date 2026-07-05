@@ -203,6 +203,8 @@ const FOUR_D_VERTEX = /* glsl */ `
     // w-distributions still cluster even after the support normalization
     // spreads the cloud over the full [-1, 1]). Near-zero w — the part of
     // the cloud passing through our own 3-space — stays dim gray and recedes.
+    // (Palette mirrored in ui.ts's W_RAMP_GRADIENT so the legend matches the
+    // screen — fr-a3q. Keep the constants in sync.)
     float m = pow(abs(s), 0.6);
     vec3 side = s < 0.0 ? vec3(0.30, 0.60, 1.00) : vec3(1.00, 0.50, 0.18);
     vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);

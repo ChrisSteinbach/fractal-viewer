@@ -4,6 +4,7 @@ import {
   colorModeUsesGamma,
   transformColors,
 } from "../fractal/color";
+import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
@@ -364,10 +365,11 @@ function variationSummary(t: Transform): string[] {
 }
 
 /**
- * Number of evenly spaced {@link buildColorModeLUT} samples used to build the
- * legend's CSS gradient (fr-dsz) — more than a coarse 8-stop bar so a non-1
- * `colorGamma` curve (fr-8sk) still reads accurately in the legend, not just
- * at its two (always-fixed) endpoints.
+ * Number of evenly spaced samples used to build the legend's LUT-sampled
+ * gradients (fr-dsz): the colorMode ramps and, since fr-a3q, the palette
+ * strips — more than a coarse 8-stop bar so a non-1 `colorGamma` curve
+ * (fr-8sk) still reads accurately in the legend, not just at its two
+ * (always-fixed) endpoints.
  */
 const LEGEND_GRADIENT_STOPS = 16;
 
@@ -384,13 +386,13 @@ function cssRgb(r: number, g: number, b: number): string {
 }
 
 /**
- * Build the legend's CSS `linear-gradient` for the height/radius color modes
- * by sampling {@link buildColorModeLUT} — the same lookup table the solid
- * render's hot loop uses, so the legend bar can never drift from the actual
- * ramp (or from the current color-contrast setting).
+ * Sample a 256-entry-per-channel RGB LUT into a CSS `linear-gradient` string
+ * — shared by the colorMode ramps ({@link legendGradient}) and, since
+ * fr-a3q, the palette strips (see {@link buildPaletteLUT}): both renderers'
+ * hot loops index the very same LUTs, so sampling them here too is what
+ * keeps the legend from ever drifting off the rendered colors.
  */
-function legendGradient(mode: "height" | "radius", colorGamma: number): string {
-  const lut = buildColorModeLUT(mode, colorGamma);
+function lutGradient(lut: Float32Array): string {
   const stops: string[] = [];
   for (let i = 0; i < LEGEND_GRADIENT_STOPS; i++) {
     const lutIndex = Math.round((i / (LEGEND_GRADIENT_STOPS - 1)) * 255);
@@ -398,6 +400,74 @@ function legendGradient(mode: "height" | "radius", colorGamma: number): string {
     stops.push(cssRgb(lut[o], lut[o + 1], lut[o + 2]));
   }
   return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/**
+ * Build the legend's CSS `linear-gradient` for the height/radius color modes
+ * by sampling {@link buildColorModeLUT} — the same lookup table the solid
+ * render's hot loop uses, so the legend bar can never drift from the actual
+ * ramp (or from the current color-contrast setting).
+ */
+function legendGradient(mode: "height" | "radius", colorGamma: number): string {
+  return lutGradient(buildColorModeLUT(mode, colorGamma));
+}
+
+/**
+ * Stops in the 4D legend's diverging w ramp. Unlike the LUT gradients this
+ * count must be ODD so `s = 0` lands exactly on a stop: the ramp's defining
+ * feature is the dim desaturated notch at w = 0, and with an even count CSS's
+ * linear interpolation would bridge straight over it. 33 (~4px per stop on
+ * the 140px bar) also keeps the steep `|s|^0.6` sides honest, where 16 stops
+ * would visibly overshoot the curve.
+ */
+const W_RAMP_STOPS = 33;
+
+/**
+ * The 4D projection legend's gradient (fr-a3q): the diverging signed-w
+ * palette that `FOUR_D_VERTEX` (scene.ts) bakes into the shader, reproduced
+ * stop-for-stop from the same math — `m = |s|^0.6`,
+ * `mix(vec3(0.38), side, m) * (0.30 + 0.70 * m)` with blue on the −w side and
+ * orange on +w — the same can't-drift fidelity bar the colorMode legend sets
+ * by sampling `buildColorModeLUT`, except the shader source is GLSL, so the
+ * formula is mirrored here (with a keep-in-sync comment there) rather than
+ * shared. Two deliberate differences from the coordinate ramps: it is signed
+ * (diverging around w = 0, our own 3-space), and it does NOT respond to
+ * `colorGamma` — the shader never applies it. Computed once: the ramp is
+ * fixed. Since fr-9bk the shader normalizes by the bounds box's w-support at
+ * the CURRENT tumble rotation, so the strip's ends mean "the cloud's current
+ * w extremes", not fixed w values — which is why the legend labels the ends
+ * with signs, not numbers.
+ */
+const W_RAMP_GRADIENT = (() => {
+  const stops: string[] = [];
+  for (let i = 0; i < W_RAMP_STOPS; i++) {
+    const s = (i / (W_RAMP_STOPS - 1)) * 2 - 1;
+    const m = Math.pow(Math.abs(s), 0.6);
+    const [sideR, sideG, sideB] = s < 0 ? [0.3, 0.6, 1.0] : [1.0, 0.5, 0.18];
+    const brightness = 0.3 + 0.7 * m;
+    const mixChannel = (side: number): number =>
+      (0.38 + (side - 0.38) * m) * brightness;
+    stops.push(cssRgb(mixChannel(sideR), mixChannel(sideG), mixChannel(sideB)));
+  }
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+})();
+
+/**
+ * The human-readable name for a palette id, read from the panel `<select>`
+ * that picked it — index.html's option labels are the app's single source of
+ * palette display names (ui.test.ts pins the option values to
+ * `FLAME_PALETTE_IDS`), so the legend reuses them instead of introducing a
+ * second copy that could drift. Falls back to the raw id if the option is
+ * ever missing.
+ */
+function paletteDisplayName(
+  select: HTMLSelectElement,
+  id: FlamePaletteId,
+): string {
+  for (const option of Array.from(select.options)) {
+    if (option.value === id) return (option.textContent ?? "").trim() || id;
+  }
+  return id;
 }
 
 interface AxisControl {
@@ -469,6 +539,7 @@ export class Ui {
   private readonly legendBar: HTMLElement;
   private readonly legendLabels: HTMLElement;
   private readonly legendLabelLow: HTMLElement;
+  private readonly legendLabelMid: HTMLElement;
   private readonly legendLabelHigh: HTMLElement;
   private readonly legendSwatches: HTMLElement;
   private readonly legendText: HTMLElement;
@@ -583,6 +654,7 @@ export class Ui {
     this.legendBar = this.byId("legendBar");
     this.legendLabels = this.byId("legendLabels");
     this.legendLabelLow = this.byId("legendLabelLow");
+    this.legendLabelMid = this.byId("legendLabelMid");
     this.legendLabelHigh = this.byId("legendLabelHigh");
     this.legendSwatches = this.byId("legendSwatches");
     this.legendText = this.byId("legendText");
@@ -1054,54 +1126,104 @@ export class Ui {
   }
 
   /**
-   * Reflect the color legend (fr-dsz): an unobtrusive key for what the active
-   * Color Mode's colors mean. Height/radius get a gradient bar sampled from
-   * {@link buildColorModeLUT} (so it can never drift from the rendered ramp,
-   * or from the current color-contrast setting) with low/high or
-   * center/edge labels; position gets a short axis-mapping note instead of a
-   * bar (the mapping is xyz→rgb, not a single ramp); transform gets one
-   * swatch per transform. Hidden entirely for uniform coloring (nothing to
-   * key), while a flame render is active (it colors by palette, not by Color
-   * Mode), and while the solid render is active with a non-"legacy" palette
-   * (voxel.ts's accumulateVoxels then colors from that palette's LUT instead
-   * of colorMode, exactly like the flame case — but solid's `"legacy"`
-   * palette DOES follow colorMode/colorGamma faithfully, so the legend stays
-   * accurate and visible for that one case).
+   * Reflect the color legend (fr-dsz, fr-a3q): an unobtrusive key for what
+   * the current view's colors mean. Three families, checked in priority
+   * order:
+   *
+   * - 4D projection (non-flat system): the diverging signed-w ramp baked
+   *   into `FOUR_D_VERTEX` (see {@link W_RAMP_GRADIENT}), labeled "−w" /
+   *   "in our 3-space" / "+w". Color comes from the rotated 4th coordinate
+   *   in-shader, so `colorMode` (even "uniform") is irrelevant here.
+   * - Palette-driven renders — flame always, solid with a non-"legacy"
+   *   palette: the active gradient palette's strip sampled from
+   *   {@link buildPaletteLUT} (the very table the render's hot loop indexes),
+   *   captioned with the palette's display name. The flame "legacy" palette
+   *   colors by producing transform along the orbit — no meaningful 1D ramp —
+   *   so it shows no legend at all, while solid "legacy" follows
+   *   colorMode/colorGamma faithfully and falls through to the family below.
+   * - Otherwise the active Color Mode's key: height/radius get a gradient
+   *   bar sampled from {@link buildColorModeLUT} (so it can never drift from
+   *   the rendered ramp, or from the current color-contrast setting) with
+   *   low/high or center/edge labels; position gets a short axis-mapping
+   *   note (xyz→rgb is not a single ramp); transform gets one swatch per
+   *   transform; uniform hides the legend (nothing to key).
    *
    * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
    * than recomputing `systemIsNonFlat` here, so the two never risk reading a
    * different answer within the same refresh.
    */
   private updateLegend(state: AppState, nonFlat: boolean): void {
-    const mode = state.colorMode;
-    const hidden =
-      mode === "uniform" ||
-      state.flameActive ||
-      // The 4D view colors by the rotated 4th coordinate in-shader (see
-      // scene.ts), not by any Color Mode, so this legend can't describe it.
-      nonFlat ||
-      (state.solidActive && state.solid.paletteId !== "legacy");
-    this.legend.classList.toggle("hidden", hidden);
-    if (hidden) return;
+    if (nonFlat) {
+      this.showLegendBar(W_RAMP_GRADIENT, "−w", "in our 3-space", "+w");
+      return;
+    }
 
-    const isGradient = mode === "height" || mode === "radius";
-    this.legendBar.classList.toggle("hidden", !isGradient);
-    this.legendLabels.classList.toggle("hidden", !isGradient);
+    const render = state.flameActive
+      ? { paletteId: state.flame.paletteId, select: this.flamePalette }
+      : state.solidActive
+        ? { paletteId: state.solid.paletteId, select: this.solidPalette }
+        : null;
+    if (render !== null) {
+      // `buildPaletteLUT` returning null IS the "no coordinate gradient"
+      // signal for "legacy" (see palette.ts) — the same discriminator the
+      // renderers use, not a second string compare that could drift.
+      const lut = buildPaletteLUT(render.paletteId);
+      if (lut !== null) {
+        const name = paletteDisplayName(render.select, render.paletteId);
+        this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");
+        return;
+      }
+      if (state.flameActive) {
+        this.legend.classList.add("hidden");
+        return;
+      }
+    }
+
+    const mode = state.colorMode;
+    if (mode === "uniform") {
+      this.legend.classList.add("hidden");
+      return;
+    }
+    if (mode === "height" || mode === "radius") {
+      this.showLegendBar(
+        legendGradient(mode, state.colorGamma),
+        mode === "height" ? "low" : "center",
+        "",
+        mode === "height" ? "high" : "edge",
+      );
+      return;
+    }
+    // position / transform: no gradient bar, a text note or swatch strip.
+    this.legend.classList.remove("hidden");
+    this.legendBar.classList.add("hidden");
+    this.legendLabels.classList.add("hidden");
     this.legendSwatches.classList.toggle("hidden", mode !== "transform");
     this.legendText.classList.toggle("hidden", mode !== "position");
-
-    if (mode === "height" || mode === "radius") {
-      this.legendBar.style.backgroundImage = legendGradient(
-        mode,
-        state.colorGamma,
-      );
-      this.legendLabelLow.textContent = mode === "height" ? "low" : "center";
-      this.legendLabelHigh.textContent = mode === "height" ? "high" : "edge";
-    } else if (mode === "position") {
+    if (mode === "position") {
       this.legendText.textContent = "X→R Y→G Z→B";
-    } else if (mode === "transform") {
+    } else {
       this.renderLegendSwatches(state.transforms.length);
     }
+  }
+
+  /** Show the legend as a gradient bar with low/mid/high labels (empty
+   * strings render as blank), hiding the swatch/text variants — the shared
+   * shape of the colorMode ramps, the palette strips, and the 4D w ramp. */
+  private showLegendBar(
+    gradient: string,
+    low: string,
+    mid: string,
+    high: string,
+  ): void {
+    this.legend.classList.remove("hidden");
+    this.legendBar.classList.remove("hidden");
+    this.legendLabels.classList.remove("hidden");
+    this.legendSwatches.classList.add("hidden");
+    this.legendText.classList.add("hidden");
+    this.legendBar.style.backgroundImage = gradient;
+    this.legendLabelLow.textContent = low;
+    this.legendLabelMid.textContent = mid;
+    this.legendLabelHigh.textContent = high;
   }
 
   /** Rebuild the "by transform" swatch strip from the current palette,
