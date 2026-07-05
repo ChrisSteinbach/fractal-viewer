@@ -143,6 +143,10 @@ export interface UiHandlers {
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
+  /** The 4D auto-tumble was paused or resumed (fr-woc). */
+  onFourDTumbleToggle: (checked: boolean) => void;
+  /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
+  onFourDTumbleSpeedInput: (value: number) => void;
   /** "Current System → 4D" was clicked (fr-2ou): embed the live 3D system at
    * w = 0 and enter the 4D projection on it. */
   onEmbedCurrentSystem: () => void;
@@ -515,6 +519,12 @@ export class Ui {
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
+  // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
+  // the slice controls above.
+  private readonly fourDTumbleToggle: HTMLInputElement;
+  private readonly fourDTumbleRow: HTMLElement;
+  private readonly fourDTumbleSpeedSlider: HTMLInputElement;
+  private readonly fourDTumbleSpeedLabel: HTMLElement;
   // "Current System → 4D" entry button (fr-2ou). Always enabled: fr-hy8 made the
   // 3D → 4D embed total, so there is no "not embeddable" state left to gate on.
   private readonly embed3Button: HTMLButtonElement;
@@ -639,6 +649,10 @@ export class Ui {
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
+    this.fourDTumbleToggle = this.byId("fourDTumbleToggle");
+    this.fourDTumbleRow = this.byId("fourDTumbleRow");
+    this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
+    this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.embed3Button = this.byId("embed3Button");
     this.fourDMapSelect = this.byId("fourDMapSelect");
     this.fourDPosWSlider = this.byId("fourDPosWSlider");
@@ -802,6 +816,19 @@ export class Ui {
     this.exitFourDButton.addEventListener("click", () =>
       handlers.onExitFourD(),
     );
+    this.fourDTumbleToggle.addEventListener("change", () => {
+      const on = this.fourDTumbleToggle.checked;
+      // The speed slider only means anything while the tumble is running —
+      // same "row hides with its toggle" pattern as the slice below (tumble
+      // state is session-only and never enters AppState).
+      this.fourDTumbleRow.classList.toggle("hidden", !on);
+      handlers.onFourDTumbleToggle(on);
+    });
+    this.fourDTumbleSpeedSlider.addEventListener("input", () => {
+      const value = Number(this.fourDTumbleSpeedSlider.value);
+      this.fourDTumbleSpeedLabel.textContent = `${value.toFixed(1)}×`;
+      handlers.onFourDTumbleSpeedInput(value);
+    });
     this.fourDSliceToggle.addEventListener("change", () => {
       const on = this.fourDSliceToggle.checked;
       // The position slider only means anything while the slice is on — a
@@ -857,6 +884,16 @@ export class Ui {
     this.fourDSliceRow.classList.add("hidden");
     this.fourDSliceSlider.value = "0";
     this.fourDSliceLabel.textContent = "0.00";
+  }
+
+  /** Reset the 4D tumble controls on every 4D entry — `on` is false under
+   * prefers-reduced-motion, where the tumble starts paused but stays available
+   * as an explicit opt-in. */
+  resetFourDTumble(on: boolean): void {
+    this.fourDTumbleToggle.checked = on;
+    this.fourDTumbleRow.classList.toggle("hidden", !on);
+    this.fourDTumbleSpeedSlider.value = "1";
+    this.fourDTumbleSpeedLabel.textContent = "1.0×";
   }
 
   /**
@@ -1028,12 +1065,22 @@ export class Ui {
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.fourDActive) {
-      // The 4D projection auto-tumbles on its own; the camera orbits the
-      // projected cloud exactly like camera mode.
+      // The 4D projection tumbles on its own (pause/speed in the panel); the
+      // camera orbits the projected cloud exactly like camera mode, and Shift
+      // retargets drag/scroll to the hidden w-planes (fr-woc) — the help box
+      // is the most visible gesture surface, so the Shift line lives here as
+      // well as in the panel hint. Touch has no Shift; it keeps the orbit
+      // lines only.
       this.helpTitle.textContent = "4D Projection";
       this.setHelpLines(
         this.mouse
-          ? ["Auto-tumbling 4D IFS", "Drag: Orbit", "Scroll: Zoom"]
+          ? [
+              "Auto-tumbling 4D IFS",
+              "Drag: Orbit",
+              "Scroll: Zoom",
+              "Shift-drag: Turn XW/YW",
+              "Shift-scroll: Turn ZW",
+            ]
           : ["Auto-tumbling 4D IFS", "1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.selectedTransform === null) {

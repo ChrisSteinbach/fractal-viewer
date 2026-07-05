@@ -1,12 +1,14 @@
 import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
-import { embedTransform3, rotationMatrix4 } from "../fractal/affine4";
+import { embedTransform3 } from "../fractal/affine4";
 import {
   doubleRotationSpiral,
   pentatopeGasket,
   pentatopeWireframe,
 } from "../fractal/presets4";
+import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
+import type { RotorPair } from "./rotor4";
 import { buildColors } from "../fractal/color";
 import {
   DEFAULT_GAMMA_THRESHOLD,
@@ -116,9 +118,11 @@ const FOUR_D_SYSTEMS = {
 type FourDKind = keyof typeof FOUR_D_SYSTEMS;
 
 /**
- * Auto-tumble rates for the 4D projection (fr-cbg spike): the XY- and ZW-plane
- * angular speeds in rad/s. Slow and deliberately incommensurate-ish (~48 s and
- * ~30 s per revolution) so the double rotation never visibly loops.
+ * Auto-tumble BASE rates for the 4D projection (fr-cbg spike): the XY- and
+ * ZW-plane angular speeds in rad/s at the default 1x tumble speed (fr-woc
+ * multiplies these by the user's speed slider — see `fourDTumbleSpeed`).
+ * Slow and deliberately incommensurate-ish (~48 s and ~30 s per revolution at
+ * 1x) so the double rotation never visibly loops.
  */
 const FOUR_D_XY_RATE = 0.13;
 const FOUR_D_ZW_RATE = 0.21;
@@ -183,18 +187,24 @@ function main(): void {
   let lastResult: ChaosGameResult | null = null;
 
   // 4D projection view state (fr-cbg spike). `fourDSystem` is the loaded 4D IFS
-  // (null in 3D mode), `fourDResult` its last chaos-game run, `fourDStartMs` the
-  // clock origin the auto-tumble measures elapsed time from, and
-  // `fourDReducedMotion` a snapshot of the prefers-reduced-motion setting taken
-  // on entry (so the animate loop needn't re-query matchMedia every frame).
+  // (null in 3D mode), `fourDResult` its last chaos-game run.
   let fourDSystem: Transform4[] | null = null;
   let fourDResult: ChaosGame4Result | null = null;
   // The plot-time lens for the 4D run (fr-hy8): the embedded 3D final transform
   // when entering via "Current System → 4D", else null (the preset systems carry
   // no lens). Set on every 4D entry, reset on exit, passed to runChaosGame4.
   let fourDFinal: Transform4 | null = null;
-  let fourDStartMs = 0;
-  let fourDReducedMotion = false;
+  // The accumulated 4D VIEW rotation (fr-woc): tumble ticks and Shift-drag/
+  // Shift-wheel deltas all compose into this one quaternion pair (see
+  // rotor4.ts), converted to a matrix only where scene.setRot4 needs it. That
+  // single accumulator is what makes pausing freeze the exact current
+  // orientation and what lets a drag mid-tumble just add on top, instead of
+  // fighting a separately-tracked clock. Session-only, like the slice below:
+  // reset to identity on every 4D entry, never persisted.
+  let fourDPair: RotorPair = identityRotorPair();
+  let fourDTumbleOn = true;
+  let fourDTumbleSpeed = 1;
+  let fourDLastTickMs = 0;
   // The soft w-slice (fr-6x2): session-only view state, reset on every entry.
   let fourDSliceOn = false;
   let fourDSliceCenter = 0;
@@ -690,8 +700,6 @@ function main(): void {
   ): void {
     fourDSystem = system;
     fourDFinal = final;
-    fourDStartMs = performance.now();
-    fourDReducedMotion = prefersReducedMotion();
     state = setFourDActive(state, true);
     scene.setFourDActive(true);
     // The tumbling scaffold (Show guides toggles it with the grid/axes) — the
@@ -703,14 +711,29 @@ function main(): void {
     fourDSliceCenter = 0;
     scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
     ui.resetFourDSlice();
+    // Fresh visit, fresh view rotation (fr-woc): identity pair and a fresh
+    // tumble clock every time — the pair accumulates BOTH the auto-tumble and
+    // Shift-drag/Shift-wheel deltas (see the fourDPair declaration above), so
+    // resetting it here is what makes every 4D visit start from the same
+    // neutral orientation. Reduced motion starts PAUSED (not hard-frozen, as
+    // before fr-woc) on one generic view — both rotation planes engaged once,
+    // so the projection still reads as 4D at a glance — composed directly
+    // into the pair; the checkbox still lets the user opt into motion
+    // explicitly, and Shift-drags always work since user-initiated motion is
+    // exactly what prefers-reduced-motion permits.
+    fourDPair = identityRotorPair();
+    const reducedMotion = prefersReducedMotion();
+    fourDTumbleOn = !reducedMotion;
+    fourDTumbleSpeed = 1;
+    fourDLastTickMs = performance.now();
+    if (reducedMotion) {
+      fourDPair = rotateInPlane(fourDPair, "xy", 0.6);
+      fourDPair = rotateInPlane(fourDPair, "zw", 0.9);
+    }
+    ui.resetFourDTumble(fourDTumbleOn);
     // Fresh visit, fresh editor: select the first map and fill its sliders.
     fourDSelected = 0;
     ui.renderFourDEditor(fourDEditorParams(), fourDSelected);
-    if (fourDReducedMotion) {
-      // No auto-tumble under reduced motion: freeze on one generic 4D view
-      // (both rotation planes engaged) so the projection still reads as 4D.
-      scene.setRot4(rotationMatrix4({ xy: 0.6, zw: 0.9 }));
-    }
     regenerate();
     refreshGuides();
     refreshUi();
@@ -1206,6 +1229,15 @@ function main(): void {
       fourDSliceCenter = value;
       scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
     },
+    // Tumble pause/resume + speed (fr-woc): also session-only view state, no
+    // scheduleSave — animate() reads these two vars directly every frame, so
+    // there is nothing else to push here.
+    onFourDTumbleToggle: (checked) => {
+      fourDTumbleOn = checked;
+    },
+    onFourDTumbleSpeedInput: (value) => {
+      fourDTumbleSpeed = value;
+    },
     onEmbedCurrentSystem: () => enterFourDEmbedded(),
     onFourDMapSelect: (index) => {
       if (!fourDSystem) return;
@@ -1254,6 +1286,14 @@ function main(): void {
       ui.renderTransformEditor(state.transforms[index], index);
       if (state.autoUpdate) regenerate();
       scheduleSave();
+    },
+    fourDActive: () => state.fourDActive,
+    onFourDRotate: ({ xw, yw, zw }) => {
+      if (!state.fourDActive) return; // belt-and-braces, same as the ui handlers
+      if (xw !== 0) fourDPair = rotateInPlane(fourDPair, "xw", xw);
+      if (yw !== 0) fourDPair = rotateInPlane(fourDPair, "yw", yw);
+      if (zw !== 0) fourDPair = rotateInPlane(fourDPair, "zw", zw);
+      // animate() pushes rotorMatrix(fourDPair) next frame; nothing else to do.
     },
   });
 
@@ -1314,18 +1354,29 @@ function main(): void {
     scene.applyCamera(orbit);
     scene.updateFog();
     if (state.fourDActive) {
-      // Advance the 4D auto-tumble (unless reduced motion froze one static view
-      // on entry). The point color re-derives in-shader from the new rotation,
-      // so nothing else needs updating per frame.
-      if (!fourDReducedMotion) {
-        const elapsed = (performance.now() - fourDStartMs) / 1000;
-        scene.setRot4(
-          rotationMatrix4({
-            xy: elapsed * FOUR_D_XY_RATE,
-            zw: elapsed * FOUR_D_ZW_RATE,
-          }),
+      const now = performance.now();
+      // Clamp dt: a backgrounded tab suspends RAF, and an unclamped catch-up
+      // delta would violently snap the orientation on refocus.
+      const dt = Math.min((now - fourDLastTickMs) / 1000, 0.1);
+      fourDLastTickMs = now;
+      if (fourDTumbleOn) {
+        fourDPair = rotateInPlane(
+          fourDPair,
+          "xy",
+          dt * FOUR_D_XY_RATE * fourDTumbleSpeed,
+        );
+        fourDPair = rotateInPlane(
+          fourDPair,
+          "zw",
+          dt * FOUR_D_ZW_RATE * fourDTumbleSpeed,
         );
       }
+      // Pushed every 4D frame, paused or not — 16 floats/frame is nothing and
+      // it keeps one code path. fourDLastTickMs still advances while paused,
+      // so resuming doesn't replay the gap as a jump. The point color
+      // re-derives in-shader from the new rotation, so nothing else needs
+      // updating per frame.
+      scene.setRot4(rotorMatrix(fourDPair));
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse
       // ones. state.glowBrightness (fr-8b1) then layers the user's manual

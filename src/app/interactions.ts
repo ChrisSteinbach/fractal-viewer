@@ -24,7 +24,21 @@ export interface InteractionCallbacks {
    * comment on teardown) — this just short-circuits their effect.
    */
   frozen: () => boolean;
+  /** True while the 4D projection is active: Shift retargets rotate-drags and
+   * the wheel from the 3D camera to the three w-plane rotations (fr-woc). */
+  fourDActive: () => boolean;
+  /** A Shift-retargeted gesture turned the 4D view: plane-angle deltas in
+   * radians (zero for planes the gesture doesn't touch). */
+  onFourDRotate: (delta: { xw: number; yw: number; zw: number }) => void;
 }
+
+/** Radians per normalized wheel px that Shift+scroll turns the ZW plane
+ * (fr-woc) — one ~100 px notch (after `deltaMode` normalization) reaches
+ * roughly 0.15 rad before clamping, matching the drag gesture's feel. */
+const FOUR_D_WHEEL_SPEED = 0.0025;
+/** Per-event clamp on the Shift+scroll ZW turn: a single coarse notch steps
+ * ~8.6°, while a trackpad's stream of small deltas stays smooth. */
+const FOUR_D_WHEEL_MAX = 0.15;
 
 type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
 
@@ -175,6 +189,23 @@ export function attachInteractions(
 
   function moveCamera(event: Event, dx: number, dy: number): void {
     if (orbitMode === "rotate") {
+      // Checked per-move (not latched at pointerdown), so pressing/releasing
+      // Shift mid-drag switches live between orbiting and w-turning — both
+      // are incremental deltas, so there is no jump on the switch. Touch
+      // events have no shiftKey, so touch always orbits (mobile drives the
+      // w-planes via the per-map sliders instead — see index.html).
+      const mouse = touchOf(event) ? null : (event as MouseEvent);
+      if (callbacks.fourDActive() && mouse?.shiftKey) {
+        // Dragging toward +screen-x rolls the world +x axis into +w; screen y
+        // points down while world y points up, hence the dy negation for yw
+        // (a feel default — each sign is trivially negatable).
+        callbacks.onFourDRotate({
+          xw: dx * ROTATE_SPEED,
+          yw: -dy * ROTATE_SPEED,
+          zw: 0,
+        });
+        return;
+      }
       orbit.rotate(dx, dy);
     } else if (orbitMode === "pan") {
       panByScreen(dx, dy);
@@ -252,6 +283,31 @@ export function attachInteractions(
     if (callbacks.frozen()) return;
     const selected = callbacks.selectedTransform();
     if (selected === null) {
+      if (callbacks.fourDActive() && event.shiftKey) {
+        // Chrome (Win/Linux) remaps Shift+vertical-wheel to deltaX — read
+        // whichever axis moved.
+        const raw = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+        // Normalize deltaMode (Firefox reports lines): 1 = lines (~16 px), 2 =
+        // pages (~120 px).
+        const px =
+          event.deltaMode === 1
+            ? raw * 16
+            : event.deltaMode === 2
+              ? raw * 120
+              : raw;
+        // Scroll-up rolls +z into +w, the same "push into w" convention as
+        // the drag's xw/yw.
+        callbacks.onFourDRotate({
+          xw: 0,
+          yw: 0,
+          zw: clamp(
+            -px * FOUR_D_WHEEL_SPEED,
+            -FOUR_D_WHEEL_MAX,
+            FOUR_D_WHEEL_MAX,
+          ),
+        });
+        return;
+      }
       orbit.dolly(event.deltaY > 0 ? 1.1 : 0.9);
       return;
     }

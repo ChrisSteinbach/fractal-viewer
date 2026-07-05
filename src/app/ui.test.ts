@@ -60,6 +60,8 @@ function noopHandlers(): UiHandlers {
     onExitFourD: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
+    onFourDTumbleToggle: vi.fn(),
+    onFourDTumbleSpeedInput: vi.fn(),
     onEmbedCurrentSystem: vi.fn(),
     onFourDMapSelect: vi.fn(),
     onFourDParamInput: vi.fn(),
@@ -1763,6 +1765,72 @@ describe("Ui 4D projection controls (fr-cbg)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("0");
     expect(el("fourDSliceLabel").textContent).toBe("0.00");
+  });
+});
+
+describe("Ui 4D tumble controls (fr-woc)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("hides the speed row and fires the handler when auto-tumble is toggled off", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
+
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDTumbleToggle).toHaveBeenCalledWith(false);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("fires onFourDTumbleSpeedInput with the slider's numeric value and updates the label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = el("fourDTumbleSpeedSlider") as HTMLInputElement;
+
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFourDTumbleSpeedInput).toHaveBeenCalledWith(2.5);
+    expect(el("fourDTumbleSpeedLabel").textContent).toBe("2.5×");
+  });
+
+  it("resetFourDTumble(true) checks the toggle, shows the row, and resets the slider to 1.0×", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
+    const slider = el("fourDTumbleSpeedSlider") as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change"));
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetFourDTumble(true);
+
+    expect(toggle.checked).toBe(true);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
+    expect(slider.value).toBe("1");
+    expect(el("fourDTumbleSpeedLabel").textContent).toBe("1.0×");
+  });
+
+  it("resetFourDTumble(false) unchecks the toggle, hides the row, and resets the slider to 1.0×", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const toggle = el("fourDTumbleToggle") as HTMLInputElement;
+    const slider = el("fourDTumbleSpeedSlider") as HTMLInputElement;
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetFourDTumble(false);
+
+    expect(toggle.checked).toBe(false);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
+    expect(slider.value).toBe("1");
+    expect(el("fourDTumbleSpeedLabel").textContent).toBe("1.0×");
   });
 });
 
