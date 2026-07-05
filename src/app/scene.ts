@@ -6,7 +6,7 @@ import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
 import { transformColors } from "../fractal/color";
 import { clone3 } from "../fractal/vec";
-import type { Transform, Vec3 } from "../fractal/types";
+import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import type { RenderStyle, SolidParams } from "./state";
@@ -34,6 +34,14 @@ const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
+// 4D projection: per-point additive contribution and the soft w-slice's
+// Gaussian sigma (in signed normalized-w units; the slice slider spans [-1, 1]).
+// The intensity is pitched like GLOW_BASE_OPACITY but far lower: the projected
+// sheets of a 4D attractor stack tens-to-hundreds of points per pixel, and the
+// palette only reads while the sum stays below saturation — density then shows
+// up as brightness, exactly like the flame's log-density display.
+const FOUR_D_BASE_INTENSITY = 0.055;
+const FOUR_D_SLICE_WIDTH = 0.12;
 
 function color(rgb: Vec3): THREE.Color {
   return new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]);
@@ -131,6 +139,95 @@ const DOF_FRAGMENT = /* glsl */ `
   }
 `;
 
+// 4D projection point shader (fr-cbg spike). A 4D IFS cloud is rotated in 4D
+// about its own center, then orthographically projected to 3D (drop the rotated
+// w), and colored in-shader by that rotated w. Modeled on DOF_VERTEX's raw
+// ShaderMaterial pipeline (there is deliberately no onBeforeCompile in this
+// codebase). The color MUST live in the shader, not a CPU-baked `color` buffer:
+// it depends on the LIVE uRot4 uniform, so a baked buffer would go stale the
+// moment the rotation advances a frame.
+//
+// Two choices here exist to make the FOURTH dimension legible rather than
+// looking like one more 3D coordinate ramp:
+//
+// - A DIVERGING palette on the SIGNED rotated w — cool blue on the −w side of
+//   our 3-space, warm orange on the +w side, dim desaturated gray near w = 0 —
+//   instead of the height/radius-style rainbow, which a still image cannot
+//   distinguish from the 3D "height" mode. Color answers "how far OUT of the
+//   visible hyperplane, and to which side".
+// - Additive translucency (see the material setup): an orthographic projection
+//   folds several w-layers onto the same xyz spot, and opaque depth-tested
+//   points would let the front layer win — hiding exactly the self-overlap
+//   that makes a projection read as 4D. Additive blending superposes the
+//   layers, and where −w and +w sheets cross, blue + orange sum toward white:
+//   color mixtures that exist nowhere in the palette flag genuine 4D overlap.
+//
+// The soft w-slice (fr-6x2) rides the same alpha path: a Gaussian opacity
+// window in the signed rotated w, swept by a slider — depth-of-field in the
+// fourth dimension. Points outside the slice keep a floor of visibility so the
+// full projection stays as ghost context around the vivid cross-section.
+const FOUR_D_VERTEX = /* glsl */ `
+  uniform mat4 uRot4;
+  uniform vec4 uCenter4;
+  uniform float uInvRadius4;
+  uniform float uSize;
+  uniform float uHalfHeight;
+  uniform float uIntensity;
+  uniform float uSliceOn;
+  uniform float uSliceCenter;
+  uniform float uSliceWidth;
+  attribute float w;
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    // Rotate about the cloud's 4D center so the projection tumbles in place,
+    // then project orthographically to 3D by dropping the rotated w.
+    vec4 q = uRot4 * (vec4(position, w) - uCenter4);
+    vec3 projected = q.xyz + uCenter4.xyz;
+
+    // Signed, normalized rotated w. |q| = |p - center| <= radius is rotation-
+    // invariant, so s stays within [-1, 1] at every tumble angle and never
+    // needs re-normalizing as the view turns.
+    float s = clamp(q.w * uInvRadius4, -1.0, 1.0);
+
+    // Diverging palette: sign picks the side, magnitude drives saturation AND
+    // brightness (the 0.6 exponent saturates the mid-range early, since an
+    // anisotropic cloud rarely pushes |s| near 1). Near-zero w — the part of
+    // the cloud passing through our own 3-space — stays dim gray and recedes.
+    float m = pow(abs(s), 0.6);
+    vec3 side = s < 0.0 ? vec3(0.30, 0.60, 1.00) : vec3(1.00, 0.50, 0.18);
+    vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);
+
+    // Soft w-slice: a Gaussian window in s around uSliceCenter, with a floor so
+    // the rest of the projection stays visible as ghost context.
+    float slice = 1.0;
+    if (uSliceOn > 0.5) {
+      float d = (s - uSliceCenter) / uSliceWidth;
+      slice = 0.06 + 0.94 * exp(-0.5 * d * d);
+    }
+    vAlpha = uIntensity * slice;
+
+    // The exact modelView/projection/gl_PointSize pipeline DOF_VERTEX uses,
+    // minus its circle-of-confusion term: the same size-attenuation formula.
+    vec4 mv = modelViewMatrix * vec4(projected, 1.0);
+    float dist = -mv.z;
+    gl_PointSize = uSize * (uHalfHeight / dist);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+// Additive square points: with THREE.AdditiveBlending the source factor is the
+// fragment's alpha, so vAlpha scales each point's contribution and overlapping
+// w-layers sum — no sorting needed (addition commutes), hence depthWrite off.
+const FOUR_D_FRAGMENT = /* glsl */ `
+  varying vec3 vColor;
+  varying float vAlpha;
+  void main() {
+    gl_FragColor = vec4(vColor, vAlpha);
+  }
+`;
+
 // Eye-dome lighting: a screen-space pass that darkens each pixel in proportion
 // to how much its neighbours sit *in front* of it, carving silhouettes and
 // creases so the cloud reads as solid without any lights. (Potree's technique.)
@@ -210,6 +307,19 @@ export class FractalScene {
   private readonly discMaterial: THREE.PointsMaterial; // edl
   private readonly glowMaterial: THREE.PointsMaterial; // glow
   private readonly dofMaterial: THREE.ShaderMaterial; // dof
+  private readonly fourDMaterial: THREE.ShaderMaterial; // 4D projection (fr-cbg)
+  // True while the 4D projection owns the point cloud, so setRenderStyle records
+  // the requested style without clobbering fourDMaterial (see setFourDActive).
+  private fourDActive = false;
+  // The projected 4D wireframe scaffold (e.g. the pentatope's ten edges, the
+  // rotating-tesseract-style legibility cue) and the state needed to re-pose it:
+  // its 4D edge endpoints and the current row-major 4D rotation. Re-posed on the
+  // CPU whenever the rotation uniform changes — a handful of vertices, not the
+  // half-million-point cloud, so per-frame CPU projection costs nothing.
+  private fourDScaffold: THREE.LineSegments | null = null;
+  private fourDScaffoldEdges: [Vec4, Vec4][] = [];
+  // prettier-ignore
+  private fourDRot: number[] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
   private readonly fog: THREE.Fog;
   private readonly darkBackground: THREE.Texture;
@@ -322,6 +432,27 @@ export class FractalScene {
       transparent: true,
       depthWrite: false,
     });
+    this.fourDMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uRot4: { value: new THREE.Matrix4() },
+        uCenter4: { value: new THREE.Vector4() },
+        uInvRadius4: { value: 1 },
+        uSize: { value: DOF_POINT_SIZE },
+        uHalfHeight: { value: buffer.y * 0.5 },
+        uIntensity: { value: FOUR_D_BASE_INTENSITY },
+        uSliceOn: { value: 0 },
+        uSliceCenter: { value: 0 },
+        uSliceWidth: { value: FOUR_D_SLICE_WIDTH },
+      },
+      vertexShader: FOUR_D_VERTEX,
+      fragmentShader: FOUR_D_FRAGMENT,
+      // Additive, unsorted, no depth write — the glowMaterial recipe. See the
+      // FOUR_D_VERTEX comment: superposing w-layers instead of depth-testing
+      // them away is what makes the projection read as 4D.
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
 
     this.pointGeometry = new THREE.BufferGeometry();
     this.pointCloud = new THREE.Points(this.pointGeometry, this.baseMaterial);
@@ -402,7 +533,56 @@ export class FractalScene {
       "color",
       new THREE.BufferAttribute(colors, 3),
     );
+    // Drop any 4D `w` attribute left over from the projection view, so a stale
+    // (possibly shorter) w buffer never lingers on the 3D cloud.
+    this.pointGeometry.deleteAttribute("w");
     this.pointGeometry.computeBoundingSphere();
+  }
+
+  /**
+   * Upload a freshly generated 4D cloud (fr-cbg spike): the projected-to-3D
+   * `xyz` positions plus the separate `w` coordinate the shader colors by, and
+   * the 4D `center`/`radius` that drive the shader's rotation pivot and w-color
+   * normalization. The 4D shader reads no `color` attribute (color is computed
+   * from `w` and the live rotation), so any stale one is dropped.
+   */
+  setPoints4(
+    positions: Float32Array,
+    w: Float32Array,
+    center: Vec4,
+    radius: number,
+  ): void {
+    this.pointGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(positions, 3),
+    );
+    this.pointGeometry.setAttribute("w", new THREE.BufferAttribute(w, 1));
+    this.pointGeometry.deleteAttribute("color");
+
+    const u = this.fourDMaterial.uniforms;
+    (u.uCenter4.value as THREE.Vector4).set(
+      center[0],
+      center[1],
+      center[2],
+      center[3],
+    );
+    u.uInvRadius4.value = 1 / Math.max(radius, 1e-6);
+
+    // Set the bounding sphere MANUALLY rather than computeBoundingSphere(): the
+    // raw xyz attribute only bounds the un-rotated projection and underestimates
+    // where the shader moves points as the cloud tumbles. But the 4D ball of
+    // `radius` around `center` is rotation-invariant, and its orthographic
+    // projection always sits inside the SAME xyz sphere (center, radius), so a
+    // sphere there bounds the projection at EVERY tumble angle — frustum culling
+    // stays correct throughout. (1.001 is a hair of slack against Float32 round.)
+    this.pointGeometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(center[0], center[1], center[2]),
+      radius * 1.001,
+    );
+
+    // The scaffold pivots on the same center, which a fresh generation may
+    // have moved — re-pose it.
+    this.updateFourDScaffoldPositions();
   }
 
   /**
@@ -477,6 +657,7 @@ export class FractalScene {
     for (const cube of this.guideCubes) {
       cube.visible = showGuides;
     }
+    if (this.fourDScaffold) this.fourDScaffold.visible = showGuides;
   }
 
   /** The live guide box for a transform, so drags can move it directly. */
@@ -551,6 +732,11 @@ export class FractalScene {
    */
   setRenderStyle(style: RenderStyle): void {
     this.renderStyle = style;
+    // While the 4D projection owns the point cloud, record the requested style
+    // (so exiting 4D can restore it) but don't overwrite fourDMaterial. main.ts
+    // also guards its onRenderStyle handler, but the scene must not be
+    // corruptible from here either.
+    if (this.fourDActive) return;
     switch (style) {
       case "depthFade":
         this.pointCloud.material = this.baseMaterial;
@@ -583,6 +769,130 @@ export class FractalScene {
   }
 
   /**
+   * Enter or exit the 4D projection view (fr-cbg spike). Swaps the point cloud
+   * to fourDMaterial on entry; on exit, restores the current render style's
+   * material by re-running {@link setRenderStyle} (which owns the style→material
+   * mapping) rather than duplicating it here.
+   */
+  setFourDActive(active: boolean): void {
+    this.fourDActive = active;
+    if (active) {
+      this.pointCloud.material = this.fourDMaterial;
+    } else {
+      // fourDActive is now false, so this restores the recorded style's
+      // material (and its fog/background) instead of being guarded out.
+      this.setRenderStyle(this.renderStyle);
+    }
+  }
+
+  /**
+   * Set the 4D rotation uniform (fr-cbg spike). `m` is a row-major 16-entry
+   * array — the format affine4.ts's `rotationMatrix4` produces.
+   * `THREE.Matrix4.set()` takes its arguments in row-major order and stores them
+   * column-major internally (exactly the WebGL layout the shader's `mat4 uRot4`
+   * expects), so handing the row-major array straight to `set()` is the correct
+   * pairing.
+   */
+  setRot4(m: number[]): void {
+    const uRot4 = this.fourDMaterial.uniforms.uRot4.value as THREE.Matrix4;
+    // prettier-ignore
+    uRot4.set(
+      m[0],  m[1],  m[2],  m[3],
+      m[4],  m[5],  m[6],  m[7],
+      m[8],  m[9],  m[10], m[11],
+      m[12], m[13], m[14], m[15],
+    );
+    // The scaffold rides the exact same rotation, applied on the CPU (see the
+    // field comment). `rotationMatrix4` hands us a fresh array every call, so
+    // keeping the reference is safe.
+    this.fourDRot = m;
+    this.updateFourDScaffoldPositions();
+  }
+
+  /**
+   * Show a 4D wireframe scaffold (fr-6d5) — line segments given by their 4D
+   * endpoints, projected through the SAME rotation/center as the point cloud so
+   * the two can never drift. The pentatope's ten tumbling edges are what make
+   * the 4D rotation legible at a glance, the way a rotating tesseract's frame
+   * does. Pass `null` (or `[]`) to remove it. Follows the Show-guides toggle
+   * like the grid and axes.
+   */
+  setFourDScaffold(edges: [Vec4, Vec4][] | null): void {
+    if (this.fourDScaffold) {
+      this.scene.remove(this.fourDScaffold);
+      this.fourDScaffold.geometry.dispose();
+      (this.fourDScaffold.material as THREE.Material).dispose();
+      this.fourDScaffold = null;
+    }
+    this.fourDScaffoldEdges = edges ?? [];
+    if (this.fourDScaffoldEdges.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(
+        new Float32Array(this.fourDScaffoldEdges.length * 6),
+        3,
+      ),
+    );
+    const material = new THREE.LineBasicMaterial({
+      color: 0x93a4c8,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      // Additive like the cloud: the scaffold brightens dark background but
+      // never darkens the glowing cloud into crack-like seams.
+      blending: THREE.AdditiveBlending,
+    });
+    const lines = new THREE.LineSegments(geometry, material);
+    // A handful of segments under a moving projection: culling isn't worth it.
+    lines.frustumCulled = false;
+    // Match the current Show-guides state (the grid is its source of truth).
+    lines.visible = this.grid.visible;
+    this.fourDScaffold = lines;
+    this.scene.add(lines);
+    this.updateFourDScaffoldPositions();
+  }
+
+  /** Re-pose the scaffold under the current 4D rotation: for each endpoint,
+   * `projected = center.xyz + (R4 · (v − center)).xyz` — the CPU twin of the
+   * vertex shader's transform. */
+  private updateFourDScaffoldPositions(): void {
+    const lines = this.fourDScaffold;
+    if (!lines) return;
+    const m = this.fourDRot;
+    const c = this.fourDMaterial.uniforms.uCenter4.value as THREE.Vector4;
+    const attr = lines.geometry.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute;
+    const out = attr.array as Float32Array;
+    let o = 0;
+    for (const edge of this.fourDScaffoldEdges) {
+      for (const v of edge) {
+        const x = v[0] - c.x;
+        const y = v[1] - c.y;
+        const z = v[2] - c.z;
+        const w = v[3] - c.w;
+        out[o++] = m[0] * x + m[1] * y + m[2] * z + m[3] * w + c.x;
+        out[o++] = m[4] * x + m[5] * y + m[6] * z + m[7] * w + c.y;
+        out[o++] = m[8] * x + m[9] * y + m[10] * z + m[11] * w + c.z;
+      }
+    }
+    attr.needsUpdate = true;
+  }
+
+  /**
+   * Configure the soft w-slice (fr-6x2): a Gaussian opacity window around
+   * `center` in SIGNED normalized rotated-w units (the [-1, 1] range the
+   * shader's diverging palette uses), with a fixed width and a visibility floor
+   * so the unsliced projection stays as ghost context. One uniform write, so
+   * sweeping the slider costs nothing per frame.
+   */
+  setFourDSlice(on: boolean, center: number): void {
+    this.fourDMaterial.uniforms.uSliceOn.value = on ? 1 : 0;
+    this.fourDMaterial.uniforms.uSliceCenter.value = center;
+  }
+
+  /**
    * Scale every render style's points by `multiplier` (1 = authored size).
    * Applied to all materials at once so switching styles preserves the choice.
    */
@@ -591,6 +901,7 @@ export class FractalScene {
     this.discMaterial.size = DISC_POINT_SIZE * multiplier;
     this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
     this.dofMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
+    this.fourDMaterial.uniforms.uSize.value = DOF_POINT_SIZE * multiplier;
   }
 
   /**
@@ -630,9 +941,19 @@ export class FractalScene {
     this.edlTarget.setSize(buffer.x, buffer.y);
     this.edlResolution.set(buffer.x, buffer.y);
     this.dofMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
+    this.fourDMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
   }
 
   render(): void {
+    // The 4D projection (fr-cbg spike) always renders plain: its material is
+    // designed to look like the base style, and layering the recorded render
+    // style's post-processing (bloom / EDL / DOF focus) over it would restyle
+    // the projection unpredictably — including in captureFrame's PNG export.
+    // The recorded style still drives fog/background until the user exits.
+    if (this.fourDActive) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     switch (this.renderStyle) {
       case "glow":
         this.composer.render();
