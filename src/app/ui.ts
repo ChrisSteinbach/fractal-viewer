@@ -150,7 +150,7 @@ export interface UiHandlers {
   /** "Current System → 4D" was clicked (fr-2ou): embed the live 3D system at
    * w = 0 and enter the 4D projection on it. */
   onEmbedCurrentSystem: () => void;
-  /** The 4D editor's Map dropdown changed: `index` is the 0-based map to edit. */
+  /** The 4D editor's Transform dropdown changed: `index` is the 0-based map to edit. */
   onFourDMapSelect: (index: number) => void;
   /** A 4D per-map param slider moved (fr-2ou). For `posW`/`scaleW`, `value` is
    * the raw slider number; for the `xw`/`yw`/`zw` rotation planes, `value` is in
@@ -897,8 +897,8 @@ export class Ui {
   }
 
   /**
-   * (Re)build the in-4D per-map editor (fr-2ou): rebuild the Map dropdown as
-   * "Map 1"…"Map N", select `selected`, and fill the five w-param sliders +
+   * (Re)build the in-4D per-map editor (fr-2ou): rebuild the Transform dropdown
+   * as "Transform 1"…"Transform N", select `selected`, and fill the five w-param sliders +
    * labels from `maps[selected]`. Called by main.ts on 4D entry and whenever
    * the selected map changes — NOT on a slider edit, since the sliders are
    * already the live source of that value. Rotation angles arrive in radians
@@ -909,7 +909,7 @@ export class Ui {
     maps.forEach((_, i) => {
       const option = this.doc.createElement("option");
       option.value = String(i);
-      option.textContent = `Map ${i + 1}`;
+      option.textContent = `Transform ${i + 1}`;
       this.fourDMapSelect.appendChild(option);
     });
     this.fourDMapSelect.value = String(selected);
