@@ -437,13 +437,23 @@ export function setTransforms(
   return { ...state, transforms, selectedTransform: null };
 }
 
-/** Update a single transform's geometry, preserving its id. */
+/**
+ * Update a single transform's geometry, preserving its id. A plain object
+ * spread over the patch: every field genuinely PRESENT on `geometry`
+ * replaces the transform's own, including `w` (the optional 4D extension,
+ * fr-bf6.3 — see `WExtension`'s docs). The single editor (`ui.ts`) always
+ * emits every other field but includes `w` only when its own working copy is
+ * non-empty, so an ordinary edit that never touched the 4D group carries no
+ * `w` key at all — this spread then leaves an existing `w` block untouched.
+ * Full replacement, never a field-by-field merge, happens only when the
+ * caller actually supplies a `w`.
+ */
 export function updateTransform(
   state: AppState,
   index: number,
   geometry: Pick<
     Transform,
-    "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
+    "position" | "rotation" | "scale" | "weight" | "shear" | "variations" | "w"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>

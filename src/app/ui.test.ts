@@ -89,6 +89,16 @@ function editorSlider(label: string): HTMLInputElement {
   return slider;
 }
 
+/** The value readout immediately following an editor slider (see
+ * editorSlider above) — the two are always built as adjacent siblings. */
+function editorReadout(label: string): HTMLElement {
+  const readout = editorSlider(label).nextElementSibling;
+  if (!(readout instanceof HTMLElement)) {
+    throw new Error(`No readout following the slider labelled "${label}"`);
+  }
+  return readout;
+}
+
 function editorGroupTitles(): string[] {
   return Array.from(
     document.querySelectorAll("#transformEditor .editor-group-title"),
@@ -605,10 +615,17 @@ describe("Ui.renderTransformEditor", () => {
       "Shear",
       "Weight",
       "Variations",
+      "4D",
+      "Position W",
+      "Scale W",
+      "Rotation W",
+      "Shear W",
     ]);
-    // 12 axis sliders (4 channels × 3) + 1 weight slider; a plain transform has
+    // 12 axis sliders (4 channels × 3) + 1 weight slider + 8 in the 4D group
+    // (Position W, Scale W, 3 Rotation W, 3 Shear W — always built, just
+    // collapsed for a w-less transform like this one); a plain transform has
     // no variations, so the Variations group adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(13);
+    expect(editorSliders()).toHaveLength(21);
   });
 
   it("shows the stored rotation radians as degrees", () => {
@@ -746,7 +763,7 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(defaultTransforms()[0], 0);
-    expect(editorSliders()).toHaveLength(13);
+    expect(editorSliders()).toHaveLength(21);
 
     ui.renderTransformEditor(null, null);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -819,13 +836,19 @@ describe("Ui final transform", () => {
     ui.renderTransformEditor(lens, "final");
 
     // Same channels as a transform, but no Weight group — a selection weight is
-    // meaningless for a map applied to every point.
+    // meaningless for a map applied to every point. The 4D group is still
+    // there, though (fr-bf6.3): both editors get it.
     expect(editorGroupTitles()).toEqual([
       "Position",
       "Rotation",
       "Scale",
       "Shear",
       "Variations",
+      "4D",
+      "Position W",
+      "Scale W",
+      "Rotation W",
+      "Shear W",
     ]);
   });
 
@@ -942,6 +965,187 @@ describe("Ui variation editor", () => {
     expect(options).not.toContain("spherical");
     expect(options).toContain(""); // placeholder
     expect(options).toContain("swirl"); // other types still offered
+  });
+});
+
+// The collapsed "4D" group (fr-bf6.3): the single UI that can create or edit
+// a transform's optional `w` extension (see fractal/types.ts's WExtension).
+describe("Ui 4D group", () => {
+  const flat: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  function fourDDetails(): HTMLDetailsElement {
+    const details = document.querySelector<HTMLDetailsElement>(
+      "#transformEditor details",
+    );
+    if (!details) throw new Error("No 4D <details> group in the editor");
+    return details;
+  }
+
+  it("renders closed for a transform with no w block", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(flat, 0);
+    expect(fourDDetails().open).toBe(false);
+  });
+
+  it("renders open for a transform that already has a w block", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0);
+    expect(fourDDetails().open).toBe(true);
+  });
+
+  it("gives the final transform's editor the 4D group too", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(flat, "final");
+    expect(document.querySelector("#transformEditor details")).not.toBeNull();
+  });
+
+  it("emits a w of exactly { position } when Position W moves, with no other fields materialized", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(flat, 0);
+
+    const positionW = editorSlider("Position W");
+    positionW.value = "0.75";
+    positionW.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ position: 0.75 });
+  });
+
+  it("keeps an explicit zero present rather than pruning it", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0);
+
+    const positionW = editorSlider("Position W");
+    positionW.value = "0";
+    positionW.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ position: 0 });
+  });
+
+  it("converts a Rotation W slider from degrees to radians and leaves w.scale absent", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(flat, 0);
+
+    const rotationXW = editorSlider("Rotation XW");
+    rotationXW.value = "90";
+    rotationXW.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w?.rotation?.xw).toBeCloseTo(Math.PI / 2);
+    expect(geometry.w?.rotation?.yw).toBeUndefined();
+    expect(geometry.w?.scale).toBeUndefined();
+  });
+
+  it("writes an explicit Shear W field sparsely, alongside no rotation", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(flat, 0);
+
+    const shearXW = editorSlider("Shear XW");
+    shearXW.value = "1.2";
+    shearXW.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ shear: { xw: 1.2 } });
+  });
+
+  it("shows the derived mean scale with an auto marker until Scale W is moved", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+
+    // (0.2 + 0.5 + 0.8) / 3 = 0.5
+    expect(editorSlider("Scale W").value).toBe("0.5");
+    expect(editorReadout("Scale W").textContent).toBe("0.50 (auto)");
+  });
+
+  it("drops the auto marker and reports the explicit value once Scale W moves", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+
+    const scaleW = editorSlider("Scale W");
+    scaleW.value = "0.9";
+    scaleW.dispatchEvent(new Event("input"));
+
+    expect(editorReadout("Scale W").textContent).toBe("0.90");
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ scale: 0.9 });
+  });
+
+  it("tracks the derived Scale W live as the 3D scale changes while still auto", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0);
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "1"; // mean now (1 + 0.5 + 0.5) / 3 = 0.6667
+    scaleX.dispatchEvent(new Event("input"));
+
+    expect(Number(editorSlider("Scale W").value)).toBeCloseTo(2 / 3);
+    expect(editorReadout("Scale W").textContent).toBe("0.67 (auto)");
+  });
+
+  it("stops tracking the derived scale once Scale W has been set explicitly", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0);
+
+    const scaleW = editorSlider("Scale W");
+    scaleW.value = "0.9";
+    scaleW.dispatchEvent(new Event("input"));
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "1";
+    scaleX.dispatchEvent(new Event("input"));
+
+    expect(editorReadout("Scale W").textContent).toBe("0.90");
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[1][1];
+    expect(geometry.w).toStrictEqual({ scale: 0.9 });
+  });
+
+  it("emits no w key at all for an ordinary position edit on a w-less transform", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(flat, 0);
+
+    const positionX = editorSlider("Position X");
+    positionX.value = "1";
+    positionX.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect("w" in geometry).toBe(false);
+  });
+
+  it("re-syncs the 4D sliders when the transform changes under the same selection", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, w: { position: 0.2 } }, 0);
+    // Same index → no rebuild; reflects an external change to w (e.g. a
+    // preset swap wouldn't hit this path, but a stable-selection re-render
+    // should still pick up whatever the current transform carries).
+    ui.renderTransformEditor({ ...flat, w: { position: 0.9 } }, 0);
+
+    expect(editorSlider("Position W").value).toBe("0.9");
   });
 });
 

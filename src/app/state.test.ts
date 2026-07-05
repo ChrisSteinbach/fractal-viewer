@@ -262,6 +262,54 @@ describe("updateTransform", () => {
     // Other transforms untouched.
     expect(next.transforms[0]).toBe(state.transforms[0]);
   });
+
+  // fr-bf6.3: the single editor emits a `w` key only when its own working
+  // copy is non-empty (see ui.ts's emitGeometry), so this plain object
+  // spread over the patch is exactly what gives "sparse write" its meaning —
+  // a `w`-carrying patch replaces the stored block outright (never a
+  // field-by-field merge), and a `w`-less patch never touches it.
+  it("replaces the transform's w when the patch carries one", () => {
+    const state = initialState(true);
+    const withW = updateTransform(state, 1, {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { position: 0.4, rotation: { xw: 0.2 } },
+    });
+    expect(withW.transforms[1].w).toEqual({
+      position: 0.4,
+      rotation: { xw: 0.2 },
+    });
+
+    // A second w-carrying patch REPLACES the whole block, not merges into it
+    // — the old `rotation.xw` does not survive alongside the new `scale`.
+    const replaced = updateTransform(withW, 1, {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { scale: 0.6 },
+    });
+    expect(replaced.transforms[1].w).toEqual({ scale: 0.6 });
+  });
+
+  it("leaves an existing w untouched when the patch carries none", () => {
+    const state = initialState(true);
+    const withW = updateTransform(state, 1, {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { position: 0.4 },
+    });
+
+    // An ordinary edit (no `w` key at all in the patch) must not disturb it.
+    const moved = updateTransform(withW, 1, {
+      position: [2, 2, 2],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    expect(moved.transforms[1].position).toEqual([2, 2, 2]);
+    expect(moved.transforms[1].w).toEqual({ position: 0.4 });
+  });
 });
 
 describe("setFlameExposure", () => {

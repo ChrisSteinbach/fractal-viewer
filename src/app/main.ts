@@ -253,7 +253,18 @@ function main(): void {
     const nonFlat = systemIsNonFlat(state);
     const wasNonFlat = viewIs4D;
     viewIs4D = nonFlat;
-    if (nonFlat !== wasNonFlat) scene.setFourDActive(nonFlat);
+    if (nonFlat !== wasNonFlat) {
+      scene.setFourDActive(nonFlat);
+      // Re-gate the panel on the flip. Most regenerate() callers refresh the
+      // UI themselves right after (applyEdit, boot), but the per-slider
+      // geometry path (onTransformGeometry / onFinalTransformGeometry)
+      // deliberately does not — and since the 4D editor group (fr-bf6.3) a
+      // w-slider drag is a geometry edit that CAN flip flatness. Without this,
+      // the cloud switches projection while flame/solid/4D-view sections sit
+      // stale until the next unrelated interaction. Harmlessly idempotent for
+      // the callers that refresh anyway.
+      ui.updateLabels(state);
+    }
 
     if (nonFlat && (replaced || !wasNonFlat)) {
       resetFourDView();

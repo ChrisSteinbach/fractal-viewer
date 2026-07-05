@@ -13,6 +13,7 @@ import type {
   Variation,
   VariationType,
   Vec3,
+  WExtension,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
@@ -20,7 +21,15 @@ import type { AppState, RenderStyle } from "./state";
 import {
   MAX_COLOR_GAMMA,
   MAX_NUM_POINTS,
+  MAX_W_ANGLE,
+  MAX_W_POSITION,
+  MAX_W_SCALE,
+  MAX_W_SHEAR,
   MIN_NUM_POINTS,
+  MIN_W_ANGLE,
+  MIN_W_POSITION,
+  MIN_W_SCALE,
+  MIN_W_SHEAR,
   systemIsNonFlat,
 } from "./state";
 import {
@@ -31,10 +40,14 @@ import {
 
 export type { Preset };
 
-/** The geometry (and weight/variations) a transform editor edits. */
+/** The geometry (and weight/variations) a transform editor edits. `w` is the
+ * optional 4D extension (fr-bf6.3, see `types.ts`'s `WExtension`) — included
+ * here so the single editor can be the one UI that creates/edits it, but see
+ * {@link Ui.emitGeometry} for why it's only ever present on the emitted
+ * object when the working copy actually has one. */
 type Geometry = Pick<
   Transform,
-  "position" | "rotation" | "scale" | "weight" | "shear" | "variations"
+  "position" | "rotation" | "scale" | "weight" | "shear" | "variations" | "w"
 >;
 
 /** The final transform's geometry — the same, minus the selection weight, which
@@ -232,6 +245,44 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
 const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale", "shear"];
 
 /**
+ * Deep-copy a transform's optional `w` extension (fr-bf6.3, see `types.ts`'s
+ * `WExtension`) so the editor's mutable working copy and the transform's own
+ * stored one never alias — the `w`-shaped counterpart to `clone3` for the
+ * plain Vec3 channels (position/rotation/scale/shear). `undefined` in,
+ * `undefined` out; only fields actually present are copied, so a sparse block
+ * stays exactly as sparse in the copy.
+ */
+function cloneW(w: WExtension | undefined): WExtension | undefined {
+  if (!w) return undefined;
+  const clone: WExtension = {};
+  if (w.position !== undefined) clone.position = w.position;
+  if (w.scale !== undefined) clone.scale = w.scale;
+  if (w.rotation) clone.rotation = { ...w.rotation };
+  if (w.shear) clone.shear = { ...w.shear };
+  return clone;
+}
+
+/**
+ * The Scale W value implied while `w.scale` is UNSET: the mean spatial
+ * contraction `(|sx|+|sy|+|sz|)/3` — the exact formula `affine4.ts`'s
+ * `embedTransform3` uses for the lift (see its JSDoc for why the MEAN
+ * contraction, not `1`, is what keeps a later 4D edit contractive).
+ * Duplicated here rather than imported: this is a UI-only PREVIEW of that
+ * value for the editor's "(auto)" label, not the lift itself, which always
+ * recomputes it fresh from whatever the transform's scale is at lift time.
+ */
+function derivedScaleW(scale: Vec3): number {
+  return (Math.abs(scale[0]) + Math.abs(scale[1]) + Math.abs(scale[2])) / 3;
+}
+
+/** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
+ * `types.ts`'s `Rotation4`/`Shear4`), in the 4D group's row order. One array
+ * drives both the Rotation W and Shear W row-builders below since the two
+ * genuinely share the same three plane keys. */
+const W_PLANES = ["xw", "yw", "zw"] as const;
+const W_PLANE_LABELS = ["XW", "YW", "ZW"];
+
+/**
  * The weight editor is log-scaled, so the slider sits at centre for the default
  * weight of 1 and reaches both rare (~0.05) and dominant (~20) maps without
  * crowding the low end. Stored as a plain multiplier on {@link Transform}.
@@ -354,6 +405,19 @@ interface AxisControl {
   readout: HTMLElement;
 }
 
+/**
+ * Live handles into the collapsed "4D" group's eight rows (fr-bf6.3) — one
+ * per {@link WExtension} field, since unlike the plain Vec3 channels each
+ * binds to an independently-optional field rather than a shared indexed
+ * array. Rotation/Shear W hold their XW/YW/ZW rows in that order.
+ */
+interface FourDControls {
+  positionW: AxisControl;
+  scaleW: AxisControl;
+  rotationW: AxisControl[];
+  shearW: AxisControl[];
+}
+
 /** Live handles into a built editor so external edits can re-sync the sliders. */
 interface EditorState {
   /** What the editor edits: a transform index or the final transform. */
@@ -364,6 +428,10 @@ interface EditorState {
     scale: Vec3;
     shear: Vec3;
     weight: number;
+    /** Working copy of the transform's optional 4D extension (fr-bf6.3);
+     * `undefined` exactly when the transform has none AND the user hasn't
+     * touched the 4D group yet — see {@link Ui.mutateW}/{@link Ui.emitGeometry}. */
+    w: WExtension | undefined;
   };
   controls: Record<Channel, AxisControl[]>;
   /** The selection-weight control, or `null` for the final transform (no weight). */
@@ -374,6 +442,9 @@ interface EditorState {
   variationList: HTMLElement;
   /** The "add variation" dropdown, whose options exclude already-added types. */
   variationAdd: HTMLSelectElement;
+  /** The collapsed "4D" group's row controls (fr-bf6.3) — always built,
+   * whether or not this transform currently carries a `w` block. */
+  fourD: FourDControls;
 }
 
 /**
@@ -1247,6 +1318,7 @@ export class Ui {
       scale: clone3(transform.scale),
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
+      w: cloneW(transform.w),
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -1305,6 +1377,12 @@ export class Ui {
     const weightControl =
       target === "final" ? null : this.buildWeightControl(geometry.weight);
     const { list, add } = this.buildVariationsGroup();
+    // Placed last (after Variations): a deliberate choice to leave the
+    // existing layout for every ordinary (flat) transform undisturbed — this
+    // is purely an opt-in extension appended at the end, always built (never
+    // conditionally omitted) so add/remove/selection keep working uniformly
+    // whether or not this transform (or system) is currently non-flat.
+    const fourD = this.buildFourDGroup(transform);
 
     this.editor = {
       target,
@@ -1314,6 +1392,7 @@ export class Ui {
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
       variationAdd: add,
+      fourD,
     };
     this.renderVariationRows();
     this.refreshAddOptions();
@@ -1480,6 +1559,277 @@ export class Ui {
     this.emitGeometry();
   }
 
+  /**
+   * Build one row of the 4D group: the same shape as the per-axis rows the
+   * Position/Rotation/Scale/Shear loop and {@link buildWeightControl} build
+   * (axis label, slider, live readout) — factored out here because each of
+   * the eight 4D rows binds to a different, independently-optional field of
+   * a transform's `w` block (see `WExtension`) rather than a shared indexed
+   * array, so the generic per-channel loop above doesn't fit them directly.
+   */
+  private buildFourDRow(
+    container: HTMLElement,
+    axisLabel: string,
+    ariaLabel: string,
+    min: number,
+    max: number,
+    step: number,
+    initialModel: number,
+    toSlider: (model: number) => number,
+    fromSlider: (slider: number) => number,
+    format: (model: number) => string,
+    onModelChange: (model: number) => void,
+  ): AxisControl {
+    const row = this.doc.createElement("div");
+    row.className = "editor-row";
+
+    const name = this.doc.createElement("span");
+    name.className = "axis";
+    name.textContent = axisLabel;
+
+    const slider = this.doc.createElement("input");
+    slider.type = "range";
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.value = String(toSlider(initialModel));
+    slider.setAttribute("aria-label", ariaLabel);
+
+    const readout = this.doc.createElement("span");
+    readout.className = "value";
+    readout.textContent = format(initialModel);
+
+    slider.addEventListener("input", () => {
+      const model = fromSlider(Number(slider.value));
+      readout.textContent = format(model);
+      onModelChange(model);
+    });
+
+    row.append(name, slider, readout);
+    container.appendChild(row);
+    return { slider, readout };
+  }
+
+  /** Append a titled sub-group (a plain div, NOT collapsible on its own) to
+   * `details` — the 4D group's internal structure mirrors the outer editor's
+   * own group-title-then-rows pattern, just nested one level inside the
+   * `<details>` so Position W/Scale W/Rotation W/Shear W stay visually
+   * distinct from one another. */
+  private appendFourDSubGroup(
+    details: HTMLElement,
+    title: string,
+  ): HTMLElement {
+    const group = this.doc.createElement("div");
+    group.className = "editor-group";
+    const heading = this.doc.createElement("div");
+    heading.className = "editor-group-title";
+    heading.textContent = title;
+    group.appendChild(heading);
+    details.appendChild(group);
+    return group;
+  }
+
+  /**
+   * Build the collapsed "4D" group (fr-bf6.3): the only UI that can create or
+   * edit a transform's optional `w` extension (see `types.ts`'s
+   * `WExtension`). Always built — never conditionally omitted — so every
+   * other editor interaction keeps working uniformly whether or not this
+   * particular transform is currently non-flat.
+   *
+   * `<details>`'s native open/closed state is the entire "collapsed by
+   * default" affordance: open only when `transform.w` is already present
+   * (regardless of whether it happens to be flat/trivial), so a system
+   * authored via preset or URL hash shows its 4D values immediately instead
+   * of hiding them a click away. Only {@link buildEditor} (a fresh selection)
+   * decides this — {@link syncFourDControls} never touches `.open`, so a
+   * user's manual toggle is never fought mid-session.
+   */
+  private buildFourDGroup(transform: Transform): FourDControls {
+    const details = this.doc.createElement("details");
+    details.className = "editor-group";
+    details.open = transform.w !== undefined;
+
+    const summary = this.doc.createElement("summary");
+    summary.className = "editor-group-title";
+    summary.textContent = "4D";
+    details.appendChild(summary);
+
+    const w = transform.w;
+
+    const positionGroup = this.appendFourDSubGroup(details, "Position W");
+    const positionW = this.buildFourDRow(
+      positionGroup,
+      "W",
+      "Position W",
+      MIN_W_POSITION,
+      MAX_W_POSITION,
+      0.01,
+      w?.position ?? 0,
+      (v) => v,
+      (v) => v,
+      (v) => v.toFixed(2),
+      (model) => {
+        this.mutateW((block) => {
+          block.position = model;
+        });
+        this.emitGeometry();
+      },
+    );
+
+    const scaleGroup = this.appendFourDSubGroup(details, "Scale W");
+    const scaleWAuto = w?.scale === undefined;
+    const scaleWInitial = w?.scale ?? derivedScaleW(transform.scale);
+    const scaleW = this.buildFourDRow(
+      scaleGroup,
+      "W",
+      "Scale W",
+      MIN_W_SCALE,
+      MAX_W_SCALE,
+      0.01,
+      scaleWInitial,
+      (v) => v,
+      (v) => v,
+      (v) => v.toFixed(2),
+      (model) => {
+        this.mutateW((block) => {
+          block.scale = model;
+        });
+        this.emitGeometry();
+      },
+    );
+    // The row above always formats as a plain number — patch in the "(auto)"
+    // marker here, once, for the derived starting value. The row's own
+    // listener (buildFourDRow) already reformats with the plain `format` the
+    // instant the user actually moves it, so nothing else needs to know
+    // about the marker; {@link refreshScaleWIfAuto} re-applies it live while
+    // a 3D scale slider moves and this one stays untouched.
+    if (scaleWAuto) {
+      scaleW.readout.textContent = `${scaleWInitial.toFixed(2)} (auto)`;
+    }
+
+    // Rotation/Shear W share the same three plane keys (see W_PLANES) and the
+    // same MIN_W_ANGLE/MAX_W_ANGLE range persist.ts clamps against on decode
+    // (state.ts's doc) — deriving the slider's degree bounds from those
+    // radian constants, rather than repeating -180/180 as a bare literal,
+    // keeps the wire format and this widget sharing one source.
+    const rotationGroup = this.appendFourDSubGroup(details, "Rotation W");
+    const minAngleDeg = radToDeg(MIN_W_ANGLE);
+    const maxAngleDeg = radToDeg(MAX_W_ANGLE);
+    const rotationW = W_PLANES.map((plane, i) =>
+      this.buildFourDRow(
+        rotationGroup,
+        W_PLANE_LABELS[i],
+        `Rotation ${W_PLANE_LABELS[i]}`,
+        minAngleDeg,
+        maxAngleDeg,
+        1,
+        w?.rotation?.[plane] ?? 0,
+        displayDegrees,
+        degToRad,
+        (v) => `${displayDegrees(v)}°`,
+        (model) => {
+          this.mutateW((block) => {
+            const rotation: NonNullable<WExtension["rotation"]> =
+              block.rotation ?? {};
+            rotation[plane] = model;
+            block.rotation = rotation;
+          });
+          this.emitGeometry();
+        },
+      ),
+    );
+
+    const shearGroup = this.appendFourDSubGroup(details, "Shear W");
+    const shearW = W_PLANES.map((plane, i) =>
+      this.buildFourDRow(
+        shearGroup,
+        W_PLANE_LABELS[i],
+        `Shear ${W_PLANE_LABELS[i]}`,
+        MIN_W_SHEAR,
+        MAX_W_SHEAR,
+        0.01,
+        w?.shear?.[plane] ?? 0,
+        (v) => v,
+        (v) => v,
+        (v) => v.toFixed(2),
+        (model) => {
+          this.mutateW((block) => {
+            const shear: NonNullable<WExtension["shear"]> = block.shear ?? {};
+            shear[plane] = model;
+            block.shear = shear;
+          });
+          this.emitGeometry();
+        },
+      ),
+    );
+
+    this.transformEditor.appendChild(details);
+    return { positionW, scaleW, rotationW, shearW };
+  }
+
+  /**
+   * Ensure the working `w` block exists, then run `mutate` to set exactly the
+   * one field the fired slider owns — the sparse-write contract (fr-bf6.3):
+   * untouched fields must never be materialized, since their absence is what
+   * keeps an unrelated edit from dragging a flat transform's `w` into
+   * existence, and what lets `w.scale` keep meaning "derived" until the user
+   * actually sets it (see `WExtension.scale`'s doc).
+   */
+  private mutateW(mutate: (w: WExtension) => void): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const w: WExtension = editor.geometry.w ?? {};
+    mutate(w);
+    editor.geometry.w = w;
+  }
+
+  /**
+   * Keep the Scale W row tracking the live mean 3D contraction while
+   * `w.scale` is UNSET (see `WExtension.scale`'s doc) — called after every 3D
+   * scale slider edit; a no-op once the user has set an explicit Scale W,
+   * since then it no longer derives from the 3D scale at all.
+   */
+  private refreshScaleWIfAuto(): void {
+    const editor = this.editor;
+    if (!editor || editor.geometry.w?.scale !== undefined) return;
+    const derived = derivedScaleW(editor.geometry.scale);
+    editor.fourD.scaleW.slider.value = String(derived);
+    editor.fourD.scaleW.readout.textContent = `${derived.toFixed(2)} (auto)`;
+  }
+
+  /** Re-sync the 4D group's sliders/readouts to the current working geometry
+   * — the fr-bf6.3 counterpart to the Position/Rotation/Scale/Shear loop and
+   * the weight control's own re-sync in {@link syncEditor}. Never touches the
+   * `<details>` open/closed state — see {@link buildFourDGroup}'s doc. */
+  private syncFourDControls(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const { w } = editor.geometry;
+    const { fourD } = editor;
+
+    const posV = w?.position ?? 0;
+    fourD.positionW.slider.value = String(posV);
+    fourD.positionW.readout.textContent = posV.toFixed(2);
+
+    const scaleAuto = w?.scale === undefined;
+    const scaleV = w?.scale ?? derivedScaleW(editor.geometry.scale);
+    fourD.scaleW.slider.value = String(scaleV);
+    fourD.scaleW.readout.textContent = scaleAuto
+      ? `${scaleV.toFixed(2)} (auto)`
+      : scaleV.toFixed(2);
+
+    W_PLANES.forEach((plane, i) => {
+      const rad = w?.rotation?.[plane] ?? 0;
+      fourD.rotationW[i].slider.value = String(displayDegrees(rad));
+      fourD.rotationW[i].readout.textContent = `${displayDegrees(rad)}°`;
+    });
+    W_PLANES.forEach((plane, i) => {
+      const val = w?.shear?.[plane] ?? 0;
+      fourD.shearW[i].slider.value = String(val);
+      fourD.shearW[i].readout.textContent = val.toFixed(2);
+    });
+  }
+
   private syncEditor(transform: Transform): void {
     const editor = this.editor;
     if (!editor) return;
@@ -1489,6 +1839,7 @@ export class Ui {
       scale: clone3(transform.scale),
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
+      w: cloneW(transform.w),
     };
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
@@ -1503,6 +1854,7 @@ export class Ui {
       editor.weightControl.slider.value = String(weightToSlider(weight));
       editor.weightControl.readout.textContent = weight.toFixed(2);
     }
+    this.syncFourDControls();
 
     // Variations rarely change under a stable selection (drags don't touch
     // them), so only rebuild the rows when they actually differ.
@@ -1525,6 +1877,9 @@ export class Ui {
     const model = spec.fromSlider(sliderValue);
     editor.geometry[channel][axis] = model;
     editor.controls[channel][axis].readout.textContent = spec.format(model);
+    // Scale W tracks the live mean 3D contraction while unset (see
+    // WExtension.scale's doc) — keep it in sync with every 3D scale edit.
+    if (channel === "scale") this.refreshScaleWIfAuto();
     this.emitGeometry();
   }
 
@@ -1550,6 +1905,16 @@ export class Ui {
       scale: clone3(editor.geometry.scale),
       shear: clone3(editor.geometry.shear),
       variations: editor.variations.map((v) => ({ ...v })),
+      // Sparse by construction (fr-bf6.3): only include `w` when the working
+      // copy actually has one, so a transform the user never touched the 4D
+      // group on emits geometry with NO `w` key at all — not `undefined`,
+      // not `{}` — keeping it byte-identical through an unrelated edit (see
+      // WExtension's docs: absence is the flat/identity state). Cloned again
+      // here (like the plain Vec3 channels above) so the emitted object never
+      // aliases the editor's own live-mutated working copy.
+      ...(editor.geometry.w !== undefined
+        ? { w: cloneW(editor.geometry.w) }
+        : {}),
     };
     if (editor.target === "final") {
       this.handlers?.onFinalTransformGeometry(base);
