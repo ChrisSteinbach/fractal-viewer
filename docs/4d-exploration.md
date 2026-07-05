@@ -60,7 +60,10 @@ generalization scheme once already.
 coordinates; `Bounds` gains `minW`/`maxW` and the radial extent becomes the 4D
 radius. A pleasant accident: the 4D radius is invariant under the 4D view
 rotation, so auto-framing (fr-0b8) can frame to `maxR` once and never needs to
-re-run as the user tumbles the cloud.
+re-run as the user tumbles the cloud. (w-_color_, by contrast, outgrew the
+invariant radius: anisotropic clouds washed out toward gray, so the shader now
+normalizes by the bounds box's rotation-covariant support in the rotated-w
+direction — fr-9bk.)
 
 ## 2. Seeing it: projection
 
