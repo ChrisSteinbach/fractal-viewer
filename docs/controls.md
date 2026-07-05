@@ -22,6 +22,22 @@ Orbit around the fractal without changing it.
 Phi (vertical orbit) is clamped just shy of the poles and the zoom radius is
 clamped to `[1, 100]` — see `src/app/orbit.ts`.
 
+## 4D projection
+
+While the 4D projection is active (see **4D — Experimental** below), plain
+gestures still orbit/pan/zoom the 3D projection exactly as above. Holding
+**Shift** retargets the left-drag and the wheel to turn the two hidden
+rotation planes instead — Hanson's "rolling ball" scheme, restricted to
+coordinate planes:
+
+| Input               | Action                          |
+| ------------------- | ------------------------------- |
+| Shift + left-drag   | Turn the XW (↔) / YW (↕) planes |
+| Shift + mouse wheel | Turn the ZW plane               |
+
+Touch devices have no Shift key, so touch always orbits; turn the w-planes
+from the **4D Transform Params** sliders instead.
+
 ## Transform mode
 
 With a transform selected, its **guide box** is highlighted in white and the same
@@ -75,12 +91,15 @@ Transform** sliders that appear in the panel while a transform is selected.
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
 - **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
-  a _4D_ IFS, shown as a slowly auto-tumbling orthographic projection (an XY+ZW
-  double rotation). **Current System → 4D** instead takes the system you built in
-  the 3D editor into 4D, embedding every map at w = 0 — any system embeds
-  faithfully now, including shear, variations, and an enabled final-transform
-  lens (all carried across so the w = 0 slice is exactly your 3D fractal). The
-  rendering is built to make the
+  a _4D_ IFS, shown as an orthographic projection of a slow double rotation
+  (XY+ZW). **Auto-tumble (XY+ZW)** pauses/resumes that motion (it starts
+  paused when the OS asks for reduced motion, though the Shift-drag/
+  Shift-wheel gestures above always work regardless) and **Tumble speed**
+  scales its rate from 0.1× to 3×. **Current System → 4D** instead takes the
+  system you built in the 3D editor into 4D, embedding every map at w = 0 —
+  any system embeds faithfully now, including shear, variations, and an
+  enabled final-transform lens (all carried across so the w = 0 slice is
+  exactly your 3D fractal). The rendering is built to make the
   fourth dimension legible: a diverging palette on the rotated 4th coordinate
   (cool blue = −w, warm orange = +w, dim gray ≈ our own 3-space), additive
   translucency so the w-layers a projection folds together stay _visible_ and sum
