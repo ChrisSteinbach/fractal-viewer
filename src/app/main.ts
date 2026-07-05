@@ -2,7 +2,11 @@ import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { rotationMatrix4 } from "../fractal/affine4";
-import { doubleRotationSpiral, pentatopeGasket } from "../fractal/presets4";
+import {
+  doubleRotationSpiral,
+  pentatopeGasket,
+  pentatopeWireframe,
+} from "../fractal/presets4";
 import { buildColors } from "../fractal/color";
 import {
   DEFAULT_GAMMA_THRESHOLD,
@@ -186,6 +190,9 @@ function main(): void {
   let fourDResult: ChaosGame4Result | null = null;
   let fourDStartMs = 0;
   let fourDReducedMotion = false;
+  // The soft w-slice (fr-6x2): session-only view state, reset on every entry.
+  let fourDSliceOn = false;
+  let fourDSliceCenter = 0;
 
   // Re-run the chaos game: the only path that touches the RNG and changes point
   // positions. Use this for geometry edits, add/remove, presets, and explicit
@@ -651,6 +658,14 @@ function main(): void {
     fourDReducedMotion = prefersReducedMotion();
     state = setFourDActive(state, true);
     scene.setFourDActive(true);
+    // The tumbling 5-cell scaffold (Show guides toggles it with the grid/axes)
+    // — only the pentatope has a natural wireframe; the spiral gets none.
+    scene.setFourDScaffold(kind === "pentatope" ? pentatopeWireframe() : null);
+    // Fresh visit, fresh slice: off and centered, in scene and panel alike.
+    fourDSliceOn = false;
+    fourDSliceCenter = 0;
+    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    ui.resetFourDSlice();
     if (fourDReducedMotion) {
       // No auto-tumble under reduced motion: freeze on one generic 4D view
       // (both rotation planes engaged) so the projection still reads as 4D.
@@ -673,6 +688,7 @@ function main(): void {
     state = setFourDActive(state, false);
     fourDSystem = null;
     fourDResult = null;
+    scene.setFourDScaffold(null);
     scene.setFourDActive(false);
     scene.setRenderStyle(state.renderStyle);
     regenerate();
@@ -1114,6 +1130,16 @@ function main(): void {
     },
     onEnterFourD: (kind) => enterFourD(kind),
     onExitFourD: () => exitFourD(),
+    // Slice state is session-only view state (like the tumble clock): it never
+    // touches AppState or persistence, so these write straight to the scene.
+    onFourDSliceToggle: (checked) => {
+      fourDSliceOn = checked;
+      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    },
+    onFourDSliceInput: (value) => {
+      fourDSliceCenter = value;
+      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    },
   });
 
   attachInteractions(scene, orbit, {

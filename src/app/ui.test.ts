@@ -58,6 +58,8 @@ function noopHandlers(): UiHandlers {
     onSymmetryAxisChange: vi.fn(),
     onEnterFourD: vi.fn(),
     onExitFourD: vi.fn(),
+    onFourDSliceToggle: vi.fn(),
+    onFourDSliceInput: vi.fn(),
   };
 }
 
@@ -1713,6 +1715,51 @@ describe("Ui 4D projection controls (fr-cbg)", () => {
     ui.bind(handlers);
     exitFourDButton().click();
     expect(handlers.onExitFourD).toHaveBeenCalledOnce();
+  });
+
+  it("reveals the slice-position row and fires the handler when the w-slice is toggled on", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("fourDSliceToggle") as HTMLInputElement;
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDSliceToggle).toHaveBeenCalledWith(true);
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("fires onFourDSliceInput with the slider's numeric value and updates the label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = el("fourDSliceSlider") as HTMLInputElement;
+
+    slider.value = "-0.35";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFourDSliceInput).toHaveBeenCalledWith(-0.35);
+    expect(el("fourDSliceLabel").textContent).toBe("-0.35");
+  });
+
+  it("resetFourDSlice unchecks the toggle, hides the row, and recenters the slider", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("fourDSliceToggle") as HTMLInputElement;
+    const slider = el("fourDSliceSlider") as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change"));
+    slider.value = "0.8";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetFourDSlice();
+
+    expect(toggle.checked).toBe(false);
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
+    expect(slider.value).toBe("0");
+    expect(el("fourDSliceLabel").textContent).toBe("0.00");
   });
 });
 

@@ -458,9 +458,27 @@
       </div>
       <div id="fourDControls" class="hidden">
         <p class="flame-hint">
-          Auto-tumbling XY+ZW double rotation · color = 4th coordinate: blue −w
-          → red +w
+          Auto-tumbling XY+ZW double rotation. Color = side of our 3-space:
+          <strong>blue −w · orange +w</strong> · gray ≈ w 0. Layers add up where
+          the projection overlaps itself.
         </p>
+        <label class="checkbox-label">
+          <input type="checkbox" id="fourDSliceToggle" />
+          W slice (cross-section)
+        </label>
+        <div id="fourDSliceRow" class="hidden">
+          <label class="select-label">
+            Slice position: <span id="fourDSliceLabel">0.00</span>
+            <input
+              type="range"
+              id="fourDSliceSlider"
+              min="-1"
+              max="1"
+              step="0.01"
+              value="0"
+            />
+          </label>
+        </div>
         <button class="btn btn-ghost" id="exitFourDButton" type="button">
           ← Back to 3D
         </button>

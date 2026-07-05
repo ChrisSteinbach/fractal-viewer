@@ -34,6 +34,14 @@ const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
+// 4D projection: per-point additive contribution and the soft w-slice's
+// Gaussian sigma (in signed normalized-w units; the slice slider spans [-1, 1]).
+// The intensity is pitched like GLOW_BASE_OPACITY but far lower: the projected
+// sheets of a 4D attractor stack tens-to-hundreds of points per pixel, and the
+// palette only reads while the sum stays below saturation — density then shows
+// up as brightness, exactly like the flame's log-density display.
+const FOUR_D_BASE_INTENSITY = 0.055;
+const FOUR_D_SLICE_WIDTH = 0.12;
 
 function color(rgb: Vec3): THREE.Color {
   return new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]);
@@ -138,37 +146,39 @@ const DOF_FRAGMENT = /* glsl */ `
 // codebase). The color MUST live in the shader, not a CPU-baked `color` buffer:
 // it depends on the LIVE uRot4 uniform, so a baked buffer would go stale the
 // moment the rotation advances a frame.
+//
+// Two choices here exist to make the FOURTH dimension legible rather than
+// looking like one more 3D coordinate ramp:
+//
+// - A DIVERGING palette on the SIGNED rotated w — cool blue on the −w side of
+//   our 3-space, warm orange on the +w side, dim desaturated gray near w = 0 —
+//   instead of the height/radius-style rainbow, which a still image cannot
+//   distinguish from the 3D "height" mode. Color answers "how far OUT of the
+//   visible hyperplane, and to which side".
+// - Additive translucency (see the material setup): an orthographic projection
+//   folds several w-layers onto the same xyz spot, and opaque depth-tested
+//   points would let the front layer win — hiding exactly the self-overlap
+//   that makes a projection read as 4D. Additive blending superposes the
+//   layers, and where −w and +w sheets cross, blue + orange sum toward white:
+//   color mixtures that exist nowhere in the palette flag genuine 4D overlap.
+//
+// The soft w-slice (fr-6x2) rides the same alpha path: a Gaussian opacity
+// window in the signed rotated w, swept by a slider — depth-of-field in the
+// fourth dimension. Points outside the slice keep a floor of visibility so the
+// full projection stays as ghost context around the vivid cross-section.
 const FOUR_D_VERTEX = /* glsl */ `
   uniform mat4 uRot4;
   uniform vec4 uCenter4;
   uniform float uInvRadius4;
   uniform float uSize;
   uniform float uHalfHeight;
+  uniform float uIntensity;
+  uniform float uSliceOn;
+  uniform float uSliceCenter;
+  uniform float uSliceWidth;
   attribute float w;
   varying vec3 vColor;
-
-  // A GLSL port of color.ts's hue2rgb/hslToRgb (THREE.Color.setHSL's algorithm),
-  // so the 4D w-ramp is a sibling of the height/radius ramps: w = -radius maps
-  // to cool blue-violet, w = +radius to warm red.
-  float hue2rgb(float q, float p, float t) {
-    if (t < 0.0) t += 1.0;
-    if (t > 1.0) t -= 1.0;
-    if (t < 1.0 / 6.0) return q + (p - q) * 6.0 * t;
-    if (t < 1.0 / 2.0) return p;
-    if (t < 2.0 / 3.0) return q + (p - q) * 6.0 * (2.0 / 3.0 - t);
-    return q;
-  }
-  vec3 hsl2rgb(float h, float s, float l) {
-    h = fract(h);
-    if (s == 0.0) return vec3(l);
-    float p = l <= 0.5 ? l * (1.0 + s) : l + s - l * s;
-    float q = 2.0 * l - p;
-    return vec3(
-      hue2rgb(q, p, h + 1.0 / 3.0),
-      hue2rgb(q, p, h),
-      hue2rgb(q, p, h - 1.0 / 3.0)
-    );
-  }
+  varying float vAlpha;
 
   void main() {
     // Rotate about the cloud's 4D center so the projection tumbles in place,
@@ -176,11 +186,27 @@ const FOUR_D_VERTEX = /* glsl */ `
     vec4 q = uRot4 * (vec4(position, w) - uCenter4);
     vec3 projected = q.xyz + uCenter4.xyz;
 
-    // Color by the rotated w. |q| = |p - center| <= radius is rotation-
-    // invariant, so t stays within [0, 1] at every tumble angle and never
+    // Signed, normalized rotated w. |q| = |p - center| <= radius is rotation-
+    // invariant, so s stays within [-1, 1] at every tumble angle and never
     // needs re-normalizing as the view turns.
-    float t = clamp(0.5 + 0.5 * q.w * uInvRadius4, 0.0, 1.0);
-    vColor = hsl2rgb(0.7 * (1.0 - t), 0.85, 0.55);
+    float s = clamp(q.w * uInvRadius4, -1.0, 1.0);
+
+    // Diverging palette: sign picks the side, magnitude drives saturation AND
+    // brightness (the 0.6 exponent saturates the mid-range early, since an
+    // anisotropic cloud rarely pushes |s| near 1). Near-zero w — the part of
+    // the cloud passing through our own 3-space — stays dim gray and recedes.
+    float m = pow(abs(s), 0.6);
+    vec3 side = s < 0.0 ? vec3(0.30, 0.60, 1.00) : vec3(1.00, 0.50, 0.18);
+    vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);
+
+    // Soft w-slice: a Gaussian window in s around uSliceCenter, with a floor so
+    // the rest of the projection stays visible as ghost context.
+    float slice = 1.0;
+    if (uSliceOn > 0.5) {
+      float d = (s - uSliceCenter) / uSliceWidth;
+      slice = 0.06 + 0.94 * exp(-0.5 * d * d);
+    }
+    vAlpha = uIntensity * slice;
 
     // The exact modelView/projection/gl_PointSize pipeline DOF_VERTEX uses,
     // minus its circle-of-confusion term: the same size-attenuation formula.
@@ -191,12 +217,14 @@ const FOUR_D_VERTEX = /* glsl */ `
   }
 `;
 
-// Opaque square points matching baseMaterial's plain look: no map, no
-// transparency, default depth write, no fog.
+// Additive square points: with THREE.AdditiveBlending the source factor is the
+// fragment's alpha, so vAlpha scales each point's contribution and overlapping
+// w-layers sum — no sorting needed (addition commutes), hence depthWrite off.
 const FOUR_D_FRAGMENT = /* glsl */ `
   varying vec3 vColor;
+  varying float vAlpha;
   void main() {
-    gl_FragColor = vec4(vColor, 1.0);
+    gl_FragColor = vec4(vColor, vAlpha);
   }
 `;
 
@@ -283,6 +311,15 @@ export class FractalScene {
   // True while the 4D projection owns the point cloud, so setRenderStyle records
   // the requested style without clobbering fourDMaterial (see setFourDActive).
   private fourDActive = false;
+  // The projected 4D wireframe scaffold (e.g. the pentatope's ten edges, the
+  // rotating-tesseract-style legibility cue) and the state needed to re-pose it:
+  // its 4D edge endpoints and the current row-major 4D rotation. Re-posed on the
+  // CPU whenever the rotation uniform changes — a handful of vertices, not the
+  // half-million-point cloud, so per-frame CPU projection costs nothing.
+  private fourDScaffold: THREE.LineSegments | null = null;
+  private fourDScaffoldEdges: [Vec4, Vec4][] = [];
+  // prettier-ignore
+  private fourDRot: number[] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
   private readonly fog: THREE.Fog;
   private readonly darkBackground: THREE.Texture;
@@ -402,9 +439,19 @@ export class FractalScene {
         uInvRadius4: { value: 1 },
         uSize: { value: DOF_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
+        uIntensity: { value: FOUR_D_BASE_INTENSITY },
+        uSliceOn: { value: 0 },
+        uSliceCenter: { value: 0 },
+        uSliceWidth: { value: FOUR_D_SLICE_WIDTH },
       },
       vertexShader: FOUR_D_VERTEX,
       fragmentShader: FOUR_D_FRAGMENT,
+      // Additive, unsorted, no depth write — the glowMaterial recipe. See the
+      // FOUR_D_VERTEX comment: superposing w-layers instead of depth-testing
+      // them away is what makes the projection read as 4D.
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
 
     this.pointGeometry = new THREE.BufferGeometry();
@@ -532,6 +579,10 @@ export class FractalScene {
       new THREE.Vector3(center[0], center[1], center[2]),
       radius * 1.001,
     );
+
+    // The scaffold pivots on the same center, which a fresh generation may
+    // have moved — re-pose it.
+    this.updateFourDScaffoldPositions();
   }
 
   /**
@@ -606,6 +657,7 @@ export class FractalScene {
     for (const cube of this.guideCubes) {
       cube.visible = showGuides;
     }
+    if (this.fourDScaffold) this.fourDScaffold.visible = showGuides;
   }
 
   /** The live guide box for a transform, so drags can move it directly. */
@@ -750,6 +802,94 @@ export class FractalScene {
       m[8],  m[9],  m[10], m[11],
       m[12], m[13], m[14], m[15],
     );
+    // The scaffold rides the exact same rotation, applied on the CPU (see the
+    // field comment). `rotationMatrix4` hands us a fresh array every call, so
+    // keeping the reference is safe.
+    this.fourDRot = m;
+    this.updateFourDScaffoldPositions();
+  }
+
+  /**
+   * Show a 4D wireframe scaffold (fr-6d5) — line segments given by their 4D
+   * endpoints, projected through the SAME rotation/center as the point cloud so
+   * the two can never drift. The pentatope's ten tumbling edges are what make
+   * the 4D rotation legible at a glance, the way a rotating tesseract's frame
+   * does. Pass `null` (or `[]`) to remove it. Follows the Show-guides toggle
+   * like the grid and axes.
+   */
+  setFourDScaffold(edges: [Vec4, Vec4][] | null): void {
+    if (this.fourDScaffold) {
+      this.scene.remove(this.fourDScaffold);
+      this.fourDScaffold.geometry.dispose();
+      (this.fourDScaffold.material as THREE.Material).dispose();
+      this.fourDScaffold = null;
+    }
+    this.fourDScaffoldEdges = edges ?? [];
+    if (this.fourDScaffoldEdges.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(
+        new Float32Array(this.fourDScaffoldEdges.length * 6),
+        3,
+      ),
+    );
+    const material = new THREE.LineBasicMaterial({
+      color: 0x93a4c8,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      // Additive like the cloud: the scaffold brightens dark background but
+      // never darkens the glowing cloud into crack-like seams.
+      blending: THREE.AdditiveBlending,
+    });
+    const lines = new THREE.LineSegments(geometry, material);
+    // A handful of segments under a moving projection: culling isn't worth it.
+    lines.frustumCulled = false;
+    // Match the current Show-guides state (the grid is its source of truth).
+    lines.visible = this.grid.visible;
+    this.fourDScaffold = lines;
+    this.scene.add(lines);
+    this.updateFourDScaffoldPositions();
+  }
+
+  /** Re-pose the scaffold under the current 4D rotation: for each endpoint,
+   * `projected = center.xyz + (R4 · (v − center)).xyz` — the CPU twin of the
+   * vertex shader's transform. */
+  private updateFourDScaffoldPositions(): void {
+    const lines = this.fourDScaffold;
+    if (!lines) return;
+    const m = this.fourDRot;
+    const c = this.fourDMaterial.uniforms.uCenter4.value as THREE.Vector4;
+    const attr = lines.geometry.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute;
+    const out = attr.array as Float32Array;
+    let o = 0;
+    for (const edge of this.fourDScaffoldEdges) {
+      for (const v of edge) {
+        const x = v[0] - c.x;
+        const y = v[1] - c.y;
+        const z = v[2] - c.z;
+        const w = v[3] - c.w;
+        out[o++] = m[0] * x + m[1] * y + m[2] * z + m[3] * w + c.x;
+        out[o++] = m[4] * x + m[5] * y + m[6] * z + m[7] * w + c.y;
+        out[o++] = m[8] * x + m[9] * y + m[10] * z + m[11] * w + c.z;
+      }
+    }
+    attr.needsUpdate = true;
+  }
+
+  /**
+   * Configure the soft w-slice (fr-6x2): a Gaussian opacity window around
+   * `center` in SIGNED normalized rotated-w units (the [-1, 1] range the
+   * shader's diverging palette uses), with a fixed width and a visibility floor
+   * so the unsliced projection stays as ghost context. One uniform write, so
+   * sweeping the slider costs nothing per frame.
+   */
+  setFourDSlice(on: boolean, center: number): void {
+    this.fourDMaterial.uniforms.uSliceOn.value = on ? 1 : 0;
+    this.fourDMaterial.uniforms.uSliceCenter.value = center;
   }
 
   /**

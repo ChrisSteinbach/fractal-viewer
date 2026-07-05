@@ -44,6 +44,25 @@ export function pentatopeGasket(): Transform4[] {
 }
 
 /**
+ * The 5-cell's wireframe scaffold: all C(5,2) = 10 edges of the regular
+ * 4-simplex whose vertices anchor {@link pentatopeGasket}'s maps. Rendered as a
+ * projected, tumbling wireframe it is the legibility cue for the 4D view — a
+ * rigid 4D rotation bends the PROJECTED edge lengths and angles through changes
+ * no rigid 3D motion could produce, which is exactly what makes classic
+ * rotating-tesseract renders read as 4D.
+ */
+export function pentatopeWireframe(): [Vec4, Vec4][] {
+  const v = pentatopeVertices();
+  const edges: [Vec4, Vec4][] = [];
+  for (let i = 0; i < v.length; i++) {
+    for (let j = i + 1; j < v.length; j++) {
+      edges.push([v[i], v[j]]);
+    }
+  }
+  return edges;
+}
+
+/**
  * A double-rotation spiral — a structure with NO 3D counterpart. The dominant
  * "swirl" map contracts while rotating simultaneously in two ORTHOGONAL planes
  * (`xy` and `zw`) at incommensurate angles; a true 4D double rotation has no

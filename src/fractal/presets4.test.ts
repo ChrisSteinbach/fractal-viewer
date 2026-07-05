@@ -1,5 +1,9 @@
 import { runChaosGame4 } from "./chaos-game-4d";
-import { doubleRotationSpiral, pentatopeGasket } from "./presets4";
+import {
+  doubleRotationSpiral,
+  pentatopeGasket,
+  pentatopeWireframe,
+} from "./presets4";
 import { mulberry32 } from "./rng";
 import type { Vec4 } from "./types";
 
@@ -29,6 +33,28 @@ describe("pentatopeGasket", () => {
       for (let j = i + 1; j < vertices.length; j++) {
         expect(dot4(vertices[i], vertices[j])).toBeCloseTo(-0.25, 12);
       }
+    }
+  });
+});
+
+describe("pentatopeWireframe", () => {
+  it("has the 5-cell's ten edges, all of the regular simplex's edge length", () => {
+    const edges = pentatopeWireframe();
+    expect(edges).toHaveLength(10);
+    // Unit-circumradius regular 4-simplex edge: |a − b|² = 2 − 2·(a·b) = 2.5.
+    for (const [a, b] of edges) {
+      const d: Vec4 = [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
+      expect(Math.sqrt(dot4(d, d))).toBeCloseTo(Math.sqrt(2.5), 12);
+    }
+  });
+
+  it("uses the same vertices the gasket's maps contract toward", () => {
+    const fixed = pentatopeGasket().map((m) =>
+      m.position.map((p) => p * 2).join(),
+    );
+    for (const [a, b] of pentatopeWireframe()) {
+      expect(fixed).toContain(a.join());
+      expect(fixed).toContain(b.join());
     }
   });
 });

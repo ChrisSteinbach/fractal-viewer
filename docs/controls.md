@@ -76,8 +76,15 @@ Transform** sliders that appear in the panel while a transform is selected.
   is meaningless for a map applied to every point. Untick to remove it.
 - **4D — Experimental** — **Pentatope Gasket** / **Double-Rotation Spiral** load
   a _4D_ IFS, shown as a slowly auto-tumbling orthographic projection (an XY+ZW
-  double rotation; point color = the rotated 4th coordinate, blue −w → red +w).
-  The camera orbits the projection as usual, and Points / Point Size /
+  double rotation). The rendering is built to make the fourth dimension
+  legible: a diverging palette on the rotated 4th coordinate (cool blue = −w,
+  warm orange = +w, dim gray ≈ our own 3-space), additive translucency so the
+  w-layers a projection folds together stay _visible_ and sum toward white
+  where they cross, and — with **Show guides** on — the 5-cell's wireframe
+  tumbling through the same rotation. **W slice** carves a soft Gaussian
+  cross-section out of the cloud (the rest stays as ghost context) and its
+  position slider sweeps along w — each position is a genuinely different 3D
+  fractal. The camera orbits the projection as usual, and Points / Point Size /
   Regenerate / guides / Save PNG stay live; everything that edits or restyles
   the 3D system is hidden, and the view is session-only (never persisted).
   **← Back to 3D** restores the previous scene exactly. See

@@ -116,6 +116,11 @@ export interface UiHandlers {
   onEnterFourD: (kind: "pentatope" | "spiral") => void;
   /** The 4D projection's "Back to 3D" button was clicked. */
   onExitFourD: () => void;
+  /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
+  onFourDSliceToggle: (checked: boolean) => void;
+  /** The 4D slice-position slider moved: `value` is the slice center in
+   * signed normalized rotated-w units, [-1, 1]. */
+  onFourDSliceInput: (value: number) => void;
 }
 
 /**
@@ -474,6 +479,10 @@ export class Ui {
   private readonly spiral4Button: HTMLButtonElement;
   private readonly fourDControls: HTMLElement;
   private readonly exitFourDButton: HTMLButtonElement;
+  private readonly fourDSliceToggle: HTMLInputElement;
+  private readonly fourDSliceRow: HTMLElement;
+  private readonly fourDSliceSlider: HTMLInputElement;
+  private readonly fourDSliceLabel: HTMLElement;
   private readonly transformsSection: HTMLElement;
   private readonly presetSection: HTMLElement;
   private readonly colorModeRow: HTMLElement;
@@ -579,6 +588,10 @@ export class Ui {
     this.spiral4Button = this.byId("spiral4Button");
     this.fourDControls = this.byId("fourDControls");
     this.exitFourDButton = this.byId("exitFourDButton");
+    this.fourDSliceToggle = this.byId("fourDSliceToggle");
+    this.fourDSliceRow = this.byId("fourDSliceRow");
+    this.fourDSliceSlider = this.byId("fourDSliceSlider");
+    this.fourDSliceLabel = this.byId("fourDSliceLabel");
     this.transformsSection = this.byId("transformsSection");
     this.presetSection = this.byId("presetSection");
     this.colorModeRow = this.byId("colorModeRow");
@@ -730,6 +743,28 @@ export class Ui {
     this.exitFourDButton.addEventListener("click", () =>
       handlers.onExitFourD(),
     );
+    this.fourDSliceToggle.addEventListener("change", () => {
+      const on = this.fourDSliceToggle.checked;
+      // The position slider only means anything while the slice is on — a
+      // pure view reveal, so the UI owns it (slice state is session-only and
+      // never enters AppState).
+      this.fourDSliceRow.classList.toggle("hidden", !on);
+      handlers.onFourDSliceToggle(on);
+    });
+    this.fourDSliceSlider.addEventListener("input", () => {
+      const value = Number(this.fourDSliceSlider.value);
+      this.fourDSliceLabel.textContent = value.toFixed(2);
+      handlers.onFourDSliceInput(value);
+    });
+  }
+
+  /** Reset the 4D slice controls to off/centered — called on every 4D entry so
+   * a slice left behind by the previous visit never silently applies. */
+  resetFourDSlice(): void {
+    this.fourDSliceToggle.checked = false;
+    this.fourDSliceRow.classList.add("hidden");
+    this.fourDSliceSlider.value = "0";
+    this.fourDSliceLabel.textContent = "0.00";
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
