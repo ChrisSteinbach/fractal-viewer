@@ -3,11 +3,16 @@ import {
   applyAffine4,
   composeAffine4,
   embedTransform3,
+  isFlatTransform,
   rotationMatrix4,
+  systemIsFlat,
+  toTransform4,
 } from "./affine4";
+import { runChaosGame4 } from "./chaos-game-4d";
+import { defaultTransforms } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Affine4 } from "./affine4";
-import type { Transform } from "./types";
+import type { Transform, Transform4 } from "./types";
 
 const HALF_PI = Math.PI / 2;
 
@@ -325,5 +330,218 @@ describe("embedTransform3", () => {
     expect(
       embedTransform3(transform({ variations: [] })).variations,
     ).toBeUndefined();
+  });
+});
+
+describe("isFlatTransform", () => {
+  function transform(overrides: Partial<Transform>): Transform {
+    return {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      ...overrides,
+    };
+  }
+
+  it("is flat for a transform with no w block", () => {
+    expect(isFlatTransform(transform({}))).toBe(true);
+  });
+
+  it("is flat for an empty w block", () => {
+    expect(isFlatTransform(transform({ w: {} }))).toBe(true);
+  });
+
+  it("is flat for a w block whose fields are all present and exactly zero", () => {
+    const t = transform({
+      w: {
+        position: 0,
+        scale: 0,
+        rotation: { xw: 0, yw: 0, zw: 0 },
+        shear: { xw: 0, yw: 0, zw: 0 },
+      },
+    });
+    expect(isFlatTransform(t)).toBe(true);
+  });
+
+  it("is not flat when w.position is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { position: 0.1 } }))).toBe(false);
+  });
+
+  it("is not flat when w.scale is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { scale: 0.1 } }))).toBe(false);
+  });
+
+  it("is not flat when w.rotation.xw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { rotation: { xw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+
+  it("is not flat when w.rotation.yw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { rotation: { yw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+
+  it("is not flat when w.rotation.zw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { rotation: { zw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+
+  it("is not flat when w.shear.xw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { shear: { xw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+
+  it("is not flat when w.shear.yw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { shear: { yw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+
+  it("is not flat when w.shear.zw is nonzero", () => {
+    expect(isFlatTransform(transform({ w: { shear: { zw: 0.1 } } }))).toBe(
+      false,
+    );
+  });
+});
+
+describe("systemIsFlat", () => {
+  it("is true for the default preset (no transform carries a w block)", () => {
+    expect(systemIsFlat(defaultTransforms())).toBe(true);
+  });
+
+  it("flips to false when any single transform in the system gets a nonzero w field", () => {
+    const transforms = defaultTransforms();
+    const withW = transforms.map((t, i) =>
+      i === 2 ? { ...t, w: { position: 0.2 } } : t,
+    );
+    expect(systemIsFlat(withW)).toBe(false);
+  });
+});
+
+describe("toTransform4", () => {
+  function transform(overrides: Partial<Transform>): Transform {
+    return {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      ...overrides,
+    };
+  }
+
+  it("equals embedTransform3(t) exactly for a w-less transform (same shape, same absent fields)", () => {
+    const t = transform({
+      position: [0.2, -0.3, 0.4],
+      rotation: [0.1, 0.2, 0.3],
+      scale: [0.6, 0.7, 0.8],
+    });
+    // toStrictEqual: toEqual would treat `{ shear: undefined }` and `{}` as
+    // equal, masking exactly the shape leak this anchor exists to catch.
+    expect(toTransform4(t)).toStrictEqual(embedTransform3(t));
+  });
+
+  it("overrides position[3] and leaves the derived scale[3] alone when only w.position is set", () => {
+    const t = transform({ scale: [0.4, 0.6, 0.8], w: { position: 0.9 } });
+    const lifted = toTransform4(t);
+    expect(lifted.position[3]).toBe(0.9);
+    expect(lifted.scale[3]).toBeCloseTo((0.4 + 0.6 + 0.8) / 3, 12);
+  });
+
+  it("uses an explicit w.scale in place of the derived mean contraction", () => {
+    const t = transform({ scale: [0.4, 0.6, 0.8], w: { scale: 0.5 } });
+    expect(toTransform4(t).scale[3]).toBe(0.5);
+  });
+
+  it("re-derives scale[3] from the current mean after a scale edit when w.scale is absent", () => {
+    const t = transform({ scale: [0.4, 0.4, 0.4] });
+    expect(toTransform4(t).scale[3]).toBeCloseTo(0.4, 12);
+
+    // Edit t.scale in place, then lift again: scale[3] must track the NEW
+    // mean, not whatever a first lift happened to compute.
+    t.scale = [0.8, 0.8, 0.8];
+    expect(toTransform4(t).scale[3]).toBeCloseTo(0.8, 12);
+  });
+
+  it("splices w rotation angles onto the embed's rotation object", () => {
+    const t = transform({
+      rotation: [0.1, 0.2, 0.3],
+      w: { rotation: { xw: 0.5, yw: -0.2, zw: 0.1 } },
+    });
+    const base = embedTransform3(t);
+    const lifted = toTransform4(t);
+    expect(lifted.rotation).toEqual({
+      ...base.rotation,
+      xw: 0.5,
+      yw: -0.2,
+      zw: 0.1,
+    });
+  });
+
+  it("creates a shear object for w-only shear when the 3D base is unsheared", () => {
+    const t = transform({ w: { shear: { xw: 0.3 } } });
+    expect(embedTransform3(t).shear).toBeUndefined(); // sanity: base is unsheared
+    expect(toTransform4(t).shear).toEqual({ xw: 0.3 });
+  });
+
+  it("merges w shear entries onto an existing 3D-sheared embed", () => {
+    const t = transform({
+      shear: [0.5, -0.3, 0.2],
+      w: { shear: { xw: 0.1, yw: 0.2, zw: 0.3 } },
+    });
+    expect(toTransform4(t).shear).toEqual({
+      xy: 0.5,
+      xz: -0.3,
+      yz: 0.2,
+      xw: 0.1,
+      yw: 0.2,
+      zw: 0.3,
+    });
+  });
+});
+
+describe("toTransform4 end-to-end (runChaosGame4 equivalence)", () => {
+  it("runs identically to a hand-built Transform4 carrying the same params", () => {
+    // A transform with overrides on every w field, lifted, must compose and
+    // run exactly like a Transform4 written out by hand with the same
+    // numbers — the anchor property that makes toTransform4 a genuine 3D/4D
+    // unification rather than a separate code path.
+    const t: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0.3],
+      rotation: [0.1, 0.4, -0.2],
+      scale: [0.5, 0.5, 0.5],
+      w: {
+        position: 0.15,
+        scale: 0.45,
+        rotation: { xw: 0.2, yw: -0.1, zw: 0.05 },
+        shear: { xw: 0.1, yw: -0.05, zw: 0.02 },
+      },
+    };
+    const lifted = toTransform4(t);
+    // Hand-worked: embedTransform3 maps rotation [rx,ry,rz] = [0.1,0.4,-0.2]
+    // to { yz: rx, xz: -ry, xy: rz }, the mean contraction (0.5) is overridden
+    // by w.scale (0.45), and the w-column shear is created fresh (the 3D base
+    // carries no shear of its own).
+    const handBuilt: Transform4 = {
+      position: [0.2, -0.1, 0.3, 0.15],
+      scale: [0.5, 0.5, 0.5, 0.45],
+      rotation: { yz: 0.1, xz: -0.4, xy: -0.2, xw: 0.2, yw: -0.1, zw: 0.05 },
+      shear: { xw: 0.1, yw: -0.05, zw: 0.02 },
+    };
+    expect(lifted).toEqual(handBuilt);
+    expect(composeAffine4(lifted)).toEqual(composeAffine4(handBuilt));
+
+    const a = runChaosGame4([lifted], 500, mulberry32(13));
+    const b = runChaosGame4([handBuilt], 500, mulberry32(13));
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.w)).toEqual(Array.from(b.w));
+    expect(Array.from(a.transformIndices)).toEqual(
+      Array.from(b.transformIndices),
+    );
   });
 });
