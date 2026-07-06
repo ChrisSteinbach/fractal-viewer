@@ -309,8 +309,14 @@ fn applySlot(slotIdx: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
   if (s.varCount > 0u) {
     var acc = vec3f(0.0);
     for (var v = 0u; v < s.varCount; v++) {
-      let w = s.varWeights[v >> 2u][v & 3u];
-      let ty = s.varTypes[v >> 2u][v & 3u];
+      // Lane reads go through the STORAGE REFERENCE (slots[slotIdx]), not
+      // the value copy in "s": dynamically indexing an array inside a
+      // let-bound composite VALUE is a spot where WGSL implementations
+      // disagree (Tint accepts it; Naga/Firefox is stricter) — indexing
+      // through a reference is unambiguously valid everywhere. The re-read
+      // stays in cache; "s" still serves every constant-index field.
+      let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
+      let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
       acc += w * applyVariation(ty, a, state);
     }
     q = acc;
