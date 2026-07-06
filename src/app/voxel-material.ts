@@ -48,11 +48,13 @@ const VOXEL_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
+  /** Primary march step count, scaled with the bound grid so the stride
+   * stays ~1.16 voxels (see marchStepsForGrid). */
+  uniform int uMarchSteps;
 
   in vec2 vUv;
   out vec4 outColor;
 
-  const int MARCH_STEPS = 220;
   const int REFINE_STEPS = 5;
   const int SHADOW_STEPS = 48;
 
@@ -112,13 +114,13 @@ const VOXEL_FRAGMENT = /* glsl */ `
       return;
     }
 
-    float dt = (tFar - t) / float(MARCH_STEPS);
+    float dt = (tFar - t) / float(uMarchSteps);
     t += dt * hash(gl_FragCoord.xy);
 
     // --- primary march: first sample past the isosurface -------------------
     float tPrev = t;
     bool hit = false;
-    for (int i = 0; i < MARCH_STEPS; i++) {
+    for (int i = 0; i < uMarchSteps; i++) {
       if (densityAt(ro + rd * t) > uThreshold) {
         hit = true;
         break;
@@ -232,6 +234,20 @@ export function lightDirection(
   ).normalize();
 }
 
+/**
+ * Primary march step count for a `gridSize`³ density volume. 220 steps was
+ * tuned for 256³ (≈1.16 voxels per stride on a face-on ray, 256/220);
+ * scaling with the grid keeps that stride at larger grids (512³ → 440 steps
+ * ≈ 1.16 voxels/stride) so shells thinner than a stride aren't skipped
+ * between refine hits. The 220 floor means grids at or below 256³ render
+ * exactly as before — never coarser than the tuned baseline. The cost is
+ * deliberate: per-pixel march work scales with resolution exactly on the
+ * machines that opted into big grids (fr-2ul).
+ */
+export function marchStepsForGrid(gridSize: number): number {
+  return Math.max(220, Math.ceil((gridSize * 220) / 256));
+}
+
 export function createVoxelMaterial(
   volume: THREE.Data3DTexture,
 ): THREE.ShaderMaterial {
@@ -249,6 +265,9 @@ export function createVoxelMaterial(
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
+      // Matches the placeholder 1³ texture era; a real value arrives with
+      // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
+      uMarchSteps: { value: 220 },
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,
