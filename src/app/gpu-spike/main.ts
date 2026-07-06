@@ -223,6 +223,25 @@ function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
 }
 
+/** Human-scale throughput, e.g. `15.9 M iter/s` / `413 M iter/s` — matches
+ * the live activity badge / status-line wording. `"…"` for a not-yet-known
+ * rate (no chunk/batch has completed yet). */
+function formatRate(itersPerSec: number): string {
+  if (!Number.isFinite(itersPerSec) || itersPerSec <= 0) return "…";
+  if (itersPerSec >= 1e9) return `${(itersPerSec / 1e9).toFixed(2)} B iter/s`;
+  if (itersPerSec >= 1e6) return `${(itersPerSec / 1e6).toFixed(1)} M iter/s`;
+  if (itersPerSec >= 1e3) return `${(itersPerSec / 1e3).toFixed(1)} K iter/s`;
+  return `${itersPerSec.toFixed(0)} iter/s`;
+}
+
+/** Human-scale iteration COUNT (not rate), e.g. `50.3M` — used for the
+ * equal-N phase's running "(done/total)" status text. */
+function formatCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return `${n}`;
+}
+
 /**
  * Same recipe as `scene.ts`'s `flameProjectionMatrix`: a frozen camera's
  * combined projection*view, row-major-flattened (`Mat4`'s convention).
@@ -262,6 +281,23 @@ function drawImage(
 }
 
 // ---------------------------------------------------------------------------
+// Live-progress plumbing (activity badge / status line)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fired strictly BETWEEN timed windows — after one chunk/batch's
+ * `accumulateFlame`/`runBatch` call has returned and before the next one
+ * starts — so wiring this up can never add work inside what's actually
+ * timed; the running numbers it reports are themselves derived only from
+ * the same call-time sums the final `TimedResult`/`TimedGpuResult` use.
+ * `itersPerSec` is the CUMULATIVE rate so far (matches how the final
+ * `itersPerSec` is computed, so the last live tick agrees with it);
+ * `doneIterations` is the running total, used by the equal-N phase's
+ * "(done/total)" status text (ignored by the open-ended timed runs).
+ */
+type ProgressCallback = (itersPerSec: number, doneIterations: number) => void;
+
+// ---------------------------------------------------------------------------
 // CPU accumulation
 // ---------------------------------------------------------------------------
 
@@ -284,11 +320,13 @@ function prepareCpu(def: ScenarioDef): CpuPrepared {
 }
 
 /** Accumulate in CPU_CHUNK_ITERATIONS-sized chunks until Σcall-time reaches
- * `durationSec`, yielding to the event loop between chunks. */
+ * `durationSec`, yielding to the event loop between chunks. `onProgress`
+ * (see its doc) fires once per chunk, in that same between-chunks gap. */
 async function runCpuTimed(
   cpu: CpuPrepared,
   projection: Mat4,
   durationSec: number,
+  onProgress?: ProgressCallback,
 ): Promise<TimedResult> {
   const rng = mulberry32(SEED);
   let histogram: FlameHistogram | undefined;
@@ -310,6 +348,7 @@ async function runCpuTimed(
     );
     ms += performance.now() - t0;
     iterations += CPU_CHUNK_ITERATIONS;
+    onProgress?.(iterations / (ms / 1000), iterations);
     await new Promise<void>((resolve) => setTimeout(resolve));
   }
   return { iterations, ms, itersPerSec: iterations / (ms / 1000) };
@@ -319,14 +358,18 @@ async function runCpuTimed(
  * chunks with a final partial chunk — a fresh histogram/rng, independent of
  * any timed run (see the module doc: timed and equal-N runs never share a
  * histogram). Always runs at least one chunk, so unlike the timed run above,
- * this returns a definite (non-optional) FlameHistogram. */
+ * this returns a definite (non-optional) FlameHistogram. `onProgress` fires
+ * once per chunk (including the first), between chunks like `runCpuTimed`'s. */
 async function runCpuExactly(
   cpu: CpuPrepared,
   projection: Mat4,
   totalIterations: number,
+  onProgress?: ProgressCallback,
 ): Promise<FlameHistogram> {
   const rng = mulberry32(SEED);
   const firstChunk = Math.min(CPU_CHUNK_ITERATIONS, totalIterations);
+  let ms = 0;
+  const t0 = performance.now();
   let histogram = accumulateFlame(
     cpu.prepared,
     projection,
@@ -338,10 +381,14 @@ async function runCpuExactly(
     undefined,
     cpu.lut,
   );
+  ms += performance.now() - t0;
+  let doneIterations = firstChunk;
+  onProgress?.(doneIterations / (ms / 1000), doneIterations);
   let remaining = totalIterations - firstChunk;
   while (remaining > 0) {
     await new Promise<void>((resolve) => setTimeout(resolve));
     const n = Math.min(CPU_CHUNK_ITERATIONS, remaining);
+    const tChunk0 = performance.now();
     histogram = accumulateFlame(
       cpu.prepared,
       projection,
@@ -353,7 +400,10 @@ async function runCpuExactly(
       histogram,
       cpu.lut,
     );
+    ms += performance.now() - tChunk0;
+    doneIterations += n;
     remaining -= n;
+    onProgress?.(doneIterations / (ms / 1000), doneIterations);
   }
   return histogram;
 }
@@ -364,11 +414,14 @@ async function runCpuExactly(
 
 /** Timed GPU run: adaptive batching targeting ~250ms/batch. Skips gracefully
  * (returns `{ skipped }`) rather than throwing when WebGPU is unavailable, so
- * the page stays usable in non-WebGPU browsers. */
+ * the page stays usable in non-WebGPU browsers. `onProgress` fires once per
+ * batch, after `runBatch` resolves and before the next one is sized/issued —
+ * same between-timed-windows gap `runCpuTimed` uses. */
 async function runGpuTimed(
   def: ScenarioDef,
   projection: Mat4,
   durationSec: number,
+  onProgress?: ProgressCallback,
 ): Promise<TimedGpuResult | SkippedResult> {
   let engine: GpuFlameAccumulator;
   try {
@@ -393,6 +446,7 @@ async function runGpuTimed(
       iterations += batch.iterations;
       ms += batch.ms;
       totalDispatches += dispatches;
+      onProgress?.(iterations / (ms / 1000), iterations);
       dispatches = clamp(
         Math.round((dispatches * ADAPTIVE_BATCH_TARGET_MS) / batch.ms),
         ADAPTIVE_BATCH_MIN_DISPATCHES,
@@ -412,10 +466,16 @@ async function runGpuTimed(
 
 /** Equal-N comparison run: a FRESH engine (independent of `runGpuTimed`'s),
  * itersPerInvocation lowered to 256 so EQUAL_N_DISPATCHES batches lands on
- * EQUAL_N_ITERATIONS exactly. Destroyed only after `readHistogram` resolves. */
+ * EQUAL_N_ITERATIONS exactly. Destroyed only after `readHistogram` resolves.
+ * Run as EQUAL_N_DISPATCHES separate `runBatch(1)` calls rather than one
+ * `runBatch(EQUAL_N_DISPATCHES)` purely so `onProgress` gets a tick between
+ * each — WebGPU orders successive submits on a queue exactly like dispatches
+ * within one pass, so the chain state (and thus the total, still exactly
+ * EQUAL_N_ITERATIONS) is unaffected by the split. */
 async function runGpuEqualN(
   def: ScenarioDef,
   projection: Mat4,
+  onProgress?: ProgressCallback,
 ): Promise<{ histogram: FlameHistogram } | SkippedResult> {
   let engine: GpuFlameAccumulator;
   try {
@@ -431,7 +491,14 @@ async function runGpuEqualN(
   }
   try {
     await engine.warmup();
-    await engine.runBatch(EQUAL_N_DISPATCHES);
+    let iterations = 0;
+    let ms = 0;
+    for (let i = 0; i < EQUAL_N_DISPATCHES; i++) {
+      const batch = await engine.runBatch(1);
+      iterations += batch.iterations;
+      ms += batch.ms;
+      onProgress?.(iterations / (ms / 1000), iterations);
+    }
     const histogram = await engine.readHistogram();
     return { histogram };
   } finally {
@@ -546,6 +613,36 @@ function setStatus(dom: ScenarioDom, text: string): void {
   dom.status.textContent = text;
 }
 
+/** Which kind of work — if any — is on the GPU/CPU right now. Drives the
+ * fixed-position activity badge: idle/done are the same neutral gray state
+ * (just different text), cpu is amber, gpu is green. */
+type ActivityKind = "idle" | "cpu" | "gpu";
+
+interface ActivityBadge {
+  setState(kind: ActivityKind, text: string): void;
+}
+
+function createActivityBadge(
+  badge: HTMLElement,
+  label: HTMLElement,
+): ActivityBadge {
+  return {
+    setState(kind, text) {
+      badge.classList.remove("idle", "cpu", "gpu");
+      badge.classList.add(kind);
+      label.textContent = text;
+    },
+  };
+}
+
+/** The badge's label while a chunk/batch is in flight but hasn't reported a
+ * rate yet — `formatRate`'s own `NaN` fallback ("…") keeps this in sync with
+ * every other "not yet known" rate string on the page. */
+function accumulatingLabel(kind: "cpu" | "gpu", itersPerSec: number): string {
+  const verb = kind === "cpu" ? "CPU accumulating" : "GPU accumulating";
+  return `${verb} — ${formatRate(itersPerSec)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
@@ -554,6 +651,7 @@ async function runScenario(
   def: ScenarioDef,
   dom: ScenarioDom,
   durationSec: number,
+  activity: ActivityBadge,
 ): Promise<ScenarioResultRecord> {
   const projection = buildProjection(
     ACCUM_WIDTH,
@@ -563,14 +661,34 @@ async function runScenario(
   );
   const cpu = prepareCpu(def);
 
-  setStatus(dom, "running: cpu timed…");
-  const cpuTimed = await runCpuTimed(cpu, projection, durationSec);
+  setStatus(dom, `running: cpu timed — ${formatRate(NaN)}`);
+  activity.setState("cpu", accumulatingLabel("cpu", NaN));
+  const cpuTimed = await runCpuTimed(cpu, projection, durationSec, (rate) => {
+    activity.setState("cpu", accumulatingLabel("cpu", rate));
+    setStatus(dom, `running: cpu timed — ${formatRate(rate)}`);
+  });
 
-  setStatus(dom, "running: gpu timed…");
-  const gpuTimed = await runGpuTimed(def, projection, durationSec);
+  setStatus(dom, `running: gpu timed — ${formatRate(NaN)}`);
+  activity.setState("gpu", accumulatingLabel("gpu", NaN));
+  const gpuTimed = await runGpuTimed(def, projection, durationSec, (rate) => {
+    activity.setState("gpu", accumulatingLabel("gpu", rate));
+    setStatus(dom, `running: gpu timed — ${formatRate(rate)}`);
+  });
 
-  setStatus(dom, "running: equal-N comparison…");
-  const cpuHist = await runCpuExactly(cpu, projection, EQUAL_N_ITERATIONS);
+  setStatus(dom, "equal-N: cpu…");
+  activity.setState("cpu", accumulatingLabel("cpu", NaN));
+  const cpuHist = await runCpuExactly(
+    cpu,
+    projection,
+    EQUAL_N_ITERATIONS,
+    (rate, done) => {
+      activity.setState("cpu", accumulatingLabel("cpu", rate));
+      setStatus(
+        dom,
+        `equal-N: cpu (${formatCount(done)}/${formatCount(EQUAL_N_ITERATIONS)})…`,
+      );
+    },
+  );
   const cpuDisplay = downsampleFlame(
     cpuHist,
     DISPLAY_WIDTH,
@@ -584,7 +702,11 @@ async function runScenario(
   if ("skipped" in gpuTimed) {
     comparison = { skipped: gpuTimed.skipped };
   } else {
-    const gpuEqualN = await runGpuEqualN(def, projection);
+    setStatus(dom, "equal-N: gpu…");
+    activity.setState("gpu", accumulatingLabel("gpu", NaN));
+    const gpuEqualN = await runGpuEqualN(def, projection, (rate) => {
+      activity.setState("gpu", accumulatingLabel("gpu", rate));
+    });
     if ("skipped" in gpuEqualN) {
       comparison = { skipped: gpuEqualN.skipped };
     } else {
@@ -622,6 +744,7 @@ async function runScenario(
     comparison,
   };
   setStatus(dom, "done");
+  activity.setState("idle", "Done");
   dom.pre.textContent = JSON.stringify(result, null, 2);
   return result;
 }
@@ -687,6 +810,11 @@ async function main(): Promise<void> {
   const scenarioButtons = requireElement<HTMLDivElement>("scenarioButtons");
   const scenariosContainer = requireElement<HTMLDivElement>("scenarios");
   const resultsPre = requireElement<HTMLPreElement>("results");
+  const activity = createActivityBadge(
+    requireElement<HTMLDivElement>("activityBadge"),
+    requireElement<HTMLSpanElement>("activityLabel"),
+  );
+  activity.setState("idle", "Idle");
 
   const params = new URLSearchParams(window.location.search);
   const autorun = params.get("autorun") === "1";
@@ -750,7 +878,7 @@ async function main(): Promise<void> {
     try {
       const dom = domByName.get(def.name);
       if (!dom) return;
-      recordResult(await runScenario(def, dom, currentDuration()));
+      recordResult(await runScenario(def, dom, currentDuration(), activity));
     } finally {
       running = false;
       setButtonsDisabled(false);
@@ -765,7 +893,7 @@ async function main(): Promise<void> {
       for (const def of activeScenarios) {
         const dom = domByName.get(def.name);
         if (!dom) continue;
-        recordResult(await runScenario(def, dom, currentDuration()));
+        recordResult(await runScenario(def, dom, currentDuration(), activity));
       }
     } finally {
       running = false;

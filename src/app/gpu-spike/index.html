@@ -32,6 +32,66 @@
         max-width: 70em;
       }
 
+      #activityBadge {
+        position: fixed;
+        top: 14px;
+        right: 18px;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 14px;
+        border-radius: 999px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12.5px;
+        background: #24242e;
+        border: 1px solid #3a3a48;
+        color: #9a9ab0;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+        transition:
+          background 0.2s,
+          border-color 0.2s,
+          color 0.2s;
+      }
+
+      #activityBadge .dot {
+        width: 9px;
+        height: 9px;
+        flex: none;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      #activityBadge.cpu {
+        background: #3a2e14;
+        border-color: #7a5a1e;
+        color: #ffcf7a;
+      }
+
+      #activityBadge.gpu {
+        background: #16321e;
+        border-color: #2e6a3e;
+        color: #7affa0;
+      }
+
+      #activityBadge.cpu .dot,
+      #activityBadge.gpu .dot {
+        animation: activityPulse 1s ease-in-out infinite;
+      }
+
+      @keyframes activityPulse {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+
+        50% {
+          opacity: 0.35;
+          transform: scale(0.7);
+        }
+      }
+
       #adapterBanner {
         padding: 10px 14px;
         border-radius: 6px;
@@ -152,6 +212,11 @@
     </style>
   </head>
   <body>
+    <div id="activityBadge" class="idle">
+      <span class="dot"></span>
+      <span id="activityLabel">Idle</span>
+    </div>
+
     <h1>GPU Flame Accumulation — Benchmark Spike (fr-53k)</h1>
     <p class="subtitle">
       Compares the CPU flame worker's chaos-game accumulation

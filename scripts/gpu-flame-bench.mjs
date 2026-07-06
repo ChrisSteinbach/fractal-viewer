@@ -153,6 +153,26 @@ function killDevServer(child) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A screenshot that must never fail the run — used for the timing-based
+ * mid-run progress captures, which have no page hook to synchronize on and
+ * can legitimately race page state (e.g. a scenario finishing early). */
+async function screenshotBestEffort(page, filePath) {
+  try {
+    await page.screenshot({ path: filePath, fullPage: true });
+    console.error(
+      `[gpu-flame-bench] progress screenshot written to ${filePath}`,
+    );
+  } catch (err) {
+    console.error(
+      `[gpu-flame-bench] progress screenshot to ${filePath} failed (ignored): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const outDir = path.resolve(REPO_ROOT, args.out);
@@ -223,6 +243,17 @@ async function main() {
     const targetUrl = `${base}/gpu-spike/index.html?${query.toString()}`;
     console.error(`[gpu-flame-bench] navigating to ${targetUrl}`);
     await page.goto(targetUrl, { waitUntil: "load" });
+
+    // Timing-based evidence that the activity badge actually engages: ~2s
+    // should land inside the CPU-timed phase, ~8s (on the default 4s
+    // duration) inside the GPU-timed phase that follows it. Best-effort —
+    // there's no page hook to wait on instead, so a screenshot racing page
+    // state (or a scenario finishing unusually fast/slow) must never fail
+    // the run; it just means a less useful PNG.
+    await sleep(2_000);
+    await screenshotBestEffort(page, path.join(outDir, "progress-1.png"));
+    await sleep(6_000);
+    await screenshotBestEffort(page, path.join(outDir, "progress-2.png"));
 
     console.error(
       `[gpu-flame-bench] waiting up to ${BENCH_TIMEOUT_MS}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
