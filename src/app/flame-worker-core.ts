@@ -710,6 +710,13 @@ export class FlameWorkerSession {
    * double-scheduling the loop (e.g. a `setIterationsBudget` bump arriving
    * while a chunk is already pending). */
   private running = false;
+  /** Set once by {@link dispose} and never cleared (fr-1ib) — unlike a
+   * restart (which bumps `generation` to hand the loop off to a NEW
+   * accumulation), disposal has nothing to hand off TO: this is what makes
+   * both `ensureRunning` and `runChunk`'s own re-check refuse to ever
+   * schedule/run another chunk again, including one already sitting in the
+   * schedule queue when `dispose()` ran. */
+  private disposed = false;
 
   constructor(deps: FlameWorkerDeps) {
     this.now = deps.now;
@@ -785,6 +792,27 @@ export class FlameWorkerSession {
         this.setSymmetry(command.order, command.axis);
         break;
     }
+  }
+
+  /**
+   * Permanently stop this session and release its backend (fr-1ib) — for a
+   * host that runs a session OUTSIDE a dedicated Worker (`flame-session-
+   * host.ts`), which has no single call that reclaims a same-thread
+   * session's GPU resources the way killing a whole Worker thread does for
+   * the worker-hosted case. Bumps `generation` (so a chunk already in
+   * flight discovers, on its next check, that it has been superseded — see
+   * `runChunk`'s doc) and destroys the current backend (a no-op if none
+   * exists yet, e.g. disposing a session that never started). Unlike a
+   * restart, there is nothing to hand off TO: `disposed` latches
+   * permanently, so neither that hand-off's `ensureRunning()` call nor a
+   * chunk already sitting in the schedule queue can ever start another one.
+   * Idempotent.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.generation++;
+    this.backend?.destroy();
+    this.backend = null;
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
@@ -973,6 +1001,7 @@ export class FlameWorkerSession {
   }
 
   private ensureRunning(): void {
+    if (this.disposed) return;
     if (this.running) return;
     if (!this.prepared || !this.projection) return;
     if (this.iterationsDone >= this.iterationsBudget) return;
@@ -1099,12 +1128,19 @@ export class FlameWorkerSession {
     const projection = this.projection;
     // Re-checked here, not just in ensureRunning's gate before scheduling:
     // a chunk already scheduled runs regardless of what happens in between
-    // (JS is single-threaded, but a `setIterationsBudget` command handled
-    // before this chunk fires doesn't retroactively unschedule it), so a
-    // budget LOWERED below iterationsDone in the meantime must stop here —
-    // otherwise `iterationsBudget - iterationsDone` below goes negative and
-    // silently corrupts the progress count instead of just finishing.
+    // (JS is single-threaded, but a `setIterationsBudget` command — or a
+    // `dispose()` call, fr-1ib — handled before this chunk fires doesn't
+    // retroactively unschedule it), so a budget LOWERED below iterationsDone
+    // in the meantime must stop here — otherwise `iterationsBudget -
+    // iterationsDone` below goes negative and silently corrupts the
+    // progress count instead of just finishing. `disposed` gets the same
+    // treatment for the same reason: without it, a chunk already sitting in
+    // the schedule queue when `dispose()` runs would resume here, find
+    // `this.backend` null (dispose destroyed and cleared it), and spin up a
+    // BRAND NEW backend — exactly the resurrection `dispose()` exists to
+    // rule out.
     if (
+      this.disposed ||
       !prepared ||
       !projection ||
       this.iterationsDone >= this.iterationsBudget

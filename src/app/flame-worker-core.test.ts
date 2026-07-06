@@ -1490,3 +1490,46 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(destroyCalls).toBe(1); // still exactly once.
   });
 });
+
+// ---------------------------------------------------------------------------
+// dispose (fr-1ib): the main-thread session host's equivalent of a real
+// Worker's terminate() — releases the backend and permanently stops the
+// chunk loop, including a chunk already sitting in the schedule queue.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession dispose", () => {
+  it("destroys the current backend and refuses to run an already-scheduled chunk, without resurrecting a new backend", async () => {
+    let destroyCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested — forces a second chunk.
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {
+        destroyCalls++;
+      },
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    scheduler.step(); // kicks off backend creation + the first accumulate/snapshot.
+    await flushMicrotasks();
+    // One chunk in: 10 done (not yet 40), so a second chunk is ALREADY
+    // sitting in the schedule queue, not yet run — the scenario dispose()
+    // has to guard against (runChunk's own re-check, not just ensureRunning's).
+    expect(progressEvents(events)).toHaveLength(1);
+    expect(destroyCalls).toBe(0);
+
+    session.dispose();
+    expect(destroyCalls).toBe(1); // destroyed synchronously, inside dispose().
+
+    scheduler.step(); // runs the already-queued second chunk.
+    await flushMicrotasks();
+
+    expect(scheduler.step()).toBe(false); // nothing further was ever scheduled.
+    expect(progressEvents(events)).toHaveLength(1); // the queued chunk never got to accumulate/report.
+    expect(backendEvents(events)).toHaveLength(1); // no second "backend" event — no new backend was created.
+    expect(destroyCalls).toBe(1); // still exactly once — no double-destroy either.
+  });
+});
