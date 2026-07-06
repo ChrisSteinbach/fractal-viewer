@@ -1306,6 +1306,49 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     ]);
   });
 
+  it("restarts on CPU from scratch when the GPU backend's snapshot rejects (accumulate having succeeded)", async () => {
+    // Regression: a GPU readback can fail on its own — e.g. a device lost
+    // between a successful accumulate and this snapshot — independently of
+    // accumulate ever failing. Unlike the accumulate rejection above, this
+    // failure has to be reached via a DUE tick whose accumulate already
+    // succeeded, so it exercises a different escape hatch (the due-branch
+    // snapshot await used to sit outside runChunk's try/catch entirely).
+    let snapshotCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested.
+      snapshot: async () => {
+        snapshotCalls++;
+        if (snapshotCalls === 1) return createFlameHistogram(8, 8); // the first due tick succeeds.
+        throw new Error("device lost during readback");
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    // If the snapshot rejection escaped runChunk unhandled, this would
+    // surface as an unhandled promise rejection — Vitest fails the test run
+    // on those by default, so this drain completing at all is itself part
+    // of the proof that the rejection was caught, not just the assertions
+    // below.
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // 10 (the one GPU due tick whose snapshot succeeded — chunks 2 and 3
+    // aren't due under a zero-step clock) then 40 (the CPU restart running
+    // from iterationsDone = 0, not 10 + 40 = 50) — same reset-semantics
+    // proof as the accumulate-rejection test above, now for a snapshot
+    // failure landing on the FINISHING due tick (accumulate having just
+    // succeeded).
+    expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([
+      10, 40,
+    ]);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0); // recovered, not surfaced as a fatal error.
+  });
+
   it("accounts for a backend retiring more than it was asked (overshoot), still finishing", async () => {
     const backend: FlameAccumBackend = {
       kind: "gpu",

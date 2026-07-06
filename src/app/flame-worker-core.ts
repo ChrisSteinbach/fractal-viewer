@@ -420,7 +420,11 @@ export interface FlameAccumBackend {
    * every call, zero conversion cost. A GPU backend reads its device buffers
    * back and converts them into one. Called only on the redisplay cadence
    * (`runChunk`'s `due` branch) or once more at finish — never per chunk —
-   * since a GPU readback is comparatively expensive.
+   * since a GPU readback is comparatively expensive. May throw/reject (a GPU
+   * readback can fail on its own — e.g. a device lost between a successful
+   * `accumulate` and this call — independently of `accumulate` ever
+   * failing); the session owns recovery, with the same GPU-fallback/CPU-
+   * error shape as `accumulate`'s (see `runChunk`'s `due` branch).
    */
   snapshot(): FlameHistogram | Promise<FlameHistogram>;
   /** Release any resources this backend holds (GPU buffers/pipelines). A
@@ -1238,8 +1242,41 @@ export class FlameWorkerSession {
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
     if (due) {
-      const snapResult = backend.snapshot();
-      const snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
+      let snap: FlameHistogram;
+      try {
+        const snapResult = backend.snapshot();
+        snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
+      } catch (e) {
+        // Mirrors the accumulate catch above: a GPU readback can fail on its
+        // own (e.g. a device lost between a successful accumulate and this
+        // snapshot) independently of accumulate ever failing, and letting
+        // that rejection escape `runChunk` unhandled would trip the main
+        // thread's generic worker.onerror ("crashed") path instead of the
+        // graceful fallback accumulate failures get for the exact same
+        // underlying event — inconsistent recovery for the same failure.
+        if (gen !== this.generation) {
+          this.running = false;
+          this.ensureRunning();
+          return;
+        }
+        this.running = false;
+        if (backend.kind === "gpu") {
+          this.gpuFailed = true;
+          this.log(
+            `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
+          );
+          this.startAccumulation(
+            this.lastRequestedSupersample ?? this.effectiveSupersample,
+          );
+        } else {
+          // CpuFlameBackend.snapshot only throws on a broken invariant (see
+          // its doc) — not a retryable/ratchetable condition like the CPU
+          // accumulate OOM path above — so there is nothing smaller to try;
+          // surface it exactly like the accumulate catch's own CPU branch.
+          this.emit({ type: "error", message: describeError(e) });
+        }
+        return;
+      }
       if (gen !== this.generation) {
         this.running = false;
         this.ensureRunning();
