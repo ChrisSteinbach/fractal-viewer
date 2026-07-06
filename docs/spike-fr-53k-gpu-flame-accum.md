@@ -169,9 +169,9 @@ wherever WebGPU is absent and the reference everywhere.
 
 ## Addendum: desktop / Firefox cross-validation (same day)
 
-A second run on a desktop — **Firefox 152 on Ubuntu**, discrete GPU (Firefox
-withholds `adapter.info` for privacy) — via the same page, all four
-scenarios, 4 s timed runs:
+A second run on a desktop — **Firefox 152 on Ubuntu, AMD Radeon RX 7900
+XTX** (identified by the operator; Firefox withholds `adapter.info` for
+privacy) — via the same page, all four scenarios, 4 s timed runs:
 
 | Scenario   | CPU iter/s | GPU iter/s  | Speedup    |
 | ---------- | ---------- | ----------- | ---------- |
@@ -185,6 +185,12 @@ What this adds beyond bigger numbers:
 - **The "billions of iter/s" claim is confirmed literally** — a default
   20 M-iteration render is ~2 ms of GPU time (display-cadence-limited); a
   1-billion-iteration deep convergence is ~0.1 s.
+- **The kernel is compute-bound, and scales.** The 7900 XTX has ~30× the
+  Iris Xe's fp32 compute (~61 vs ~2 TFLOPS) and delivered ~29× its
+  throughput (352.6 M → 10.06 B on sierpinski) — near-linear scaling with
+  available FLOPS across a 30× hardware range, despite every landed point
+  funnelling through shared-histogram atomics. Atomic contention is not the
+  ceiling; more GPU keeps buying more speed.
 - **Second WGSL toolchain**: Firefox compiles WGSL with Naga/wgpu (not
   Chrome's Tint/Dawn). The kernel ran unmodified — portability across the
   two major implementations is demonstrated, not assumed.
@@ -220,5 +226,5 @@ interactively at `https://<dev-server>/gpu-spike/index.html` — including from
 a phone on the LAN, which is how phone numbers should eventually be taken.
 
 Benchmarked 2026-07-06: Chrome 148, Linux, Intel Iris Xe (gen-12lp), and
-Firefox 152, Ubuntu, discrete GPU (addendum), spike branch
+Firefox 152, Ubuntu, AMD RX 7900 XTX (addendum), spike branch
 `spike/fr-53k-gpu-flame-accum`.
