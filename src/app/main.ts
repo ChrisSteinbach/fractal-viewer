@@ -96,6 +96,25 @@ function showError(message: string): void {
   console.error("Fractal Viewer:", message);
 }
 
+/**
+ * Shown when register-sw.ts reports that a new deploy's service worker
+ * replaced this page's controller — the old build's hashed chunk URLs (e.g.
+ * the flame worker's) may now 404, so offer a reload instead of letting
+ * renders fail silently (fr-k1z). Dismissible; never forces the reload.
+ */
+function showUpdateBanner(): void {
+  const banner = document.getElementById("updateBanner");
+  const reload = document.getElementById("updateReloadBtn");
+  const dismiss = document.getElementById("updateDismissBtn");
+  if (!banner || !reload || !dismiss) return;
+  // onclick assignment (not addEventListener) so repeated controllerchange
+  // events — one per deploy landing while this tab stays open — rewire
+  // idempotently instead of stacking duplicate listeners.
+  reload.onclick = () => window.location.reload();
+  dismiss.onclick = () => banner.classList.add("hidden");
+  banner.classList.remove("hidden");
+}
+
 function webglAvailable(): boolean {
   try {
     const canvas = document.createElement("canvas");
@@ -1512,5 +1531,5 @@ function main(): void {
   animate();
 }
 
-registerServiceWorker();
+registerServiceWorker(showUpdateBanner);
 main();
