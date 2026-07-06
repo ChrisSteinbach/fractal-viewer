@@ -102,12 +102,15 @@ function showError(message: string): void {
 }
 
 /**
- * Shown when register-sw.ts reports that a new deploy's service worker
- * replaced this page's controller — the old build's hashed chunk URLs (e.g.
- * the flame worker's) may now 404, so offer a reload instead of letting
- * renders fail silently (fr-k1z). Dismissible; never forces the reload.
+ * Shown when register-sw.ts reports an update. Usually that means the new
+ * worker is still WAITING for this page to say go (fr-o13) — so the banner
+ * now appears before anything breaks, not after — but it also still covers
+ * the rarer took-over-without-asking case (another tab already accepted).
+ * Reload hands off to register-sw.ts's accept dance: message the waiting
+ * worker and reload once it takes over, or, in the already-took-over case,
+ * just reload. Dismissible either way; never forces the reload.
  */
-function showUpdateBanner(): void {
+function showUpdateBanner(acceptUpdate: () => void): void {
   const banner = document.getElementById("updateBanner");
   const reload = document.getElementById("updateReloadBtn");
   const dismiss = document.getElementById("updateDismissBtn");
@@ -115,7 +118,7 @@ function showUpdateBanner(): void {
   // onclick assignment (not addEventListener) so repeated controllerchange
   // events — one per deploy landing while this tab stays open — rewire
   // idempotently instead of stacking duplicate listeners.
-  reload.onclick = () => window.location.reload();
+  reload.onclick = () => acceptUpdate();
   dismiss.onclick = () => banner.classList.add("hidden");
   banner.classList.remove("hidden");
 }

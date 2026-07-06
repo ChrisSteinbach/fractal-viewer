@@ -292,13 +292,17 @@ work, and the app then simply stays on the transfer fallback). The service
 worker lives in its own tiny TypeScript program (`src/app/sw/tsconfig.json`)
 because its WebWorker lib conflicts with the app's DOM lib.
 
-A later deploy's worker still takes over an already-open tab the same way —
-`skipWaiting()` + `clients.claim()`, no forced reload — but that tab's JS still
-references the OLD build's content-hashed chunk URLs, which can start 404ing
-(the flame worker, say, fails with no visible explanation). So `register-sw.ts`
-also reports that specific transition — an already-controlled page's
-controller getting replaced — back to the app, which shows a dismissible
-"update available" reload banner instead of leaving it silent (fr-k1z).
+A later deploy's worker no longer takes over an already-open tab uninvited —
+it waits, since `skipWaiting()` now only runs once a page posts the worker a
+`SKIP_WAITING` message. `register-sw.ts` detects that waiting worker (at
+registration, via `updatefound`, and via a `registration.update()` check
+whenever the tab becomes visible again) and the app shows the dismissible
+"new version" banner; reloading is the user's choice, applied by posting
+`SKIP_WAITING` and reloading once on the resulting `controllerchange`. An
+ignored banner costs nothing — the old worker keeps serving the old precache,
+so the old build's content-hashed chunk URLs (the flame/voxel workers) can no
+longer 404 mid-session. If another tab accepts instead, the remaining tabs
+get the same banner via the replaced-controller path (fr-k1z, fr-o13).
 
 ## GPU accumulation backend
 
