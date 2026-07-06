@@ -36,11 +36,11 @@ declare let self: ServiceWorkerGlobalScope & {
 const precache = new PrecacheController();
 precache.addToCacheList(self.__WB_MANIFEST);
 
-// autoUpdate semantics, matching the previous generateSW output: a new
-// deploy's worker takes over open pages immediately (skipWaiting +
-// clients.claim below) instead of waiting for every tab to close. Old
-// workbox cache-name generations are pruned the same way generateSW did.
-void self.skipWaiting();
+// A new deploy's worker now waits until every open page lets go — or until a
+// page explicitly sends `SKIP_WAITING` after the user accepts the update
+// banner (fr-o13) — so an open session's old precache is never yanked out
+// from under it. Old workbox cache-name generations are still pruned on
+// activate via cleanupOutdatedCaches.
 cleanupOutdatedCaches();
 
 self.addEventListener("install", (event) => {
@@ -49,6 +49,16 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(precache.activate(event).then(() => self.clients.claim()));
+});
+
+// The client half lives in ../register-sw.ts: when the user accepts the
+// update banner, the page posts this message to the WAITING worker, which
+// then skipWaiting()s into activation; the page reloads on the resulting
+// controllerchange (fr-o13).
+self.addEventListener("message", (event) => {
+  if ((event.data as { type?: unknown } | null)?.type === "SKIP_WAITING") {
+    void self.skipWaiting();
+  }
 });
 
 /**

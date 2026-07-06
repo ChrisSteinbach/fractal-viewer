@@ -13,8 +13,8 @@ wrong surface for anything touching `register-sw.ts` or `sw/sw.ts`.
 
 ## Production build + service worker
 
-The SW path (registration, isolation dance, update takeover) only exists in a
-production build. `npm run preview` works but is HTTPS with a self-signed cert,
+The SW path (registration, isolation dance, waiting-update flow) only exists
+in a production build. `npm run preview` works but is HTTPS with a self-signed cert,
 which browser automation may reject. A plain HTTP static server on localhost is
 equivalent (localhost is a secure context, and Chromium honors SW-injected
 COOP/COEP there — `crossOriginIsolated` comes back `true`):
@@ -39,9 +39,14 @@ Drive it with the Playwright MCP browser. Useful checks from
    `src/app/index.html`) and `npm run build` again — the changed precache
    manifest makes `sw.js` byte-different, which is what an update IS.
 3. In the open tab: `(await navigator.serviceWorker.getRegistration()).update()`
-   — the new worker installs, `skipWaiting()`s, claims, and `controllerchange`
-   fires (this is what shows the fr-k1z update banner).
-4. Revert the temporary marker and rebuild when done.
+   — the new worker installs and parks in `waiting` (fr-o13: no takeover),
+   which shows the update banner while the OLD worker keeps serving the old
+   precache (`fetch("./index.html")` should NOT contain your marker yet).
+4. Click the banner's Reload: the page posts `SKIP_WAITING`, the new worker
+   activates and claims, and the page reloads once onto the new build (now
+   the served HTML DOES contain the marker). Any other open tab is NOT
+   reloaded — it re-shows the banner instead (replaced-controller path).
+5. Revert the temporary marker and rebuild when done.
 
 ## Gotchas
 
