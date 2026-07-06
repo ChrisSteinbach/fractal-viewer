@@ -56,6 +56,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
     localStorage so systems are shareable and survive reloads. Pure codec with a
     strict, never-throwing decoder; storage/location are injected (tested).
+  - `history.ts` — session-only undo/redo stacks over the encoded scene
+    snapshot (pure, tested).
   - `ui.ts` — control panel + transform list, built with `createElement`.
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).

@@ -61,6 +61,10 @@ type EditTarget = number | "final" | null;
 export interface UiHandlers {
   onAdd: () => void;
   onRemove: () => void;
+  /** Step the scene document back one edit burst. */
+  onUndo: () => void;
+  /** Step the scene document forward one edit burst. */
+  onRedo: () => void;
   onPreset: (preset: Preset) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
@@ -551,6 +555,8 @@ export class Ui {
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
   private readonly removeBtn: HTMLButtonElement;
+  private readonly undoBtn: HTMLButtonElement;
+  private readonly redoBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly regenerateBtn: HTMLButtonElement;
@@ -666,6 +672,8 @@ export class Ui {
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
     this.removeBtn = this.byId("removeBtn");
+    this.undoBtn = this.byId("undoBtn");
+    this.redoBtn = this.byId("redoBtn");
     this.presetSelect = this.byId("presetSelect");
     this.surpriseBtn = this.byId("surpriseBtn");
     this.regenerateBtn = this.byId("regenerateBtn");
@@ -764,6 +772,8 @@ export class Ui {
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
+    this.undoBtn.addEventListener("click", () => handlers.onUndo());
+    this.redoBtn.addEventListener("click", () => handlers.onRedo());
     // The preset menu acts as a one-shot action list: fire the chosen preset,
     // then snap back to the placeholder so it never implies a persistent mode.
     this.presetSelect.addEventListener("change", () => {
@@ -1123,6 +1133,16 @@ export class Ui {
 
   setPointCount(count: number): void {
     this.pointCount.textContent = `${count.toLocaleString()} pts`;
+  }
+
+  /**
+   * Reflect undo/redo availability (disabled ⇔ nothing to step to). Driven by
+   * main.ts's history stacks rather than AppState — the stacks are session-only
+   * and live outside the state object, like the 4D tumble clock.
+   */
+  setUndoRedo(canUndo: boolean, canRedo: boolean): void {
+    this.undoBtn.disabled = !canUndo;
+    this.redoBtn.disabled = !canRedo;
   }
 
   /**

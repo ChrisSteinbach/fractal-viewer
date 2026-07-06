@@ -16,6 +16,8 @@ function noopHandlers(): UiHandlers {
   return {
     onAdd: vi.fn(),
     onRemove: vi.fn(),
+    onUndo: vi.fn(),
+    onRedo: vi.fn(),
     onPreset: vi.fn(),
     onSurprise: vi.fn(),
     onNumPointsInput: vi.fn(),
@@ -711,6 +713,54 @@ describe("Ui surprise button", () => {
     ui.bind(handlers);
     surpriseBtn().click();
     expect(handlers.onSurprise).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Ui undo/redo controls", () => {
+  function undoBtn(): HTMLButtonElement {
+    return document.getElementById("undoBtn") as HTMLButtonElement;
+  }
+  function redoBtn(): HTMLButtonElement {
+    return document.getElementById("redoBtn") as HTMLButtonElement;
+  }
+
+  it("starts with both buttons disabled, from the markup", () => {
+    new Ui(document);
+    expect(undoBtn().disabled).toBe(true);
+    expect(redoBtn().disabled).toBe(true);
+  });
+
+  it("enables undo and leaves redo disabled when only undo is available", () => {
+    const ui = new Ui(document);
+    ui.setUndoRedo(true, false);
+    expect(undoBtn().disabled).toBe(false);
+    expect(redoBtn().disabled).toBe(true);
+  });
+
+  it("enables redo and leaves undo disabled when only redo is available", () => {
+    const ui = new Ui(document);
+    ui.setUndoRedo(false, true);
+    expect(undoBtn().disabled).toBe(true);
+    expect(redoBtn().disabled).toBe(false);
+  });
+
+  it("fires onUndo when Undo is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    // Disabled buttons (the markup's starting state) don't dispatch clicks.
+    ui.setUndoRedo(true, true);
+    undoBtn().click();
+    expect(handlers.onUndo).toHaveBeenCalledOnce();
+  });
+
+  it("fires onRedo when Redo is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.setUndoRedo(true, true);
+    redoBtn().click();
+    expect(handlers.onRedo).toHaveBeenCalledOnce();
   });
 });
 
