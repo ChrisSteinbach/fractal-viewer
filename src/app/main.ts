@@ -13,6 +13,7 @@ import {
 import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
+import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
 import {
@@ -730,6 +731,13 @@ function main(): void {
       // Math.random) can't cross postMessage — which as a side effect makes
       // a render a reproducible pure function of its inputs.
       seed: Math.floor(Math.random() * 0xffffffff),
+      // Device-aware memory budget for the voxel grid + texture (fr-8x7) —
+      // the same two main-thread-only signals, for the same reasons, as the
+      // flame render's maxAccumBuckets above (fr-7c8).
+      maxVoxels: voxelAccumBudgetVoxels(
+        (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+        window.matchMedia("(pointer: coarse)").matches,
+      ),
       order: state.symmetry.order,
       axis: state.symmetry.axis,
     });

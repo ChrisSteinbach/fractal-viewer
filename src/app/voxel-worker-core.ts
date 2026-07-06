@@ -67,6 +67,13 @@ export type VoxelWorkerCommand =
        * postMessage) — also makes a render a reproducible pure function of
        * its inputs. */
       seed: number;
+      /**
+       * Grid + texture memory ceiling in voxels, computed by the main thread
+       * via {@link voxelAccumBudgetVoxels} — the device signals it reads
+       * (`navigator.deviceMemory`, pointer coarseness) only exist there.
+       * Omitted, the session falls back to the phone-safe floor.
+       */
+      maxVoxels?: number;
       /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
       order: number;
       axis: SymmetryAxis;
@@ -124,7 +131,8 @@ export interface VoxelWorkerDeps {
   /** Defaults to the real {@link createVoxelGrid}; overridable so a test can
    * force the OOM-retry path without a real allocation failure. */
   createGrid?: typeof createVoxelGrid;
-  /** Defaults to the real (320 MiB-derived) voxel budget; overridable so a
+  /** Fallback voxel budget for `start` commands that don't carry their own
+   * `maxVoxels` (defaults to the phone-safe 320 MiB floor); overridable so a
    * test can trigger the proactive `clampVoxelResolution` guard cheaply. */
   maxVoxels?: number;
   /** Defaults to the real (1,000,000) initial chunk size; overridable so a
@@ -156,18 +164,90 @@ const VOXEL_FRAME_BUDGET_MS = 8;
  * volume is an order of magnitude more bytes than a display-size image.
  */
 const VOXEL_TEXTURE_INTERVAL_MS = 250;
+/**
+ * Caps texture packing at roughly 1/{@link VOXEL_TEXTURE_PACK_DUTY} of total
+ * worker time once packs get slow: the refresh threshold stretches to
+ * `VOXEL_TEXTURE_PACK_DUTY * this.lastPackMs` whenever that exceeds
+ * `VOXEL_TEXTURE_INTERVAL_MS` (the interval is measured from pack START, so
+ * a threshold of `duty * lastPackMs` bounds packing to `1 / duty` of the time
+ * between refreshes). At <=256^3 packs are fast enough that the flat 250 ms
+ * floor still governs, so behavior there is unchanged.
+ *
+ * Without this, a slow pack is pathological: `lastTextureAt` is stamped at
+ * pack START, so once a pack takes >= `VOXEL_TEXTURE_INTERVAL_MS` every
+ * subsequent 8 ms accumulation chunk is immediately "due" again the instant
+ * it returns, and the worker spends nearly all its time re-packing instead of
+ * accumulating. Packing is O(size^3) — tens of ms at 192^3, but roughly
+ * ~500 ms at 512^3 — so raising the desktop ceiling to 512^3 (fr-8x7) is what
+ * made the fixed stride pathological; the flame worker needs no equivalent
+ * guard because its per-refresh output is display-resolution, not O(size^3).
+ */
+const VOXEL_TEXTURE_PACK_DUTY = 3;
 
 /** Bytes per voxel across everything a session allocates per voxel: Float32
  * density (4) + Float32 RGB running mean (12) + the RGBA8 texture (4). */
 const BYTES_PER_VOXEL = 20;
+const MIB = 1024 * 1024;
 /**
- * Memory ceiling for one session's grid + texture. 320 MiB / 20 bytes is
- * exactly 256^3 voxels — the slider's own maximum passes untouched on
- * desktop while the same proactive guard the flame uses protects
- * memory-constrained phones (backed up by the reactive shrink in `start`).
+ * Phone-safe floor (and no-better-information default) for one session's
+ * grid + texture. 320 MiB / 20 bytes is exactly 256^3 — the value the app
+ * shipped with since fr-v4f, so coarse-pointer devices keep exactly their old
+ * behavior (the old 256-max slider passes untouched). Same reasoning as the
+ * flame's floor (`FLAME_ACCUM_FLOOR_BYTES`): phones die uncatchably (the OS
+ * kills the tab before an allocation ever throws), so they get a conservative
+ * flat budget, while desktops fail catchably and get more.
  */
-const MAX_VOXEL_ACCUM_BYTES = 320 * 1024 * 1024;
-const MAX_VOXELS = Math.floor(MAX_VOXEL_ACCUM_BYTES / BYTES_PER_VOXEL);
+const VOXEL_ACCUM_FLOOR_BYTES = 320 * MIB;
+const VOXEL_FLOOR_VOXELS = Math.floor(
+  VOXEL_ACCUM_FLOOR_BYTES / BYTES_PER_VOXEL,
+);
+/** Desktop budget scale: grid+texture bytes allowed per GiB of *reported*
+ * device memory. 320 MiB/GiB lands an 8-GiB report exactly on the ceiling
+ * (same scale as the flame's `FLAME_ACCUM_BYTES_PER_GIB`). */
+const VOXEL_ACCUM_BYTES_PER_GIB = 320 * MIB;
+/**
+ * Desktop ceiling. 2560 MiB is exactly 512^3 voxels x 20 bytes — the new
+ * slider maximum passes untouched on any machine reporting 8 GiB
+ * (`navigator.deviceMemory`'s cap, meaning "8 or more"); a modest slice of
+ * such a machine, and the reactive allocation-failure ratchet
+ * (`maxSafeResolution`) still backstops weaker ones.
+ */
+const VOXEL_ACCUM_MAX_BYTES = 2560 * MIB;
+
+/**
+ * The grid+texture memory budget (in voxels — see {@link BYTES_PER_VOXEL})
+ * for the device we're actually running on, from the two signals only the
+ * MAIN thread can read; it computes this and ships the result in the `start`
+ * command (fr-8x7, mirroring the flame's fr-7c8 — see
+ * `flame-worker-core.ts`'s `flameAccumBudgetBuckets`). Before this, the
+ * budget was a flat 320 MiB sized so the OLD 256 slider max fit exactly on
+ * every device — i.e. desktops were pinned to a phone-derived resolution
+ * ceiling no matter how much RAM they actually had.
+ *
+ * - `coarsePointer` (from `matchMedia("(pointer: coarse)")`) marks
+ *   phone/tablet-class devices: they keep the flat floor, and their
+ *   `deviceMemory` is deliberately IGNORED — flagship phones report the
+ *   capped maximum of 8 despite being exactly the devices the conservative
+ *   floor exists for (see {@link VOXEL_ACCUM_FLOOR_BYTES}).
+ * - `deviceMemoryGiB` (`navigator.deviceMemory`: Chromium-only, quantized,
+ *   capped at 8) scales the desktop budget. Where it's unavailable
+ *   (Firefox/Safari) a fine-pointer device is assumed desktop-class (8):
+ *   optimistic, but desktops fail catchably, and a genuinely weaker machine
+ *   is still protected by `startAccumulation`'s reactive OOM fallback plus
+ *   the session's learned `maxSafeResolution` ceiling.
+ */
+export function voxelAccumBudgetVoxels(
+  deviceMemoryGiB: number | undefined,
+  coarsePointer: boolean,
+): number {
+  if (coarsePointer) return VOXEL_FLOOR_VOXELS;
+  const bytes = (deviceMemoryGiB ?? 8) * VOXEL_ACCUM_BYTES_PER_GIB;
+  const clamped = Math.min(
+    VOXEL_ACCUM_MAX_BYTES,
+    Math.max(VOXEL_ACCUM_FLOOR_BYTES, bytes),
+  );
+  return Math.floor(clamped / BYTES_PER_VOXEL);
+}
 
 function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -190,7 +270,12 @@ export class VoxelWorkerSession {
   private readonly schedule: (fn: () => void) => void;
   private readonly emit: (event: VoxelWorkerEvent) => void;
   private readonly createGrid: typeof createVoxelGrid;
-  private readonly maxVoxels: number;
+  /** Fallback budget for starts that don't carry one — see VoxelWorkerDeps. */
+  private readonly defaultMaxVoxels: number;
+  /** The budget the CURRENT session runs under: the `start` command's
+   * device-aware value (see {@link voxelAccumBudgetVoxels}), or the
+   * fallback when the command carried none. */
+  private maxVoxels: number;
   private readonly initialChunkSize: number;
   private readonly boundsSamples: number | undefined;
 
@@ -233,6 +318,9 @@ export class VoxelWorkerSession {
   /** undefined until the first texture pack of this session, so that first
    * one is never throttled. */
   private lastTextureAt: number | undefined;
+  /** Wall-clock cost (ms) of the last texture pack — feeds the pack-duty
+   * throttle stretch in `runChunk`; 0 until the first pack completes. */
+  private lastPackMs = 0;
   private chunkSize: number;
   /** True while a chunk is scheduled or in flight — guards against
    * double-scheduling the loop. */
@@ -243,7 +331,8 @@ export class VoxelWorkerSession {
     this.schedule = deps.schedule;
     this.emit = deps.emit;
     this.createGrid = deps.createGrid ?? createVoxelGrid;
-    this.maxVoxels = deps.maxVoxels ?? MAX_VOXELS;
+    this.defaultMaxVoxels = deps.maxVoxels ?? VOXEL_FLOOR_VOXELS;
+    this.maxVoxels = this.defaultMaxVoxels;
     this.initialChunkSize = deps.initialChunkSize ?? VOXEL_CHUNK_INITIAL;
     this.boundsSamples = deps.boundsSamples;
     this.chunkSize = this.initialChunkSize;
@@ -307,6 +396,7 @@ export class VoxelWorkerSession {
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
+    this.maxVoxels = cmd.maxVoxels ?? this.defaultMaxVoxels;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
     // The bounds pilot is part of the same seeded run, so a given seed
     // produces one reproducible render, bounds included.
@@ -387,6 +477,7 @@ export class VoxelWorkerSession {
     this.effectiveResolution = effective;
     this.iterationsDone = 0;
     this.lastTextureAt = undefined;
+    this.lastPackMs = 0;
     this.chunkSize = this.initialChunkSize;
     this.emit({
       type: "resolutionNote",
@@ -435,16 +526,21 @@ export class VoxelWorkerSession {
     this.adaptChunkSize(t1 - t0);
 
     const finished = this.iterationsDone >= this.iterationsBudget;
+    const textureInterval = Math.max(
+      VOXEL_TEXTURE_INTERVAL_MS,
+      VOXEL_TEXTURE_PACK_DUTY * this.lastPackMs,
+    );
     const due =
       finished ||
       this.lastTextureAt === undefined ||
-      t1 - this.lastTextureAt >= VOXEL_TEXTURE_INTERVAL_MS;
+      t1 - this.lastTextureAt >= textureInterval;
     if (due) {
       this.lastTextureAt = t1;
       if (!this.sendGrid(grid)) {
         this.running = false;
         return;
       }
+      this.lastPackMs = this.now() - t1;
     }
 
     if (finished) {

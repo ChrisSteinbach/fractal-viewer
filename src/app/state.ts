@@ -271,10 +271,18 @@ export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "legacy";
  * sweet spot (a 256^3 grid is ~2.4x the memory and allocation risk for a
  * modest sharpness gain); the worker's own byte budget may still clamp the
  * top of this range on constrained devices (see `voxel-worker-core.ts`).
+ *
+ * The ceiling (512) matches the desktop budget ceiling (fr-8x7): 512^3 x 20
+ * bytes/voxel = 2.5 GiB, exactly `voxelAccumBudgetVoxels`'s
+ * `VOXEL_ACCUM_MAX_BYTES` in `voxel-worker-core.ts`, so a desktop reporting
+ * (or assumed to have, per that function) 8+ GiB can run the slider's full
+ * range untouched. Weaker devices asking for more than their own budget are
+ * proactively clamped by the worker (`clampVoxelResolution`) and shown the
+ * "Reduced to N³" note (`resolutionNote`).
  */
 export const DEFAULT_SOLID_RESOLUTION = 192;
 export const MIN_SOLID_RESOLUTION = 64;
-export const MAX_SOLID_RESOLUTION = 256;
+export const MAX_SOLID_RESOLUTION = 512;
 /** Same iteration economics as the flame: the grid has a comparable bucket
  * count to a 2D histogram, so the same default converges similarly fast. */
 export const DEFAULT_SOLID_ITERATIONS = 20_000_000;
