@@ -33,6 +33,7 @@ import { FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
+import { SceneHistory } from "./history";
 import {
   addTransform,
   initialState,
@@ -73,7 +74,14 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
-import { fromSnapshot, loadScene, saveScene, toSnapshot } from "./persist";
+import {
+  decodeScene,
+  encodeScene,
+  fromSnapshot,
+  loadScene,
+  saveScene,
+  toSnapshot,
+} from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 
@@ -797,6 +805,13 @@ function main(): void {
     ui.renderTransformEditor(editing, sel);
   }
 
+  // Session-only undo/redo over encoded scene snapshots (see history.ts).
+  const history = new SceneHistory();
+  // True while the CURRENT edit burst already has a checkpoint — the 300 ms
+  // save debounce below defines "one burst", so a slider drag coalesces into
+  // a single undo step instead of one per tick.
+  let burstOpen = false;
+
   // Debounced saver — persists 300 ms after the last scene-affecting change so
   // rapid slider drags don't flood history/storage on every tick.
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -804,6 +819,7 @@ function main(): void {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveScene(toSnapshot(state));
+      burstOpen = false;
     }, 300);
   }
 
@@ -815,11 +831,99 @@ function main(): void {
     clearTimeout(saveTimer);
     saveTimer = undefined;
     saveScene(toSnapshot(state));
+    burstOpen = false;
   }
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushSave();
   });
   window.addEventListener("pagehide", flushSave);
+
+  /**
+   * Bookkeeping for a scene-document edit that is ABOUT to happen: capture an
+   * undo checkpoint of the PRE-edit state on the leading edge of an edit
+   * burst, and schedule the trailing-edge debounced save. Must be called
+   * BEFORE the state mutation. The 300 ms save debounce defines "one burst",
+   * so a slider drag coalesces into a single undo step. "replace" (preset
+   * load / Surprise Me) always cuts a fresh checkpoint, even mid-burst, and
+   * tags the transition so undo/redo re-frames the camera when crossing it.
+   *
+   * Every handler that edits the persisted scene document must route its save
+   * through here (this is what used to be a bare scheduleSave() call at the
+   * end of each handler); scheduleSave() alone is only for paths that must
+   * not create an undo step (the undo/redo restore itself).
+   */
+  function beginSceneEdit(kind: "tweak" | "replace" = "tweak"): void {
+    if (!burstOpen || kind === "replace") {
+      history.checkpoint(encodeScene(toSnapshot(state)), kind === "replace");
+      burstOpen = true;
+      syncUndoUi();
+    }
+    scheduleSave();
+  }
+
+  function syncUndoUi(): void {
+    ui.setUndoRedo(history.canUndo, history.canRedo);
+  }
+
+  /**
+   * Apply a history snapshot: whole-system-replacement semantics, the same path
+   * a boot-time hash/localStorage load takes. Any active flame/solid render is
+   * exited first (they are session-only overlays OF the document; the app
+   * "boots into the explorer" and so does time travel). View state stays live
+   * except where the restored document invalidates it: the selection is
+   * clamped/cleared exactly like removeTransform does, and the preset scaffold
+   * is cleared (preset-load decoration, not document state). `refit` re-frames
+   * the camera only when the step crosses a whole-system replacement —
+   * symmetric with how the camera moved when that replacement was applied;
+   * ordinary parameter edits leave the user's framing alone.
+   */
+  function restoreSnapshot(snapshot: string, refit: boolean): void {
+    const snap = decodeScene(snapshot);
+    if (!snap) return; // can't happen: entries are encodeScene output
+    if (state.flameActive) exitFlameMode();
+    if (state.solidActive) exitSolidMode();
+    state = fromSnapshot(snap, state);
+    if (
+      typeof state.selectedTransform === "number" &&
+      state.selectedTransform >= state.transforms.length
+    ) {
+      state = selectTransform(state, null);
+    }
+    if (state.selectedTransform === "final" && !state.finalTransform) {
+      state = selectTransform(state, null);
+    }
+    regenerate(true);
+    scene.setFourDScaffold(null);
+    scene.setRenderStyle(state.renderStyle);
+    // Mirror onRenderStyle: never leave a stale glow exposure on a non-glow style.
+    if (state.renderStyle !== "glow") scene.setGlowExposure(1);
+    scene.setPointSize(state.pointSize);
+    scene.setGuidesVisible(state.showGuides);
+    scene.setSolidParams(state.solid);
+    refreshGuides();
+    refreshUi();
+    if (refit) fitCameraToAttractor();
+    // Persist the restored document WITHOUT opening an undo burst: an undo is
+    // not an edit (it must not checkpoint), so this is the one legitimate bare
+    // scheduleSave outside beginSceneEdit.
+    scheduleSave();
+  }
+
+  function performUndo(): void {
+    // Settle an in-progress burst so it becomes its own undo step before we
+    // step behind it (mirrors flushSave's page-hide contract).
+    if (burstOpen) flushSave();
+    const entry = history.undo(encodeScene(toSnapshot(state)));
+    if (entry) restoreSnapshot(entry.snapshot, entry.replaced);
+    syncUndoUi();
+  }
+
+  function performRedo(): void {
+    if (burstOpen) flushSave();
+    const entry = history.redo(encodeScene(toSnapshot(state)));
+    if (entry) restoreSnapshot(entry.snapshot, entry.replaced);
+    syncUndoUi();
+  }
 
   /**
    * Shared choreography for edits that replace or modify the transform set.
@@ -844,20 +948,21 @@ function main(): void {
    * happen: a preset/Surprise-Me load was guarded out entirely while
    * `fourDActive`).
    *
-   * After applying the reducer, every geometry edit refreshes the guide boxes
-   * and the UI, then schedules a debounced save.
+   * Before applying the reducer, checkpoints an undo step and, after it, every
+   * geometry edit refreshes the guide boxes and the UI, then schedules a
+   * debounced save (see `beginSceneEdit`).
    */
   function applyEdit(
     applyReducer: () => void,
     effect: "auto" | "always" = "auto",
   ): void {
+    beginSceneEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     if (effect === "always" || state.autoUpdate) {
       regenerate(effect === "always");
     }
     refreshGuides();
     refreshUi();
-    scheduleSave();
   }
 
   // Only a handful of handlers below still guard on the view being 4D — the
@@ -879,6 +984,8 @@ function main(): void {
         state = removeTransform(state);
       });
     },
+    onUndo: () => performUndo(),
+    onRedo: () => performRedo(),
     onPreset: (preset) => {
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
@@ -904,22 +1011,22 @@ function main(): void {
       fitCameraToAttractor();
     },
     onNumPointsInput: (value) => {
+      beginSceneEdit();
       state = setNumPoints(state, value);
       ui.updateLabels(state);
-      scheduleSave();
     },
     onPointSizeInput: (value) => {
+      beginSceneEdit();
       state = setPointSize(state, value);
       scene.setPointSize(value);
       ui.updateLabels(state);
-      scheduleSave();
     },
     onGlowBrightnessInput: (value) => {
+      beginSceneEdit();
       // No direct scene push needed: animate()'s per-frame glow-exposure
       // calculation already reads state.glowBrightness as a multiplier.
       state = setGlowBrightness(state, value);
       ui.updateLabels(state);
-      scheduleSave();
     },
     onRegenerate: () => regenerate(),
     onSavePng: () => {
@@ -938,34 +1045,35 @@ function main(): void {
       link.click();
     },
     onToggleGuides: (checked) => {
+      beginSceneEdit();
       state = setShowGuides(state, checked);
       scene.setGuidesVisible(checked);
       refreshUi();
-      scheduleSave();
     },
     onColorMode: (mode) => {
       // colorModeRow hides while non-flat (the shader colors from the rotated
       // w instead) — belt-and-braces.
       if (viewIs4D) return;
+      beginSceneEdit();
       state = setColorMode(state, mode);
       // The color-contrast row's visibility (fr-8sk) depends on colorMode —
       // same rationale as onRenderStyle's updateLabels call below for the
       // glow-brightness row.
       ui.updateLabels(state);
       recolor();
-      scheduleSave();
     },
     onColorGammaInput: (value) => {
       if (viewIs4D) return;
+      beginSceneEdit();
       state = setColorGamma(state, value);
       ui.updateLabels(state);
       recolor();
-      scheduleSave();
     },
     onRenderStyle: (style) => {
       // renderStyleRow hides while non-flat (the 4D material/render path
       // ignores renderStyle entirely) — belt-and-braces.
       if (viewIs4D) return;
+      beginSceneEdit();
       state = setRenderStyle(state, style);
       scene.setRenderStyle(style);
       // Reset glow exposure so no stale factor sticks when switching away.
@@ -974,7 +1082,6 @@ function main(): void {
       // immediately — previously nothing in this handler depended on
       // renderStyle-conditional DOM, so the sync was never needed here.
       ui.updateLabels(state);
-      scheduleSave();
     },
     onToggleAutoUpdate: (checked) => {
       state = setAutoUpdate(state, checked);
@@ -983,6 +1090,7 @@ function main(): void {
       // symmetrySection hides while non-flat (the 4D chaos game has no
       // symmetry parameter at all) — belt-and-braces.
       if (viewIs4D) return;
+      beginSceneEdit();
       state = setSymmetryOrder(state, value);
       ui.updateLabels(state);
       if (state.autoUpdate) regenerate();
@@ -996,10 +1104,10 @@ function main(): void {
         order: state.symmetry.order,
         axis: state.symmetry.axis,
       });
-      scheduleSave();
     },
     onSymmetryAxisChange: (axis) => {
       if (viewIs4D) return;
+      beginSceneEdit();
       state = setSymmetryAxis(state, axis);
       ui.updateLabels(state);
       if (state.autoUpdate) regenerate();
@@ -1013,7 +1121,6 @@ function main(): void {
         order: state.symmetry.order,
         axis: state.symmetry.axis,
       });
-      scheduleSave();
     },
     onSelect: (index) => {
       state = selectTransform(state, index);
@@ -1021,6 +1128,7 @@ function main(): void {
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
+      beginSceneEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
       ui.renderTransformList(
@@ -1029,7 +1137,6 @@ function main(): void {
         state.finalTransform ?? null,
       );
       if (state.autoUpdate) regenerate();
-      scheduleSave();
     },
     onToggleFinalTransform: (checked) => {
       applyEdit(() => {
@@ -1050,6 +1157,7 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
+      beginSceneEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
         state.transforms,
@@ -1057,7 +1165,6 @@ function main(): void {
         state.finalTransform ?? null,
       );
       if (state.autoUpdate) regenerate();
-      scheduleSave();
     },
     onTogglePanel: () => {
       state = setPanelOpen(state, !state.panelOpen);
@@ -1074,6 +1181,7 @@ function main(): void {
     },
     onExitFlameRender: () => exitFlameMode(),
     onFlameExposureInput: (value) => {
+      beginSceneEdit();
       state = setFlameExposure(state, value);
       ui.updateLabels(state);
       // Shared mode: the tone-map runs on THIS thread over the live shared
@@ -1082,32 +1190,32 @@ function main(): void {
       // owns the tone-map; forward as before. Same split for gamma/vibrancy.
       if (flameShared) presentSharedFrame();
       else postFlame({ type: "setExposure", exposure: state.flame.exposure });
-      scheduleSave();
     },
     onFlameIterationsInput: (value) => {
+      beginSceneEdit();
       state = setFlameIterations(state, value);
       ui.updateLabels(state);
       postFlame({
         type: "setIterationsBudget",
         iterations: state.flame.iterations,
       });
-      scheduleSave();
     },
     onFlameGammaInput: (value) => {
+      beginSceneEdit();
       state = setFlameGamma(state, value);
       ui.updateLabels(state);
       if (flameShared) presentSharedFrame();
       else postFlame({ type: "setGamma", gamma: state.flame.gamma });
-      scheduleSave();
     },
     onFlameVibrancyInput: (value) => {
+      beginSceneEdit();
       state = setFlameVibrancy(state, value);
       ui.updateLabels(state);
       if (flameShared) presentSharedFrame();
       else postFlame({ type: "setVibrancy", vibrancy: state.flame.vibrancy });
-      scheduleSave();
     },
     onFlameSupersampleInput: (value) => {
+      beginSceneEdit();
       // The reducer clamps/rounds; the worker compares the settled value
       // against its own effective supersample and restarts accumulation for
       // us if it actually changed — no need to restart here directly (and
@@ -1119,43 +1227,42 @@ function main(): void {
         type: "setSupersample",
         supersample: state.flame.supersample,
       });
-      scheduleSave();
     },
     onFlamePaletteChange: (paletteId) => {
+      beginSceneEdit();
       // Like supersample this restarts accumulation in the worker (the color
       // sums bake in the palette); the worker owns that restart, so this just
       // updates state + label and forwards the new palette.
       state = setFlamePaletteId(state, paletteId);
       ui.updateLabels(state);
       postFlame({ type: "setPalette", paletteId: state.flame.paletteId });
-      scheduleSave();
     },
     onFlameEstimatorRadiusInput: (value) => {
+      beginSceneEdit();
       state = setFlameEstimatorRadius(state, value);
       ui.updateLabels(state);
       postFlame({
         type: "setEstimatorRadius",
         estimatorRadius: state.flame.estimatorRadius,
       });
-      scheduleSave();
     },
     onFlameEstimatorMinimumRadiusInput: (value) => {
+      beginSceneEdit();
       state = setFlameEstimatorMinimumRadius(state, value);
       ui.updateLabels(state);
       postFlame({
         type: "setEstimatorMinimumRadius",
         estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
       });
-      scheduleSave();
     },
     onFlameEstimatorCurveInput: (value) => {
+      beginSceneEdit();
       state = setFlameEstimatorCurve(state, value);
       ui.updateLabels(state);
       postFlame({
         type: "setEstimatorCurve",
         estimatorCurve: state.flame.estimatorCurve,
       });
-      scheduleSave();
     },
     onEnterSolidRender: () => {
       // solidEntry hides while non-flat — belt-and-braces.
@@ -1164,48 +1271,49 @@ function main(): void {
     },
     onExitSolidRender: () => exitSolidMode(),
     onSolidThresholdInput: (value) => {
+      beginSceneEdit();
       state = setSolidThreshold(state, value);
       ui.updateLabels(state);
       scene.setSolidParams(state.solid);
-      scheduleSave();
     },
     onSolidLightAzimuthInput: (value) => {
+      beginSceneEdit();
       state = setSolidLightAzimuth(state, value);
       ui.updateLabels(state);
       scene.setSolidParams(state.solid);
-      scheduleSave();
     },
     onSolidLightElevationInput: (value) => {
+      beginSceneEdit();
       state = setSolidLightElevation(state, value);
       ui.updateLabels(state);
       scene.setSolidParams(state.solid);
-      scheduleSave();
     },
     onSolidAmbientInput: (value) => {
+      beginSceneEdit();
       state = setSolidAmbient(state, value);
       ui.updateLabels(state);
       scene.setSolidParams(state.solid);
-      scheduleSave();
     },
     onSolidPaletteChange: (paletteId) => {
+      beginSceneEdit();
       // Like resolution this restarts accumulation in the worker (the
       // colors bake into avgRGB); the worker owns that restart, so this
       // just updates state + label and forwards the new palette.
       state = setSolidPaletteId(state, paletteId);
       ui.updateLabels(state);
       postVoxel({ type: "setPalette", paletteId: state.solid.paletteId });
-      scheduleSave();
     },
     onSolidIterationsInput: (value) => {
+      beginSceneEdit();
       state = setSolidIterations(state, value);
       ui.updateLabels(state);
       postVoxel({
         type: "setIterationsBudget",
         iterations: state.solid.iterations,
       });
-      scheduleSave();
     },
     onSolidResolutionInput: (value) => {
+      beginSceneEdit();
       // The reducer clamps/snaps to the voxel step; unlike the flame's
       // supersample the worker has no live "change resolution" command (a
       // grid's dimensions are fixed at allocation), so a genuine change while
@@ -1214,7 +1322,6 @@ function main(): void {
       const previousResolution = state.solid.resolution;
       state = setSolidResolution(state, value);
       ui.updateLabels(state);
-      scheduleSave();
       if (state.solidActive && state.solid.resolution !== previousResolution) {
         enterSolidMode();
       }
@@ -1244,6 +1351,7 @@ function main(): void {
     selectedTransform: selectedBox,
     frozen: () => state.flameActive,
     onTransformChange: (index, geometry) => {
+      beginSceneEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
         state.transforms,
@@ -1252,7 +1360,6 @@ function main(): void {
       );
       ui.renderTransformEditor(state.transforms[index], index);
       if (state.autoUpdate) regenerate();
-      scheduleSave();
     },
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
@@ -1272,10 +1379,41 @@ function main(): void {
     ui.updateLabels(state);
   });
 
+  // Undo/redo keyboard shortcuts. Guarded so a text-editing target keeps its
+  // native undo (no text inputs exist in the app today; belt-and-braces for
+  // future ones). Sliders/selects/checkboxes have no native undo, so a focused
+  // slider still lets Ctrl+Z time-travel the scene. Cmd+Y is deliberately NOT
+  // bound: it is the browser's history shortcut on macOS.
+  window.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (t instanceof HTMLElement) {
+      if (t.isContentEditable || t instanceof HTMLTextAreaElement) return;
+      if (
+        t instanceof HTMLInputElement &&
+        !["range", "checkbox", "radio", "button"].includes(t.type)
+      )
+        return;
+    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key === "z") {
+      e.preventDefault();
+      if (e.shiftKey) performRedo();
+      else performUndo();
+    } else if (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      performRedo();
+    }
+  });
+
   const loading = document.getElementById("loading");
   if (loading) loading.style.display = "none";
   scene.setRenderStyle(state.renderStyle);
   scene.setPointSize(state.pointSize);
+  // Push the restored solid threshold/lighting to the GPU uniforms: without
+  // this, a scene restored with non-default solid params would render with
+  // voxel-material.ts's hardcoded defaults until a solid slider first moved.
+  scene.setSolidParams(state.solid);
   // regenerate() first (see applyEdit's doc comment for why): it decides
   // `viewIs4D` for a possibly-restored non-flat scene, and refreshGuides()
   // right after needs that to already be current, not defaulted to `false`.
@@ -1285,6 +1423,7 @@ function main(): void {
   // refreshGuides only governs the per-transform boxes.
   scene.setGuidesVisible(state.showGuides);
   refreshUi();
+  syncUndoUi();
 
   // While a flame render is active, accumulation/downsample/tone-map all
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"

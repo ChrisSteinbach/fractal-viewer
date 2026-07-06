@@ -186,6 +186,48 @@ describe("encodeScene / decodeScene round-trip", () => {
     expect(result!.transforms[0].position[0]).toBeCloseTo(1.2346, 4);
     expect(result!.pointSize).toBeCloseTo(1.2346, 4);
   });
+
+  // history.ts dedupes undo checkpoints by comparing encoded strings with
+  // `===` (see its checkpoint/undo), which only holds if encoding a snapshot,
+  // decoding it, and re-encoding the result always reproduces the identical
+  // string. Exercises every optional field in one snapshot — a transform with
+  // weight, shear, variations, and a full w block, plus a finalTransform — so
+  // this is pinned for more than just the empty-snapshot case.
+  it("re-encodes to the identical string after a decode round-trip", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0.1, 0.2, 0.3],
+          rotation: [0.4, 0.5, 0.6],
+          scale: [0.7, 0.8, 0.9],
+          weight: 2.5,
+          shear: [0.1, -0.2, 0.3],
+          variations: [
+            { type: "spherical", weight: 1 },
+            { type: "swirl", weight: 0.4 },
+          ],
+          w: {
+            position: 0.3,
+            scale: 0.6,
+            rotation: { zw: -0.75 },
+            shear: { xw: 0.5 },
+          },
+        },
+      ],
+      finalTransform: {
+        id: 0,
+        position: [0.5, 0, -0.5],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bubble", weight: 0.8 }],
+      },
+    };
+    const once = encodeScene(s);
+    const twice = encodeScene(decodeScene(once)!);
+    expect(twice).toBe(once);
+  });
 });
 
 // ---------------------------------------------------------------------------
