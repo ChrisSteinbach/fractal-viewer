@@ -21,6 +21,7 @@ import {
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
+  FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
@@ -57,6 +58,7 @@ import {
   MIN_SOLID_THRESHOLD,
   MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
+  nearestFlameIterationDetentIndex,
   removeTransform,
   selectTransform,
   setColorGamma,
@@ -343,13 +345,55 @@ describe("setFlameIterations", () => {
 
   it("clamps above the maximum", () => {
     expect(
-      setFlameIterations(initialState(true), 1_000_000_000).flame.iterations,
+      setFlameIterations(initialState(true), 3_000_000_000).flame.iterations,
     ).toBe(MAX_FLAME_ITERATIONS);
   });
 
   it("clamps below the minimum", () => {
     expect(setFlameIterations(initialState(true), 1).flame.iterations).toBe(
       MIN_FLAME_ITERATIONS,
+    );
+  });
+});
+
+describe("FLAME_ITERATION_DETENTS", () => {
+  it("starts at the minimum and ends at the maximum iteration budget", () => {
+    expect(FLAME_ITERATION_DETENTS[0]).toBe(MIN_FLAME_ITERATIONS);
+    expect(FLAME_ITERATION_DETENTS[FLAME_ITERATION_DETENTS.length - 1]).toBe(
+      MAX_FLAME_ITERATIONS,
+    );
+  });
+
+  // index.html's flameIterationsSlider hardcodes value="4" as the default
+  // detent index (and max="10" as the last one) — this pins the assumption
+  // so the markup and this list can never silently drift apart.
+  it("has the default iteration budget at index 4", () => {
+    expect(FLAME_ITERATION_DETENTS[4]).toBe(DEFAULT_FLAME_ITERATIONS);
+  });
+});
+
+describe("nearestFlameIterationDetentIndex", () => {
+  it("returns a detent's own index when given its exact value", () => {
+    expect(nearestFlameIterationDetentIndex(5_000_000)).toBe(2);
+    expect(nearestFlameIterationDetentIndex(2_000_000_000)).toBe(10);
+  });
+
+  it("snaps a value between two detents to the nearer one in log space", () => {
+    // 37M sits between 2e7 (index 4) and 5e7 (index 5). Log10 distances are
+    // 0.267 to 20M vs 0.131 to 50M, so it snaps up to index 5 — a plain
+    // linear midpoint (35M) would also call this closer to 50M, but the two
+    // rules disagree closer to the geometric mean (~31.6M), which is why the
+    // comparison has to be logarithmic, not linear.
+    expect(nearestFlameIterationDetentIndex(37_000_000)).toBe(5);
+  });
+
+  it("clamps a below-minimum value to the first index", () => {
+    expect(nearestFlameIterationDetentIndex(1)).toBe(0);
+  });
+
+  it("clamps an above-maximum value to the last index", () => {
+    expect(nearestFlameIterationDetentIndex(10_000_000_000)).toBe(
+      FLAME_ITERATION_DETENTS.length - 1,
     );
   });
 });

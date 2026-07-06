@@ -20,6 +20,7 @@ import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { AppState, RenderStyle } from "./state";
 import {
+  FLAME_ITERATION_DETENTS,
   MAX_COLOR_GAMMA,
   MAX_NUM_POINTS,
   MAX_W_ANGLE,
@@ -31,6 +32,7 @@ import {
   MIN_W_POSITION,
   MIN_W_SCALE,
   MIN_W_SHEAR,
+  nearestFlameIterationDetentIndex,
   systemIsNonFlat,
 } from "./state";
 import {
@@ -337,6 +339,25 @@ function sliderToColorGamma(v: number): number {
 }
 function colorGammaToSlider(gamma: number): number {
   return Math.log(gamma) / Math.log(MAX_COLOR_GAMMA);
+}
+
+/**
+ * Format an iteration count for display (fr-79p): millions with one decimal
+ * below 1e9 — the flame progress line's long-standing look, e.g. "20.0M" —
+ * and billions with up to two decimals at 1e9 and above, trailing zeros (and
+ * a bare trailing dot) trimmed, e.g. "1.5B", "2B". Without the billions branch
+ * a GPU-scale budget would print as an unreadable "2000.0M"; kept local to
+ * `ui.ts` (not exported from `state.ts`) since it's a display concern, not
+ * app state. Shared by {@link Ui.setFlameProgress} and the Quality label in
+ * {@link Ui.updateLabels} — the solid render is CPU-only and out of scope
+ * (fr-79p), so {@link Ui.setSolidProgress} keeps its own plain-millions format.
+ */
+function formatIterationCount(n: number): string {
+  if (n >= 1_000_000_000) {
+    const billions = (n / 1_000_000_000).toFixed(2).replace(/\.?0+$/, "");
+    return `${billions}B`;
+  }
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 /**
@@ -835,7 +856,9 @@ export class Ui {
       handlers.onFlameExposureInput(Number(this.flameExposureSlider.value)),
     );
     this.flameIterationsSlider.addEventListener("input", () =>
-      handlers.onFlameIterationsInput(Number(this.flameIterationsSlider.value)),
+      handlers.onFlameIterationsInput(
+        FLAME_ITERATION_DETENTS[Number(this.flameIterationsSlider.value)],
+      ),
     );
     this.flameGammaSlider.addEventListener("input", () =>
       handlers.onFlameGammaInput(Number(this.flameGammaSlider.value)),
@@ -980,10 +1003,16 @@ export class Ui {
 
     this.flameExposureLabel.textContent = `${state.flame.exposure.toFixed(2)}×`;
     this.flameExposureSlider.value = String(state.flame.exposure);
-    this.flameIterationsLabel.textContent = `${(
-      state.flame.iterations / 1_000_000
-    ).toFixed(0)}M iterations`;
-    this.flameIterationsSlider.value = String(state.flame.iterations);
+    this.flameIterationsLabel.textContent = `${formatIterationCount(
+      state.flame.iterations,
+    )} iterations`;
+    // The slider carries a detent INDEX (fr-79p), not the raw count: a
+    // persisted/shared scene can hold a non-detent value (e.g. an old scene's
+    // 37M), so the thumb snaps to display at the nearest detent while state
+    // keeps the exact value until the user actually moves the slider.
+    this.flameIterationsSlider.value = String(
+      nearestFlameIterationDetentIndex(state.flame.iterations),
+    );
 
     this.flameGammaLabel.textContent = state.flame.gamma.toFixed(2);
     this.flameGammaSlider.value = String(state.flame.gamma);
@@ -1281,10 +1310,10 @@ export class Ui {
       iterationsBudget > 0
         ? Math.min(100, Math.floor((iterationsDone / iterationsBudget) * 100))
         : 100;
-    const done = (iterationsDone / 1_000_000).toFixed(1);
-    const budget = (iterationsBudget / 1_000_000).toFixed(1);
+    const done = formatIterationCount(iterationsDone);
+    const budget = formatIterationCount(iterationsBudget);
     this.flameProgress.classList.remove("flame-progress-estimating");
-    this.flameProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+    this.flameProgress.textContent = `${done} / ${budget} iterations (${pct}%)`;
   }
 
   /**

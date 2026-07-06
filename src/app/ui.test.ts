@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
-import { initialState, MAX_COLOR_GAMMA } from "./state";
+import {
+  FLAME_ITERATION_DETENTS,
+  initialState,
+  MAX_COLOR_GAMMA,
+} from "./state";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS, buildPaletteLUT } from "../fractal/palette";
 import { buildColorModeLUT } from "../fractal/color";
@@ -1407,12 +1411,34 @@ describe("Ui flame render controls", () => {
       "2.50×",
     );
 
+    // 42M is not itself a detent (fr-79p): its nearest in log space is the
+    // 5e7 detent (index 5), so the slider thumb snaps there for display while
+    // the label keeps showing the exact stored value.
     const iterationsSlider = document.getElementById(
       "flameIterationsSlider",
     ) as HTMLInputElement;
-    expect(iterationsSlider.value).toBe("42000000");
+    expect(iterationsSlider.value).toBe("5");
     expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
-      "42M iterations",
+      "42.0M iterations",
+    );
+  });
+
+  it("reflects a GPU-scale iteration budget in billions in the Quality label (fr-79p)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: {
+        ...initialState(true).flame,
+        iterations: 2_000_000_000,
+      },
+    });
+
+    expect(
+      (document.getElementById("flameIterationsSlider") as HTMLInputElement)
+        .value,
+    ).toBe("10");
+    expect(document.getElementById("flameIterationsLabel")?.textContent).toBe(
+      "2B iterations",
     );
   });
 
@@ -1430,7 +1456,7 @@ describe("Ui flame render controls", () => {
     expect(handlers.onFlameExposureInput).toHaveBeenCalledWith(1.75);
   });
 
-  it("reports the iterations slider's numeric value on input", () => {
+  it("reports the iteration count mapped from the slider's detent index on input (fr-79p)", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -1438,10 +1464,12 @@ describe("Ui flame render controls", () => {
     const slider = document.getElementById(
       "flameIterationsSlider",
     ) as HTMLInputElement;
-    slider.value = "5000000";
+    slider.value = "3"; // detent index 3 -> FLAME_ITERATION_DETENTS[3]
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(5_000_000);
+    expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(
+      FLAME_ITERATION_DETENTS[3],
+    );
   });
 
   it("reflects gamma, vibrancy, and supersample into their sliders and labels", () => {
@@ -1664,6 +1692,14 @@ describe("Ui.setFlameProgress", () => {
     ui.setFlameProgress(19_950_000, 20_000_000); // 99.75% — would round to 100.
     expect(document.getElementById("flameProgress")?.textContent).toContain(
       "(99%)",
+    );
+  });
+
+  it("formats a >= 1e9 budget in billions, done still in millions (fr-79p)", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(843_200_000, 2_000_000_000);
+    expect(document.getElementById("flameProgress")?.textContent).toBe(
+      "843.2M / 2B iterations (42%)",
     );
   });
 
