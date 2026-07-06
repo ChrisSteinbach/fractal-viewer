@@ -6,7 +6,7 @@ import {
   viewFlameHistogram,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
-import type { Mat4 } from "../fractal/flame";
+import type { FlameHistogram, Mat4 } from "../fractal/flame";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import {
   flameAccumBudgetBuckets,
@@ -1488,6 +1488,261 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 
     await drainAsync(scheduler); // let the restarted accumulation run to completion too.
     expect(destroyCalls).toBe(1); // still exactly once.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GPU progressive display downsample (fr-ee9): the optional
+// FlameAccumBackend.snapshotDisplay seam — a GPU backend's progressive
+// (not-yet-finished) due ticks prefer it over a full snapshot(), and the
+// finalFrameDisplayed latch that keeps the finished-frame adaptive display
+// correct even though those progressive ticks never refresh this.histogram.
+// Every fake backend below returns REAL promises, like the "GPU accumulation
+// backend" suite above, so these tests drive the session with
+// drainAsync/flushMicrotasks rather than the synchronous scheduler.drain().
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
+  it("takes the snapshotDisplay path (not snapshot) on a not-yet-finished due tick, landing in the expected shared slot; the finished tick still uses the full snapshot + adaptive estimate", async () => {
+    const frames = makeSharedFrames(8, 8);
+    let snapshotCalls = 0;
+    let snapshotDisplayCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => {
+        snapshotCalls++;
+        return createFlameHistogram(8, 8);
+      },
+      snapshotDisplay: async (out) => {
+        snapshotDisplayCalls++;
+        out.hits.fill(42);
+        out.maxHits = 42;
+        return out;
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    // Same 20,000,000-budget/8,000,000-GPU-chunk shape as the "GPU
+    // accumulation backend" suite's own equivalent test: three accumulate
+    // calls (8M/8M/4M), but only the FIRST (not finished, due — lastDownsampleAt
+    // was undefined) and the LAST (finished) chunks are ever "due" under a
+    // zero-step clock.
+    session.handle(
+      startCommand({
+        gpuPreference: "auto",
+        iterationsBudget: 20_000_000,
+        sharedFrames: frames,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(snapshotDisplayCalls).toBe(1); // the one progressive due tick.
+    expect(snapshotCalls).toBe(1); // the one finished due tick — never more.
+
+    const shared = sharedFrameEvents(events);
+    expect(shared).toHaveLength(2);
+    const progressiveEvent = shared[0];
+    expect(progressiveEvent.maxHits).toBe(42);
+    expect(Array.from(frames[progressiveEvent.slot].hits)).toEqual(
+      new Array(64).fill(42),
+    ); // the snapshotDisplay mock's own fill really landed in the named slot.
+
+    // The finished frame still runs the (synchronous, unchunked) adaptive
+    // density-estimation pass — fr-17t/fr-99z's "estimating" busy event,
+    // queued right before it — even though the progressive tick above never
+    // touched that codepath at all (it used snapshotDisplay, not
+    // rebuildDisplay).
+    expect(estimatingEvents(events)).toHaveLength(1);
+    const last2 = events.slice(-2);
+    expect(last2[0]).toEqual({ type: "estimating" });
+    expect(last2[1].type).toBe("sharedFrame");
+  });
+
+  it("restarts on CPU from scratch when the GPU backend's snapshotDisplay rejects on a progressive due tick", async () => {
+    let snapshotDisplayCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested.
+      snapshot: async () => createFlameHistogram(8, 8),
+      snapshotDisplay: async () => {
+        snapshotDisplayCalls++;
+        throw new Error("device lost during display downsample");
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(snapshotDisplayCalls).toBe(1);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // The one GPU due tick's snapshotDisplay rejected before ever reporting
+    // progress (unlike the mirrored snapshot-rejection test, whose accumulate
+    // succeeds and reports once before its failing due tick) — so the only
+    // progress event at all is the CPU restart's own finish, from scratch.
+    expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([40]);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0); // recovered, not surfaced as a fatal error.
+  });
+
+  it("produces the finished adaptive frame via the pending chunk when the budget is lowered below done mid-GPU-render, with FRESH (not stale/missing) data", async () => {
+    // Regression test for the stale-histogram hole (fr-ee9): a GPU backend's
+    // progressive due ticks never refresh this.histogram (they use
+    // snapshotDisplay instead), so setIterationsBudget's lowered-mid-render
+    // branch must NOT try to redisplay from it itself — it would either
+    // no-op (histogram still null) or, worse, silently show a stale frame
+    // from a PREVIOUS finish. The pending (already-scheduled) chunk's own
+    // budget-met entry bail is what has to fetch a fresh snapshot instead.
+    let snapshotCalls = 0;
+    let snapshotDisplayCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10 -> forces a second (pending) chunk.
+      snapshot: async () => {
+        snapshotCalls++;
+        // Uniform hits alone would tonemap identically regardless of the
+        // absolute count (density normalizes by the histogram's own max) —
+        // a distinct COLOR (green, via sumRGB) is what actually makes this
+        // call's tone-mapped image distinguishable from snapshotDisplay's
+        // (red) fill below.
+        const hist = createFlameHistogram(8, 8);
+        hist.hits.fill(10);
+        for (let i = 0; i < hist.sumRGB.length; i += 3) {
+          hist.sumRGB[i + 1] = 10; // pure green.
+        }
+        hist.maxHits = 10;
+        return hist;
+      },
+      snapshotDisplay: async (out) => {
+        snapshotDisplayCalls++;
+        out.hits.fill(10);
+        for (let i = 0; i < out.sumRGB.length; i += 3) {
+          out.sumRGB[i] = 10; // pure red — must never leak into the finished frame.
+        }
+        out.maxHits = 10;
+        return out;
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    scheduler.step(); // chunk 1: 10 done, not finished, due (first chunk) -> snapshotDisplay path.
+    await flushMicrotasks();
+
+    expect(snapshotDisplayCalls).toBe(1);
+    expect(snapshotCalls).toBe(0); // this.histogram is untouched by the progressive tick.
+    expect(progressEvents(events)).toHaveLength(1); // the progressive tick's own send.
+
+    session.handle({ type: "setIterationsBudget", iterations: 5 }); // below iterationsDone(10).
+    // GPU (not CPU), so the lowered branch does nothing itself — no new
+    // event yet; the already-scheduled chunk 2 is what will finish this.
+    expect(progressEvents(events)).toHaveLength(1);
+    expect(snapshotCalls).toBe(0);
+
+    scheduler.step(); // the already-scheduled chunk 2 -> the new budget-met entry bail.
+    await flushMicrotasks();
+
+    expect(snapshotCalls).toBe(1); // backend.snapshot() called exactly once, by the finish bail.
+    const last2 = events.slice(-2);
+    expect(last2[0]).toEqual({ type: "estimating" });
+    expect(last2[1].type).toBe("progress");
+    const finalProgress = progressEvents(events).at(-1)!;
+    expect(finalProgress.iterationsDone).toBe(10); // what actually accumulated, unchanged.
+    expect(finalProgress.iterationsBudget).toBe(5); // the new (already-met) target.
+
+    // Fresh, not stale/missing: the finished image (from backend.snapshot's
+    // green fill) must differ from the progressive tick's own image (from
+    // snapshotDisplay's red fill) — proving the finish bail genuinely fetched
+    // a NEW snapshot rather than reusing/leaking the progressive one.
+    const progressiveImage = Array.from(progressEvents(events)[0].image);
+    expect(Array.from(finalProgress.image)).not.toEqual(progressiveImage);
+  });
+
+  it("discards a stale in-flight snapshotDisplay when a restart supersedes it, without double-scheduling, and the new accumulation completes normally", async () => {
+    const events: FlameWorkerEvent[] = [];
+    const scheduler = stepScheduler();
+    let scheduleCalls = 0;
+    let snapshotDisplayCalls = 0;
+    let resolveFirstSnapshotDisplay:
+      ((value: FlameHistogram) => void) | undefined;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      snapshotDisplay: (out) => {
+        snapshotDisplayCalls++;
+        if (snapshotDisplayCalls === 1) {
+          // Held deliberately — resolved only after the restart below, to
+          // prove the stale continuation's eventual result is discarded.
+          return new Promise<FlameHistogram>((resolve) => {
+            resolveFirstSnapshotDisplay = resolve;
+          });
+        }
+        return Promise.resolve(out);
+      },
+      destroy: () => {},
+    };
+    const session = new FlameWorkerSession({
+      now: fakeClock(0),
+      schedule: (fn) => {
+        scheduleCalls++;
+        scheduler.schedule(fn);
+      },
+      emit: (event) => events.push(event),
+      createGpuBackend: async () => backend,
+    });
+
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 20_000_000 }),
+    );
+    expect(scheduleCalls).toBe(1); // start's ensureRunning scheduled chunk 1.
+    scheduler.step(); // runs chunk 1: backend creation, accumulate (not finished, due) -> the held snapshotDisplay call.
+    await flushMicrotasks();
+    expect(snapshotDisplayCalls).toBe(1); // confirms we're genuinely stuck mid-snapshotDisplay.
+
+    session.handle({ type: "setSupersample", supersample: 2 }); // supersedes it.
+    // The restart's OWN ensureRunning() (inside startAccumulation) no-ops —
+    // `running` is still true, since the stale runChunk call above hasn't
+    // returned yet — so this must not schedule a second chunk on its own.
+    expect(scheduleCalls).toBe(1);
+
+    resolveFirstSnapshotDisplay!(createFlameHistogram(8, 8)); // let the stale chunk's promise settle.
+    await flushMicrotasks();
+    // The stale continuation noticed it had been superseded and handed the
+    // loop off: exactly one NEW chunk scheduled for the new generation.
+    expect(scheduleCalls).toBe(2);
+
+    await drainAsync(scheduler);
+    // Reaches exactly 20,000,000 via the NEW generation's own accumulation —
+    // the discarded stale call never fed anything into it.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20_000_000);
+  });
+
+  it("produces a fresh finished adaptive frame each time: finish, raise budget, finish again (finalFrameDisplayed resets)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+    const estimatingAfterFirstFinish = estimatingEvents(events).length;
+    expect(estimatingAfterFirstFinish).toBeGreaterThan(0);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
+
+    session.handle({ type: "setIterationsBudget", iterations: 120 });
+    scheduler.drain();
+
+    // A second "estimating" event proves the adaptive pass genuinely re-ran
+    // for this second finish too — not just silently reusing whatever
+    // finalFrameDisplayed's latch left over from the first finish.
+    expect(estimatingEvents(events).length).toBeGreaterThan(
+      estimatingAfterFirstFinish,
+    );
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(120);
   });
 });
 

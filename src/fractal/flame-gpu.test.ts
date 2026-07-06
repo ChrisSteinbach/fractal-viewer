@@ -1,13 +1,16 @@
 import {
   CHAIN_STRIDE_BYTES,
   COLOR_FIXED_POINT_SCALE,
+  DOWNSAMPLE_PARAMS_BYTES,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
   MAX_SLOT_VARIATIONS,
   PARAMS_BYTES,
   SLOT_STRIDE_BYTES,
+  convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
+  packGpuDownsample,
   packGpuParams,
   packGpuSystem,
   planGpuDispatches,
@@ -667,5 +670,194 @@ describe("convertGpuHistogram", () => {
     const out = createFlameHistogram(3, 3);
     const words = new Uint32Array(2 * 2 * HIST_U32_PER_BUCKET);
     expect(() => convertGpuHistogram(words, 2, 2, out)).toThrow(RangeError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fr-ee9: GPU-side progressive display downsample — packGpuDownsample (the
+// pure kernel/weight-table packer) and convertGpuDisplayHistogram (the
+// readback converter). The WGSL itself (FLAME_GPU_DOWNSAMPLE_WGSL) is pinned
+// by the agreement harness (src/app/gpu-bench/), not here — see that
+// module's doc.
+// ---------------------------------------------------------------------------
+
+describe("packGpuDownsample", () => {
+  // Params element offsets (4-byte units), restated directly from
+  // flame-gpu.ts's DOWNSAMPLE_PARAMS_BYTES doc comment, independent of that
+  // module's own (private) offset constants — same "can't coincidentally
+  // agree with a matching mistake" reasoning as packGpuSystem's tests above.
+  const P_SRC_W = 0;
+  const P_SRC_H = 1;
+  const P_OUT_W = 2;
+  const P_OUT_H = 3;
+  const P_SCALE_X = 4;
+  const P_SCALE_Y = 5;
+  const P_RADIUS_X = 6;
+  const P_RADIUS_Y = 7;
+  const P_KERNEL_Y_OFFSET = 8;
+  const P_COL_WEIGHT_SUM_OFFSET = 9;
+
+  /** Independent restatement of downsampleFlame's phase/sigma/radius
+   * derivation (flame.ts) — the oracle packGpuDownsample's kernel values
+   * must agree with, computed here from scratch rather than imported. */
+  function expectedKernel(
+    scale: number,
+    filterRadius: number,
+  ): { phase: number; sigma: number; radius: number; values: number[] } {
+    const phase = 0.5 * (scale - 1);
+    const sigma = Math.max(filterRadius, 1e-3) * scale;
+    const radius = Math.max(1, Math.ceil(sigma * 3));
+    const values: number[] = [];
+    for (let k = -radius; k <= radius; k++) {
+      const d = k - phase;
+      values.push(Math.exp(-(d * d) / (2 * sigma * sigma)));
+    }
+    return { phase, sigma, radius, values };
+  }
+
+  it("writes srcW/srcH/outW/outH/scaleX/scaleY at their documented offsets", () => {
+    const packed = packGpuDownsample(20, 12, 10, 4, 0.4); // scaleX=2, scaleY=3.
+    expect(packed.params.byteLength).toBe(DOWNSAMPLE_PARAMS_BYTES);
+    const u32 = new Uint32Array(packed.params);
+    expect(u32[P_SRC_W]).toBe(20);
+    expect(u32[P_SRC_H]).toBe(12);
+    expect(u32[P_OUT_W]).toBe(10);
+    expect(u32[P_OUT_H]).toBe(4);
+    expect(u32[P_SCALE_X]).toBe(2);
+    expect(u32[P_SCALE_Y]).toBe(3);
+  });
+
+  it("computes kernelX matching downsampleFlame's phase/sigma/radius formula at an EVEN scale (half-cell phase)", () => {
+    const filterRadius = 0.4;
+    const packed = packGpuDownsample(8, 8, 4, 4, filterRadius); // scale 2, even.
+    const { phase, radius, values } = expectedKernel(2, filterRadius);
+    expect(phase).toBe(0.5); // the even-scale half-cell offset.
+    const u32 = new Uint32Array(packed.params);
+    expect(u32[P_RADIUS_X]).toBe(radius);
+    for (let k = 0; k < values.length; k++) {
+      expect(packed.weights[k]).toBeCloseTo(values[k], 5);
+    }
+  });
+
+  it("computes kernelY matching the same formula at an ODD scale (integer phase, no half-cell offset)", () => {
+    const filterRadius = 0.4;
+    const packed = packGpuDownsample(9, 9, 3, 3, filterRadius); // scale 3, odd.
+    const { phase, radius, values } = expectedKernel(3, filterRadius);
+    expect(phase).toBe(1); // the odd-scale integer offset — no phase kink.
+    const u32 = new Uint32Array(packed.params);
+    expect(u32[P_RADIUS_Y]).toBe(radius);
+    const kernelYOffset = u32[P_KERNEL_Y_OFFSET];
+    for (let k = 0; k < values.length; k++) {
+      expect(packed.weights[kernelYOffset + k]).toBeCloseTo(values[k], 5);
+    }
+  });
+
+  it("gives an interior column the full (unclipped) kernel sum reciprocal", () => {
+    const filterRadius = 0.4;
+    const packed = packGpuDownsample(40, 40, 20, 20, filterRadius); // scale 2.
+    const { values } = expectedKernel(2, filterRadius);
+    const fullSum = values.reduce((a, b) => a + b, 0);
+    const u32 = new Uint32Array(packed.params);
+    const colWeightSumOffset = u32[P_COL_WEIGHT_SUM_OFFSET];
+    // A column safely in the interior (far from both edges) sees every tap
+    // in bounds, so its reciprocal is exactly 1/fullSum.
+    expect(packed.weights[colWeightSumOffset + 10]).toBeCloseTo(1 / fullSum, 5);
+  });
+
+  it("gives an edge column a smaller weight sum (larger reciprocal) than an interior column", () => {
+    // A wide filterRadius against a small output so the leftmost column's
+    // kernel footprint genuinely spills past the source's left edge.
+    const packed = packGpuDownsample(20, 20, 10, 10, 2); // scale 2, wide kernel.
+    const u32 = new Uint32Array(packed.params);
+    const colWeightSumOffset = u32[P_COL_WEIGHT_SUM_OFFSET];
+    const edgeRecip = packed.weights[colWeightSumOffset + 0];
+    const interiorRecip = packed.weights[colWeightSumOffset + 5];
+    expect(edgeRecip).toBeGreaterThan(interiorRecip);
+  });
+
+  it("gives an edge row the same clipped-sum treatment as an edge column (Y axis)", () => {
+    const packed = packGpuDownsample(20, 20, 10, 10, 2);
+    const u32 = new Uint32Array(packed.params);
+    const rowWeightSumOffset = u32[P_COL_WEIGHT_SUM_OFFSET] + 10; // colWeightSumOffset + outW.
+    const edgeRecip = packed.weights[rowWeightSumOffset + 0];
+    const interiorRecip = packed.weights[rowWeightSumOffset + 5];
+    expect(edgeRecip).toBeGreaterThan(interiorRecip);
+  });
+
+  it("sizes the weights array as kernelX + kernelY + outW + outH", () => {
+    const outW = 6;
+    const outH = 5;
+    const packed = packGpuDownsample(12, 10, outW, outH, 0.4); // scaleX=2, scaleY=2.
+    const u32 = new Uint32Array(packed.params);
+    const radiusX = u32[P_RADIUS_X];
+    const radiusY = u32[P_RADIUS_Y];
+    const expectedLength = 2 * radiusX + 1 + (2 * radiusY + 1) + outW + outH;
+    expect(packed.weights.length).toBe(expectedLength);
+  });
+
+  it("passes through a scale-1 (no supersample) axis without degenerating", () => {
+    // scaleX = 1 (outW === srcW): downsampleFlame's own pass-through case —
+    // phase 0, sigma pinned to MIN_FILTER_SIGMA's floor.
+    const packed = packGpuDownsample(10, 20, 10, 10, 0.4); // scaleX=1, scaleY=2.
+    const u32 = new Uint32Array(packed.params);
+    expect(u32[P_SCALE_X]).toBe(1);
+    const { phase, radius, values } = expectedKernel(1, 0.4);
+    expect(phase).toBe(0);
+    expect(u32[P_RADIUS_X]).toBe(radius);
+    for (let k = 0; k < values.length; k++) {
+      expect(packed.weights[k]).toBeCloseTo(values[k], 5);
+    }
+  });
+});
+
+describe("convertGpuDisplayHistogram", () => {
+  it("copies interleaved [hits,r,g,b] into out.hits/out.sumRGB", () => {
+    const out = createFlameHistogram(2, 1);
+    const data = new Float32Array([5, 1, 2, 3, 9, 4, 5, 6]);
+    const hist = convertGpuDisplayHistogram(data, 2, 1, out);
+    expect(hist).toBe(out); // reused, not reallocated.
+    expect(Array.from(hist.hits)).toEqual([5, 9]);
+    expect(Array.from(hist.sumRGB)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("recomputes maxHits as the max over every converted bucket", () => {
+    const out = createFlameHistogram(2, 1);
+    const data = new Float32Array([5, 0, 0, 0, 999, 0, 0, 0]);
+    const hist = convertGpuDisplayHistogram(data, 2, 1, out);
+    expect(hist.maxHits).toBe(999);
+  });
+
+  it("fully overwrites a reused out histogram's stale nonzero buckets", () => {
+    const out = createFlameHistogram(2, 1);
+    out.hits[0] = 12345;
+    out.hits[1] = 6789;
+    out.sumRGB.fill(42);
+    out.maxHits = 12345;
+
+    const data = new Float32Array([7, 0, 0, 0, 0, 0, 0, 0]); // bucket 1 all-zero.
+    const hist = convertGpuDisplayHistogram(data, 2, 1, out);
+
+    expect(hist.hits[0]).toBe(7);
+    expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
+    expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(hist.maxHits).toBe(7);
+  });
+
+  it("throws RangeError naming both the actual and expected length on a data length mismatch", () => {
+    const out = createFlameHistogram(2, 2);
+    const data = new Float32Array(10);
+    expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(
+      RangeError,
+    );
+    expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(/\b10\b/);
+    expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(/\b16\b/); // 2*2*4.
+  });
+
+  it("throws RangeError when out has different dimensions than requested", () => {
+    const out = createFlameHistogram(3, 3);
+    const data = new Float32Array(2 * 2 * 4);
+    expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(
+      RangeError,
+    );
   });
 });

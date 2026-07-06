@@ -29,13 +29,18 @@
  */
 import {
   BYTES_PER_GPU_BUCKET,
+  DOWNSAMPLE_PARAMS_BYTES,
+  DOWNSAMPLE_WORKGROUP_SIZE,
+  FLAME_GPU_DOWNSAMPLE_WGSL,
   FLAME_GPU_KERNEL_WGSL,
   PARAMS_BYTES,
   PARAMS_ITERS_OFFSET_BYTES,
   WARMUP_ITERATIONS,
   WORKGROUP_SIZE,
+  convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
+  packGpuDownsample,
   packGpuParams,
   packGpuSystem,
   planGpuDispatches,
@@ -43,6 +48,16 @@ import {
 import { createFlameHistogram } from "../fractal/flame";
 import type { FlameHistogram } from "../fractal/flame";
 import type { FlameAccumBackend, GpuBackendRequest } from "./flame-worker-core";
+
+/** Bytes per display-resolution downsample bucket: interleaved f32 [hits, r,
+ * g, b] — see flame-gpu.ts's FLAME_GPU_DOWNSAMPLE_WGSL doc. */
+const DISPLAY_BUCKET_BYTES = 16;
+
+/** Smallest workgroup count covering `total` invocations at `size` per
+ * workgroup — used to size both downsample passes' 2D dispatches. */
+function ceilDiv(total: number, size: number): number {
+  return Math.ceil(total / size);
+}
 
 /**
  * Independent chains iterated in parallel — must be a multiple of
@@ -89,6 +104,20 @@ interface GpuFlameBackendInit {
   width: number;
   height: number;
   adapterLabel?: string;
+  /** fr-ee9: the progressive-display two-pass separable downsample's
+   * pipelines, buffers, and shared bind group — see `snapshotDisplay`'s doc. */
+  downsampleXPipeline: GPUComputePipeline;
+  downsampleYPipeline: GPUComputePipeline;
+  downsampleBindGroup: GPUBindGroup;
+  intermediateBuffer: GPUBuffer;
+  displayBuffer: GPUBuffer;
+  displayStagingBuffer: GPUBuffer;
+  downsampleWeightsBuffer: GPUBuffer;
+  downsampleParamsBuffer: GPUBuffer;
+  /** Display resolution — what `snapshotDisplay`'s `out` histogram must
+   * already be sized to (baked in at backend-creation time). */
+  displayWidth: number;
+  displayHeight: number;
 }
 
 /**
@@ -123,6 +152,26 @@ class GpuFlameBackend implements FlameAccumBackend {
    * unconditionally overwrites every bucket, so reuse is indistinguishable
    * from a fresh allocation to any caller. */
   private readonly outHistogram: FlameHistogram;
+  /** fr-ee9: the progressive-display two-pass downsample's pipelines,
+   * buffers, and shared bind group — see `snapshotDisplay`'s doc. */
+  private readonly downsampleXPipeline: GPUComputePipeline;
+  private readonly downsampleYPipeline: GPUComputePipeline;
+  private readonly downsampleBindGroup: GPUBindGroup;
+  private readonly intermediateBuffer: GPUBuffer;
+  private readonly displayBuffer: GPUBuffer;
+  private readonly displayStagingBuffer: GPUBuffer;
+  private readonly downsampleWeightsBuffer: GPUBuffer;
+  private readonly downsampleParamsBuffer: GPUBuffer;
+  private readonly displayWidth: number;
+  private readonly displayHeight: number;
+  private readonly displayBytes: number;
+  /** Dispatch geometry for the two downsample passes, precomputed once (both
+   * are fixed for the backend's whole lifetime): downsampleX covers (display
+   * width, accumulation height), downsampleY covers (display width, display
+   * height) — see FLAME_GPU_DOWNSAMPLE_WGSL's doc for why the two passes
+   * have different shapes. */
+  private readonly downsampleXWorkgroups: readonly [number, number];
+  private readonly downsampleYWorkgroups: readonly [number, number];
   /** The Params buffer's CURRENT `itersPerInvocation` field — starts at
    * {@link WARMUP_ITERATIONS} because that is the value the warmup dispatch
    * (run by `createGpuFlameBackend`, before this instance exists) actually
@@ -152,6 +201,26 @@ class GpuFlameBackend implements FlameAccumBackend {
     this.adapterLabel = init.adapterLabel;
     this.histBytes = init.width * init.height * BYTES_PER_GPU_BUCKET;
     this.outHistogram = createFlameHistogram(init.width, init.height);
+    this.downsampleXPipeline = init.downsampleXPipeline;
+    this.downsampleYPipeline = init.downsampleYPipeline;
+    this.downsampleBindGroup = init.downsampleBindGroup;
+    this.intermediateBuffer = init.intermediateBuffer;
+    this.displayBuffer = init.displayBuffer;
+    this.displayStagingBuffer = init.displayStagingBuffer;
+    this.downsampleWeightsBuffer = init.downsampleWeightsBuffer;
+    this.downsampleParamsBuffer = init.downsampleParamsBuffer;
+    this.displayWidth = init.displayWidth;
+    this.displayHeight = init.displayHeight;
+    this.displayBytes =
+      init.displayWidth * init.displayHeight * DISPLAY_BUCKET_BYTES;
+    this.downsampleXWorkgroups = [
+      ceilDiv(init.displayWidth, DOWNSAMPLE_WORKGROUP_SIZE),
+      ceilDiv(init.height, DOWNSAMPLE_WORKGROUP_SIZE),
+    ];
+    this.downsampleYWorkgroups = [
+      ceilDiv(init.displayWidth, DOWNSAMPLE_WORKGROUP_SIZE),
+      ceilDiv(init.displayHeight, DOWNSAMPLE_WORKGROUP_SIZE),
+    ];
 
     // Fatal only: a validation error in one dispatch does NOT resolve this
     // (it surfaces via onuncapturederror instead, logged but non-fatal) —
@@ -241,6 +310,52 @@ class GpuFlameBackend implements FlameAccumBackend {
     return this.outHistogram;
   }
 
+  /**
+   * fr-ee9: the progressive-display downsample — runs the two-pass separable
+   * Gaussian filter (`FLAME_GPU_DOWNSAMPLE_WGSL`) over the RESIDENT `hist`
+   * buffer (no full-histogram readback) and reads back only a
+   * `displayWidth x displayHeight` f32 histogram into `out`. Both dispatches
+   * go in ONE compute pass: WebGPU orders a pass's dispatches so each one
+   * observes the prior dispatch's storage writes, so downsampleY always sees
+   * downsampleX's freshly-written `intermediate` buffer, never a stale one.
+   */
+  async snapshotDisplay(out: FlameHistogram): Promise<FlameHistogram> {
+    if (this.lost) {
+      throw new Error("Flame GPU: device is lost, cannot snapshot display");
+    }
+    const encoder = this.device.createCommandEncoder({
+      label: "flame-gpu downsample display",
+    });
+    const pass = encoder.beginComputePass({
+      label: "flame-gpu downsample pass",
+    });
+    pass.setBindGroup(0, this.downsampleBindGroup);
+    pass.setPipeline(this.downsampleXPipeline);
+    pass.dispatchWorkgroups(...this.downsampleXWorkgroups);
+    pass.setPipeline(this.downsampleYPipeline);
+    pass.dispatchWorkgroups(...this.downsampleYWorkgroups);
+    pass.end();
+    encoder.copyBufferToBuffer(
+      this.displayBuffer,
+      0,
+      this.displayStagingBuffer,
+      0,
+      this.displayBytes,
+    );
+    this.device.queue.submit([encoder.finish()]);
+    await this.displayStagingBuffer.mapAsync(GPUMapMode.READ);
+    // Convert BEFORE unmap() — same reason as snapshot()'s own readback above.
+    const data = new Float32Array(this.displayStagingBuffer.getMappedRange());
+    convertGpuDisplayHistogram(
+      data,
+      this.displayWidth,
+      this.displayHeight,
+      out,
+    );
+    this.displayStagingBuffer.unmap();
+    return out;
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -250,6 +365,11 @@ class GpuFlameBackend implements FlameAccumBackend {
     this.chainsBuffer.destroy();
     this.histBuffer.destroy();
     this.stagingBuffer.destroy();
+    this.intermediateBuffer.destroy();
+    this.displayBuffer.destroy();
+    this.displayStagingBuffer.destroy();
+    this.downsampleWeightsBuffer.destroy();
+    this.downsampleParamsBuffer.destroy();
     this.device.destroy();
   }
 }
@@ -466,6 +586,144 @@ export async function createGpuFlameBackend(
     ],
   });
 
+  // fr-ee9: the progressive-display two-pass separable downsample — built
+  // once per backend (display dims + filter radius are fixed for the whole
+  // accumulation), driven by GpuFlameBackend.snapshotDisplay() on every
+  // progressive redisplay tick instead of a full histogram readback + CPU
+  // downsampleFlame. See flame-gpu.ts's FLAME_GPU_DOWNSAMPLE_WGSL doc.
+  const packedDownsample = packGpuDownsample(
+    request.width,
+    request.height,
+    request.displayWidth,
+    request.displayHeight,
+    request.progressiveFilterRadius,
+  );
+
+  const downsampleParamsBuffer = device.createBuffer({
+    label: "flame-gpu downsample params",
+    size: DOWNSAMPLE_PARAMS_BYTES,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(downsampleParamsBuffer, 0, packedDownsample.params);
+
+  const downsampleWeightsBuffer = device.createBuffer({
+    label: "flame-gpu downsample weights",
+    size: packedDownsample.weights.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(
+    downsampleWeightsBuffer,
+    0,
+    packedDownsample.weights,
+  );
+
+  // intermediate: one row per SOURCE row, one column per OUTPUT column (see
+  // downsampleX's doc) — outW * srcH * 16 B, always <= the already-limit-
+  // checked hist buffer's 32 B * srcW * srcH (since srcW >= outW), so no new
+  // device-limit guard is needed here (see the fr-ee9 brief's Part 2 note).
+  const intermediateBuffer = device.createBuffer({
+    label: "flame-gpu downsample intermediate",
+    size: request.displayWidth * request.height * DISPLAY_BUCKET_BYTES,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const displayBytes =
+    request.displayWidth * request.displayHeight * DISPLAY_BUCKET_BYTES;
+  const displayBuffer = device.createBuffer({
+    label: "flame-gpu downsample display",
+    size: displayBytes,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  });
+  // ONE reusable staging buffer for every snapshotDisplay() readback over
+  // this backend's whole lifetime — same rationale as the accumulate
+  // histogram's own `stagingBuffer` above.
+  const displayStagingBuffer = device.createBuffer({
+    label: "flame-gpu downsample display staging",
+    size: displayBytes,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  });
+
+  const downsampleBindGroupLayout = device.createBindGroupLayout({
+    label: "flame-gpu downsample bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+    ],
+  });
+  // ONE explicit layout shared by both downsample pipelines, same
+  // "auto layouts can't share a bind group across pipelines" reasoning as
+  // the accumulate/warmup pipeline pair above — downsampleY must read the
+  // exact `intermediate` buffer downsampleX just wrote.
+  const downsamplePipelineLayout = device.createPipelineLayout({
+    label: "flame-gpu downsample pipeline layout",
+    bindGroupLayouts: [downsampleBindGroupLayout],
+  });
+
+  const downsampleShaderModule = device.createShaderModule({
+    label: "flame-gpu downsample kernel",
+    code: FLAME_GPU_DOWNSAMPLE_WGSL,
+  });
+  const downsampleCompilationInfo =
+    await downsampleShaderModule.getCompilationInfo();
+  const downsampleErrors = downsampleCompilationInfo.messages.filter(
+    (m) => m.type === "error",
+  );
+  if (downsampleErrors.length > 0) {
+    throw new Error(
+      `Flame GPU: downsample WGSL compilation failed:\n${downsampleErrors
+        .map((m) => `  ${m.lineNum}:${m.linePos}: ${m.message}`)
+        .join("\n")}`,
+    );
+  }
+
+  const downsampleXPipeline = device.createComputePipeline({
+    label: "flame-gpu downsampleX pipeline",
+    layout: downsamplePipelineLayout,
+    compute: { module: downsampleShaderModule, entryPoint: "downsampleX" },
+  });
+  const downsampleYPipeline = device.createComputePipeline({
+    label: "flame-gpu downsampleY pipeline",
+    layout: downsamplePipelineLayout,
+    compute: { module: downsampleShaderModule, entryPoint: "downsampleY" },
+  });
+
+  // binding 1 reuses the accumulate pipeline's own `histBuffer` (created
+  // above) as a read-only resource — the whole point of fr-ee9 is running
+  // the downsample over that RESIDENT buffer, never reading it back in full.
+  const downsampleBindGroup = device.createBindGroup({
+    label: "flame-gpu downsample bind group",
+    layout: downsampleBindGroupLayout,
+    entries: [
+      { binding: 0, resource: { buffer: downsampleParamsBuffer } },
+      { binding: 1, resource: { buffer: histBuffer } },
+      { binding: 2, resource: { buffer: downsampleWeightsBuffer } },
+      { binding: 3, resource: { buffer: intermediateBuffer } },
+      { binding: 4, resource: { buffer: displayBuffer } },
+    ],
+  });
+
   // Run every chain forward WARMUP_ITERATIONS steps without recording (the
   // PLOT=0 pipeline), BEFORE this factory resolves — the GPU counterpart of
   // accumulateFlame's fresh-start warmup loop, so the session's very first
@@ -505,5 +763,15 @@ export async function createGpuFlameBackend(
     width: request.width,
     height: request.height,
     adapterLabel,
+    downsampleXPipeline,
+    downsampleYPipeline,
+    downsampleBindGroup,
+    intermediateBuffer,
+    displayBuffer,
+    displayStagingBuffer,
+    downsampleWeightsBuffer,
+    downsampleParamsBuffer,
+    displayWidth: request.displayWidth,
+    displayHeight: request.displayHeight,
   });
 }

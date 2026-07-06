@@ -23,6 +23,7 @@ import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { transformColors } from "../../fractal/color";
 import {
   accumulateFlame,
+  createFlameHistogram,
   downsampleFlame,
   tonemapFlame,
   DEFAULT_GAMMA_THRESHOLD,
@@ -43,6 +44,7 @@ import {
   DEFAULT_FLAME_VIBRANCY,
 } from "../state";
 import { createGpuFlameBackend } from "../flame-gpu-backend";
+import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
@@ -99,11 +101,58 @@ interface ComparisonMetrics {
   pass: boolean;
 }
 
+/**
+ * fr-ee9: the display-downsample agreement leg's metrics — comparing the GPU
+ * `snapshotDisplay` kernel's output against `downsampleFlame` fed the exact
+ * SAME resident histogram (see `compareDisplayDownsample`'s doc). An
+ * EXACTNESS check modulo f32 rounding, not a statistical one like
+ * {@link ComparisonMetrics} — hence the much tighter tolerances `pass` above
+ * applies.
+ */
+interface DisplayDownsampleMetrics {
+  /** Largest |gpu - cpu| observed over every `hits` bucket. */
+  maxAbsHitsError: number;
+  /** Largest |gpu - cpu| observed over every `sumRGB` channel. */
+  maxAbsColorError: number;
+  /** |gpu.maxHits - cpu.maxHits| / cpu.maxHits (or |gpu.maxHits| when
+   * cpu.maxHits is exactly 0). */
+  maxHitsRelError: number;
+  /** Every hits/sumRGB bucket within `max(1e-6, 1e-4 * max(|cpu|, 1))`, AND
+   * `maxHitsRelError <= 1e-4`. */
+  pass: boolean;
+}
+
+/**
+ * fr-ee9's acceptance-evidence measurement: how much cheaper a progressive
+ * redisplay tick is with the new resident-buffer downsample
+ * (`snapshotDisplay`, readback + convert already included) than with the old
+ * full-histogram-readback path (`snapshot` + CPU `downsampleFlame`) — see
+ * `measureRedisplayCost`'s doc.
+ */
+interface RedisplayCostMetrics {
+  /** Mean ms of `snapshot()` (readback + convert already included) + CPU
+   * `downsampleFlame`, over several reps. */
+  oldMs: number;
+  /** Mean ms of `snapshotDisplay()` (readback + convert already included),
+   * over the same number of reps. */
+  newMs: number;
+  /** `newMs / oldMs` — the new path's cost as a fraction of the old path's;
+   * fr-ee9's whole point is this landing well under 1. */
+  ratio: number;
+}
+
 interface ScenarioResultRecord {
   name: string;
   cpu: TimedResult;
   gpu: TimedGpuResult | SkippedResult;
   comparison: ComparisonMetrics | SkippedResult;
+  /** fr-ee9: the display-downsample agreement leg — see
+   * `DisplayDownsampleMetrics`'s doc. Skipped under the exact same condition
+   * as `comparison` (no GPU backend at all this run). */
+  displayDownsample: DisplayDownsampleMetrics | SkippedResult;
+  /** fr-ee9: see `RedisplayCostMetrics`'s doc — this scenario's measured
+   * redisplay-cost ratio, the bead's acceptance evidence. */
+  redisplayCost: RedisplayCostMetrics | SkippedResult;
 }
 
 interface BenchResults {
@@ -111,10 +160,19 @@ interface BenchResults {
   timestamp: string;
   adapter: BenchAdapterInfo | null;
   scenarios: ScenarioResultRecord[];
-  /** "fail" iff any scenario's `comparison.pass` is `false`; "pass"
-   * otherwise — including vacuously, before any scenario has run, or when
-   * every scenario's comparison was skipped (no WebGPU in this browser: see
-   * `computeAgreement`'s doc for why that is deliberately NOT a failure). */
+  /** fr-ee9: a standalone ss=1 (no supersample) display-downsample agreement
+   * check — every `scenarios` entry runs at the same ss=2 accumulation (see
+   * `ACCUM_WIDTH`/`ACCUM_HEIGHT`), so this is the only leg exercising
+   * `downsampleFlame`'s (and the GPU kernel's) scale-1 pass-through path —
+   * see `runSs1DisplayDownsampleCheck`'s doc.
+   */
+  ss1DisplayDownsample: DisplayDownsampleMetrics | SkippedResult;
+  /** "fail" iff any scenario's `comparison.pass`/`displayDownsample.pass`, or
+   * the standalone `ss1DisplayDownsample.pass`, is `false`; "pass" only once
+   * every one of those has actually run and all passed — including
+   * vacuously "skipped" before any scenario has run, or when every GPU leg
+   * was skipped (no WebGPU in this browser: see `computeAgreement`'s doc for
+   * why that is deliberately NOT a failure). */
   agreement: "pass" | "fail" | "skipped";
 }
 
@@ -202,7 +260,10 @@ const ACCUM_WIDTH = DISPLAY_WIDTH * SUPERSAMPLE;
 const ACCUM_HEIGHT = DISPLAY_HEIGHT * SUPERSAMPLE;
 
 const CPU_CHUNK_ITERATIONS = 2_000_000;
-const DOWNSAMPLE_FILTER_RADIUS = 0.4;
+// Downsample filter radius: imported FLAME_FILTER_RADIUS (flame-worker-core.ts)
+// rather than a locally-redeclared copy, so this harness can never silently
+// drift from the value production actually blurs progressive frames with —
+// see that export's own doc.
 
 /** The app's default flame tone-map (state.ts) — see FlameParams' doc. */
 const TONEMAP_PARAMS: TonemapParams = {
@@ -319,6 +380,9 @@ function toGpuBackendRequest(
     width: ACCUM_WIDTH,
     height: ACCUM_HEIGHT,
     seed: SEED,
+    displayWidth: DISPLAY_WIDTH,
+    displayHeight: DISPLAY_HEIGHT,
+    progressiveFilterRadius: FLAME_FILTER_RADIUS,
   };
 }
 
@@ -515,6 +579,23 @@ async function runGpuTimed(
   }
 }
 
+/** {@link runGpuEqualN}'s result. */
+interface GpuEqualNResult {
+  histogram: FlameHistogram;
+  /**
+   * fr-ee9: the SAME backend's own `snapshotDisplay()` output, taken right
+   * after `histogram` (no further `accumulate()` calls in between — both
+   * read the identical resident buffer). `undefined` only if this backend
+   * has no `snapshotDisplay` (shouldn't happen for a production GPU backend
+   * — `createGpuFlameBackend` always builds one — but this function stays
+   * honest about the interface's optionality rather than asserting it).
+   */
+  gpuDisplayDownsample?: FlameHistogram;
+  /** fr-ee9: see {@link measureRedisplayCost}'s doc; `undefined` under the
+   * same condition as `gpuDisplayDownsample`. */
+  redisplayCost?: RedisplayCostMetrics;
+}
+
 /**
  * Equal-N comparison run: a FRESH backend (independent of `runGpuTimed`'s),
  * driven by exactly {@link EQUAL_N_CALLS} calls of
@@ -527,12 +608,19 @@ async function runGpuTimed(
  * way to `main`'s top-level catch as a genuine `__BENCH_ERROR__` — this is
  * NOT downgraded to a graceful `{ skipped }`, unlike a missing/failed
  * backend, because it signals a real bug rather than an absent capability.
+ *
+ * fr-ee9: also captures the display-downsample agreement leg's GPU side and
+ * the redisplay-cost bench, both against this SAME accumulated backend
+ * before it is destroyed — see `GpuEqualNResult`'s doc. `runScenario` builds
+ * the CPU-oracle side (a `downsampleFlame` call it needs anyway for its own
+ * tone-mapped-image comparison) and does the actual comparing, so the same
+ * `downsampleFlame` call is never made twice.
  */
 async function runGpuEqualN(
   def: ScenarioDef,
   projection: Mat4,
   onProgress?: ProgressCallback,
-): Promise<{ histogram: FlameHistogram } | SkippedResult> {
+): Promise<GpuEqualNResult | SkippedResult> {
   let backend: FlameAccumBackend;
   try {
     backend = await createGpuFlameBackend(toGpuBackendRequest(def, projection));
@@ -557,7 +645,17 @@ async function runGpuEqualN(
       onProgress?.(iterations / (ms / 1000), iterations);
     }
     const histogram = await backend.snapshot();
-    return { histogram };
+
+    let gpuDisplayDownsample: FlameHistogram | undefined;
+    let redisplayCost: RedisplayCostMetrics | undefined;
+    if (backend.snapshotDisplay) {
+      gpuDisplayDownsample = await backend.snapshotDisplay(
+        createFlameHistogram(DISPLAY_WIDTH, DISPLAY_HEIGHT),
+      );
+      redisplayCost = (await measureRedisplayCost(backend)) ?? undefined;
+    }
+
+    return { histogram, gpuDisplayDownsample, redisplayCost };
   } finally {
     backend.destroy();
   }
@@ -624,29 +722,144 @@ function passesAgreement(
   );
 }
 
+/** Per-bucket tolerance for the fr-ee9 display-downsample exactness check —
+ * `max(1e-6, 1e-4 * max(|cpu|, 1))`, per the bead's brief. */
+function displayDownsampleTolerance(cpuValue: number): number {
+  return Math.max(1e-6, 1e-4 * Math.max(Math.abs(cpuValue), 1));
+}
+
 /**
- * Roll every scenario's `comparison` up into one verdict:
+ * fr-ee9's display-downsample agreement leg: compares the GPU
+ * `snapshotDisplay` kernel's output against `downsampleFlame` fed the exact
+ * SAME resident histogram (both `gpu` and `cpu` here are downsampled from
+ * the same `backend.snapshot()` readback — see `GpuEqualNResult`'s doc) — an
+ * EXACTNESS check modulo f32 rounding, NOT a statistical one like
+ * `passesAgreement`'s tone-mapped-image MAE/bias thresholds (which pin
+ * equal-N ACCUMULATION agreement instead, across two independently-run
+ * accumulations), so tight per-bucket tolerances are valid here.
+ */
+function compareDisplayDownsample(
+  gpu: FlameHistogram,
+  cpu: FlameHistogram,
+): DisplayDownsampleMetrics {
+  let maxAbsHitsError = 0;
+  let withinTolerance = true;
+  for (let i = 0; i < gpu.hits.length; i++) {
+    const err = Math.abs(gpu.hits[i] - cpu.hits[i]);
+    if (err > maxAbsHitsError) maxAbsHitsError = err;
+    if (err > displayDownsampleTolerance(cpu.hits[i])) withinTolerance = false;
+  }
+  let maxAbsColorError = 0;
+  for (let i = 0; i < gpu.sumRGB.length; i++) {
+    const err = Math.abs(gpu.sumRGB[i] - cpu.sumRGB[i]);
+    if (err > maxAbsColorError) maxAbsColorError = err;
+    if (err > displayDownsampleTolerance(cpu.sumRGB[i])) {
+      withinTolerance = false;
+    }
+  }
+  const maxHitsRelError =
+    cpu.maxHits !== 0
+      ? Math.abs(gpu.maxHits - cpu.maxHits) / cpu.maxHits
+      : Math.abs(gpu.maxHits);
+  return {
+    maxAbsHitsError,
+    maxAbsColorError,
+    maxHitsRelError,
+    pass: withinTolerance && maxHitsRelError <= 1e-4,
+  };
+}
+
+/** Reps averaged by {@link measureRedisplayCost} — enough to smooth out a
+ * stray GC pause or driver hiccup without materially lengthening the bench. */
+const REDISPLAY_COST_REPS = 5;
+
+/**
+ * fr-ee9's acceptance-evidence measurement: how much cheaper a progressive
+ * redisplay tick is with the new resident-buffer downsample
+ * (`snapshotDisplay` — GPU dispatch + readback + convert already included)
+ * than with the OLD full-histogram-readback path (`snapshot` — readback +
+ * convert already included — followed by a CPU `downsampleFlame` pass).
+ * Both are timed against the SAME already-accumulated `backend` (no further
+ * `accumulate()` calls in between, or between the two loops below), so
+ * neither side's timing is skewed by doing more or less actual accumulation
+ * work — the ratio isolates the redisplay mechanism's own cost. Returns
+ * `null` when `backend` has no `snapshotDisplay` (see `GpuEqualNResult`'s
+ * doc for when that can happen).
+ */
+async function measureRedisplayCost(
+  backend: FlameAccumBackend,
+): Promise<RedisplayCostMetrics | null> {
+  if (!backend.snapshotDisplay) return null;
+  const snapshotDisplay = backend.snapshotDisplay.bind(backend);
+  const oldOut = createFlameHistogram(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+  const newOut = createFlameHistogram(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+
+  let oldMs = 0;
+  for (let i = 0; i < REDISPLAY_COST_REPS; i++) {
+    const t0 = performance.now();
+    const full = await backend.snapshot();
+    downsampleFlame(
+      full,
+      DISPLAY_WIDTH,
+      DISPLAY_HEIGHT,
+      FLAME_FILTER_RADIUS,
+      oldOut,
+    );
+    oldMs += performance.now() - t0;
+  }
+
+  let newMs = 0;
+  for (let i = 0; i < REDISPLAY_COST_REPS; i++) {
+    const t0 = performance.now();
+    await snapshotDisplay(newOut);
+    newMs += performance.now() - t0;
+  }
+
+  oldMs /= REDISPLAY_COST_REPS;
+  newMs /= REDISPLAY_COST_REPS;
+  return { oldMs, newMs, ratio: newMs / oldMs };
+}
+
+/**
+ * Roll every scenario's `comparison`/`displayDownsample`, plus the standalone
+ * `ss1DisplayDownsample` check, up into one verdict:
  *
- * - `"fail"`: at least one scenario actually RAN its comparison and did not
- *   clear the thresholds — the kernel and its CPU oracle disagree.
- * - `"pass"`: at least one comparison ran and every one that ran passed.
- * - `"skipped"`: NO comparison ran at all (no WebGPU in this browser, or
- *   every GPU run failed). Deliberately its own state rather than a vacuous
- *   "pass": an agreement check that silently checked nothing must never
- *   read as green — a CI box that loses WebGPU (a flag change, a busted
- *   SwiftShader) would otherwise keep reporting success while pinning
- *   nothing. `scripts/gpu-flame-bench.mjs` exits non-zero on BOTH "fail"
- *   and "skipped" for exactly that reason; a human on a non-WebGPU browser
- *   (e.g. benchmarking a phone's CPU side) just sees the honest label.
+ * - `"fail"`: at least one of those actually RAN and did not clear its
+ *   thresholds — the kernel and its CPU oracle disagree.
+ * - `"pass"`: at least one scenario's `comparison` ran, at least one
+ *   scenario's `displayDownsample` ran, AND `ss1DisplayDownsample` ran —
+ *   and every one of those that ran passed.
+ * - `"skipped"`: nothing to fail, but not everything above ran either (no
+ *   WebGPU in this browser, every GPU run failed, or the full sweep — every
+ *   scenario plus the ss=1 check — hasn't finished yet). Deliberately its
+ *   own state rather than a vacuous "pass": an agreement check that
+ *   silently checked nothing must never read as green — a CI box that loses
+ *   WebGPU (a flag change, a busted SwiftShader) would otherwise keep
+ *   reporting success while pinning nothing. `scripts/gpu-flame-bench.mjs`
+ *   exits non-zero on BOTH "fail" and "skipped" for exactly that reason; a
+ *   human on a non-WebGPU browser (e.g. benchmarking a phone's CPU side)
+ *   just sees the honest label.
  */
 function computeAgreement(
   scenarios: ScenarioResultRecord[],
+  ss1: DisplayDownsampleMetrics | SkippedResult,
 ): "pass" | "fail" | "skipped" {
-  const ran = scenarios.filter((s) => "pass" in s.comparison);
-  if (ran.some((s) => "pass" in s.comparison && !s.comparison.pass)) {
+  const ranImage = scenarios.filter((s) => "pass" in s.comparison);
+  const ranDisplay = scenarios.filter((s) => "pass" in s.displayDownsample);
+  const ss1Ran = "pass" in ss1;
+  const anyImageFail = ranImage.some(
+    (s) => "pass" in s.comparison && !s.comparison.pass,
+  );
+  const anyDisplayFail = ranDisplay.some(
+    (s) => "pass" in s.displayDownsample && !s.displayDownsample.pass,
+  );
+  const ss1Fail = ss1Ran && !ss1.pass;
+  if (anyImageFail || anyDisplayFail || ss1Fail) {
     return "fail";
   }
-  return ran.length > 0 ? "pass" : "skipped";
+  return ranImage.length > 0 && ranDisplay.length > 0 && ss1Ran
+    ? "pass"
+    : "skipped";
 }
 
 // ---------------------------------------------------------------------------
@@ -788,14 +1001,18 @@ async function runScenario(
     cpuHist,
     DISPLAY_WIDTH,
     DISPLAY_HEIGHT,
-    DOWNSAMPLE_FILTER_RADIUS,
+    FLAME_FILTER_RADIUS,
   );
   const cpuImage = tonemapFlame(cpuDisplay, TONEMAP_PARAMS);
   drawImage(dom.cpuCanvas, cpuImage);
 
   let comparison: ComparisonMetrics | SkippedResult;
+  let displayDownsample: DisplayDownsampleMetrics | SkippedResult;
+  let redisplayCost: RedisplayCostMetrics | SkippedResult;
   if ("skipped" in gpuTimed) {
     comparison = { skipped: gpuTimed.skipped };
+    displayDownsample = { skipped: gpuTimed.skipped };
+    redisplayCost = { skipped: gpuTimed.skipped };
   } else {
     setStatus(dom, "equal-N: gpu…");
     activity.setState("gpu", accumulatingLabel("gpu", NaN));
@@ -804,12 +1021,19 @@ async function runScenario(
     });
     if ("skipped" in gpuEqualN) {
       comparison = { skipped: gpuEqualN.skipped };
+      displayDownsample = { skipped: gpuEqualN.skipped };
+      redisplayCost = { skipped: gpuEqualN.skipped };
     } else {
+      // fr-ee9: this IS the CPU oracle side of the display-downsample
+      // agreement leg below (downsampleFlame fed the GPU's own resident
+      // histogram) — computed once here for the existing tone-mapped-image
+      // comparison, then reused for `compareDisplayDownsample` rather than
+      // calling downsampleFlame on the same input a second time.
       const gpuDisplay = downsampleFlame(
         gpuEqualN.histogram,
         DISPLAY_WIDTH,
         DISPLAY_HEIGHT,
-        DOWNSAMPLE_FILTER_RADIUS,
+        FLAME_FILTER_RADIUS,
       );
       const gpuImage = tonemapFlame(gpuDisplay, TONEMAP_PARAMS);
       drawImage(dom.gpuCanvas, gpuImage);
@@ -828,6 +1052,12 @@ async function runScenario(
         maxHitsGpu: gpuEqualN.histogram.maxHits,
         pass: passesAgreement(diff.maeRGB, diff.biasRGB),
       };
+      displayDownsample = gpuEqualN.gpuDisplayDownsample
+        ? compareDisplayDownsample(gpuEqualN.gpuDisplayDownsample, gpuDisplay)
+        : { skipped: "backend has no snapshotDisplay" };
+      redisplayCost = gpuEqualN.redisplayCost ?? {
+        skipped: "backend has no snapshotDisplay",
+      };
     }
   }
 
@@ -836,11 +1066,94 @@ async function runScenario(
     cpu: cpuTimed,
     gpu: gpuTimed,
     comparison,
+    displayDownsample,
+    redisplayCost,
   };
   setStatus(dom, "done");
   activity.setState("idle", "Done");
   dom.pre.textContent = JSON.stringify(result, null, 2);
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Standalone ss=1 display-downsample check (fr-ee9)
+// ---------------------------------------------------------------------------
+
+/** Small enough to accumulate and read back quickly — this check only needs
+ * to exercise the ss=1 (scale-1, no-supersample) codepath, not produce a
+ * representative-quality image. */
+const SS1_WIDTH = 240;
+const SS1_HEIGHT = 135;
+const SS1_ITERATIONS = 4_000_000;
+
+/**
+ * fr-ee9's ss=1 (no supersample) display-downsample agreement check,
+ * standalone from the per-scenario legs above: every `SCENARIOS` entry runs
+ * at the same fixed ss=2 accumulation (`ACCUM_WIDTH`/`ACCUM_HEIGHT`, both
+ * `DISPLAY_WIDTH`/`HEIGHT * SUPERSAMPLE`), so none of them ever exercises
+ * `downsampleFlame`'s (and the mirrored GPU kernel's) scale-1 pass-through
+ * path — phase pinned to 0, sigma pinned to its `MIN_FILTER_SIGMA` floor
+ * (see flame.ts's `downsampleFlame` doc). Reworking every `ScenarioDef` to
+ * carry its own supersample factor just for this would be a much bigger
+ * change than the bead calls for, so this runs one small, cheap,
+ * independent accumulation at `SS1_WIDTH x SS1_HEIGHT` (accumulation ===
+ * display resolution) using the first scenario's system, purely to exercise
+ * that path — not a timed/visual comparison the way the scenarios above are.
+ */
+async function runSs1DisplayDownsampleCheck(): Promise<
+  DisplayDownsampleMetrics | SkippedResult
+> {
+  const def = SCENARIOS[0];
+  const projection = buildProjection(
+    SS1_WIDTH,
+    SS1_HEIGHT,
+    def.cameraPos,
+    def.lookAt,
+  );
+  let backend: FlameAccumBackend;
+  try {
+    backend = await createGpuFlameBackend({
+      transforms: def.transforms,
+      finalTransform: def.finalTransform,
+      order: def.symmetry.order,
+      axis: def.symmetry.axis,
+      paletteId: def.paletteId,
+      projection,
+      width: SS1_WIDTH,
+      height: SS1_HEIGHT,
+      seed: SEED,
+      displayWidth: SS1_WIDTH,
+      displayHeight: SS1_HEIGHT,
+      progressiveFilterRadius: FLAME_FILTER_RADIUS,
+    });
+  } catch (e) {
+    return { skipped: describeError(e) };
+  }
+  try {
+    if (!backend.snapshotDisplay) {
+      return { skipped: "backend has no snapshotDisplay" };
+    }
+    const retired = await backend.accumulate(SS1_ITERATIONS);
+    if (retired < SS1_ITERATIONS) {
+      throw new Error(
+        `[gpu-bench] ss=1 check: backend.accumulate(${SS1_ITERATIONS}) retired ` +
+          `only ${retired} iterations`,
+      );
+    }
+    const full = await backend.snapshot();
+    const gpuDisplay = await backend.snapshotDisplay(
+      createFlameHistogram(SS1_WIDTH, SS1_HEIGHT),
+    );
+    const cpuDisplay = downsampleFlame(
+      full,
+      SS1_WIDTH,
+      SS1_HEIGHT,
+      FLAME_FILTER_RADIUS,
+    );
+    return compareDisplayDownsample(gpuDisplay, cpuDisplay);
+  } finally {
+    backend.destroy();
+  }
 }
 
 async function probeAdapter(): Promise<BenchAdapterInfo | null> {
@@ -932,7 +1245,11 @@ async function main(): Promise<void> {
     timestamp: new Date().toISOString(),
     adapter: null,
     scenarios: [],
-    // "skipped" until a comparison actually runs — see computeAgreement.
+    // "skipped" (not yet run) until runAll's own ss=1 check completes — see
+    // computeAgreement.
+    ss1DisplayDownsample: { skipped: "not yet run" },
+    // "skipped" until every leg (every scenario's comparison/displayDownsample
+    // plus ss1DisplayDownsample) actually runs — see computeAgreement.
     agreement: "skipped",
   };
   window.__BENCH_RESULTS__ = benchResults;
@@ -941,11 +1258,18 @@ async function main(): Promise<void> {
     resultsPre.textContent = JSON.stringify(benchResults, null, 2);
   }
 
+  function recomputeAgreement(): void {
+    benchResults.agreement = computeAgreement(
+      benchResults.scenarios,
+      benchResults.ss1DisplayDownsample,
+    );
+  }
+
   function recordResult(result: ScenarioResultRecord): void {
     const idx = benchResults.scenarios.findIndex((r) => r.name === result.name);
     if (idx >= 0) benchResults.scenarios[idx] = result;
     else benchResults.scenarios.push(result);
-    benchResults.agreement = computeAgreement(benchResults.scenarios);
+    recomputeAgreement();
     renderResults();
   }
 
@@ -992,6 +1316,17 @@ async function main(): Promise<void> {
         if (!dom) continue;
         recordResult(await runScenario(def, dom, currentDuration(), activity));
       }
+      // fr-ee9: the standalone ss=1 display-downsample check — always run as
+      // part of a full sweep (independent of any ?scenarios= filter above),
+      // since it is the only leg that exercises the scale-1 pass-through
+      // path at all (see runSs1DisplayDownsampleCheck's doc), and the
+      // headless runner's agreement verdict is meant to certify the WHOLE
+      // kernel, not just whichever named scenarios were requested.
+      activity.setState("gpu", "GPU ss=1 check…");
+      benchResults.ss1DisplayDownsample = await runSs1DisplayDownsampleCheck();
+      activity.setState("idle", "Done");
+      recomputeAgreement();
+      renderResults();
     } finally {
       running = false;
       setButtonsDisabled(false);
