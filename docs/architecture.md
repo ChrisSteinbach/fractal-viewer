@@ -300,6 +300,35 @@ also reports that specific transition — an already-controlled page's
 controller getting replaced — back to the app, which shows a dismissible
 "update available" reload banner instead of leaving it silent (fr-k1z).
 
+## GPU accumulation backend
+
+Accumulation itself — not just display — is backend-pluggable (fr-npb): a
+`FlameAccumBackend` seam in `flame-worker-core.ts` lets the flame worker
+session drive either the CPU chaos-game loop (`accumulateFlame`, unchanged)
+or a WebGPU compute-shader backend, chosen per render behind a
+`navigator.gpu` capability check (gated to fine-pointer, non-touch devices),
+with CPU as the universal fallback and the ground truth the GPU path is
+measured against. The WGSL kernel and its pure packing/dispatch-planning/
+histogram-conversion layer live in `src/fractal/flame-gpu.ts` (dependency-free
+and Vitest-tested, like the rest of `src/fractal/`); `src/app/
+flame-gpu-backend.ts` drives it from inside the worker behind the
+`FlameAccumBackend` seam. The kernel is a line-for-line WGSL port of
+`accumulateFlame`'s inlined stepping logic (same transform pick, affine/
+variation/symmetry math, escape-reseed, final-transform lens, color walk),
+diverging only where GPU execution forces it: f32 instead of f64, and many
+independent per-chain PCG32 streams instead of one mulberry32 orbit — so its
+output is a statistically indistinguishable render of the same attractor, not
+a byte-identical one.
+
+That distinction is pinned by a standing statistical-agreement harness: a
+dev-only benchmark/comparison page (`src/app/gpu-bench/`) and its headless
+runner (`scripts/gpu-flame-bench.mjs`) accumulate the same system on both
+backends from the same seed-class and check the CPU/GPU renders agree within
+measured thresholds, exiting non-zero (CI-able) if they don't — the same page
+also doubles as the phone-benchmarking path, since it works interactively
+over the LAN like any other dev page. See `docs/spike-fr-53k-gpu-flame-accum.md`
+for the original spike's go/no-go decision and measured numbers.
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state

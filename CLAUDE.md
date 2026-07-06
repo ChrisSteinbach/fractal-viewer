@@ -44,6 +44,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `chaos-game.ts` — the IFS iterator: warm-up, escape-reset, bounds tracking.
     Takes an injected RNG so runs are reproducible in tests.
   - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the six color-mode palettes.
+  - `flame-gpu.ts` — the WebGPU flame kernel (WGSL) + pure packing/dispatch-
+    planning/histogram-conversion layer; Vitest-tested like the rest of this
+    directory, pinned against `flame.ts`'s `accumulateFlame` (its CPU oracle)
+    by the agreement harness in `src/app/gpu-bench/`.
   - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
     octahedron/icosahedron/dodecahedron flakes) + add-transform.
   - `rng.ts` — seedable mulberry32 PRNG.
@@ -62,6 +66,9 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
+  - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s kernel from inside the
+    flame worker, behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
+    seam (WebGPU when available on fine-pointer devices, CPU otherwise).
   - `register-sw.ts` — service-worker registration + the reload-once
     cross-origin-isolation bootstrap (gives the flame worker its
     SharedArrayBuffer fast path; postMessage transfer is the fallback).
