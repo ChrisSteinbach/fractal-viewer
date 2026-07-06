@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPU Flame Accumulation Spike (fr-53k)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        padding: 16px 20px 48px;
+        background: #14141c;
+        color: #e8e8f0;
+        font:
+          14px/1.4 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+
+      p.subtitle {
+        margin: 0 0 16px;
+        color: #9a9ab0;
+        max-width: 70em;
+      }
+
+      #adapterBanner {
+        padding: 10px 14px;
+        border-radius: 6px;
+        background: #1e2a1e;
+        border: 1px solid #2e4a2e;
+        margin-bottom: 16px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12.5px;
+      }
+
+      #adapterBanner.warning {
+        background: #3a1e1e;
+        border-color: #6a2e2e;
+        color: #ffb3b3;
+      }
+
+      #controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 22px;
+      }
+
+      #controls label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      #scenarioButtons {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      input[type="number"] {
+        width: 5em;
+        background: #24242e;
+        border: 1px solid #3a3a48;
+        color: inherit;
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 13px;
+      }
+
+      button {
+        background: #2a3a5a;
+        border: 1px solid #3d5580;
+        color: #e8e8f0;
+        border-radius: 5px;
+        padding: 6px 14px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      button:hover {
+        background: #34456e;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .scenario {
+        margin-bottom: 28px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid #2a2a36;
+      }
+
+      .scenario h2 {
+        font-size: 15px;
+        margin: 0 0 10px;
+      }
+
+      .scenario h2 .status {
+        color: #9a9ab0;
+        font-weight: normal;
+      }
+
+      .canvases {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 10px;
+        overflow-x: auto;
+      }
+
+      .canvas-block {
+        text-align: center;
+        flex: none;
+      }
+
+      .canvas-block canvas {
+        display: block;
+        background: #000;
+        border: 1px solid #2a2a36;
+      }
+
+      .canvas-block span {
+        display: block;
+        margin-top: 4px;
+        color: #9a9ab0;
+        font-size: 12px;
+      }
+
+      pre {
+        background: #1a1a22;
+        border: 1px solid #2a2a36;
+        border-radius: 6px;
+        padding: 10px 12px;
+        overflow-x: auto;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU Flame Accumulation — Benchmark Spike (fr-53k)</h1>
+    <p class="subtitle">
+      Compares the CPU flame worker's chaos-game accumulation
+      (<code>accumulateFlame</code>) against a WebGPU compute-shader port on the
+      same systems and seed-class. Throwaway spike — see
+      <code>src/app/gpu-spike/kernel.ts</code>.
+    </p>
+
+    <div id="adapterBanner">Checking WebGPU availability&hellip;</div>
+
+    <div id="controls">
+      <label>
+        Duration (s per run):
+        <input
+          type="number"
+          id="durationInput"
+          min="0.5"
+          step="0.5"
+          value="4"
+        />
+      </label>
+      <button id="runAllBtn" type="button">Run all</button>
+      <div id="scenarioButtons"></div>
+    </div>
+
+    <div id="scenarios"></div>
+
+    <h2>Full results</h2>
+    <pre id="results">{}</pre>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

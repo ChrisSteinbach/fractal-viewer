@@ -10,3 +10,4 @@ coverage/
 *.db
 .prep-pr/
 .dispatch/
+bench-results/

@@ -13,7 +13,7 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["vitest/globals", "node", "vite/client"]
+    "types": ["vitest/globals", "node", "vite/client", "@webgpu/types"]
   },
   "include": ["src"],
   // The service worker needs the WebWorker lib, which conflicts with this
