@@ -213,7 +213,74 @@ export const DEFAULT_FLAME_ITERATIONS = 20_000_000;
 export const MIN_FLAME_EXPOSURE = 0.2;
 export const MAX_FLAME_EXPOSURE = 4;
 export const MIN_FLAME_ITERATIONS = 1_000_000;
-export const MAX_FLAME_ITERATIONS = 100_000_000;
+/**
+ * GPU accumulation (fr-npb) measured ~10G iterations/sec on discrete GPUs
+ * (fr-53k addendum), so billion-iteration budgets are now interactive rather
+ * than the multi-minute CPU wait they used to imply — this ceiling was raised
+ * from the CPU-era 100M accordingly (fr-79p). 2B stays under 2^31, so the
+ * value is int32-safe everywhere (worker messages, GPU dispatch counts, etc.)
+ * without needing a separate "GPU mode" ceiling.
+ */
+export const MAX_FLAME_ITERATIONS = 2_000_000_000;
+/**
+ * Detents for the flame Quality slider (fr-79p; `index.html`'s
+ * `flameIterationsSlider`), which carries a detent INDEX rather than a raw
+ * iteration count — see {@link nearestFlameIterationDetentIndex}. A linear,
+ * 1M-step slider spanning [{@link MIN_FLAME_ITERATIONS},
+ * {@link MAX_FLAME_ITERATIONS}] would squeeze the entire CPU-practical range
+ * (1-100M) into the first ~5% of the slider's travel, since the GPU-practical
+ * range now reaches all the way to 2B. A 1-2-5 preferred-number series (the
+ * same progression multimeter dials and camera apertures use) instead keeps
+ * every decade reachable in the same handful of detents, so both a CPU user
+ * dialing in ~20M and a GPU user dialing in ~2B get comparably fine control.
+ *
+ * First entry equals {@link MIN_FLAME_ITERATIONS}, last equals
+ * {@link MAX_FLAME_ITERATIONS}; {@link DEFAULT_FLAME_ITERATIONS} (20M) is
+ * `FLAME_ITERATION_DETENTS[4]` — `index.html`'s slider hardcodes that index as
+ * its default `value`, guarded by a state.test.ts assertion so the two can
+ * never silently drift apart.
+ */
+export const FLAME_ITERATION_DETENTS = [
+  1_000_000, 2_000_000, 5_000_000, 10_000_000, 20_000_000, 50_000_000,
+  100_000_000, 200_000_000, 500_000_000, 1_000_000_000, 2_000_000_000,
+] as const;
+
+/**
+ * Index of the {@link FLAME_ITERATION_DETENTS} entry closest to `iterations`
+ * in LOG space (comparing `|log(iterations) - log(detent)|`, not the raw
+ * difference) — log space is what makes a 1-2-5 series feel evenly spaced
+ * along the slider, so "nearest" has to be measured the same way an equal
+ * step of slider travel is: multiplicatively. Out-of-range input falls out
+ * naturally to the first/last index (the nearest detent in log-distance to
+ * anything below {@link MIN_FLAME_ITERATIONS} is always the smallest detent,
+ * and symmetrically for anything above {@link MAX_FLAME_ITERATIONS}), so
+ * there's no separate clamp step.
+ *
+ * A persisted or shared scene can carry a non-detent value (e.g. an old
+ * scene's 37M, from before this slider existed) — `state.flame.iterations`
+ * keeps that exact value; only the slider's displayed thumb position snaps to
+ * the nearest detent (see `ui.ts`'s `updateLabels`), and the exact value
+ * survives until the user actually moves the slider.
+ *
+ * Non-finite or non-positive input cannot reach this function in practice:
+ * every caller clamps through {@link setFlameIterations} first, which pins to
+ * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}] before this
+ * ever runs — so, unlike the setters below, this does not defend against
+ * `NaN`/`Infinity`/`<= 0`.
+ */
+export function nearestFlameIterationDetentIndex(iterations: number): number {
+  const target = Math.log(iterations);
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < FLAME_ITERATION_DETENTS.length; i++) {
+    const distance = Math.abs(target - Math.log(FLAME_ITERATION_DETENTS[i]));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
 /**
  * A moderately "punchy" default — MIN_FLAME_GAMMA (1) is the neutral point
  * that leaves fr-o7s's original log-density curve unreshaped; 2.4 pushes
