@@ -1,6 +1,7 @@
 import {
   accumulateFlame,
   clampSupersampleToBudget,
+  createFlameHistogram,
   tonemapFlame,
   viewFlameHistogram,
   DEFAULT_GAMMA_THRESHOLD,
@@ -12,6 +13,7 @@ import {
   FlameWorkerSession,
 } from "./flame-worker-core";
 import type {
+  FlameAccumBackend,
   FlameWorkerCommand,
   FlameWorkerDeps,
   FlameWorkerEvent,
@@ -83,6 +85,38 @@ function stepScheduler(): {
   };
 }
 
+/**
+ * Resolves after a real macrotask boundary — by the time this settles,
+ * every microtask queued so far (however many sequential `await`s a fake
+ * GPU backend's promise chain took) has fully drained. Only needed by the
+ * GPU-backend tests below, whose fakes return REAL promises: a CPU-only
+ * run never actually suspends (`flame-worker-core.ts`'s `isPromiseLike`
+ * guard skips `await` whenever a backend returns a plain value), so every
+ * other test in this file keeps using the synchronous `scheduler.drain()`/
+ * `step()` unmodified. A single `await Promise.resolve()` would NOT be
+ * enough here: it only guarantees one pending continuation has run, and
+ * can resume in the wrong order relative to a multi-step chain (each
+ * additional internal `await` re-queues behind whatever this already
+ * queued) — a macrotask sidesteps that ordering subtlety entirely, since
+ * the platform never runs one until the microtask queue is completely
+ * empty.
+ */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Drives a session whose current chunk may genuinely suspend (a real GPU
+ * factory/backend promise) to completion: step the manual scheduler, let
+ * that step's async work fully settle, and repeat until nothing is left to
+ * schedule. */
+async function drainAsync(
+  scheduler: ReturnType<typeof stepScheduler>,
+): Promise<void> {
+  while (scheduler.step()) {
+    await flushMicrotasks();
+  }
+}
+
 /** A clock that advances by `step` (0 by default — i.e. constant, so
  * elapsed-time-driven chunk adaptation and redisplay throttling are both
  * inert unless a test explicitly wants to exercise them) on every read. */
@@ -115,6 +149,8 @@ function harness(
     accumulate: overrides.accumulate,
     maxAccumBuckets: overrides.maxAccumBuckets,
     initialChunkSize: overrides.initialChunkSize,
+    createGpuBackend: overrides.createGpuBackend,
+    log: overrides.log,
   });
   return { session, events, scheduler };
 }
@@ -155,6 +191,12 @@ function estimatingEvents(
   events: FlameWorkerEvent[],
 ): Extract<FlameWorkerEvent, { type: "estimating" }>[] {
   return events.filter((e) => e.type === "estimating");
+}
+
+function backendEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "backend" }>[] {
+  return events.filter((e) => e.type === "backend");
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,5 +1188,348 @@ describe("FlameWorkerSession shared-frame transport", () => {
     expect(relabeled.maxHits).toBe(finished.maxHits);
     expect(relabeled.iterationsDone).toBe(500);
     expect(relabeled.iterationsBudget).toBe(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GPU accumulation backend (fr-npb): the pluggable FlameAccumBackend seam —
+// a `start`/restart opts in via `gpuPreference: "auto"` plus an injected
+// `createGpuBackend` factory; every fake backend below returns REAL promises
+// (unlike the CPU path, which never actually suspends — see
+// flame-worker-core.ts's `isPromiseLike`), so these tests drive the session
+// with `drainAsync`/`flushMicrotasks` instead of the synchronous
+// `scheduler.drain()` every other test in this file uses.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession GPU accumulation backend", () => {
+  it("accumulates through a GPU backend the factory resolves, snapshotting only on due/finished ticks", async () => {
+    let snapshotCalls = 0;
+    let accumulateCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "Fake Adapter",
+      accumulate: async (n) => {
+        accumulateCalls++;
+        return n;
+      },
+      snapshot: async () => {
+        snapshotCalls++;
+        return createFlameHistogram(8, 8);
+      },
+      destroy: () => {},
+    };
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      return backend;
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    // A budget spanning several of the (real, 8,000,000-iteration) GPU
+    // chunks — large so the render stays genuinely multi-chunk despite the
+    // GPU chunk-size bump (see flame-worker-core.ts's runChunk) overriding
+    // any small initialChunkSize on the very first GPU chunk.
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 20_000_000 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(factoryCalls).toBe(1); // one backend for the whole accumulation.
+    expect(accumulateCalls).toBe(3); // 8,000,000 + 8,000,000 + 4,000,000.
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "gpu", adapter: "Fake Adapter" },
+    ]);
+    const progress = progressEvents(events);
+    expect(progress.at(-1)!.iterationsDone).toBe(20_000_000);
+    // A zero-step clock never crosses the redisplay throttle, so only the
+    // first chunk (lastDownsampleAt was undefined) and the last (finished)
+    // are ever "due" — same throttling contract as the CPU path — even
+    // though THREE chunks actually accumulated.
+    expect(snapshotCalls).toBe(2);
+  });
+
+  it("falls back to CPU when the GPU factory rejects, and never retries it again this session", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      throw new Error("no suitable GPU adapter");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(factoryCalls).toBe(1);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500); // the real CPU accumulate ran.
+
+    // gpuFailed ratchets for the rest of the session — a later restart must
+    // not retry the factory.
+    session.handle({ type: "setSupersample", supersample: 2 });
+    await drainAsync(scheduler);
+
+    expect(factoryCalls).toBe(1);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+      { type: "backend", backend: "cpu", adapter: undefined }, // the restart re-emits, still cpu.
+    ]);
+  });
+
+  it("restarts on CPU from scratch when the GPU backend's accumulate rejects mid-run", async () => {
+    let accumulateCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => {
+        accumulateCalls++;
+        if (accumulateCalls === 1) return 10; // first chunk succeeds.
+        throw new Error("device lost");
+      },
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // 10 (the GPU chunk that succeeded before the failure) then 40 (the
+    // CPU restart running from iterationsDone = 0, not 10 + 40 = 50) — the
+    // only way to land on exactly this sequence is a genuine from-scratch
+    // restart, not the GPU failure just being papered over.
+    expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([
+      10, 40,
+    ]);
+  });
+
+  it("restarts on CPU from scratch when the GPU backend's snapshot rejects (accumulate having succeeded)", async () => {
+    // Regression: a GPU readback can fail on its own — e.g. a device lost
+    // between a successful accumulate and this snapshot — independently of
+    // accumulate ever failing. Unlike the accumulate rejection above, this
+    // failure has to be reached via a DUE tick whose accumulate already
+    // succeeded, so it exercises a different escape hatch (the due-branch
+    // snapshot await used to sit outside runChunk's try/catch entirely).
+    let snapshotCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested.
+      snapshot: async () => {
+        snapshotCalls++;
+        if (snapshotCalls === 1) return createFlameHistogram(8, 8); // the first due tick succeeds.
+        throw new Error("device lost during readback");
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    // If the snapshot rejection escaped runChunk unhandled, this would
+    // surface as an unhandled promise rejection — Vitest fails the test run
+    // on those by default, so this drain completing at all is itself part
+    // of the proof that the rejection was caught, not just the assertions
+    // below.
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // 10 (the one GPU due tick whose snapshot succeeded — chunks 2 and 3
+    // aren't due under a zero-step clock) then 40 (the CPU restart running
+    // from iterationsDone = 0, not 10 + 40 = 50) — same reset-semantics
+    // proof as the accumulate-rejection test above, now for a snapshot
+    // failure landing on the FINISHING due tick (accumulate having just
+    // succeeded).
+    expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([
+      10, 40,
+    ]);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0); // recovered, not surfaced as a fatal error.
+  });
+
+  it("accounts for a backend retiring more than it was asked (overshoot), still finishing", async () => {
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      // Always retires 37 MORE than requested — e.g. a dispatch that rounds
+      // its chain count up to a workgroup-size multiple.
+      accumulate: async (n) => n + 37,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 20_000_000 }),
+    );
+    await drainAsync(scheduler);
+
+    const progress = progressEvents(events);
+    // Requested chunks are 8,000,000 / 8,000,000 / 3,999,926 (the last one
+    // sized to exactly close the remaining gap) — retired 37 more each time,
+    // so the running totals below are the SUM of actuals, not requests.
+    expect(progress.map((p) => p.iterationsDone)).toEqual([
+      8_000_037, 20_000_037,
+    ]);
+    const last = progress.at(-1)!;
+    expect(last.iterationsDone).toBeGreaterThanOrEqual(last.iterationsBudget); // finished, above budget.
+    expect(last.iterationsDone).not.toBe(last.iterationsBudget); // genuinely overshot, not coincidentally exact.
+  });
+
+  it("discards a stale in-flight chunk when a restart supersedes it, without double-scheduling, and the new accumulation completes normally", async () => {
+    const events: FlameWorkerEvent[] = [];
+    const scheduler = stepScheduler();
+    let scheduleCalls = 0;
+    let accumulateCalls = 0;
+    let resolveFirstAccumulate: ((value: number) => void) | undefined;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: (n) => {
+        accumulateCalls++;
+        if (accumulateCalls === 1) {
+          // Held deliberately — resolved only after the restart below, to
+          // prove the stale continuation's eventual result is discarded.
+          return new Promise<number>((resolve) => {
+            resolveFirstAccumulate = resolve;
+          });
+        }
+        return Promise.resolve(n);
+      },
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const session = new FlameWorkerSession({
+      now: fakeClock(0),
+      schedule: (fn) => {
+        scheduleCalls++;
+        scheduler.schedule(fn);
+      },
+      emit: (event) => events.push(event),
+      createGpuBackend: async () => backend,
+    });
+
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    expect(scheduleCalls).toBe(1); // start's ensureRunning scheduled chunk 1.
+    scheduler.step(); // runs chunk 1: backend creation, then the held accumulate call.
+    await flushMicrotasks();
+    expect(accumulateCalls).toBe(1); // confirms we're genuinely stuck mid-accumulate.
+
+    session.handle({ type: "setSupersample", supersample: 2 }); // supersedes it.
+    // The restart's OWN ensureRunning() (inside startAccumulation) no-ops —
+    // `running` is still true, since the stale runChunk call above hasn't
+    // returned yet — so this must not schedule a second chunk on its own.
+    expect(scheduleCalls).toBe(1);
+
+    resolveFirstAccumulate!(10); // let the stale chunk's promise settle.
+    await flushMicrotasks();
+    // The stale continuation noticed it had been superseded and handed the
+    // loop off: exactly one NEW chunk scheduled for the new generation —
+    // not zero (dropped forever) and not two (double-scheduled).
+    expect(scheduleCalls).toBe(2);
+
+    await drainAsync(scheduler);
+    // Reaches exactly 500 (not 510): the discarded stale chunk's "10" never
+    // got folded into the new generation's own accumulation.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("never calls the factory when gpuPreference is off or absent, even if one is provided", () => {
+    function run(gpuPreference?: "auto" | "off"): {
+      factoryCalls: number;
+      events: FlameWorkerEvent[];
+    } {
+      let factoryCalls = 0;
+      const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+        factoryCalls++;
+        throw new Error("must never be called");
+      };
+      const { session, events, scheduler } = harness({ createGpuBackend });
+      session.handle(startCommand({ iterationsBudget: 500, gpuPreference }));
+      scheduler.drain(); // fully synchronous — the CPU path never suspends.
+      return { factoryCalls, events };
+    }
+
+    const absent = run(undefined);
+    expect(absent.factoryCalls).toBe(0);
+    expect(backendEvents(absent.events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+
+    const off = run("off");
+    expect(off.factoryCalls).toBe(0);
+    expect(backendEvents(off.events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+  });
+
+  it("destroys the previous backend exactly once when a restart replaces it", async () => {
+    let destroyCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {
+        destroyCalls++;
+      },
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+    expect(destroyCalls).toBe(0); // finished normally; nothing has replaced it yet.
+
+    session.handle({ type: "setSupersample", supersample: 2 });
+    expect(destroyCalls).toBe(1); // destroyed synchronously, inside startAccumulation.
+
+    await drainAsync(scheduler); // let the restarted accumulation run to completion too.
+    expect(destroyCalls).toBe(1); // still exactly once.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispose (fr-1ib): the main-thread session host's equivalent of a real
+// Worker's terminate() — releases the backend and permanently stops the
+// chunk loop, including a chunk already sitting in the schedule queue.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession dispose", () => {
+  it("destroys the current backend and refuses to run an already-scheduled chunk, without resurrecting a new backend", async () => {
+    let destroyCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested — forces a second chunk.
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {
+        destroyCalls++;
+      },
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    scheduler.step(); // kicks off backend creation + the first accumulate/snapshot.
+    await flushMicrotasks();
+    // One chunk in: 10 done (not yet 40), so a second chunk is ALREADY
+    // sitting in the schedule queue, not yet run — the scenario dispose()
+    // has to guard against (runChunk's own re-check, not just ensureRunning's).
+    expect(progressEvents(events)).toHaveLength(1);
+    expect(destroyCalls).toBe(0);
+
+    session.dispose();
+    expect(destroyCalls).toBe(1); // destroyed synchronously, inside dispose().
+
+    scheduler.step(); // runs the already-queued second chunk.
+    await flushMicrotasks();
+
+    expect(scheduler.step()).toBe(false); // nothing further was ever scheduled.
+    expect(progressEvents(events)).toHaveLength(1); // the queued chunk never got to accumulate/report.
+    expect(backendEvents(events)).toHaveLength(1); // no second "backend" event — no new backend was created.
+    expect(destroyCalls).toBe(1); // still exactly once — no double-destroy either.
   });
 });

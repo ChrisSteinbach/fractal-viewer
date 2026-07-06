@@ -1723,6 +1723,45 @@ describe("Ui.setFlameSupersampleNote", () => {
   });
 });
 
+describe("Ui.setFlameBackendNote", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("flameBackendNote");
+  }
+
+  it("is hidden with empty text by default", () => {
+    new Ui(document);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows a GPU accumulation message with the adapter label and un-hides", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote("gpu", "Apple M2");
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.textContent).toBe("GPU accumulation (Apple M2)");
+  });
+
+  it("omits the parenthetical when no adapter label is given", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote("gpu");
+    expect(note()?.textContent).toBe("GPU accumulation");
+  });
+
+  it("shows a CPU accumulation message, ignoring any adapter label", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote("cpu");
+    expect(note()?.textContent).toBe("CPU accumulation");
+  });
+
+  it("hides again when passed null", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote("gpu", "Apple M2");
+    ui.setFlameBackendNote(null);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+});
+
 describe("Ui solid render controls", () => {
   function solidBtn(): HTMLButtonElement {
     return document.getElementById("solidBtn") as HTMLButtonElement;

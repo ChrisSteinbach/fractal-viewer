@@ -29,6 +29,14 @@
  * already-downsampled-and-tone-mapped display-resolution RGBA image per
  * update. Either way the big supersampled accumulator never leaves the
  * worker.
+ *
+ * Accumulation itself runs through a pluggable {@link FlameAccumBackend}
+ * (fr-npb): CPU by default, or — when the `start` command's
+ * `gpuPreference` opts in and the real worker wires up a `createGpuBackend`
+ * factory — a WebGPU accumulator (`flame-gpu.ts`), which `runChunk` drives
+ * through the exact same chunk/redisplay loop and falls back to CPU (once
+ * per session — see `gpuFailed`) on any GPU failure. See that interface's
+ * doc for the seam's contract.
  */
 import {
   accumulateFlame,
@@ -53,7 +61,7 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { SymmetryAxis, Transform } from "../fractal/types";
+import type { SymmetryAxis, Transform, Vec3 } from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -122,6 +130,17 @@ export type FlameWorkerCommand =
        * downsample is concurrently overwriting.
        */
       sharedFrames?: [SharedFrameBuffers, SharedFrameBuffers];
+      /**
+       * Opt into the WebGPU accumulation backend (fr-npb) when the real
+       * worker's `createGpuBackend` factory is wired up: `"auto"` tries GPU
+       * first and falls back to CPU (once per session) on any failure;
+       * `"off"` — and, deliberately, absent — never attempts it. Absent
+       * defaults to `"off"` rather than `"auto"` because a session with no
+       * `createGpuBackend` factory at all (every pre-fr-npb caller) must
+       * behave exactly as before: this field existing is not itself a
+       * signal that GPU is available.
+       */
+      gpuPreference?: "auto" | "off";
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
@@ -168,6 +187,23 @@ export type FlameWorkerEvent =
       effective: number | null;
       requested?: number;
     }
+  | {
+      /**
+       * Which {@link FlameAccumBackend} is driving the CURRENT accumulation
+       * (fr-npb) — emitted once per backend creation, i.e. on the first
+       * chunk of every `start`/restart (a live `setSupersample`/`setPalette`/
+       * `setSymmetry`, or a GPU-failure/OOM-ratchet restart), so the UI's
+       * label always reflects the backend actually in use, including across
+       * a mid-session fallback. Emitted in EVERY session, not just GPU-
+       * attempted ones (a CPU-only session emits `backend: "cpu"` too), so
+       * the event is a reliable signal regardless of `gpuPreference`.
+       */
+      type: "backend";
+      backend: "gpu" | "cpu";
+      /** Whatever label the backend factory's adapter exposes (e.g. a
+       * `GPUAdapterInfo` description) — see {@link FlameAccumBackend.adapterLabel}. */
+      adapter?: string;
+    }
   | { type: "error"; message: string }
   | {
       /**
@@ -209,6 +245,19 @@ export interface FlameWorkerDeps {
    * command mid-accumulation) with a tiny iteration budget instead of
    * needing millions of real iterations to span more than one chunk. */
   initialChunkSize?: number;
+  /**
+   * Async factory for the WebGPU accumulation backend (fr-npb), tried when
+   * a `start`/restart's `gpuPreference` is `"auto"`. Absent — every
+   * pre-fr-npb caller, and the real worker until GPU wiring lands there —
+   * means CPU-only, unconditionally, regardless of `gpuPreference`: this
+   * factory's presence, not the preference field, is what actually gates
+   * the attempt. Rejection is non-fatal: `runChunk` falls back to CPU and
+   * never retries the factory again this session (see `gpuFailed`).
+   */
+  createGpuBackend?: (request: GpuBackendRequest) => Promise<FlameAccumBackend>;
+  /** Diagnostic sink for GPU-fallback/failure messages (`console.info` in
+   * the real worker); defaults to a no-op so tests stay quiet. */
+  log?: (message: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +275,32 @@ const FLAME_CHUNK_MAX = 20_000_000;
  * that a `setSupersample`/`setExposure`/etc. command is picked up promptly
  * (the worker only checks for a new command between scheduled chunks). */
 const FLAME_FRAME_BUDGET_MS = 8;
+
+/**
+ * GPU counterparts of the CPU chunk-size constants above (fr-npb) — used by
+ * `adaptChunkSize`/`startAccumulation` whenever the CURRENT backend's `kind`
+ * is `"gpu"`. An order of magnitude (or more) bigger than the CPU numbers
+ * because a GPU dispatch's iteration rate is itself orders of magnitude
+ * higher, so a CPU-sized chunk would be gone in a fraction of a millisecond
+ * — all overhead, no useful work.
+ */
+const FLAME_GPU_CHUNK_INITIAL = 8_000_000;
+const FLAME_GPU_CHUNK_MIN = 262_144;
+const FLAME_GPU_CHUNK_MAX = 536_870_912;
+/**
+ * Target wall-clock time per GPU accumulation chunk — much larger than
+ * {@link FLAME_FRAME_BUDGET_MS}. A GPU chunk's fixed JS/submit overhead
+ * (building the bind group, `queue.submit`, the dispatch bookkeeping) is
+ * roughly 1-2 ms REGARDLESS of how many iterations the chunk covers, so
+ * chasing the CPU's 8 ms target would tax throughput by ~20% just servicing
+ * that fixed cost every chunk; 24 ms keeps the tax to roughly 4-8% while
+ * still picking up a live command ~40 times a second — plenty responsive
+ * (see `FLAME_FRAME_BUDGET_MS`'s doc for why that cadence matters). The MAX
+ * above is sized so even a single chunk on a very fast (~10 G
+ * iterations/second) discrete GPU comfortably fits within this budget with
+ * room to spare, rather than needing a second dispatch mid-budget.
+ */
+const FLAME_GPU_FRAME_BUDGET_MS = 24;
 
 /** Fixed reconstruction-filter radius (display pixels) `downsampleFlame` blurs
  * PROGRESSIVE (not-yet-finished) frames with in `runChunk` — see its doc for
@@ -306,6 +381,176 @@ function describeError(e: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Accumulation backend seam (fr-npb)
+// ---------------------------------------------------------------------------
+
+/**
+ * One accumulation run's engine — the seam a WebGPU accumulator
+ * (`flame-gpu.ts`) plugs into alongside the CPU implementation below. The
+ * session (`runChunk`) drives whichever backend is current in chunks and
+ * snapshots it on the redisplay cadence; nothing outside this interface
+ * (and `createBackend`, which chooses an implementation) knows which engine
+ * is actually running.
+ *
+ * `accumulate`/`snapshot` return a plain value OR a `Promise` of one quite
+ * deliberately, not always a `Promise` — see `runChunk`'s `isPromiseLike`
+ * guard. The CPU backend below returns synchronously, and `runChunk` only
+ * evaluates an `await` when the returned value is ACTUALLY a promise, so a
+ * CPU-only accumulation never yields to the microtask queue: it runs one
+ * chunk start-to-finish (accumulate, maybe snapshot, maybe schedule the
+ * next chunk) in the same synchronous stretch it always has, which is what
+ * keeps it byte-identical to before this seam existed and keeps it
+ * drivable by a plain synchronous `while` loop (see
+ * flame-worker-core.test.ts's `stepScheduler`).
+ */
+export interface FlameAccumBackend {
+  readonly kind: "cpu" | "gpu";
+  /**
+   * Advance ~`iterations` more steps; returns (or resolves to) the count
+   * ACTUALLY retired. The CPU backend retires exactly `iterations`; a GPU
+   * backend may retire more (rounding up to its dispatch granularity) but
+   * never less — `runChunk` accumulates whatever comes back into
+   * `iterationsDone`, so a render can finish slightly ABOVE its budget.
+   * May throw/reject; the session owns recovery (see `runChunk`'s catch).
+   */
+  accumulate(iterations: number): number | Promise<number>;
+  /**
+   * Everything accumulated so far, as a {@link FlameHistogram}. The CPU
+   * backend returns its live accumulator object — the exact same object
+   * every call, zero conversion cost. A GPU backend reads its device buffers
+   * back and converts them into one. Called only on the redisplay cadence
+   * (`runChunk`'s `due` branch) or once more at finish — never per chunk —
+   * since a GPU readback is comparatively expensive. May throw/reject (a GPU
+   * readback can fail on its own — e.g. a device lost between a successful
+   * `accumulate` and this call — independently of `accumulate` ever
+   * failing); the session owns recovery, with the same GPU-fallback/CPU-
+   * error shape as `accumulate`'s (see `runChunk`'s `due` branch).
+   */
+  snapshot(): FlameHistogram | Promise<FlameHistogram>;
+  /** Release any resources this backend holds (GPU buffers/pipelines). A
+   * no-op for the CPU backend. Idempotent — safe to call more than once
+   * (e.g. a generation hand-off destroying an already-orphaned backend). */
+  destroy(): void;
+  /** Adapter/device label the backend factory discovered (e.g. a
+   * `GPUAdapterInfo` description) — surfaced verbatim in the `"backend"`
+   * event for the UI to display. `undefined` for the CPU backend, and for
+   * any GPU backend that has no better label to offer. */
+  readonly adapterLabel?: string;
+}
+
+/**
+ * Everything a `createGpuBackend` factory needs to stand up one
+ * accumulation's worth of GPU state — the GPU counterpart of the fields the
+ * CPU backend reads off the session directly (it doesn't need a request
+ * object; it closes over the session's own fields instead, since it never
+ * crosses an async boundary before its first use).
+ */
+export interface GpuBackendRequest {
+  /** The raw (un-rotated, un-symmetried) transform list — see
+   * `FlameWorkerSession.baseTransforms`. */
+  transforms: Transform[];
+  finalTransform: Transform | null;
+  /** Kaleidoscope symmetry (fr-6im) — see `chaos-game.ts`'s `prepareChaosGame`. */
+  order: number;
+  axis: SymmetryAxis;
+  /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
+  paletteId: FlamePaletteId;
+  projection: Mat4;
+  /** ACCUMULATION resolution (display size x effective supersample) — NOT
+   * the display resolution `start.width`/`height` carry. */
+  width: number;
+  height: number;
+  /**
+   * Deterministic per-restart seed, drawn from the session's own (already
+   * `start`-seeded) `Rng` at backend-creation time — so it is fully
+   * determined by the `start` command's seed, yet distinct for every
+   * restart within the session, mirroring how the CPU path's continuing
+   * `rng` instance makes each restart's orbit stream distinct too.
+   */
+  seed: number;
+}
+
+/**
+ * Resolves `value` immediately if it is already a plain value, or `await`s
+ * it if it is genuinely a promise — see {@link FlameAccumBackend}'s doc for
+ * why this distinction (rather than an unconditional `await`) is load-
+ * bearing: an `async` function's `await` ALWAYS defers to the microtask
+ * queue, even for a non-thenable operand, so unconditionally writing `await
+ * backend.accumulate(n)` would make every CPU chunk yield once — breaking a
+ * synchronous `while` loop's ability to drive a render to completion (its
+ * next iteration would find nothing queued yet, since the scheduled
+ * continuation is still sitting in the microtask queue). Guarding the
+ * `await` so it is only ever textually evaluated for an actual thenable
+ * keeps a CPU-only `runChunk` fully synchronous end-to-end, exactly as
+ * before this backend seam existed.
+ */
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Promise<T>).then === "function"
+  );
+}
+
+/**
+ * The CPU accumulation backend: wraps today's exact `accumulateFlame` call
+ * behind {@link FlameAccumBackend} so the session can drive either engine
+ * through one seam. Holds the one thing that makes a chunked render
+ * resumable — its own {@link FlameHistogram}, `null` until the first
+ * `accumulate` call — plus everything `accumulateFlame` needs that doesn't
+ * change chunk to chunk (the prepared geometry, camera, dimensions,
+ * palette/colorLUT, and the session's SHARED `Rng` instance: threading the
+ * very same live `rng` through every chunk, rather than each backend owning
+ * a copy, is what makes a chunked render produce the identical orbit a
+ * single unchunked call would).
+ */
+class CpuFlameBackend implements FlameAccumBackend {
+  readonly kind = "cpu" as const;
+  private histogram: FlameHistogram | null = null;
+
+  constructor(
+    private readonly accumulateFn: typeof accumulateFlame,
+    private readonly prepared: PreparedChaosGame,
+    private readonly projection: Mat4,
+    private readonly width: number,
+    private readonly height: number,
+    private readonly palette: Vec3[],
+    private readonly rng: Rng,
+    private readonly colorLUT: Float32Array | null,
+  ) {}
+
+  accumulate(iterations: number): number {
+    this.histogram = this.accumulateFn(
+      this.prepared,
+      this.projection,
+      this.width,
+      this.height,
+      iterations,
+      this.rng,
+      this.palette,
+      this.histogram ?? undefined,
+      this.colorLUT ?? undefined,
+    );
+    return iterations; // CPU always retires exactly what it was asked for.
+  }
+
+  snapshot(): FlameHistogram {
+    // Shouldn't happen: `runChunk` only ever snapshots after at least one
+    // successful `accumulate` on this backend. Thrown, not silently
+    // defaulted, so a future ordering bug surfaces immediately.
+    if (!this.histogram) {
+      throw new Error("CpuFlameBackend.snapshot() called before accumulate()");
+    }
+    return this.histogram;
+  }
+
+  destroy(): void {
+    // Nothing to release: accumulateFlame only ever touches plain JS
+    // objects/typed arrays, which the GC reclaims on its own.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
 
@@ -327,6 +572,12 @@ export class FlameWorkerSession {
   private readonly schedule: (fn: () => void) => void;
   private readonly emit: (event: FlameWorkerEvent) => void;
   private readonly accumulate: typeof accumulateFlame;
+  /** Absent = CPU-only regardless of `gpuPreference` — see FlameWorkerDeps. */
+  private readonly createGpuBackend?: (
+    request: GpuBackendRequest,
+  ) => Promise<FlameAccumBackend>;
+  /** Diagnostic sink for GPU-fallback/failure messages — see FlameWorkerDeps. */
+  private readonly log: (message: string) => void;
   /** Fallback budget for starts that don't carry one — see FlameWorkerDeps. */
   private readonly defaultMaxAccumBuckets: number;
   /** The budget the CURRENT session runs under: the `start` command's
@@ -341,6 +592,10 @@ export class FlameWorkerSession {
   /** Gradient lookup table for structural coloring, or `null` for the
    * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
   private colorLUT: Float32Array | null = null;
+  /** The palette `colorLUT` was built from — `colorLUT` alone loses this
+   * (`"legacy"` and any future no-op palette both look like `null`), and a
+   * `GpuBackendRequest` needs the id itself, not the CPU-side LUT. */
+  private paletteId: FlamePaletteId = "legacy";
   /** The raw (un-rotated) transforms/finalTransform from the last "start" —
    * retained so setSymmetry can re-prepare with a NEW symmetry without the
    * main thread resending the whole transform list. */
@@ -355,8 +610,39 @@ export class FlameWorkerSession {
   private symmetryAxis: SymmetryAxis = "y";
   private rng: Rng = Math.random;
 
-  /** The real progressive accumulator, at accumWidth x accumHeight (display
-   * size x effective supersample). */
+  /** The current accumulation's engine (fr-npb) — `null` between a
+   * `startAccumulation` and the next `runChunk` call, which creates one
+   * lazily (GPU creation is async; `startAccumulation`'s callers are all
+   * synchronous command handlers, so they can't await it themselves). */
+  private backend: FlameAccumBackend | null = null;
+  /** Bumped every `startAccumulation` (a restart, in place, of the SAME
+   * session) — `runChunk` captures it on entry and re-checks it after every
+   * `await`, so a restart that lands while a chunk/backend-creation is in
+   * flight is detected and that stale work is discarded rather than
+   * clobbering the new accumulation's state (see `runChunk`'s doc). */
+  private generation = 0;
+  /** Ratchets from `false` to `true` the first time the GPU backend fails
+   * (creation or accumulation) and never resets — a device's GPU either
+   * works or it doesn't, so there is no point re-attempting the factory
+   * after this session has already seen it fail once. */
+  private gpuFailed = false;
+  /** From the `start` command (see its doc); `"off"` unless the main thread
+   * explicitly opts in. Read fresh on every backend creation, so a `start`
+   * with no `createGpuBackend` factory wired up (every pre-fr-npb caller)
+   * behaves identically regardless of what this says. */
+  private gpuPreference: "auto" | "off" = "off";
+
+  /** The latest accumulation snapshot: CPU backend, the live accumulator
+   * object itself (identical semantics to before this backend seam
+   * existed, since a chunked CPU accumulate mutates and returns that same
+   * object every call — see `CpuFlameBackend`); GPU backend-to-come, the
+   * last-converted mirror. Refreshed only on the redisplay cadence
+   * (`runChunk`'s `due` branch), same as `displayHistogram` below — every
+   * OTHER reader of this field (`redisplayWithFreshEstimate`, the
+   * `setIterationsBudget`-lowered path) only ever runs once accumulation
+   * has stopped, by which point the terminal chunk's `due` branch (finished
+   * is always due) has already refreshed it. At accumWidth x accumHeight
+   * (display size x effective supersample). */
   private histogram: FlameHistogram | null = null;
   /** Display-resolution derivative, refreshed on the cadence `runChunk`
    * decides — never fed back into `accumulateFlame` (see `downsampleFlame`).
@@ -424,12 +710,21 @@ export class FlameWorkerSession {
    * double-scheduling the loop (e.g. a `setIterationsBudget` bump arriving
    * while a chunk is already pending). */
   private running = false;
+  /** Set once by {@link dispose} and never cleared (fr-1ib) — unlike a
+   * restart (which bumps `generation` to hand the loop off to a NEW
+   * accumulation), disposal has nothing to hand off TO: this is what makes
+   * both `ensureRunning` and `runChunk`'s own re-check refuse to ever
+   * schedule/run another chunk again, including one already sitting in the
+   * schedule queue when `dispose()` ran. */
+  private disposed = false;
 
   constructor(deps: FlameWorkerDeps) {
     this.now = deps.now;
     this.schedule = deps.schedule;
     this.emit = deps.emit;
     this.accumulate = deps.accumulate ?? accumulateFlame;
+    this.createGpuBackend = deps.createGpuBackend;
+    this.log = deps.log ?? (() => {});
     this.defaultMaxAccumBuckets =
       deps.maxAccumBuckets ?? FLAME_ACCUM_FLOOR_BUCKETS;
     this.maxAccumBuckets = this.defaultMaxAccumBuckets;
@@ -499,6 +794,27 @@ export class FlameWorkerSession {
     }
   }
 
+  /**
+   * Permanently stop this session and release its backend (fr-1ib) — for a
+   * host that runs a session OUTSIDE a dedicated Worker (`flame-session-
+   * host.ts`), which has no single call that reclaims a same-thread
+   * session's GPU resources the way killing a whole Worker thread does for
+   * the worker-hosted case. Bumps `generation` (so a chunk already in
+   * flight discovers, on its next check, that it has been superseded — see
+   * `runChunk`'s doc) and destroys the current backend (a no-op if none
+   * exists yet, e.g. disposing a session that never started). Unlike a
+   * restart, there is nothing to hand off TO: `disposed` latches
+   * permanently, so neither that hand-off's `ensureRunning()` call nor a
+   * chunk already sitting in the schedule queue can ever start another one.
+   * Idempotent.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.generation++;
+    this.backend?.destroy();
+    this.backend = null;
+  }
+
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
@@ -512,6 +828,7 @@ export class FlameWorkerSession {
     this.palette = transformColors(cmd.transforms.length);
     // null for "legacy" — accumulateFlame then colors by transform (palette).
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
+    this.paletteId = cmd.paletteId;
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
@@ -542,6 +859,7 @@ export class FlameWorkerSession {
     };
     this.maxSafeSupersample = Infinity; // a fresh session has no learned ceiling yet.
     this.maxAccumBuckets = cmd.maxAccumBuckets ?? this.defaultMaxAccumBuckets;
+    this.gpuPreference = cmd.gpuPreference ?? "off";
     this.startAccumulation(cmd.requestedSupersample);
   }
 
@@ -568,10 +886,23 @@ export class FlameWorkerSession {
     this.accumHeight = this.height * effective;
     this.effectiveSupersample = effective;
     this.lastRequestedSupersample = requested;
+    // A restart, in place, of the SAME session (fr-npb) — bump the
+    // generation so a `runChunk` already in flight (mid-chunk, or awaiting
+    // GPU backend creation) recognizes on its next check that IT has been
+    // superseded, and destroy the outgoing backend now rather than leaving
+    // that to whichever stale `runChunk` eventually notices (it may never
+    // get the chance to — see that method's doc).
+    this.generation++;
+    this.backend?.destroy();
+    this.backend = null;
     this.histogram = null;
     this.displayHistogram = null;
     this.iterationsDone = 0;
     this.lastDownsampleAt = undefined;
+    // Reset to the CPU initial unconditionally: a backend doesn't exist yet
+    // (just destroyed above), so the CPU size is the only sane baseline —
+    // `runChunk` bumps this to the GPU initial itself, once, right after it
+    // lazily creates a GPU backend (see its doc).
     this.chunkSize = this.initialChunkSize;
     this.emitSupersampleNote(effective, requested);
     this.ensureRunning();
@@ -638,6 +969,7 @@ export class FlameWorkerSession {
   private setPalette(paletteId: FlamePaletteId): void {
     if (!this.prepared || !this.projection) return; // no active session yet.
     this.colorLUT = buildPaletteLUT(paletteId);
+    this.paletteId = paletteId;
     // sumRGB has the old palette's colors baked into it, so — unlike a
     // tone-map param — this can't be re-applied to the existing accumulation;
     // it has to accumulate afresh. Same restart path setSupersample uses (the
@@ -669,24 +1001,146 @@ export class FlameWorkerSession {
   }
 
   private ensureRunning(): void {
+    if (this.disposed) return;
     if (this.running) return;
     if (!this.prepared || !this.projection) return;
     if (this.iterationsDone >= this.iterationsBudget) return;
     this.running = true;
-    this.schedule(() => this.runChunk());
+    this.schedule(() => {
+      void this.runChunk();
+    });
   }
 
-  private runChunk(): void {
+  /**
+   * Bring up a backend for the CURRENT accumulation: GPU first when
+   * `gpuPreference` is `"auto"`, a factory is wired up, and GPU hasn't
+   * already failed this session; CPU otherwise. Returns the CPU backend
+   * DIRECTLY (not wrapped in a `Promise`) whenever GPU isn't attempted —
+   * deliberately not declared `async` (which would implicitly wrap every
+   * return in a `Promise`, promise-ifying even the all-CPU path and
+   * defeating `runChunk`'s `isPromiseLike` guard at the one call site that
+   * runs on EVERY first chunk of EVERY accumulation) — so `runChunk` applies
+   * the exact same conditional-`await` pattern here as it does for
+   * `accumulate`/`snapshot`. The actual GPU attempt (which DOES need
+   * `async`/`try`/`catch`) lives in {@link createGpuBackendWithFallback}.
+   */
+  private createBackend(
+    prepared: PreparedChaosGame,
+    projection: Mat4,
+  ): FlameAccumBackend | Promise<FlameAccumBackend> {
+    const gpuFactory = this.createGpuBackend;
+    if (this.gpuPreference === "auto" && !this.gpuFailed && gpuFactory) {
+      return this.createGpuBackendWithFallback(
+        gpuFactory,
+        prepared,
+        projection,
+      );
+    }
+    return this.makeCpuBackend(prepared, projection);
+  }
+
+  /** The genuinely-async half of {@link createBackend}: try the GPU
+   * factory, and on ANY throw/reject, ratchet `gpuFailed` (so this session
+   * never retries it) and fall back to CPU. Takes `gpuFactory` as a
+   * parameter, already known non-`undefined` by the caller, rather than
+   * re-reading `this.createGpuBackend` and asserting it non-null here. */
+  private async createGpuBackendWithFallback(
+    gpuFactory: (request: GpuBackendRequest) => Promise<FlameAccumBackend>,
+    prepared: PreparedChaosGame,
+    projection: Mat4,
+  ): Promise<FlameAccumBackend> {
+    try {
+      return await gpuFactory(this.buildGpuBackendRequest(projection));
+    } catch (e) {
+      this.gpuFailed = true;
+      this.log(
+        `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
+      );
+      return this.makeCpuBackend(prepared, projection);
+    }
+  }
+
+  private makeCpuBackend(
+    prepared: PreparedChaosGame,
+    projection: Mat4,
+  ): FlameAccumBackend {
+    return new CpuFlameBackend(
+      this.accumulate,
+      prepared,
+      projection,
+      this.accumWidth,
+      this.accumHeight,
+      this.palette,
+      this.rng,
+      this.colorLUT,
+    );
+  }
+
+  /** Assembles a {@link GpuBackendRequest} from the session's retained
+   * "last start" state — see that type's doc for the per-restart `seed`. */
+  private buildGpuBackendRequest(projection: Mat4): GpuBackendRequest {
+    return {
+      transforms: this.baseTransforms,
+      finalTransform: this.baseFinalTransform,
+      order: this.symmetryOrder,
+      axis: this.symmetryAxis,
+      paletteId: this.paletteId,
+      projection,
+      width: this.accumWidth,
+      height: this.accumHeight,
+      seed: Math.floor(this.rng() * 0x100000000) >>> 0,
+    };
+  }
+
+  /**
+   * Advance the current accumulation by one chunk, refresh the display on
+   * the throttled cadence, and reschedule until the iteration budget is
+   * met. `async` so a GPU backend's genuinely-asynchronous
+   * accumulate/snapshot/creation calls can be awaited — but every `await`
+   * below is guarded by `isPromiseLike` (see its doc), so a CPU-only
+   * accumulation never actually suspends: it runs exactly as synchronously
+   * as it did before this backend seam existed, which is what lets
+   * flame-worker-core.test.ts's synchronous `scheduler.drain()` keep
+   * driving every pre-fr-npb test to completion unmodified — an
+   * unconditional `await` here would instead make even a CPU chunk yield to
+   * the microtask queue, and a plain synchronous `while` loop can never
+   * catch that continuation (see `isPromiseLike`'s doc).
+   *
+   * Generation handling (fr-npb): `gen` is this call's accumulation
+   * identity, captured on entry. Because backend creation and accumulation
+   * can both genuinely suspend (the GPU paths), a `setSupersample`/
+   * `setPalette`/`setSymmetry`/OOM-ratchet/GPU-failure restart can land on
+   * `this` WHILE this call is suspended — `startAccumulation` bumps
+   * `this.generation`, destroys `this.backend`, and — because `this.running`
+   * is still `true` (this very call hasn't returned yet) — its own
+   * `ensureRunning()` no-ops, leaving THIS call as the only thing that will
+   * ever reschedule the loop. So every point below that resumes from an
+   * `await` re-checks `gen !== this.generation` and, if superseded, cleans
+   * up anything only this stale call owns (an orphaned just-created
+   * backend nobody has installed yet) and calls `this.running = false;
+   * this.ensureRunning();` — which this time actually schedules the new
+   * generation's first chunk, hanging the loop off to it rather than
+   * letting it die or double-running it.
+   */
+  private async runChunk(): Promise<void> {
+    const gen = this.generation;
     const prepared = this.prepared;
     const projection = this.projection;
     // Re-checked here, not just in ensureRunning's gate before scheduling:
     // a chunk already scheduled runs regardless of what happens in between
-    // (JS is single-threaded, but a `setIterationsBudget` command handled
-    // before this chunk fires doesn't retroactively unschedule it), so a
-    // budget LOWERED below iterationsDone in the meantime must stop here —
-    // otherwise `iterationsBudget - iterationsDone` below goes negative and
-    // silently corrupts the progress count instead of just finishing.
+    // (JS is single-threaded, but a `setIterationsBudget` command — or a
+    // `dispose()` call, fr-1ib — handled before this chunk fires doesn't
+    // retroactively unschedule it), so a budget LOWERED below iterationsDone
+    // in the meantime must stop here — otherwise `iterationsBudget -
+    // iterationsDone` below goes negative and silently corrupts the
+    // progress count instead of just finishing. `disposed` gets the same
+    // treatment for the same reason: without it, a chunk already sitting in
+    // the schedule queue when `dispose()` runs would resume here, find
+    // `this.backend` null (dispose destroyed and cleared it), and spin up a
+    // BRAND NEW backend — exactly the resurrection `dispose()` exists to
+    // rule out.
     if (
+      this.disposed ||
       !prepared ||
       !projection ||
       this.iterationsDone >= this.iterationsBudget
@@ -695,32 +1149,93 @@ export class FlameWorkerSession {
       return;
     }
 
+    // Lazily bring up this accumulation's backend — not in
+    // startAccumulation, which is a synchronous command handler and can't
+    // await the (possibly async) GPU factory.
+    if (this.backend === null) {
+      const createdResult = this.createBackend(prepared, projection);
+      const created = isPromiseLike(createdResult)
+        ? await createdResult
+        : createdResult;
+      if (gen !== this.generation) {
+        // Superseded while the factory was in flight (see this method's
+        // doc). Nobody else references `created` — it was never installed
+        // as `this.backend` — so release it now rather than leak it (a
+        // no-op for CPU, real cleanup for GPU).
+        created.destroy();
+        this.running = false;
+        this.ensureRunning();
+        return;
+      }
+      this.backend = created;
+      // A GPU backend just came up: its dispatch granularity dwarfs a CPU
+      // chunk (see FLAME_GPU_CHUNK_INITIAL's doc) — bump off the CPU-sized
+      // value startAccumulation just reset chunkSize to, rather than wait
+      // for adaptChunkSize to climb there one 2x step at a time. The
+      // equality check is always true here in practice (backend creation
+      // only ever happens immediately after that reset, before anything
+      // else can touch chunkSize) — kept explicit rather than unconditional
+      // so the intent ("bump only the first GPU chunk after a backend
+      // comes up") reads directly at the call site instead of leaning on
+      // that ordering invariant silently.
+      if (created.kind === "gpu" && this.chunkSize === this.initialChunkSize) {
+        this.chunkSize = FLAME_GPU_CHUNK_INITIAL;
+      }
+      this.emit({
+        type: "backend",
+        backend: created.kind,
+        adapter: created.adapterLabel,
+      });
+    }
+    const backend = this.backend;
+
     const chunk = Math.min(
       this.chunkSize,
       this.iterationsBudget - this.iterationsDone,
     );
-    // Only the FIRST accumulate call for a given histogram allocates (inside
-    // accumulateFlame) — a later call resuming an already-allocated
-    // histogram isn't expected to newly fail for memory reasons, so only a
-    // fresh-start failure gets the shrink-and-retry treatment below;
-    // anything else is a real bug and should surface, not be swallowed.
+    // Only the FIRST accumulate call for a given backend allocates (inside
+    // accumulateFlame, CPU side) — a later call resuming an already-
+    // allocated histogram isn't expected to newly fail for memory reasons,
+    // so only a fresh-start failure gets the shrink-and-retry treatment
+    // below; anything else is a real bug and should surface, not be
+    // swallowed. Still exactly `this.histogram === null`, not something
+    // read off the backend: the very first chunk after ANY (re)start is
+    // unconditionally "due" (`lastDownsampleAt` is freshly `undefined` — see
+    // the `due` computation below), so `this.histogram` is always populated
+    // from that very chunk's snapshot before `runChunk` can be called
+    // again — this session-level flag has tracked "fresh start" correctly
+    // since before the backend seam existed, and still does.
     const wasFreshStart = this.histogram === null;
     const t0 = this.now();
-    let histogram: FlameHistogram;
+    let actual: number;
     try {
-      histogram = this.accumulate(
-        prepared,
-        projection,
-        this.accumWidth,
-        this.accumHeight,
-        chunk,
-        this.rng,
-        this.palette,
-        this.histogram ?? undefined,
-        this.colorLUT ?? undefined,
-      );
+      const result = backend.accumulate(chunk);
+      actual = isPromiseLike(result) ? await result : result;
     } catch (e) {
+      if (gen !== this.generation) {
+        // Superseded while accumulating — the new generation already owns
+        // its own backend/state; this stale failure carries nothing useful.
+        this.running = false;
+        this.ensureRunning();
+        return;
+      }
       this.running = false;
+      if (backend.kind === "gpu") {
+        // GPU failure recovery is unconditional and unlearned (unlike the
+        // CPU ratchet below): a GPU accumulate failure isn't a
+        // "this-size-doesn't-fit" signal the way a CPU allocation failure
+        // is, so there's no smaller size worth trying first — drop to CPU
+        // for the rest of the session and restart the current accumulation
+        // there from scratch.
+        this.gpuFailed = true;
+        this.log(
+          `Flame: GPU accumulation failed, restarting on CPU (${describeError(e)}).`,
+        );
+        this.startAccumulation(
+          this.lastRequestedSupersample ?? this.effectiveSupersample,
+        );
+        return;
+      }
       if (wasFreshStart && this.effectiveSupersample > 1) {
         // The proactive budget estimate (clampSupersampleToBudget) wasn't
         // conservative enough for this device at this size — learn that and
@@ -739,10 +1254,22 @@ export class FlameWorkerSession {
       }
       return;
     }
-    this.histogram = histogram;
+    if (gen !== this.generation) {
+      // Succeeded, but superseded while in flight — discard the result
+      // rather than folding a stale generation's work into the new one's
+      // iterationsDone/histogram.
+      this.running = false;
+      this.ensureRunning();
+      return;
+    }
 
     const t1 = this.now();
-    this.iterationsDone += chunk;
+    // `actual`, not `chunk`: a backend may retire MORE than it was asked
+    // for (GPU rounds up to its dispatch granularity — see
+    // FlameAccumBackend's doc) — iterationsDone may end up slightly ABOVE
+    // iterationsBudget, which is fine: the `finished`/`due` checks below
+    // only ever compare `>=`.
+    this.iterationsDone += actual;
     this.adaptChunkSize(t1 - t0);
 
     const finished = this.iterationsDone >= this.iterationsBudget;
@@ -751,6 +1278,47 @@ export class FlameWorkerSession {
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
     if (due) {
+      let snap: FlameHistogram;
+      try {
+        const snapResult = backend.snapshot();
+        snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
+      } catch (e) {
+        // Mirrors the accumulate catch above: a GPU readback can fail on its
+        // own (e.g. a device lost between a successful accumulate and this
+        // snapshot) independently of accumulate ever failing, and letting
+        // that rejection escape `runChunk` unhandled would trip the main
+        // thread's generic worker.onerror ("crashed") path instead of the
+        // graceful fallback accumulate failures get for the exact same
+        // underlying event — inconsistent recovery for the same failure.
+        if (gen !== this.generation) {
+          this.running = false;
+          this.ensureRunning();
+          return;
+        }
+        this.running = false;
+        if (backend.kind === "gpu") {
+          this.gpuFailed = true;
+          this.log(
+            `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
+          );
+          this.startAccumulation(
+            this.lastRequestedSupersample ?? this.effectiveSupersample,
+          );
+        } else {
+          // CpuFlameBackend.snapshot only throws on a broken invariant (see
+          // its doc) — not a retryable/ratchetable condition like the CPU
+          // accumulate OOM path above — so there is nothing smaller to try;
+          // surface it exactly like the accumulate catch's own CPU branch.
+          this.emit({ type: "error", message: describeError(e) });
+        }
+        return;
+      }
+      if (gen !== this.generation) {
+        this.running = false;
+        this.ensureRunning();
+        return;
+      }
+      this.histogram = snap;
       this.rebuildDisplay(finished);
       this.lastDownsampleAt = t1;
       this.sendProgress();
@@ -759,20 +1327,28 @@ export class FlameWorkerSession {
     if (finished) {
       this.running = false;
     } else {
-      this.schedule(() => this.runChunk());
+      this.schedule(() => {
+        void this.runChunk();
+      });
     }
   }
 
   private adaptChunkSize(elapsed: number): void {
     if (elapsed <= 0) return;
     // Damped multiplicative correction (capped to 0.5x-2x per chunk) so one
-    // slow chunk (e.g. a GC pause) doesn't overcorrect wildly.
-    const scale = Math.min(2, Math.max(0.5, FLAME_FRAME_BUDGET_MS / elapsed));
+    // slow chunk (e.g. a GC pause) doesn't overcorrect wildly. Target/bounds
+    // are picked by the CURRENT backend's kind (see the FLAME_GPU_* consts'
+    // doc for why the GPU numbers are so much larger); falls back to the CPU
+    // numbers if somehow called with no backend up yet, though in practice
+    // this only ever runs right after a successful accumulate, which always
+    // has one.
+    const gpu = this.backend?.kind === "gpu";
+    const budgetMs = gpu ? FLAME_GPU_FRAME_BUDGET_MS : FLAME_FRAME_BUDGET_MS;
+    const minChunk = gpu ? FLAME_GPU_CHUNK_MIN : FLAME_CHUNK_MIN;
+    const maxChunk = gpu ? FLAME_GPU_CHUNK_MAX : FLAME_CHUNK_MAX;
+    const scale = Math.min(2, Math.max(0.5, budgetMs / elapsed));
     this.chunkSize = Math.round(
-      Math.min(
-        FLAME_CHUNK_MAX,
-        Math.max(FLAME_CHUNK_MIN, this.chunkSize * scale),
-      ),
+      Math.min(maxChunk, Math.max(minChunk, this.chunkSize * scale)),
     );
   }
 

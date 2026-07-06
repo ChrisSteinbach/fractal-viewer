@@ -13,6 +13,11 @@ import {
 import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
+import {
+  createLocalFlameSessionHost,
+  probeWorkerWebGpu,
+} from "./flame-session-host";
+import type { FlameSessionHost } from "./flame-session-host";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
@@ -133,6 +138,20 @@ function prefersReducedMotion(): boolean {
   return (
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true
   );
+}
+
+/**
+ * Manual escape hatch for which {@link FlameSessionHost} `enterFlameMode`
+ * picks (fr-1ib): `?flamehost=local` forces the main-thread session,
+ * `?flamehost=worker` forces the real Worker one, anything else (including
+ * the param being absent) defers to the auto-detect logic. This is also
+ * the only way to exercise the local host in Chrome, where dedicated
+ * workers DO have WebGPU — `workerWebGpu` there resolves `true`, so the
+ * auto-detect condition never picks local on its own.
+ */
+function flameHostOverride(): "local" | "worker" | null {
+  const value = new URLSearchParams(window.location.search).get("flamehost");
+  return value === "local" || value === "worker" ? value : null;
 }
 
 /**
@@ -469,21 +488,44 @@ function main(): void {
     cancelTweenOptions,
   );
 
-  // Flame render session (fr-o7s/fr-ucs/fr-73y): a Web Worker owns the
-  // supersampled accumulation, the OOM guard, the throttled downsample, and
-  // (in transfer mode) the tone-map (see flame-worker-core.ts) — this is
-  // thin glue that spins one up per render and forwards UI events as
-  // messages. When the page is cross-origin isolated (fr-96i: natively in
-  // dev via vite's server headers; in production via the COOP/COEP-injecting
-  // service worker in sw/sw.ts, since GitHub Pages cannot send those headers
-  // itself), the render upgrades to a SharedArrayBuffer transport: the
-  // worker downsamples into shared display-resolution buckets and THIS
-  // thread tone-maps a live view of them (see presentSharedFrame), so
-  // exposure/gamma/vibrancy changes land instantly with no worker round
-  // trip and nothing per-tick crosses but a few scalars. Without isolation
-  // it falls back to fr-73y's postMessage transfer of a tone-mapped image.
-  // Either way the big oversampled accumulator never leaves the worker.
-  let flameWorker: Worker | null = null;
+  // Probed once, here at boot (fr-1ib) — well before a human could
+  // plausibly click Render — whether dedicated WORKERS on this browser
+  // actually have usable WebGPU. Firefox 152 is a real counterexample:
+  // `navigator.gpu` exists on the main thread but not inside dedicated
+  // workers, so the flame worker's own GPU attempt would silently always
+  // fail there, and the fastest machine measured during fr-npb's
+  // benchmarking (an RX 7900 XTX) would render on CPU forever. `null` (still
+  // unresolved, or never probed at all — coarse-pointer/no-navigator.gpu
+  // devices skip it outright, since they'd never use the answer) always
+  // conservatively takes the worker path enterFlameMode already used before
+  // this existed. See flame-session-host.ts's `probeWorkerWebGpu` for the
+  // probe itself and enterFlameMode below for how the answer is used.
+  let workerWebGpu: boolean | null = null;
+  if (navigator.gpu && !window.matchMedia("(pointer: coarse)").matches) {
+    void probeWorkerWebGpu().then((ok) => {
+      workerWebGpu = ok;
+    });
+  }
+
+  // Flame render session (fr-o7s/fr-ucs/fr-73y): a session (either a real
+  // Web Worker, or — fr-1ib — the SAME FlameWorkerSession hosted on this
+  // main thread when workers here lack WebGPU but the main thread has it —
+  // owns the supersampled accumulation, the OOM guard, the throttled
+  // downsample, and (in transfer mode) the tone-map (see
+  // flame-worker-core.ts) — this is thin glue that spins one up per render
+  // and forwards UI events as messages. When the page is cross-origin
+  // isolated (fr-96i: natively in dev via vite's server headers; in
+  // production via the COOP/COEP-injecting service worker in sw/sw.ts,
+  // since GitHub Pages cannot send those headers itself), a WORKER-hosted
+  // render upgrades to a SharedArrayBuffer transport: the worker downsamples
+  // into shared display-resolution buckets and THIS thread tone-maps a live
+  // view of them (see presentSharedFrame), so exposure/gamma/vibrancy
+  // changes land instantly with no worker round trip and nothing per-tick
+  // crosses but a few scalars. Without isolation — and always for the
+  // main-thread host, which is already zero-copy same-thread — it falls
+  // back to fr-73y's postMessage transfer of a tone-mapped image. Either way
+  // the big oversampled accumulator never leaves the session.
+  let flameHost: FlameSessionHost | null = null;
   // True once the CURRENT session's first "progress" image has arrived.
   // Spinning up a worker (and the round trip to its first accumulate +
   // downsample + tone-map) takes real time, unlike fr-o7s's synchronous
@@ -556,7 +598,7 @@ function main(): void {
   }
 
   function postFlame(command: FlameWorkerCommand): void {
-    flameWorker?.postMessage(command);
+    flameHost?.post(command);
   }
 
   function handleFlameEvent(event: FlameWorkerEvent): void {
@@ -581,6 +623,9 @@ function main(): void {
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
+      case "backend":
+        ui.setFlameBackendNote(event.backend, event.adapter);
+        break;
       case "estimating":
         ui.setFlameEstimating();
         break;
@@ -594,32 +639,74 @@ function main(): void {
     }
   }
 
-  // Freeze the current camera and start converging a flame render of it in a
-  // fresh worker. Called only from the Render button — never automatically —
-  // so the explorer stays the default, always-interactive experience.
-  function enterFlameMode(): void {
-    flameWorker?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker.
-    const { width, height } = scene.flameRenderSize();
-    const projection = scene.flameProjectionMatrix();
-    ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh worker reports its own.
-    ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
-    flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
-    flameShared = tryCreateFlameSharedSession(width, height);
-    console.info(
-      flameShared
-        ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
-        : "Flame render: postMessage-transfer transport.",
-    );
-
-    flameWorker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
+  // Wraps a real flame Worker in the same FlameSessionHost surface the
+  // main-thread session (flame-session-host.ts) implements, so
+  // enterFlameMode/postFlame/exitFlameMode don't need to know which one is
+  // actually running (fr-1ib). `onerror` — a real Worker's uncaught-
+  // exception signal — has no main-thread-host equivalent (there is no
+  // second thread here to crash independently of this one), so it stays
+  // worker-specific, wired up here rather than folded into
+  // FlameSessionHost's shared surface.
+  function createWorkerFlameSessionHost(): FlameSessionHost {
+    const worker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
     });
-    flameWorker.onmessage = (e: MessageEvent<FlameWorkerEvent>) =>
+    worker.onmessage = (e: MessageEvent<FlameWorkerEvent>) =>
       handleFlameEvent(e.data);
-    flameWorker.onerror = (e) => {
+    worker.onerror = (e) => {
       console.error("Flame worker crashed; returning to explorer.", e);
       exitFlameMode();
     };
+    return {
+      post: (command) => worker.postMessage(command),
+      terminate: () => worker.terminate(),
+    };
+  }
+
+  // Freeze the current camera and start converging a flame render of it in a
+  // fresh session. Called only from the Render button — never automatically —
+  // so the explorer stays the default, always-interactive experience.
+  function enterFlameMode(): void {
+    flameHost?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker/session.
+    const { width, height } = scene.flameRenderSize();
+    const projection = scene.flameProjectionMatrix();
+    ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh session reports its own.
+    ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh session reports its own.
+    ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
+    flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
+
+    // Phone/tablet-class devices: shared with the memory-budget computation
+    // below, so only read matchMedia once.
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    // The manual override is also how the local host gets verified in
+    // Chrome, where dedicated workers DO have WebGPU — `workerWebGpu` there
+    // resolves `true`, so the auto-detect condition below never picks local
+    // on its own (see flameHostOverride's doc).
+    const override = flameHostOverride();
+    const useLocalHost =
+      override === "local" ||
+      (override !== "worker" &&
+        !coarse &&
+        !!navigator.gpu &&
+        workerWebGpu === false);
+
+    if (useLocalHost) {
+      console.info(
+        "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
+      );
+      // Same-thread transfer is already zero-copy — no SharedArrayBuffer
+      // upgrade to allocate (and nothing here would ever populate it).
+      flameShared = null;
+      flameHost = createLocalFlameSessionHost(handleFlameEvent);
+    } else {
+      flameShared = tryCreateFlameSharedSession(width, height);
+      console.info(
+        flameShared
+          ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
+          : "Flame render: postMessage-transfer transport.",
+      );
+      flameHost = createWorkerFlameSessionHost();
+    }
 
     postFlame({
       type: "start",
@@ -630,7 +717,9 @@ function main(): void {
       height,
       // A worker needs an explicit numeric seed — a live Rng (like
       // Math.random) can't cross postMessage — which as a side effect makes
-      // a render a reproducible pure function of its inputs.
+      // a render a reproducible pure function of its inputs. Harmless to
+      // draw the same way for the local host too (nothing there needs
+      // postMessage), keeping `start`'s construction identical either way.
       seed: Math.floor(Math.random() * 0xffffffff),
       requestedSupersample: state.flame.supersample,
       // Device-aware memory budget for the supersampled accumulator (fr-7c8).
@@ -639,7 +728,7 @@ function main(): void {
       // are main-thread/window facilities a worker can't reliably read.
       maxAccumBuckets: flameAccumBudgetBuckets(
         (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
-        window.matchMedia("(pointer: coarse)").matches,
+        coarse,
       ),
       iterationsBudget: state.flame.iterations,
       exposure: state.flame.exposure,
@@ -653,7 +742,17 @@ function main(): void {
       axis: state.symmetry.axis,
       // SAB-backed views structured-clone by SHARING their buffers — the
       // worker sees the same memory these frames wrap, nothing is copied.
+      // Always undefined for the local host (see above).
       sharedFrames: flameShared?.frames,
+      // WebGPU accumulation (fr-npb/fr-1ib): coarse-pointer (phone/tablet)
+      // devices stay CPU-only until the GPU path is validated there — "off",
+      // not "auto", so this session's gpuFailed ratchet is never even
+      // exercised on a device class that hasn't been checked out yet.
+      // Desktops/laptops (fine pointer) try GPU first and fall back to CPU
+      // automatically. Always "auto" whenever `useLocalHost` is true — it
+      // requires `!coarse` itself, so this expression already agrees with
+      // "the local host only exists because main-thread GPU is present".
+      gpuPreference: coarse ? "off" : "auto",
     });
 
     state = setFlameActive(state, true);
@@ -662,15 +761,17 @@ function main(): void {
 
   // Discard the in-progress render and return to the live explorer, exactly
   // as it was left (the camera/orbit was never touched while rendering). The
-  // worker is terminated outright rather than asked to wind down: an
+  // session is torn down outright rather than asked to wind down: an
   // in-flight accumulate chunk can't be interrupted mid-call anyway (a
-  // worker is single-threaded JS too), and the next Render click spins up a
-  // fresh worker rather than trying to reuse this one.
+  // worker is single-threaded JS too, and the main-thread host has no
+  // second thread to begin with), and the next Render click spins up a
+  // fresh session rather than trying to reuse this one.
   function exitFlameMode(): void {
-    flameWorker?.terminate();
-    flameWorker = null;
+    flameHost?.terminate();
+    flameHost = null;
     flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
     ui.setFlameSupersampleNote(null);
+    ui.setFlameBackendNote(null);
     flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
     state = setFlameActive(state, false);
     refreshUi();
