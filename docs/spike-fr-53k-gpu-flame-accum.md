@@ -167,6 +167,45 @@ progressive frames, (4) the equal-N agreement harness kept as a scripted
 check (SwiftShader in CI, real GPU locally). CPU worker remains the default
 wherever WebGPU is absent and the reference everywhere.
 
+## Addendum: desktop / Firefox cross-validation (same day)
+
+A second run on a desktop — **Firefox 152 on Ubuntu**, discrete GPU (Firefox
+withholds `adapter.info` for privacy) — via the same page, all four
+scenarios, 4 s timed runs:
+
+| Scenario   | CPU iter/s | GPU iter/s  | Speedup    |
+| ---------- | ---------- | ----------- | ---------- |
+| sierpinski | 13.5 M     | **10.06 B** | **745×**   |
+| fern       | 14.7 M     | **7.26 B**  | **494×**   |
+| swirl      | 6.8 M      | **9.48 B**  | **1,394×** |
+| kaleido    | 10.6 M     | **10.06 B** | **949×**   |
+
+What this adds beyond bigger numbers:
+
+- **The "billions of iter/s" claim is confirmed literally** — a default
+  20 M-iteration render is ~2 ms of GPU time (display-cadence-limited); a
+  1-billion-iteration deep convergence is ~0.1 s.
+- **Second WGSL toolchain**: Firefox compiles WGSL with Naga/wgpu (not
+  Chrome's Tint/Dawn). The kernel ran unmodified — portability across the
+  two major implementations is demonstrated, not assumed.
+- **Cross-device determinism, sharpened.** The equal-N agreement metrics
+  match the Iris Xe and SwiftShader runs to 3–5 decimals — and for kaleido
+  _exactly_ (MAE 0.5781, maxAbs 86, maxHits 2497 on all three): systems
+  whose kernel work is pure mul/add (sierpinski, fern, kaleido — symmetry
+  rotations are precomputed on the CPU) reproduce **bit-stably across
+  devices/drivers/toolchains**; only in-kernel transcendentals (swirl's
+  sin/cos) drift, and only in the 3rd decimal of MAE. So the earlier "not
+  bit-identical across devices" caveat applies narrowly: to
+  variation-bearing systems, not the common affine case.
+- **The fixed-point overflow limit is now a hard prerequisite**, not an
+  engineering nicety: at 10 G iter/s, a hot bucket (fern's peak was 52 k
+  hits per 50 M iterations) crosses the ~16.7 M-hit color capacity in
+  roughly 3 seconds of accumulation. Productization (fr-npb) must ship
+  overflow handling before enabling on fast GPUs.
+
+Raw JSON preserved locally as
+`bench-results/desktop-firefox-152-results.json` (gitignored artifacts).
+
 ## Reproducing
 
 ```bash
@@ -180,5 +219,6 @@ Headful is required for a hardware adapter on this dev box (headless Chrome
 interactively at `https://<dev-server>/gpu-spike/index.html` — including from
 a phone on the LAN, which is how phone numbers should eventually be taken.
 
-Benchmarked 2026-07-06: Chrome 148, Linux, Intel Iris Xe (gen-12lp), spike
-branch `spike/fr-53k-gpu-flame-accum`.
+Benchmarked 2026-07-06: Chrome 148, Linux, Intel Iris Xe (gen-12lp), and
+Firefox 152, Ubuntu, discrete GPU (addendum), spike branch
+`spike/fr-53k-gpu-flame-accum`.
