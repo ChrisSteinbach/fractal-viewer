@@ -33,6 +33,7 @@
     "@types/three": "^0.185.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitest/coverage-v8": "^4.1.6",
+    "@webgpu/types": "^0.1.71",
     "eslint": "^10.4.0",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",

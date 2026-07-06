@@ -597,6 +597,7 @@ export class Ui {
   private readonly flameSupersampleLabel: HTMLElement;
   private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameSupersampleNote: HTMLElement;
+  private readonly flameBackendNote: HTMLElement;
   private readonly flamePalette: HTMLSelectElement;
   private readonly flameEstimatorRadiusLabel: HTMLElement;
   private readonly flameEstimatorRadiusSlider: HTMLInputElement;
@@ -713,6 +714,7 @@ export class Ui {
     this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
     this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
+    this.flameBackendNote = this.byId("flameBackendNote");
     this.flamePalette = this.byId("flamePalette");
     this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
     this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
@@ -1318,6 +1320,30 @@ export class Ui {
         ? `Reduced to ${effective}× (from ${requested}×) to fit available memory.`
         : `Reduced to ${effective}× to fit available memory.`;
     this.flameSupersampleNote.classList.remove("hidden");
+  }
+
+  /**
+   * Which accumulation engine is driving the current flame render (fr-npb)
+   * — reflects the worker's one-time-per-backend `"backend"` event (see
+   * `flame-worker-core.ts`'s `FlameAccumBackend`), so a GPU render (or a
+   * mid-session fallback to CPU) is visible rather than silent. `adapter`
+   * is whatever label the GPU backend factory discovered (e.g. a
+   * `GPUAdapterInfo` description); omitted for the CPU backend, or a GPU one
+   * with no better label to offer. `null` hides the note, mirroring
+   * {@link setFlameSupersampleNote}'s contract (cleared at the start of
+   * every render, before the fresh worker reports its own).
+   */
+  setFlameBackendNote(backend: "gpu" | "cpu" | null, adapter?: string): void {
+    if (backend === null) {
+      this.flameBackendNote.textContent = "";
+      this.flameBackendNote.classList.add("hidden");
+      return;
+    }
+    this.flameBackendNote.textContent =
+      backend === "gpu"
+        ? `GPU accumulation${adapter ? ` (${adapter})` : ""}`
+        : "CPU accumulation";
+    this.flameBackendNote.classList.remove("hidden");
   }
 
   /** Reflect solid-render progress, mirroring {@link setFlameProgress}. */

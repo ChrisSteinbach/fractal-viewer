@@ -581,6 +581,9 @@ function main(): void {
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
+      case "backend":
+        ui.setFlameBackendNote(event.backend, event.adapter);
+        break;
       case "estimating":
         ui.setFlameEstimating();
         break;
@@ -602,6 +605,7 @@ function main(): void {
     const { width, height } = scene.flameRenderSize();
     const projection = scene.flameProjectionMatrix();
     ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh worker reports its own.
+    ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh worker reports its own.
     ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
     flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
     flameShared = tryCreateFlameSharedSession(width, height);
@@ -621,6 +625,10 @@ function main(): void {
       exitFlameMode();
     };
 
+    // Phone/tablet-class devices: shared with the memory-budget computation
+    // below, so only read matchMedia once.
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+
     postFlame({
       type: "start",
       transforms: state.transforms,
@@ -639,7 +647,7 @@ function main(): void {
       // are main-thread/window facilities a worker can't reliably read.
       maxAccumBuckets: flameAccumBudgetBuckets(
         (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
-        window.matchMedia("(pointer: coarse)").matches,
+        coarse,
       ),
       iterationsBudget: state.flame.iterations,
       exposure: state.flame.exposure,
@@ -654,6 +662,12 @@ function main(): void {
       // SAB-backed views structured-clone by SHARING their buffers — the
       // worker sees the same memory these frames wrap, nothing is copied.
       sharedFrames: flameShared?.frames,
+      // WebGPU accumulation (fr-npb): coarse-pointer (phone/tablet) devices
+      // stay CPU-only until the GPU path is validated there — "off", not
+      // "auto", so this session's gpuFailed ratchet is never even exercised
+      // on a device class that hasn't been checked out yet. Desktops/laptops
+      // (fine pointer) try GPU first and fall back to CPU automatically.
+      gpuPreference: coarse ? "off" : "auto",
     });
 
     state = setFlameActive(state, true);
@@ -671,6 +685,7 @@ function main(): void {
     flameWorker = null;
     flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
     ui.setFlameSupersampleNote(null);
+    ui.setFlameBackendNote(null);
     flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
     state = setFlameActive(state, false);
     refreshUi();
