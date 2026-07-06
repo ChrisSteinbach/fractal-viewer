@@ -23,6 +23,14 @@
  * `skipWaiting()`s + claims — see sw/sw.ts) to take over silently, and this
  * keeps it that way. The only reload this module ever performs is the
  * isolation dance, and only from a page that loaded non-isolated.
+ *
+ * The takeover itself is no longer *silent*-silent, though (fr-k1z): when a
+ * page that was ALREADY controlled gets handed a new controller — a deploy
+ * landed while this tab stayed open — the old build's content-hashed chunk
+ * URLs (e.g. the flame worker's) can start 404ing. `registerServiceWorker`
+ * reports exactly that transition via `onUpdateAvailable`, so the app can
+ * show a dismissible reload notice instead of failing with no explanation.
+ * Reloading remains the user's choice; this module still never forces one.
  */
 
 /** sessionStorage key marking "the load after our own isolation reload". */
@@ -62,7 +70,7 @@ function reloadForIsolation(): void {
  * when this page loaded non-isolated, arrange the one-time reload described
  * in the module doc.
  */
-export function registerServiceWorker(): void {
+export function registerServiceWorker(onUpdateAvailable?: () => void): void {
   if (import.meta.env.DEV) return;
   if (!("serviceWorker" in navigator)) return; // e.g. Firefox private mode.
 
@@ -83,26 +91,52 @@ export function registerServiceWorker(): void {
       reloadForIsolation,
       { once: true },
     );
+  } else if (onUpdateAvailable) {
+    // This page isn't doing the isolation dance — either it's already
+    // isolated, or `crossOriginIsolated` is `undefined` because the browser
+    // predates the concept entirely — but it still needs to learn about a
+    // deploy landing while it was open. A bare `controllerchange` can't tell
+    // us that by itself: in the `undefined` case, a FIRST-EVER visit is also
+    // uncontrolled, and the fresh worker's first-ever claim fires the same
+    // event. Only a controller being REPLACED — this page was already
+    // controlled, and a new worker just took over — means "a deploy landed
+    // while this tab was open", so track whether a controller existed at
+    // registration time and report only on a change away from one.
+    let hadController = navigator.serviceWorker.controller !== null;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController) onUpdateAvailable?.();
+      hadController = true;
+    });
   }
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js", { scope: "./" }).then(
-      (registration) => {
-        // Active but not controlling: this page was deliberately loaded
-        // around the already-installed worker (typically a hard reload), so
-        // no controllerchange is coming — yet a PLAIN reload is still
-        // interceptable. Trigger the dance directly.
-        if (
-          wantsIsolationReload &&
-          registration.active &&
-          !navigator.serviceWorker.controller
-        ) {
-          reloadForIsolation();
-        }
-      },
-      (error: unknown) => {
-        console.error("Service worker registration failed:", error);
-      },
-    );
+    navigator.serviceWorker
+      .register("./sw.js", {
+        scope: "./",
+        // GitHub Pages serves sw.js with `max-age=600` — without this, the
+        // browser's update check can trust that stale HTTP cache entry for
+        // up to 10 minutes instead of fetching a fresh copy to compare
+        // against. Only affects THIS check; the worker's own precache/
+        // install lifecycle (sw/sw.ts) is unaffected.
+        updateViaCache: "none",
+      })
+      .then(
+        (registration) => {
+          // Active but not controlling: this page was deliberately loaded
+          // around the already-installed worker (typically a hard reload), so
+          // no controllerchange is coming — yet a PLAIN reload is still
+          // interceptable. Trigger the dance directly.
+          if (
+            wantsIsolationReload &&
+            registration.active &&
+            !navigator.serviceWorker.controller
+          ) {
+            reloadForIsolation();
+          }
+        },
+        (error: unknown) => {
+          console.error("Service worker registration failed:", error);
+        },
+      );
   });
 }

@@ -216,6 +216,53 @@ body {
   }
 }
 
+/* ── Update banner (bottom-center, fr-k1z) ─────────────────────────────────
+   Shown when register-sw.ts reports that a deploy's service worker replaced
+   this tab's controller while it was open. Bottom-center because the other
+   three corners are already spoken for: #help/#menuToggle own the top
+   corners, #legend owns the bottom-left. */
+#updateBanner {
+  display: flex;
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 10px 10px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  z-index: 20;
+}
+
+/* #updateBanner sets its own `display` for layout, which (being an ID
+   selector) outranks the generic `.hidden` utility class on specificity
+   alone — same trap as #legendLabels/#legendSwatches above, same fix:
+   restate `display: none` at matching specificity. */
+#updateBanner.hidden {
+  display: none;
+}
+
+#updateDismissBtn {
+  padding: 4px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#updateDismissBtn:hover {
+  color: var(--text);
+}
+
 /* ── Floating buttons (open / close panel) ────────────────────────────────── */
 #menuToggle {
   display: flex;
@@ -364,6 +411,15 @@ body {
 
 .btn-row .btn {
   flex: 1;
+}
+
+/* `.btn` is `display: block; width: 100%` for the panel's stacked buttons —
+   inside the flex #updateBanner the Reload button must size to its label
+   instead of stretching. */
+#updateBanner .btn {
+  width: auto;
+  margin-bottom: 0;
+  padding: 7px 14px;
 }
 
 input[type="range"] {
