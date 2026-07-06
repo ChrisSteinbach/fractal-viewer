@@ -306,8 +306,11 @@ const FLAME_GPU_FRAME_BUDGET_MS = 24;
  * PROGRESSIVE (not-yet-finished) frames with in `runChunk` — see its doc for
  * why fixed rather than density-adaptive. The finished frame instead gets
  * `adaptiveDownsampleFlame` (fr-17t), which has no equivalent fixed-radius
- * constant since its whole point is a radius computed per cell. */
-const FLAME_FILTER_RADIUS = 0.4;
+ * constant since its whole point is a radius computed per cell. Exported
+ * (fr-ee9) so `GpuBackendRequest`'s `progressiveFilterRadius` and the
+ * gpu-bench agreement harness both read the SAME value rather than each
+ * re-declaring their own copy that could silently drift from this one. */
+export const FLAME_FILTER_RADIUS = 0.4;
 /** Minimum time between downsample + tone-map + transfer refreshes while
  * actively accumulating. Accumulation itself still runs every scheduled
  * chunk; only the pricier, unchunked downsample pass is throttled. */
@@ -427,6 +430,27 @@ export interface FlameAccumBackend {
    * error shape as `accumulate`'s (see `runChunk`'s `due` branch).
    */
   snapshot(): FlameHistogram | Promise<FlameHistogram>;
+  /**
+   * OPTIONAL (fr-ee9): a progressive-display-resolution downsample WITHOUT a
+   * full-histogram readback — a GPU backend runs its downsample compute
+   * kernel over the resident accumulation buffer and reads back only a
+   * `displayWidth x displayHeight` histogram, instead of `snapshot()`'s full
+   * `width x height` one followed by a CPU `downsampleFlame` pass. Display
+   * dimensions and filter radius are baked in at backend-creation time (see
+   * `GpuBackendRequest`'s `displayWidth`/`displayHeight`/
+   * `progressiveFilterRadius`); the caller passes an `out` histogram with
+   * EXACTLY those dimensions (one of `runChunk`'s `displaySlots`), and every
+   * bucket is unconditionally overwritten (the same dirty-reuse contract as
+   * `downsampleFlame`'s own `out`). The CPU backend does NOT implement this
+   * — its live accumulator IS already display-cheap to downsample on the
+   * main-thread-adjacent worker, so there is no readback to avoid. When
+   * present, `runChunk`'s due branch prefers this over `snapshot()` for every
+   * NOT-yet-finished redisplay tick; the finished frame always calls
+   * `snapshot()` regardless (see that method's doc and `runChunk`'s own).
+   */
+  snapshotDisplay?(
+    out: FlameHistogram,
+  ): FlameHistogram | Promise<FlameHistogram>;
   /** Release any resources this backend holds (GPU buffers/pipelines). A
    * no-op for the CPU backend. Idempotent — safe to call more than once
    * (e.g. a generation hand-off destroying an already-orphaned backend). */
@@ -468,6 +492,16 @@ export interface GpuBackendRequest {
    * `rng` instance makes each restart's orbit stream distinct too.
    */
   seed: number;
+  /**
+   * fr-ee9: DISPLAY resolution (the session's fixed `width`/`height` — NOT
+   * `width`/`height` above, which are the accumulation size) and the fixed
+   * reconstruction-filter radius progressive redisplays blur with — sizes
+   * and parameterizes a `snapshotDisplay`-capable backend's downsample
+   * pipeline at creation time, once per accumulation.
+   */
+  displayWidth: number;
+  displayHeight: number;
+  progressiveFilterRadius: number;
 }
 
 /**
@@ -705,6 +739,21 @@ export class FlameWorkerSession {
   /** undefined until the first downsample+tonemap+transfer of this session,
    * so that first one is never throttled. */
   private lastDownsampleAt: number | undefined;
+  /**
+   * "The finished-frame adaptive display for the CURRENT accumulation +
+   * budget has already been sent" (fr-ee9). Exists because a
+   * `snapshotDisplay`-capable (GPU) backend's progressive due ticks
+   * deliberately never refresh `this.histogram` (see that method's doc) —
+   * so `setIterationsBudget`'s lowered-mid-render branch can no longer
+   * safely re-run the finished-frame adaptive pass itself (its only
+   * histogram to rebuild from would be null or, worse, STALE from a
+   * previous finish). This flag lets that branch do nothing for a non-CPU
+   * backend (see its own doc) and instead guards `runChunk`'s budget-met
+   * entry bail, which fetches a fresh snapshot and produces the finished
+   * frame exactly once per accumulation+budget, no matter how many already-
+   * scheduled chunks re-enter after the render is actually done.
+   */
+  private finalFrameDisplayed = false;
   private chunkSize: number;
   /** True while a chunk is scheduled or in flight — guards against
    * double-scheduling the loop (e.g. a `setIterationsBudget` bump arriving
@@ -742,7 +791,12 @@ export class FlameWorkerSession {
         const wasFinished = this.iterationsDone >= this.iterationsBudget;
         this.iterationsBudget = command.iterations;
         if (this.iterationsDone < this.iterationsBudget) {
-          this.ensureRunning(); // resume if this raised the budget past iterationsDone.
+          // Resuming past a prior finish (or past whatever had accumulated)
+          // means a new finished frame will eventually be owed again —
+          // un-latch the guard (fr-ee9) before ensureRunning() schedules the
+          // chunk that will (eventually) produce it.
+          this.finalFrameDisplayed = false;
+          this.ensureRunning();
         } else if (wasFinished) {
           // Already finished before this change, so the frame on screen is
           // already the adaptive finished one — only the label's target is
@@ -750,15 +804,30 @@ export class FlameWorkerSession {
           // mode, a scalars-only re-notification in shared mode) so it
           // reads 100% against the new budget.
           this.redisplayNow();
-        } else {
+        } else if (this.backend?.kind === "cpu" && this.histogram) {
           // Lowered to/below the accumulated count mid-render: that finishes
           // the render on the spot, but no chunk will run to say so — the
           // already-scheduled one bails silently in runChunk — so the label
           // would freeze at its last value (fr-15z) and the display would
           // keep the cheap progressive filter instead of the finished-frame
-          // adaptive estimate. Finish here: adaptive pass + final progress.
+          // adaptive estimate. Finish here: adaptive pass + final progress —
+          // but ONLY for the CPU backend, whose live `this.histogram` is
+          // always current (this preserves today's synchronous event timing
+          // for CPU exactly).
           this.redisplayWithFreshEstimate();
         }
+        // else: a snapshotDisplay-capable (GPU) backend mid-render, or no
+        // backend/histogram yet at all. this.histogram here is either null
+        // (never refreshed this accumulation — GPU's progressive due ticks
+        // deliberately skip it, see FlameAccumBackend.snapshotDisplay's doc)
+        // or STALE (left over from a PREVIOUS finish), so redisplaying from
+        // it now would either no-op or silently show old data — do nothing
+        // here. runChunk's own budget-met entry bail (fr-ee9) is what
+        // actually finishes the render in this case: it fetches a fresh
+        // `backend.snapshot()` and produces the finished frame instead —
+        // mid-render implies `running === true`, so a chunk is always
+        // scheduled or in flight, and is therefore guaranteed to reach that
+        // bail and run it, exactly once (see `finalFrameDisplayed`'s doc).
         break;
       }
       case "setExposure":
@@ -899,6 +968,7 @@ export class FlameWorkerSession {
     this.displayHistogram = null;
     this.iterationsDone = 0;
     this.lastDownsampleAt = undefined;
+    this.finalFrameDisplayed = false;
     // Reset to the CPU initial unconditionally: a backend doesn't exist yet
     // (just destroyed above), so the CPU size is the only sane baseline —
     // `runChunk` bumps this to the GPU initial itself, once, right after it
@@ -1089,6 +1159,9 @@ export class FlameWorkerSession {
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
+      displayWidth: this.width,
+      displayHeight: this.height,
+      progressiveFilterRadius: FLAME_FILTER_RADIUS,
     };
   }
 
@@ -1130,21 +1203,82 @@ export class FlameWorkerSession {
     // a chunk already scheduled runs regardless of what happens in between
     // (JS is single-threaded, but a `setIterationsBudget` command — or a
     // `dispose()` call, fr-1ib — handled before this chunk fires doesn't
-    // retroactively unschedule it), so a budget LOWERED below iterationsDone
-    // in the meantime must stop here — otherwise `iterationsBudget -
-    // iterationsDone` below goes negative and silently corrupts the
-    // progress count instead of just finishing. `disposed` gets the same
-    // treatment for the same reason: without it, a chunk already sitting in
-    // the schedule queue when `dispose()` runs would resume here, find
-    // `this.backend` null (dispose destroyed and cleared it), and spin up a
-    // BRAND NEW backend — exactly the resurrection `dispose()` exists to
-    // rule out.
-    if (
-      this.disposed ||
-      !prepared ||
-      !projection ||
-      this.iterationsDone >= this.iterationsBudget
-    ) {
+    // retroactively unschedule it). `disposed` needs this check for the same
+    // reason: without it, a chunk already sitting in the schedule queue when
+    // `dispose()` runs would resume here, find `this.backend` null (dispose
+    // destroyed and cleared it), and spin up a BRAND NEW backend — exactly
+    // the resurrection `dispose()` exists to rule out.
+    if (this.disposed || !prepared || !projection) {
+      this.running = false;
+      return;
+    }
+
+    // A budget LOWERED below iterationsDone in the meantime (or one that was
+    // never raised past it) must stop here too — without this,
+    // `iterationsBudget - iterationsDone` below goes negative and silently
+    // corrupts the progress count instead of just finishing. Split out from
+    // the disposed/prepared/projection bail above (fr-ee9): unlike those,
+    // this case may still owe the finished-frame adaptive display — a
+    // snapshotDisplay-capable (GPU) backend's progressive due ticks
+    // deliberately never refresh `this.histogram` (see
+    // FlameAccumBackend.snapshotDisplay's doc), so `setIterationsBudget`'s
+    // lowered-mid-render branch can't safely redisplay from it itself (see
+    // that branch's own doc) — THIS pending chunk (guaranteed to run, since
+    // mid-render implies `running` was true when the budget changed) is
+    // where that finished frame actually gets produced instead.
+    // `finalFrameDisplayed` (see its doc) makes this idempotent: a chunk
+    // that re-enters here after the render is already fully displayed just
+    // bails, without redoing the fetch+rebuild+send.
+    if (this.iterationsDone >= this.iterationsBudget) {
+      if (!this.finalFrameDisplayed && this.backend !== null) {
+        const backend = this.backend;
+        let snap: FlameHistogram;
+        try {
+          const snapResult = backend.snapshot();
+          snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
+        } catch (e) {
+          // Mirrors the due branch's own finished-snapshot catch below
+          // exactly (gen-recheck first, then the GPU-ratchet-restart / CPU-
+          // error split) — kept as a separate, inline copy rather than a
+          // shared helper: the two call sites sit in different control-flow
+          // shapes (this one always bails outright; the due branch's falls
+          // through to the reschedule-or-stop tail), and threading a helper
+          // through both would either flatten that difference back out via
+          // an extra tri-state return value or muddy the generation dance
+          // this method's own doc describes — inline duplication reads more
+          // clearly here than the abstraction would.
+          if (gen !== this.generation) {
+            this.running = false;
+            this.ensureRunning();
+            return;
+          }
+          this.running = false;
+          if (backend.kind === "gpu") {
+            this.gpuFailed = true;
+            this.log(
+              `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
+            );
+            this.startAccumulation(
+              this.lastRequestedSupersample ?? this.effectiveSupersample,
+            );
+          } else {
+            this.emit({ type: "error", message: describeError(e) });
+          }
+          return;
+        }
+        if (gen !== this.generation) {
+          this.running = false;
+          this.ensureRunning();
+          return;
+        }
+        this.histogram = snap;
+        this.rebuildDisplay(true);
+        this.sendProgress();
+        this.finalFrameDisplayed = true;
+      }
+      // backend === null here means the budget was lowered before any chunk
+      // ever ran this accumulation — nothing has been accumulated yet, so
+      // there is nothing to display; bail as today.
       this.running = false;
       return;
     }
@@ -1204,7 +1338,17 @@ export class FlameWorkerSession {
     // the `due` computation below), so `this.histogram` is always populated
     // from that very chunk's snapshot before `runChunk` can be called
     // again — this session-level flag has tracked "fresh start" correctly
-    // since before the backend seam existed, and still does.
+    // since before the backend seam existed, and still does. (fr-ee9: a
+    // snapshotDisplay-capable GPU backend's progressive due ticks now leave
+    // `this.histogram` unpopulated instead — see that method's doc — so the
+    // "first due chunk populates this.histogram" invariant above no longer
+    // holds universally. It still holds everywhere `wasFreshStart` is
+    // actually READ, though: this flag is only ever consulted below, in the
+    // CPU-only OOM-ratchet catch, which a GPU backend's `accumulate` failure
+    // never reaches — it takes the unconditional `backend.kind === "gpu"`
+    // branch first, several lines down. CPU backends never have
+    // `snapshotDisplay`, so wherever this flag is read, its computation
+    // above is unchanged from before fr-ee9.)
     const wasFreshStart = this.histogram === null;
     const t0 = this.now();
     let actual: number;
@@ -1278,50 +1422,109 @@ export class FlameWorkerSession {
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
     if (due) {
-      let snap: FlameHistogram;
-      try {
-        const snapResult = backend.snapshot();
-        snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
-      } catch (e) {
-        // Mirrors the accumulate catch above: a GPU readback can fail on its
-        // own (e.g. a device lost between a successful accumulate and this
-        // snapshot) independently of accumulate ever failing, and letting
-        // that rejection escape `runChunk` unhandled would trip the main
-        // thread's generic worker.onerror ("crashed") path instead of the
-        // graceful fallback accumulate failures get for the exact same
-        // underlying event — inconsistent recovery for the same failure.
+      if (!finished && backend.snapshotDisplay !== undefined) {
+        // GPU progressive display path (fr-ee9): the downsample runs
+        // resident on the device, reading back only a display-resolution
+        // histogram — no full w*h*ss^2 readback + CPU downsampleFlame every
+        // tick (see FlameAccumBackend.snapshotDisplay's doc). `this.histogram`
+        // is deliberately NOT refreshed here: only the full-snapshot branch
+        // below (which this `!finished` guard always routes away from while
+        // a GPU backend is still mid-render) and the budget-met entry bail
+        // above ever populate it.
+        const out = this.takeDisplaySlot();
+        let result: FlameHistogram;
+        try {
+          const resultOrPromise = backend.snapshotDisplay(out);
+          result = isPromiseLike(resultOrPromise)
+            ? await resultOrPromise
+            : resultOrPromise;
+        } catch (e) {
+          // Mirrors the full-snapshot catch below (gen-recheck first, then
+          // ratchet + restart) but with no CPU flavor to fall through to:
+          // `snapshotDisplay` only ever exists on a GPU backend (see that
+          // method's doc — the CPU backend never implements it), so
+          // unconditionally ratcheting `gpuFailed` here (rather than
+          // branching on `backend.kind`, as the other two catches in this
+          // method do) is exact, not a simplifying assumption.
+          if (gen !== this.generation) {
+            this.running = false;
+            this.ensureRunning();
+            return;
+          }
+          this.running = false;
+          this.gpuFailed = true;
+          this.log(
+            `Flame: GPU display downsample failed, restarting on CPU (${describeError(e)}).`,
+          );
+          this.startAccumulation(
+            this.lastRequestedSupersample ?? this.effectiveSupersample,
+          );
+          return;
+        }
         if (gen !== this.generation) {
           this.running = false;
           this.ensureRunning();
           return;
         }
-        this.running = false;
-        if (backend.kind === "gpu") {
-          this.gpuFailed = true;
-          this.log(
-            `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
-          );
-          this.startAccumulation(
-            this.lastRequestedSupersample ?? this.effectiveSupersample,
-          );
-        } else {
-          // CpuFlameBackend.snapshot only throws on a broken invariant (see
-          // its doc) — not a retryable/ratchetable condition like the CPU
-          // accumulate OOM path above — so there is nothing smaller to try;
-          // surface it exactly like the accumulate catch's own CPU branch.
-          this.emit({ type: "error", message: describeError(e) });
+        this.displayHistogram = result;
+        this.lastDownsampleAt = t1;
+        this.sendProgress();
+      } else {
+        let snap: FlameHistogram;
+        try {
+          const snapResult = backend.snapshot();
+          snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
+        } catch (e) {
+          // Mirrors the accumulate catch above: a GPU readback can fail on
+          // its own (e.g. a device lost between a successful accumulate and
+          // this snapshot) independently of accumulate ever failing, and
+          // letting that rejection escape `runChunk` unhandled would trip
+          // the main thread's generic worker.onerror ("crashed") path
+          // instead of the graceful fallback accumulate failures get for the
+          // exact same underlying event — inconsistent recovery for the same
+          // failure.
+          if (gen !== this.generation) {
+            this.running = false;
+            this.ensureRunning();
+            return;
+          }
+          this.running = false;
+          if (backend.kind === "gpu") {
+            this.gpuFailed = true;
+            this.log(
+              `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
+            );
+            this.startAccumulation(
+              this.lastRequestedSupersample ?? this.effectiveSupersample,
+            );
+          } else {
+            // CpuFlameBackend.snapshot only throws on a broken invariant (see
+            // its doc) — not a retryable/ratchetable condition like the CPU
+            // accumulate OOM path above — so there is nothing smaller to try;
+            // surface it exactly like the accumulate catch's own CPU branch.
+            this.emit({ type: "error", message: describeError(e) });
+          }
+          return;
         }
-        return;
+        if (gen !== this.generation) {
+          this.running = false;
+          this.ensureRunning();
+          return;
+        }
+        this.histogram = snap;
+        this.rebuildDisplay(finished);
+        this.lastDownsampleAt = t1;
+        this.sendProgress();
+        // This branch IS the finished-frame adaptive display for the current
+        // accumulation + budget whenever `finished` (a CPU backend's own
+        // ordinary, not-yet-finished progressive due tick also runs this
+        // same branch — CPU never has `snapshotDisplay` — but that case
+        // isn't the finished frame, hence the guard) — see
+        // `finalFrameDisplayed`'s doc.
+        if (finished) {
+          this.finalFrameDisplayed = true;
+        }
       }
-      if (gen !== this.generation) {
-        this.running = false;
-        this.ensureRunning();
-        return;
-      }
-      this.histogram = snap;
-      this.rebuildDisplay(finished);
-      this.lastDownsampleAt = t1;
-      this.sendProgress();
     }
 
     if (finished) {
@@ -1353,15 +1556,33 @@ export class FlameWorkerSession {
   }
 
   /**
+   * Advance the display-slot cursor and return the slot the caller should
+   * write into next — the slot-cycling dance `rebuildDisplay` (the CPU/
+   * finished-frame downsample path) and the GPU progressive display path
+   * (fr-ee9's `runChunk` due branch) both need identically: cycles
+   * {@link displaySlots} (the SAB-backed double buffer in shared mode, or the
+   * one locally-owned reused histogram in transfer mode), recording which
+   * slot was written last for {@link sendProgress}'s `sharedFrame` notice.
+   */
+  private takeDisplaySlot(): FlameHistogram {
+    this.lastDisplaySlot = this.nextDisplaySlot;
+    const out = this.displaySlots[this.nextDisplaySlot];
+    this.nextDisplaySlot =
+      (this.nextDisplaySlot + 1) % this.displaySlots.length;
+    return out;
+  }
+
+  /**
    * Rebuild `displayHistogram` from the current (full-resolution)
-   * `histogram` into the next {@link displaySlots} target. `adaptive` picks
-   * the filter: the full density-estimation pass (fr-17t) is O(width *
-   * height * radius^2) and not chunked — cheap enough to pay ONCE on the
-   * finished frame, but not on every throttled progressive redisplay while
-   * still accumulating (that loop's whole reason to be throttled at all).
-   * The cheap fixed-radius filter covers every preview tick instead; see
-   * `downsampleFlame`'s and `adaptiveDownsampleFlame`'s docs for why the
-   * two coexist rather than one replacing the other.
+   * `histogram` into the next {@link displaySlots} target (via
+   * {@link takeDisplaySlot}). `adaptive` picks the filter: the full
+   * density-estimation pass (fr-17t) is O(width * height * radius^2) and not
+   * chunked — cheap enough to pay ONCE on the finished frame, but not on
+   * every throttled progressive redisplay while still accumulating (that
+   * loop's whole reason to be throttled at all). The cheap fixed-radius
+   * filter covers every preview tick instead; see `downsampleFlame`'s and
+   * `adaptiveDownsampleFlame`'s docs for why the two coexist rather than one
+   * replacing the other.
    */
   private rebuildDisplay(adaptive: boolean): void {
     if (!this.histogram) return;
@@ -1370,10 +1591,7 @@ export class FlameWorkerSession {
     // FlameWorkerEvent variant's doc. Progressive redisplays (adaptive ===
     // false) never take long enough to need this.
     if (adaptive) this.emit({ type: "estimating" });
-    this.lastDisplaySlot = this.nextDisplaySlot;
-    const out = this.displaySlots[this.nextDisplaySlot];
-    this.nextDisplaySlot =
-      (this.nextDisplaySlot + 1) % this.displaySlots.length;
+    const out = this.takeDisplaySlot();
     this.displayHistogram = adaptive
       ? adaptiveDownsampleFlame(
           this.histogram,
@@ -1426,10 +1644,14 @@ export class FlameWorkerSession {
    * latest `estimatorParams` (into the next display slot), and sends it —
    * the finished-frame counterpart to `redisplayNow`'s "just re-send what's
    * already there", used when the thing that changed affects the downsample
-   * itself, not just the tone-map applied after it. */
+   * itself, not just the tone-map applied after it. Only ever called once
+   * accumulation is finished (see call sites), so this IS the finished-frame
+   * adaptive display for the current accumulation + budget — set
+   * `finalFrameDisplayed` (fr-ee9) accordingly. */
   private redisplayWithFreshEstimate(): void {
     if (!this.histogram) return;
     this.rebuildDisplay(true);
     this.sendProgress();
+    this.finalFrameDisplayed = true;
   }
 }
