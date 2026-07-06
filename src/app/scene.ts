@@ -16,6 +16,7 @@ import {
   createVoxelMaterial,
   emptyVoxelTexture,
   lightDirection,
+  marchStepsForGrid,
 } from "./voxel-material";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
@@ -1129,6 +1130,7 @@ export class FractalScene {
       boundsMax[2] - boundsMin[2],
     );
     u.uTexel.value = 1 / size;
+    u.uMarchSteps.value = marchStepsForGrid(size);
   }
 
   /**
