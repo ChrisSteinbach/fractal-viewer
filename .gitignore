@@ -10,3 +10,7 @@ coverage/
 *.db
 .prep-pr/
 .dispatch/
+
+# Local benchmark artifacts (gpu-bench runner output, ad-hoc result dumps).
+bench-results/
+/result.json
