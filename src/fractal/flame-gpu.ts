@@ -1048,3 +1048,361 @@ export function convertGpuHistogram(
   hist.maxHits = maxHits;
   return hist;
 }
+
+// ---------------------------------------------------------------------------
+// Progressive display downsample (fr-ee9): a two-pass separable Gaussian
+// compute filter that mirrors `flame.ts`'s `downsampleFlame` in structure,
+// not just in spirit — see that function's doc for the CPU algorithm this
+// restates. Moves the PROGRESSIVE (not-yet-finished) redisplay's downsample
+// onto the GPU, over the RESIDENT histogram buffer, so a redisplay tick
+// reads back only a display-resolution f32 histogram (ss^2 * 2x smaller than
+// today's full-histogram-then-CPU-downsample readback) instead of the whole
+// accumulation buffer. The finished frame keeps the full readback + CPU
+// `adaptiveDownsampleFlame` path untouched (a per-cell-adaptive radius has no
+// separable two-pass equivalent — see that function's own doc for why).
+//
+// SEPARABILITY: `downsampleFlame`'s 2-D Gaussian gather looks inseparable at
+// first glance (a fixed radius PER AXIS, summed over a rectangular footprint
+// with edge clipping) — but the edge clipping is itself rectangular (an
+// output cell's surviving source taps are exactly "sx in bounds" AND "sy in
+// bounds", independently per axis), so the 2-D weight sum factors EXACTLY as
+// (sum of in-bounds kernelY values) * (sum of in-bounds kernelX values). That
+// means the two-pass version below (an X pass, pooling each row's columns
+// into an `intermediate` buffer, then a Y pass, pooling `intermediate`'s rows
+// into the final `display` buffer, dividing by the precomputed column/row
+// weight sums) computes the exact same normalized result as the one-pass CPU
+// gather, not an approximation of it (modulo f32 vs f64 rounding — see the
+// precision note below).
+//
+// f32 vs the CPU oracle's f64: taps, kernel weights, and weight-sum
+// reciprocals are all f32 here (the CPU accumulation histogram stays
+// emulated-u64 exact; only the DOWNSAMPLE arithmetic narrows to f32). This
+// gives ~1e-6 relative error against `downsampleFlame` — invisible under the
+// log-density tonemap, and pinned within tolerance by the agreement harness
+// (`src/app/gpu-bench/`, whose display-downsample leg compares
+// `snapshotDisplay` against `downsampleFlame` fed the SAME resident
+// histogram, so tight tolerances are valid there).
+
+/**
+ * Restates `flame.ts`'s private (unexported) `MIN_FILTER_SIGMA` — the
+ * downsample kernel's sigma floor, in output pixels, for a `filterRadius` of
+ * 0 or smaller. Not imported because that module must not change to add an
+ * export just for this (see this module's own doc for the broader "restated,
+ * not imported" pattern — `symmetryPostRotation` does the same for
+ * `chaos-game.ts`'s private `symmetryRotation`); kept in sync by hand, and by
+ * the agreement harness (Part 4 of fr-ee9), which would show a kernel-shape
+ * mismatch against `downsampleFlame` if the two ever drifted.
+ */
+const MIN_FILTER_SIGMA = 1e-3;
+
+/** Workgroup size (both dimensions) for {@link FLAME_GPU_DOWNSAMPLE_WGSL}'s
+ * two entry points — 2D, not 1D, because a 1D dispatch's single-dimension
+ * workgroup count can overflow `maxComputeWorkgroupsPerDimension` at 4K *
+ * 3x-supersample accumulation sizes; 16x16 keeps both dispatch dimensions an
+ * order of magnitude under that ceiling at every accumulation size this app
+ * permits. */
+export const DOWNSAMPLE_WORKGROUP_SIZE = 16;
+
+/**
+ * Byte layout of the downsample uniform (DownsampleParams, {@link
+ * DOWNSAMPLE_PARAMS_BYTES} = 40) — every field a plain u32 (no vec4s, so no
+ * 16-byte-alignment padding is needed; see {@link packGpuDownsample}):
+ *   0 srcW | 4 srcH | 8 outW | 12 outH | 16 scaleX | 20 scaleY
+ *   24 radiusX | 28 radiusY | 32 kernelYOffset | 36 colWeightSumOffset
+ *
+ * `kernelYOffset`/`colWeightSumOffset` index into the packed `weights` array
+ * {@link packGpuDownsample} returns (element offsets, not bytes) —
+ * `rowWeightSumOffset` is not itself stored; the kernel derives it as
+ * `colWeightSumOffset + outW` (both already in hand), one add instead of a
+ * fourth stored offset.
+ */
+export const DOWNSAMPLE_PARAMS_BYTES = 40;
+
+const DP_SRC_W = 0;
+const DP_SRC_H = 1;
+const DP_OUT_W = 2;
+const DP_OUT_H = 3;
+const DP_SCALE_X = 4;
+const DP_SCALE_Y = 5;
+const DP_RADIUS_X = 6;
+const DP_RADIUS_Y = 7;
+const DP_KERNEL_Y_OFFSET = 8;
+const DP_COL_WEIGHT_SUM_OFFSET = 9;
+
+export const FLAME_GPU_DOWNSAMPLE_WGSL = /* wgsl */ `
+struct DownsampleParams {
+  srcW: u32,
+  srcH: u32,
+  outW: u32,
+  outH: u32,
+  scaleX: u32,
+  scaleY: u32,
+  radiusX: u32,
+  radiusY: u32,
+  kernelYOffset: u32,
+  colWeightSumOffset: u32,
+}
+
+@group(0) @binding(0) var<uniform> dparams: DownsampleParams;
+@group(0) @binding(1) var<storage, read> srcHist: array<u32>;
+@group(0) @binding(2) var<storage, read> dweights: array<f32>;
+@group(0) @binding(3) var<storage, read_write> intermediate: array<f32>;
+@group(0) @binding(4) var<storage, read_write> displayHist: array<f32>;
+
+// u64 (lo, hi) -> f32 — the same combination convertGpuHistogram does in JS
+// (combineU64), narrowed to f32 for the downsample's own arithmetic (see the
+// module doc's precision note). Color channels additionally scale by
+// COLOR_FIXED_POINT_SCALE's reciprocal at the SAME point convertGpuHistogram
+// divides, so the two pipelines (readback-then-CPU-downsample vs this
+// resident-buffer path) agree modulo f32 rounding.
+fn u64ToF32(lo: u32, hi: u32) -> f32 {
+  return f32(hi) * 4294967296.0 + f32(lo);
+}
+
+// Pass 1: pool each output COLUMN's contributing source columns, for every
+// SOURCE row — one invocation per (ox, sy). Unnormalized (see the module
+// doc's separability paragraph): the column weight sum is divided out in
+// pass 2, once per output cell instead of once per source tap here.
+@compute @workgroup_size(${DOWNSAMPLE_WORKGROUP_SIZE}, ${DOWNSAMPLE_WORKGROUP_SIZE})
+fn downsampleX(@builtin(global_invocation_id) gid: vec3u) {
+  let ox = gid.x;
+  let sy = gid.y;
+  if (ox >= dparams.outW || sy >= dparams.srcH) {
+    return;
+  }
+  let baseX = i32(ox * dparams.scaleX);
+  let radiusX = i32(dparams.radiusX);
+  var hits: f32 = 0.0;
+  var r: f32 = 0.0;
+  var g: f32 = 0.0;
+  var b: f32 = 0.0;
+  let rowBase = sy * dparams.srcW;
+  for (var i = -radiusX; i <= radiusX; i++) {
+    let sx = baseX + i;
+    if (sx < 0 || sx >= i32(dparams.srcW)) {
+      continue;
+    }
+    let weight = dweights[u32(i + radiusX)];
+    let bucket = (rowBase + u32(sx)) * 8u;
+    hits += weight * u64ToF32(srcHist[bucket], srcHist[bucket + 1u]);
+    r += weight * u64ToF32(srcHist[bucket + 2u], srcHist[bucket + 3u]) * (1.0 / 256.0);
+    g += weight * u64ToF32(srcHist[bucket + 4u], srcHist[bucket + 5u]) * (1.0 / 256.0);
+    b += weight * u64ToF32(srcHist[bucket + 6u], srcHist[bucket + 7u]) * (1.0 / 256.0);
+  }
+  let o = (sy * dparams.outW + ox) * 4u;
+  intermediate[o] = hits;
+  intermediate[o + 1u] = r;
+  intermediate[o + 2u] = g;
+  intermediate[o + 3u] = b;
+}
+
+// Pass 2: pool each output ROW's contributing intermediate rows, for every
+// OUTPUT column — one invocation per (ox, oy) — and normalize by the
+// precomputed column/row weight-sum reciprocals (see packGpuDownsample's
+// doc). The CPU oracle's weightSum === 0 defensive branch has no
+// counterpart here: it is unreachable (the center tap, i = j = 0, is always
+// in-bounds, since baseX/baseY are themselves in-bounds source coordinates),
+// so colWeightSum[ox] and rowWeightSum[oy] are always strictly positive —
+// see downsampleFlame's own comment making the same argument.
+@compute @workgroup_size(${DOWNSAMPLE_WORKGROUP_SIZE}, ${DOWNSAMPLE_WORKGROUP_SIZE})
+fn downsampleY(@builtin(global_invocation_id) gid: vec3u) {
+  let ox = gid.x;
+  let oy = gid.y;
+  if (ox >= dparams.outW || oy >= dparams.outH) {
+    return;
+  }
+  let baseY = i32(oy * dparams.scaleY);
+  let radiusY = i32(dparams.radiusY);
+  var hits: f32 = 0.0;
+  var r: f32 = 0.0;
+  var g: f32 = 0.0;
+  var b: f32 = 0.0;
+  for (var j = -radiusY; j <= radiusY; j++) {
+    let sy = baseY + j;
+    if (sy < 0 || sy >= i32(dparams.srcH)) {
+      continue;
+    }
+    let weight = dweights[dparams.kernelYOffset + u32(j + radiusY)];
+    let o = (u32(sy) * dparams.outW + ox) * 4u;
+    hits += weight * intermediate[o];
+    r += weight * intermediate[o + 1u];
+    g += weight * intermediate[o + 2u];
+    b += weight * intermediate[o + 3u];
+  }
+  let norm = dweights[dparams.colWeightSumOffset + ox] *
+    dweights[dparams.colWeightSumOffset + dparams.outW + oy];
+  let o = (oy * dparams.outW + ox) * 4u;
+  displayHist[o] = hits * norm;
+  displayHist[o + 1u] = r * norm;
+  displayHist[o + 2u] = g * norm;
+  displayHist[o + 3u] = b * norm;
+}
+`;
+
+/**
+ * {@link packGpuDownsample}'s result: the uniform bytes plus the packed
+ * kernel/weight-sum-reciprocal table {@link FLAME_GPU_DOWNSAMPLE_WGSL}'s two
+ * passes read.
+ */
+export interface PackedGpuDownsample {
+  /** {@link DOWNSAMPLE_PARAMS_BYTES}-byte uniform buffer contents. */
+  params: ArrayBuffer;
+  /**
+   * kernelX, kernelY, colWeightSum⁻¹[outW], rowWeightSum⁻¹[outH], packed
+   * back to back in that order (offsets: kernelX at 0; the rest at the
+   * `params` buffer's `kernelYOffset`/`colWeightSumOffset` fields, with
+   * rowWeightSum⁻¹ immediately following colWeightSum⁻¹ at
+   * `colWeightSumOffset + outW`).
+   */
+  weights: Float32Array<ArrayBuffer>;
+}
+
+/**
+ * Pack the uniform + weight table for the two-pass separable GPU downsample
+ * (fr-ee9) — the exact kernel `downsampleFlame` (`flame.ts`, lines ~620-745)
+ * computes, restated as two 1-D passes (see {@link FLAME_GPU_DOWNSAMPLE_WGSL}'s
+ * doc for why that restatement is exact, not approximate). `srcW`/`srcH` are
+ * the ACCUMULATION resolution (display size x effective supersample);
+ * `outW`/`outH` the DISPLAY resolution; both ratios (`scaleX`/`scaleY`) must
+ * be exact positive integers — `downsampleFlame`'s own contract (see its
+ * `RangeError` guard) — unchecked here since every caller already satisfies
+ * it via the accumulator's own `width * supersample` sizing.
+ *
+ * Kernel derivation mirrors the CPU oracle field for field: `phase = 0.5 *
+ * (scale - 1)`, `sigma = max(filterRadius, MIN_FILTER_SIGMA) * scale`,
+ * `radius = max(1, ceil(3 * sigma))`, `kernel[k + radius] = exp(-(k - phase)^2
+ * / (2 * sigma^2))` for `k` in `[-radius, radius]` — computed with the same
+ * `Math.exp` calls the oracle uses, so the only divergence from
+ * `downsampleFlame` is the f32 narrowing this table (and the WGSL side
+ * reading it) both apply (see the module doc's precision note).
+ *
+ * `colWeightSum[ox]`/`rowWeightSum[oy]` are the per-column/per-row sums of
+ * in-bounds kernel weights (the separability factorization — see the module
+ * doc) — accumulated in a plain (f64) JS number, then stored as the
+ * RECIPROCAL in f32, so `downsampleY` multiplies instead of dividing per
+ * output cell. Every output column/row has at least one in-bounds tap (the
+ * center, `i = j = 0`, since `ox * scaleX`/`oy * scaleY` are themselves
+ * in-bounds source coordinates), so both sums are always strictly positive —
+ * no divide-by-zero guard needed, unlike `downsampleFlame`'s own (defensive,
+ * practically unreachable) `weightSum > 0` branch.
+ */
+export function packGpuDownsample(
+  srcW: number,
+  srcH: number,
+  outW: number,
+  outH: number,
+  filterRadius: number,
+): PackedGpuDownsample {
+  const scaleX = srcW / outW;
+  const scaleY = srcH / outH;
+  const phaseX = 0.5 * (scaleX - 1);
+  const phaseY = 0.5 * (scaleY - 1);
+  const sigmaX = Math.max(filterRadius, MIN_FILTER_SIGMA) * scaleX;
+  const sigmaY = Math.max(filterRadius, MIN_FILTER_SIGMA) * scaleY;
+  const radiusX = Math.max(1, Math.ceil(sigmaX * 3));
+  const radiusY = Math.max(1, Math.ceil(sigmaY * 3));
+
+  const kernelXLength = 2 * radiusX + 1;
+  const kernelYLength = 2 * radiusY + 1;
+  const kernelYOffset = kernelXLength;
+  const colWeightSumOffset = kernelYOffset + kernelYLength;
+  const rowWeightSumOffset = colWeightSumOffset + outW;
+  const weights = new Float32Array(rowWeightSumOffset + outH);
+
+  for (let k = -radiusX; k <= radiusX; k++) {
+    const d = k - phaseX;
+    weights[k + radiusX] = Math.exp(-(d * d) / (2 * sigmaX * sigmaX));
+  }
+  for (let k = -radiusY; k <= radiusY; k++) {
+    const d = k - phaseY;
+    weights[kernelYOffset + k + radiusY] = Math.exp(
+      -(d * d) / (2 * sigmaY * sigmaY),
+    );
+  }
+
+  for (let ox = 0; ox < outW; ox++) {
+    const baseX = ox * scaleX;
+    let sum = 0;
+    for (let i = -radiusX; i <= radiusX; i++) {
+      const sx = baseX + i;
+      if (sx < 0 || sx >= srcW) continue;
+      sum += weights[i + radiusX];
+    }
+    weights[colWeightSumOffset + ox] = 1 / sum;
+  }
+  for (let oy = 0; oy < outH; oy++) {
+    const baseY = oy * scaleY;
+    let sum = 0;
+    for (let j = -radiusY; j <= radiusY; j++) {
+      const sy = baseY + j;
+      if (sy < 0 || sy >= srcH) continue;
+      sum += weights[kernelYOffset + j + radiusY];
+    }
+    weights[rowWeightSumOffset + oy] = 1 / sum;
+  }
+
+  const params = new ArrayBuffer(DOWNSAMPLE_PARAMS_BYTES);
+  const u32 = new Uint32Array(params);
+  u32[DP_SRC_W] = srcW;
+  u32[DP_SRC_H] = srcH;
+  u32[DP_OUT_W] = outW;
+  u32[DP_OUT_H] = outH;
+  u32[DP_SCALE_X] = scaleX;
+  u32[DP_SCALE_Y] = scaleY;
+  u32[DP_RADIUS_X] = radiusX;
+  u32[DP_RADIUS_Y] = radiusY;
+  u32[DP_KERNEL_Y_OFFSET] = kernelYOffset;
+  u32[DP_COL_WEIGHT_SUM_OFFSET] = colWeightSumOffset;
+
+  return { params, weights };
+}
+
+/**
+ * Convert a {@link FLAME_GPU_DOWNSAMPLE_WGSL} `displayHist` readback —
+ * interleaved f32 `[hits, r, g, b]` per bucket, ALREADY normalized (unlike
+ * {@link convertGpuHistogram}'s emulated-u64 accumulation buckets) — into an
+ * existing {@link FlameHistogram}. `out` is mandatory (not optional): unlike
+ * `convertGpuHistogram`, every caller already owns a specific display-slot
+ * histogram to reuse (fr-ee9's whole point is never allocating a fresh one
+ * per redisplay tick) — see `flame-worker-core.ts`'s `FlameAccumBackend.
+ * snapshotDisplay` doc. Every bucket is unconditionally overwritten (the
+ * same dirty-reuse contract as `convertGpuHistogram`'s `out`), and `maxHits`
+ * is recomputed as the max over every converted bucket.
+ *
+ * Throws `RangeError` (naming both the actual and expected length/dims) on a
+ * `data` length mismatch or an `out` dimension mismatch — same shape as
+ * `convertGpuHistogram`'s own checks.
+ */
+export function convertGpuDisplayHistogram(
+  data: Float32Array,
+  width: number,
+  height: number,
+  out: FlameHistogram,
+): FlameHistogram {
+  const bucketCount = width * height;
+  const expectedLength = bucketCount * 4;
+  if (data.length !== expectedLength) {
+    throw new RangeError(
+      `convertGpuDisplayHistogram: expected ${expectedLength} floats for ${width}x${height} at 4 floats/bucket, got ${data.length}`,
+    );
+  }
+  if (out.width !== width || out.height !== height) {
+    throw new RangeError(
+      `convertGpuDisplayHistogram: out histogram is ${out.width}x${out.height}, but ${width}x${height} was requested`,
+    );
+  }
+  const { hits, sumRGB } = out;
+  let maxHits = 0;
+  for (let i = 0; i < bucketCount; i++) {
+    const w = i * 4;
+    const hitVal = data[w];
+    hits[i] = hitVal;
+    if (hitVal > maxHits) maxHits = hitVal;
+    const o = i * 3;
+    sumRGB[o] = data[w + 1];
+    sumRGB[o + 1] = data[w + 2];
+    sumRGB[o + 2] = data[w + 3];
+  }
+  out.maxHits = maxHits;
+  return out;
+}
