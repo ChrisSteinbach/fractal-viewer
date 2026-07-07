@@ -7,9 +7,11 @@ import {
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
 import type { FlameHistogram, Mat4 } from "../fractal/flame";
+import { W_SIDE_PALETTES } from "../fractal/color";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform4 } from "../fractal/types";
 import {
+  FLAME_FILTER_RADIUS,
   flameAccumBudgetBuckets,
   FlameWorkerSession,
 } from "./flame-worker-core";
@@ -18,6 +20,7 @@ import type {
   FlameWorkerCommand,
   FlameWorkerDeps,
   FlameWorkerEvent,
+  GpuBackendRequest4,
   SharedFrameBuffers,
 } from "./flame-worker-core";
 
@@ -194,6 +197,7 @@ function harness(
     maxAccumBuckets: overrides.maxAccumBuckets,
     initialChunkSize: overrides.initialChunkSize,
     createGpuBackend: overrides.createGpuBackend,
+    createGpuBackend4: overrides.createGpuBackend4,
     log: overrides.log,
   });
   return { session, events, scheduler };
@@ -1944,16 +1948,22 @@ describe("FlameWorkerSession dispose", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4D flame render (fr-5b3): the `fourD` start-command block forces the CPU
-// accumulation backend (Cpu4DFlameBackend, via runChunk4) regardless of
-// gpuPreference, and every command handler must still behave sanely —
-// setSymmetry becomes a no-op (symmetry is 3D-only), setPalette still
-// restarts. A plain 3D start (no fourD) must keep behaving exactly as every
-// other describe block in this file already proves.
+// 4D flame render (fr-5b3, fr-e26): the `fourD` start-command block drives a
+// 4D session through the SAME unified runChunk/FlameAccumBackend seam as a 3D
+// one — there is no separate synchronous runChunk4 loop anymore.
+// `gpuPreference: "auto"` tries the `createGpuBackend4` factory
+// (`flame-gpu-4d.ts`'s WGSL kernel), falling back to Cpu4DFlameBackend on any
+// failure and ratcheting `gpuFailed` exactly like the 3D path's
+// `createGpuBackend`/`CpuFlameBackend` does; a 4D session never calls the 3D
+// factory, and a 3D session never calls the 4D one (see `createBackend`'s
+// dimension-aware dispatch). Every other command handler must still behave
+// sanely — setSymmetry becomes a no-op (symmetry is 3D-only), setPalette
+// still restarts. A plain 3D start (no fourD) must keep behaving exactly as
+// every other describe block in this file already proves.
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession 4D flame render", () => {
-  it("never calls the GPU factory for a 4D session, even with gpuPreference auto and a factory wired, and emits backend: cpu", () => {
+  it("never calls the 3D GPU factory for a 4D session, and — with no createGpuBackend4 wired — runs CPU synchronously, even with gpuPreference auto", () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
       factoryCalls++;
@@ -1967,12 +1977,155 @@ describe("FlameWorkerSession 4D flame render", () => {
         iterationsBudget: 500,
       }),
     );
-    scheduler.drain(); // fully synchronous — runChunk4 never suspends.
+    // Fully synchronous: with no createGpuBackend4 wired, createBackend()
+    // returns a Cpu4DFlameBackend directly (not a Promise), so runChunk's
+    // isPromiseLike guard never awaits — same discipline as a CPU-only 3D
+    // session.
+    scheduler.drain();
 
     expect(factoryCalls).toBe(0);
     expect(backendEvents(events)).toEqual([
       { type: "backend", backend: "cpu", adapter: undefined },
     ]);
+  });
+
+  it("calls the 4D GPU factory for a 4D session with gpuPreference auto and passes the session's own geometry/view/color through the request", async () => {
+    const fourD = defaultFourD();
+    let factory4Calls = 0;
+    let capturedRequest: GpuBackendRequest4 | undefined;
+    const createGpuBackend4 = async (
+      request: GpuBackendRequest4,
+    ): Promise<FlameAccumBackend> => {
+      factory4Calls++;
+      capturedRequest = request;
+      return {
+        kind: "gpu",
+        adapterLabel: "Fake 4D Adapter",
+        accumulate: async (n) => n,
+        snapshot: async () =>
+          createFlameHistogram(request.width, request.height),
+        destroy: () => {},
+      };
+    };
+    let factory3Calls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factory3Calls++;
+      throw new Error("must never be called for a 4D session");
+    };
+    const { session, events, scheduler } = harness({
+      createGpuBackend,
+      createGpuBackend4,
+    });
+    session.handle(
+      startCommand({
+        fourD,
+        gpuPreference: "auto",
+        paletteId: "legacy",
+        width: 8,
+        height: 8,
+        requestedSupersample: 2,
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(factory4Calls).toBe(1);
+    expect(factory3Calls).toBe(0);
+    const request = capturedRequest!;
+    expect(request.transforms4).toBe(fourD.transforms4); // same reference, not a copy.
+    expect(request.finalTransform4).toBeNull();
+    expect(request.projection).toBeInstanceOf(Float64Array);
+    expect(request.projection).toHaveLength(20);
+    expect(request.view).toEqual({
+      invWAmp: 1,
+      sliceOn: false,
+      sliceCenter: 0,
+      sliceWidth: 1,
+    });
+    expect(request.color.kind).toBe("wRamp");
+    if (request.color.kind === "wRamp") {
+      expect(request.color.side).toEqual(W_SIDE_PALETTES.wBlueOrange);
+    }
+    // Accumulation size (display x supersample) vs. the fixed display size.
+    expect(request.width).toBe(16);
+    expect(request.height).toBe(16);
+    expect(request.displayWidth).toBe(8);
+    expect(request.displayHeight).toBe(8);
+    expect(request.progressiveFilterRadius).toBe(FLAME_FILTER_RADIUS);
+
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "gpu", adapter: "Fake 4D Adapter" },
+    ]);
+    expect(
+      progressEvents(events).at(-1)!.iterationsDone,
+    ).toBeGreaterThanOrEqual(500);
+  });
+
+  it("falls back to Cpu4DFlameBackend and ratchets gpuFailed when the 4D factory rejects", async () => {
+    let factory4Calls = 0;
+    const createGpuBackend4 = async (): Promise<FlameAccumBackend> => {
+      factory4Calls++;
+      throw new Error("no suitable GPU adapter");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend4 });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(factory4Calls).toBe(1);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500); // the real CPU accumulate ran.
+
+    // gpuFailed ratchets for the rest of the session — a later restart must
+    // not retry the 4D factory either.
+    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    await drainAsync(scheduler);
+
+    expect(factory4Calls).toBe(1);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+      { type: "backend", backend: "cpu", adapter: undefined }, // the restart re-emits, still cpu.
+    ]);
+  });
+
+  it("a 3D session never calls the 4D factory", async () => {
+    let factory3Calls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factory3Calls++;
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () => createFlameHistogram(8, 8),
+        destroy: () => {},
+      };
+    };
+    let factory4Calls = 0;
+    const createGpuBackend4 = async (): Promise<FlameAccumBackend> => {
+      factory4Calls++;
+      throw new Error("must never be called for a 3D session");
+    };
+    const { session, events, scheduler } = harness({
+      createGpuBackend,
+      createGpuBackend4,
+    });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(factory3Calls).toBe(1);
+    expect(factory4Calls).toBe(0);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "gpu", adapter: undefined },
+    ]);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
   });
 
   it("produces progress events with a nonempty image for a simple 4D transform fixture", () => {
