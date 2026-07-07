@@ -8,6 +8,8 @@
 // MP4/H.264 is strongly preferred (X rejects WebM uploads); WebM is the
 // fallback for browsers that cannot record MP4 (e.g. Firefox).
 
+import { patchMp4Duration } from "./mp4-duration";
+
 /** Hard cap on clip length. X's free tier allows 140s; Bluesky less. */
 export const MAX_RECORDING_SECONDS = 120;
 
@@ -85,6 +87,7 @@ export function createCanvasRecorder(
   let recorder: MediaRecorder | undefined;
   let chunks: Blob[] = [];
   let startedAtMs = 0;
+  let stoppedElapsedMs = 0;
   let errored = false;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -172,13 +175,14 @@ export function createCanvasRecorder(
     } else if (blob.size === 0) {
       callbacks.onError("Recording produced no data.");
     } else {
-      downloadBlob(blob, filename);
+      void finishClip(blob, filename, mime, stoppedElapsedMs);
     }
     callbacks.onStateChange(false);
   }
 
   function stop(): void {
     if (recorder === undefined || recorder.state === "inactive") return;
+    stoppedElapsedMs = performance.now() - startedAtMs;
     recorder.stop(); // "stop" event finalizes, downloads, and cleans up.
   }
 
@@ -195,6 +199,29 @@ export function createCanvasRecorder(
     },
     stop,
   };
+}
+
+async function finishClip(
+  blob: Blob,
+  filename: string,
+  mime: string,
+  durationMs: number,
+): Promise<void> {
+  let clip = blob;
+  if (mime.startsWith("video/mp4")) {
+    try {
+      // Chrome's fragmented-MP4 recordings leave the moov durations at 0,
+      // which upload probes (e.g. Bluesky's) reject — write the real
+      // duration into the container before handing the file over (fr-ex2).
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (patchMp4Duration(bytes, durationMs)) {
+        clip = new Blob([bytes], { type: mime });
+      }
+    } catch {
+      // Keep the unpatched clip rather than losing the recording.
+    }
+  }
+  downloadBlob(clip, filename);
 }
 
 function downloadBlob(blob: Blob, filename: string): void {
