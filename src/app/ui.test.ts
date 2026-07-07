@@ -64,6 +64,8 @@ function noopHandlers(): UiHandlers {
     onSolidResolutionInput: vi.fn(),
     onSymmetryOrderInput: vi.fn(),
     onSymmetryAxisChange: vi.fn(),
+    onAutoOrbitToggle: vi.fn(),
+    onAutoOrbitSpeedInput: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
@@ -2228,6 +2230,26 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
   });
 
+  // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
+  // the 4D block: exactly one of the two shows outside a render, and both
+  // hide while a render freezes the view's automatic motion.
+  it("shows the 3D auto-orbit block only for a flat system outside a render", () => {
+    const ui = new Ui(document);
+    const flat = initialState(true);
+
+    ui.updateLabels(flat);
+    expect(el("threeDControls").classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({ ...flat, transforms: nonFlatTransforms() });
+    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...flat, flameActive: true });
+    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...flat, solidActive: true });
+    expect(el("threeDControls").classList.contains("hidden")).toBe(true);
+  });
+
   // The 4D view (rotor + slice) is frozen into an active render's worker
   // snapshot (main.ts's fourDRenderSnapshot), so its controls hide during a
   // render exactly like the editing controls do.
@@ -2374,6 +2396,72 @@ describe("Ui 4D slice controls (fr-6x2)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("0");
     expect(el("fourDSliceLabel").textContent).toBe("0.00");
+  });
+});
+
+describe("Ui 3D auto-orbit controls (fr-1yn)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("hides the speed row and fires the handler when auto-orbit is toggled off", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("autoOrbitToggle") as HTMLInputElement;
+
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change"));
+
+    expect(handlers.onAutoOrbitToggle).toHaveBeenCalledWith(false);
+    expect(el("autoOrbitRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("fires onAutoOrbitSpeedInput with the slider's numeric value and updates the label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = el("autoOrbitSpeedSlider") as HTMLInputElement;
+
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onAutoOrbitSpeedInput).toHaveBeenCalledWith(2.5);
+    expect(el("autoOrbitSpeedLabel").textContent).toBe("2.5×");
+  });
+
+  it("resetAutoOrbit(true) checks the toggle, shows the row, and resets the slider to 1.0×", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const toggle = el("autoOrbitToggle") as HTMLInputElement;
+    const slider = el("autoOrbitSpeedSlider") as HTMLInputElement;
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change"));
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetAutoOrbit(true);
+
+    expect(toggle.checked).toBe(true);
+    expect(el("autoOrbitRow").classList.contains("hidden")).toBe(false);
+    expect(slider.value).toBe("1");
+    expect(el("autoOrbitSpeedLabel").textContent).toBe("1.0×");
+  });
+
+  it("resetAutoOrbit(false) unchecks the toggle, hides the row, and resets the slider to 1.0×", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const toggle = el("autoOrbitToggle") as HTMLInputElement;
+    const slider = el("autoOrbitSpeedSlider") as HTMLInputElement;
+    slider.value = "2.5";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetAutoOrbit(false);
+
+    expect(toggle.checked).toBe(false);
+    expect(el("autoOrbitRow").classList.contains("hidden")).toBe(true);
+    expect(slider.value).toBe("1");
+    expect(el("autoOrbitSpeedLabel").textContent).toBe("1.0×");
   });
 });
 

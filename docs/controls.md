@@ -8,7 +8,9 @@ mode and its gestures, adapting the wording to the device: mouse verbs
 
 ## Camera mode
 
-Orbit around the fractal without changing it.
+Orbit around the fractal without changing it. While the system is flat, the
+camera also orbits by itself — a slow turntable, paused whenever your hand is
+on the canvas; see **3D View** below.
 
 | Input            | Action                           |
 | ---------------- | -------------------------------- |
@@ -91,6 +93,17 @@ Transform** sliders that appear in the panel while a transform is selected.
   **✦ Final Transform** row under **Select to Edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
+- **3D View** — appears while the current system is _flat_, in the same panel
+  spot **4D View** (below) takes over for a non-flat one. **Auto-orbit
+  (turntable)** slowly circles the camera around the cloud — one revolution
+  every ~52 s at 1× — pausing while any canvas drag is in progress and
+  resuming when you let go, and **Orbit speed** scales its rate from 0.1× to
+  3×. The pair mirrors the 4D **Auto-tumble** controls exactly: on by default
+  (starting paused when the OS asks for reduced motion, as an explicit
+  opt-in), session-only (never persisted), and reset to a fresh baseline only
+  when the system flips from non-flat to flat or a whole new flat system
+  replaces it (preset load / Surprise Me) — never on a later edit, so a
+  paused or re-sped orbit survives ordinary parameter tweaks.
 - **4D View** — appears once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
   becomes an orthographic projection of a slow double rotation (XY+ZW),

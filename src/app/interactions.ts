@@ -70,6 +70,17 @@ function pinchCenter(event: TouchEvent): { x: number; y: number } {
   };
 }
 
+/** Handle returned by {@link attachInteractions} for the state only the
+ * listeners themselves know. */
+export interface InteractionsHandle {
+  /** True while a canvas press/drag is in progress (camera orbit/pan/pinch or
+   * a transform-box drag). main.ts's auto-orbit polls this each frame to
+   * yield to the user's hand — both write the same camera angle, so unlike
+   * the 4D tumble (whose planes no plain gesture touches) the turntable must
+   * pause for the duration of the gesture. */
+  gestureActive: () => boolean;
+}
+
 /**
  * Wire mouse, touch, and wheel input to the scene. In camera mode the gestures
  * orbit/pan/zoom the {@link OrbitCamera}; with a transform selected they move,
@@ -85,7 +96,7 @@ export function attachInteractions(
   scene: FractalScene,
   orbit: OrbitCamera,
   callbacks: InteractionCallbacks,
-): void {
+): InteractionsHandle {
   const canvas = scene.canvas;
   const camera = scene.camera;
   const raycaster = new THREE.Raycaster();
@@ -336,4 +347,8 @@ export function attachInteractions(
   document.addEventListener("touchend", onPointerUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("contextmenu", onContextMenu);
+
+  // Reads the same flags the document-level mouseup/touchend reset, so this
+  // can never report a gesture the listeners themselves consider over.
+  return { gestureActive: () => dragging || orbitMode !== "none" };
 }
