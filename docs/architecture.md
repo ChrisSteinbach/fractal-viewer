@@ -310,8 +310,9 @@ Accumulation itself — not just display — is backend-pluggable (fr-npb): a
 `FlameAccumBackend` seam in `flame-worker-core.ts` lets the flame worker
 session drive either the CPU chaos-game loop (`accumulateFlame`, unchanged)
 or a WebGPU compute-shader backend, chosen per render behind a
-`navigator.gpu` capability check (gated to fine-pointer, non-touch devices),
-with CPU as the universal fallback and the ground truth the GPU path is
+`navigator.gpu` capability check (on phones too since fr-hs9's on-device
+validation), with CPU as the universal fallback and the ground truth the GPU
+path is
 measured against. The WGSL kernel and its pure packing/dispatch-planning/
 histogram-conversion layer live in `src/fractal/flame-gpu.ts` (dependency-free
 and Vitest-tested, like the rest of `src/fractal/`); `src/app/
