@@ -244,11 +244,14 @@ state — the rotor pair, tumble on/off and speed, and an optional soft w-slice 
 Gaussian opacity window around a chosen `w`, so a cross-section fades in without
 hard-culling the points outside it) — is session-only and resets to a fresh
 baseline only on a flat-to-non-flat transition or a whole-system replacement,
-never on an ordinary parameter edit. A couple of presets (`pentatope`,
-`doubleRotation` in `presets.ts` — the earlier standalone `presets4.ts` is gone,
-merged into the same factory record every other preset lives in) also carry a
-legibility scaffold, the pentatope's 5-cell wireframe, tumbled through the
-identical rotation so the projection's motion reads as genuinely 4D at a glance.
+never on an ordinary parameter edit. The 4D presets (`pentatope`,
+`doubleRotation`, and the fr-zde wave — `tesseract`, `sixteenCell`,
+`twentyFourCell`, `duoprism`, `hyperfern` — all in `presets.ts`; the earlier
+standalone `presets4.ts` is gone, merged into the same factory record every
+other preset lives in) span static polytope flakes and dynamic w-rotation
+systems, and each polytope preset also carries a legibility scaffold
+(`PRESET_SCAFFOLDS`) — its own wireframe edges, tumbled through the identical
+rotation so the projection's motion reads as genuinely 4D at a glance.
 
 ## Scene persistence
 

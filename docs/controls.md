@@ -103,11 +103,14 @@ Transform** sliders that appear in the panel while a transform is selected.
   keys whichever choice is active, and — unlike the tumble/slice view below
   — the choice persists across reloads and shared links. Rendered either way
   with additive translucency so the w-layers a projection folds together
-  stay _visible_ and sum toward white where they cross. Load **Pentatope
-  Gasket** or **Double-Rotation Spiral** from the
-  Presets dropdown's **4D** group to see one immediately (with, for the
-  pentatope and **Show guides** on, the 5-cell's wireframe tumbling through
-  the same rotation) — or turn any flat system non-flat yourself: every
+  stay _visible_ and sum toward white where they cross. Load any entry in the
+  Presets dropdown's **4D** group to see one immediately — **Pentatope
+  Gasket**, **16-Cell Flake**, **Duoprism (3×3)**, **Tesseract Dust**,
+  **24-Cell Flake**, **Double-Rotation Spiral**, or **Hyperfern** (Barnsley's
+  fern curling through w instead of z); with **Show guides** on, the polytope
+  presets tumble their own wireframe (5-cell, 16-cell, duoprism, tesseract,
+  24-cell edges) through the same rotation — or turn any flat system non-flat
+  yourself: every
   transform's (and the final lens's) editor ends with a collapsed **4D**
   group, with **Position W**, **Scale W** (tracks the map's live mean 3D
   contraction with an "(auto)" marker until set explicitly), and the

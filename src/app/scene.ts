@@ -885,10 +885,10 @@ export class FractalScene {
   /**
    * Show a 4D wireframe scaffold (fr-6d5) — line segments given by their 4D
    * endpoints, projected through the SAME rotation/center as the point cloud so
-   * the two can never drift. The pentatope's ten tumbling edges are what make
-   * the 4D rotation legible at a glance, the way a rotating tesseract's frame
-   * does. Pass `null` (or `[]`) to remove it. Follows the Show-guides toggle
-   * like the grid and axes.
+   * the two can never drift. A preset's tumbling edges (the pentatope's ten,
+   * the tesseract's thirty-two) are what make the 4D rotation legible at a
+   * glance, the way a rotating tesseract's frame does. Pass `null` (or `[]`)
+   * to remove it. Follows the Show-guides toggle like the grid and axes.
    */
   setFourDScaffold(edges: [Vec4, Vec4][] | null): void {
     if (this.fourDScaffold) {
