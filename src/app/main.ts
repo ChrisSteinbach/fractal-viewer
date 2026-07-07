@@ -2,7 +2,12 @@ import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
-import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
+import {
+  identityRotorPair,
+  rotateInPlane,
+  rotorMatrix,
+  wSupport,
+} from "./rotor4";
 import type { RotorPair } from "./rotor4";
 import {
   buildColors,
@@ -39,7 +44,7 @@ import {
   OrbitCamera,
   smoothstep,
 } from "./orbit";
-import { FractalScene } from "./scene";
+import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
@@ -711,6 +716,64 @@ function main(): void {
     };
   }
 
+  // Snapshot the frozen 4D view for a render worker (fr-5b3/fr-4wd): the
+  // current rotor + the cloud's center/support amplitude, the slice window,
+  // and the "legacy"-palette color dispatch inputs. The flame and voxel
+  // start commands declare structurally identical `fourD` blocks, so the one
+  // snapshot feeds both. Undefined while the view is 3D — the workers then
+  // take their unchanged 3D paths. The tumble needs no explicit pause here:
+  // animate() early-returns past the whole 4D block while either render is
+  // active, so fourDPair simply stops advancing (and onFourDRotate is gated
+  // the same way), making this snapshot valid for the render's whole life.
+  function fourDRenderSnapshot():
+    | NonNullable<Extract<FlameWorkerCommand, { type: "start" }>["fourD"]>
+    | undefined {
+    if (!viewIs4D || !fourDResult) return undefined;
+    const rotor = rotorMatrix(fourDPair);
+    const b = fourDResult.bounds;
+    const halfExtents: Vec4 = [
+      (b.maxX - b.minX) / 2,
+      (b.maxY - b.minY) / 2,
+      (b.maxZ - b.minZ) / 2,
+      (b.maxW - b.minW) / 2,
+    ];
+    // Mirrors scene.ts's updateWAmp4 exactly (same support function, same
+    // 1e-6 degenerate-cloud floor) so the workers' normalized signed-w
+    // signal s can't drift from the shader's.
+    const invWAmp = 1 / Math.max(wSupport(rotor, halfExtents), 1e-6);
+    // The "radius" color mode's normalization: the same min→max 4D-distance
+    // range over the explorer's own cloud that buildColors4's radius branch
+    // bakes with, so the render's ramp matches the explorer's colors.
+    const { positions, w, count, center } = fourDResult;
+    let radiusMin = Infinity;
+    let radiusMax = 0;
+    for (let i = 0; i < count; i++) {
+      const dx = positions[i * 3] - center[0];
+      const dy = positions[i * 3 + 1] - center[1];
+      const dz = positions[i * 3 + 2] - center[2];
+      const dw = w[i] - center[3];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+      if (d < radiusMin) radiusMin = d;
+      if (d > radiusMax) radiusMax = d;
+    }
+    if (!Number.isFinite(radiusMin)) radiusMin = 0; // empty cloud (count 0).
+    return {
+      transforms4: state.transforms.map(toTransform4),
+      finalTransform4: state.finalTransform
+        ? toTransform4(state.finalTransform)
+        : null,
+      rotor,
+      center: fourDResult.center,
+      invWAmp,
+      sliceOn: fourDSliceOn,
+      sliceCenter: fourDSliceCenter,
+      sliceWidth: FOUR_D_SLICE_WIDTH,
+      colorMode: state.fourDColor,
+      radiusMin,
+      radiusMax,
+    };
+  }
+
   // Freeze the current camera and start converging a flame render of it in a
   // fresh session. Called only from the Render button — never automatically —
   // so the explorer stays the default, always-interactive experience.
@@ -801,8 +864,11 @@ function main(): void {
       // rate. Mobile-specific ceilings need nothing extra here — a device
       // whose maxStorageBufferBindingSize can't fit the histogram fails
       // backend creation cleanly into that same CPU fallback (see
-      // flame-gpu-backend.ts's limit guard).
+      // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
+      // ignores this and always runs CPU — the WGSL kernel is 3D-only.
       gpuPreference: "auto",
+      // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
+      fourD: fourDRenderSnapshot(),
     });
 
     state = setFlameActive(state, true);
@@ -918,6 +984,8 @@ function main(): void {
       ),
       order: state.symmetry.order,
       axis: state.symmetry.axis,
+      // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
+      fourD: fourDRenderSnapshot(),
     });
 
     state = selectTransform(state, null);
@@ -1373,11 +1441,7 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
-    onEnterFlameRender: () => {
-      // flameEntry hides while non-flat — belt-and-braces.
-      if (viewIs4D) return;
-      enterFlameMode();
-    },
+    onEnterFlameRender: () => enterFlameMode(),
     onExitFlameRender: () => exitFlameMode(),
     onFlameExposureInput: (value) => {
       beginSceneEdit();
@@ -1463,11 +1527,7 @@ function main(): void {
         estimatorCurve: state.flame.estimatorCurve,
       });
     },
-    onEnterSolidRender: () => {
-      // solidEntry hides while non-flat — belt-and-braces.
-      if (viewIs4D) return;
-      enterSolidMode();
-    },
+    onEnterSolidRender: () => enterSolidMode(),
     onExitSolidRender: () => exitSolidMode(),
     onSolidThresholdInput: (value) => {
       beginSceneEdit();
@@ -1563,6 +1623,13 @@ function main(): void {
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
       if (!viewIs4D) return; // belt-and-braces, same as the ui handlers
+      // An active render froze the rotor into its worker snapshot
+      // (fourDRenderSnapshot); a gesture mutating it mid-render would change
+      // nothing on screen (animate() skips setRot4 while rendering) and then
+      // surface as a surprise orientation jump on exit. `frozen` already
+      // blocks all drags during the flame render; the solid render keeps its
+      // camera gestures live, so the w-plane gesture needs this gate.
+      if (state.flameActive || state.solidActive) return;
       if (xw !== 0) fourDPair = rotateInPlane(fourDPair, "xw", xw);
       if (yw !== 0) fourDPair = rotateInPlane(fourDPair, "yw", yw);
       if (zw !== 0) fourDPair = rotateInPlane(fourDPair, "zw", zw);
