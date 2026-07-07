@@ -112,6 +112,38 @@ describe("randomSystem", () => {
       expect(v.weight).toBeLessThanOrEqual(1.2);
     }
   });
+
+  it("floors every uniform-scale map at count^(-1/1.8), so jitter can't drag a 2-map roll into a thin squiggle (fr-d61)", () => {
+    let uniformScaleMapsSeen = 0;
+    for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      const floor = Math.pow(transforms.length, -1 / 1.8);
+      for (const t of transforms) {
+        const [sx, sy, sz] = t.scale;
+        // Exact equality identifies the uniform-scale branch: the
+        // anisotropic branch's three independent continuous draws can never
+        // coincide.
+        if (sx !== sy || sy !== sz) continue;
+        uniformScaleMapsSeen++;
+        expect(t.scale[0]).toBeGreaterThanOrEqual(floor - 1e-12);
+      }
+    }
+    expect(uniformScaleMapsSeen).toBeGreaterThan(0);
+  });
+
+  it("caps a 2-map system's weight skew at 4:1 so the light branch keeps at least a fifth of the orbit (fr-d61)", () => {
+    let twoMapSystemsSeen = 0;
+    // Bigger sample (matching the 4D-roll tests) to hit plenty of 2-map
+    // systems.
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      if (transforms.length !== 2) continue;
+      twoMapSystemsSeen++;
+      const [w0, w1] = transforms.map((t) => t.weight ?? 1);
+      expect(Math.max(w0, w1)).toBeLessThanOrEqual(4 * Math.min(w0, w1));
+    }
+    expect(twoMapSystemsSeen).toBeGreaterThan(0);
+  });
 });
 
 describe("randomSystem's 4D extension (fr-bf6.5)", () => {
@@ -211,6 +243,66 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
       expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
     }
     expect(nonFlatSystemsSeen).toBeGreaterThan(0);
+  });
+});
+
+describe("randomSystem's symmetry roll (fr-d61)", () => {
+  it("rolls symmetry on roughly 3 in 10 flat systems: integer order 2..6 about y, null otherwise", () => {
+    let flatSystemsSeen = 0;
+    let symmetryHits = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = randomSystem(mulberry32(seed));
+      if (!systemIsFlat(transforms)) continue;
+      flatSystemsSeen++;
+      if (symmetry === null) continue;
+      symmetryHits++;
+      expect(Number.isInteger(symmetry.order)).toBe(true);
+      expect(symmetry.order).toBeGreaterThanOrEqual(2);
+      expect(symmetry.order).toBeLessThanOrEqual(6);
+      expect(symmetry.axis).toBe("y");
+    }
+    const fraction = symmetryHits / flatSystemsSeen;
+    // Generous band around the 0.3 design target (SYMMETRY_PROBABILITY):
+    // loose enough to never flake, tight enough to catch a broken or
+    // always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.15);
+    expect(fraction).toBeLessThanOrEqual(0.45);
+  });
+
+  it("never attaches symmetry to a non-flat system (the 4D pipeline has no symmetry support)", () => {
+    let nonFlatSystemsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = randomSystem(mulberry32(seed));
+      if (systemIsFlat(transforms)) continue;
+      nonFlatSystemsSeen++;
+      expect(symmetry).toBeNull();
+    }
+    expect(nonFlatSystemsSeen).toBeGreaterThan(0);
+  });
+
+  it("re-probing a symmetric system WITH its rolled symmetry still lands acceptable bounds", () => {
+    let symmetricSystemsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const system = randomSystem(mulberry32(seed));
+      if (system.symmetry === null) continue;
+      symmetricSystemsSeen++;
+      // A fresh, independent rng stream -- not a replay of the internal
+      // generation-time probe -- so this genuinely re-verifies the system
+      // rather than trivially repeating the check that already accepted it.
+      const result = runChaosGame(
+        system.transforms,
+        4000,
+        mulberry32(seed * 7919 + 1),
+        system.finalTransform,
+        system.symmetry,
+      );
+      // Occupancy is deliberately not re-asserted here: a marginal system
+      // near the floor can legitimately wobble across it between seeds.
+      // Bounds acceptability is the stable promise -- the existing 4D
+      // re-probe test above makes the same trade.
+      expect(isAcceptableSystem(result.bounds)).toBe(true);
+    }
+    expect(symmetricSystemsSeen).toBeGreaterThan(0);
   });
 });
 

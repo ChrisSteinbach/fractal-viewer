@@ -6,6 +6,7 @@ import { VARIATION_TYPES } from "./types";
 import type {
   Bounds,
   Bounds4,
+  SymmetryParams,
   Transform,
   Variation,
   Vec3,
@@ -20,10 +21,19 @@ import type {
  * {@link Transform.w}), landing a genuinely non-flat system that the app
  * renders through its tumbling 4D projection instead of the flat point
  * cloud. The final transform never carries a `w` block — see
- * {@link randomFinalTransform}. */
+ * {@link randomFinalTransform}.
+ *
+ * `symmetry` (fr-wti's follow-up, landed via fr-d61) is rolled for FLAT
+ * systems only — see {@link randomSymmetry}. `null` means "no kaleidoscope",
+ * and is also what every non-flat roll carries unconditionally (the 4D
+ * pipeline has no symmetry parameter to roll one into). Like
+ * `finalTransform`, the consumer must apply this field to the app's
+ * symmetry state INCLUDING resetting it to order 1 on `null`, so a previous
+ * session's kaleidoscope never survives a roll that landed on no symmetry. */
 export interface RandomSystem {
   transforms: Transform[];
   finalTransform: Transform | null;
+  symmetry: SymmetryParams | null;
 }
 
 /** Map count is `MIN_MAP_COUNT + floor(rng() * MAP_COUNT_SPAN)`, i.e. 2..4 —
@@ -44,6 +54,26 @@ const TARGET_DIMENSION_MAX = 2.7;
 const SCALE_JITTER = 0.1;
 /** Extra per-axis wobble (±20%) for the anisotropic case. */
 const AXIS_JITTER = 0.2;
+/**
+ * Floor on a map's shared (pre-per-axis) scale, expressed as a similarity
+ * dimension rather than a raw scale so it composes with whatever `n` the
+ * roll picked. fr-d61: a validation failure surfaced a 2-map pure-affine
+ * roll where both maps' ±{@link SCALE_JITTER} draws happened to land low,
+ * dragging the effective similarity dimension to ≈1.7 — well under
+ * {@link TARGET_DIMENSION_MIN} — and rendering as a thin squiggle that only
+ * barely cleared the occupancy gate.
+ *
+ * The fix: after jitter, each map's shared scale is floored at
+ * `count^(-1/EFFECTIVE_DIMENSION_FLOOR)`. By the Moran equation (`n` maps at
+ * uniform scale `s` solve `n·s^D = 1`), that floor guarantees a uniform-scale
+ * system can never land below D = 1.8, no matter which way the jitter
+ * breaks.
+ *
+ * Set to 1.8 rather than {@link TARGET_DIMENSION_MIN}'s 1.9: a hair under the
+ * target so downward jitter still has a visible effect on low-D draws — this
+ * is a floor under the wisp zone, not a deletion of the jitter.
+ */
+const EFFECTIVE_DIMENSION_FLOOR = 1.8;
 const SCALE_MIN = 0.35;
 const SCALE_MAX = 0.85;
 const UNIFORM_SCALE_PROBABILITY = 0.7;
@@ -55,6 +85,24 @@ const ZERO_SHEAR_PROBABILITY = 0.7;
  * of authored). Capped at 25:1 — steeper skews starve the light maps'
  * regions of points and the cloud goes patchy. */
 const WEIGHT_ROLL = 24;
+/**
+ * Cap on a 2-map system's weight ratio. fr-d61's validation fail had a
+ * second ingredient alongside the thin scale draw: a 3:16 weight skew on a
+ * 2-map roll, leaving the light branch only ~16% of the orbit's points —
+ * starving half the structure. Applied deterministically to `weight` AFTER
+ * both maps have rolled ({@link randomTransforms}), so it costs no extra rng
+ * draws: the heavier map is clamped to at most `TWO_MAP_WEIGHT_RATIO_CAP`
+ * times the lighter, guaranteeing the lighter map at least a fifth of the
+ * selection.
+ *
+ * Scoped to `n = 2` only: with 3+ maps, a single starved map still leaves at
+ * least two well-fed maps carrying the structure, so this failure mode
+ * doesn't arise. Preset-style heavy skews are legitimate at that map count —
+ * `barnsleyFern`'s frond ≈85% / leaflets ≈7% / stem ≈1% needs exactly that
+ * kind of imbalance on a 4-map system — so 3+-map rolls keep
+ * {@link WEIGHT_ROLL}'s full 25:1 reach.
+ */
+const TWO_MAP_WEIGHT_RATIO_CAP = 4;
 
 const FIRST_VARIATION_PROBABILITY = 0.6;
 const SECOND_VARIATION_PROBABILITY = 0.2;
@@ -80,6 +128,31 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
   "disc",
   "julia",
 ];
+
+/**
+ * Rotational-symmetry roll: fr-wti's original follow-up idea, landed here
+ * via fr-d61 now that fr-6im has shipped rotational/mirror symmetry —
+ * random kaleidoscopes look disproportionately good for how cheap they are
+ * to roll, so roughly 3 flat rolls in 10 also land one, at an integer order
+ * of 2..6 ({@link SYMMETRY_ORDER_MIN} + `floor(rng() *`
+ * {@link SYMMETRY_ORDER_SPAN}`)`), comfortably inside the UI slider's 1..9
+ * range.
+ *
+ * The axis is ALWAYS `"y"`, never rolled: every rolled map already carries a
+ * uniformly random rotation, so changing the world axis the kaleidoscope
+ * turns about amounts to a global reorientation of the whole cloud — and the
+ * free-orbiting camera erases any difference reorientation would make. It
+ * would be a draw spent on no added variety.
+ *
+ * 4D candidates NEVER roll symmetry (see {@link randomCandidate}): the 4D
+ * pipeline (`runChaosGame4` plus the projection view) has no symmetry
+ * parameter at all, and the app hides the symmetry controls while a system
+ * is non-flat, so a rolled order on a non-flat system would be a dial the
+ * renderer ignores and the quality gate never probes.
+ */
+const SYMMETRY_PROBABILITY = 0.3;
+const SYMMETRY_ORDER_MIN = 2;
+const SYMMETRY_ORDER_SPAN = 5;
 
 /**
  * Rare-spice roll (fr-bf6.5): one system-level draw deciding whether THIS
@@ -153,7 +226,11 @@ const OCCUPANCY_GRID = 24;
  * Calibrated against the presets (every one lands ≥ 350, the thinnest being
  * barnsleyFern) and against captured dusty rolls (≤ ~210): systems whose
  * orbit piles onto a handful of micro-clusters stop claiming new cells at
- * this resolution, while genuine fractal structure keeps resolving. */
+ * this resolution, while genuine fractal structure keeps resolving. fr-d61
+ * fixed its thin-roll causes at the source instead of raising this floor —
+ * the scale floor ({@link EFFECTIVE_DIMENSION_FLOOR}) and 2-map weight cap
+ * ({@link TWO_MAP_WEIGHT_RATIO_CAP}) — since barnsleyFern already probes at
+ * ~350, leaving little headroom to raise it into. */
 export const MIN_OCCUPIED_CELLS = 280;
 /** Below this, a non-flat candidate's `w` extent reads as visually flat in
  * the projection view — no better than not rolling `w` at all — so
@@ -211,9 +288,25 @@ function clampScale(value: number): number {
   return Math.min(SCALE_MAX, Math.max(SCALE_MIN, value));
 }
 
-function randomScale(rng: Rng, baseScale: number): Vec3 {
+/**
+ * Roll a map's scale: shared jitter around `baseScale`, floored at
+ * `scaleFloor` ({@link EFFECTIVE_DIMENSION_FLOOR}) so a run of unlucky
+ * downward jitter can't thin the map below the dimension floor — then, most
+ * of the time, spread into independent per-axis wobble
+ * ({@link AXIS_JITTER}).
+ *
+ * The floor applies to the shared `s` only, never to the per-axis draws
+ * below: the axis jitter is mass-neutral in expectation (the geometric mean
+ * of three independent `U[0.8, 1.2]` factors is ≈1), so it reshapes the map
+ * rather than thinning it. The rare all-axes-down tail is left to the
+ * occupancy gate, as it always was.
+ */
+function randomScale(rng: Rng, baseScale: number, scaleFloor: number): Vec3 {
   const s = clampScale(
-    baseScale * uniform(rng, 1 - SCALE_JITTER, 1 + SCALE_JITTER),
+    Math.max(
+      scaleFloor,
+      baseScale * uniform(rng, 1 - SCALE_JITTER, 1 + SCALE_JITTER),
+    ),
   );
   if (rng() < UNIFORM_SCALE_PROBABILITY) return [s, s, s];
   return [
@@ -321,6 +414,7 @@ function randomTransform(
   rng: Rng,
   id: number,
   baseScale: number,
+  scaleFloor: number,
   fourD: boolean,
 ): Transform {
   const variations = randomVariations(rng);
@@ -329,7 +423,7 @@ function randomTransform(
     id,
     position: randomVec3(rng, -POSITION_RANGE, POSITION_RANGE),
     rotation: randomVec3(rng, -Math.PI, Math.PI),
-    scale: randomScale(rng, baseScale),
+    scale: randomScale(rng, baseScale, scaleFloor),
     weight: randomWeight(rng),
     shear: randomShear(rng),
     ...(variations ? { variations } : {}),
@@ -351,9 +445,22 @@ function randomTransforms(rng: Rng, fourD: boolean): Transform[] {
   const count = MIN_MAP_COUNT + Math.floor(rng() * MAP_COUNT_SPAN);
   const dimension = uniform(rng, TARGET_DIMENSION_MIN, TARGET_DIMENSION_MAX);
   const baseScale = Math.pow(count, -1 / dimension);
+  const scaleFloor = Math.pow(count, -1 / EFFECTIVE_DIMENSION_FLOOR);
   const transforms = Array.from({ length: count }, (_, id) =>
-    randomTransform(rng, id, baseScale, fourD),
+    randomTransform(rng, id, baseScale, scaleFloor, fourD),
   );
+  if (transforms.length === 2) {
+    const [a, b] = transforms;
+    // `weight` is optional on Transform in general (omitted ⇒ 1), though
+    // randomWeight() above always sets it concretely for a rolled map; the
+    // `?? 1` here just satisfies the wider type, matching how chaos-game.ts
+    // and chaos-game-4d.ts read this same optional field.
+    const weightA = a.weight ?? 1;
+    const weightB = b.weight ?? 1;
+    const cap = TWO_MAP_WEIGHT_RATIO_CAP * Math.min(weightA, weightB);
+    if (weightA > cap) transforms[0] = { ...a, weight: cap };
+    if (weightB > cap) transforms[1] = { ...b, weight: cap };
+  }
   if (fourD && systemIsFlat(transforms)) {
     transforms[0] = {
       ...transforms[0],
@@ -402,18 +509,39 @@ function randomFinalTransform(rng: Rng): Transform | null {
 }
 
 /**
- * Roll a full candidate: the base maps plus the optional final-transform
- * lens. The {@link FOUR_D_PROBABILITY} roll is deliberately the FIRST draw
- * of a candidate — a single leading `rng()` call — so a miss leaves every
+ * Roll an optional kaleidoscope for a flat candidate (see
+ * {@link SYMMETRY_PROBABILITY}): a miss costs exactly one draw, a hit spends
+ * one more on the order — the same sparse-roll discipline as this module's
+ * other rare-spice rolls ({@link randomFinalTransform},
+ * {@link randomWExtension}).
+ */
+function randomSymmetry(rng: Rng): SymmetryParams | null {
+  if (rng() >= SYMMETRY_PROBABILITY) return null;
+  return {
+    order: SYMMETRY_ORDER_MIN + Math.floor(rng() * SYMMETRY_ORDER_SPAN),
+    axis: "y",
+  };
+}
+
+/**
+ * Roll a full candidate: the base maps, the optional final-transform lens,
+ * and (flat candidates only) an optional symmetry. Draw order is `fourD`
+ * gate → `transforms` → `finalTransform` → `symmetry`. The
+ * {@link FOUR_D_PROBABILITY} roll is deliberately the FIRST draw of a
+ * candidate — a single leading `rng()` call — so a miss leaves every
  * subsequent roll's sequence (and the rng values it consumes) exactly as it
  * was before this feature existed; only a hit spends any further draws on
- * `w`.
+ * `w`. `symmetry` is rolled LAST, and only for a flat candidate (see
+ * {@link randomSymmetry}): a `fourD` hit skips it for free (`null`, costing
+ * no draw), matching that a non-flat system has nowhere to put a
+ * kaleidoscope.
  */
 function randomCandidate(rng: Rng): RandomSystem {
   const fourD = rng() < FOUR_D_PROBABILITY;
   return {
     transforms: randomTransforms(rng, fourD),
     finalTransform: randomFinalTransform(rng),
+    symmetry: fourD ? null : randomSymmetry(rng),
   };
 }
 
@@ -569,7 +697,9 @@ export function occupiedCellCount(
  * the core supports, so "Surprise Me" can reach anywhere the manual editor
  * can — and, occasionally ({@link FOUR_D_PROBABILITY}), a sparse `w`
  * extension on some of the base maps (fr-bf6.5), landing a genuinely 4D
- * system.
+ * system. A flat candidate additionally has a chance
+ * ({@link SYMMETRY_PROBABILITY}) of a rolled rotational symmetry
+ * ({@link randomSymmetry}).
  *
  * Each candidate is probed and must pass a quality gate before it's
  * returned; a rejected candidate is discarded and a fresh one rolled, for up
@@ -579,10 +709,12 @@ export function occupiedCellCount(
  * candidate's flatness (`affine4.ts`'s `systemIsFlat`):
  *
  * - a FLAT candidate takes the exact probe this function always has: a
- *   short `runChaosGame` run, gated by {@link isAcceptableSystem} (sane
- *   bounds — not collapsed, not hugging the escape wall) and
- *   {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS` (enough spatial detail
- *   to read as a shape rather than dust);
+ *   short `runChaosGame` run — including any rolled `symmetry`, so the gate
+ *   judges the kaleidoscoped cloud the user will actually see, bounds and
+ *   occupancy alike — gated by {@link isAcceptableSystem} (sane bounds — not
+ *   collapsed, not hugging the escape wall) and {@link occupiedCellCount} ≥
+ *   `MIN_OCCUPIED_CELLS` (enough spatial detail to read as a shape rather
+ *   than dust);
  * - a NON-FLAT candidate is instead probed by lifting every map through
  *   `toTransform4` and running `runChaosGame4`, gated by
  *   {@link isAcceptableSystem4} (the 4D analogue: bounded, and with a
@@ -603,6 +735,7 @@ export function randomSystem(rng: Rng): RandomSystem {
         PROBE_POINTS,
         rng,
         candidate.finalTransform,
+        candidate.symmetry ?? undefined,
       );
       if (
         isAcceptableSystem(bounds) &&
