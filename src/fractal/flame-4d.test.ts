@@ -1,5 +1,4 @@
 import { accumulateFlame4 } from "./flame-4d";
-import type { FlameColor4, FourDFlameView } from "./flame-4d";
 import { WARMUP_ITERATIONS } from "./chaos-game";
 import { plotPoint4, prepareChaosGame4, stepOrbit4 } from "./chaos-game-4d";
 import { rotationMatrix4, toTransform4 } from "./affine4";
@@ -9,12 +8,14 @@ import {
   wRampColor,
   W_SIDE_PALETTES,
 } from "./color";
+import type { FourDRenderColor } from "./color";
 import { buildPaletteLUT } from "./palette";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
   sliceWeight,
 } from "./project4";
+import type { FourDView } from "./project4";
 import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { pentatope } from "./presets";
@@ -68,7 +69,7 @@ const FLAT_PROJECTION = composeFlameProjection4(
   composeRotorProjection4(IDENTITY_ROTOR, [0, 0, 0, 0]),
 );
 
-const FLAT_VIEW: FourDFlameView = {
+const FLAT_VIEW: FourDView = {
   invWAmp: 1,
   sliceOn: false,
   sliceCenter: 0,
@@ -114,7 +115,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
     // dedicated test below (fixed-point system, immune to the ULP noise a
     // real weighted Gaussian would introduce over thousands of iterations);
     // this oracle isolates the projection/plot/pick math, at weight 1 always.
-    const view: FourDFlameView = {
+    const view: FourDView = {
       invWAmp: 0.8,
       sliceOn: false,
       sliceCenter: 0.1,
@@ -215,7 +216,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
 describe("accumulateFlame4 determinism", () => {
   it("produces identical histograms for the same seed", () => {
     const prepared = prepareChaosGame4(weightedPentatope());
-    const color: FlameColor4 = {
+    const color: FourDRenderColor = {
       kind: "transform",
       palette: transformColors(5),
     };
@@ -247,7 +248,7 @@ describe("accumulateFlame4 determinism", () => {
 
   it("differs for a different seed", () => {
     const prepared = prepareChaosGame4(weightedPentatope());
-    const color: FlameColor4 = {
+    const color: FourDRenderColor = {
       kind: "transform",
       palette: transformColors(5),
     };
@@ -280,7 +281,7 @@ describe("accumulateFlame4 progressive accumulation", () => {
     const prepared = prepareChaosGame4(weightedPentatope());
     const lut = buildPaletteLUT("spectrum");
     if (!lut) throw new Error("spectrum should have a LUT");
-    const color: FlameColor4 = { kind: "structural", lut };
+    const color: FourDRenderColor = { kind: "structural", lut };
     const width = 32;
     const height = 32;
 
@@ -335,7 +336,7 @@ describe("accumulateFlame4 soft w-slice floor (fr-6x2 ghost context)", () => {
     // exactly 0 in double precision, pinning every iteration's weight at
     // exactly the 0.06 floor (see project4.ts's sliceWeight).
     const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0]));
-    const view: FourDFlameView = {
+    const view: FourDView = {
       invWAmp: 1,
       sliceOn: true,
       sliceCenter: 1,
@@ -344,7 +345,7 @@ describe("accumulateFlame4 soft w-slice floor (fr-6x2 ghost context)", () => {
     const width = 10;
     const height = 10;
     const iterations = 1000;
-    const color: FlameColor4 = {
+    const color: FourDRenderColor = {
       kind: "transform",
       palette: transformColors(1),
     };

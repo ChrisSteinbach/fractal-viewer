@@ -1,5 +1,6 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import { clampVoxelResolution } from "../fractal/voxel";
+import type { Transform4 } from "../fractal/types";
 import {
   voxelAccumBudgetVoxels,
   VoxelWorkerSession,
@@ -30,6 +31,51 @@ function startCommand(
     order: 1,
     axis: "y",
     ...overrides,
+  };
+}
+
+/** Row-major 4x4 identity rotor — no rotation, so the rotor-projection step
+ * degenerates to "drop w, keep xyz" verbatim — mirrors
+ * flame-worker-core.test.ts's own fixture. */
+// prettier-ignore
+const IDENTITY_ROTOR4 = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+
+/** A simple pentatope-ish 4D system: every map contracts all of 4-space
+ * toward the same fixed point, converging to (0.5, 0.5, 0.5, 0.5) — the 4D
+ * twin of this file's implicit 3D fixture (`sierpinskiTetrahedron`), just
+ * simple enough to reason about by hand — mirrors flame-worker-core.test.ts's
+ * own `makeTransforms4`. */
+function makeTransforms4(count: number): Transform4[] {
+  return Array.from({ length: count }, (): Transform4 => ({
+    position: [0.25, 0.25, 0.25, 0.25],
+    scale: [0.5, 0.5, 0.5, 0.5],
+  }));
+}
+
+/** A ready-to-use `fourD` block (see `VoxelWorkerCommand`'s `start` variant)
+ * — an inert rotor/center so the projection is "drop w, keep xyz" verbatim,
+ * sliceOn false so every point contributes at full weight. Tests that care
+ * about a specific field spread over this. */
+function defaultFourD(): NonNullable<
+  Extract<VoxelWorkerCommand, { type: "start" }>["fourD"]
+> {
+  return {
+    transforms4: makeTransforms4(4),
+    finalTransform4: null,
+    rotor: IDENTITY_ROTOR4,
+    center: [0, 0, 0, 0],
+    invWAmp: 1,
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 1,
+    colorMode: "wBlueOrange",
+    radiusMin: 0,
+    radiusMax: 1,
   };
 }
 
@@ -447,6 +493,7 @@ describe("VoxelWorkerSession memory guards", () => {
           maxDensity: 0,
           orbit: null,
           orbitColor: 0.5,
+          orbitW: 0,
         };
       },
     });
@@ -477,6 +524,110 @@ describe("VoxelWorkerSession memory guards", () => {
 
     expect(events.some((e) => e.type === "error")).toBe(true);
     expect(gridEvents(events)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4D solid render (fr-4wd): the `fourD` start-command block drives
+// computeVoxelBounds4/accumulateVoxels4 instead of the 3D path, and every
+// command handler must still behave sanely — setSymmetry becomes a no-op
+// (symmetry is 3D-only), setPalette still restarts. A plain 3D start (no
+// fourD) must keep behaving exactly as every other describe block in this
+// file already proves.
+// ---------------------------------------------------------------------------
+
+describe("VoxelWorkerSession 4D solid render", () => {
+  it("emits a grid event with a nonzero texture for a simple 4D transform fixture", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 2000 }),
+    );
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.length).toBeGreaterThan(0);
+    const last = grids[grids.length - 1];
+    expect(last.iterationsDone).toBe(2000);
+    expect(last.texture.some((b) => b > 0)).toBe(true);
+  });
+
+  it("setSymmetry on a 4D session is a no-op: no bounds re-run, no restart", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
+    );
+    scheduler.drain();
+    const gridsBefore = gridEvents(events).length;
+    const notesBefore = noteEvents(events).length;
+
+    session.handle({ type: "setSymmetry", order: 3, axis: "z" });
+
+    // No restart -> no new grid/resolutionNote from a no-op command with
+    // nothing scheduled.
+    expect(gridEvents(events)).toHaveLength(gridsBefore);
+    expect(noteEvents(events)).toHaveLength(notesBefore);
+  });
+
+  it("setPalette on a 4D session restarts accumulation and re-emits a grid", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 50 });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        iterationsBudget: 200,
+        paletteId: "legacy",
+      }),
+    );
+    scheduler.drain();
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const gridsBefore = gridEvents(events).length;
+
+    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    scheduler.drain();
+
+    // A finished render produces no more grids on its own; that it climbs
+    // back to the budget AND emits new grid events proves it reset to zero
+    // and re-ran, exactly like the 3D setPalette restart.
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
+  });
+
+  it("a 3D start (no fourD) is unaffected: still runs to completion with a real texture", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 500 }));
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.length).toBeGreaterThan(0);
+    const last = grids[grids.length - 1];
+    expect(last.iterationsDone).toBe(500);
+    expect(last.texture.some((b) => b > 0)).toBe(true);
+  });
+
+  it("does not produce a degenerate grid (bounds min < max) when the slice sits far outside the cloud", () => {
+    // s is always clamped into [-1, 1], so a center of 50 is many widths
+    // away from every sample regardless of the system — the <1% fallback
+    // (voxel-4d.ts's computeVoxelBounds4) must engage instead of trimming
+    // to a near-empty (or NaN) qualifying set.
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          sliceOn: true,
+          sliceCenter: 50,
+          sliceWidth: 0.1,
+        },
+        iterationsBudget: 500,
+      }),
+    );
+    scheduler.drain();
+
+    const grids = gridEvents(events);
+    expect(grids.length).toBeGreaterThan(0);
+    const last = grids[grids.length - 1];
+    expect(last.boundsMax[0]).toBeGreaterThan(last.boundsMin[0]);
+    expect(last.boundsMax[1]).toBeGreaterThan(last.boundsMin[1]);
+    expect(last.boundsMax[2]).toBeGreaterThan(last.boundsMin[2]);
   });
 });
 

@@ -59,16 +59,17 @@ import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
 import { accumulateFlame4 } from "../fractal/flame-4d";
-import type { FlameColor4, FourDFlameView } from "../fractal/flame-4d";
 import {
   buildColorModeLUT,
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
+import type { FourDRenderColor } from "../fractal/color";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
 } from "../fractal/project4";
+import type { FourDView } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
@@ -161,7 +162,7 @@ export type FlameWorkerCommand =
          * `composeRotorProjection4`. */
         center: Vec4;
         /** `1 / wSupport(rotor, halfExtents)` at render entry — see
-         * `flame-4d.ts`'s `FourDFlameView.invWAmp` and `rotor4.ts`'s
+         * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s
          * `wSupport`. */
         invWAmp: number;
         /** Whether the soft w-slice is on — `scene.ts`'s `uSliceOn`. */
@@ -172,7 +173,7 @@ export type FlameWorkerCommand =
          * thread reads `FOUR_D_SLICE_WIDTH`). */
         sliceWidth: number;
         /** The explorer's active 4D color mode — drives the "legacy"
-         * palette dispatch (see `flame-4d.ts`'s `FlameColor4`). */
+         * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
         colorMode: FourDColorMode;
         /** Min/max 4D distance from `center` over the explorer's own cloud
          * (`ChaosGame4Result`), computed by the main thread — the "radius"
@@ -668,11 +669,11 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
   constructor(
     private readonly prepared: PreparedChaosGame4,
     private readonly projection: Float64Array,
-    private readonly view: FourDFlameView,
+    private readonly view: FourDView,
     private readonly width: number,
     private readonly height: number,
     private readonly rng: Rng,
-    private readonly color: FlameColor4,
+    private readonly color: FourDRenderColor,
   ) {}
 
   accumulate(iterations: number): number {
@@ -758,7 +759,7 @@ export class FlameWorkerSession {
    * across every `startAccumulation` restart (a supersample/palette change
    * never rebuilds it, mirroring `projection`'s own lifetime). */
   private projection4: Float64Array | null = null;
-  private fourDView: FourDFlameView | null = null;
+  private fourDView: FourDView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
   private fourDCenter: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
@@ -766,7 +767,7 @@ export class FlameWorkerSession {
   /** Built once per `startAccumulation` (never per chunk — see
    * `buildFourDColor`) from the current `paletteId`/`colorLUT` and the
    * `fourD` block's `colorMode`. `null` for a 3D session. */
-  private fourDColor: FlameColor4 | null = null;
+  private fourDColor: FourDRenderColor | null = null;
   private palette: ReturnType<typeof transformColors> = [];
   /** Gradient lookup table for structural coloring, or `null` for the
    * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
@@ -1141,16 +1142,16 @@ export class FlameWorkerSession {
   }
 
   /**
-   * Build this session's {@link FlameColor4} from the CURRENT
+   * Build this session's {@link FourDRenderColor} from the CURRENT
    * `paletteId`/`colorLUT` and the `start` command's `fourD` block — called
    * once per `startAccumulation` (never per chunk), so a live `setPalette`
    * rebuilds it fresh on every restart. A non-`"legacy"` `paletteId` always
    * wins (structural coloring, exactly mirroring the 3D path's own
    * `colorLUT !== null` precedence); `"legacy"` dispatches on the
-   * explorer's own 4D color mode — see `flame-4d.ts`'s `FlameColor4` doc
+   * explorer's own 4D color mode — see `color.ts`'s `FourDRenderColor` doc
    * for what each variant reproduces.
    */
-  private buildFourDColor(): FlameColor4 {
+  private buildFourDColor(): FourDRenderColor {
     if (this.colorLUT !== null) {
       return { kind: "structural", lut: this.colorLUT };
     }

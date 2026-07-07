@@ -162,3 +162,33 @@ export function sliceWeight(
   const d = (s - center) / width;
   return floor + (1 - floor) * Math.exp(-0.5 * d * d);
 }
+
+/**
+ * The frozen 4D view parameters a render (flame or solid, fr-5b3/fr-4wd) was
+ * entered with — moved here from `flame-4d.ts` since it describes projection
+ * state, not anything specific to the flame accumulator: everything
+ * `accumulateFlame4`/`accumulateVoxels4` need to reproduce `scene.ts`'s
+ * `FOUR_D_VERTEX` shader's signed-w normalization and soft w-slice, held
+ * constant for the whole accumulation (unlike the live point-cloud view,
+ * whose rotor/support amplitude are recomputed every frame as the tumble
+ * advances).
+ */
+export interface FourDView {
+  /**
+   * `1 / wSupport(rotor, halfExtents)` at render-entry — see
+   * `src/app/rotor4.ts`'s `wSupport` and `scene.ts`'s `uInvWAmp4` uniform.
+   * The per-point signed-w signal is `s = clamp(sRaw * invWAmp, -1, 1)`,
+   * exactly the shader's `s = clamp(q.w * uInvWAmp4, -1.0, 1.0)`.
+   */
+  invWAmp: number;
+  /** Whether the soft w-slice window is active — mirrors `scene.ts`'s
+   * `uSliceOn` uniform. `false` skips {@link sliceWeight} entirely, so every
+   * point contributes at full weight. */
+  sliceOn: boolean;
+  /** Slice center in the normalized signed-w signal `s` — `scene.ts`'s
+   * `uSliceCenter`. */
+  sliceCenter: number;
+  /** Slice width (Gaussian falloff) — `scene.ts`'s `uSliceWidth`, sent as a
+   * plain number (the main thread reads `FOUR_D_SLICE_WIDTH`). */
+  sliceWidth: number;
+}

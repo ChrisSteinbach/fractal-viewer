@@ -27,18 +27,31 @@ import {
   voxelTextureData,
 } from "../fractal/voxel";
 import type { VoxelBounds, VoxelGrid } from "../fractal/voxel";
+import { accumulateVoxels4, computeVoxelBounds4 } from "../fractal/voxel-4d";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
-import { transformColors } from "../fractal/color";
+import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
+import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
+import {
+  buildColorModeLUT,
+  transformColors,
+  W_SIDE_PALETTES,
+} from "../fractal/color";
+import type { FourDRenderColor } from "../fractal/color";
+import { composeRotorProjection4 } from "../fractal/project4";
+import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
+  FourDColorMode,
   SymmetryAxis,
   Transform,
+  Transform4,
   Vec3,
+  Vec4,
 } from "../fractal/types";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +90,52 @@ export type VoxelWorkerCommand =
       /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
       order: number;
       axis: SymmetryAxis;
+      /**
+       * Optional 4D solid render (fr-4wd, mirroring the flame's fr-5b3):
+       * present when the explorer was in 4D mode when the render was
+       * entered. When present, the session drives `chaos-game-4d.ts`'s 4D
+       * chaos game and `voxel-4d.ts`'s `computeVoxelBounds4`/
+       * `accumulateVoxels4` instead of the 3D path. `transforms`/
+       * `finalTransform`/`colorMode`/`colorGamma` above still arrive either
+       * way (the main thread always sends both), but are simply unused when
+       * this is present — the 4D view hides the contrast control and never
+       * applied gamma to color (see `color.ts`'s `buildColors4` doc), and
+       * the radius LUT below uses gamma 1. Unlike the flame session, there
+       * is no GPU backend to opt out of here: the voxel session is CPU-only
+       * regardless of dimension.
+       */
+      fourD?: {
+        /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
+        transforms4: Transform4[];
+        finalTransform4: Transform4 | null;
+        /** Row-major 4x4 rotor matrix (the `affine4.ts`/`rotationMatrix4`
+         * convention), frozen at render entry — see `project4.ts`'s
+         * `composeRotorProjection4`. Built into one {@link RotorProjection4}
+         * ONCE per session (the rotor never changes mid-render — only the
+         * camera stays live). */
+        rotor: number[];
+        /** The cloud's 4D center (the rotor's pivot) — see
+         * `composeRotorProjection4`. */
+        center: Vec4;
+        /** `1 / wSupport(rotor, halfExtents)` at render-entry — see
+         * `project4.ts`'s `FourDView.invWAmp` and `rotor4.ts`'s `wSupport`. */
+        invWAmp: number;
+        /** Whether the soft w-slice is on — `scene.ts`'s `uSliceOn`. */
+        sliceOn: boolean;
+        /** Slice center in the normalized signed-w signal — `uSliceCenter`. */
+        sliceCenter: number;
+        /** Slice width — `uSliceWidth`, sent as a plain number (the main
+         * thread reads `FOUR_D_SLICE_WIDTH`). */
+        sliceWidth: number;
+        /** The explorer's active 4D color mode — drives the "legacy"
+         * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
+        colorMode: FourDColorMode;
+        /** Min/max 4D distance from `center` over the explorer's own cloud
+         * (`ChaosGame4Result`), computed by the main thread — the "radius"
+         * color mode's normalization range. */
+        radiusMin: number;
+        radiusMax: number;
+      };
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setPalette"; paletteId: FlamePaletteId }
@@ -292,6 +351,27 @@ export class VoxelWorkerSession {
   private grid: VoxelGrid | null = null;
   private bounds: VoxelBounds | null = null;
 
+  /** True when the current session's `start` carried a `fourD` block — see
+   * that field's doc. Set once per `start`; a restart (setPalette) never
+   * toggles it, since a session's dimensionality doesn't change mid-life,
+   * only a brand-new `start` can — mirrors flame-worker-core's `is4D`. */
+  private is4D = false;
+  private prepared4: PreparedChaosGame4 | null = null;
+  /** The 20-coefficient rotor projection `composeRotorProjection4` builds —
+   * built ONCE in `start` (the rotor is frozen for the whole session, unlike
+   * the flame session's `projection4` there is no camera to fold in here:
+   * the solid render is world-space, so this alone is the projection). */
+  private rotorProj4: RotorProjection4 | null = null;
+  private fourDView: FourDView | null = null;
+  private fourDColorMode: FourDColorMode = "wBlueOrange";
+  private fourDCenter: Vec4 = [0, 0, 0, 0];
+  private fourDRadiusMin = 0;
+  private fourDRadiusMax = 1;
+  /** Built once per `startAccumulation` (never per chunk — see
+   * `buildFourDColor`) from the current `colorLUT` and the `fourD` block's
+   * `colorMode`. `null` for a 3D session. */
+  private fourDColor: FourDRenderColor | null = null;
+
   /** The raw (un-rotated) transforms/finalTransform from the last "start" —
    * retained so setSymmetry can re-prepare with a NEW symmetry without the
    * main thread resending the whole transform list. */
@@ -384,6 +464,9 @@ export class VoxelWorkerSession {
     this.baseFinalTransform = cmd.finalTransform;
     this.symmetryOrder = cmd.order;
     this.symmetryAxis = cmd.axis;
+    // Built unconditionally, mirroring flame-worker-core's own `start`: even
+    // in a 4D session these still arrive (the main thread always sends
+    // both) but are simply unused.
     this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
       order: cmd.order,
       axis: cmd.axis,
@@ -392,20 +475,103 @@ export class VoxelWorkerSession {
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
     this.colorGamma = cmd.colorGamma;
-    // null for "legacy" — accumulateVoxels then falls back to colorMode.
+    // null for "legacy" — accumulateVoxels/buildFourDColor then falls back
+    // to colorMode/the explorer's 4D color mode respectively.
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
     this.maxVoxels = cmd.maxVoxels ?? this.defaultMaxVoxels;
     this.maxSafeResolution = Infinity; // a fresh session has no learned ceiling yet.
+
+    this.is4D = cmd.fourD !== undefined;
+    if (cmd.fourD) {
+      const fourD = cmd.fourD;
+      this.prepared4 = prepareChaosGame4(
+        fourD.transforms4,
+        fourD.finalTransform4,
+      );
+      // The rotor is frozen for the whole session — built once here, unlike
+      // the flame session's projection4 there is no camera to fold on top:
+      // the solid render is world-space.
+      this.rotorProj4 = composeRotorProjection4(fourD.rotor, fourD.center);
+      this.fourDView = {
+        invWAmp: fourD.invWAmp,
+        sliceOn: fourD.sliceOn,
+        sliceCenter: fourD.sliceCenter,
+        sliceWidth: fourD.sliceWidth,
+      };
+      this.fourDColorMode = fourD.colorMode;
+      this.fourDCenter = fourD.center;
+      this.fourDRadiusMin = fourD.radiusMin;
+      this.fourDRadiusMax = fourD.radiusMax;
+    } else {
+      this.prepared4 = null;
+      this.rotorProj4 = null;
+      this.fourDView = null;
+    }
+
     // The bounds pilot is part of the same seeded run, so a given seed
     // produces one reproducible render, bounds included.
-    this.bounds = computeVoxelBounds(
-      this.prepared,
-      this.rng,
-      this.boundsSamples,
-    );
+    this.bounds = this.is4D
+      ? computeVoxelBounds4(
+          this.prepared4!,
+          this.rotorProj4!,
+          this.fourDView!,
+          this.rng,
+          this.boundsSamples,
+        )
+      : computeVoxelBounds(this.prepared, this.rng, this.boundsSamples);
     this.startAccumulation();
+  }
+
+  /**
+   * Whether `start` has populated this session's geometry — 3D `prepared`,
+   * or (for a 4D session) `prepared4`/`rotorProj4`/`fourDView` — the shared
+   * "is there an active session to restart/run" gate every live-command
+   * handler uses, mirroring flame-worker-core's own `hasGeometry`.
+   */
+  private hasGeometry(): boolean {
+    return this.is4D
+      ? this.prepared4 !== null &&
+          this.rotorProj4 !== null &&
+          this.fourDView !== null
+      : this.prepared !== null;
+  }
+
+  /**
+   * Build this session's {@link FourDRenderColor} from the CURRENT
+   * `colorLUT` and the `start` command's `fourD` block — called once per
+   * `startAccumulation` (never per chunk), so a live `setPalette` rebuilds
+   * it fresh on every restart. A non-null `colorLUT` always wins (structural
+   * coloring, exactly mirroring the 3D path's own `colorLUT !== null`
+   * precedence); `null` (`"legacy"`) dispatches on the explorer's own 4D
+   * color mode — see `color.ts`'s `FourDRenderColor` doc for what each
+   * variant reproduces. Reuses flame-worker-core's `buildFourDColor` shape
+   * exactly, so the two sessions read alike.
+   */
+  private buildFourDColor(): FourDRenderColor {
+    if (this.colorLUT !== null) {
+      return { kind: "structural", lut: this.colorLUT };
+    }
+    switch (this.fourDColorMode) {
+      case "wBlueOrange":
+      case "wPurpleGreen":
+      case "wCyanMagenta":
+        return { kind: "wRamp", side: W_SIDE_PALETTES[this.fourDColorMode] };
+      case "transform":
+        return {
+          kind: "transform",
+          palette: transformColors(this.prepared4?.transformCount ?? 0),
+        };
+      case "radius":
+        return {
+          kind: "radius",
+          lut: buildColorModeLUT("radius", 1),
+          center: this.fourDCenter,
+          minD: this.fourDRadiusMin,
+          maxD: this.fourDRadiusMax,
+        };
+    }
   }
 
   /**
@@ -413,17 +579,24 @@ export class VoxelWorkerSession {
    * avgRGB has the OLD palette's colors baked in as a running mean, so —
    * unlike a GPU-uniform param — this can't be re-applied to the existing
    * accumulation; it has to accumulate afresh. Bounds/resolution are
-   * unchanged, so this reallocates an identical-size grid at the same bounds
+   * unchanged (color doesn't move geometry, so the bounds pilot does NOT
+   * re-run), so this reallocates an identical-size grid at the same bounds
    * — the same restart path setSymmetry uses.
    */
   private setPalette(paletteId: FlamePaletteId): void {
-    if (!this.prepared || !this.bounds) return; // no active session yet.
+    if (!this.hasGeometry()) return; // no active session yet.
     this.colorLUT = buildPaletteLUT(paletteId);
     this.startAccumulation();
   }
 
   private setSymmetry(order: number, axis: SymmetryAxis): void {
-    if (!this.prepared || !this.bounds) return; // no active session yet.
+    if (!this.hasGeometry()) return; // no active session yet.
+    // Symmetry (fr-6im) is 3D-only: the UI hides the control while a 4D
+    // session is active, but guard here too rather than trust that. A 4D
+    // session has no `postRotations`/base-map bookkeeping to rebuild, so
+    // there is nothing for this command to actually do — mirrors
+    // flame-worker-core's own `setSymmetry` guard.
+    if (this.is4D) return;
     if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
     this.symmetryOrder = order;
     this.symmetryAxis = axis;
@@ -453,7 +626,8 @@ export class VoxelWorkerSession {
    * allocation failure, learn the ceiling and retry one step smaller rather
    * than failing every attempt forever — the reactive guard backing up the
    * proactive `clampVoxelResolution` estimate, mirroring the flame session's
-   * supersample fallback.
+   * supersample fallback. Dimension-agnostic: the grid itself (and this OOM
+   * guard) doesn't care whether it's being filled by the 3D or 4D path.
    */
   private startAccumulation(): void {
     if (!this.bounds) return;
@@ -479,6 +653,13 @@ export class VoxelWorkerSession {
     this.lastTextureAt = undefined;
     this.lastPackMs = 0;
     this.chunkSize = this.initialChunkSize;
+    // The color sums a fresh accumulation will produce depend on the
+    // CURRENT colorLUT/fourDColorMode — rebuilt here (not just in `start`)
+    // so a live setPalette's restart picks up the new palette (see
+    // buildFourDColor's doc).
+    if (this.is4D) {
+      this.fourDColor = this.buildFourDColor();
+    }
     this.emit({
       type: "resolutionNote",
       effective: effective < this.requestedResolution ? effective : null,
@@ -489,19 +670,22 @@ export class VoxelWorkerSession {
 
   private ensureRunning(): void {
     if (this.running) return;
-    if (!this.prepared || !this.grid) return;
+    if (!this.hasGeometry() || !this.grid) return;
     if (this.iterationsDone >= this.iterationsBudget) return;
     this.running = true;
     this.schedule(() => this.runChunk());
   }
 
   private runChunk(): void {
-    const prepared = this.prepared;
     const grid = this.grid;
     // Re-checked here, not just in ensureRunning's gate: a budget LOWERED
     // below iterationsDone between scheduling and firing must stop here, or
     // the chunk math below goes negative (see flame-worker-core's runChunk).
-    if (!prepared || !grid || this.iterationsDone >= this.iterationsBudget) {
+    if (
+      !grid ||
+      !this.hasGeometry() ||
+      this.iterationsDone >= this.iterationsBudget
+    ) {
       this.running = false;
       return;
     }
@@ -511,16 +695,28 @@ export class VoxelWorkerSession {
       this.iterationsBudget - this.iterationsDone,
     );
     const t0 = this.now();
-    accumulateVoxels(
-      prepared,
-      grid,
-      chunk,
-      this.rng,
-      this.palette,
-      this.colorMode,
-      this.colorLUT ?? undefined,
-      this.colorGamma,
-    );
+    if (this.is4D) {
+      accumulateVoxels4(
+        this.prepared4!,
+        grid,
+        chunk,
+        this.rng,
+        this.rotorProj4!,
+        this.fourDView!,
+        this.fourDColor!,
+      );
+    } else {
+      accumulateVoxels(
+        this.prepared!,
+        grid,
+        chunk,
+        this.rng,
+        this.palette,
+        this.colorMode,
+        this.colorLUT ?? undefined,
+        this.colorGamma,
+      );
+    }
     const t1 = this.now();
     this.iterationsDone += chunk;
     this.adaptChunkSize(t1 - t0);

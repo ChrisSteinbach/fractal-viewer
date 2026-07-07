@@ -19,7 +19,7 @@
  * caller, via `composeFlameProjection4`) into the `projection` this function
  * takes.
  *
- * **Coloring** has four flavors (see {@link FlameColor4}): `"structural"` is
+ * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
  * slot every step, reset on escape-reseed — except keyed on the RAW picked
@@ -43,82 +43,15 @@ import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import { wRampColor } from "./color";
+import type { FourDRenderColor } from "./color";
 import { sliceWeight } from "./project4";
+import type { FourDView } from "./project4";
 import type { Rng } from "./rng";
-import type { Vec3, Vec4 } from "./types";
+import type { Vec3 } from "./types";
 
 /** Color for a transform/bucket outside `palette` — shouldn't happen; mirrors
  * `flame.ts`'s `FALLBACK_COLOR` and `color.ts`'s `buildColors4` fallback. */
 const FALLBACK_COLOR: Vec3 = [1, 1, 1];
-
-/**
- * How {@link accumulateFlame4} colors each plotted point (fr-5b3):
- *
- * - `"structural"`: the cosine-palette path, identical semantics to
- *   `accumulateFlame`'s `colorLUT` mode — an orbit-riding coordinate `c`
- *   blended halfway toward the picked transform's `idx / (n - 1)` slot every
- *   step (escape-reseed resets it to `0.5`), indexing `lut` (a `256 * 3`
- *   `buildPaletteLUT` table). Keyed on the RAW picked transform index rather
- *   than a base-map index: 4D has no kaleidoscope symmetry (fr-6im is 3D
- *   only — see `chaos-game-4d.ts`'s `PreparedChaosGame4`), so there is no
- *   expanded-copy modulo to recover.
- * - `"wRamp"`: the diverging rotated-w ramp (`color.ts`'s `wRampColor`)
- *   evaluated on the per-point normalized signed-w signal `s` — the "legacy"
- *   dispatch for whichever `wBlueOrange`/`wPurpleGreen`/`wCyanMagenta` mode
- *   the explorer had active.
- * - `"transform"`: `palette[idx]` (the picked transform's hue, from
- *   `color.ts`'s `transformColors`) — the "legacy" dispatch for the
- *   explorer's "By Transform" 4D color mode (`buildColors4`'s `"transform"`
- *   branch), falling back to {@link FALLBACK_COLOR} for an out-of-range
- *   index (shouldn't happen; mirrors `buildColors4`).
- * - `"radius"`: the 3D radius ramp LUT (`color.ts`'s `buildColorModeLUT`),
- *   indexed by the plotted point's 4D Euclidean distance from `center`,
- *   normalized over `[minD, maxD]` — the "legacy" dispatch for the
- *   explorer's "By 4D Radius" mode (`buildColors4`'s `"radius"` branch).
- *   `minD`/`maxD` are the explorer's own cloud's min/max 4D distance from
- *   its center (`ChaosGame4Result`), computed by the main thread — NOT
- *   recomputed from the flame's own (much larger, and differently
- *   distributed) accumulated sample.
- */
-export type FlameColor4 =
-  | { kind: "structural"; lut: Float32Array }
-  | { kind: "wRamp"; side: { neg: Vec3; pos: Vec3 } }
-  | { kind: "transform"; palette: Vec3[] }
-  | {
-      kind: "radius";
-      lut: Float32Array;
-      center: Vec4;
-      minD: number;
-      maxD: number;
-    };
-
-/**
- * The frozen 4D view parameters the flame render was entered with (fr-5b3) —
- * everything `accumulateFlame4` needs to reproduce `scene.ts`'s
- * `FOUR_D_VERTEX` shader's signed-w normalization and soft w-slice, held
- * constant for the whole accumulation (unlike the live point-cloud view,
- * whose rotor/support amplitude are recomputed every frame as the tumble
- * advances).
- */
-export interface FourDFlameView {
-  /**
-   * `1 / wSupport(rotor, halfExtents)` at render-entry — see
-   * `src/app/rotor4.ts`'s `wSupport` and `scene.ts`'s `uInvWAmp4` uniform.
-   * The per-point signed-w signal is `s = clamp(sRaw * invWAmp, -1, 1)`,
-   * exactly the shader's `s = clamp(q.w * uInvWAmp4, -1.0, 1.0)`.
-   */
-  invWAmp: number;
-  /** Whether the soft w-slice window is active — mirrors `scene.ts`'s
-   * `uSliceOn` uniform. `false` skips {@link import("./project4").sliceWeight}
-   * entirely, so every point contributes at full weight. */
-  sliceOn: boolean;
-  /** Slice center in the normalized signed-w signal `s` — `scene.ts`'s
-   * `uSliceCenter`. */
-  sliceCenter: number;
-  /** Slice width (Gaussian falloff) — `scene.ts`'s `uSliceWidth`, sent as a
-   * plain number (the main thread reads `FOUR_D_SLICE_WIDTH`). */
-  sliceWidth: number;
-}
 
 /** The ghost-context floor the flame's soft w-slice uses — see this module's
  * doc for why it matches the point-cloud view's floor (0.06), not the solid
@@ -155,12 +88,12 @@ const SLICE_FLOOR = 0.06;
 export function accumulateFlame4(
   prepared: PreparedChaosGame4,
   projection: Float64Array,
-  view: FourDFlameView,
+  view: FourDView,
   width: number,
   height: number,
   iterations: number,
   rng: Rng,
-  color: FlameColor4,
+  color: FourDRenderColor,
   histogram?: FlameHistogram,
 ): FlameHistogram {
   if (projection.length !== 20) {
@@ -181,7 +114,7 @@ export function accumulateFlame4(
   let maxHits = hist.maxHits;
 
   // Structural coloring (mirrors accumulateFlame's colorLUT path exactly —
-  // see FlameColor4's doc): `structural` gates both the per-step update below
+  // see FourDRenderColor's doc): `structural` gates both the per-step update below
   // and the escape-reseed reset, hoisted once rather than re-checking
   // `color.kind` twice per iteration. `colorDenom` is `n - 1` (0 for a
   // single-transform system, which pins the coordinate at 0.5) — keyed on

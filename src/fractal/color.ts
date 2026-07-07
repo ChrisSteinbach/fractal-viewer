@@ -6,6 +6,7 @@ import type {
   FourDColorMode,
   Transform,
   Vec3,
+  Vec4,
   WDepthColorMode,
 } from "./types";
 
@@ -393,3 +394,46 @@ export function buildColors4(
   }
   return colors;
 }
+
+/**
+ * How the 4D flame and solid renders color each plotted point/voxel (fr-5b3,
+ * fr-4wd — moved here from `flame-4d.ts` so both accumulators, and neither's
+ * name, own it):
+ *
+ * - `"structural"`: the cosine-palette path, identical semantics to
+ *   `accumulateFlame`'s `colorLUT` mode — an orbit-riding coordinate `c`
+ *   blended halfway toward the picked transform's `idx / (n - 1)` slot every
+ *   step (escape-reseed resets it to `0.5`), indexing `lut` (a `256 * 3`
+ *   `buildPaletteLUT` table). Keyed on the RAW picked transform index rather
+ *   than a base-map index: 4D has no kaleidoscope symmetry (fr-6im is 3D
+ *   only — see `chaos-game-4d.ts`'s `PreparedChaosGame4`), so there is no
+ *   expanded-copy modulo to recover.
+ * - `"wRamp"`: the diverging rotated-w ramp ({@link wRampColor}) evaluated on
+ *   the per-point normalized signed-w signal `s` — the "legacy" dispatch for
+ *   whichever `wBlueOrange`/`wPurpleGreen`/`wCyanMagenta` mode the explorer
+ *   had active.
+ * - `"transform"`: `palette[idx]` (the picked transform's hue, from
+ *   {@link transformColors}) — the "legacy" dispatch for the explorer's "By
+ *   Transform" 4D color mode ({@link buildColors4}'s `"transform"` branch),
+ *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
+ *   mirrors `buildColors4`).
+ * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}), indexed
+ *   by the plotted point's 4D Euclidean distance from `center`, normalized
+ *   over `[minD, maxD]` — the "legacy" dispatch for the explorer's "By 4D
+ *   Radius" mode ({@link buildColors4}'s `"radius"` branch). `minD`/`maxD`
+ *   are the explorer's own cloud's min/max 4D distance from its center
+ *   (`ChaosGame4Result`), computed by the main thread — NOT recomputed from
+ *   the accumulator's own (much larger, and differently distributed)
+ *   accumulated sample.
+ */
+export type FourDRenderColor =
+  | { kind: "structural"; lut: Float32Array }
+  | { kind: "wRamp"; side: { neg: Vec3; pos: Vec3 } }
+  | { kind: "transform"; palette: Vec3[] }
+  | {
+      kind: "radius";
+      lut: Float32Array;
+      center: Vec4;
+      minD: number;
+      maxD: number;
+    };
