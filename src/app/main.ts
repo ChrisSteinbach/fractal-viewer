@@ -46,6 +46,8 @@ import { Ui } from "./ui";
 import { SceneHistory } from "./history";
 import {
   addTransform,
+  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_ORDER,
   initialState,
   removeTransform,
   selectTransform,
@@ -1159,9 +1161,25 @@ function main(): void {
         // null as "clear" (stores undefined), so a previous session's lens
         // never survives a roll that landed on no final transform.
         state = setFinalTransform(state, sys.finalTransform);
+        // sys.symmetry is SymmetryParams | null (fr-d61; rolled for flat
+        // systems only) — same discipline as the lens above: a null roll
+        // RESETS the order, so a kaleidoscope left over from earlier play
+        // never multiplies a fresh surprise in a way its quality gate never
+        // probed. regenerate() (via applyEdit "always") reads state.symmetry
+        // for both the point cloud and the flame worker's restart payload,
+        // and refreshUi() syncs the slider/axis controls.
+        state = setSymmetryOrder(
+          state,
+          sys.symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
+        );
+        state = setSymmetryAxis(
+          state,
+          sys.symmetry?.axis ?? DEFAULT_SYMMETRY_AXIS,
+        );
       }, "always");
-      // randomSystem never rolls a `w` extension, but a preset scaffold from
-      // an earlier visit could still be showing — clear it unconditionally.
+      // A rolled system never carries a preset's tumbling scaffold (only the
+      // pentatope preset does), but one from an earlier visit could still be
+      // showing — clear it unconditionally.
       scene.setFourDScaffold(null);
       fitCameraToAttractor();
     },
