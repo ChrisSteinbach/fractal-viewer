@@ -759,6 +759,15 @@ export class FlameWorkerSession {
    * double-scheduling the loop (e.g. a `setIterationsBudget` bump arriving
    * while a chunk is already pending). */
   private running = false;
+  /** True while a deferred re-estimate (fr-3fv) is sitting in the schedule
+   * queue — guards `setEstimatorParam` against queuing a second one on top
+   * of it, which is what lets a burst of live estimator-param commands
+   * coalesce into a single adaptive pass instead of one per command (see
+   * that method's doc). Cleared when the deferred task actually runs,
+   * whether or not it goes on to call `redisplayWithFreshEstimate` — a
+   * stale/superseded/still-running bail still means nothing is pending
+   * anymore, so the next live change should queue a fresh one. */
+  private estimatorRedisplayPending = false;
   /** Set once by {@link dispose} and never cleared (fr-1ib) — unlike a
    * restart (which bumps `generation` to hand the loop off to a NEW
    * accumulation), disposal has nothing to hand off TO: this is what makes
@@ -1003,22 +1012,64 @@ export class FlameWorkerSession {
     if (!this.running) this.redisplayNow();
   }
 
+  /**
+   * Unlike tonemapParams (re-read fresh by sendProgress on every send, so
+   * just resending picks up a live change), estimatorParams only feeds the
+   * adaptive downsample baked into `displayHistogram` by `runChunk`'s
+   * finished branch — resending as-is would just re-tonemap the OLD
+   * estimate. While still accumulating, that finished branch hasn't run yet
+   * and will read estimatorParams fresh when it does, so nothing else to do
+   * here. Once finished, nothing will ever rebuild displayHistogram again on
+   * its own — this is the only thing that will.
+   *
+   * That adaptive pass is O(width * height * radius^2) — can take seconds
+   * at a wide radius — and dragging an estimator slider posts a BURST of
+   * these commands in quick succession. Running the pass synchronously per
+   * command makes the visible display lag behind the pointer by (queued
+   * commands × pass cost): a one-second drag can queue ~30 of them, each
+   * replaying the full pass before the next command is even read (fr-3fv).
+   *
+   * So instead of running it inline, defer the pass through `schedule`
+   * (`(fn) => setTimeout(fn, 0)` in the real hosts) and coalesce with
+   * `estimatorRedisplayPending` so a burst only ever has ONE deferred pass
+   * outstanding. `estimatorParams` above is still updated eagerly on every
+   * call — only the expensive part is deferred. `setTimeout(fn, 0)` lands
+   * behind every command already sitting in the session thread's message
+   * queue, so by the time the deferred pass fires, the whole burst has
+   * already landed in `estimatorParams` — the pass reads it once, at the
+   * end, with the NEWEST value of every param, not just whichever command
+   * happened to trigger it. Ticks that arrive WHILE a long pass is
+   * running queue up behind it the same way: the deferred task clears the
+   * flag BEFORE doing the work, so once the pass finishes, the first
+   * queued tick re-arms one fresh deferred pass and the rest of the
+   * backlog coalesces into it. Net effect: the display lags at most one
+   * pass behind the newest params, with no fixed debounce constant to tune
+   * and no perceptible added latency when the pass itself is fast.
+   *
+   * The deferred callback re-validates before doing the expensive work,
+   * mirroring `runChunk`'s own supersede discipline: `disposed`/`gen` cover
+   * disposal and a restart in the meantime (a DIFFERENT accumulation's own
+   * finished branch already reads estimatorParams fresh on its own, so this
+   * stale task has nothing useful left to do). `running` additionally
+   * covers `setIterationsBudget` resuming accumulation WITHOUT bumping
+   * `generation` (see that case's comment) — without this check, a
+   * deferred pass firing mid-resume would waste a full pass on a histogram
+   * about to be overwritten AND prematurely set `finalFrameDisplayed`
+   * (fr-ee9), suppressing the resumed render's own real finished frame.
+   */
   private setEstimatorParam<K extends keyof DensityEstimatorParams>(
     key: K,
     value: DensityEstimatorParams[K],
   ): void {
     this.estimatorParams = { ...this.estimatorParams, [key]: value };
-    // Unlike tonemapParams (re-read fresh by sendProgress on every send, so
-    // just resending picks up a live change), estimatorParams only feeds the
-    // adaptive downsample baked into `displayHistogram` by `runChunk`'s
-    // finished branch — resending as-is would just re-tonemap the OLD
-    // estimate. While still accumulating, that finished branch hasn't run
-    // yet and will read estimatorParams fresh when it does, so nothing else
-    // to do here. Once finished, nothing will ever rebuild displayHistogram
-    // again on its own — this is the only thing that will, so redo the
-    // (done-frame-only, not re-chunked) adaptive pass against the histogram
-    // already in hand now, rather than re-accumulating from scratch.
-    if (!this.running) this.redisplayWithFreshEstimate();
+    if (this.running || this.estimatorRedisplayPending) return;
+    this.estimatorRedisplayPending = true;
+    const gen = this.generation;
+    this.schedule(() => {
+      this.estimatorRedisplayPending = false;
+      if (this.disposed || gen !== this.generation || this.running) return;
+      this.redisplayWithFreshEstimate();
+    });
   }
 
   private setSupersample(requested: number): void {
@@ -1645,9 +1696,12 @@ export class FlameWorkerSession {
    * the finished-frame counterpart to `redisplayNow`'s "just re-send what's
    * already there", used when the thing that changed affects the downsample
    * itself, not just the tone-map applied after it. Only ever called once
-   * accumulation is finished (see call sites), so this IS the finished-frame
-   * adaptive display for the current accumulation + budget — set
-   * `finalFrameDisplayed` (fr-ee9) accordingly. */
+   * accumulation is finished (see call sites — `setEstimatorParam`'s
+   * deferred callback re-checks `running`/`generation` itself right before
+   * calling this, precisely so that stays true even though the command
+   * that queued it may have arrived mid-accumulation), so this IS the
+   * finished-frame adaptive display for the current accumulation + budget —
+   * set `finalFrameDisplayed` (fr-ee9) accordingly. */
   private redisplayWithFreshEstimate(): void {
     if (!this.histogram) return;
     this.rebuildDisplay(true);

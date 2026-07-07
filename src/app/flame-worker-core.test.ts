@@ -968,7 +968,10 @@ describe("FlameWorkerSession estimating event", () => {
 // Live estimator params (fr-17t): mirrors "live tone-map params" above, but
 // a change re-runs the adaptive downsample itself (not just a re-tonemap of
 // the existing displayHistogram), since estimatorParams feed that pass, not
-// tonemapFlame.
+// tonemapFlame. A live change defers that re-estimate through the scheduler
+// instead of running it inline, so a burst of these commands from a slider
+// drag coalesces into a single adaptive pass rather than one per command
+// (fr-3fv) — see setEstimatorParam's doc.
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession live estimator params", () => {
@@ -991,7 +994,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(last.iterationsDone).toBe(40);
   });
 
-  it("re-runs the adaptive estimate and sends immediately when a param changes after accumulation is done", () => {
+  it("defers the re-estimate to the next scheduler tick when a param changes after accumulation is done (fr-3fv)", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 50 }));
     scheduler.drain();
@@ -999,14 +1002,78 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(doneCount).toBeGreaterThan(0); // budget (50) < initial chunk size -> finished already.
 
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
-    expect(progressEvents(events)).toHaveLength(doneCount + 1);
+    // Deferred through the scheduler (fr-3fv), not run inline — handle()
+    // itself must not have produced anything synchronously.
+    expect(progressEvents(events)).toHaveLength(doneCount);
 
+    scheduler.drain();
+    expect(progressEvents(events)).toHaveLength(doneCount + 1);
+  });
+
+  it("coalesces a burst of estimator commands into a single adaptive pass (fr-3fv)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain();
+    const doneProgress = progressEvents(events).length;
+    const doneEstimating = estimatingEvents(events).length;
+
+    // All three commands fire before anything is drained — exactly what a
+    // fast slider drag looks like from the worker's side.
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
     session.handle({
       type: "setEstimatorMinimumRadius",
-      estimatorMinimumRadius: 2,
+      estimatorMinimumRadius: 0,
     });
-    session.handle({ type: "setEstimatorCurve", estimatorCurve: 1.5 });
-    expect(progressEvents(events)).toHaveLength(doneCount + 3);
+    session.handle({ type: "setEstimatorCurve", estimatorCurve: 0.3 });
+    scheduler.drain();
+
+    // One coalesced pass, not three — a fixed cost regardless of burst size.
+    expect(estimatingEvents(events)).toHaveLength(doneEstimating + 1);
+    expect(progressEvents(events)).toHaveLength(doneProgress + 1);
+  });
+
+  it("the coalesced pass uses the newest value of every param, not just whichever command triggered it (fr-3fv)", () => {
+    // Mirrors "applies estimator params to the finished frame" above: same
+    // seed and budget, differing only in HOW the final estimator params are
+    // reached — a burst of live commands (session A) vs. starting with them
+    // already in place (session B). If the coalesced pass reads the newest
+    // value of every field (not just the field named by whichever command
+    // happened to trigger the deferred pass), the two must render
+    // byte-identical.
+    const a = harness();
+    a.session.handle(
+      startCommand({
+        seed: 3,
+        iterationsBudget: 500,
+        estimatorRadius: 1,
+        estimatorMinimumRadius: 1,
+        estimatorCurve: 1,
+      }),
+    );
+    a.scheduler.drain();
+    a.session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
+    a.session.handle({
+      type: "setEstimatorMinimumRadius",
+      estimatorMinimumRadius: 0,
+    });
+    a.session.handle({ type: "setEstimatorCurve", estimatorCurve: 0.3 });
+    a.scheduler.drain();
+    const imgA = Array.from(progressEvents(a.events).at(-1)!.image);
+
+    const b = harness();
+    b.session.handle(
+      startCommand({
+        seed: 3,
+        iterationsBudget: 500,
+        estimatorRadius: 8,
+        estimatorMinimumRadius: 0,
+        estimatorCurve: 0.3,
+      }),
+    );
+    b.scheduler.drain();
+    const imgB = Array.from(progressEvents(b.events).at(-1)!.image);
+
+    expect(imgA).toEqual(imgB);
   });
 
   it("emits an estimating event immediately before the resulting progress event when a param changes after accumulation is done (fr-99z)", () => {
@@ -1015,6 +1082,7 @@ describe("FlameWorkerSession live estimator params", () => {
     scheduler.drain();
 
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
+    scheduler.drain(); // runs the deferred re-estimate (fr-3fv).
 
     const last = events.slice(-2);
     expect(last[0]).toEqual({ type: "estimating" });
@@ -1027,11 +1095,13 @@ describe("FlameWorkerSession live estimator params", () => {
       calls.push(args[4]); // iterations argument.
       return accumulateFlame(...args);
     };
-    const { session } = harness({ accumulate: countingAccumulate });
+    const { session, scheduler } = harness({ accumulate: countingAccumulate });
     session.handle(startCommand({ iterationsBudget: 50 }));
+    scheduler.drain(); // reach "done" for real before the param change.
     const callsAfterDone = calls.length;
 
     session.handle({ type: "setEstimatorCurve", estimatorCurve: 2 });
+    scheduler.drain(); // runs the deferred re-estimate (fr-3fv) — still no accumulate call.
     expect(calls).toHaveLength(callsAfterDone); // no new accumulate call.
   });
 
@@ -1055,9 +1125,48 @@ describe("FlameWorkerSession live estimator params", () => {
       estimatorMinimumRadius: 0,
     });
     session.handle({ type: "setEstimatorCurve", estimatorCurve: 0.3 });
+    scheduler.drain(); // runs the deferred (coalesced) re-estimate (fr-3fv).
     const afterChange = Array.from(progressEvents(events).at(-1)!.image);
 
     expect(afterChange).not.toEqual(finishedImage);
+  });
+
+  it("drops a pending re-estimate when a new render supersedes it (fr-3fv)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 500 }));
+    scheduler.drain();
+    const doneEstimating = estimatingEvents(events).length;
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 }); // defers a re-estimate.
+    session.handle(startCommand({ iterationsBudget: 50 })); // a fresh start — bumps generation.
+    scheduler.drain();
+
+    // Only the new render's own finished-frame pass ran — the stale
+    // deferred task (still carrying the OLD generation) bailed on the
+    // `gen !== this.generation` check instead of wastefully re-running.
+    expect(estimatingEvents(events)).toHaveLength(doneEstimating + 1);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
+  });
+
+  it("a budget raise racing the deferred re-estimate still yields the resumed render's finished frame (fr-ee9)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    scheduler.drain();
+    const doneEstimating = estimatingEvents(events).length;
+
+    session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 }); // defers a re-estimate.
+    // Resumes accumulation WITHOUT bumping generation (see that command's
+    // own case comment) — the deferred task above must not mistake this for
+    // "still the same finished render" and fire early.
+    session.handle({ type: "setIterationsBudget", iterations: 80 });
+    scheduler.drain();
+
+    // The deferred task bailed on `this.running` (true again mid-resume)
+    // rather than running early and prematurely latching `finalFrameDisplayed`
+    // (fr-ee9) — only the resumed render's OWN finished-frame pass produced a
+    // new estimating event, and the render actually reached the raised budget.
+    expect(estimatingEvents(events)).toHaveLength(doneEstimating + 1);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(80);
   });
 });
 
@@ -1166,6 +1275,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
     // other slot (each command cycles the buffer, so a second one would wrap
     // back around to slot 0 — deliberately not sent here).
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
+    scheduler.drain(); // runs the deferred re-estimate (fr-3fv).
 
     const after = sharedFrameEvents(events).at(-1)!;
     expect(after.slot).toBe(1);
