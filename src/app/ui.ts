@@ -43,6 +43,7 @@ import {
   MIN_GUIDE_SCALE,
   MAX_GUIDE_SCALE,
 } from "./constants";
+import { videoCaptureSupported } from "./recorder";
 
 export type { Preset };
 
@@ -81,6 +82,7 @@ export interface UiHandlers {
   onGlowBrightnessInput: (value: number) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
+  onRecordVideoToggle: () => void;
   onToggleGuides: (checked: boolean) => void;
   onColorMode: (mode: ColorMode) => void;
   /** The color-contrast slider changed (fr-8sk) — the value passed is the
@@ -607,6 +609,7 @@ export class Ui {
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
+  private readonly recordVideoBtn: HTMLButtonElement;
   private readonly numPointsLabel: HTMLElement;
   private readonly numPointsSlider: HTMLInputElement;
   private readonly pointSizeLabel: HTMLElement;
@@ -726,6 +729,8 @@ export class Ui {
     this.surpriseBtn = this.byId("surpriseBtn");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
+    this.recordVideoBtn = this.byId("recordVideoBtn");
+    this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
     this.numPointsLabel = this.byId("numPointsLabel");
     this.numPointsSlider = this.byId("numPointsSlider");
     this.pointSizeLabel = this.byId("pointSizeLabel");
@@ -834,6 +839,9 @@ export class Ui {
     this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
+    this.recordVideoBtn.addEventListener("click", () =>
+      handlers.onRecordVideoToggle(),
+    );
     this.numPointsSlider.addEventListener("input", () =>
       handlers.onNumPointsInput(
         sliderToNumPoints(Number(this.numPointsSlider.value)),
@@ -1205,6 +1213,16 @@ export class Ui {
   setUndoRedo(canUndo: boolean, canRedo: boolean): void {
     this.undoBtn.disabled = !canUndo;
     this.redoBtn.disabled = !canRedo;
+  }
+
+  /** Reflect recorder state on the record button; null label means idle. */
+  setRecordingState(elapsedLabel: string | null): void {
+    const recording = elapsedLabel !== null;
+    this.recordVideoBtn.textContent = recording
+      ? `■ Stop ${elapsedLabel}`
+      : "● Record video";
+    this.recordVideoBtn.classList.toggle("btn-ghost", !recording);
+    this.recordVideoBtn.classList.toggle("btn-red", recording);
   }
 
   /**

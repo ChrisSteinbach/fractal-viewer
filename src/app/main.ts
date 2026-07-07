@@ -44,6 +44,7 @@ import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
 import { SceneHistory } from "./history";
+import { createCanvasRecorder, formatElapsed } from "./recorder";
 import {
   addTransform,
   DEFAULT_SYMMETRY_AXIS,
@@ -228,6 +229,18 @@ function main(): void {
     : initialState(panelOpen);
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+
+  const recorder = createCanvasRecorder(scene.canvas, {
+    onStateChange: (recording) => {
+      ui.setRecordingState(recording ? formatElapsed(0) : null);
+    },
+    onTick: (seconds) => {
+      ui.setRecordingState(formatElapsed(seconds));
+    },
+    onError: (message) => {
+      console.error(`Video recording: ${message}`);
+    },
+  });
 
   // The most recent chaos-game run, cached so a color-mode change can recolor
   // the existing cloud (see `recolor`) instead of re-rolling the RNG and drawing
@@ -1202,6 +1215,9 @@ function main(): void {
       ui.updateLabels(state);
     },
     onRegenerate: () => regenerate(),
+    onRecordVideoToggle: () => {
+      recorder.toggle();
+    },
     onSavePng: () => {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
       // while a flame render is active, its own 2D canvas (true alpha; see

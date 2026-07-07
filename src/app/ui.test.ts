@@ -30,6 +30,7 @@ function noopHandlers(): UiHandlers {
     onGlowBrightnessInput: vi.fn(),
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
+    onRecordVideoToggle: vi.fn(),
     onToggleGuides: vi.fn(),
     onColorMode: vi.fn(),
     onColorGammaInput: vi.fn(),
@@ -868,6 +869,31 @@ describe("Ui.setPointCount", () => {
     expect(document.getElementById("pointCount")?.textContent).toBe(
       `${(100000).toLocaleString()} pts`,
     );
+  });
+});
+
+describe("Ui record video button", () => {
+  function recordVideoBtn(): HTMLButtonElement {
+    return document.getElementById("recordVideoBtn") as HTMLButtonElement;
+  }
+
+  it("hides the record video button when capture is unsupported", () => {
+    new Ui(document);
+    expect(recordVideoBtn().classList.contains("hidden")).toBe(true);
+  });
+
+  it("swaps the record button between record and stop states", () => {
+    const ui = new Ui(document);
+
+    ui.setRecordingState("0:07");
+    expect(recordVideoBtn().textContent).toBe("■ Stop 0:07");
+    expect(recordVideoBtn().classList.contains("btn-red")).toBe(true);
+    expect(recordVideoBtn().classList.contains("btn-ghost")).toBe(false);
+
+    ui.setRecordingState(null);
+    expect(recordVideoBtn().textContent).toBe("● Record video");
+    expect(recordVideoBtn().classList.contains("btn-ghost")).toBe(true);
+    expect(recordVideoBtn().classList.contains("btn-red")).toBe(false);
   });
 });
 
