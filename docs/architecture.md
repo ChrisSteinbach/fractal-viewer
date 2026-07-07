@@ -345,6 +345,20 @@ also doubles as the phone-benchmarking path, since it works interactively
 over the LAN like any other dev page. See `docs/spike-fr-53k-gpu-flame-accum.md`
 for the original spike's go/no-go decision and measured numbers.
 
+The 4D flame render takes the same GPU path (fr-e26): `src/fractal/
+flame-gpu-4d.ts` lifts the kernel one dimension — 4x4+translation affines,
+the `variations4` registry, the 20-coefficient rotor+camera projection, the
+four `FourDRenderColor` modes, and the soft w-slice's fractional weights
+carried through the integer histogram as a x256 fixed-point factor —
+mirroring `accumulateFlame4` the way the 3D kernel mirrors `accumulateFlame`.
+Both kernels share one driver (`flame-gpu-backend.ts`'s program-parameterized
+setup), one worker loop (`runChunk` drives 3D and 4D sessions alike through
+the same `FlameAccumBackend` seam and GPU-failure ratchet), and one resident
+display-downsample pipeline (the filter is linear, so the 4D buckets' extra
+fixed-point factor just divides out on readback). The gpu-bench page's 4D
+scenarios pin it against `accumulateFlame4` across all four color modes and
+both slice states.
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state

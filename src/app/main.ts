@@ -909,7 +909,8 @@ function main(): void {
       // whose maxStorageBufferBindingSize can't fit the histogram fails
       // backend creation cleanly into that same CPU fallback (see
       // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
-      // ignores this and always runs CPU — the WGSL kernel is 3D-only.
+      // takes the same auto-with-fallback path through the 4D kernel
+      // (fr-e26, flame-gpu-4d.ts).
       gpuPreference: "auto",
       // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
       fourD: fourDRenderSnapshot(),

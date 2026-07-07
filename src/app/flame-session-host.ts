@@ -31,7 +31,10 @@ import type {
   FlameWorkerDeps,
   FlameWorkerEvent,
 } from "./flame-worker-core";
-import { createGpuFlameBackend } from "./flame-gpu-backend";
+import {
+  createGpuFlameBackend,
+  createGpuFlameBackend4,
+} from "./flame-gpu-backend";
 
 /**
  * The same surface `main.ts` drives a real flame `Worker` through
@@ -83,6 +86,7 @@ export function createLocalFlameSessionHost(
       });
     },
     createGpuBackend: createGpuFlameBackend,
+    createGpuBackend4: createGpuFlameBackend4,
     log: (message) => console.info(message),
     ...depsOverride,
   });

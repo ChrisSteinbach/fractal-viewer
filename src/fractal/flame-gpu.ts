@@ -571,8 +571,13 @@ function writeSlotPost(
  * members (one per variation — see `types.ts`), so every legal transform
  * already fits; this only fires if that union ever grows without a matching
  * bump to the Slot layout.
+ *
+ * Exported (fr-e26) for `flame-gpu-4d.ts`: a variation list is
+ * dimension-free data (`Variation[]` is shared by `Transform` and
+ * `Transform4`), so the 4D packer reuses this filter/index mapping verbatim
+ * rather than restating it.
  */
-function packVariations(variations: Transform["variations"]): {
+export function packVariations(variations: Transform["variations"]): {
   types: number[];
   weights: number[];
 } {
@@ -618,8 +623,12 @@ function writeSlotVariations(
  * kernel's `addU64` only ever adds integers (see {@link convertGpuHistogram}
  * for the inverse on readback). The w lane is left at the `ArrayBuffer`'s
  * zero default (unused padding).
+ *
+ * Exported (fr-e26) for `flame-gpu-4d.ts`: the `colors` table's entry layout
+ * (and its fixed-point scale) is identical one dimension up, so the 4D
+ * packer writes its LUT/palette entries through this same helper.
  */
-function writeColorEntry(
+export function writeColorEntry(
   colorsU32: Uint32Array,
   index: number,
   r: number,

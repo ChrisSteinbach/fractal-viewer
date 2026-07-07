@@ -48,6 +48,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     planning/histogram-conversion layer; Vitest-tested like the rest of this
     directory, pinned against `flame.ts`'s `accumulateFlame` (its CPU oracle)
     by the agreement harness in `src/app/gpu-bench/`.
+  - `flame-gpu-4d.ts` — the 4D twin of `flame-gpu.ts`: the 4D WGSL kernel
+    (4x4+t affines, `variations4`, the rotor+camera projection, the four
+    `FourDRenderColor` modes, fixed-point soft-slice weights), pinned against
+    `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios.
   - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
     octahedron/icosahedron/dodecahedron flakes) + add-transform.
   - `rng.ts` — seedable mulberry32 PRNG.
@@ -66,9 +70,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
-  - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s kernel from inside the
-    flame worker, behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
-    seam (WebGPU when available on fine-pointer devices, CPU otherwise).
+  - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
+    kernels from inside the flame worker (one shared driver, two packing
+    factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
+    seam (WebGPU when available, CPU otherwise).
   - `register-sw.ts` — service-worker registration + the reload-once
     cross-origin-isolation bootstrap (gives the flame worker its
     SharedArrayBuffer fast path; postMessage transfer is the fallback).

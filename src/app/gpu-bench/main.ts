@@ -9,6 +9,16 @@
  * the production build (see vite.config.ts — only the root index.html is a
  * build input).
  *
+ * fr-e26: the 4D scenarios pin `src/fractal/flame-gpu-4d.ts`'s kernel
+ * (driven by the same backend module's `createGpuFlameBackend4`) to
+ * `flame-4d.ts`'s `accumulateFlame4` the exact same way — every scenario,
+ * 3D or 4D, runs through ONE shared timed/equal-N/display-downsample
+ * pipeline via its own {@link ScenarioEngines} adapter, so the comparison
+ * and agreement logic literally cannot differ between the two kernels. The
+ * 4D defs cover all four `FourDRenderColor` kinds and both soft-w-slice
+ * states (the slice weighting being the 4D kernel's one genuinely new
+ * accumulation mechanism — see flame-gpu-4d.ts's fixed-point-weight doc).
+ *
  * Three things happen per scenario, each a SEPARATE accumulation (see (c)
  * below): a timed CPU run, a timed GPU run, and an equal-iteration-count
  * visual comparison that also doubles as the pass/fail agreement check.
@@ -18,9 +28,17 @@
  * since the page works interactively over the LAN like any other dev page.
  */
 import * as THREE from "three";
+import { rotationMatrix4, toTransform4 } from "../../fractal/affine4";
 import { prepareChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
-import { transformColors } from "../../fractal/color";
+import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
+import type { PreparedChaosGame4 } from "../../fractal/chaos-game-4d";
+import {
+  W_SIDE_PALETTES,
+  buildColorModeLUT,
+  transformColors,
+} from "../../fractal/color";
+import type { FourDRenderColor } from "../../fractal/color";
 import {
   accumulateFlame,
   createFlameHistogram,
@@ -29,26 +47,46 @@ import {
   DEFAULT_GAMMA_THRESHOLD,
 } from "../../fractal/flame";
 import type { FlameHistogram, Mat4, TonemapParams } from "../../fractal/flame";
+import { accumulateFlame4 } from "../../fractal/flame-4d";
 import { buildPaletteLUT } from "../../fractal/palette";
 import type { FlamePaletteId } from "../../fractal/palette";
 import {
   barnsleyFern,
+  doubleRotation,
+  hyperfern,
   sierpinskiTetrahedron,
   swirlFlame,
 } from "../../fractal/presets";
+import {
+  composeFlameProjection4,
+  composeRotorProjection4,
+} from "../../fractal/project4";
+import type { FourDView } from "../../fractal/project4";
 import { mulberry32 } from "../../fractal/rng";
-import type { SymmetryParams, Transform, Vec3 } from "../../fractal/types";
+import type {
+  FourDColorMode,
+  Rotation4,
+  SymmetryParams,
+  Transform,
+  Vec3,
+  Vec4,
+} from "../../fractal/types";
 import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_VIBRANCY,
 } from "../state";
-import { createGpuFlameBackend } from "../flame-gpu-backend";
+import {
+  createGpuFlameBackend,
+  createGpuFlameBackend4,
+} from "../flame-gpu-backend";
 import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
+  GpuBackendRequest4,
 } from "../flame-worker-core";
+import { wSupport } from "../rotor4";
 
 // ---------------------------------------------------------------------------
 // Window surface for the headless runner
@@ -188,7 +226,8 @@ declare global {
 // Scenarios
 // ---------------------------------------------------------------------------
 
-interface ScenarioDef {
+interface ScenarioDef3D {
+  kind: "3d";
   name: string;
   transforms: Transform[];
   finalTransform: Transform | null;
@@ -198,13 +237,46 @@ interface ScenarioDef {
   lookAt: [number, number, number];
 }
 
-const SIERPINSKI_CAMERA: Pick<ScenarioDef, "cameraPos" | "lookAt"> = {
+/**
+ * A 4D scenario (fr-e26): a 3D-authored preset lifted per-map through
+ * `toTransform4` (exactly how the app's own 4D mode builds its Transform4
+ * set — see main.ts's `fourDRenderSnapshot`), viewed through a frozen
+ * `rotationMatrix4(rotation)` tumble. `paletteId` and `colorMode` reproduce
+ * the session's `buildFourDColor` precedence: a non-`"legacy"` palette wins
+ * (structural coloring); `"legacy"` dispatches on `colorMode`. The camera is
+ * derived from the scenario's own explorer cloud (see {@link prepare4D})
+ * rather than authored per scenario — a fixed offset direction at a
+ * radius-proportional distance frames any system at any tumble.
+ */
+interface ScenarioDef4D {
+  kind: "4d";
+  name: string;
+  system: () => Transform[];
+  rotation: Rotation4;
+  paletteId: FlamePaletteId;
+  colorMode: FourDColorMode;
+  sliceOn: boolean;
+  sliceCenter: number;
+  sliceWidth: number;
+}
+
+type ScenarioDef = ScenarioDef3D | ScenarioDef4D;
+
+const SIERPINSKI_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
   cameraPos: [2.5, 1.8, 2.5],
   lookAt: [0, 0.4, 0],
 };
 
+/** A fixed w-mixing tumble shared by the 4D scenarios — three plane angles
+ * chosen to genuinely rotate w into view (nonzero xw/yw/zw), so the
+ * projected cloud, the signed-w signal, and therefore the wRamp/slice legs
+ * all actually depend on the 4D machinery rather than degenerating to a
+ * w-dropped 3D render. */
+const BENCH_TUMBLE: Rotation4 = { xy: 0.35, xw: 0.65, yw: 0.4, zw: 0.55 };
+
 const SCENARIOS: ScenarioDef[] = [
   {
+    kind: "3d",
     name: "sierpinski",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
@@ -213,6 +285,7 @@ const SCENARIOS: ScenarioDef[] = [
     ...SIERPINSKI_CAMERA,
   },
   {
+    kind: "3d",
     name: "fern",
     transforms: barnsleyFern(),
     finalTransform: null,
@@ -225,6 +298,7 @@ const SCENARIOS: ScenarioDef[] = [
     lookAt: [0, 0, 0],
   },
   {
+    kind: "3d",
     name: "swirl",
     transforms: swirlFlame(),
     finalTransform: null,
@@ -234,12 +308,63 @@ const SCENARIOS: ScenarioDef[] = [
     lookAt: [0, 0, 0],
   },
   {
+    kind: "3d",
     name: "kaleido",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
     symmetry: { order: 5, axis: "y" },
     paletteId: "aurora",
     ...SIERPINSKI_CAMERA,
+  },
+  // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds,
+  // both slice states, and both pick paths (hyperfern and doubleRotation
+  // both carry non-1 weights, exercising the weighted binary search; the
+  // 3D scenarios above already pin the uniform pick).
+  {
+    kind: "4d",
+    name: "hyperfern-structural",
+    system: hyperfern,
+    rotation: BENCH_TUMBLE,
+    paletteId: "ember", // non-legacy => structural LUT coloring.
+    colorMode: "wBlueOrange", // ignored under a non-legacy palette.
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+  },
+  {
+    kind: "4d",
+    name: "doublerot-wramp-slice",
+    system: doubleRotation,
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange", // wRamp, computed in-shader on the GPU side.
+    // Slice ON: the fixed-point weight path, the 4D kernel's one genuinely
+    // new accumulation mechanism, must run against the CPU oracle.
+    sliceOn: true,
+    sliceCenter: 0.25,
+    sliceWidth: 0.3,
+  },
+  {
+    kind: "4d",
+    name: "hyperfern-transform",
+    system: hyperfern,
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "transform",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+  },
+  {
+    kind: "4d",
+    name: "doublerot-radius",
+    system: doubleRotation,
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "radius",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
   },
 ];
 
@@ -364,10 +489,10 @@ function buildProjection(
   return Array.from(combined.transpose().elements);
 }
 
-/** Assemble the production {@link GpuBackendRequest} for a scenario — the
- * GPU counterpart of `prepareCpu`'s CPU-side setup. */
+/** Assemble the production {@link GpuBackendRequest} for a 3D scenario —
+ * the GPU counterpart of `prepareCpu`'s CPU-side setup. */
 function toGpuBackendRequest(
-  def: ScenarioDef,
+  def: ScenarioDef3D,
   projection: Mat4,
 ): GpuBackendRequest {
   return {
@@ -413,33 +538,235 @@ function drawImage(
 type ProgressCallback = (itersPerSec: number, doneIterations: number) => void;
 
 // ---------------------------------------------------------------------------
-// CPU accumulation
+// Scenario engines: ONE timed/equal-N pipeline over per-dimension adapters
 // ---------------------------------------------------------------------------
 
-interface CpuPrepared {
-  prepared: PreparedChaosGame;
-  palette: Vec3[];
-  lut: Float32Array | undefined;
+/**
+ * Advance one CPU oracle chunk: `n` more iterations into `histogram`
+ * (`undefined` = fresh start, warmup included), continuing `rng`. Closes
+ * over everything scenario-fixed (prepared system, projection, palette/
+ * color, view) so the shared chunk loops below ({@link runCpuTimed} /
+ * {@link runCpuExactly}) drive `accumulateFlame` and `accumulateFlame4`
+ * identically — the same one-seam shape as the production
+ * `FlameAccumBackend`, but for the ORACLE side of the comparison.
+ */
+type CpuChunkFn = (
+  n: number,
+  histogram: FlameHistogram | undefined,
+  rng: () => number,
+) => FlameHistogram;
+
+/**
+ * A scenario's two engines (fr-e26): the CPU oracle's chunk function and
+ * the production GPU backend factory — everything dimension-specific,
+ * behind which `runScenario`'s timed/equal-N/display-downsample pipeline is
+ * shared verbatim by the 3D and 4D kernels. Built by {@link prepare3D} /
+ * {@link prepare4D}.
+ */
+interface ScenarioEngines {
+  cpuChunk: CpuChunkFn;
+  createBackend: () => Promise<FlameAccumBackend>;
 }
 
-function prepareCpu(def: ScenarioDef): CpuPrepared {
+/** Build a 3D scenario's engines: `prepareChaosGame` + `accumulateFlame`
+ * on the oracle side, `createGpuFlameBackend` on the production side. */
+function prepare3D(def: ScenarioDef3D): ScenarioEngines {
+  const prepared: PreparedChaosGame = prepareChaosGame(
+    def.transforms,
+    def.finalTransform,
+    def.symmetry,
+  );
+  const palette: Vec3[] = transformColors(def.transforms.length);
+  const lut = buildPaletteLUT(def.paletteId) ?? undefined;
+  const projection = buildProjection(
+    ACCUM_WIDTH,
+    ACCUM_HEIGHT,
+    def.cameraPos,
+    def.lookAt,
+  );
   return {
-    prepared: prepareChaosGame(
-      def.transforms,
-      def.finalTransform,
-      def.symmetry,
-    ),
-    palette: transformColors(def.transforms.length),
-    lut: buildPaletteLUT(def.paletteId) ?? undefined,
+    cpuChunk: (n, histogram, rng) =>
+      accumulateFlame(
+        prepared,
+        projection,
+        ACCUM_WIDTH,
+        ACCUM_HEIGHT,
+        n,
+        rng,
+        palette,
+        histogram,
+        lut,
+      ),
+    createBackend: () =>
+      createGpuFlameBackend(toGpuBackendRequest(def, projection)),
   };
 }
+
+/** Points in the small explorer-stand-in cloud {@link prepare4D} runs to
+ * derive the view exactly the way the app does — enough for stable bounds/
+ * center/radius statistics, cheap enough to run once per scenario. */
+const EXPLORER_CLOUD_POINTS = 100_000;
+
+/**
+ * Build a 4D scenario's engines: `prepareChaosGame4` + `accumulateFlame4`
+ * on the oracle side, `createGpuFlameBackend4` on the production side —
+ * both fed the IDENTICAL projection/view/color objects, so the comparison
+ * pins the kernels, not the setup.
+ *
+ * The frozen view is derived exactly the way `main.ts`'s
+ * `fourDRenderSnapshot` derives the app's: run the explorer's own cloud
+ * (`runChaosGame4`), then take its bounds' half-extents into
+ * `wSupport(rotor, halfExtents)` for `invWAmp` (same 1e-6 degenerate
+ * floor), its center as the rotor pivot, and its min/max 4D distance from
+ * center as the "radius" color mode's normalization range. The camera isn't
+ * authored per scenario like the 3D defs': it looks at the cloud's own
+ * xyz-center from a fixed offset direction at `3 * radius` — far enough to
+ * frame any of these systems at any tumble angle under the shared 50° FOV.
+ */
+function prepare4D(def: ScenarioDef4D): ScenarioEngines {
+  const transforms4 = def.system().map(toTransform4);
+  const prepared4: PreparedChaosGame4 = prepareChaosGame4(transforms4, null);
+  const cloud = runChaosGame4(
+    transforms4,
+    EXPLORER_CLOUD_POINTS,
+    mulberry32(SEED),
+  );
+  const rotor = rotationMatrix4(def.rotation);
+  const b = cloud.bounds;
+  const halfExtents: Vec4 = [
+    (b.maxX - b.minX) / 2,
+    (b.maxY - b.minY) / 2,
+    (b.maxZ - b.minZ) / 2,
+    (b.maxW - b.minW) / 2,
+  ];
+  const invWAmp = 1 / Math.max(wSupport(rotor, halfExtents), 1e-6);
+  const view: FourDView = {
+    invWAmp,
+    sliceOn: def.sliceOn,
+    sliceCenter: def.sliceCenter,
+    sliceWidth: def.sliceWidth,
+  };
+
+  // The "radius" mode's normalization range: min/max 4D distance from the
+  // cloud's center over the explorer cloud itself — fourDRenderSnapshot's
+  // own loop, verbatim.
+  const { positions, w, count, center } = cloud;
+  let radiusMin = Infinity;
+  let radiusMax = 0;
+  for (let i = 0; i < count; i++) {
+    const dx = positions[i * 3] - center[0];
+    const dy = positions[i * 3 + 1] - center[1];
+    const dz = positions[i * 3 + 2] - center[2];
+    const dw = w[i] - center[3];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+    if (d < radiusMin) radiusMin = d;
+    if (d > radiusMax) radiusMax = d;
+  }
+  if (!Number.isFinite(radiusMin)) radiusMin = 0;
+
+  const color = buildBenchFourDColor(def, transforms4.length, {
+    center,
+    radiusMin,
+    radiusMax,
+  });
+
+  // Auto-framing camera (see this function's doc): a fixed offset direction,
+  // distance proportional to the cloud's own bounding radius.
+  const dir = new THREE.Vector3(0.8, 0.55, 1.0).normalize();
+  const dist = Math.max(3 * cloud.radius, 1e-3);
+  const cameraPos: [number, number, number] = [
+    center[0] + dir.x * dist,
+    center[1] + dir.y * dist,
+    center[2] + dir.z * dist,
+  ];
+  const camera = buildProjection(ACCUM_WIDTH, ACCUM_HEIGHT, cameraPos, [
+    center[0],
+    center[1],
+    center[2],
+  ]);
+  const projection = composeFlameProjection4(
+    camera,
+    composeRotorProjection4(rotor, center),
+  );
+
+  return {
+    cpuChunk: (n, histogram, rng) =>
+      accumulateFlame4(
+        prepared4,
+        projection,
+        view,
+        ACCUM_WIDTH,
+        ACCUM_HEIGHT,
+        n,
+        rng,
+        color,
+        histogram,
+      ),
+    createBackend: () =>
+      createGpuFlameBackend4({
+        transforms4,
+        finalTransform4: null,
+        projection,
+        view,
+        color,
+        width: ACCUM_WIDTH,
+        height: ACCUM_HEIGHT,
+        seed: SEED,
+        displayWidth: DISPLAY_WIDTH,
+        displayHeight: DISPLAY_HEIGHT,
+        progressiveFilterRadius: FLAME_FILTER_RADIUS,
+      } satisfies GpuBackendRequest4),
+  };
+}
+
+/**
+ * The session's `buildFourDColor` dispatch (flame-worker-core.ts), restated
+ * over a {@link ScenarioDef4D}: a non-`"legacy"` palette wins (structural),
+ * `"legacy"` dispatches on the explorer color mode — same precedence, same
+ * LUT/palette constructors, so the bench renders the exact color pipeline
+ * the app would for that palette/mode combination.
+ */
+function buildBenchFourDColor(
+  def: ScenarioDef4D,
+  transformCount: number,
+  cloudStats: { center: Vec4; radiusMin: number; radiusMax: number },
+): FourDRenderColor {
+  const lut = buildPaletteLUT(def.paletteId);
+  if (lut !== null) {
+    return { kind: "structural", lut };
+  }
+  switch (def.colorMode) {
+    case "wBlueOrange":
+    case "wPurpleGreen":
+    case "wCyanMagenta":
+      return { kind: "wRamp", side: W_SIDE_PALETTES[def.colorMode] };
+    case "transform":
+      return { kind: "transform", palette: transformColors(transformCount) };
+    case "radius":
+      return {
+        kind: "radius",
+        lut: buildColorModeLUT("radius", 1),
+        center: cloudStats.center,
+        minD: cloudStats.radiusMin,
+        maxD: cloudStats.radiusMax,
+      };
+  }
+}
+
+/** Build whichever dimension's engines a scenario calls for. */
+function buildEngines(def: ScenarioDef): ScenarioEngines {
+  return def.kind === "3d" ? prepare3D(def) : prepare4D(def);
+}
+
+// ---------------------------------------------------------------------------
+// CPU accumulation
+// ---------------------------------------------------------------------------
 
 /** Accumulate in CPU_CHUNK_ITERATIONS-sized chunks until Σcall-time reaches
  * `durationSec`, yielding to the event loop between chunks. `onProgress`
  * (see its doc) fires once per chunk, in that same between-chunks gap. */
 async function runCpuTimed(
-  cpu: CpuPrepared,
-  projection: Mat4,
+  cpuChunk: CpuChunkFn,
   durationSec: number,
   onProgress?: ProgressCallback,
 ): Promise<TimedResult> {
@@ -450,17 +777,7 @@ async function runCpuTimed(
   const targetMs = durationSec * 1000;
   while (ms < targetMs) {
     const t0 = performance.now();
-    histogram = accumulateFlame(
-      cpu.prepared,
-      projection,
-      ACCUM_WIDTH,
-      ACCUM_HEIGHT,
-      CPU_CHUNK_ITERATIONS,
-      rng,
-      cpu.palette,
-      histogram,
-      cpu.lut,
-    );
+    histogram = cpuChunk(CPU_CHUNK_ITERATIONS, histogram, rng);
     ms += performance.now() - t0;
     iterations += CPU_CHUNK_ITERATIONS;
     onProgress?.(iterations / (ms / 1000), iterations);
@@ -476,8 +793,7 @@ async function runCpuTimed(
  * this returns a definite (non-optional) FlameHistogram. `onProgress` fires
  * once per chunk (including the first), between chunks like `runCpuTimed`'s. */
 async function runCpuExactly(
-  cpu: CpuPrepared,
-  projection: Mat4,
+  cpuChunk: CpuChunkFn,
   totalIterations: number,
   onProgress?: ProgressCallback,
 ): Promise<FlameHistogram> {
@@ -485,17 +801,7 @@ async function runCpuExactly(
   const firstChunk = Math.min(CPU_CHUNK_ITERATIONS, totalIterations);
   let ms = 0;
   const t0 = performance.now();
-  let histogram = accumulateFlame(
-    cpu.prepared,
-    projection,
-    ACCUM_WIDTH,
-    ACCUM_HEIGHT,
-    firstChunk,
-    rng,
-    cpu.palette,
-    undefined,
-    cpu.lut,
-  );
+  let histogram = cpuChunk(firstChunk, undefined, rng);
   ms += performance.now() - t0;
   let doneIterations = firstChunk;
   onProgress?.(doneIterations / (ms / 1000), doneIterations);
@@ -504,17 +810,7 @@ async function runCpuExactly(
     await new Promise<void>((resolve) => setTimeout(resolve));
     const n = Math.min(CPU_CHUNK_ITERATIONS, remaining);
     const tChunk0 = performance.now();
-    histogram = accumulateFlame(
-      cpu.prepared,
-      projection,
-      ACCUM_WIDTH,
-      ACCUM_HEIGHT,
-      n,
-      rng,
-      cpu.palette,
-      histogram,
-      cpu.lut,
-    );
+    histogram = cpuChunk(n, histogram, rng);
     ms += performance.now() - tChunk0;
     doneIterations += n;
     remaining -= n;
@@ -528,20 +824,20 @@ async function runCpuExactly(
 // ---------------------------------------------------------------------------
 
 /** Timed GPU run: adaptive batching (toward ~250ms/call) through the real
- * `FlameAccumBackend` seam. Skips gracefully (returns `{ skipped }`) rather
- * than throwing when WebGPU is unavailable, so the page stays usable in
- * non-WebGPU browsers — `createGpuFlameBackend` itself never falls back to
- * CPU (see its module doc), so that graceful skip is entirely this page's
- * own doing. */
+ * `FlameAccumBackend` seam — whichever kernel's backend the scenario's
+ * `createBackend` engine stands up. Skips gracefully (returns `{ skipped }`)
+ * rather than throwing when WebGPU is unavailable, so the page stays usable
+ * in non-WebGPU browsers — the production factories themselves never fall
+ * back to CPU (see flame-gpu-backend.ts's module doc), so that graceful
+ * skip is entirely this page's own doing. */
 async function runGpuTimed(
-  def: ScenarioDef,
-  projection: Mat4,
+  createBackend: ScenarioEngines["createBackend"],
   durationSec: number,
   onProgress?: ProgressCallback,
 ): Promise<TimedGpuResult | SkippedResult> {
   let backend: FlameAccumBackend;
   try {
-    backend = await createGpuFlameBackend(toGpuBackendRequest(def, projection));
+    backend = await createBackend();
   } catch (e) {
     return { skipped: describeError(e) };
   }
@@ -617,13 +913,12 @@ interface GpuEqualNResult {
  * `downsampleFlame` call is never made twice.
  */
 async function runGpuEqualN(
-  def: ScenarioDef,
-  projection: Mat4,
+  createBackend: ScenarioEngines["createBackend"],
   onProgress?: ProgressCallback,
 ): Promise<GpuEqualNResult | SkippedResult> {
   let backend: FlameAccumBackend;
   try {
-    backend = await createGpuFlameBackend(toGpuBackendRequest(def, projection));
+    backend = await createBackend();
   } catch (e) {
     return { skipped: describeError(e) };
   }
@@ -961,33 +1256,33 @@ async function runScenario(
   durationSec: number,
   activity: ActivityBadge,
 ): Promise<ScenarioResultRecord> {
-  const projection = buildProjection(
-    ACCUM_WIDTH,
-    ACCUM_HEIGHT,
-    def.cameraPos,
-    def.lookAt,
-  );
-  const cpu = prepareCpu(def);
+  // Everything dimension-specific — CPU oracle, projection/view/color
+  // derivation, production backend factory — lives behind the engines
+  // (fr-e26); the whole pipeline below is shared by the 3D and 4D kernels.
+  const engines = buildEngines(def);
 
   setStatus(dom, `running: cpu timed — ${formatRate(NaN)}`);
   activity.setState("cpu", accumulatingLabel("cpu", NaN));
-  const cpuTimed = await runCpuTimed(cpu, projection, durationSec, (rate) => {
+  const cpuTimed = await runCpuTimed(engines.cpuChunk, durationSec, (rate) => {
     activity.setState("cpu", accumulatingLabel("cpu", rate));
     setStatus(dom, `running: cpu timed — ${formatRate(rate)}`);
   });
 
   setStatus(dom, `running: gpu timed — ${formatRate(NaN)}`);
   activity.setState("gpu", accumulatingLabel("gpu", NaN));
-  const gpuTimed = await runGpuTimed(def, projection, durationSec, (rate) => {
-    activity.setState("gpu", accumulatingLabel("gpu", rate));
-    setStatus(dom, `running: gpu timed — ${formatRate(rate)}`);
-  });
+  const gpuTimed = await runGpuTimed(
+    engines.createBackend,
+    durationSec,
+    (rate) => {
+      activity.setState("gpu", accumulatingLabel("gpu", rate));
+      setStatus(dom, `running: gpu timed — ${formatRate(rate)}`);
+    },
+  );
 
   setStatus(dom, "equal-N: cpu…");
   activity.setState("cpu", accumulatingLabel("cpu", NaN));
   const cpuHist = await runCpuExactly(
-    cpu,
-    projection,
+    engines.cpuChunk,
     EQUAL_N_ITERATIONS,
     (rate, done) => {
       activity.setState("cpu", accumulatingLabel("cpu", rate));
@@ -1016,7 +1311,7 @@ async function runScenario(
   } else {
     setStatus(dom, "equal-N: gpu…");
     activity.setState("gpu", accumulatingLabel("gpu", NaN));
-    const gpuEqualN = await runGpuEqualN(def, projection, (rate) => {
+    const gpuEqualN = await runGpuEqualN(engines.createBackend, (rate) => {
       activity.setState("gpu", accumulatingLabel("gpu", rate));
     });
     if ("skipped" in gpuEqualN) {
@@ -1103,7 +1398,14 @@ const SS1_ITERATIONS = 4_000_000;
 async function runSs1DisplayDownsampleCheck(): Promise<
   DisplayDownsampleMetrics | SkippedResult
 > {
-  const def = SCENARIOS[0];
+  // The first 3D scenario's system: this check pins the SHARED downsample
+  // kernel's scale-1 pass-through path (dimension-independent — the 4D
+  // programs drive the very same kernel; see flame-gpu-4d.ts's module doc),
+  // so one dimension's system suffices.
+  const def = SCENARIOS.find((s): s is ScenarioDef3D => s.kind === "3d");
+  if (!def) {
+    return { skipped: "no 3D scenario to build the ss=1 check from" };
+  }
   const projection = buildProjection(
     SS1_WIDTH,
     SS1_HEIGHT,

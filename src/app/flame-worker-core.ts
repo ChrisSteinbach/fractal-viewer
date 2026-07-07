@@ -146,9 +146,10 @@ export type FlameWorkerCommand =
        * `accumulateFlame4` instead of the 3D path. `transforms`/
        * `finalTransform` above still arrive either way (the main thread
        * always sends both), but are simply unused when this is present.
-       * Also forces the CPU accumulation backend regardless of
-       * `gpuPreference` — see `runChunk4`'s doc: `flame-gpu.ts`'s WGSL
-       * kernel is 3D-only, a 4D kernel is a follow-up bead.
+       * `gpuPreference` applies to 4D sessions too (fr-e26): `"auto"` tries
+       * the `createGpuBackend4` factory (`flame-gpu-4d.ts`'s WGSL kernel)
+       * with the same fall-back-to-CPU/`gpuFailed`-ratchet discipline as
+       * the 3D path.
        */
       fourD?: {
         /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
@@ -317,6 +318,16 @@ export interface FlameWorkerDeps {
    * never retries the factory again this session (see `gpuFailed`).
    */
   createGpuBackend?: (request: GpuBackendRequest) => Promise<FlameAccumBackend>;
+  /**
+   * The 4D counterpart of {@link createGpuBackend} (fr-e26): tried when a 4D
+   * session's `gpuPreference` is `"auto"`, with the same absent-means-CPU
+   * and rejection-falls-back semantics. A separate factory (rather than one
+   * dimension-switched request) because the two kernels' requests share
+   * almost nothing — see {@link GpuBackendRequest4}.
+   */
+  createGpuBackend4?: (
+    request: GpuBackendRequest4,
+  ) => Promise<FlameAccumBackend>;
   /** Diagnostic sink for GPU-fallback/failure messages (`console.info` in
    * the real worker); defaults to a no-op so tests stay quiet. */
   log?: (message: string) => void;
@@ -567,6 +578,43 @@ export interface GpuBackendRequest {
 }
 
 /**
+ * Everything a `createGpuBackend4` factory needs to stand up one 4D
+ * accumulation's worth of GPU state (fr-e26) — the 4D twin of
+ * {@link GpuBackendRequest}, carrying exactly what `flame-gpu-4d.ts`'s
+ * packers consume. `projection`, `view`, and `color` are the SAME objects
+ * the CPU oracle (`accumulateFlame4`, via `Cpu4DFlameBackend`) takes, so
+ * the two engines cannot disagree on what is being rendered. There is no
+ * symmetry (`order`/`axis`) and no `paletteId`: 4D has no kaleidoscope
+ * symmetry, and the palette dispatch is already resolved into `color` by
+ * the session's own `buildFourDColor`.
+ */
+export interface GpuBackendRequest4 {
+  /** The raw 4D transform set — see `FlameWorkerSession.baseTransforms4`. */
+  transforms4: Transform4[];
+  finalTransform4: Transform4 | null;
+  /** The 20-coefficient composed rotor+camera affine (`project4.ts`'s
+   * `composeFlameProjection4`), row-major 4x5 — the same array
+   * `accumulateFlame4` takes. */
+  projection: Float64Array;
+  /** The frozen 4D view (signed-w normalization + soft slice) — see
+   * `project4.ts`'s `FourDView`. */
+  view: FourDView;
+  /** The session's built {@link FourDRenderColor} — see `buildFourDColor`. */
+  color: FourDRenderColor;
+  /** ACCUMULATION resolution (display size x effective supersample). */
+  width: number;
+  height: number;
+  /** Deterministic per-restart seed — same contract as
+   * {@link GpuBackendRequest.seed}. */
+  seed: number;
+  /** fr-ee9: display resolution + progressive filter radius — same contract
+   * as {@link GpuBackendRequest}'s fields of the same names. */
+  displayWidth: number;
+  displayHeight: number;
+  progressiveFilterRadius: number;
+}
+
+/**
  * Resolves `value` immediately if it is already a plain value, or `await`s
  * it if it is genuinely a promise — see {@link FlameAccumBackend}'s doc for
  * why this distinction (rather than an unconditional `await`) is load-
@@ -647,20 +695,17 @@ class CpuFlameBackend implements FlameAccumBackend {
 }
 
 /**
- * The CPU-only 4D accumulation backend (fr-5b3): wraps `flame-4d.ts`'s
+ * The CPU 4D accumulation backend (fr-5b3): wraps `flame-4d.ts`'s
  * `accumulateFlame4` in the same shape {@link CpuFlameBackend} wraps
- * `accumulateFlame` in for the 3D path. Deliberately stored under its OWN
- * `FlameWorkerSession.backend4` field, typed to this concrete class rather
- * than the general {@link FlameAccumBackend} interface — `accumulate`/
- * `snapshot` are declared to return their plain values directly (not the
- * interface's wider `T | Promise<T>`), which TypeScript accepts as a
- * covariant override, so every call site in `runChunk4` reads them straight
- * off, with no `isPromiseLike`/`await` dance. A 4D session never attempts
- * the GPU factory at all (see the `start` command's `fourD` field's doc:
- * `flame-gpu.ts`'s WGSL kernel is 3D-only, a 4D kernel is a follow-up bead)
- * — this class is the ONLY accumulation engine a 4D session ever runs, so
- * there is no GPU counterpart to fall back from here, unlike
- * `CpuFlameBackend`.
+ * `accumulateFlame` in for the 3D path. Driven through the same
+ * `FlameWorkerSession.backend` seam and `runChunk` loop as every other
+ * engine (fr-e26 — until the 4D GPU kernel existed, this class had its own
+ * synchronous `runChunk4` twin); its `accumulate`/`snapshot` return plain
+ * values (never promises), so `runChunk`'s `isPromiseLike` guard keeps a
+ * CPU-only 4D render exactly as synchronous as it always was. This is both
+ * the no-GPU engine and the engine a 4D session falls BACK to when the
+ * `createGpuBackend4` factory is absent or fails — the same role
+ * `CpuFlameBackend` plays for 3D.
  */
 class Cpu4DFlameBackend implements FlameAccumBackend {
   readonly kind = "cpu" as const;
@@ -692,7 +737,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
   }
 
   snapshot(): FlameHistogram {
-    // Shouldn't happen: runChunk4 only ever snapshots after at least one
+    // Shouldn't happen: runChunk only ever snapshots after at least one
     // successful accumulate() on this backend — see CpuFlameBackend's own
     // snapshot() for the same discipline.
     if (!this.histogram) {
@@ -734,6 +779,10 @@ export class FlameWorkerSession {
   /** Absent = CPU-only regardless of `gpuPreference` — see FlameWorkerDeps. */
   private readonly createGpuBackend?: (
     request: GpuBackendRequest,
+  ) => Promise<FlameAccumBackend>;
+  /** The 4D factory (fr-e26) — same absent-means-CPU rule, for 4D sessions. */
+  private readonly createGpuBackend4?: (
+    request: GpuBackendRequest4,
   ) => Promise<FlameAccumBackend>;
   /** Diagnostic sink for GPU-fallback/failure messages — see FlameWorkerDeps. */
   private readonly log: (message: string) => void;
@@ -781,6 +830,13 @@ export class FlameWorkerSession {
    * main thread resending the whole transform list. */
   private baseTransforms: Transform[] = [];
   private baseFinalTransform: Transform | null = null;
+  /** The raw 4D transform set from the last "start"'s `fourD` block —
+   * retained (alongside the composed `prepared4`) because a
+   * {@link GpuBackendRequest4} carries the raw transforms; the GPU packer
+   * composes its own affines from them, exactly as the 3D path retains
+   * `baseTransforms` for `GpuBackendRequest`. Empty for a 3D session. */
+  private baseTransforms4: Transform4[] = [];
+  private baseFinalTransform4: Transform4 | null = null;
   /** The symmetry actually baked into `this.prepared` right now — lets
    * setSymmetry no-op a repeat value instead of restarting for nothing (the
    * order slider fires "input" continuously while dragging, and can report
@@ -795,15 +851,6 @@ export class FlameWorkerSession {
    * lazily (GPU creation is async; `startAccumulation`'s callers are all
    * synchronous command handlers, so they can't await it themselves). */
   private backend: FlameAccumBackend | null = null;
-  /** The current 4D accumulation's engine (fr-5b3) — the `runChunk4`
-   * counterpart to {@link backend}, kept as its OWN field (rather than
-   * reusing `backend`, typed to the general `FlameAccumBackend` interface)
-   * so it stays typed to the concrete {@link Cpu4DFlameBackend} class — see
-   * that class's doc for why. `null` for a 3D session, and between a
-   * `startAccumulation` and the next `runChunk4` call for a 4D one (backend
-   * creation happens lazily there too, for symmetry with the 3D path, even
-   * though it never actually needs to await anything). */
-  private backend4: Cpu4DFlameBackend | null = null;
   /** Bumped every `startAccumulation` (a restart, in place, of the SAME
    * session) — `runChunk` captures it on entry and re-checks it after every
    * `await`, so a restart that lands while a chunk/backend-creation is in
@@ -937,6 +984,7 @@ export class FlameWorkerSession {
     this.emit = deps.emit;
     this.accumulate = deps.accumulate ?? accumulateFlame;
     this.createGpuBackend = deps.createGpuBackend;
+    this.createGpuBackend4 = deps.createGpuBackend4;
     this.log = deps.log ?? (() => {});
     this.defaultMaxAccumBuckets =
       deps.maxAccumBuckets ?? FLAME_ACCUM_FLOOR_BUCKETS;
@@ -1046,8 +1094,6 @@ export class FlameWorkerSession {
     this.generation++;
     this.backend?.destroy();
     this.backend = null;
-    this.backend4?.destroy();
-    this.backend4 = null;
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
@@ -1067,6 +1113,8 @@ export class FlameWorkerSession {
     this.is4D = cmd.fourD !== undefined;
     if (cmd.fourD) {
       const fourD = cmd.fourD;
+      this.baseTransforms4 = fourD.transforms4;
+      this.baseFinalTransform4 = fourD.finalTransform4;
       this.prepared4 = prepareChaosGame4(
         fourD.transforms4,
         fourD.finalTransform4,
@@ -1089,6 +1137,8 @@ export class FlameWorkerSession {
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
     } else {
+      this.baseTransforms4 = [];
+      this.baseFinalTransform4 = null;
       this.prepared4 = null;
       this.projection4 = null;
       this.fourDView = null;
@@ -1208,8 +1258,6 @@ export class FlameWorkerSession {
     this.generation++;
     this.backend?.destroy();
     this.backend = null;
-    this.backend4?.destroy();
-    this.backend4 = null;
     this.histogram = null;
     this.displayHistogram = null;
     this.iterationsDone = 0;
@@ -1377,71 +1425,96 @@ export class FlameWorkerSession {
     if (this.iterationsDone >= this.iterationsBudget) return;
     this.running = true;
     this.schedule(() => {
-      if (this.is4D) {
-        this.runChunk4();
-      } else {
-        void this.runChunk();
-      }
+      void this.runChunk();
     });
   }
 
   /**
    * Bring up a backend for the CURRENT accumulation: GPU first when
-   * `gpuPreference` is `"auto"`, a factory is wired up, and GPU hasn't
-   * already failed this session; CPU otherwise. Returns the CPU backend
-   * DIRECTLY (not wrapped in a `Promise`) whenever GPU isn't attempted —
-   * deliberately not declared `async` (which would implicitly wrap every
-   * return in a `Promise`, promise-ifying even the all-CPU path and
-   * defeating `runChunk`'s `isPromiseLike` guard at the one call site that
-   * runs on EVERY first chunk of EVERY accumulation) — so `runChunk` applies
-   * the exact same conditional-`await` pattern here as it does for
-   * `accumulate`/`snapshot`. The actual GPU attempt (which DOES need
-   * `async`/`try`/`catch`) lives in {@link createGpuBackendWithFallback}.
+   * `gpuPreference` is `"auto"`, the session's dimension has a factory
+   * wired up, and GPU hasn't already failed this session; CPU otherwise.
+   * Dimension-aware (fr-e26): a 4D session tries `createGpuBackend4` and
+   * falls back to {@link Cpu4DFlameBackend}, a 3D one tries
+   * `createGpuBackend` and falls back to {@link CpuFlameBackend} — one
+   * `gpuPreference`/`gpuFailed` discipline over both. Returns the CPU
+   * backend DIRECTLY (not wrapped in a `Promise`) whenever GPU isn't
+   * attempted — deliberately not declared `async` (which would implicitly
+   * wrap every return in a `Promise`, promise-ifying even the all-CPU path
+   * and defeating `runChunk`'s `isPromiseLike` guard at the one call site
+   * that runs on EVERY first chunk of EVERY accumulation) — so `runChunk`
+   * applies the exact same conditional-`await` pattern here as it does for
+   * `accumulate`/`snapshot`. The actual GPU attempts (which DO need
+   * `async`/`try`/`catch`) live in {@link createGpuBackendWithFallback} /
+   * {@link createGpuBackend4WithFallback}.
+   *
+   * Reads the session's own geometry fields rather than taking them as
+   * parameters: it is only ever called synchronously from `runChunk`, after
+   * `hasGeometry()` has confirmed the current dimension's fields are
+   * populated — and if a restart lands while a (GPU) creation is in flight,
+   * `runChunk`'s generation re-check destroys whatever comes back, so a
+   * stale read can never be installed.
    */
-  private createBackend(
-    prepared: PreparedChaosGame,
-    projection: Mat4,
-  ): FlameAccumBackend | Promise<FlameAccumBackend> {
-    const gpuFactory = this.createGpuBackend;
-    if (this.gpuPreference === "auto" && !this.gpuFailed && gpuFactory) {
-      return this.createGpuBackendWithFallback(
-        gpuFactory,
-        prepared,
-        projection,
-      );
+  private createBackend(): FlameAccumBackend | Promise<FlameAccumBackend> {
+    if (this.gpuPreference === "auto" && !this.gpuFailed) {
+      if (this.is4D) {
+        const gpuFactory4 = this.createGpuBackend4;
+        if (gpuFactory4) {
+          return this.createGpuBackend4WithFallback(gpuFactory4);
+        }
+      } else {
+        const gpuFactory = this.createGpuBackend;
+        if (gpuFactory) {
+          return this.createGpuBackendWithFallback(gpuFactory);
+        }
+      }
     }
-    return this.makeCpuBackend(prepared, projection);
+    return this.is4D ? this.makeCpu4DBackend() : this.makeCpuBackend();
   }
 
-  /** The genuinely-async half of {@link createBackend}: try the GPU
-   * factory, and on ANY throw/reject, ratchet `gpuFailed` (so this session
-   * never retries it) and fall back to CPU. Takes `gpuFactory` as a
+  /** The genuinely-async half of {@link createBackend}'s 3D branch: try the
+   * GPU factory, and on ANY throw/reject, ratchet `gpuFailed` (so this
+   * session never retries it) and fall back to CPU. Takes `gpuFactory` as a
    * parameter, already known non-`undefined` by the caller, rather than
    * re-reading `this.createGpuBackend` and asserting it non-null here. */
   private async createGpuBackendWithFallback(
     gpuFactory: (request: GpuBackendRequest) => Promise<FlameAccumBackend>,
-    prepared: PreparedChaosGame,
-    projection: Mat4,
   ): Promise<FlameAccumBackend> {
     try {
-      return await gpuFactory(this.buildGpuBackendRequest(projection));
+      return await gpuFactory(this.buildGpuBackendRequest());
     } catch (e) {
       this.gpuFailed = true;
       this.log(
         `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
       );
-      return this.makeCpuBackend(prepared, projection);
+      return this.makeCpuBackend();
     }
   }
 
-  private makeCpuBackend(
-    prepared: PreparedChaosGame,
-    projection: Mat4,
-  ): FlameAccumBackend {
+  /** The 4D twin of {@link createGpuBackendWithFallback} (fr-e26) — same
+   * ratchet, same log shape, `Cpu4DFlameBackend` as the fallback. */
+  private async createGpuBackend4WithFallback(
+    gpuFactory4: (request: GpuBackendRequest4) => Promise<FlameAccumBackend>,
+  ): Promise<FlameAccumBackend> {
+    try {
+      return await gpuFactory4(this.buildGpuBackendRequest4());
+    } catch (e) {
+      this.gpuFailed = true;
+      this.log(
+        `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
+      );
+      return this.makeCpu4DBackend();
+    }
+  }
+
+  /** Non-null assertions throughout: only ever called (via
+   * {@link createBackend}) after `hasGeometry()` has confirmed the 3D
+   * fields are populated — the same "trust `start`'s invariant" discipline
+   * this method has always applied to `this.accumWidth`/`this.palette`. */
+  private makeCpuBackend(): FlameAccumBackend {
     return new CpuFlameBackend(
       this.accumulate,
-      prepared,
-      projection,
+      this.prepared!,
+      this.projection!,
       this.accumWidth,
       this.accumHeight,
       this.palette,
@@ -1450,12 +1523,10 @@ export class FlameWorkerSession {
     );
   }
 
-  /** The 4D counterpart of {@link makeCpuBackend} — only ever called from
-   * `runChunk4`, always after `hasGeometry()` has confirmed `prepared4`/
-   * `projection4`/`fourDView` are populated (and `startAccumulation` has
-   * populated `fourDColor` alongside them), so the non-null assertions here
-   * hold the same "trust `start`'s invariant" discipline `makeCpuBackend`
-   * itself already relies on for `this.accumWidth`/`this.palette`/etc. */
+  /** The 4D counterpart of {@link makeCpuBackend} — same non-null-assertion
+   * discipline (`hasGeometry()` has confirmed `prepared4`/`projection4`/
+   * `fourDView`, and `startAccumulation` populates `fourDColor` alongside
+   * them before any chunk can run). */
   private makeCpu4DBackend(): Cpu4DFlameBackend {
     return new Cpu4DFlameBackend(
       this.prepared4!,
@@ -1469,15 +1540,39 @@ export class FlameWorkerSession {
   }
 
   /** Assembles a {@link GpuBackendRequest} from the session's retained
-   * "last start" state — see that type's doc for the per-restart `seed`. */
-  private buildGpuBackendRequest(projection: Mat4): GpuBackendRequest {
+   * "last start" state — see that type's doc for the per-restart `seed`.
+   * Same non-null-assertion discipline as {@link makeCpuBackend}, and the
+   * same field-free shape as {@link buildGpuBackendRequest4} (fr-e26 made
+   * `createBackend` arg-free; a lingering `projection` parameter here would
+   * suggest a per-call value where there is only the session's own). */
+  private buildGpuBackendRequest(): GpuBackendRequest {
     return {
       transforms: this.baseTransforms,
       finalTransform: this.baseFinalTransform,
       order: this.symmetryOrder,
       axis: this.symmetryAxis,
       paletteId: this.paletteId,
-      projection,
+      projection: this.projection!,
+      width: this.accumWidth,
+      height: this.accumHeight,
+      seed: Math.floor(this.rng() * 0x100000000) >>> 0,
+      displayWidth: this.width,
+      displayHeight: this.height,
+      progressiveFilterRadius: FLAME_FILTER_RADIUS,
+    };
+  }
+
+  /** The 4D twin of {@link buildGpuBackendRequest} (fr-e26). Non-null
+   * assertions per {@link makeCpu4DBackend}'s discipline; `fourDColor` is
+   * rebuilt by every `startAccumulation`, so the request always carries the
+   * CURRENT palette/color-mode dispatch, exactly like the CPU backend. */
+  private buildGpuBackendRequest4(): GpuBackendRequest4 {
+    return {
+      transforms4: this.baseTransforms4,
+      finalTransform4: this.baseFinalTransform4,
+      projection: this.projection4!,
+      view: this.fourDView!,
+      color: this.fourDColor!,
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
@@ -1519,8 +1614,6 @@ export class FlameWorkerSession {
    */
   private async runChunk(): Promise<void> {
     const gen = this.generation;
-    const prepared = this.prepared;
-    const projection = this.projection;
     // Re-checked here, not just in ensureRunning's gate before scheduling:
     // a chunk already scheduled runs regardless of what happens in between
     // (JS is single-threaded, but a `setIterationsBudget` command — or a
@@ -1529,8 +1622,10 @@ export class FlameWorkerSession {
     // reason: without it, a chunk already sitting in the schedule queue when
     // `dispose()` runs would resume here, find `this.backend` null (dispose
     // destroyed and cleared it), and spin up a BRAND NEW backend — exactly
-    // the resurrection `dispose()` exists to rule out.
-    if (this.disposed || !prepared || !projection) {
+    // the resurrection `dispose()` exists to rule out. `hasGeometry()`
+    // covers whichever dimension this session runs in (fr-e26 — this one
+    // loop now drives 3D and 4D alike; see `createBackend`).
+    if (this.disposed || !this.hasGeometry()) {
       this.running = false;
       return;
     }
@@ -1609,7 +1704,7 @@ export class FlameWorkerSession {
     // startAccumulation, which is a synchronous command handler and can't
     // await the (possibly async) GPU factory.
     if (this.backend === null) {
-      const createdResult = this.createBackend(prepared, projection);
+      const createdResult = this.createBackend();
       const created = isPromiseLike(createdResult)
         ? await createdResult
         : createdResult;
@@ -1854,134 +1949,6 @@ export class FlameWorkerSession {
     } else {
       this.schedule(() => {
         void this.runChunk();
-      });
-    }
-  }
-
-  /**
-   * The 4D twin of {@link runChunk} (fr-5b3): drives `flame-4d.ts`'s
-   * `accumulateFlame4` through {@link Cpu4DFlameBackend}. Deliberately does
-   * NOT share `runChunk`'s body, `createBackend`, or any of its GPU-fallback
-   * machinery — a 4D session never attempts the GPU factory (see the
-   * `start` command's `fourD` field's doc), so there is no async
-   * backend-creation race to await, no `snapshotDisplay` progressive path,
-   * and — because `Cpu4DFlameBackend.accumulate`/`snapshot` are always
-   * plain synchronous returns — no mid-flight generation hand-off to guard
-   * against either: this method is not even `async`, and runs
-   * start-to-finish in one synchronous stretch every time it's called, the
-   * same way the CPU-only path did before `runChunk`'s GPU seam existed.
-   *
-   * A restart (setSupersample/setPalette) landing BETWEEN two scheduled
-   * chunks still hands off correctly without any `gen` bookkeeping:
-   * `startAccumulation` finds `this.running` already `true` (this chunk is
-   * still sitting in the schedule queue) and so its own `ensureRunning()`
-   * no-ops, leaving THIS (stale-but-still-valid) queued call as the only
-   * thing that will reschedule the loop — when it fires, it reads
-   * `this.backend4`/`this.histogram`/etc. fresh off `this`, which by then
-   * already reflect the new generation's (reset) state. Contrast `runChunk`'s
-   * own doc, where the equivalent hand-off exists specifically because a
-   * GPU call can suspend mid-`runChunk` and resume after `this` has moved
-   * on — nothing here ever suspends, so there is nothing to resume stale.
-   */
-  private runChunk4(): void {
-    if (this.disposed || !this.hasGeometry()) {
-      this.running = false;
-      return;
-    }
-
-    // A budget lowered below iterationsDone in the meantime (or one that
-    // was never raised past it) — mirrors runChunk's own same-named guard,
-    // minus the snapshotDisplay-capable-backend caveat that doesn't apply
-    // here (Cpu4DFlameBackend never implements it).
-    if (this.iterationsDone >= this.iterationsBudget) {
-      if (!this.finalFrameDisplayed && this.backend4 !== null) {
-        let snap: FlameHistogram;
-        try {
-          snap = this.backend4.snapshot();
-        } catch (e) {
-          this.running = false;
-          this.emit({ type: "error", message: describeError(e) });
-          return;
-        }
-        this.histogram = snap;
-        this.rebuildDisplay(true);
-        this.sendProgress();
-        this.finalFrameDisplayed = true;
-      }
-      this.running = false;
-      return;
-    }
-
-    // Lazily bring up this accumulation's backend, for symmetry with
-    // runChunk's own timing (even though nothing here actually needs to
-    // await anything).
-    if (this.backend4 === null) {
-      this.backend4 = this.makeCpu4DBackend();
-      this.emit({ type: "backend", backend: "cpu", adapter: undefined });
-    }
-    const backend4 = this.backend4;
-
-    const chunk = Math.min(
-      this.chunkSize,
-      this.iterationsBudget - this.iterationsDone,
-    );
-    // Only the FIRST accumulate call for a given backend allocates (inside
-    // accumulateFlame4) — see runChunk's own `wasFreshStart` for the same
-    // "only a fresh-start failure gets the shrink-and-retry treatment"
-    // reasoning.
-    const wasFreshStart = this.histogram === null;
-    const t0 = this.now();
-    let actual: number;
-    try {
-      actual = backend4.accumulate(chunk);
-    } catch (e) {
-      this.running = false;
-      if (wasFreshStart && this.effectiveSupersample > 1) {
-        // The proactive budget estimate wasn't conservative enough for this
-        // device at this size — learn that and retry smaller, mirroring
-        // runChunk's own CPU OOM-ratchet branch exactly (there is no GPU
-        // branch to consider here).
-        this.maxSafeSupersample = this.effectiveSupersample - 1;
-        this.startAccumulation(
-          this.lastRequestedSupersample ?? this.effectiveSupersample,
-        );
-      } else {
-        this.emit({ type: "error", message: describeError(e) });
-      }
-      return;
-    }
-    const t1 = this.now();
-    this.iterationsDone += actual;
-    this.adaptChunkSize(t1 - t0);
-
-    const finished = this.iterationsDone >= this.iterationsBudget;
-    const due =
-      finished ||
-      this.lastDownsampleAt === undefined ||
-      t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
-    if (due) {
-      let snap: FlameHistogram;
-      try {
-        snap = backend4.snapshot();
-      } catch (e) {
-        this.running = false;
-        this.emit({ type: "error", message: describeError(e) });
-        return;
-      }
-      this.histogram = snap;
-      this.rebuildDisplay(finished);
-      this.lastDownsampleAt = t1;
-      this.sendProgress();
-      if (finished) {
-        this.finalFrameDisplayed = true;
-      }
-    }
-
-    if (finished) {
-      this.running = false;
-    } else {
-      this.schedule(() => {
-        this.runChunk4();
       });
     }
   }

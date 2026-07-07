@@ -22,7 +22,10 @@
  */
 import { FlameWorkerSession } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
-import { createGpuFlameBackend } from "./flame-gpu-backend";
+import {
+  createGpuFlameBackend,
+  createGpuFlameBackend4,
+} from "./flame-gpu-backend";
 
 interface FlameWorkerScope {
   postMessage(message: FlameWorkerEvent, transfer: Transferable[]): void;
@@ -47,13 +50,15 @@ const session = new FlameWorkerSession({
       scope.postMessage(event, []);
     }
   },
-  // WebGPU accumulation (fr-npb): wiring this factory up is what actually
-  // gates the session's GPU attempt — a `start` command's `gpuPreference`
-  // alone does nothing without it (see FlameWorkerDeps.createGpuBackend's
-  // doc). Real WebGPU calls live entirely in flame-gpu-backend.ts, kept
-  // separate from this thin glue file for the same reason flame-worker-core
-  // stays free of `self`/`postMessage`: plain-Vitest testability.
+  // WebGPU accumulation (fr-npb; 4D in fr-e26): wiring these factories up is
+  // what actually gates the session's GPU attempt — a `start` command's
+  // `gpuPreference` alone does nothing without them (see
+  // FlameWorkerDeps.createGpuBackend's doc). Real WebGPU calls live entirely
+  // in flame-gpu-backend.ts, kept separate from this thin glue file for the
+  // same reason flame-worker-core stays free of `self`/`postMessage`:
+  // plain-Vitest testability.
   createGpuBackend: createGpuFlameBackend,
+  createGpuBackend4: createGpuFlameBackend4,
   log: (message) => console.info(message),
 });
 

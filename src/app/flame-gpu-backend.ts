@@ -18,6 +18,16 @@
  * helpers. See that file's module doc for the byte-layout contract this
  * drives and the WGSL kernel itself.
  *
+ * fr-e26: the driver body — device acquisition, buffer/bind-group/pipeline
+ * setup, the shared downsample pipeline, the warmup dispatch, and the
+ * {@link GpuFlameBackend} class itself — is dimension-agnostic, so it is
+ * factored into {@link createBackendForProgram}, parameterized by a
+ * {@link GpuProgramSpec} (which kernel, which packed buffers, which
+ * readback conversions). {@link createGpuFlameBackend} packs the 3D program
+ * (`flame-gpu.ts`), {@link createGpuFlameBackend4} the 4D one
+ * (`flame-gpu-4d.ts`, pinned against `accumulateFlame4`); both share every
+ * line of driver code, so the two paths can never drift on the driving.
+ *
  * This module never falls back to CPU itself — every failure mode here is a
  * plain thrown (`create`) or rejected (`accumulate`) `Error` with a message
  * naming what went wrong; `flame-worker-core.ts`'s `FlameWorkerSession` (the
@@ -33,7 +43,6 @@ import {
   DOWNSAMPLE_WORKGROUP_SIZE,
   FLAME_GPU_DOWNSAMPLE_WGSL,
   FLAME_GPU_KERNEL_WGSL,
-  PARAMS_BYTES,
   PARAMS_ITERS_OFFSET_BYTES,
   WARMUP_ITERATIONS,
   WORKGROUP_SIZE,
@@ -45,9 +54,22 @@ import {
   packGpuSystem,
   planGpuDispatches,
 } from "../fractal/flame-gpu";
+import {
+  FLAME_GPU_KERNEL_4D_WGSL,
+  PARAMS4_ITERS_OFFSET_BYTES,
+  convertGpuDisplayHistogram4,
+  convertGpuHistogram4,
+  packGpuChains4,
+  packGpuParams4,
+  packGpuSystem4,
+} from "../fractal/flame-gpu-4d";
 import { createFlameHistogram } from "../fractal/flame";
 import type { FlameHistogram } from "../fractal/flame";
-import type { FlameAccumBackend, GpuBackendRequest } from "./flame-worker-core";
+import type {
+  FlameAccumBackend,
+  GpuBackendRequest,
+  GpuBackendRequest4,
+} from "./flame-worker-core";
 
 /** Bytes per display-resolution downsample bucket: interleaved f32 [hits, r,
  * g, b] — see flame-gpu.ts's FLAME_GPU_DOWNSAMPLE_WGSL doc. */
@@ -87,9 +109,62 @@ const NUM_CHAINS = 65536;
  */
 const MAX_ITERS_PER_INVOCATION = 512;
 
+/** Convert a `snapshot()` staging readback into a {@link FlameHistogram} —
+ * `convertGpuHistogram` for the 3D program, `convertGpuHistogram4` (whose
+ * buckets carry the extra weight fixed-point factor) for the 4D one. */
+type SnapshotConverter = (
+  words: Uint32Array,
+  width: number,
+  height: number,
+  out: FlameHistogram,
+) => FlameHistogram;
+
+/** Convert a `snapshotDisplay()` staging readback — same 3D/4D split as
+ * {@link SnapshotConverter} (see `convertGpuDisplayHistogram4`'s doc for why
+ * the shared downsample kernel needs only a different readback scale). */
+type DisplayConverter = (
+  data: Float32Array,
+  width: number,
+  height: number,
+  out: FlameHistogram,
+) => FlameHistogram;
+
+/**
+ * One accumulation program's worth of dimension-SPECIFIC state (fr-e26):
+ * the WGSL kernel, its packed buffers, the one mid-session-rewritten uniform
+ * field's offset, and the readback conversions — everything about a backend
+ * that differs between the 3D and 4D kernels. The dimension-AGNOSTIC rest
+ * (device, bind groups, pipelines, downsample, warmup, the backend class)
+ * lives in {@link createBackendForProgram}, which this parameterizes.
+ */
+interface GpuProgramSpec {
+  /** Names the kernel in compile-error messages (e.g. "3D kernel"). */
+  label: string;
+  kernel: string;
+  /** Packed uniform contents — `itersPerInvocation` must already be
+   * {@link WARMUP_ITERATIONS}, the value the warmup dispatch reads. */
+  params: ArrayBuffer;
+  /** Byte offset of the uniform's `itersPerInvocation` — the one field
+   * `accumulate()` rewrites mid-session. */
+  paramsItersOffsetBytes: number;
+  slots: ArrayBuffer;
+  colors: ArrayBuffer;
+  chains: ArrayBuffer;
+  convertSnapshot: SnapshotConverter;
+  convertDisplay: DisplayConverter;
+  /** Accumulation resolution (display size x effective supersample). */
+  width: number;
+  height: number;
+  /** fr-ee9: display resolution + progressive filter radius — sizes the
+   * shared downsample pipeline (see `GpuBackendRequest`'s same fields). */
+  displayWidth: number;
+  displayHeight: number;
+  progressiveFilterRadius: number;
+}
+
 /**
  * Everything {@link GpuFlameBackend}'s constructor needs, built up by the
- * (long) {@link createGpuFlameBackend} factory. Mirrors
+ * (long) {@link createBackendForProgram} driver. Mirrors
  * `flame-worker-core.ts`'s `CpuFlameBackend` constructor-argument shape in
  * spirit — a plain bag of "what this backend needs to do its job" — but as
  * an object rather than positional arguments, since there are enough GPU
@@ -105,6 +180,12 @@ interface GpuFlameBackendInit {
   chainsBuffer: GPUBuffer;
   histBuffer: GPUBuffer;
   stagingBuffer: GPUBuffer;
+  /** See {@link GpuProgramSpec} — the program's mid-session-rewritten
+   * uniform offset and readback conversions, threaded through to the
+   * backend's accumulate/snapshot/snapshotDisplay. */
+  paramsItersOffsetBytes: number;
+  convertSnapshot: SnapshotConverter;
+  convertDisplay: DisplayConverter;
   /** Accumulation resolution (display size x effective supersample) — see
    * `GpuBackendRequest`'s doc. */
   width: number;
@@ -127,13 +208,13 @@ interface GpuFlameBackendInit {
 }
 
 /**
- * The GPU accumulation backend: drives `flame-gpu.ts`'s
- * `FLAME_GPU_KERNEL_WGSL` over one packed system, behind the same
+ * The GPU accumulation backend: drives a {@link GpuProgramSpec}'s kernel
+ * (3D or 4D) over one packed system, behind the same
  * {@link FlameAccumBackend} seam `CpuFlameBackend` implements. Built and
- * warmed up entirely inside {@link createGpuFlameBackend} — by the time this
- * class exists, every chain has already run its `WARMUP_ITERATIONS` steps
- * unrecorded, so the very first `accumulate()` call starts already on the
- * attractor, exactly like `accumulateFlame`'s CPU fresh-start.
+ * warmed up entirely inside {@link createBackendForProgram} — by the time
+ * this class exists, every chain has already run its `WARMUP_ITERATIONS`
+ * steps unrecorded, so the very first `accumulate()` call starts already on
+ * the attractor, exactly like the CPU accumulators' fresh-start.
  */
 class GpuFlameBackend implements FlameAccumBackend {
   readonly kind = "gpu" as const;
@@ -148,13 +229,16 @@ class GpuFlameBackend implements FlameAccumBackend {
   private readonly chainsBuffer: GPUBuffer;
   private readonly histBuffer: GPUBuffer;
   private readonly stagingBuffer: GPUBuffer;
+  private readonly paramsItersOffsetBytes: number;
+  private readonly convertSnapshot: SnapshotConverter;
+  private readonly convertDisplay: DisplayConverter;
   private readonly width: number;
   private readonly height: number;
   private readonly histBytes: number;
   private readonly workgroupCount = NUM_CHAINS / WORKGROUP_SIZE;
   /** The `snapshot()` target, allocated ONCE and reused every call — the
    * GPU counterpart of `CpuFlameBackend` handing back its own live
-   * accumulator object every time. `convertGpuHistogram`'s `out` contract
+   * accumulator object every time. The converters' `out` contract
    * unconditionally overwrites every bucket, so reuse is indistinguishable
    * from a fresh allocation to any caller. */
   private readonly outHistogram: FlameHistogram;
@@ -180,10 +264,11 @@ class GpuFlameBackend implements FlameAccumBackend {
   private readonly downsampleYWorkgroups: readonly [number, number];
   /** The Params buffer's CURRENT `itersPerInvocation` field — starts at
    * {@link WARMUP_ITERATIONS} because that is the value the warmup dispatch
-   * (run by `createGpuFlameBackend`, before this instance exists) actually
+   * (run by `createBackendForProgram`, before this instance exists) actually
    * wrote there. `accumulate()` only pays for a `writeBuffer` when a new
-   * plan's value differs from this, per `PARAMS_ITERS_OFFSET_BYTES`'s doc
-   * ("the one field the driver rewrites mid-session"). */
+   * plan's value differs from this, per the program's
+   * `paramsItersOffsetBytes` doc ("the one field the driver rewrites
+   * mid-session"). */
   private currentItersPerInvocation = WARMUP_ITERATIONS;
   /** Set once — a lost device never comes back — by the `device.lost`
    * handler wired up below. Checked at the top of `accumulate()` so a
@@ -202,6 +287,9 @@ class GpuFlameBackend implements FlameAccumBackend {
     this.chainsBuffer = init.chainsBuffer;
     this.histBuffer = init.histBuffer;
     this.stagingBuffer = init.stagingBuffer;
+    this.paramsItersOffsetBytes = init.paramsItersOffsetBytes;
+    this.convertSnapshot = init.convertSnapshot;
+    this.convertDisplay = init.convertDisplay;
     this.width = init.width;
     this.height = init.height;
     this.adapterLabel = init.adapterLabel;
@@ -267,7 +355,7 @@ class GpuFlameBackend implements FlameAccumBackend {
     if (plan.itersPerInvocation !== this.currentItersPerInvocation) {
       this.device.queue.writeBuffer(
         this.paramsBuffer,
-        PARAMS_ITERS_OFFSET_BYTES,
+        this.paramsItersOffsetBytes,
         new Uint32Array([plan.itersPerInvocation]),
       );
       this.currentItersPerInvocation = plan.itersPerInvocation;
@@ -311,7 +399,7 @@ class GpuFlameBackend implements FlameAccumBackend {
     // Convert BEFORE unmap(): unmap() detaches the ArrayBuffer backing
     // getMappedRange()'s view, so reading `words` after it would throw.
     const words = new Uint32Array(this.stagingBuffer.getMappedRange());
-    convertGpuHistogram(words, this.width, this.height, this.outHistogram);
+    this.convertSnapshot(words, this.width, this.height, this.outHistogram);
     this.stagingBuffer.unmap();
     return this.outHistogram;
   }
@@ -352,12 +440,7 @@ class GpuFlameBackend implements FlameAccumBackend {
     await this.displayStagingBuffer.mapAsync(GPUMapMode.READ);
     // Convert BEFORE unmap() — same reason as snapshot()'s own readback above.
     const data = new Float32Array(this.displayStagingBuffer.getMappedRange());
-    convertGpuDisplayHistogram(
-      data,
-      this.displayWidth,
-      this.displayHeight,
-      out,
-    );
+    this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
     this.displayStagingBuffer.unmap();
     return out;
   }
@@ -381,18 +464,18 @@ class GpuFlameBackend implements FlameAccumBackend {
 }
 
 /**
- * Stand up one accumulation's worth of GPU state for `request` and return it
- * behind the {@link FlameAccumBackend} seam — the `createGpuBackend` factory
- * `flame-worker.ts` wires into `FlameWorkerSession`. Matches
- * `FlameWorkerDeps.createGpuBackend`'s signature exactly, so it plugs in
- * with no adapter shim.
+ * Stand up one accumulation's worth of GPU state for a packed
+ * {@link GpuProgramSpec} and return it behind the {@link FlameAccumBackend}
+ * seam — the dimension-agnostic driver both factories share (fr-e26; this
+ * is the whole body `createGpuFlameBackend` owned before the 4D kernel
+ * existed, with the program-specific inputs parameterized out).
  *
  * Every early-exit here is a thrown `Error` (which, inside this `async`
  * function, becomes a REJECTED promise) with a message naming what failed;
  * see the module doc for why this never attempts its own CPU fallback.
  */
-export async function createGpuFlameBackend(
-  request: GpuBackendRequest,
+async function createBackendForProgram(
+  program: GpuProgramSpec,
 ): Promise<FlameAccumBackend> {
   if (!navigator.gpu) {
     throw new Error(
@@ -418,74 +501,46 @@ export async function createGpuFlameBackend(
     },
   });
 
-  const histBytes = request.width * request.height * BYTES_PER_GPU_BUCKET;
+  const histBytes = program.width * program.height * BYTES_PER_GPU_BUCKET;
   if (histBytes > device.limits.maxStorageBufferBindingSize) {
     // The session's own RAM budget already sized the accumulation
     // resolution for a CPU Float64 histogram; this device's storage-buffer
     // ceiling is a SEPARATE, GPU-specific limit that can bind tighter — the
     // session runs this render on CPU instead when this throws.
     throw new Error(
-      `Flame GPU: histogram buffer for ${request.width}x${request.height} ` +
+      `Flame GPU: histogram buffer for ${program.width}x${program.height} ` +
         `needs ${histBytes} bytes, exceeding this device's ` +
         `maxStorageBufferBindingSize (${device.limits.maxStorageBufferBindingSize} bytes)`,
     );
   }
 
-  const packed = packGpuSystem({
-    transforms: request.transforms,
-    finalTransform: request.finalTransform,
-    symmetry: { order: request.order, axis: request.axis },
-    paletteId: request.paletteId,
-  });
-  const chainsBytes = packGpuChains(NUM_CHAINS, request.seed);
-  // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
-  // backend ever runs is the warmup one below, which reads this very same
-  // Params field (warmup and accumulate are two specializations of the same
-  // WGSL entry point — see flame-gpu.ts's kernel doc). GpuFlameBackend.
-  // accumulate() takes over rewriting it, once construction hands back a
-  // backend whose `currentItersPerInvocation` already agrees with this value.
-  const paramsBytes = packGpuParams({
-    projection: request.projection,
-    width: request.width,
-    height: request.height,
-    transformCount: packed.transformCount,
-    baseTransformCount: packed.baseTransformCount,
-    itersPerInvocation: WARMUP_ITERATIONS,
-    colorMode: packed.colorMode,
-    weighted: packed.weighted,
-    hasFinal: packed.hasFinal,
-    totalWeight: packed.totalWeight,
-    colorDenom: packed.colorDenom,
-    numChains: NUM_CHAINS,
-  });
-
   const paramsBuffer = device.createBuffer({
     label: "flame-gpu params",
-    size: PARAMS_BYTES,
+    size: program.params.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(paramsBuffer, 0, paramsBytes);
+  device.queue.writeBuffer(paramsBuffer, 0, program.params);
 
   const slotsBuffer = device.createBuffer({
     label: "flame-gpu slots",
-    size: packed.slots.byteLength,
+    size: program.slots.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(slotsBuffer, 0, packed.slots);
+  device.queue.writeBuffer(slotsBuffer, 0, program.slots);
 
   const colorsBuffer = device.createBuffer({
     label: "flame-gpu colors",
-    size: packed.colors.byteLength,
+    size: program.colors.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(colorsBuffer, 0, packed.colors);
+  device.queue.writeBuffer(colorsBuffer, 0, program.colors);
 
   const chainsBuffer = device.createBuffer({
     label: "flame-gpu chains",
-    size: chainsBytes.byteLength,
+    size: program.chains.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(chainsBuffer, 0, chainsBytes);
+  device.queue.writeBuffer(chainsBuffer, 0, program.chains);
 
   // Zero-initialized by WebGPU (createBuffer with no mappedAtCreation) —
   // exactly the fresh histogram createFlameHistogram would hand back.
@@ -546,20 +601,20 @@ export async function createGpuFlameBackend(
 
   const shaderModule = device.createShaderModule({
     label: "flame-gpu kernel",
-    code: FLAME_GPU_KERNEL_WGSL,
+    code: program.kernel,
   });
   const compilationInfo = await shaderModule.getCompilationInfo();
   const errors = compilationInfo.messages.filter((m) => m.type === "error");
   if (errors.length > 0) {
     throw new Error(
-      `Flame GPU: WGSL compilation failed:\n${errors
+      `Flame GPU: ${program.label} WGSL compilation failed:\n${errors
         .map((m) => `  ${m.lineNum}:${m.linePos}: ${m.message}`)
         .join("\n")}`,
     );
   }
 
   // Two specializations of the same entry point via the PLOT override
-  // constant (see flame-gpu.ts's kernel doc) — warmup iterates every chain
+  // constant (see the kernels' shared doc) — warmup iterates every chain
   // without recording into hist.
   const warmupPipeline = device.createComputePipeline({
     label: "flame-gpu warmup pipeline",
@@ -596,13 +651,16 @@ export async function createGpuFlameBackend(
   // once per backend (display dims + filter radius are fixed for the whole
   // accumulation), driven by GpuFlameBackend.snapshotDisplay() on every
   // progressive redisplay tick instead of a full histogram readback + CPU
-  // downsampleFlame. See flame-gpu.ts's FLAME_GPU_DOWNSAMPLE_WGSL doc.
+  // downsampleFlame. Shared verbatim by the 3D and 4D programs (the filter
+  // is linear, so the 4D buckets' extra fixed-point weight factor divides
+  // out in the program's convertDisplay instead — see
+  // flame-gpu-4d.ts's convertGpuDisplayHistogram4).
   const packedDownsample = packGpuDownsample(
-    request.width,
-    request.height,
-    request.displayWidth,
-    request.displayHeight,
-    request.progressiveFilterRadius,
+    program.width,
+    program.height,
+    program.displayWidth,
+    program.displayHeight,
+    program.progressiveFilterRadius,
   );
 
   const downsampleParamsBuffer = device.createBuffer({
@@ -629,11 +687,11 @@ export async function createGpuFlameBackend(
   // device-limit guard is needed here (see the fr-ee9 brief's Part 2 note).
   const intermediateBuffer = device.createBuffer({
     label: "flame-gpu downsample intermediate",
-    size: request.displayWidth * request.height * DISPLAY_BUCKET_BYTES,
+    size: program.displayWidth * program.height * DISPLAY_BUCKET_BYTES,
     usage: GPUBufferUsage.STORAGE,
   });
   const displayBytes =
-    request.displayWidth * request.displayHeight * DISPLAY_BUCKET_BYTES;
+    program.displayWidth * program.displayHeight * DISPLAY_BUCKET_BYTES;
   const displayBuffer = device.createBuffer({
     label: "flame-gpu downsample display",
     size: displayBytes,
@@ -732,8 +790,8 @@ export async function createGpuFlameBackend(
 
   // Run every chain forward WARMUP_ITERATIONS steps without recording (the
   // PLOT=0 pipeline), BEFORE this factory resolves — the GPU counterpart of
-  // accumulateFlame's fresh-start warmup loop, so the session's very first
-  // real accumulate() call starts already on the attractor.
+  // the CPU accumulators' fresh-start warmup loop, so the session's very
+  // first real accumulate() call starts already on the attractor.
   const workgroupCount = NUM_CHAINS / WORKGROUP_SIZE;
   {
     const encoder = device.createCommandEncoder({
@@ -766,8 +824,11 @@ export async function createGpuFlameBackend(
     chainsBuffer,
     histBuffer,
     stagingBuffer,
-    width: request.width,
-    height: request.height,
+    paramsItersOffsetBytes: program.paramsItersOffsetBytes,
+    convertSnapshot: program.convertSnapshot,
+    convertDisplay: program.convertDisplay,
+    width: program.width,
+    height: program.height,
     adapterLabel,
     downsampleXPipeline,
     downsampleYPipeline,
@@ -777,7 +838,111 @@ export async function createGpuFlameBackend(
     displayStagingBuffer,
     downsampleWeightsBuffer,
     downsampleParamsBuffer,
+    displayWidth: program.displayWidth,
+    displayHeight: program.displayHeight,
+  });
+}
+
+/**
+ * Stand up one 3D accumulation's worth of GPU state for `request` and return
+ * it behind the {@link FlameAccumBackend} seam — the `createGpuBackend`
+ * factory `flame-worker.ts` wires into `FlameWorkerSession`. Matches
+ * `FlameWorkerDeps.createGpuBackend`'s signature exactly, so it plugs in
+ * with no adapter shim. Packs `flame-gpu.ts`'s program, then hands off to
+ * the shared {@link createBackendForProgram} driver.
+ */
+export async function createGpuFlameBackend(
+  request: GpuBackendRequest,
+): Promise<FlameAccumBackend> {
+  const packed = packGpuSystem({
+    transforms: request.transforms,
+    finalTransform: request.finalTransform,
+    symmetry: { order: request.order, axis: request.axis },
+    paletteId: request.paletteId,
+  });
+  // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
+  // backend ever runs is the warmup one (see createBackendForProgram), which
+  // reads this very same Params field (warmup and accumulate are two
+  // specializations of the same WGSL entry point). GpuFlameBackend.
+  // accumulate() takes over rewriting it, once construction hands back a
+  // backend whose `currentItersPerInvocation` already agrees with this value.
+  return createBackendForProgram({
+    label: "3D kernel",
+    kernel: FLAME_GPU_KERNEL_WGSL,
+    params: packGpuParams({
+      projection: request.projection,
+      width: request.width,
+      height: request.height,
+      transformCount: packed.transformCount,
+      baseTransformCount: packed.baseTransformCount,
+      itersPerInvocation: WARMUP_ITERATIONS,
+      colorMode: packed.colorMode,
+      weighted: packed.weighted,
+      hasFinal: packed.hasFinal,
+      totalWeight: packed.totalWeight,
+      colorDenom: packed.colorDenom,
+      numChains: NUM_CHAINS,
+    }),
+    paramsItersOffsetBytes: PARAMS_ITERS_OFFSET_BYTES,
+    slots: packed.slots,
+    colors: packed.colors,
+    chains: packGpuChains(NUM_CHAINS, request.seed),
+    convertSnapshot: convertGpuHistogram,
+    convertDisplay: convertGpuDisplayHistogram,
+    width: request.width,
+    height: request.height,
     displayWidth: request.displayWidth,
     displayHeight: request.displayHeight,
+    progressiveFilterRadius: request.progressiveFilterRadius,
+  });
+}
+
+/**
+ * The 4D twin of {@link createGpuFlameBackend} (fr-e26): packs
+ * `flame-gpu-4d.ts`'s program — the 4D kernel pinned against
+ * `accumulateFlame4` — and hands off to the same shared driver. Matches
+ * `FlameWorkerDeps.createGpuBackend4`'s signature exactly. Note the 4D
+ * readback converters: the 4D kernel's buckets carry the fixed-point slice-
+ * weight factor (see flame-gpu-4d.ts's module doc), so reading them back
+ * with the 3D converters would inflate every value 256-fold.
+ */
+export async function createGpuFlameBackend4(
+  request: GpuBackendRequest4,
+): Promise<FlameAccumBackend> {
+  const packed = packGpuSystem4({
+    transforms4: request.transforms4,
+    finalTransform4: request.finalTransform4,
+    color: request.color,
+  });
+  // itersPerInvocation starts at WARMUP_ITERATIONS — same warmup contract as
+  // the 3D factory above.
+  return createBackendForProgram({
+    label: "4D kernel",
+    kernel: FLAME_GPU_KERNEL_4D_WGSL,
+    params: packGpuParams4({
+      projection: request.projection,
+      width: request.width,
+      height: request.height,
+      transformCount: packed.transformCount,
+      itersPerInvocation: WARMUP_ITERATIONS,
+      weighted: packed.weighted,
+      hasFinal: packed.hasFinal,
+      totalWeight: packed.totalWeight,
+      colorDenom: packed.colorDenom,
+      numChains: NUM_CHAINS,
+      view: request.view,
+      color: request.color,
+    }),
+    paramsItersOffsetBytes: PARAMS4_ITERS_OFFSET_BYTES,
+    slots: packed.slots,
+    colors: packed.colors,
+    chains: packGpuChains4(NUM_CHAINS, request.seed),
+    convertSnapshot: convertGpuHistogram4,
+    convertDisplay: convertGpuDisplayHistogram4,
+    width: request.width,
+    height: request.height,
+    displayWidth: request.displayWidth,
+    displayHeight: request.displayHeight,
+    progressiveFilterRadius: request.progressiveFilterRadius,
   });
 }
