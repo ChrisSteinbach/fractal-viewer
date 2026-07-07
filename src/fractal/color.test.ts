@@ -1,10 +1,12 @@
 import {
+  W_SIDE_PALETTES,
   buildColorModeLUT,
   buildColors,
   buildColors4,
   colorModeUsesGamma,
   hslToRgb,
   transformColors,
+  wRampColor,
 } from "./color";
 import { runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
@@ -441,5 +443,53 @@ describe("buildColors4", () => {
     expect(colors[3]).toBeCloseTo(warm[0], 5);
     expect(colors[4]).toBeCloseTo(warm[1], 5);
     expect(colors[5]).toBeCloseTo(warm[2], 5);
+  });
+});
+
+describe("wRampColor", () => {
+  const { wBlueOrange, wPurpleGreen, wCyanMagenta } = W_SIDE_PALETTES;
+
+  it("is the dim gray notch (0.38 * 0.30) at s = 0, for any palette", () => {
+    const dim = 0.38 * 0.3;
+    expectRgbClose(wRampColor(0, wBlueOrange), [dim, dim, dim]);
+    expectRgbClose(wRampColor(0, wPurpleGreen), [dim, dim, dim]);
+    expectRgbClose(wRampColor(0, wCyanMagenta), [dim, dim, dim]);
+  });
+
+  it("is exactly side.pos at s = 1", () => {
+    expectRgbClose(wRampColor(1, wBlueOrange), wBlueOrange.pos);
+    expectRgbClose(wRampColor(1, wCyanMagenta), wCyanMagenta.pos);
+  });
+
+  it("is exactly side.neg at s = -1", () => {
+    expectRgbClose(wRampColor(-1, wBlueOrange), wBlueOrange.neg);
+    expectRgbClose(wRampColor(-1, wCyanMagenta), wCyanMagenta.neg);
+  });
+
+  it("clamps s beyond +/-1", () => {
+    expectRgbClose(wRampColor(5, wBlueOrange), wRampColor(1, wBlueOrange));
+    expectRgbClose(wRampColor(-5, wBlueOrange), wRampColor(-1, wBlueOrange));
+  });
+
+  it("brightness increases monotonically in |s|", () => {
+    const samples = [0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1];
+    function magnitude(s: number): number {
+      const [r, g, b] = wRampColor(s, wPurpleGreen);
+      return r + g + b;
+    }
+    let prev = -Infinity;
+    for (const s of samples) {
+      const mag = magnitude(s);
+      expect(mag).toBeGreaterThan(prev);
+      prev = mag;
+    }
+    // Symmetric in magnitude for the negative side too (different hue, same
+    // brightness curve since |s| is what drives m).
+    prev = -Infinity;
+    for (const s of samples) {
+      const mag = magnitude(-s);
+      expect(mag).toBeGreaterThan(prev);
+      prev = mag;
+    }
   });
 });

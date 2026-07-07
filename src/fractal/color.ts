@@ -284,6 +284,34 @@ export const W_SIDE_PALETTES: Record<
 };
 
 /**
+ * CPU twin of the FOUR_D_VERTEX diverging-w ramp (scene.ts:213-227): clamp
+ * `s` to `[-1, 1]`; magnitude `m = |s|^0.6`; pick `side.neg` for `s < 0` else
+ * `side.pos`; mix that side color with a dim gray notch by `m`, then scale by
+ * `(0.30 + 0.70 * m)` — component-wise `(0.38 · (1 − m) + side_i · m) · (0.30
+ * + 0.70 · m)`. For wherever a rotated-w color needs computing off the GPU —
+ * the solid (voxel) render has no shader to color in, unlike the flame and
+ * point-cloud paths.
+ *
+ * Joins the fr-a3q keep-in-sync set alongside {@link W_SIDE_PALETTES} and
+ * ui.ts's `wRampGradient`: the side PALETTE is shared data (no drift
+ * possible — all three read {@link W_SIDE_PALETTES} directly), but this
+ * function's own ramp SHAPE constants — the 0.6 exponent, the 0.38 gray, the
+ * 0.30 + 0.70 brightness — are mirrored from the GLSL by hand, same as
+ * `wRampGradient`'s. Keep all three in sync.
+ */
+export function wRampColor(s: number, side: { neg: Vec3; pos: Vec3 }): Vec3 {
+  const clamped = s < -1 ? -1 : s > 1 ? 1 : s;
+  const m = Math.abs(clamped) ** 0.6;
+  const sideColor = clamped < 0 ? side.neg : side.pos;
+  const brightness = 0.3 + 0.7 * m;
+  return [
+    (0.38 * (1 - m) + sideColor[0] * m) * brightness,
+    (0.38 * (1 - m) + sideColor[1] * m) * brightness,
+    (0.38 * (1 - m) + sideColor[2] * m) * brightness,
+  ];
+}
+
+/**
  * True for the 4D color modes that bake a per-point color attribute
  * ({@link buildColors4}) rather than coloring purely in-shader from the
  * rotated w. Single source of truth for the bake-vs-uniform dispatch

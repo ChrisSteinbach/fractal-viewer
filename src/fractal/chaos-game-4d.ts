@@ -7,7 +7,8 @@ import type { Rng } from "./rng";
 import type { Bounds4, Transform4, Vec4 } from "./types";
 
 /**
- * # 4D chaos game (fr-cbg spike; variations + lens in fr-hy8)
+ * # 4D chaos game (fr-cbg spike; variations + lens in fr-hy8; prepared seams
+ * in fr-5b3)
  *
  * A dedicated, self-contained 4D path that mirrors the SHAPE of
  * `chaos-game.ts`'s {@link import("./chaos-game").runChaosGame} but does not try
@@ -28,6 +29,16 @@ import type { Bounds4, Transform4, Vec4 } from "./types";
  * variations and no lens takes the exact same code path, and consumes the RNG
  * identically, as before those were added (the blend/lens are `null`). Symmetry
  * is still 3D-only.
+ *
+ * As of fr-5b3 (the 4D flame/solid renders), the per-run setup and per-iteration stepping are hoisted
+ * into their own exported seams — {@link prepareChaosGame4}, {@link pickIndex4},
+ * {@link stepOrbit4}, {@link plotPoint4} — the 4D twins of `chaos-game.ts`'s
+ * `prepareChaosGame`/`pickIndex`/`stepOrbit`/`plotPoint`. This is what lets a
+ * future 4D histogram accumulator (a `flame-gpu.ts`-style hand-inlined hot loop)
+ * drive the exact same tested stepping logic {@link runChaosGame4} does, rather
+ * than duplicating it a third time. `runChaosGame4` itself is refactored to call
+ * these seams, but its RNG consumption order is unchanged bit-for-bit — see the
+ * golden-pin regression test in `chaos-game-4d.test.ts`.
  */
 
 /**
@@ -93,6 +104,255 @@ function emptyResult(): ChaosGame4Result {
 }
 
 /**
+ * The per-run setup shared by every 4D chaos-game consumer — the 4D twin of
+ * `chaos-game.ts`'s {@link import("./chaos-game").PreparedChaosGame}: composed
+ * affines and variation blends (one pair per transform), the optional
+ * final-transform lens, and the weighted-selection table. Building this once
+ * per run — rather than recomputing it every iteration — is what lets both the
+ * point-cloud recorder ({@link runChaosGame4}) and a future 4D histogram
+ * accumulator drive the exact same tested stepping logic ({@link stepOrbit4},
+ * {@link plotPoint4}) while each owns its own tight loop and output sink.
+ *
+ * UNLIKE {@link import("./chaos-game").PreparedChaosGame}, there is no
+ * `postRotations`/`baseTransformCount` here: kaleidoscope symmetry (fr-6im) is
+ * still 3D-only, so there is no expanded-copy bookkeeping to carry — every
+ * slot IS a base transform, one-to-one with `transforms`.
+ */
+export interface PreparedChaosGame4 {
+  /** Composed affine map per transform, indexed like `transforms`. */
+  affines: Affine4[];
+  /** Composed variation blend per transform, or `null` for a purely affine map. */
+  variations: (VariationBlend4 | null)[];
+  /** Composed final-transform affine (the plot-time lens), or `null` when absent. */
+  finalAffine: Affine4 | null;
+  /** Composed final-transform variation blend, or `null`. */
+  finalWarp: VariationBlend4 | null;
+  /** `transforms.length` — the draw range for the unweighted uniform pick in {@link pickIndex4}. */
+  transformCount: number;
+  /** Whether any transform has a non-1 weight — selects the weighted draw in {@link pickIndex4}. */
+  weighted: boolean;
+  /** Running sum of weights, indexed like `transforms`; binary-searched when `weighted`. */
+  cumulative: Float64Array;
+  /** Sum of all transform weights. */
+  totalWeight: number;
+}
+
+/**
+ * Compose a 4D transform set — and an optional final-transform lens — into a
+ * {@link PreparedChaosGame4}: everything about a run that does not change
+ * per-iteration. Call once per run and reuse the result for every
+ * {@link stepOrbit4} / {@link plotPoint4} call in that run. Mirrors
+ * `chaos-game.ts`'s `prepareChaosGame` one dimension up (see
+ * {@link PreparedChaosGame4} for the one structural difference: no symmetry).
+ *
+ * Throws `RangeError` if `transforms.length` exceeds {@link MAX_TRANSFORMS}
+ * (the Uint8 transform-index cap), matching `prepareChaosGame`'s message text
+ * exactly.
+ */
+export function prepareChaosGame4(
+  transforms: Transform4[],
+  finalTransform: Transform4 | null = null,
+): PreparedChaosGame4 {
+  if (transforms.length > MAX_TRANSFORMS) {
+    throw new RangeError(
+      `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms.length}`,
+    );
+  }
+
+  // Compose every affine once up front (never per-iteration). Alongside each,
+  // its nonlinear variation blend or `null` for a purely-affine map — every
+  // entry is `null` for the existing presets, so those take the exact same
+  // (RNG-identical) path as before variations existed.
+  const affines: Affine4[] = transforms.map(composeAffine4);
+  const variations: (VariationBlend4 | null)[] = transforms.map((t) =>
+    composeVariations4(t.variations),
+  );
+  const transformCount = affines.length;
+
+  // The optional plot-time lens: one more affine + variation blend applied only
+  // when a point is recorded, never fed back into the orbit. Both stay `null`
+  // when there is no final transform, so `plotPoint4` keeps the pre-lens path.
+  const finalAffine = finalTransform ? composeAffine4(finalTransform) : null;
+  const finalWarp = finalTransform
+    ? composeVariations4(finalTransform.variations)
+    : null;
+
+  // Weighted-selection table (see `chaos-game.ts`'s `pickIndex` for the same
+  // discipline): when every weight is 1 we keep the plain uniform
+  // `Math.floor(rng() * n)` draw in `pickIndex4`, so a uniform system consumes
+  // the RNG identically to the obvious code; only a genuinely weighted system
+  // pays for the cumulative table + binary search.
+  const weights = transforms.map((t) => t.weight ?? 1);
+  let totalWeight = 0;
+  const cumulative = new Float64Array(transformCount);
+  for (let i = 0; i < transformCount; i++) {
+    totalWeight += weights[i];
+    cumulative[i] = totalWeight;
+  }
+  const weighted =
+    weights.some((wt) => wt !== 1) &&
+    totalWeight > 0 &&
+    Number.isFinite(totalWeight);
+
+  return {
+    affines,
+    variations,
+    finalAffine,
+    finalWarp,
+    transformCount,
+    weighted,
+    cumulative,
+    totalWeight,
+  };
+}
+
+/**
+ * Smallest index whose cumulative weight exceeds `r = rng() * totalWeight`, or
+ * the plain uniform draw `Math.floor(rng() * n)` when no transform has a
+ * non-1 weight — the fast, RNG-identical path for the common unweighted case
+ * (see {@link prepareChaosGame4}). Mirrors `chaos-game.ts`'s `pickIndex`
+ * exactly, one dimension up (the pick itself has no dimension — it only ever
+ * touches `prepared.transformCount`/`cumulative`/`totalWeight`).
+ *
+ * Exported so a future hand-inlined 4D hot loop (a `flame-gpu.ts`-style
+ * accumulator) can pick a transform the exact same way {@link stepOrbit4}
+ * does, without paying for `stepOrbit4`'s per-call `OrbitStep4` allocation.
+ */
+export function pickIndex4(prepared: PreparedChaosGame4, rng: Rng): number {
+  if (!prepared.weighted) {
+    return Math.floor(rng() * prepared.transformCount);
+  }
+  const { cumulative, totalWeight } = prepared;
+  const r = rng() * totalWeight;
+  let lo = 0;
+  let hi = cumulative.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (r < cumulative[mid]) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** The orbit point (and the transform that produced it) after one {@link stepOrbit4} call. */
+export interface OrbitStep4 {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+  /** Index of the transform that produced this step (see `stepOrbit`'s caveat
+   * about the escape-reseed case — the same caveat applies here). */
+  index: number;
+}
+
+/**
+ * Advance the 4D chaos-game orbit by one iteration: pick a random transform
+ * (per `prepared`'s weights), apply its affine + variation, and reseed all
+ * four coordinates if the landing point escapes to infinity. Pure: takes the
+ * current orbit point and returns the next one plus the chosen transform
+ * index, so a caller — the warmup loop, {@link runChaosGame4}'s recording
+ * loop, or a future 4D histogram accumulator — carries the state forward
+ * itself.
+ *
+ * Mirrors `chaos-game.ts`'s `stepOrbit` one dimension up: same pick, same
+ * affine-then-variation order, same escape check (now over all four
+ * coordinates), same reseed-all-coordinates-from-`rng` recovery. There is no
+ * symmetry/postRotation step (4D has none — see {@link PreparedChaosGame4}),
+ * and `index` is always the raw picked index (no base-map modulo, since there
+ * are no expanded kaleidoscope copies to recover from).
+ */
+export function stepOrbit4(
+  prepared: PreparedChaosGame4,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+  rng: Rng,
+): OrbitStep4 {
+  const idx = pickIndex4(prepared, rng);
+  const p = applyAffine4(prepared.affines[idx], x, y, z, w);
+  const warp = prepared.variations[idx];
+  let nx: number;
+  let ny: number;
+  let nz: number;
+  let nw: number;
+  if (warp === null) {
+    nx = p[0];
+    ny = p[1];
+    nz = p[2];
+    nw = p[3];
+  } else {
+    // Nonlinear maps can send a point to infinity — or, at a singularity, to
+    // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
+    // stopping a bad landing from poisoning the rest of the orbit.
+    const q = warp(p[0], p[1], p[2], p[3], rng);
+    nx = q[0];
+    ny = q[1];
+    nz = q[2];
+    nw = q[3];
+  }
+  if (
+    !Number.isFinite(nx) ||
+    !Number.isFinite(ny) ||
+    !Number.isFinite(nz) ||
+    !Number.isFinite(nw) ||
+    Math.abs(nx) > ESCAPE_LIMIT ||
+    Math.abs(ny) > ESCAPE_LIMIT ||
+    Math.abs(nz) > ESCAPE_LIMIT ||
+    Math.abs(nw) > ESCAPE_LIMIT
+  ) {
+    nx = rng() - 0.5;
+    ny = rng() - 0.5;
+    nz = rng() - 0.5;
+    nw = rng() - 0.5;
+  }
+  return { x: nx, y: ny, z: nz, w: nw, index: idx };
+}
+
+/**
+ * Compute the plotted point for a 4D orbit point: the point itself, or — when
+ * `prepared` has a final transform — that point bent through the
+ * final-transform "lens" (fractal-flame terminology: applied only at plot
+ * time, never fed back into the orbit; see {@link runChaosGame4}). Mirrors
+ * `chaos-game.ts`'s `plotPoint` one dimension up: a nonlinear lens can diverge
+ * at a singularity, so the bent point is only adopted while every one of the
+ * four coordinates stays finite, otherwise this returns the orbit point
+ * unchanged so a bad landing never produces NaN/Inf.
+ */
+export function plotPoint4(
+  prepared: PreparedChaosGame4,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+  rng: Rng,
+): Vec4 {
+  const { finalAffine, finalWarp } = prepared;
+  if (finalAffine === null) return [x, y, z, w];
+  const p = applyAffine4(finalAffine, x, y, z, w);
+  let fx = p[0];
+  let fy = p[1];
+  let fz = p[2];
+  let fw = p[3];
+  if (finalWarp !== null) {
+    const q = finalWarp(fx, fy, fz, fw, rng);
+    fx = q[0];
+    fy = q[1];
+    fz = q[2];
+    fw = q[3];
+  }
+  if (
+    Number.isFinite(fx) &&
+    Number.isFinite(fy) &&
+    Number.isFinite(fz) &&
+    Number.isFinite(fw)
+  ) {
+    return [fx, fy, fz, fw];
+  }
+  return [x, y, z, w];
+}
+
+/**
  * Run a 4D iterated function system with the chaos game — the 4D sibling of
  * {@link import("./chaos-game").runChaosGame}. Starting from a random seed
  * point, repeatedly pick a random transform (weighted by
@@ -109,8 +369,17 @@ function emptyResult(): ChaosGame4Result {
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`. Returns an empty result (zero-length arrays, zero bounds,
  * origin center, radius 0) when there are no transforms or no points requested,
- * mirroring the 3D path. Throws `RangeError` past {@link MAX_TRANSFORMS} (the
- * Uint8 transform-index cap), like `prepareChaosGame`.
+ * mirroring the 3D path — this early return happens BEFORE
+ * {@link prepareChaosGame4} is called, so an empty system never pays for (or
+ * risks) the `MAX_TRANSFORMS` check on an empty array. Throws `RangeError`
+ * past {@link MAX_TRANSFORMS} (the Uint8 transform-index cap) via
+ * {@link prepareChaosGame4}.
+ *
+ * The per-run setup ({@link prepareChaosGame4}) and per-iteration stepping
+ * ({@link stepOrbit4}, {@link plotPoint4}) this function drives are exported so
+ * another consumer — e.g. a future 4D histogram accumulator that needs the
+ * same iteration logic but a different sink — can reuse them with its own
+ * loop.
  */
 export function runChaosGame4(
   transforms: Transform4[],
@@ -121,63 +390,8 @@ export function runChaosGame4(
   if (transforms.length === 0 || numPoints <= 0) {
     return emptyResult();
   }
-  if (transforms.length > MAX_TRANSFORMS) {
-    throw new RangeError(
-      `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms.length}`,
-    );
-  }
 
-  // Compose every affine once up front (never per-iteration), the same
-  // amortisation `prepareChaosGame` does for the 3D path. Alongside each, its
-  // nonlinear variation blend or `null` for a purely-affine map — every entry
-  // is `null` for the existing presets, so those take the exact same (RNG-
-  // identical) path as before variations existed.
-  const affines: Affine4[] = transforms.map(composeAffine4);
-  const variations: (VariationBlend4 | null)[] = transforms.map((t) =>
-    composeVariations4(t.variations),
-  );
-  const n = affines.length;
-
-  // The optional plot-time lens: one more affine + variation blend applied only
-  // when a point is recorded, never fed back into the orbit. Both stay `null`
-  // when there is no final transform, so the recording loop keeps its old path.
-  const finalAffine = finalTransform ? composeAffine4(finalTransform) : null;
-  const finalWarp = finalTransform
-    ? composeVariations4(finalTransform.variations)
-    : null;
-
-  // Weighted-selection table, replicating `chaos-game.ts`'s `pickIndex` logic
-  // locally (copied, not abstracted — see this file's header). When every
-  // weight is 1 we keep the plain uniform `Math.floor(rng() * n)` draw so a
-  // uniform system consumes the RNG identically to the obvious code; only a
-  // genuinely weighted system pays for the cumulative table + binary search.
-  const weights = transforms.map((t) => t.weight ?? 1);
-  let totalWeight = 0;
-  const cumulative = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    totalWeight += weights[i];
-    cumulative[i] = totalWeight;
-  }
-  const weighted =
-    weights.some((wt) => wt !== 1) &&
-    totalWeight > 0 &&
-    Number.isFinite(totalWeight);
-
-  // Local `pickIndex` twin (see `chaos-game.ts`'s `pickIndex`): uniform draw
-  // for the common all-unit-weight case, else lower-bound binary search over
-  // the cumulative weights.
-  const pick = (): number => {
-    if (!weighted) return Math.floor(rng() * n);
-    const r = rng() * totalWeight;
-    let lo = 0;
-    let hi = n - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (r < cumulative[mid]) hi = mid;
-      else lo = mid + 1;
-    }
-    return lo;
-  };
+  const prepared = prepareChaosGame4(transforms, finalTransform);
 
   const positions = new Float32Array(numPoints * 3);
   const wBuffer = new Float32Array(numPoints);
@@ -190,40 +404,11 @@ export function runChaosGame4(
 
   // Warm up so the orbit settles onto the attractor before we start recording.
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-    const idx = pick();
-    const p = applyAffine4(affines[idx], x, y, z, w);
-    x = p[0];
-    y = p[1];
-    z = p[2];
-    w = p[3];
-    // Nonlinear warp after the affine (a singular warp can send a point to
-    // NaN/±∞, which the escape guard below then catches). null ⇒ no warp, no
-    // RNG draw — the pre-variations path exactly.
-    const warp = variations[idx];
-    if (warp !== null) {
-      const q = warp(x, y, z, w, rng);
-      x = q[0];
-      y = q[1];
-      z = q[2];
-      w = q[3];
-    }
-    // stepOrbit's escape semantics, extended to w: reseed all four coords if
-    // any is non-finite or escapes the bound.
-    if (
-      !Number.isFinite(x) ||
-      !Number.isFinite(y) ||
-      !Number.isFinite(z) ||
-      !Number.isFinite(w) ||
-      Math.abs(x) > ESCAPE_LIMIT ||
-      Math.abs(y) > ESCAPE_LIMIT ||
-      Math.abs(z) > ESCAPE_LIMIT ||
-      Math.abs(w) > ESCAPE_LIMIT
-    ) {
-      x = rng() - 0.5;
-      y = rng() - 0.5;
-      z = rng() - 0.5;
-      w = rng() - 0.5;
-    }
+    const s = stepOrbit4(prepared, x, y, z, w, rng);
+    x = s.x;
+    y = s.y;
+    z = s.z;
+    w = s.w;
   }
 
   let minX = Infinity;
@@ -236,76 +421,22 @@ export function runChaosGame4(
   let maxW = -Infinity;
 
   for (let i = 0; i < numPoints; i++) {
-    const idx = pick();
-    const p = applyAffine4(affines[idx], x, y, z, w);
-    x = p[0];
-    y = p[1];
-    z = p[2];
-    w = p[3];
-    const warp = variations[idx];
-    if (warp !== null) {
-      const q = warp(x, y, z, w, rng);
-      x = q[0];
-      y = q[1];
-      z = q[2];
-      w = q[3];
-    }
-    if (
-      !Number.isFinite(x) ||
-      !Number.isFinite(y) ||
-      !Number.isFinite(z) ||
-      !Number.isFinite(w) ||
-      Math.abs(x) > ESCAPE_LIMIT ||
-      Math.abs(y) > ESCAPE_LIMIT ||
-      Math.abs(z) > ESCAPE_LIMIT ||
-      Math.abs(w) > ESCAPE_LIMIT
-    ) {
-      x = rng() - 0.5;
-      y = rng() - 0.5;
-      z = rng() - 0.5;
-      w = rng() - 0.5;
-    }
+    const s = stepOrbit4(prepared, x, y, z, w, rng);
+    x = s.x;
+    y = s.y;
+    z = s.z;
+    w = s.w;
 
     // The plotted point is the orbit point, optionally bent through the lens
     // (final transform's affine + warp). The orbit state x/y/z/w is left
-    // untouched, so the lens never feeds back into the iteration; the bent point
-    // is adopted only while all four coordinates stay finite, otherwise the
-    // orbit point is plotted so a singular lens never leaks NaN/±∞.
-    let px = x;
-    let py = y;
-    let pz = z;
-    let pw = w;
-    if (finalAffine !== null) {
-      const f = applyAffine4(finalAffine, x, y, z, w);
-      let fx = f[0];
-      let fy = f[1];
-      let fz = f[2];
-      let fw = f[3];
-      if (finalWarp !== null) {
-        const fq = finalWarp(fx, fy, fz, fw, rng);
-        fx = fq[0];
-        fy = fq[1];
-        fz = fq[2];
-        fw = fq[3];
-      }
-      if (
-        Number.isFinite(fx) &&
-        Number.isFinite(fy) &&
-        Number.isFinite(fz) &&
-        Number.isFinite(fw)
-      ) {
-        px = fx;
-        py = fy;
-        pz = fz;
-        pw = fw;
-      }
-    }
+    // untouched, so the lens never feeds back into the iteration.
+    const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
 
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
     wBuffer[i] = pw;
-    transformIndices[i] = idx;
+    transformIndices[i] = s.index;
 
     if (px < minX) minX = px;
     if (px > maxX) maxX = px;
