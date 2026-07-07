@@ -43,7 +43,9 @@ const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 // palette only reads while the sum stays below saturation — density then shows
 // up as brightness, exactly like the flame's log-density display.
 const FOUR_D_BASE_INTENSITY = 0.055;
-const FOUR_D_SLICE_WIDTH = 0.12;
+// Exported since fr-5b3/fr-4wd: main.ts sends this same width into the flame/
+// solid render workers, so their CPU slice windows match the shader's exactly.
+export const FOUR_D_SLICE_WIDTH = 0.12;
 
 function color(rgb: Vec3): THREE.Color {
   return new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2]);

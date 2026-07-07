@@ -6,6 +6,7 @@ import type {
   FourDColorMode,
   Transform,
   Vec3,
+  Vec4,
   WDepthColorMode,
 } from "./types";
 
@@ -284,6 +285,34 @@ export const W_SIDE_PALETTES: Record<
 };
 
 /**
+ * CPU twin of the FOUR_D_VERTEX diverging-w ramp (scene.ts:213-227): clamp
+ * `s` to `[-1, 1]`; magnitude `m = |s|^0.6`; pick `side.neg` for `s < 0` else
+ * `side.pos`; mix that side color with a dim gray notch by `m`, then scale by
+ * `(0.30 + 0.70 * m)` — component-wise `(0.38 · (1 − m) + side_i · m) · (0.30
+ * + 0.70 · m)`. For wherever a rotated-w color needs computing off the GPU —
+ * the solid (voxel) render has no shader to color in, unlike the flame and
+ * point-cloud paths.
+ *
+ * Joins the fr-a3q keep-in-sync set alongside {@link W_SIDE_PALETTES} and
+ * ui.ts's `wRampGradient`: the side PALETTE is shared data (no drift
+ * possible — all three read {@link W_SIDE_PALETTES} directly), but this
+ * function's own ramp SHAPE constants — the 0.6 exponent, the 0.38 gray, the
+ * 0.30 + 0.70 brightness — are mirrored from the GLSL by hand, same as
+ * `wRampGradient`'s. Keep all three in sync.
+ */
+export function wRampColor(s: number, side: { neg: Vec3; pos: Vec3 }): Vec3 {
+  const clamped = s < -1 ? -1 : s > 1 ? 1 : s;
+  const m = Math.abs(clamped) ** 0.6;
+  const sideColor = clamped < 0 ? side.neg : side.pos;
+  const brightness = 0.3 + 0.7 * m;
+  return [
+    (0.38 * (1 - m) + sideColor[0] * m) * brightness,
+    (0.38 * (1 - m) + sideColor[1] * m) * brightness,
+    (0.38 * (1 - m) + sideColor[2] * m) * brightness,
+  ];
+}
+
+/**
  * True for the 4D color modes that bake a per-point color attribute
  * ({@link buildColors4}) rather than coloring purely in-shader from the
  * rotated w. Single source of truth for the bake-vs-uniform dispatch
@@ -365,3 +394,46 @@ export function buildColors4(
   }
   return colors;
 }
+
+/**
+ * How the 4D flame and solid renders color each plotted point/voxel (fr-5b3,
+ * fr-4wd — moved here from `flame-4d.ts` so both accumulators, and neither's
+ * name, own it):
+ *
+ * - `"structural"`: the cosine-palette path, identical semantics to
+ *   `accumulateFlame`'s `colorLUT` mode — an orbit-riding coordinate `c`
+ *   blended halfway toward the picked transform's `idx / (n - 1)` slot every
+ *   step (escape-reseed resets it to `0.5`), indexing `lut` (a `256 * 3`
+ *   `buildPaletteLUT` table). Keyed on the RAW picked transform index rather
+ *   than a base-map index: 4D has no kaleidoscope symmetry (fr-6im is 3D
+ *   only — see `chaos-game-4d.ts`'s `PreparedChaosGame4`), so there is no
+ *   expanded-copy modulo to recover.
+ * - `"wRamp"`: the diverging rotated-w ramp ({@link wRampColor}) evaluated on
+ *   the per-point normalized signed-w signal `s` — the "legacy" dispatch for
+ *   whichever `wBlueOrange`/`wPurpleGreen`/`wCyanMagenta` mode the explorer
+ *   had active.
+ * - `"transform"`: `palette[idx]` (the picked transform's hue, from
+ *   {@link transformColors}) — the "legacy" dispatch for the explorer's "By
+ *   Transform" 4D color mode ({@link buildColors4}'s `"transform"` branch),
+ *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
+ *   mirrors `buildColors4`).
+ * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}), indexed
+ *   by the plotted point's 4D Euclidean distance from `center`, normalized
+ *   over `[minD, maxD]` — the "legacy" dispatch for the explorer's "By 4D
+ *   Radius" mode ({@link buildColors4}'s `"radius"` branch). `minD`/`maxD`
+ *   are the explorer's own cloud's min/max 4D distance from its center
+ *   (`ChaosGame4Result`), computed by the main thread — NOT recomputed from
+ *   the accumulator's own (much larger, and differently distributed)
+ *   accumulated sample.
+ */
+export type FourDRenderColor =
+  | { kind: "structural"; lut: Float32Array }
+  | { kind: "wRamp"; side: { neg: Vec3; pos: Vec3 } }
+  | { kind: "transform"; palette: Vec3[] }
+  | {
+      kind: "radius";
+      lut: Float32Array;
+      center: Vec4;
+      minD: number;
+      maxD: number;
+    };

@@ -1096,19 +1096,22 @@ export class Ui {
     // the OLD 4D mode, the presets block, transform list, and editor all STAY
     // VISIBLE and live for a non-flat system exactly as for a flat one — only
     // the controls that are genuinely meaningless while viewing the 4D shader
-    // path (flame/solid entry, symmetry, color mode/contrast, depth style —
-    // none of them reach the 4D projection or its own w-driven coloring) hide,
-    // and the tumble/slice block takes their place. Flame/solid entry and the
-    // 4D view are mutually exclusive by construction: each hides while either
-    // of the others is active.
+    // path (symmetry, color mode/contrast, depth style — none of them reach
+    // the 4D projection or its own w-driven coloring) hide, and the
+    // tumble/slice block takes their place. The flame/solid entries stay
+    // available while non-flat (fr-5b3/fr-4wd): both renders snapshot the
+    // frozen 4D view and run their own 4D accumulators. The tumble/slice
+    // block hides while a render is active for the same reason the editing
+    // controls above do — the view (rotor + slice) is frozen into the
+    // render's worker snapshot, so its controls couldn't affect it.
     const nonFlat = systemIsNonFlat(state);
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.flameEntry.classList.toggle("hidden", rendering || nonFlat);
-    this.solidEntry.classList.toggle("hidden", rendering || nonFlat);
+    this.flameEntry.classList.toggle("hidden", rendering);
+    this.solidEntry.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
-    this.fourDControls.classList.toggle("hidden", !nonFlat);
+    this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
     this.symmetrySection.classList.toggle("hidden", nonFlat);

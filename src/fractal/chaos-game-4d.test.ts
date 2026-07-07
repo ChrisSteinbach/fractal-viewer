@@ -5,9 +5,16 @@ import {
   toTransform4,
 } from "./affine4";
 import { ESCAPE_LIMIT, MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
-import { runChaosGame4 } from "./chaos-game-4d";
+import {
+  pickIndex4,
+  plotPoint4,
+  prepareChaosGame4,
+  runChaosGame4,
+  stepOrbit4,
+} from "./chaos-game-4d";
 import { pentatope, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
+import { composeVariations4 } from "./variations4";
 import type { Transform, Transform4 } from "./types";
 
 // presets4.ts (the fr-cbg spike's native-Transform4 preset module) was
@@ -86,6 +93,41 @@ describe("runChaosGame4 determinism", () => {
     const a = runChaosGame4(pentatopeGasket(), 400, mulberry32(7));
     const b = runChaosGame4(pentatopeGasket(), 400, mulberry32(8));
     expect(Array.from(a.positions)).not.toEqual(Array.from(b.positions));
+  });
+
+  // Golden pin (fr-5b3 seam refactor): exact values captured from the
+  // UNMODIFIED (pre-prepareChaosGame4) implementation. If the seam refactor
+  // changes RNG consumption order, this fails — fix the refactor, never these
+  // constants.
+  it("is unchanged by the prepared-seam refactor (golden pin, pentatope, seed 123)", () => {
+    const result = runChaosGame4(
+      pentatope().map(toTransform4),
+      10_000,
+      mulberry32(123),
+      null,
+    );
+    let posSum = 0;
+    for (const v of result.positions) posSum += v;
+    let wSum = 0;
+    for (const v of result.w) wSum += v;
+    let idxSum = 0;
+    for (const v of result.transformIndices) idxSum += v;
+    expect(posSum).toBe(-35.70872919570684);
+    expect(wSum).toBe(19.6837997417897);
+    expect(idxSum).toBe(20069);
+    expect(result.radius).toBe(1.13994626685649);
+    expect(result.center).toEqual([
+      -0.0003939631899278484, -0.000957899587122335, -0.000301348846510896,
+      0.3673757091824691,
+    ]);
+    expect(Array.from(result.positions.slice(0, 9))).toEqual([
+      -0.007044479250907898, 0.4197215735912323, -0.13282717764377594,
+      0.2759862542152405, 0.48936927318573, 0.21309490501880646,
+      0.41750162839889526, 0.5241931080818176, 0.38605594635009766,
+    ]);
+    expect(Array.from(result.w.slice(0, 3))).toEqual([
+      -0.24938935041427612, -0.24969467520713806, -0.24984733760356903,
+    ]);
   });
 });
 
@@ -337,5 +379,153 @@ describe("runChaosGame4 bounds, center and radius", () => {
     expect(result.radius).toBeCloseTo(Math.sqrt(maxDistSq), 6);
     // Every point is within the radius (it is the max, by construction).
     expect(result.radius).toBeGreaterThanOrEqual(Math.sqrt(maxDistSq) - 1e-9);
+  });
+});
+
+describe("prepareChaosGame4", () => {
+  it("composes one affine and one variation slot per transform", () => {
+    const prepared = prepareChaosGame4(makeMaps(4));
+    expect(prepared.affines).toHaveLength(4);
+    expect(prepared.variations).toHaveLength(4);
+    expect(prepared.transformCount).toBe(4);
+  });
+
+  it("has no final transform when none is passed", () => {
+    const prepared = prepareChaosGame4(makeMaps(2));
+    expect(prepared.finalAffine).toBeNull();
+    expect(prepared.finalWarp).toBeNull();
+  });
+
+  it("flags a system as weighted only when a weight differs from 1", () => {
+    const uniform = prepareChaosGame4(makeMaps(2));
+    expect(uniform.weighted).toBe(false);
+
+    const skewed: Transform4[] = [
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1] },
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], weight: 3 },
+    ];
+    const weighted = prepareChaosGame4(skewed);
+    expect(weighted.weighted).toBe(true);
+    expect(weighted.totalWeight).toBe(4);
+    expect(Array.from(weighted.cumulative)).toEqual([1, 4]);
+  });
+
+  it("rejects systems with more than the supported number of transforms", () => {
+    expect(() => prepareChaosGame4(makeMaps(MAX_TRANSFORMS + 1))).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("pickIndex4", () => {
+  it("draws uniformly with exactly one rng call when unweighted", () => {
+    const prepared = prepareChaosGame4(makeMaps(4));
+    let calls = 0;
+    const rng = () => {
+      calls++;
+      return 0.5; // floor(0.5 * 4) = 2.
+    };
+    expect(pickIndex4(prepared, rng)).toBe(2);
+    expect(calls).toBe(1);
+  });
+
+  it("picks by cumulative weight band when weighted", () => {
+    const maps: Transform4[] = [
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], weight: 1 },
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], weight: 3 },
+    ];
+    const prepared = prepareChaosGame4(maps);
+    // cumulative = [1, 4], totalWeight = 4.
+    expect(pickIndex4(prepared, () => 0)).toBe(0); // r = 0, band [0, 1).
+    expect(pickIndex4(prepared, () => 0.9999)).toBe(1); // r ~= 4, band [1, 4).
+  });
+});
+
+describe("stepOrbit4", () => {
+  it("matches a hand-applied affine + variation step", () => {
+    const maps: Transform4[] = [
+      {
+        position: [0.3, 0.1, -0.2, 0.15],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        variations: [{ type: "spherical", weight: 0.6 }],
+      },
+    ];
+    const prepared = prepareChaosGame4(maps);
+    const s = stepOrbit4(prepared, 0.2, -0.1, 0.05, 0.1, mulberry32(7));
+
+    // A single-transform unweighted system's pick consumes exactly one rng
+    // call (see pickIndex4), so a fresh rng of the same seed must be advanced
+    // past that draw before hand-computing the expected variation step.
+    const rngForHand = mulberry32(7);
+    rngForHand();
+    const affine = composeAffine4(maps[0]);
+    const warp = composeVariations4(maps[0].variations)!;
+    const [ax, ay, az, aw] = applyAffine4(affine, 0.2, -0.1, 0.05, 0.1);
+    const [ex, ey, ez, ew] = warp(ax, ay, az, aw, rngForHand);
+
+    expect(s.x).toBeCloseTo(ex, 10);
+    expect(s.y).toBeCloseTo(ey, 10);
+    expect(s.z).toBeCloseTo(ez, 10);
+    expect(s.w).toBeCloseTo(ew, 10);
+    expect(s.index).toBe(0);
+  });
+
+  it("reseeds all four coordinates on escape", () => {
+    // A single net-expansive map (scale 3) sends the orbit to infinity from
+    // any point already near the escape limit; the reseed guard — extended
+    // to w — must catch it before it poisons the rest of the orbit.
+    const expansive: Transform4[] = [
+      { position: [0.1, 0, 0, 0.1], scale: [3, 3, 3, 3] },
+    ];
+    const prepared = prepareChaosGame4(expansive);
+    const s = stepOrbit4(prepared, 40, 40, 40, 40, mulberry32(4));
+    for (const c of [s.x, s.y, s.z, s.w]) {
+      expect(Number.isFinite(c)).toBe(true);
+      expect(Math.abs(c)).toBeLessThanOrEqual(ESCAPE_LIMIT);
+    }
+  });
+});
+
+describe("plotPoint4", () => {
+  it("returns the orbit point unchanged when the prepared system has no final transform", () => {
+    const prepared = prepareChaosGame4(makeMaps(4));
+    expect(plotPoint4(prepared, 1, -2, 0.5, 0.3, mulberry32(1))).toEqual([
+      1, -2, 0.5, 0.3,
+    ]);
+  });
+
+  it("bends the point through the final transform when one is present", () => {
+    const finalTransform: Transform4 = {
+      position: [1, -2, 0.5, 0.3],
+      scale: [2, 2, 2, 2],
+    };
+    const prepared = prepareChaosGame4(makeMaps(4), finalTransform);
+    const F = composeAffine4(finalTransform);
+    const [ex, ey, ez, ew] = applyAffine4(F, 0.3, 0.1, -0.2, 0.15);
+    const [px, py, pz, pw] = plotPoint4(
+      prepared,
+      0.3,
+      0.1,
+      -0.2,
+      0.15,
+      mulberry32(1),
+    );
+    expect(px).toBeCloseTo(ex, 10);
+    expect(py).toBeCloseTo(ey, 10);
+    expect(pz).toBeCloseTo(ez, 10);
+    expect(pw).toBeCloseTo(ew, 10);
+  });
+
+  it("falls back to the orbit point when the lens produces a non-finite value", () => {
+    // An infinite scale composes an affine whose off-diagonal entries are
+    // 0 * Infinity = NaN, so applying it to ANY point yields NaN in every
+    // coordinate — deterministic, no variation or RNG needed to provoke it.
+    const lens: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [Infinity, Infinity, Infinity, Infinity],
+    };
+    const prepared = prepareChaosGame4(makeMaps(4), lens);
+    const result = plotPoint4(prepared, 0.3, 0.1, -0.2, 0.15, mulberry32(1));
+    expect(result).toEqual([0.3, 0.1, -0.2, 0.15]);
   });
 });

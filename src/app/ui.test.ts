@@ -2216,16 +2216,35 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows the 4D controls and hides flame/solid/symmetry/color/style for a non-flat system", () => {
+  it("shows the 4D controls and hides symmetry/color/style for a non-flat system — flame/solid entry stays (fr-5b3/fr-4wd)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     expect(el("fourDControls").classList.contains("hidden")).toBe(false);
-    expect(el("flameEntry").classList.contains("hidden")).toBe(true);
-    expect(el("solidEntry").classList.contains("hidden")).toBe(true);
+    expect(el("flameEntry").classList.contains("hidden")).toBe(false);
+    expect(el("solidEntry").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
+  });
+
+  // The 4D view (rotor + slice) is frozen into an active render's worker
+  // snapshot (main.ts's fourDRenderSnapshot), so its controls hide during a
+  // render exactly like the editing controls do.
+  it("hides the 4D tumble/slice controls while a render is active on a non-flat system", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.updateLabels({ ...nonFlat, flameActive: true });
+    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("flameControls").classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({ ...nonFlat, solidActive: true });
+    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
+    expect(el("solidControls").classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels(nonFlat);
+    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
   });
 
   // The crucial inversion from the old 4D MODE (fr-bf6): unlike the retired

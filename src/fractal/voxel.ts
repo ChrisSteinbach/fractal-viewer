@@ -64,12 +64,15 @@ export const VOXEL_BOUNDS_SAMPLES = 30_000;
 /** Fraction of samples trimmed from EACH tail before taking the extent. A
  * nonlinear variation can fling isolated points far off the attractor (see
  * `stepOrbit`'s escape guard); untrimmed, one such outlier would stretch the
- * grid until the actual structure occupies a handful of voxels. */
-const BOUNDS_QUANTILE = 0.005;
+ * grid until the actual structure occupies a handful of voxels. Exported so
+ * `voxel-4d.ts`'s `computeVoxelBounds4` trims by the exact same fraction —
+ * one tuning value, not two that could silently drift apart. */
+export const BOUNDS_QUANTILE = 0.005;
 
 /** Padding applied to the trimmed half-extent so the isosurface (and its
- * gradient-sampling neighborhood) never sits exactly on the grid boundary. */
-const BOUNDS_MARGIN = 0.05;
+ * gradient-sampling neighborhood) never sits exactly on the grid boundary.
+ * Exported for the same no-drift reason as {@link BOUNDS_QUANTILE}. */
+export const BOUNDS_MARGIN = 0.05;
 
 /**
  * Estimate the world-space cube enclosing the attractor by running a short
@@ -203,6 +206,14 @@ export interface VoxelGrid {
    * NOT folded into `orbit` because it is not a spatial coordinate.
    */
   orbitColor: number;
+  /**
+   * The 4D orbit's fourth-coordinate continuation — the `voxel-4d.ts`
+   * counterpart of {@link orbit}'s `x, y, z`, letting a chunked 4D render
+   * resume its `w` coordinate exactly like the 3D one resumes `x, y, z`.
+   * Only read/written by `voxel-4d.ts`'s `accumulateVoxels4`; stays at its
+   * `0` default on the 3D path (`accumulateVoxels` never touches it).
+   */
+  orbitW: number;
 }
 
 /** A fresh, empty grid over `bounds`: every voxel at zero, orbit not started,
@@ -216,6 +227,7 @@ export function createVoxelGrid(size: number, bounds: VoxelBounds): VoxelGrid {
     maxDensity: 0,
     orbit: null,
     orbitColor: 0.5,
+    orbitW: 0,
   };
 }
 
