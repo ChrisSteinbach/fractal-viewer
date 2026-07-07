@@ -159,6 +159,10 @@ export interface UiHandlers {
    * shader's color source (and re-bakes the attribute for the baked modes)
    * without re-running the chaos game. */
   onFourDColor: (mode: FourDColorMode) => void;
+  /** The 4D camera-depth fade (fr-3e0) was toggled. Unlike the session-only
+   * slice/tumble toggles above, this edits the persisted scene document —
+   * it's a look preference like {@link onFourDColor}'s. */
+  onFourDDepthFadeToggle: (checked: boolean) => void;
 }
 
 /**
@@ -709,6 +713,7 @@ export class Ui {
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   private readonly fourDColorSelect: HTMLSelectElement;
+  private readonly fourDDepthFadeToggle: HTMLInputElement;
   private readonly colorModeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
@@ -828,6 +833,7 @@ export class Ui {
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.fourDColorSelect = this.byId("fourDColor");
+    this.fourDDepthFadeToggle = this.byId("fourDDepthFadeToggle");
     this.colorModeRow = this.byId("colorModeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
@@ -1015,6 +1021,9 @@ export class Ui {
     this.fourDColorSelect.addEventListener("change", () =>
       handlers.onFourDColor(this.fourDColorSelect.value as FourDColorMode),
     );
+    this.fourDDepthFadeToggle.addEventListener("change", () =>
+      handlers.onFourDDepthFadeToggle(this.fourDDepthFadeToggle.checked),
+    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -1060,6 +1069,7 @@ export class Ui {
     this.colorGammaSlider.value = String(colorGammaToSlider(state.colorGamma));
     this.colorMode.value = state.colorMode;
     this.fourDColorSelect.value = state.fourDColor;
+    this.fourDDepthFadeToggle.checked = state.fourDDepthFade;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;

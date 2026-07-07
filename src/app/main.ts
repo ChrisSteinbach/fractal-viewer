@@ -72,6 +72,7 @@ import {
   setFlameSupersample,
   setFlameVibrancy,
   setFourDColor,
+  setFourDDepthFade,
   setGlowBrightness,
   setNumPoints,
   setPanelOpen,
@@ -1179,6 +1180,7 @@ function main(): void {
     // Mirror onRenderStyle: never leave a stale glow exposure on a non-glow style.
     if (state.renderStyle !== "glow") scene.setGlowExposure(1);
     scene.setPointSize(state.pointSize);
+    scene.setFourDDepthFade(state.fourDDepthFade);
     scene.setGuidesVisible(state.showGuides);
     scene.setSolidParams(state.solid);
     refreshGuides();
@@ -1378,6 +1380,17 @@ function main(): void {
       // The legend keys off fourDColor while non-flat.
       ui.updateLabels(state);
       applyFourDColor();
+    },
+    onFourDDepthFadeToggle: (checked) => {
+      // A persisted scene-document edit like onFourDColor (NOT session-only
+      // view state like the slice/tumble handlers below), so it routes
+      // through beginSceneEdit for undo + the debounced save. Same
+      // belt-and-braces flat-side guard: the checkbox only shows while
+      // non-flat.
+      if (!viewIs4D) return;
+      beginSceneEdit();
+      state = setFourDDepthFade(state, checked);
+      scene.setFourDDepthFade(checked);
     },
     onRenderStyle: (style) => {
       // renderStyleRow hides while non-flat (the 4D material/render path
@@ -1727,6 +1740,10 @@ function main(): void {
   if (loading) loading.style.display = "none";
   scene.setRenderStyle(state.renderStyle);
   scene.setPointSize(state.pointSize);
+  // Same push for the restored 4D depth-fade toggle (fr-3e0): the uniform
+  // defaults to off, so a scene restored with the fade on would render
+  // without it until the checkbox first moved.
+  scene.setFourDDepthFade(state.fourDDepthFade);
   // Push the restored solid threshold/lighting to the GPU uniforms: without
   // this, a scene restored with non-default solid params would render with
   // voxel-material.ts's hardcoded defaults until a solid slider first moved.

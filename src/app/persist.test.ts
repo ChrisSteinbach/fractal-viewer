@@ -79,6 +79,7 @@ function baseSnapshot(): SceneSnapshot {
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
     fourDColor: "wBlueOrange",
+    fourDDepthFade: false,
     renderStyle: "depthFade",
     showGuides: true,
     flame: {
@@ -1658,6 +1659,35 @@ describe("decodeScene fourDColor", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
+  });
+});
+
+describe("decodeScene fourDDepthFade", () => {
+  it("round-trips an enabled 4D camera-depth fade", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), fourDDepthFade: true };
+    const result = decodeScene(encodeScene(s));
+    expect(result).not.toBeNull();
+    expect(result!.fourDDepthFade).toBe(true);
+  });
+
+  it("defaults to off for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `fourDDepthFade` key at all — exactly what
+    // every link looked like before fr-3e0. Boolean coercion (showGuides's
+    // contract) turns the absent key into the off default, never a rejection.
+    const raw: Partial<SceneSnapshot> = { ...baseSnapshot() };
+    delete raw.fourDDepthFade;
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourDDepthFade).toBe(false);
+  });
+
+  it("coerces a non-boolean fourDDepthFade by truthiness instead of rejecting the scene", () => {
+    // Same spirit as the other cosmetic fields: a hand-crafted payload's
+    // sloppy value must not nuke an otherwise-valid shared link.
+    const raw = { ...baseSnapshot(), fourDDepthFade: 1 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourDDepthFade).toBe(true);
   });
 });
 

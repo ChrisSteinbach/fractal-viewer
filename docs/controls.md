@@ -135,7 +135,16 @@ Transform** sliders that appear in the panel while a transform is selected.
   speed** scales its rate from 0.1× to 3×. **W slice** carves a soft Gaussian
   cross-section out of the cloud (the rest stays as ghost context), its
   position slider sweeping along w — each position is a genuinely different
-  3D fractal. The camera orbits the projection as usual, and Points / Point
+  3D fractal. **Depth fade (dim far points)** (fr-3e0) attenuates each
+  point's contribution with _camera_ distance — the one 3D depth style whose
+  mechanism survives the additive blending (fade-to-black is attenuation;
+  fading toward a haze color would sum across the stacked w-layers and blow
+  out), restoring the camera-z cue the projection otherwise lacks. It is off
+  by default because brightness already encodes |w| (dim gray = near our
+  3-space), and earns its keep in stills — Save PNG, paused video — where
+  motion parallax can't disambiguate depth; unlike the tumble/slice view
+  state it persists across reloads and shared links, exactly like **4D
+  Color**. The camera orbits the projection as usual, and Points / Point
   Size / Regenerate / guides / Save PNG stay live, as do the transform list
   and every transform's editor; **Color Mode**, **Color Contrast**, **Depth
   Style**, the Flame/Solid Render entries, and **Symmetry** all hide, since

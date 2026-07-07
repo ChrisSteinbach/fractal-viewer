@@ -71,6 +71,7 @@ function noopHandlers(): UiHandlers {
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
     onFourDColor: vi.fn(),
+    onFourDDepthFadeToggle: vi.fn(),
   };
 }
 
@@ -2396,6 +2397,36 @@ describe("Ui 4D slice controls (fr-6x2)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("0");
     expect(el("fourDSliceLabel").textContent).toBe("0.00");
+  });
+});
+
+describe("Ui 4D depth-fade control (fr-3e0)", () => {
+  function toggle(): HTMLInputElement {
+    return document.getElementById("fourDDepthFadeToggle") as HTMLInputElement;
+  }
+
+  it("fires onFourDDepthFadeToggle with the checkbox state", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    toggle().checked = true;
+    toggle().dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDDepthFadeToggle).toHaveBeenCalledWith(true);
+  });
+
+  // Unlike the session-only slice/tumble toggles, the fade is part of the
+  // persisted scene document — so updateLabels must reflect a restored state
+  // (boot from a shared link, undo/redo) back into the checkbox.
+  it("syncs the checkbox from state via updateLabels", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels({ ...initialState(true), fourDDepthFade: true });
+    expect(toggle().checked).toBe(true);
+
+    ui.updateLabels(initialState(true));
+    expect(toggle().checked).toBe(false);
   });
 });
 

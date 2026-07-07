@@ -75,6 +75,7 @@ import {
   setFlameSupersample,
   setFlameVibrancy,
   setFourDColor,
+  setFourDDepthFade,
   setGlowBrightness,
   setPointSize,
   setRenderStyle,
@@ -165,6 +166,12 @@ describe("initialState", () => {
   // fresh one) renders exactly as before this option existed.
   it("defaults to the wBlueOrange 4D color mode", () => {
     expect(initialState(true).fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
+  });
+
+  // Off, so a pre-fr-3e0 scene (or a fresh one) renders the 4D projection
+  // exactly as before this option existed.
+  it("defaults the 4D camera-depth fade to off", () => {
+    expect(initialState(true).fourDDepthFade).toBe(false);
   });
 });
 
@@ -866,6 +873,15 @@ describe("setFourDColor", () => {
     const next = setFourDColor(state, "wCyanMagenta");
     expect(next.fourDColor).toBe("wCyanMagenta");
     expect(state.fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
+  });
+});
+
+describe("setFourDDepthFade", () => {
+  it("toggles the 4D camera-depth fade immutably", () => {
+    const state = initialState(true);
+    const next = setFourDDepthFade(state, true);
+    expect(next.fourDDepthFade).toBe(true);
+    expect(state.fourDDepthFade).toBe(false);
   });
 });
 
