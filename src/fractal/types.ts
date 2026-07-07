@@ -112,6 +112,40 @@ export const COLOR_MODES = [
 /** How point colors are derived from the generated cloud. */
 export type ColorMode = (typeof COLOR_MODES)[number];
 
+/**
+ * How the 4D projection view colors points (fr-d47), in UI order. Same
+ * single-source pattern as {@link COLOR_MODES}: this array drives the
+ * {@link FourDColorMode} type and the persistence validator
+ * (`VALID_FOUR_D_COLOR_MODES` in `persist.ts`), so adding a mode is one edit.
+ * The `w…` entries are diverging palettes on the signed rotated 4th
+ * coordinate, colored purely in-shader (see `color.ts`'s `W_SIDE_PALETTES`
+ * and scene.ts's `FOUR_D_VERTEX`); `transform` and `radius` bake a
+ * rotation-invariant per-point color attribute instead (`color.ts`'s
+ * `buildColors4`).
+ */
+export const FOUR_D_COLOR_MODES = [
+  "wBlueOrange",
+  "wPurpleGreen",
+  "wCyanMagenta",
+  "transform",
+  "radius",
+] as const;
+
+/** How the 4D projection derives point colors. */
+export type FourDColorMode = (typeof FOUR_D_COLOR_MODES)[number];
+
+/** The {@link FourDColorMode}s that color in-shader from the signed rotated
+ * w — the diverging "w depth" palettes (see `color.ts`'s `W_SIDE_PALETTES`). */
+export type WDepthColorMode = Exclude<FourDColorMode, "transform" | "radius">;
+
+/** The {@link FourDColorMode}s that bake a rotation-invariant per-point color
+ * attribute on the CPU (see `color.ts`'s `buildColors4`) — the complement of
+ * {@link WDepthColorMode}. */
+export type FourDAttributeColorMode = Extract<
+  FourDColorMode,
+  "transform" | "radius"
+>;
+
 /** Axis-aligned extent of a point cloud, plus radial extent from the origin. */
 export interface Bounds {
   minX: number;

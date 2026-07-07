@@ -4,6 +4,7 @@ import type { FlamePaletteId } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
+  FourDColorMode,
   SymmetryAxis,
   SymmetryParams,
   Transform,
@@ -146,6 +147,15 @@ export interface AppState {
   selectedTransform: number | "final" | null;
   showGuides: boolean;
   colorMode: ColorMode;
+  /**
+   * How the 4D projection view colors points (fr-d47): a diverging signed-w
+   * palette or a baked structural mode — see `fractal/types.ts`'s
+   * {@link FourDColorMode} and `color.ts`'s `buildColors4`. Persists like
+   * `colorMode` / `renderStyle` (NOT session-only, unlike the tumble/slice
+   * view state), and is simply inert while the system is flat — exactly as
+   * `colorMode` is inert while it is non-flat.
+   */
+  fourDColor: FourDColorMode;
   /**
    * Contrast exponent applied to the normalized coordinate in the
    * height/radius/position color modes (fr-8sk, see `color.ts`'s
@@ -417,6 +427,12 @@ export const DEFAULT_COLOR_GAMMA = 1;
 export const MIN_COLOR_GAMMA = 0.2;
 export const MAX_COLOR_GAMMA = 5;
 /**
+ * Default 4D color mode (fr-d47): the original diverging blue/orange w
+ * ramp, so pre-existing scenes (whose links never carried the field) render
+ * exactly as before this option existed.
+ */
+export const DEFAULT_FOUR_D_COLOR: FourDColorMode = "wBlueOrange";
+/**
  * 4D per-map extension (fr-cbg spike) ranges — see `fractal/types.ts`'s
  * `WExtension`. Nothing in THIS module uses them yet: `persist.ts` imports
  * them now to clamp `w` fields on decode, and the upcoming single-editor task
@@ -449,6 +465,7 @@ export function initialState(panelOpen: boolean): AppState {
     showGuides: true,
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
+    fourDColor: DEFAULT_FOUR_D_COLOR,
     renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
@@ -558,6 +575,19 @@ export function setPointSize(state: AppState, pointSize: number): AppState {
 
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
   return { ...state, colorMode };
+}
+
+/**
+ * Set how the 4D projection colors points (fr-d47). Not clamped — it is an
+ * enum (see `fractal/types.ts`'s `FourDColorMode`), and the UI only offers
+ * valid values (persistence validates untrusted input in `decodeScene`), like
+ * {@link setSymmetryAxis}.
+ */
+export function setFourDColor(
+  state: AppState,
+  fourDColor: FourDColorMode,
+): AppState {
+  return { ...state, fourDColor };
 }
 
 /**

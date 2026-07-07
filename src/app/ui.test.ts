@@ -10,6 +10,7 @@ import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS, buildPaletteLUT } from "../fractal/palette";
 import { buildColorModeLUT } from "../fractal/color";
 import { to255 } from "../fractal/vec";
+import { FOUR_D_COLOR_MODES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
@@ -66,6 +67,7 @@ function noopHandlers(): UiHandlers {
     onFourDSliceInput: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
+    onFourDColor: vi.fn(),
   };
 }
 
@@ -632,12 +634,17 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendLabelMid().textContent).toBe("in our 3-space");
     expect(legendLabelHigh().textContent).toBe("+w");
 
-    // Hardcoded on purpose: these pin the legend to FOUR_D_VERTEX's GLSL
-    // constants (scene.ts), which a TS test cannot import. At s = −1 the
-    // shader yields the pure blue side (0.30, 0.60, 1.00), at s = +1 the
-    // pure orange side (1.00, 0.50, 0.18), and at s = 0 the dim gray notch
-    // 0.38 * 0.30 = 0.114 per channel. If the shader palette changes, this
-    // test must change with it — that is the keep-in-sync contract.
+    // Hardcoded on purpose: since fr-d47 the side COLORS are shared DATA
+    // (color.ts's W_SIDE_PALETTES.wBlueOrange, fed to both the shader's
+    // uSideNeg/uSidePos uniforms and this legend) so they can't drift from
+    // each other — but the ramp's SHAPE is still hand-mirrored from
+    // FOUR_D_VERTEX's GLSL (scene.ts), which a TS test cannot import: the
+    // 0.38 gray baseline, the 0.6 magnitude exponent, and the 0.30 + 0.70
+    // brightness scale. At s = −1 the shader yields the pure blue side
+    // (0.30, 0.60, 1.00), at s = +1 the pure orange side (1.00, 0.50, 0.18),
+    // and at s = 0 the dim gray notch 0.38 * 0.30 = 0.114 per channel. If
+    // either the shared palette or the GLSL ramp shape changes, this test
+    // must change with it — that is the keep-in-sync contract.
     const background = legendBar().style.backgroundImage;
     const blue = "rgb(77, 153, 255)";
     const gray = "rgb(29, 29, 29)";
@@ -675,6 +682,92 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendLabelLow().textContent).toBe("low");
     expect(legendLabelMid().textContent).toBe("");
     expect(legendLabelHigh().textContent).toBe("high");
+  });
+
+  // Guards against the dropdown and FOUR_D_COLOR_MODES (fr-d47) drifting
+  // apart — the options must match exactly, in order.
+  it("offers exactly FOUR_D_COLOR_MODES, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#fourDColor option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...FOUR_D_COLOR_MODES]);
+  });
+
+  it("shows the purple/green w ramp for the wPurpleGreen 4D color mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...fourDState(), fourDColor: "wPurpleGreen" });
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelLow().textContent).toBe("−w");
+    expect(legendLabelMid().textContent).toBe("in our 3-space");
+    expect(legendLabelHigh().textContent).toBe("+w");
+
+    // Hardcoded on purpose, exactly like the wBlueOrange test above: these
+    // pin color.ts's W_SIDE_PALETTES.wPurpleGreen data AND the ramp's
+    // mirrored GLSL shape constants (0.38 gray, ^0.6, 0.30 + 0.70).
+    const background = legendBar().style.backgroundImage;
+    const purple = "rgb(158, 97, 255)";
+    const gray = "rgb(29, 29, 29)";
+    const green = "rgb(102, 242, 89)";
+    expect(background).toContain(purple);
+    expect(background).toContain(gray);
+    expect(background).toContain(green);
+    expect(background.indexOf(purple)).toBeLessThan(background.indexOf(gray));
+    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(green));
+  });
+
+  it("shows the cyan/magenta w ramp for the wCyanMagenta 4D color mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...fourDState(), fourDColor: "wCyanMagenta" });
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelLow().textContent).toBe("−w");
+    expect(legendLabelMid().textContent).toBe("in our 3-space");
+    expect(legendLabelHigh().textContent).toBe("+w");
+
+    // Hardcoded on purpose, same rationale as the other two w-depth ramps.
+    const background = legendBar().style.backgroundImage;
+    const cyan = "rgb(51, 217, 242)";
+    const gray = "rgb(29, 29, 29)";
+    const magenta = "rgb(255, 77, 191)";
+    expect(background).toContain(cyan);
+    expect(background).toContain(gray);
+    expect(background).toContain(magenta);
+    expect(background.indexOf(cyan)).toBeLessThan(background.indexOf(gray));
+    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(magenta));
+  });
+
+  it("shows a swatch strip, one per transform, for the 4D transform color mode", () => {
+    const ui = new Ui(document);
+    const state = { ...fourDState(), fourDColor: "transform" as const };
+    ui.updateLabels(state);
+
+    expect(legend().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(true);
+    expect(legendSwatches().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(
+      state.transforms.length,
+    );
+  });
+
+  it("shows the radius gradient bar for the 4D radius color mode, unaffected by color contrast", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...fourDState(), fourDColor: "radius" });
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelLow().textContent).toBe("center");
+    expect(legendLabelHigh().textContent).toBe("edge");
+
+    const neutral = legendBar().style.backgroundImage;
+    ui.updateLabels({
+      ...fourDState(),
+      fourDColor: "radius",
+      colorGamma: MAX_COLOR_GAMMA,
+    });
+    // Gamma-neutral contract: the 4D view never applies colorGamma, so the
+    // baked radius ramp must not react to it either — mirrors the w-ramp's
+    // own "keeps the 4D w ramp fixed as color contrast changes" test above.
+    expect(legendBar().style.backgroundImage).toBe(neutral);
   });
 });
 

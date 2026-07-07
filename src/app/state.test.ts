@@ -10,6 +10,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_POINT_SIZE,
   DEFAULT_SOLID_AMBIENT,
@@ -73,6 +74,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setFourDColor,
   setGlowBrightness,
   setPointSize,
   setRenderStyle,
@@ -157,6 +159,12 @@ describe("initialState", () => {
       order: DEFAULT_SYMMETRY_ORDER,
       axis: DEFAULT_SYMMETRY_AXIS,
     });
+  });
+
+  // The original diverging blue/orange w ramp, so a pre-fr-d47 scene (or a
+  // fresh one) renders exactly as before this option existed.
+  it("defaults to the wBlueOrange 4D color mode", () => {
+    expect(initialState(true).fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
   });
 });
 
@@ -849,6 +857,15 @@ describe("setGlowBrightness", () => {
     expect(setGlowBrightness(initialState(true), -5).glowBrightness).toBe(
       MIN_GLOW_BRIGHTNESS,
     );
+  });
+});
+
+describe("setFourDColor", () => {
+  it("sets the 4D color mode immutably", () => {
+    const state = initialState(true);
+    const next = setFourDColor(state, "wCyanMagenta");
+    expect(next.fourDColor).toBe("wCyanMagenta");
+    expect(state.fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
   });
 });
 

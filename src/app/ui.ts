@@ -3,17 +3,20 @@ import {
   buildColorModeLUT,
   colorModeUsesGamma,
   transformColors,
+  W_SIDE_PALETTES,
 } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
   ColorMode,
+  FourDColorMode,
   SymmetryAxis,
   Transform,
   Variation,
   VariationType,
   Vec3,
+  WDepthColorMode,
   WExtension,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
@@ -145,6 +148,10 @@ export interface UiHandlers {
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
+  /** The 4D color select changed (fr-d47) — the app re-points the 4D
+   * shader's color source (and re-bakes the attribute for the baked modes)
+   * without re-running the chaos game. */
+  onFourDColor: (mode: FourDColorMode) => void;
 }
 
 /**
@@ -448,34 +455,52 @@ function legendGradient(mode: "height" | "radius", colorGamma: number): string {
 const W_RAMP_STOPS = 33;
 
 /**
- * The 4D projection legend's gradient (fr-a3q): the diverging signed-w
- * palette that `FOUR_D_VERTEX` (scene.ts) bakes into the shader, reproduced
+ * Build a 4D projection legend gradient (fr-a3q): the diverging signed-w
+ * palette that `FOUR_D_VERTEX` (scene.ts) computes in the shader, reproduced
  * stop-for-stop from the same math — `m = |s|^0.6`,
- * `mix(vec3(0.38), side, m) * (0.30 + 0.70 * m)` with blue on the −w side and
- * orange on +w — the same can't-drift fidelity bar the colorMode legend sets
- * by sampling `buildColorModeLUT`, except the shader source is GLSL, so the
- * formula is mirrored here (with a keep-in-sync comment there) rather than
- * shared. Two deliberate differences from the coordinate ramps: it is signed
- * (diverging around w = 0, our own 3-space), and it does NOT respond to
- * `colorGamma` — the shader never applies it. Computed once: the ramp is
- * fixed. Since fr-9bk the shader normalizes by the bounds box's w-support at
- * the CURRENT tumble rotation, so the strip's ends mean "the cloud's current
- * w extremes", not fixed w values — which is why the legend labels the ends
+ * `mix(vec3(0.38), side, m) * (0.30 + 0.70 * m)` with `neg` on the −w side
+ * and `pos` on +w — the same can't-drift fidelity bar the colorMode legend
+ * sets by sampling `buildColorModeLUT`. Since fr-d47 the side pair is shared
+ * DATA (`W_SIDE_PALETTES`, also feeding the shader's uSideNeg/uSidePos
+ * uniforms), so only the ramp's SHAPE constants remain mirrored from the GLSL
+ * (with a keep-in-sync comment there). Two deliberate differences from the
+ * coordinate ramps: it is signed (diverging around w = 0, our own 3-space),
+ * and it does NOT respond to `colorGamma` — the shader never applies it.
+ * Since fr-9bk the shader normalizes by the bounds box's w-support at the
+ * CURRENT tumble rotation, so the strip's ends mean "the cloud's current w
+ * extremes", not fixed w values — which is why the legend labels the ends
  * with signs, not numbers.
  */
-const W_RAMP_GRADIENT = (() => {
+function wRampGradient(neg: Vec3, pos: Vec3): string {
   const stops: string[] = [];
   for (let i = 0; i < W_RAMP_STOPS; i++) {
     const s = (i / (W_RAMP_STOPS - 1)) * 2 - 1;
     const m = Math.pow(Math.abs(s), 0.6);
-    const [sideR, sideG, sideB] = s < 0 ? [0.3, 0.6, 1.0] : [1.0, 0.5, 0.18];
+    const [sideR, sideG, sideB] = s < 0 ? neg : pos;
     const brightness = 0.3 + 0.7 * m;
     const mixChannel = (side: number): number =>
       (0.38 + (side - 0.38) * m) * brightness;
     stops.push(cssRgb(mixChannel(sideR), mixChannel(sideG), mixChannel(sideB)));
   }
   return `linear-gradient(to right, ${stops.join(", ")})`;
-})();
+}
+
+/** One prebuilt legend gradient per w-depth palette — the ramps are fixed, so
+ * they're computed once at module load like the old single W_RAMP_GRADIENT. */
+const W_RAMP_GRADIENTS: Record<WDepthColorMode, string> = {
+  wBlueOrange: wRampGradient(
+    W_SIDE_PALETTES.wBlueOrange.neg,
+    W_SIDE_PALETTES.wBlueOrange.pos,
+  ),
+  wPurpleGreen: wRampGradient(
+    W_SIDE_PALETTES.wPurpleGreen.neg,
+    W_SIDE_PALETTES.wPurpleGreen.pos,
+  ),
+  wCyanMagenta: wRampGradient(
+    W_SIDE_PALETTES.wCyanMagenta.neg,
+    W_SIDE_PALETTES.wCyanMagenta.pos,
+  ),
+};
 
 /**
  * The human-readable name for a palette id, read from the panel `<select>`
@@ -666,6 +691,7 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
+  private readonly fourDColorSelect: HTMLSelectElement;
   private readonly colorModeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
@@ -777,6 +803,7 @@ export class Ui {
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
+    this.fourDColorSelect = this.byId("fourDColor");
     this.colorModeRow = this.byId("colorModeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
@@ -946,6 +973,9 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
+    this.fourDColorSelect.addEventListener("change", () =>
+      handlers.onFourDColor(this.fourDColorSelect.value as FourDColorMode),
+    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -980,6 +1010,7 @@ export class Ui {
     this.colorGammaLabel.textContent = state.colorGamma.toFixed(2);
     this.colorGammaSlider.value = String(colorGammaToSlider(state.colorGamma));
     this.colorMode.value = state.colorMode;
+    this.fourDColorSelect.value = state.fourDColor;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;
     this.autoUpdate.checked = state.autoUpdate;
@@ -1181,10 +1212,14 @@ export class Ui {
    * the current view's colors mean. Three families, checked in priority
    * order:
    *
-   * - 4D projection (non-flat system): the diverging signed-w ramp baked
-   *   into `FOUR_D_VERTEX` (see {@link W_RAMP_GRADIENT}), labeled "−w" /
-   *   "in our 3-space" / "+w". Color comes from the rotated 4th coordinate
-   *   in-shader, so `colorMode` (even "uniform") is irrelevant here.
+   * - 4D projection (non-flat system): keyed by `state.fourDColor` (fr-d47).
+   *   The w-depth modes show their diverging signed-w ramp (see
+   *   {@link W_RAMP_GRADIENTS}) labeled "−w" / "in our 3-space" / "+w"; the
+   *   baked "transform" mode shows the same per-transform swatch strip as the
+   *   3D mode of that name (identical palette); "radius" shows the 3D radius
+   *   ramp's bar — gamma-neutral, since the 4D view never applies
+   *   colorGamma — labeled center/edge. `colorMode` (even "uniform") is
+   *   irrelevant here.
    * - Palette-driven renders — flame always, solid with a non-"legacy"
    *   palette: the active gradient palette's strip sampled from
    *   {@link buildPaletteLUT} (the very table the render's hot loop indexes),
@@ -1205,7 +1240,19 @@ export class Ui {
    */
   private updateLegend(state: AppState, nonFlat: boolean): void {
     if (nonFlat) {
-      this.showLegendBar(W_RAMP_GRADIENT, "−w", "in our 3-space", "+w");
+      const mode = state.fourDColor;
+      if (mode === "transform") {
+        this.showLegendSwatchStrip(state.transforms.length);
+        return;
+      }
+      if (mode === "radius") {
+        // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
+        // cloud's 4D center. Gamma-neutral: the 4D shader never applies
+        // colorGamma, so the legend must not pretend it does.
+        this.showLegendBar(legendGradient("radius", 1), "center", "", "edge");
+        return;
+      }
+      this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");
       return;
     }
 
@@ -1244,17 +1291,30 @@ export class Ui {
       );
       return;
     }
-    // position / transform: no gradient bar, a text note or swatch strip.
+    if (mode === "transform") {
+      this.showLegendSwatchStrip(state.transforms.length);
+      return;
+    }
+    // position: no gradient bar, a short axis-mapping note.
     this.legend.classList.remove("hidden");
     this.legendBar.classList.add("hidden");
     this.legendLabels.classList.add("hidden");
-    this.legendSwatches.classList.toggle("hidden", mode !== "transform");
-    this.legendText.classList.toggle("hidden", mode !== "position");
-    if (mode === "position") {
-      this.legendText.textContent = "X→R Y→G Z→B";
-    } else {
-      this.renderLegendSwatches(state.transforms.length);
-    }
+    this.legendSwatches.classList.add("hidden");
+    this.legendText.classList.remove("hidden");
+    this.legendText.textContent = "X→R Y→G Z→B";
+  }
+
+  /** Show the legend as the per-transform swatch strip, hiding the bar/text
+   * variants — shared by the 3D "By Transform" color mode and the 4D
+   * projection's baked transform mode (fr-d47), which use the identical
+   * {@link transformColors} palette. */
+  private showLegendSwatchStrip(count: number): void {
+    this.legend.classList.remove("hidden");
+    this.legendBar.classList.add("hidden");
+    this.legendLabels.classList.add("hidden");
+    this.legendSwatches.classList.remove("hidden");
+    this.legendText.classList.add("hidden");
+    this.renderLegendSwatches(count);
   }
 
   /** Show the legend as a gradient bar with low/mid/high labels (empty

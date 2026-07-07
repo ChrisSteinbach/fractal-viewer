@@ -94,11 +94,17 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **4D View** — appears once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
   becomes an orthographic projection of a slow double rotation (XY+ZW),
-  colored by a diverging palette on the rotated 4th coordinate — cool blue
-  toward −w, warm orange toward +w, dim gray ≈ our own 3-space, spelled out
-  right in the panel — with additive translucency so the w-layers a
-  projection folds together stay _visible_ and sum toward white where they
-  cross. Load **Pentatope Gasket** or **Double-Rotation Spiral** from the
+  colored per the **4D Color** select (fr-d47), spelled out right in the
+  panel: three diverging palettes on the rotated 4th coordinate — **W Depth
+  (blue / orange)** (the default), purple / green, or cyan / magenta, cool
+  toward −w and warm toward +w — or two rotation-invariant modes, **By
+  Transform** and **By 4D Radius (warm→cool)**, which still dim toward gray
+  as |w| → 0 so the fourth dimension stays legible either way; the legend
+  keys whichever choice is active, and — unlike the tumble/slice view below
+  — the choice persists across reloads and shared links. Rendered either way
+  with additive translucency so the w-layers a projection folds together
+  stay _visible_ and sum toward white where they cross. Load **Pentatope
+  Gasket** or **Double-Rotation Spiral** from the
   Presets dropdown's **4D** group to see one immediately (with, for the
   pentatope and **Show guides** on, the 5-cell's wireframe tumbling through
   the same rotation) — or turn any flat system non-flat yourself: every

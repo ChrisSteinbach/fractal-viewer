@@ -1,5 +1,13 @@
 import type { ChaosGameResult } from "./chaos-game";
-import type { ColorMode, Transform, Vec3 } from "./types";
+import type { ChaosGame4Result } from "./chaos-game-4d";
+import type {
+  ColorMode,
+  FourDAttributeColorMode,
+  FourDColorMode,
+  Transform,
+  Vec3,
+  WDepthColorMode,
+} from "./types";
 
 function hue2rgb(q: number, p: number, t: number): number {
   let h = t;
@@ -251,4 +259,109 @@ export function buildColors(
  * Single source of truth: the UI's slider-row visibility keys on this. */
 export function colorModeUsesGamma(mode: ColorMode): boolean {
   return mode === "height" || mode === "radius" || mode === "position";
+}
+
+/**
+ * The diverging side-color pairs for the 4D projection's "w depth" color
+ * modes (fr-d47): `neg` tints the −w side of our 3-space, `pos` the +w side,
+ * and the shader mixes either toward a dim gray notch as |rotated w| → 0
+ * (scene.ts's `FOUR_D_VERTEX`). Every pair keeps the original blue/orange
+ * ramp's conventions: the cool color sits on −w, and the pair's additive sum
+ * pushes toward white, so genuine 4D self-overlap still flags itself in a
+ * color no single point can have. Plain data rather than GLSL constants, so
+ * the shader uniforms (scene.ts), the panel legend (ui.ts), and the tests all
+ * read the ONE definition and can never drift on the palette itself — only
+ * the ramp's shape constants remain mirrored in GLSL (see ui.ts's
+ * `wRampGradient`).
+ */
+export const W_SIDE_PALETTES: Record<
+  WDepthColorMode,
+  { neg: Vec3; pos: Vec3 }
+> = {
+  wBlueOrange: { neg: [0.3, 0.6, 1.0], pos: [1.0, 0.5, 0.18] },
+  wPurpleGreen: { neg: [0.62, 0.38, 1.0], pos: [0.4, 0.95, 0.35] },
+  wCyanMagenta: { neg: [0.2, 0.85, 0.95], pos: [1.0, 0.3, 0.75] },
+};
+
+/**
+ * True for the 4D color modes that bake a per-point color attribute
+ * ({@link buildColors4}) rather than coloring purely in-shader from the
+ * rotated w. Single source of truth for the bake-vs-uniform dispatch
+ * (main.ts's `applyFourDColor`); the type-guard return narrows the mode for
+ * `buildColors4`'s signature on one side and `W_SIDE_PALETTES` lookups on the
+ * other.
+ */
+export function fourDColorNeedsAttribute(
+  mode: FourDColorMode,
+): mode is FourDAttributeColorMode {
+  return mode === "transform" || mode === "radius";
+}
+
+/**
+ * Build the per-point color-attribute buffer for the 4D projection's baked
+ * color modes (fr-d47) — the modes whose color does NOT depend on the live 4D
+ * view rotation and so can be computed once per generation:
+ *
+ * - `"transform"`: the same evenly-spaced-hue palette as the 3D "By
+ *   Transform" mode ({@link transformColors}), keyed by the transform that
+ *   produced each point. Rotation-invariant by construction.
+ * - `"radius"`: the same warm→cool ramp as the 3D "By Radius" mode (the ONE
+ *   ramp definition, via {@link buildColorModeLUT}'s radius writer), over
+ *   each point's 4D Euclidean distance from the cloud's 4D `center`,
+ *   normalized against the actual min→max distance range the way
+ *   `buildColors`' radius branch normalizes — so the full ramp is always in
+ *   play (the fr-9bk spirit). A 4D view rotation about `center` preserves
+ *   every such distance, so the baked colors stay honest at every tumble
+ *   angle.
+ *
+ * The shader treats the baked color exactly like a w-depth side color — it
+ * still mixes toward the dim gray notch as |rotated w| → 0 (scene.ts's
+ * `FOUR_D_VERTEX`) — so the fourth dimension stays legible in brightness
+ * while hue carries the structural information. The w-depth modes never call
+ * this; their color is a pure function of the rotated w and lives entirely in
+ * the shader (see {@link W_SIDE_PALETTES}).
+ *
+ * `colorGamma` deliberately does not apply: the 4D view hides the contrast
+ * control and never applied gamma to color (see ui.ts's legend contract).
+ */
+export function buildColors4(
+  result: ChaosGame4Result,
+  transformCount: number,
+  mode: FourDAttributeColorMode,
+): Float32Array {
+  const { positions, w, transformIndices, count, center } = result;
+  const colors = new Float32Array(count * 3);
+
+  if (mode === "transform") {
+    const tColors = transformColors(transformCount);
+    for (let i = 0; i < count; i++) {
+      const rgb = tColors[transformIndices[i]] ?? [1, 1, 1];
+      const o = i * 3;
+      colors[o] = rgb[0];
+      colors[o + 1] = rgb[1];
+      colors[o + 2] = rgb[2];
+    }
+    return colors;
+  }
+
+  // radius: two passes — distances (tracking min/max) first, then colors —
+  // with the same degenerate-range `|| 1` guard as buildColors.
+  const dist = new Float32Array(count);
+  let minD = Infinity;
+  let maxD = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const dx = positions[i * 3] - center[0];
+    const dy = positions[i * 3 + 1] - center[1];
+    const dz = positions[i * 3 + 2] - center[2];
+    const dw = w[i] - center[3];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+    dist[i] = d;
+    if (d < minD) minD = d;
+    if (d > maxD) maxD = d;
+  }
+  const range = maxD - minD || 1;
+  for (let i = 0; i < count; i++) {
+    writeRadiusColor(colors, i * 3, (dist[i] - minD) / range);
+  }
+  return colors;
 }

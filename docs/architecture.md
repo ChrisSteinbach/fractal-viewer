@@ -209,20 +209,28 @@ suppression — that would otherwise re-derive it every frame or pointer move. A
 flat system takes the untouched `runChaosGame` path, byte-identical to before
 this feature existed; a non-flat one lifts every transform (and the enabled final
 transform, if any) through `toTransform4` and calls `runChaosGame4` instead,
-uploading the result with `scene.setPoints4` rather than `scene.setPoints` — there
-is no CPU color buffer to build, since 4D color is computed in the shader. Flame,
-solid, and rotational symmetry stay 3D-only by design — a recorded decision
-(fr-bf6), not an oversight — and simply hide their controls whenever the system
-is non-flat rather than being generalized to a fourth dimension.
+uploading the result with `scene.setPoints4` rather than `scene.setPoints`. Point
+color is a separate concern from generating the cloud — see below. Flame, solid,
+and rotational symmetry stay 3D-only by design — a recorded decision (fr-bf6),
+not an oversight — and simply hide their controls whenever the system is
+non-flat rather than being generalized to a fourth dimension.
 
 Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
 point about the cloud's 4D center by a `uRot4` uniform, drops the rotated `w` to
-project orthographically, and colors the point in-shader from the signed rotated
-`w`, normalized by the cloud's 4D bounding box's support in the rotated-w
-direction (`rotor4.ts`'s `wSupport`, rotation-covariant so anisotropic clouds
-never wash out toward gray) — a diverging palette, cool blue toward `−w`, warm
-orange toward `+w`, dim gray near `w = 0`, rendered with additive blending so the
+project orthographically, and colors the point according to the panel's **4D
+Color** select (fr-d47). Three of its five modes are diverging palettes on the
+signed rotated `w` — blue/orange (the default), purple/green, or cyan/magenta,
+each a `{neg, pos}` pair in `color.ts`'s `W_SIDE_PALETTES` fed to the shader as
+uniforms — toward `−w`/`+w`; the other two swap in a rotation-invariant
+per-point color instead, baked once per generation into a color attribute by
+`color.ts`'s `buildColors4` (by producing transform, or by 4D distance from the
+cloud's 4D center). Either way the signed rotated `w` — which picks the
+diverging side and, in every mode, drives the dim gray notch near `w = 0` — is
+normalized by the cloud's 4D bounding box's support in the rotated-w direction
+(`rotor4.ts`'s `wSupport`, rotation-covariant so anisotropic clouds never wash
+out toward gray), so the fourth dimension stays legible in brightness no matter
+which mode is active. The projection renders with additive blending so the
 several w-layers an orthographic projection folds onto the same screen pixel stay
 visible and sum toward white where they overlap, instead of the nearest layer
 hiding the rest. `uRot4` is driven from `rotor4.ts`, which represents the

@@ -1,6 +1,7 @@
 import {
   buildColorModeLUT,
   buildColors,
+  buildColors4,
   colorModeUsesGamma,
   hslToRgb,
   transformColors,
@@ -9,7 +10,8 @@ import { runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import { defaultTransforms } from "./presets";
 import type { ChaosGameResult } from "./chaos-game";
-import type { Bounds } from "./types";
+import type { ChaosGame4Result } from "./chaos-game-4d";
+import type { Bounds, Bounds4 } from "./types";
 
 function expectRgbClose(actual: number[], expected: number[]): void {
   expected.forEach((value, i) => expect(actual[i]).toBeCloseTo(value, 4));
@@ -335,5 +337,109 @@ describe("buildColorModeLUT", () => {
       [contrasty[last], contrasty[last + 1], contrasty[last + 2]],
       [linear[last], linear[last + 1], linear[last + 2]],
     );
+  });
+});
+
+/** Bounds4 plays no part in buildColors4 (it reads `center`/`positions`/`w`
+ * directly, never the box) — zeroed out so the fixtures below can stay
+ * literal about the fields that actually matter. */
+function zeroBounds4(): Bounds4 {
+  return {
+    minX: 0,
+    maxX: 0,
+    minY: 0,
+    maxY: 0,
+    minZ: 0,
+    maxZ: 0,
+    minW: 0,
+    maxW: 0,
+  };
+}
+
+describe("buildColors4", () => {
+  it("transform mode colors each point by its producing transform", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      w: new Float32Array([0, 0, 0]),
+      transformIndices: new Uint8Array([0, 2, 1]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+    };
+    const colors = buildColors4(result, 3, "transform");
+    const palette = transformColors(3);
+    for (let i = 0; i < 3; i++) {
+      const rgb = palette[result.transformIndices[i]];
+      const o = i * 3;
+      expect(colors[o]).toBeCloseTo(rgb[0], 5);
+      expect(colors[o + 1]).toBeCloseTo(rgb[1], 5);
+      expect(colors[o + 2]).toBeCloseTo(rgb[2], 5);
+    }
+  });
+
+  it("transform mode falls back to white for an out-of-range index", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0]),
+      w: new Float32Array([0]),
+      transformIndices: new Uint8Array([7]),
+      count: 1,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+    };
+    const colors = buildColors4(result, 2, "transform");
+    expect(colors[0]).toBeCloseTo(1, 5);
+    expect(colors[1]).toBeCloseTo(1, 5);
+    expect(colors[2]).toBeCloseTo(1, 5);
+  });
+
+  it("radius mode spans the warm→cool ramp over 4D distance from the center", () => {
+    // center [0,0,0,0]; point 0 sits AT the center (d=0, nearest); point 1 is
+    // 1 unit away in x (d=1); point 2 is 2 units away in w ALONE (d=2) — a
+    // pure-w offset, so this only comes out farthest if the distance is
+    // genuinely 4D (a 3D-only radius would read it as 0).
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 0]),
+      w: new Float32Array([0, 0, 2]),
+      transformIndices: new Uint8Array([0, 0, 0]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 2,
+    };
+    const colors = buildColors4(result, 1, "radius");
+    const near = hslToRgb(0, 0.85, 0.55);
+    const far = hslToRgb(0.7, 0.85, 0.55);
+    expect(colors[0]).toBeCloseTo(near[0], 5);
+    expect(colors[1]).toBeCloseTo(near[1], 5);
+    expect(colors[2]).toBeCloseTo(near[2], 5);
+    expect(colors[6]).toBeCloseTo(far[0], 5);
+    expect(colors[7]).toBeCloseTo(far[1], 5);
+    expect(colors[8]).toBeCloseTo(far[2], 5);
+  });
+
+  it("radius mode is NaN-free when every point is equidistant", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([1, 0, 0, 0, 1, 0]),
+      w: new Float32Array([0, 0]),
+      transformIndices: new Uint8Array([0, 0]),
+      count: 2,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+    };
+    const colors = buildColors4(result, 1, "radius");
+    expect(colors).toHaveLength(6);
+    for (const channel of colors) expect(Number.isFinite(channel)).toBe(true);
+    // minD === maxD here, so the `|| 1` degenerate-range guard kicks in and
+    // every point normalizes to t=0 — the warm end of the ramp.
+    const warm = hslToRgb(0, 0.85, 0.55);
+    expect(colors[0]).toBeCloseTo(warm[0], 5);
+    expect(colors[1]).toBeCloseTo(warm[1], 5);
+    expect(colors[2]).toBeCloseTo(warm[2], 5);
+    expect(colors[3]).toBeCloseTo(warm[0], 5);
+    expect(colors[4]).toBeCloseTo(warm[1], 5);
+    expect(colors[5]).toBeCloseTo(warm[2], 5);
   });
 });

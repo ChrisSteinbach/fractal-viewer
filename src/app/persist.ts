@@ -11,9 +11,15 @@
 import { isFlatTransform } from "../fractal/affine4";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
-import { COLOR_MODES, SYMMETRY_AXES, VARIATION_TYPES } from "../fractal/types";
+import {
+  COLOR_MODES,
+  FOUR_D_COLOR_MODES,
+  SYMMETRY_AXES,
+  VARIATION_TYPES,
+} from "../fractal/types";
 import type {
   ColorMode,
+  FourDColorMode,
   SymmetryAxis,
   SymmetryParams,
   Transform,
@@ -24,6 +30,7 @@ import type {
 } from "../fractal/types";
 import {
   DEFAULT_COLOR_GAMMA,
+  DEFAULT_FOUR_D_COLOR,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
   DEFAULT_ESTIMATOR_RADIUS,
@@ -110,6 +117,12 @@ export interface SceneSnapshot {
    * present, not session-only.
    */
   colorGamma: number;
+  /**
+   * 4D projection color mode (fr-d47, see {@link AppState.fourDColor}).
+   * Persists like `colorMode` — always present, not session-only (unlike the
+   * tumble/slice view state, which never persists).
+   */
+  fourDColor: FourDColorMode;
   renderStyle: RenderStyle;
   showGuides: boolean;
   /**
@@ -159,6 +172,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     pointSize: state.pointSize,
     colorMode: state.colorMode,
     colorGamma: state.colorGamma,
+    fourDColor: state.fourDColor,
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
     flame: state.flame,
@@ -195,6 +209,9 @@ const STORAGE_KEY = "fractal-viewer:scene";
 
 /** Exact set of valid ColorMode values for strict validation of untrusted input. */
 const VALID_COLOR_MODES = new Set<string>(COLOR_MODES);
+
+/** Exact set of valid FourDColorMode values (fr-d47). */
+const VALID_FOUR_D_COLOR_MODES = new Set<string>(FOUR_D_COLOR_MODES);
 
 /** Exact set of valid RenderStyle values. */
 const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
@@ -771,6 +788,7 @@ export function encodeScene(s: SceneSnapshot): string {
     pointSize: number;
     colorMode: ColorMode;
     colorGamma: number;
+    fourDColor: FourDColorMode;
     renderStyle: RenderStyle;
     showGuides: boolean;
     flame: FlameParams;
@@ -785,6 +803,9 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written, like glowBrightness — a small, always-present setting,
     // not a per-transform optional feature like finalTransform/weight/shear.
     colorGamma: round4(s.colorGamma),
+    // Always written for the same reason — even for a flat system, where it
+    // is inert exactly the way colorMode is inert for a non-flat one.
+    fourDColor: s.fourDColor,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
     // Always written, like numPoints/pointSize (not conditionally omitted
@@ -854,7 +875,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * rejecting the scene. colorGamma (fr-8sk) follows the identical contract:
  * clamps to [{@link MIN_COLOR_GAMMA}, {@link MAX_COLOR_GAMMA}], falling back
  * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
- * rejecting the scene.
+ * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.axis
+ * and shares its quiet fallback: absent (any pre-fr-d47 link) or unrecognized
+ * values become {@link DEFAULT_FOUR_D_COLOR}, never a rejection.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -948,6 +971,17 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       Math.min(MAX_COLOR_GAMMA, colorGamma),
     );
 
+    // fourDColor (fr-d47): how the 4D projection colors points. Same quiet-
+    // fallback contract as symmetry.axis / flame.paletteId, NOT colorMode's
+    // strict reject: an absent (every pre-fr-d47 link) or unrecognized value
+    // falls back to the default blue/orange ramp — a 4D palette choice is
+    // cosmetic, not worth losing an otherwise-valid shared link over.
+    const fourDColor: FourDColorMode =
+      typeof o.fourDColor === "string" &&
+      VALID_FOUR_D_COLOR_MODES.has(o.fourDColor)
+        ? (o.fourDColor as FourDColorMode)
+        : DEFAULT_FOUR_D_COLOR;
+
     return {
       transforms,
       finalTransform,
@@ -955,6 +989,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       pointSize,
       colorMode: colorMode as ColorMode,
       colorGamma,
+      fourDColor,
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
       flame,
