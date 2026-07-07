@@ -9,6 +9,7 @@
 // fallback for browsers that cannot record MP4 (e.g. Firefox).
 
 import { patchMp4Duration } from "./mp4-duration";
+import { patchWebmDuration } from "./webm-duration";
 
 /** Hard cap on clip length. X's free tier allows 140s; Bluesky less. */
 export const MAX_RECORDING_SECONDS = 120;
@@ -208,18 +209,26 @@ async function finishClip(
   durationMs: number,
 ): Promise<void> {
   let clip = blob;
-  if (mime.startsWith("video/mp4")) {
-    try {
-      // Chrome's fragmented-MP4 recordings leave the moov durations at 0,
-      // which upload probes (e.g. Bluesky's) reject — write the real
-      // duration into the container before handing the file over (fr-ex2).
-      const bytes = new Uint8Array(await blob.arrayBuffer());
+  try {
+    // MediaRecorder streams the container out before the clip's length is
+    // known, so both muxers leave broken duration metadata that upload
+    // probes (e.g. Bluesky's) reject: Chrome's fragmented MP4 keeps the
+    // moov durations at 0 (fr-ex2) and WebM ships a zero or missing
+    // Segment Info Duration (fr-87q). Write the real wall-clock duration
+    // into the container before handing the file over.
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (mime.startsWith("video/mp4")) {
       if (patchMp4Duration(bytes, durationMs)) {
         clip = new Blob([bytes], { type: mime });
       }
-    } catch {
-      // Keep the unpatched clip rather than losing the recording.
+    } else if (mime.startsWith("video/webm")) {
+      const patched = patchWebmDuration(bytes, durationMs);
+      if (patched !== undefined) {
+        clip = new Blob([patched], { type: mime });
+      }
     }
+  } catch {
+    // Keep the unpatched clip rather than losing the recording.
   }
   downloadBlob(clip, filename);
 }
