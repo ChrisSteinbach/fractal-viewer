@@ -179,6 +179,19 @@ const DOF_FRAGMENT = /* glsl */ `
 // window in the signed rotated w, swept by a slider — depth-of-field in the
 // fourth dimension. Points outside the slice keep a floor of visibility so the
 // full projection stays as ghost context around the vivid cross-section.
+//
+// The opt-in camera-depth fade (fr-3e0) rides it too: attenuating each point's
+// contribution with CAMERA distance is the one 3D depth style whose mechanism
+// survives additive blending — fading toward black IS attenuation, which
+// composes under addition, whereas fading toward any brighter fog color would
+// add that color once per stacked layer and blow out. It restores the
+// camera-z cue the projection otherwise lacks (post-processing never runs
+// here — see render()), which matters most in stills, where motion parallax
+// can't help. Off by default: brightness already encodes |w| (dim gray = near
+// our 3-space), so the fade deliberately trades some of that legibility for
+// camera depth. The near/far band re-brackets the projected cloud every
+// rendered frame (updateFourDFade), mirroring updateFog's band for the 3D
+// styles.
 const FOUR_D_VERTEX = /* glsl */ `
   uniform mat4 uRot4;
   uniform vec4 uCenter4;
@@ -189,6 +202,9 @@ const FOUR_D_VERTEX = /* glsl */ `
   uniform float uSliceOn;
   uniform float uSliceCenter;
   uniform float uSliceWidth;
+  uniform float uFadeOn;
+  uniform float uFadeNear;
+  uniform float uFadeFar;
   uniform vec3 uSideNeg;
   uniform vec3 uSidePos;
   uniform float uUseAttrColor;
@@ -241,6 +257,14 @@ const FOUR_D_VERTEX = /* glsl */ `
     // minus its circle-of-confusion term: the same size-attenuation formula.
     vec4 mv = modelViewMatrix * vec4(projected, 1.0);
     float dist = -mv.z;
+
+    // Opt-in camera-depth fade (fr-3e0, see the header comment): attenuate
+    // the contribution toward zero across the [uFadeNear, uFadeFar] band —
+    // fade-to-black is the additive-blending-safe analog of the 3D depthFade
+    // style's fog. smoothstep rather than fog's linear ramp so the band's
+    // edges land softly; the band brackets the cloud with the same margin.
+    if (uFadeOn > 0.5) vAlpha *= 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
+
     gl_PointSize = uSize * (uHalfHeight / dist);
     gl_Position = projectionMatrix * mv;
   }
@@ -475,6 +499,9 @@ export class FractalScene {
         uSliceOn: { value: 0 },
         uSliceCenter: { value: 0 },
         uSliceWidth: { value: FOUR_D_SLICE_WIDTH },
+        uFadeOn: { value: 0 },
+        uFadeNear: { value: 1 },
+        uFadeFar: { value: 10 },
         uSideNeg: {
           value: new THREE.Vector3(...W_SIDE_PALETTES.wBlueOrange.neg),
         },
@@ -983,6 +1010,17 @@ export class FractalScene {
   }
 
   /**
+   * Enable/disable the 4D projection's camera-depth fade (fr-3e0): dim each
+   * point's additive contribution with camera distance — see FOUR_D_VERTEX's
+   * header for why fade-to-black is the only 3D depth style that survives
+   * additive blending. One uniform write; the near/far band itself follows
+   * the camera per rendered frame via {@link updateFourDFade}.
+   */
+  setFourDDepthFade(on: boolean): void {
+    this.fourDMaterial.uniforms.uFadeOn.value = on ? 1 : 0;
+  }
+
+  /**
    * Scale every render style's points by `multiplier` (1 = authored size).
    * Applied to all materials at once so switching styles preserves the choice.
    */
@@ -1022,6 +1060,38 @@ export class FractalScene {
     fog.far = far;
   }
 
+  /**
+   * Re-bracket the camera-depth fade band around the projected 4D cloud — the
+   * 4D sibling of {@link updateFog}, sharing its margin and minimum band.
+   * Called from {@link render} on every 4D frame (the camera is final by
+   * then), so the band is already current whenever the toggle switches the
+   * fade on. The radius must be the 4D bounding ball's — the length of the
+   * halfExtents 4-vector, around uCenter4.xyz — because the stored xyz
+   * attribute only bounds the UN-rotated projection: once w-extent rotates
+   * into view the cloud projects wider, while the 4D ball bounds it at every
+   * tumble angle (the same argument as setPoints4's bounding-sphere comment).
+   */
+  private updateFourDFade(): void {
+    const u = this.fourDMaterial.uniforms;
+    if (u.uFadeOn.value === 0) return;
+    const [hx, hy, hz, hw] = this.fourDHalfExtents;
+    const radius = Math.hypot(hx, hy, hz, hw);
+    const c = u.uCenter4.value as THREE.Vector4;
+    const camDist = Math.hypot(
+      this.camera.position.x - c.x,
+      this.camera.position.y - c.y,
+      this.camera.position.z - c.z,
+    );
+    let near = Math.max(0.1, camDist - radius * FOG_MARGIN);
+    let far = camDist + radius * FOG_MARGIN;
+    if (far - near < 0.5) {
+      near = camDist - 0.5;
+      far = camDist + 0.5;
+    }
+    u.uFadeNear.value = near;
+    u.uFadeFar.value = far;
+  }
+
   resize(width: number, height: number): void {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
@@ -1040,7 +1110,10 @@ export class FractalScene {
     // style's post-processing (bloom / EDL / DOF focus) over it would restyle
     // the projection unpredictably — including in captureFrame's PNG export.
     // The recorded style still drives fog/background until the user exits.
+    // The camera-depth fade (fr-3e0) is part of the 4D material itself, not
+    // post-processing, so "plain" rendering still carries it.
     if (this.fourDActive) {
+      this.updateFourDFade();
       this.renderer.render(this.scene, this.camera);
       return;
     }

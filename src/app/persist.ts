@@ -123,6 +123,12 @@ export interface SceneSnapshot {
    * tumble/slice view state, which never persists).
    */
   fourDColor: FourDColorMode;
+  /**
+   * 4D camera-depth fade toggle (fr-3e0, see {@link AppState.fourDDepthFade}).
+   * Persists like `fourDColor` — always present, not session-only (unlike the
+   * tumble/slice view state, which never persists).
+   */
+  fourDDepthFade: boolean;
   renderStyle: RenderStyle;
   showGuides: boolean;
   /**
@@ -173,6 +179,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     colorMode: state.colorMode,
     colorGamma: state.colorGamma,
     fourDColor: state.fourDColor,
+    fourDDepthFade: state.fourDDepthFade,
     renderStyle: state.renderStyle,
     showGuides: state.showGuides,
     flame: state.flame,
@@ -789,6 +796,7 @@ export function encodeScene(s: SceneSnapshot): string {
     colorMode: ColorMode;
     colorGamma: number;
     fourDColor: FourDColorMode;
+    fourDDepthFade: boolean;
     renderStyle: RenderStyle;
     showGuides: boolean;
     flame: FlameParams;
@@ -806,6 +814,8 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written for the same reason — even for a flat system, where it
     // is inert exactly the way colorMode is inert for a non-flat one.
     fourDColor: s.fourDColor,
+    // Always written, exactly like fourDColor above (fr-3e0).
+    fourDDepthFade: s.fourDDepthFade,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
     // Always written, like numPoints/pointSize (not conditionally omitted
@@ -877,7 +887,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
  * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.axis
  * and shares its quiet fallback: absent (any pre-fr-d47 link) or unrecognized
- * values become {@link DEFAULT_FOUR_D_COLOR}, never a rejection.
+ * values become {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade
+ * (fr-3e0) follows showGuides's boolean-coercion contract: any truthy value is
+ * on, and absent (any pre-fr-3e0 link) coerces to off — the default.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -990,6 +1002,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       colorMode: colorMode as ColorMode,
       colorGamma,
       fourDColor,
+      fourDDepthFade: Boolean(o.fourDDepthFade),
       renderStyle: renderStyle as RenderStyle,
       showGuides: Boolean(o.showGuides),
       flame,

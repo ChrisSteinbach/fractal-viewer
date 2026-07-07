@@ -157,6 +157,19 @@ export interface AppState {
    */
   fourDColor: FourDColorMode;
   /**
+   * Camera-depth fade for the 4D projection view (fr-3e0): dim each point's
+   * additive contribution with camera distance, restoring the camera-z cue
+   * the 4D path otherwise lacks (the 3D "Depth Style" never reaches it — see
+   * `scene.ts`'s render()/setRenderStyle guards). Opt-in (default off)
+   * because the 4D shader already spends luminance on |w| — dim gray means
+   * "near our 3-space" — so a distance fade makes dimness ambiguous; its
+   * value is stills (PNG capture / paused video), where motion parallax
+   * can't disambiguate depth. A look preference, so it persists like
+   * `fourDColor` (NOT session-only, unlike the tumble/slice view state) and
+   * is simply inert while the system is flat.
+   */
+  fourDDepthFade: boolean;
+  /**
    * Contrast exponent applied to the normalized coordinate in the
    * height/radius/position color modes (fr-8sk, see `color.ts`'s
    * `colorModeUsesGamma`): `t' = t ** colorGamma`. `1` = linear (today's
@@ -466,6 +479,7 @@ export function initialState(panelOpen: boolean): AppState {
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
     fourDColor: DEFAULT_FOUR_D_COLOR,
+    fourDDepthFade: false,
     renderStyle: "depthFade",
     autoUpdate: true,
     panelOpen,
@@ -588,6 +602,15 @@ export function setFourDColor(
   fourDColor: FourDColorMode,
 ): AppState {
   return { ...state, fourDColor };
+}
+
+/** Toggle the 4D projection's camera-depth fade (fr-3e0) — see
+ * {@link AppState.fourDDepthFade}. */
+export function setFourDDepthFade(
+  state: AppState,
+  fourDDepthFade: boolean,
+): AppState {
+  return { ...state, fourDDepthFade };
 }
 
 /**
