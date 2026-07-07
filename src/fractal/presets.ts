@@ -334,6 +334,16 @@ const FERN_FLATTEN = 0.3;
  * into a fiddlehead curl toward the tip. Larger ⇒ tighter curl; 0 ⇒ flat.
  */
 const FERN_CURL = 0.12;
+/**
+ * Hyperfern only: out-of-SPACE tilt of the frond map per application, radians
+ * — {@link FERN_CURL}'s 4D sibling, rotating the rachis direction `+y` toward
+ * `+w` (the `yw` plane) instead of toward `+z`. Compounds up the frond exactly
+ * the same way, so the base stays in the `w = 0` slice while the tip rolls
+ * into the fourth dimension. Slightly larger than the 3D curl because the
+ * projection hides the curled direction — the head-on foreshortening has to
+ * read on its own.
+ */
+const HYPERFERN_CURL = 0.15;
 
 /**
  * Barnsley's four exact maps, with weights proportional to his published
@@ -406,8 +416,17 @@ function decomposePlanar(
  * copies. Only the frond curls — and it keeps its depth (z-scale = its xy
  * scale) so the tilt is a true 3-D rotation, not flattened to `FERN_FLATTEN`
  * like the planar maps.
+ *
+ * A non-zero `wCurl` is the same construction one dimension up (the
+ * {@link hyperfern}): the frond map gains a `w.rotation.yw` tilt of that many
+ * radians per application, rotating the rachis direction into `+w` instead of
+ * `+z` while the fern stays exactly planar in z. And for the same reason the
+ * 3D curl keeps z-depth, the w-curl pins `w.scale` to the frond's planar
+ * scale rather than leaving it derived — derived would be the FLATTENED mean
+ * `(0.85 + 0.85 + 0.3)/3`, squashing the curl in `w` each recursion instead
+ * of truly rotating it.
  */
-function buildFern(curl: number): Transform[] {
+function buildFern(curl: number, wCurl = 0): Transform[] {
   const [cx, cy] = FERN_CENTER;
   // The frond is Barnsley's dominant, self-similar map (his highest weight); it
   // alone climbs the rachis, so it alone carries the curl.
@@ -423,7 +442,7 @@ function buildFern(curl: number): Transform[] {
     const px = FERN_SCALE * translate[0] + cx - (a * cx + b * cy);
     const py = FERN_SCALE * translate[1] + cy - (c * cx + d * cy);
     const curls = curl !== 0 && id === frond;
-    return {
+    const transform: Transform = {
       id,
       position: [px, py, 0],
       rotation: [curls ? curl : 0, 0, angle],
@@ -431,6 +450,10 @@ function buildFern(curl: number): Transform[] {
       shear: [shear, 0, 0],
       weight,
     };
+    if (wCurl !== 0 && id === frond) {
+      transform.w = { rotation: { yw: wCurl }, scale: scaleX };
+    }
+    return transform;
   });
 }
 
@@ -533,6 +556,61 @@ function pentatopeVertices(): Vec4[] {
 }
 
 /**
+ * {@link flake}, one dimension up: each map contracts all of 4-space toward a
+ * fixed point `v` by `ratio`, the fourth coordinate riding the `w` extension.
+ * `position = v·(1 − ratio)` puts the fixed point of `x ↦ ratio·x + position`
+ * exactly at `v` — INCLUDING its `w` component, because `w.scale` is
+ * deliberately ABSENT on every map: `toTransform4` derives `scale_w` as the
+ * mean spatial contraction of `[ratio, ratio, ratio]`, which is exactly
+ * `ratio`, so the whole flake family contracts all of 4-space uniformly with
+ * nothing pinned and nothing to go stale (the absent-means-derived convention
+ * {@link pentatope} showcases).
+ */
+function flake4(vertices: Vec4[], ratio: number): Transform[] {
+  const k = 1 - ratio;
+  return vertices.map((v, id): Transform => ({
+    id,
+    position: [v[0] * k, v[1] * k, v[2] * k],
+    rotation: [0, 0, 0],
+    scale: [ratio, ratio, ratio],
+    w: { position: v[3] * k },
+  }));
+}
+
+/** 4D Euclidean distance between two vertices. */
+function dist4(a: Vec4, b: Vec4): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]);
+}
+
+/**
+ * A polytope's edges as vertex pairs: every pair whose distance ties (within
+ * floating-point tolerance) the MINIMAL pairwise distance. For every polytope
+ * used here that minimum IS the edge length — and for the regular 4-simplex,
+ * where all pairs are edges, all C(5,2) distances tie at the minimum, so the
+ * same rule yields the complete graph. The next-nearest distance class in
+ * each of these polytopes sits ≥ 25% above the edge length, so a relative
+ * `1e-9` tolerance can never leak a diagonal in.
+ */
+function wireframeEdges(vertices: Vec4[]): [Vec4, Vec4][] {
+  let min = Infinity;
+  for (let i = 0; i < vertices.length; i++) {
+    for (let j = i + 1; j < vertices.length; j++) {
+      min = Math.min(min, dist4(vertices[i], vertices[j]));
+    }
+  }
+  const edges: [Vec4, Vec4][] = [];
+  const limit = min * (1 + 1e-9);
+  for (let i = 0; i < vertices.length; i++) {
+    for (let j = i + 1; j < vertices.length; j++) {
+      if (dist4(vertices[i], vertices[j]) <= limit) {
+        edges.push([vertices[i], vertices[j]]);
+      }
+    }
+  }
+  return edges;
+}
+
+/**
  * The pentatope (5-cell) gasket — the true 4D successor of the Sierpinski
  * tetrahedron, and the first NON-FLAT preset: five maps, each contracting all
  * of 4-space by ½ toward one vertex of a regular 4-simplex (circumradius 1,
@@ -542,24 +620,12 @@ function pentatopeVertices(): Vec4[] {
  * Sierpinski tetrahedron's is `log 4 / log 2 = 2`.
  *
  * Each map fixes its vertex `v`: with scale ½, the fixed point of
- * `x ↦ ½·x + position` is `2·position`, so `position = v/2` — the same
- * `position = v·(1 − ratio)` construction as {@link flake}, one dimension up.
- * The four base maps land at `w.position = −1/8`, the apex map at `+1/2`.
- *
- * `w.scale` is deliberately ABSENT — the showcase of absent-means-derived:
- * `toTransform4` derives `scale_w` as the mean spatial contraction of
- * `[½, ½, ½]`, which is exactly the `½` the native-4D original carried, so
- * every lifted map contracts all of 4-space by ½ with nothing pinned and
- * nothing to go stale.
+ * `x ↦ ½·x + position` is `2·position`, so `position = v/2` — see
+ * {@link flake4}. The four base maps land at `w.position = −1/8`, the apex
+ * map at `+1/2`, and `w.scale` stays absent (derived as exactly ½).
  */
 export function pentatope(): Transform[] {
-  return pentatopeVertices().map((v, i): Transform => ({
-    id: i,
-    position: [v[0] * HALF, v[1] * HALF, v[2] * HALF],
-    rotation: [0, 0, 0],
-    scale: [HALF, HALF, HALF],
-    w: { position: v[3] * HALF },
-  }));
+  return flake4(pentatopeVertices(), HALF);
 }
 
 /**
@@ -574,14 +640,7 @@ export function pentatope(): Transform[] {
  * {@link PRESET_SCAFFOLDS}.
  */
 export function pentatopeWireframe(): [Vec4, Vec4][] {
-  const v = pentatopeVertices();
-  const edges: [Vec4, Vec4][] = [];
-  for (let i = 0; i < v.length; i++) {
-    for (let j = i + 1; j < v.length; j++) {
-      edges.push([v[i], v[j]]);
-    }
-  }
-  return edges;
+  return wireframeEdges(pentatopeVertices());
 }
 
 /**
@@ -624,6 +683,190 @@ export function doubleRotation(): Transform[] {
   ];
 }
 
+/** Half-side of the tesseract: vertices `(±h)⁴`, circumradius `2h = 1.3`. */
+const TESSERACT_HALF_SIDE = 0.65;
+
+/** The 16 vertices of the tesseract (4-cube): every sign choice of `(±h)⁴`. */
+function tesseractVertices(): Vec4[] {
+  const h = TESSERACT_HALF_SIDE;
+  const out: Vec4[] = [];
+  for (const x of [-h, h]) {
+    for (const y of [-h, h]) {
+      for (const z of [-h, h]) {
+        for (const w of [-h, h]) {
+          out.push([x, y, z, w]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Tesseract dust — sixteen maps at ratio ⅓ toward the corners of a 4-cube,
+ * i.e. the four-fold Cartesian product of middle-third Cantor sets
+ * `C × C × C × C` (at ratio ⅓ the sub-copies along each axis reproduce the
+ * middle-third gaps exactly). Hausdorff dimension `log 16 / log 3 ≈ 2.52`.
+ *
+ * The projection trick that makes it a 4D showpiece: seen head-on, vertices
+ * differing only in `w` project onto the SAME 3D corner, so eight corners
+ * each hold two interleaved dust clusters at opposite `w` (opposite ends of
+ * the diverging w palettes) — then any w-plane tumble slides them apart into
+ * the sixteen-corner shadow every rotating-tesseract render is famous for.
+ */
+export function tesseract(): Transform[] {
+  return flake4(tesseractVertices(), 1 / 3);
+}
+
+/** The tesseract's 32 edges (pairs differing in exactly one coordinate) —
+ * THE canonical 4D wireframe. See {@link PRESET_SCAFFOLDS}. */
+export function tesseractWireframe(): [Vec4, Vec4][] {
+  return wireframeEdges(tesseractVertices());
+}
+
+/** Circumradius of the 16-cell, matching {@link octahedronFlake}'s 1.3. */
+const SIXTEEN_CELL_R = 1.3;
+
+/** The 8 vertices of the 16-cell (4D cross-polytope): `±r` on each axis. */
+function sixteenCellVertices(): Vec4[] {
+  const r = SIXTEEN_CELL_R;
+  return [
+    [r, 0, 0, 0],
+    [-r, 0, 0, 0],
+    [0, r, 0, 0],
+    [0, -r, 0, 0],
+    [0, 0, r, 0],
+    [0, 0, -r, 0],
+    [0, 0, 0, r],
+    [0, 0, 0, -r],
+  ];
+}
+
+/**
+ * The 16-cell (hyperoctahedron) flake — {@link octahedronFlake}'s direct 4D
+ * sibling: eight maps toward `±r` on each of the four axes, at the same
+ * separates-the-lobes ratio 0.4 the octahedron uses (below the just-touching
+ * ½). Six lobes form the familiar octahedron; the other two live entirely on
+ * the `±w` axis, so head-on they project onto the CENTER — a superimposed
+ * pair at opposite ends of the w palettes — until an xw/yw/zw tumble swings
+ * them out of what looks like nowhere. The clearest "there is an eighth lobe
+ * hiding in the fourth direction" demonstration in the menu.
+ */
+export function sixteenCellFlake(): Transform[] {
+  return flake4(sixteenCellVertices(), 0.4);
+}
+
+/** The 16-cell's 24 edges (every vertex pair except the four antipodal
+ * ones). See {@link PRESET_SCAFFOLDS}. */
+export function sixteenCellWireframe(): [Vec4, Vec4][] {
+  return wireframeEdges(sixteenCellVertices());
+}
+
+/** Circumradius of the 24-cell, matching {@link icosahedronFlake}'s reach. */
+const TWENTY_FOUR_CELL_R = 1.4;
+
+/** The 24 vertices of the 24-cell: all permutations of `(±1, ±1, 0, 0)`,
+ * scaled from raw norm √2 to {@link TWENTY_FOUR_CELL_R}. */
+function twentyFourCellVertices(): Vec4[] {
+  const s = TWENTY_FOUR_CELL_R / Math.SQRT2;
+  const out: Vec4[] = [];
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      for (const si of [-1, 1]) {
+        for (const sj of [-1, 1]) {
+          const v: Vec4 = [0, 0, 0, 0];
+          v[i] = si * s;
+          v[j] = sj * s;
+          out.push(v);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The 24-cell flake — twenty-four maps toward the vertices of 4D's celebrity
+ * polytope: the one regular polytope with NO analogue in any other dimension
+ * (not a simplex, hypercube, or cross-polytope family member), self-dual,
+ * its vertices the D₄ root system. Ratio 0.3 follows
+ * {@link dodecahedronFlake}'s choice for a 20-map flake; dimension
+ * `log 24 / log(1/0.3) ≈ 2.64`. Its edge length EQUALS its circumradius — a
+ * property no other regular 4-polytope shares — which is why the 96-edge
+ * scaffold reads as an unusually even, crystalline cage from every tumble
+ * angle.
+ */
+export function twentyFourCellFlake(): Transform[] {
+  return flake4(twentyFourCellVertices(), 0.3);
+}
+
+/** The 24-cell's 96 edges (each vertex has eight nearest neighbours). See
+ * {@link PRESET_SCAFFOLDS}. */
+export function twentyFourCellWireframe(): [Vec4, Vec4][] {
+  return wireframeEdges(twentyFourCellVertices());
+}
+
+/** 4D circumradius of the duoprism; each triangle's own circle is `R/√2`. */
+const DUOPRISM_R = 1.3;
+
+/** The 9 vertices of the 3×3 duoprism: the Cartesian product of a triangle
+ * in the xy-plane with a triangle in the zw-plane. */
+function duoprismVertices(): Vec4[] {
+  const r = DUOPRISM_R / Math.SQRT2;
+  const out: Vec4[] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * 2 * Math.PI;
+    for (let j = 0; j < 3; j++) {
+      const b = (j / 3) * 2 * Math.PI;
+      out.push([
+        r * Math.cos(a),
+        r * Math.sin(a),
+        r * Math.cos(b),
+        r * Math.sin(b),
+      ]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The 3×3 duoprism gasket — nine maps toward the product of two triangles
+ * living in completely orthogonal planes, a shape 3-space cannot host (its
+ * polygon × polygon products stop at prisms, polygon × segment). Every
+ * vertex satisfies `|xy| = |zw| = R/√2`, i.e. all nine sit ON a Clifford
+ * torus — so this is also the menu's picture of that famously
+ * unpicturable surface. The symmetry is the double rotation split in two: a
+ * plain 3D yaw (xy) spins one triangle while the zw tumble spins the other,
+ * independently. Ratio ⅓ gives dimension `log 9 / log 3 = 2`.
+ */
+export function duoprism(): Transform[] {
+  return flake4(duoprismVertices(), 1 / 3);
+}
+
+/** The duoprism's 18 edges: each triangle's 3 edges, once per vertex of the
+ * other triangle. See {@link PRESET_SCAFFOLDS}. */
+export function duoprismWireframe(): [Vec4, Vec4][] {
+  return wireframeEdges(duoprismVertices());
+}
+
+/**
+ * Hyperfern — Barnsley's fern curling through the FOURTH dimension. The four
+ * maps are the flat fern's verbatim (planar in z, Barnsley's exact linear
+ * parts); the one change is the frond map, whose per-application tilt is a
+ * `yw` plane rotation riding the `w` extension instead of {@link curlingFern}'s
+ * 3D `yz` tilt — rotating the rachis direction `+y` toward `+w`, an angle per
+ * recursion ({@link HYPERFERN_CURL}). Because the frond alone climbs the
+ * rachis the tilt compounds: the base of the leaf lies in ordinary 3-space
+ * and each step up the stem rotates a little more of it into `w`, so the
+ * projection shows the tip foreshortening away into the invisible direction,
+ * a yw/zw tumble unrolls the fiddlehead back into view, and the diverging w
+ * palettes paint the curl base → tip. See {@link buildFern} for why the
+ * frond's `w.scale` is pinned to its planar scale.
+ */
+export function hyperfern(): Transform[] {
+  return buildFern(0, HYPERFERN_CURL);
+}
+
 /**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
@@ -653,6 +896,14 @@ const PRESETS = {
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
+  // The second wave of 4D systems (fr-zde): the remaining regular polytopes
+  // small enough to converge as flakes (the 120-/600-cell's hundreds of maps
+  // are not), a duoprism, and the fern bent through w.
+  sixteenCell: sixteenCellFlake,
+  duoprism,
+  tesseract,
+  twentyFourCell: twentyFourCellFlake,
+  hyperfern,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -660,15 +911,20 @@ export type Preset = keyof typeof PRESETS;
 /**
  * Legibility scaffolds a preset can carry — projected, tumbling wireframes
  * the 4D view renders alongside the cloud (see `scene.ts`'s
- * `setFourDScaffold`). Most presets — including flat ones and `doubleRotation`
- * — have no natural 4D wireframe and are simply absent here; `pentatope`'s
- * 5-cell is the one shape whose vertices are exactly its maps' fixed points,
- * so it is the one entry. Keyed by {@link Preset} (not a parallel enum) so
- * `main.ts` can look one up by the same name `presetTransforms` just used,
- * with no second mapping to keep in sync.
+ * `setFourDScaffold`). Every {@link flake4} preset qualifies, because a flake
+ * map's fixed point IS its polytope vertex (see {@link flake4}), so the
+ * wireframe traces exactly the cloud's own anchor points; presets with no
+ * natural wireframe — flat ones, `doubleRotation`, `hyperfern` — are simply
+ * absent. Keyed by {@link Preset} (not a parallel enum) so `main.ts` can look
+ * one up by the same name `presetTransforms` just used, with no second
+ * mapping to keep in sync.
  */
 export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
   pentatope: pentatopeWireframe,
+  sixteenCell: sixteenCellWireframe,
+  duoprism: duoprismWireframe,
+  tesseract: tesseractWireframe,
+  twentyFourCell: twentyFourCellWireframe,
 };
 
 /** Build the transform set for a named preset. */

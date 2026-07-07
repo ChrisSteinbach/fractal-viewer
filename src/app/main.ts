@@ -1161,8 +1161,8 @@ function main(): void {
         state = setTransforms(state, presetTransforms(preset));
       }, "always");
       // The tumbling scaffold (Show guides toggles it with the grid/axes) —
-      // only `pentatope` carries one; every other preset (flat or non-flat)
-      // clears whatever the previous preset left behind.
+      // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
+      // preset (flat or non-flat) clears whatever the previous one left.
       scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
       fitCameraToAttractor();
     },
@@ -1191,7 +1191,7 @@ function main(): void {
         );
       }, "always");
       // A rolled system never carries a preset's tumbling scaffold (only the
-      // pentatope preset does), but one from an earlier visit could still be
+      // polytope presets do), but one from an earlier visit could still be
       // showing — clear it unconditionally.
       scene.setFourDScaffold(null);
       fitCameraToAttractor();

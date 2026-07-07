@@ -10,6 +10,9 @@ import {
   defaultTransforms,
   dodecahedronFlake,
   doubleRotation,
+  duoprism,
+  duoprismWireframe,
+  hyperfern,
   icosahedronFlake,
   jerusalemCube,
   mengerSponge,
@@ -18,15 +21,22 @@ import {
   pentatope,
   pentatopeWireframe,
   PRESET_NAMES,
+  PRESET_SCAFFOLDS,
   presetTransforms,
   radiolarian,
   sierpinskiPyramid,
   sierpinskiTetrahedron,
+  sixteenCellFlake,
+  sixteenCellWireframe,
   spiral,
   swirlFlame,
+  tesseract,
+  tesseractWireframe,
+  twentyFourCellFlake,
+  twentyFourCellWireframe,
 } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Vec4 } from "./types";
+import type { Transform, Vec4 } from "./types";
 
 describe("presets", () => {
   it("defaultTransforms has four maps", () => {
@@ -449,5 +459,264 @@ describe("doubleRotation (unified 4D preset)", () => {
     let farW = 0;
     for (const w of result.w) farW = Math.max(farW, Math.abs(w));
     expect(farW).toBeGreaterThan(0.15);
+  });
+});
+
+/** The lifted fixed point of a uniform flake map: `x* = position / (1 − r)`. */
+function liftedFixedPoint(t: Transform, ratio: number): Vec4 {
+  const m = toTransform4(t);
+  const k = 1 / (1 - ratio);
+  return [
+    m.position[0] * k,
+    m.position[1] * k,
+    m.position[2] * k,
+    m.position[3] * k,
+  ];
+}
+
+function edgeLength(edge: [Vec4, Vec4]): number {
+  const [a, b] = edge;
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]);
+}
+
+describe("tesseract (4D preset)", () => {
+  it("has sixteen ⅓-scale maps whose lifted fixed points are the 4-cube's corners", () => {
+    const transforms = tesseract();
+    expect(transforms).toHaveLength(16);
+    for (const t of transforms) {
+      expect(t.scale).toEqual([1 / 3, 1 / 3, 1 / 3]);
+      // w.scale absent ⇒ derived as the mean contraction, exactly the ratio.
+      expect(t.w?.scale).toBeUndefined();
+      expect(toTransform4(t).scale[3]).toBeCloseTo(1 / 3, 12);
+      // Every corner coordinate is ±h — the (±h)⁴ sign lattice.
+      for (const c of liftedFixedPoint(t, 1 / 3)) {
+        expect(Math.abs(c)).toBeCloseTo(0.65, 12);
+      }
+    }
+    // All sixteen sign choices, no corner doubled.
+    const corners = new Set(
+      transforms.map((t) =>
+        liftedFixedPoint(t, 1 / 3)
+          .map((c) => Math.sign(c))
+          .join(),
+      ),
+    );
+    expect(corners.size).toBe(16);
+  });
+
+  // Ratio ⅓ makes the attractor the four-fold product of middle-third Cantor
+  // sets: the dust must span the full ±h cube on EVERY axis, w included.
+  it("renders Cantor dust with full, equal extent on all four axes", () => {
+    const result = runChaosGame4(
+      tesseract().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    for (const extent of [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW]) {
+      expect(extent).toBeGreaterThan(1.2);
+      expect(extent).toBeLessThanOrEqual(1.3 + 1e-6);
+    }
+    expect(result.radius).toBeLessThan(1.4);
+  });
+
+  it("wireframe has the tesseract's 32 edges, all one coordinate-flip long", () => {
+    const edges = tesseractWireframe();
+    expect(edges).toHaveLength(32);
+    for (const edge of edges) {
+      expect(edgeLength(edge)).toBeCloseTo(1.3, 12);
+    }
+  });
+});
+
+describe("sixteenCellFlake (4D preset)", () => {
+  it("has eight 0.4-scale maps toward ±r on each of the four axes", () => {
+    const transforms = sixteenCellFlake();
+    expect(transforms).toHaveLength(8);
+    for (const t of transforms) {
+      expect(t.scale).toEqual([0.4, 0.4, 0.4]);
+      // Cross-polytope vertex: exactly one nonzero coordinate, at radius r.
+      const coords = liftedFixedPoint(t, 0.4).map((c) => Math.abs(c));
+      const nonzero = coords.filter((c) => c > 1e-12);
+      expect(nonzero).toHaveLength(1);
+      expect(nonzero[0]).toBeCloseTo(1.3, 12);
+    }
+  });
+
+  // The 4D signature: unlike its 3D sibling (octahedronFlake, w extent 0),
+  // the two ±w lobes give the attractor the same span in w as in x/y/z.
+  it("spans w as fully as the three visible axes", () => {
+    const result = runChaosGame4(
+      sixteenCellFlake().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    for (const extent of [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW]) {
+      expect(extent).toBeGreaterThan(2.3);
+      expect(extent).toBeLessThanOrEqual(2.6 + 1e-6);
+    }
+  });
+
+  it("wireframe has the 16-cell's 24 edges (no antipodal pairs)", () => {
+    const edges = sixteenCellWireframe();
+    expect(edges).toHaveLength(24);
+    // Every edge joins vertices on DIFFERENT axes (√2·r); the four antipodal
+    // pairs (length 2r) are diagonals, not edges.
+    for (const edge of edges) {
+      expect(edgeLength(edge)).toBeCloseTo(1.3 * Math.SQRT2, 12);
+    }
+  });
+});
+
+describe("twentyFourCellFlake (4D preset)", () => {
+  it("has 24 maps at 0.3 scale toward the (±1, ±1, 0, 0) permutations", () => {
+    const transforms = twentyFourCellFlake();
+    expect(transforms).toHaveLength(24);
+    const s = 1.4 / Math.SQRT2;
+    const seen = new Set<string>();
+    for (const t of transforms) {
+      expect(t.scale).toEqual([0.3, 0.3, 0.3]);
+      const v = liftedFixedPoint(t, 0.3);
+      // Exactly two nonzero coordinates of magnitude s ⇒ vertex norm 1.4.
+      const nonzero = v.filter((c) => Math.abs(c) > 1e-12);
+      expect(nonzero).toHaveLength(2);
+      for (const c of nonzero) expect(Math.abs(c)).toBeCloseTo(s, 12);
+      seen.add(v.map((c) => Math.round(c / s)).join());
+    }
+    expect(seen.size).toBe(24);
+  });
+
+  it("fills all four dimensions and stays bounded", () => {
+    const result = runChaosGame4(
+      twentyFourCellFlake().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    for (const extent of [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW]) {
+      expect(extent).toBeGreaterThan(1.9);
+    }
+    expect(result.radius).toBeLessThan(1.5);
+  });
+
+  // The 24-cell's signature property: edge length EQUALS circumradius — no
+  // other regular 4-polytope has this.
+  it("wireframe has 96 edges, each exactly one circumradius long", () => {
+    const edges = twentyFourCellWireframe();
+    expect(edges).toHaveLength(96);
+    for (const edge of edges) {
+      expect(edgeLength(edge)).toBeCloseTo(1.4, 12);
+    }
+  });
+});
+
+describe("duoprism (4D preset)", () => {
+  // The duoprism is the product of two triangles in orthogonal planes; every
+  // vertex projects to radius R/√2 in BOTH the xy- and zw-planes, i.e. all
+  // nine lie on a Clifford torus.
+  it("puts all nine ⅓-scale maps' fixed points on a Clifford torus", () => {
+    const transforms = duoprism();
+    expect(transforms).toHaveLength(9);
+    const planeR = 1.3 / Math.SQRT2;
+    for (const t of transforms) {
+      expect(t.scale).toEqual([1 / 3, 1 / 3, 1 / 3]);
+      const [x, y, z, w] = liftedFixedPoint(t, 1 / 3);
+      expect(Math.hypot(x, y)).toBeCloseTo(planeR, 12);
+      expect(Math.hypot(z, w)).toBeCloseTo(planeR, 12);
+    }
+  });
+
+  it("fills all four dimensions and stays bounded", () => {
+    const result = runChaosGame4(
+      duoprism().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    // Each triangle spans its own plane: full triangle height in x/z, full
+    // side in y/w (the vertex sets are identical in both planes).
+    expect(maxX - minX).toBeGreaterThan(1.3);
+    expect(maxZ - minZ).toBeGreaterThan(1.3);
+    expect(maxY - minY).toBeGreaterThan(1.5);
+    expect(maxW - minW).toBeGreaterThan(1.5);
+    expect(result.radius).toBeLessThan(2);
+  });
+
+  it("wireframe has the duoprism's 18 edges, all one triangle-side long", () => {
+    const edges = duoprismWireframe();
+    expect(edges).toHaveLength(18);
+    // A triangle inscribed in a circle of radius r has side √3·r; cross-pairs
+    // (both triangles advance) sit at √6·r and must NOT appear.
+    const side = Math.sqrt(3) * (1.3 / Math.SQRT2);
+    for (const edge of edges) {
+      expect(edgeLength(edge)).toBeCloseTo(side, 9);
+    }
+  });
+});
+
+describe("hyperfern (4D preset)", () => {
+  // The whole design: Barnsley's flat fern verbatim, plus ONE w block. Strip
+  // the w blocks and the systems must be deep-equal — same weights, same
+  // exact linear parts, same planar z-flattening.
+  it("is the flat fern plus a w-curl, nothing else", () => {
+    const stripped = hyperfern().map((t) => {
+      const copy = { ...t };
+      delete copy.w;
+      return copy;
+    });
+    expect(stripped).toEqual(barnsleyFern());
+  });
+
+  it("curls only the dominant frond map, in the yw plane, with pinned w depth", () => {
+    const transforms = hyperfern();
+    const curled = transforms.filter((t) => t.w !== undefined);
+    expect(curled).toHaveLength(1);
+    const [frond] = curled;
+    expect(frond.weight).toBe(
+      Math.max(...transforms.map((t) => t.weight ?? 1)),
+    );
+    // The curl tilts the rachis direction (+y) toward +w — yw, no other plane.
+    expect(frond.w?.rotation?.yw).toBeGreaterThan(0);
+    expect(frond.w?.rotation?.xw).toBeUndefined();
+    expect(frond.w?.rotation?.zw).toBeUndefined();
+    // Pinned to the frond's own planar scale (a true rotation keeps depth),
+    // not left to derive as the z-flattened mean.
+    expect(frond.w?.scale).toBe(frond.scale[0]);
+  });
+
+  // The 4D counterpart of curlingFern's acceptance test: the leaf develops
+  // real extent in w (the curl) while staying EXACTLY planar in z and keeping
+  // its upright leaf proportions.
+  it("curls through w while staying flat in z and leaf-shaped", () => {
+    const result = runChaosGame4(
+      hyperfern().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    expect(Number.isFinite(result.radius)).toBe(true);
+    expect(result.radius).toBeLessThan(3);
+    expect(height).toBeGreaterThan(width); // still an upright leaf
+    // Planar in z: nothing ever mixes z, so the seed's z decays to nothing.
+    expect(maxZ - minZ).toBeLessThan(1e-9);
+    expect(maxW - minW).toBeGreaterThan(0.2 * height); // genuinely curled
+  });
+});
+
+describe("PRESET_SCAFFOLDS", () => {
+  // main.ts shows a preset's wireframe by this lookup: exactly the polytope
+  // presets carry one (their maps' fixed points ARE the polytope vertices);
+  // dynamic 4D systems (doubleRotation, hyperfern) have no natural wireframe.
+  it("covers exactly the polytope presets", () => {
+    expect(Object.keys(PRESET_SCAFFOLDS).sort()).toEqual([
+      "duoprism",
+      "pentatope",
+      "sixteenCell",
+      "tesseract",
+      "twentyFourCell",
+    ]);
   });
 });
