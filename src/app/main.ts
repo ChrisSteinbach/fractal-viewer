@@ -499,7 +499,10 @@ function main(): void {
   // fail there, and the fastest machine measured during fr-npb's
   // benchmarking (an RX 7900 XTX) would render on CPU forever. `null` (still
   // unresolved, or never probed at all — coarse-pointer/no-navigator.gpu
-  // devices skip it outright, since they'd never use the answer) always
+  // devices skip it outright: the answer only picks worker- vs main-thread
+  // HOSTING via `useLocalHost` below, which is fine-pointer-only. A phone's
+  // worker session still attempts GPU on its own (fr-hs9) and self-falls-
+  // back through the gpuFailed ratchet, no pre-probe needed) always
   // conservatively takes the worker path enterFlameMode already used before
   // this existed. See flame-session-host.ts's `probeWorkerWebGpu` for the
   // probe itself and enterFlameMode below for how the answer is used.
@@ -747,15 +750,17 @@ function main(): void {
       // worker sees the same memory these frames wrap, nothing is copied.
       // Always undefined for the local host (see above).
       sharedFrames: flameShared?.frames,
-      // WebGPU accumulation (fr-npb/fr-1ib): coarse-pointer (phone/tablet)
-      // devices stay CPU-only until the GPU path is validated there — "off",
-      // not "auto", so this session's gpuFailed ratchet is never even
-      // exercised on a device class that hasn't been checked out yet.
-      // Desktops/laptops (fine pointer) try GPU first and fall back to CPU
-      // automatically. Always "auto" whenever `useLocalHost` is true — it
-      // requires `!coarse` itself, so this expression already agrees with
-      // "the local host only exists because main-thread GPU is present".
-      gpuPreference: coarse ? "off" : "auto",
+      // WebGPU accumulation (fr-npb/fr-1ib/fr-hs9): "auto" everywhere — try
+      // GPU first, fall back to CPU automatically via the session's
+      // gpuFailed ratchet. Coarse-pointer (phone/tablet) devices were "off"
+      // until fr-hs9's phone validation (Android Chrome, arm valhall):
+      // agreement pass on every gpu-bench scenario including the fr-ee9
+      // display-downsample legs, at ~19-36x the CPU worker's iteration
+      // rate. Mobile-specific ceilings need nothing extra here — a device
+      // whose maxStorageBufferBindingSize can't fit the histogram fails
+      // backend creation cleanly into that same CPU fallback (see
+      // flame-gpu-backend.ts's limit guard).
+      gpuPreference: "auto",
     });
 
     state = setFlameActive(state, true);

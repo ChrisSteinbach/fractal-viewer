@@ -66,6 +66,12 @@ function ceilDiv(total: number, size: number): number {
  * spike, this isn't caller-configurable — one fixed value keeps the packed
  * chains buffer's size (and thus a big chunk of this backend's VRAM
  * footprint) predictable from the accumulation resolution alone.
+ *
+ * fr-hs9's phone validation kept this same value for mobile: an arm-valhall
+ * phone passed the gpu-bench agreement checks and measured ~19-36x its CPU
+ * worker at 65536 chains, so there is no adapter-conditional lower count —
+ * the minimum dispatch quantum (one iteration per chain, ~1.2 ms at that
+ * phone's ~55 M iters/s) stays far below the 24 ms GPU chunk budget.
  */
 const NUM_CHAINS = 65536;
 
