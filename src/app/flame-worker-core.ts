@@ -56,12 +56,31 @@ import type {
 } from "../fractal/flame";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
-import { transformColors } from "../fractal/color";
+import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
+import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
+import { accumulateFlame4 } from "../fractal/flame-4d";
+import type { FlameColor4, FourDFlameView } from "../fractal/flame-4d";
+import {
+  buildColorModeLUT,
+  transformColors,
+  W_SIDE_PALETTES,
+} from "../fractal/color";
+import {
+  composeFlameProjection4,
+  composeRotorProjection4,
+} from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
-import type { SymmetryAxis, Transform, Vec3 } from "../fractal/types";
+import type {
+  FourDColorMode,
+  SymmetryAxis,
+  Transform,
+  Transform4,
+  Vec3,
+  Vec4,
+} from "../fractal/types";
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -119,6 +138,48 @@ export type FlameWorkerCommand =
       /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
       order: number;
       axis: SymmetryAxis;
+      /**
+       * Optional 4D flame render (fr-5b3): present when the explorer was in
+       * 4D mode when the render was entered. When present, the session
+       * drives `chaos-game-4d.ts`'s 4D chaos game and `flame-4d.ts`'s
+       * `accumulateFlame4` instead of the 3D path. `transforms`/
+       * `finalTransform` above still arrive either way (the main thread
+       * always sends both), but are simply unused when this is present.
+       * Also forces the CPU accumulation backend regardless of
+       * `gpuPreference` — see `runChunk4`'s doc: `flame-gpu.ts`'s WGSL
+       * kernel is 3D-only, a 4D kernel is a follow-up bead.
+       */
+      fourD?: {
+        /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
+        transforms4: Transform4[];
+        finalTransform4: Transform4 | null;
+        /** Row-major 4x4 rotor matrix (the `affine4.ts`/`rotationMatrix4`
+         * convention), frozen at render entry — see `project4.ts`'s
+         * `composeRotorProjection4`. */
+        rotor: number[];
+        /** The cloud's 4D center (the rotor's pivot) — see
+         * `composeRotorProjection4`. */
+        center: Vec4;
+        /** `1 / wSupport(rotor, halfExtents)` at render entry — see
+         * `flame-4d.ts`'s `FourDFlameView.invWAmp` and `rotor4.ts`'s
+         * `wSupport`. */
+        invWAmp: number;
+        /** Whether the soft w-slice is on — `scene.ts`'s `uSliceOn`. */
+        sliceOn: boolean;
+        /** Slice center in the normalized signed-w signal — `uSliceCenter`. */
+        sliceCenter: number;
+        /** Slice width — `uSliceWidth`, sent as a plain number (the main
+         * thread reads `FOUR_D_SLICE_WIDTH`). */
+        sliceWidth: number;
+        /** The explorer's active 4D color mode — drives the "legacy"
+         * palette dispatch (see `flame-4d.ts`'s `FlameColor4`). */
+        colorMode: FourDColorMode;
+        /** Min/max 4D distance from `center` over the explorer's own cloud
+         * (`ChaosGame4Result`), computed by the main thread — the "radius"
+         * color mode's normalization range. */
+        radiusMin: number;
+        radiusMax: number;
+      };
       /**
        * Two SAB-backed display-resolution frame slots (fr-96i), present only
        * when the page is cross-origin isolated (the main thread gates the
@@ -584,6 +645,69 @@ class CpuFlameBackend implements FlameAccumBackend {
   }
 }
 
+/**
+ * The CPU-only 4D accumulation backend (fr-5b3): wraps `flame-4d.ts`'s
+ * `accumulateFlame4` in the same shape {@link CpuFlameBackend} wraps
+ * `accumulateFlame` in for the 3D path. Deliberately stored under its OWN
+ * `FlameWorkerSession.backend4` field, typed to this concrete class rather
+ * than the general {@link FlameAccumBackend} interface — `accumulate`/
+ * `snapshot` are declared to return their plain values directly (not the
+ * interface's wider `T | Promise<T>`), which TypeScript accepts as a
+ * covariant override, so every call site in `runChunk4` reads them straight
+ * off, with no `isPromiseLike`/`await` dance. A 4D session never attempts
+ * the GPU factory at all (see the `start` command's `fourD` field's doc:
+ * `flame-gpu.ts`'s WGSL kernel is 3D-only, a 4D kernel is a follow-up bead)
+ * — this class is the ONLY accumulation engine a 4D session ever runs, so
+ * there is no GPU counterpart to fall back from here, unlike
+ * `CpuFlameBackend`.
+ */
+class Cpu4DFlameBackend implements FlameAccumBackend {
+  readonly kind = "cpu" as const;
+  private histogram: FlameHistogram | null = null;
+
+  constructor(
+    private readonly prepared: PreparedChaosGame4,
+    private readonly projection: Float64Array,
+    private readonly view: FourDFlameView,
+    private readonly width: number,
+    private readonly height: number,
+    private readonly rng: Rng,
+    private readonly color: FlameColor4,
+  ) {}
+
+  accumulate(iterations: number): number {
+    this.histogram = accumulateFlame4(
+      this.prepared,
+      this.projection,
+      this.view,
+      this.width,
+      this.height,
+      iterations,
+      this.rng,
+      this.color,
+      this.histogram ?? undefined,
+    );
+    return iterations; // CPU always retires exactly what it was asked for.
+  }
+
+  snapshot(): FlameHistogram {
+    // Shouldn't happen: runChunk4 only ever snapshots after at least one
+    // successful accumulate() on this backend — see CpuFlameBackend's own
+    // snapshot() for the same discipline.
+    if (!this.histogram) {
+      throw new Error(
+        "Cpu4DFlameBackend.snapshot() called before accumulate()",
+      );
+    }
+    return this.histogram;
+  }
+
+  destroy(): void {
+    // Nothing to release: accumulateFlame4 only ever touches plain JS
+    // objects/typed arrays, which the GC reclaims on its own.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -622,6 +746,27 @@ export class FlameWorkerSession {
 
   private prepared: PreparedChaosGame | null = null;
   private projection: Mat4 | null = null;
+  /** True when the current session's `start` carried a `fourD` block — see
+   * that field's doc. Set once per `start`; a restart (setSupersample/
+   * setPalette) never toggles it, since a session's dimensionality doesn't
+   * change mid-life, only a brand-new `start` can. */
+  private is4D = false;
+  private prepared4: PreparedChaosGame4 | null = null;
+  /** The 20-coefficient rotor+camera projection `composeFlameProjection4`
+   * builds — resolution-independent (NDC-based), exactly like the 3D
+   * path's `projection` above, so it is built ONCE in `start` and reused
+   * across every `startAccumulation` restart (a supersample/palette change
+   * never rebuilds it, mirroring `projection`'s own lifetime). */
+  private projection4: Float64Array | null = null;
+  private fourDView: FourDFlameView | null = null;
+  private fourDColorMode: FourDColorMode = "wBlueOrange";
+  private fourDCenter: Vec4 = [0, 0, 0, 0];
+  private fourDRadiusMin = 0;
+  private fourDRadiusMax = 1;
+  /** Built once per `startAccumulation` (never per chunk — see
+   * `buildFourDColor`) from the current `paletteId`/`colorLUT` and the
+   * `fourD` block's `colorMode`. `null` for a 3D session. */
+  private fourDColor: FlameColor4 | null = null;
   private palette: ReturnType<typeof transformColors> = [];
   /** Gradient lookup table for structural coloring, or `null` for the
    * per-transform `"legacy"` palette — see `flame.ts`'s `accumulateFlame`. */
@@ -649,6 +794,15 @@ export class FlameWorkerSession {
    * lazily (GPU creation is async; `startAccumulation`'s callers are all
    * synchronous command handlers, so they can't await it themselves). */
   private backend: FlameAccumBackend | null = null;
+  /** The current 4D accumulation's engine (fr-5b3) — the `runChunk4`
+   * counterpart to {@link backend}, kept as its OWN field (rather than
+   * reusing `backend`, typed to the general `FlameAccumBackend` interface)
+   * so it stays typed to the concrete {@link Cpu4DFlameBackend} class — see
+   * that class's doc for why. `null` for a 3D session, and between a
+   * `startAccumulation` and the next `runChunk4` call for a 4D one (backend
+   * creation happens lazily there too, for symmetry with the 3D path, even
+   * though it never actually needs to await anything). */
+  private backend4: Cpu4DFlameBackend | null = null;
   /** Bumped every `startAccumulation` (a restart, in place, of the SAME
    * session) — `runChunk` captures it on entry and re-checks it after every
    * `await`, so a restart that lands while a chunk/backend-creation is in
@@ -891,6 +1045,8 @@ export class FlameWorkerSession {
     this.generation++;
     this.backend?.destroy();
     this.backend = null;
+    this.backend4?.destroy();
+    this.backend4 = null;
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
@@ -907,6 +1063,35 @@ export class FlameWorkerSession {
     // null for "legacy" — accumulateFlame then colors by transform (palette).
     this.colorLUT = buildPaletteLUT(cmd.paletteId);
     this.paletteId = cmd.paletteId;
+    this.is4D = cmd.fourD !== undefined;
+    if (cmd.fourD) {
+      const fourD = cmd.fourD;
+      this.prepared4 = prepareChaosGame4(
+        fourD.transforms4,
+        fourD.finalTransform4,
+      );
+      // Resolution-independent (NDC-based), like the 3D path's own
+      // `projection` — built once here and reused across every
+      // startAccumulation restart (see `projection4`'s doc).
+      this.projection4 = composeFlameProjection4(
+        cmd.projection,
+        composeRotorProjection4(fourD.rotor, fourD.center),
+      );
+      this.fourDView = {
+        invWAmp: fourD.invWAmp,
+        sliceOn: fourD.sliceOn,
+        sliceCenter: fourD.sliceCenter,
+        sliceWidth: fourD.sliceWidth,
+      };
+      this.fourDColorMode = fourD.colorMode;
+      this.fourDCenter = fourD.center;
+      this.fourDRadiusMin = fourD.radiusMin;
+      this.fourDRadiusMax = fourD.radiusMax;
+    } else {
+      this.prepared4 = null;
+      this.projection4 = null;
+      this.fourDView = null;
+    }
     this.rng = mulberry32(cmd.seed);
     this.width = cmd.width;
     this.height = cmd.height;
@@ -941,6 +1126,55 @@ export class FlameWorkerSession {
     this.startAccumulation(cmd.requestedSupersample);
   }
 
+  /**
+   * Whether `start` has populated this session's geometry — 3D `prepared`/
+   * `projection`, or (for a 4D session) `prepared4`/`projection4`/
+   * `fourDView` — the shared "is there an active session to restart/run"
+   * gate `ensureRunning` and every live-command handler use.
+   */
+  private hasGeometry(): boolean {
+    return this.is4D
+      ? this.prepared4 !== null &&
+          this.projection4 !== null &&
+          this.fourDView !== null
+      : this.prepared !== null && this.projection !== null;
+  }
+
+  /**
+   * Build this session's {@link FlameColor4} from the CURRENT
+   * `paletteId`/`colorLUT` and the `start` command's `fourD` block — called
+   * once per `startAccumulation` (never per chunk), so a live `setPalette`
+   * rebuilds it fresh on every restart. A non-`"legacy"` `paletteId` always
+   * wins (structural coloring, exactly mirroring the 3D path's own
+   * `colorLUT !== null` precedence); `"legacy"` dispatches on the
+   * explorer's own 4D color mode — see `flame-4d.ts`'s `FlameColor4` doc
+   * for what each variant reproduces.
+   */
+  private buildFourDColor(): FlameColor4 {
+    if (this.colorLUT !== null) {
+      return { kind: "structural", lut: this.colorLUT };
+    }
+    switch (this.fourDColorMode) {
+      case "wBlueOrange":
+      case "wPurpleGreen":
+      case "wCyanMagenta":
+        return { kind: "wRamp", side: W_SIDE_PALETTES[this.fourDColorMode] };
+      case "transform":
+        return {
+          kind: "transform",
+          palette: transformColors(this.prepared4?.transformCount ?? 0),
+        };
+      case "radius":
+        return {
+          kind: "radius",
+          lut: buildColorModeLUT("radius", 1),
+          center: this.fourDCenter,
+          minD: this.fourDRadiusMin,
+          maxD: this.fourDRadiusMax,
+        };
+    }
+  }
+
   private computeEffectiveSupersample(requested: number): number {
     const budgeted = clampSupersampleToBudget(
       this.width,
@@ -973,6 +1207,8 @@ export class FlameWorkerSession {
     this.generation++;
     this.backend?.destroy();
     this.backend = null;
+    this.backend4?.destroy();
+    this.backend4 = null;
     this.histogram = null;
     this.displayHistogram = null;
     this.iterationsDone = 0;
@@ -983,6 +1219,13 @@ export class FlameWorkerSession {
     // `runChunk` bumps this to the GPU initial itself, once, right after it
     // lazily creates a GPU backend (see its doc).
     this.chunkSize = this.initialChunkSize;
+    // The color sums a fresh accumulation will produce depend on the
+    // CURRENT paletteId/colorMode — rebuilt here (not just in `start`) so a
+    // live setPalette's restart picks up the new palette (see
+    // buildFourDColor's doc).
+    if (this.is4D) {
+      this.fourDColor = this.buildFourDColor();
+    }
     this.emitSupersampleNote(effective, requested);
     this.ensureRunning();
   }
@@ -1073,7 +1316,7 @@ export class FlameWorkerSession {
   }
 
   private setSupersample(requested: number): void {
-    if (!this.prepared || !this.projection) return; // no active session yet.
+    if (!this.hasGeometry()) return; // no active session yet.
     const newEffective = this.computeEffectiveSupersample(requested);
     if (newEffective !== this.effectiveSupersample) {
       this.startAccumulation(requested);
@@ -1088,7 +1331,7 @@ export class FlameWorkerSession {
   }
 
   private setPalette(paletteId: FlamePaletteId): void {
-    if (!this.prepared || !this.projection) return; // no active session yet.
+    if (!this.hasGeometry()) return; // no active session yet.
     this.colorLUT = buildPaletteLUT(paletteId);
     this.paletteId = paletteId;
     // sumRGB has the old palette's colors baked into it, so — unlike a
@@ -1101,7 +1344,12 @@ export class FlameWorkerSession {
   }
 
   private setSymmetry(order: number, axis: SymmetryAxis): void {
-    if (!this.prepared || !this.projection) return; // no active session yet.
+    if (!this.hasGeometry()) return; // no active session yet.
+    // Symmetry (fr-6im) is 3D-only: the UI hides the control while a 4D
+    // session is active, but guard here too rather than trust that. A 4D
+    // session has no `postRotations`/base-map bookkeeping to rebuild, so
+    // there is nothing for this command to actually do.
+    if (this.is4D) return;
     if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
     this.symmetryOrder = order;
     this.symmetryAxis = axis;
@@ -1124,11 +1372,15 @@ export class FlameWorkerSession {
   private ensureRunning(): void {
     if (this.disposed) return;
     if (this.running) return;
-    if (!this.prepared || !this.projection) return;
+    if (!this.hasGeometry()) return;
     if (this.iterationsDone >= this.iterationsBudget) return;
     this.running = true;
     this.schedule(() => {
-      void this.runChunk();
+      if (this.is4D) {
+        this.runChunk4();
+      } else {
+        void this.runChunk();
+      }
     });
   }
 
@@ -1194,6 +1446,24 @@ export class FlameWorkerSession {
       this.palette,
       this.rng,
       this.colorLUT,
+    );
+  }
+
+  /** The 4D counterpart of {@link makeCpuBackend} — only ever called from
+   * `runChunk4`, always after `hasGeometry()` has confirmed `prepared4`/
+   * `projection4`/`fourDView` are populated (and `startAccumulation` has
+   * populated `fourDColor` alongside them), so the non-null assertions here
+   * hold the same "trust `start`'s invariant" discipline `makeCpuBackend`
+   * itself already relies on for `this.accumWidth`/`this.palette`/etc. */
+  private makeCpu4DBackend(): Cpu4DFlameBackend {
+    return new Cpu4DFlameBackend(
+      this.prepared4!,
+      this.projection4!,
+      this.fourDView!,
+      this.accumWidth,
+      this.accumHeight,
+      this.rng,
+      this.fourDColor!,
     );
   }
 
@@ -1583,6 +1853,134 @@ export class FlameWorkerSession {
     } else {
       this.schedule(() => {
         void this.runChunk();
+      });
+    }
+  }
+
+  /**
+   * The 4D twin of {@link runChunk} (fr-5b3): drives `flame-4d.ts`'s
+   * `accumulateFlame4` through {@link Cpu4DFlameBackend}. Deliberately does
+   * NOT share `runChunk`'s body, `createBackend`, or any of its GPU-fallback
+   * machinery — a 4D session never attempts the GPU factory (see the
+   * `start` command's `fourD` field's doc), so there is no async
+   * backend-creation race to await, no `snapshotDisplay` progressive path,
+   * and — because `Cpu4DFlameBackend.accumulate`/`snapshot` are always
+   * plain synchronous returns — no mid-flight generation hand-off to guard
+   * against either: this method is not even `async`, and runs
+   * start-to-finish in one synchronous stretch every time it's called, the
+   * same way the CPU-only path did before `runChunk`'s GPU seam existed.
+   *
+   * A restart (setSupersample/setPalette) landing BETWEEN two scheduled
+   * chunks still hands off correctly without any `gen` bookkeeping:
+   * `startAccumulation` finds `this.running` already `true` (this chunk is
+   * still sitting in the schedule queue) and so its own `ensureRunning()`
+   * no-ops, leaving THIS (stale-but-still-valid) queued call as the only
+   * thing that will reschedule the loop — when it fires, it reads
+   * `this.backend4`/`this.histogram`/etc. fresh off `this`, which by then
+   * already reflect the new generation's (reset) state. Contrast `runChunk`'s
+   * own doc, where the equivalent hand-off exists specifically because a
+   * GPU call can suspend mid-`runChunk` and resume after `this` has moved
+   * on — nothing here ever suspends, so there is nothing to resume stale.
+   */
+  private runChunk4(): void {
+    if (this.disposed || !this.hasGeometry()) {
+      this.running = false;
+      return;
+    }
+
+    // A budget lowered below iterationsDone in the meantime (or one that
+    // was never raised past it) — mirrors runChunk's own same-named guard,
+    // minus the snapshotDisplay-capable-backend caveat that doesn't apply
+    // here (Cpu4DFlameBackend never implements it).
+    if (this.iterationsDone >= this.iterationsBudget) {
+      if (!this.finalFrameDisplayed && this.backend4 !== null) {
+        let snap: FlameHistogram;
+        try {
+          snap = this.backend4.snapshot();
+        } catch (e) {
+          this.running = false;
+          this.emit({ type: "error", message: describeError(e) });
+          return;
+        }
+        this.histogram = snap;
+        this.rebuildDisplay(true);
+        this.sendProgress();
+        this.finalFrameDisplayed = true;
+      }
+      this.running = false;
+      return;
+    }
+
+    // Lazily bring up this accumulation's backend, for symmetry with
+    // runChunk's own timing (even though nothing here actually needs to
+    // await anything).
+    if (this.backend4 === null) {
+      this.backend4 = this.makeCpu4DBackend();
+      this.emit({ type: "backend", backend: "cpu", adapter: undefined });
+    }
+    const backend4 = this.backend4;
+
+    const chunk = Math.min(
+      this.chunkSize,
+      this.iterationsBudget - this.iterationsDone,
+    );
+    // Only the FIRST accumulate call for a given backend allocates (inside
+    // accumulateFlame4) — see runChunk's own `wasFreshStart` for the same
+    // "only a fresh-start failure gets the shrink-and-retry treatment"
+    // reasoning.
+    const wasFreshStart = this.histogram === null;
+    const t0 = this.now();
+    let actual: number;
+    try {
+      actual = backend4.accumulate(chunk);
+    } catch (e) {
+      this.running = false;
+      if (wasFreshStart && this.effectiveSupersample > 1) {
+        // The proactive budget estimate wasn't conservative enough for this
+        // device at this size — learn that and retry smaller, mirroring
+        // runChunk's own CPU OOM-ratchet branch exactly (there is no GPU
+        // branch to consider here).
+        this.maxSafeSupersample = this.effectiveSupersample - 1;
+        this.startAccumulation(
+          this.lastRequestedSupersample ?? this.effectiveSupersample,
+        );
+      } else {
+        this.emit({ type: "error", message: describeError(e) });
+      }
+      return;
+    }
+    const t1 = this.now();
+    this.iterationsDone += actual;
+    this.adaptChunkSize(t1 - t0);
+
+    const finished = this.iterationsDone >= this.iterationsBudget;
+    const due =
+      finished ||
+      this.lastDownsampleAt === undefined ||
+      t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
+    if (due) {
+      let snap: FlameHistogram;
+      try {
+        snap = backend4.snapshot();
+      } catch (e) {
+        this.running = false;
+        this.emit({ type: "error", message: describeError(e) });
+        return;
+      }
+      this.histogram = snap;
+      this.rebuildDisplay(finished);
+      this.lastDownsampleAt = t1;
+      this.sendProgress();
+      if (finished) {
+        this.finalFrameDisplayed = true;
+      }
+    }
+
+    if (finished) {
+      this.running = false;
+    } else {
+      this.schedule(() => {
+        this.runChunk4();
       });
     }
   }

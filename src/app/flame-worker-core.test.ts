@@ -8,6 +8,7 @@ import {
 } from "../fractal/flame";
 import type { FlameHistogram, Mat4 } from "../fractal/flame";
 import { sierpinskiTetrahedron } from "../fractal/presets";
+import type { Transform4 } from "../fractal/types";
 import {
   flameAccumBudgetBuckets,
   FlameWorkerSession,
@@ -57,6 +58,49 @@ function startCommand(
     order: 1,
     axis: "y",
     ...overrides,
+  };
+}
+
+/** Row-major 4x4 identity rotor — an inert 4D tumble (no rotation), for
+ * fixtures that don't care about the rotor's own math. */
+// prettier-ignore
+const IDENTITY_ROTOR4 = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+
+/** A simple pentatope-ish 4D system: every map contracts all of 4-space
+ * toward the same fixed point, converging to (0.5, 0.5, 0.5, 0.5) — the 4D
+ * twin of this file's implicit 3D fixture (`sierpinskiTetrahedron`), just
+ * simple enough to reason about by hand for a session-level smoke test. */
+function makeTransforms4(count: number): Transform4[] {
+  return Array.from({ length: count }, (): Transform4 => ({
+    position: [0.25, 0.25, 0.25, 0.25],
+    scale: [0.5, 0.5, 0.5, 0.5],
+  }));
+}
+
+/** A ready-to-use `fourD` block (see `FlameWorkerCommand`'s `start` variant)
+ * — an inert rotor/center so the projection is "drop w, keep xyz" verbatim,
+ * sliceOn false so every point contributes at full weight. Tests that care
+ * about a specific field spread over this. */
+function defaultFourD(): NonNullable<
+  Extract<FlameWorkerCommand, { type: "start" }>["fourD"]
+> {
+  return {
+    transforms4: makeTransforms4(4),
+    finalTransform4: null,
+    rotor: IDENTITY_ROTOR4,
+    center: [0, 0, 0, 0],
+    invWAmp: 1,
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 1,
+    colorMode: "wBlueOrange",
+    radiusMin: 0,
+    radiusMax: 1,
   };
 }
 
@@ -1896,5 +1940,115 @@ describe("FlameWorkerSession dispose", () => {
     expect(progressEvents(events)).toHaveLength(1); // the queued chunk never got to accumulate/report.
     expect(backendEvents(events)).toHaveLength(1); // no second "backend" event — no new backend was created.
     expect(destroyCalls).toBe(1); // still exactly once — no double-destroy either.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4D flame render (fr-5b3): the `fourD` start-command block forces the CPU
+// accumulation backend (Cpu4DFlameBackend, via runChunk4) regardless of
+// gpuPreference, and every command handler must still behave sanely —
+// setSymmetry becomes a no-op (symmetry is 3D-only), setPalette still
+// restarts. A plain 3D start (no fourD) must keep behaving exactly as every
+// other describe block in this file already proves.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession 4D flame render", () => {
+  it("never calls the GPU factory for a 4D session, even with gpuPreference auto and a factory wired, and emits backend: cpu", () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      throw new Error("must never be called");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    scheduler.drain(); // fully synchronous — runChunk4 never suspends.
+
+    expect(factoryCalls).toBe(0);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+  });
+
+  it("produces progress events with a nonempty image for a simple 4D transform fixture", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        width: 16,
+        height: 16,
+        iterationsBudget: 2000,
+      }),
+    );
+    scheduler.drain();
+
+    const progress = progressEvents(events);
+    expect(progress.length).toBeGreaterThan(0);
+    const last = progress.at(-1)!;
+    expect(last.iterationsDone).toBe(2000);
+    expect(last.width).toBe(16);
+    expect(last.height).toBe(16);
+    expect(last.image).toHaveLength(16 * 16 * 4);
+    expect(Array.from(last.image).some((v) => v !== 0)).toBe(true);
+  });
+
+  it("setSymmetry on a 4D session is a no-op: no restart, no new backend, no estimating event", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 20 }),
+    );
+    scheduler.drain();
+    const framesBefore = progressEvents(events).length;
+    const backendsBefore = backendEvents(events).length;
+    const estimatingBefore = estimatingEvents(events).length;
+    expect(backendsBefore).toBeGreaterThan(0);
+
+    session.handle({ type: "setSymmetry", order: 3, axis: "z" });
+
+    expect(progressEvents(events)).toHaveLength(framesBefore); // no new frame.
+    expect(backendEvents(events)).toHaveLength(backendsBefore); // no restart -> no new backend.
+    expect(estimatingEvents(events)).toHaveLength(estimatingBefore); // never re-ran the adaptive pass.
+  });
+
+  it("setPalette on a 4D session restarts accumulation and still produces progress", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        iterationsBudget: 20,
+        paletteId: "legacy",
+      }),
+    );
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20);
+    const framesBefore = progressEvents(events).length;
+    const backendsBefore = backendEvents(events).length;
+
+    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    scheduler.drain();
+
+    // A finished render produces no more frames on its own; that it climbs
+    // back to the budget AND emits new frames (and a new backend) proves it
+    // reset to zero and re-ran, exactly like the 3D setPalette restart.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20);
+    expect(progressEvents(events).length).toBeGreaterThan(framesBefore);
+    expect(backendEvents(events).length).toBeGreaterThan(backendsBefore);
+  });
+
+  it("a 3D start (no fourD) is unaffected: behaves exactly as every other test in this file", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ iterationsBudget: 500 }));
+    scheduler.drain();
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsDone).toBe(500);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
   });
 });

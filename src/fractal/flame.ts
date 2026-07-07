@@ -90,6 +90,15 @@ export interface FlameHistogram {
    * folded into `orbit` because it is not a spatial coordinate.
    */
   orbitColor: number;
+  /**
+   * The 4D orbit's fourth-coordinate continuation (fr-5b3) — `flame-4d.ts`'s
+   * `accumulateFlame4` twin of {@link orbit}'s `x`/`y`/`z`, kept here (rather
+   * than a fourth slot on `orbit` itself) so `orbit` stays exactly the `Vec3`
+   * every 3D caller already expects. Used ONLY by `accumulateFlame4`; stays at
+   * its `0` default on the 3D path (`accumulateFlame` never reads or writes
+   * it), so nothing here changes for any existing caller.
+   */
+  orbitW: number;
 }
 
 /** A fresh, empty histogram: every bucket at zero hits, ready to accumulate into. */
@@ -105,6 +114,7 @@ export function createFlameHistogram(
     maxHits: 0,
     orbit: [0, 0, 0],
     orbitColor: 0.5,
+    orbitW: 0,
   };
 }
 
@@ -133,6 +143,7 @@ export function viewFlameHistogram(
     maxHits,
     orbit: [0, 0, 0],
     orbitColor: 0.5,
+    orbitW: 0,
   };
 }
 
