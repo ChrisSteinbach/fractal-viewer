@@ -182,6 +182,15 @@ const FOUR_D_XY_RATE = 0.13;
 const FOUR_D_ZW_RATE = 0.21;
 
 /**
+ * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
+ * default 1× orbit speed (the user's speed slider multiplies it — see
+ * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
+ * and in the same family as the 4D tumble rates above. Negative-theta
+ * direction, matching a slow rightward drag (see OrbitCamera.rotate).
+ */
+const AUTO_ORBIT_RATE = 0.12;
+
+/**
  * Synthesize a 3D {@link Bounds} for framing a 4D projection: an axis-aligned
  * box on the cloud's xyz center whose half-DIAGONAL equals `radius`, so
  * orbit.ts's `fitRadius` (which reads the box as a bounding sphere of radius =
@@ -276,11 +285,27 @@ function main(): void {
   let fourDPair: RotorPair = identityRotorPair();
   let fourDTumbleOn = true;
   let fourDTumbleSpeed = 1;
-  let fourDLastTickMs = 0;
   // The soft w-slice (fr-6x2): session-only view state, reset by
   // resetFourDView() alongside the rotor pair above.
   let fourDSliceOn = false;
   let fourDSliceCenter = 0;
+
+  // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
+  // above — a slow turntable on the orbit camera's theta, so a flat system's
+  // cloud reads as 3D at a glance the way the tumble sells 4D. Session-only
+  // like the tumble (never persisted, never in AppState/undo), reset by
+  // resetAutoOrbitView() on a fresh visit to the 3D view. Unlike the tumble
+  // it shares its degree of freedom with the plain drag gesture, so animate()
+  // additionally pauses it while interactions reports a gesture in progress.
+  let autoOrbitOn = true;
+  let autoOrbitSpeed = 1;
+
+  // Shared frame clock for the explorer path's automatic motion (the 4D
+  // tumble and the 3D auto-orbit). Advances every explorer frame — paused,
+  // dragging, or not — so resuming never replays the gap as a jump; it
+  // simply doesn't tick during flame/solid renders (animate() returns
+  // early), which the dt clamp in animate() absorbs on exit.
+  let lastMotionTickMs = performance.now();
 
   // Reset the 4D VIEW state to a "fresh visit" baseline — rotor pair to
   // identity, tumble running (paused under reduced motion, but pre-seeded on
@@ -297,7 +322,6 @@ function main(): void {
     const reducedMotion = prefersReducedMotion();
     fourDTumbleOn = !reducedMotion;
     fourDTumbleSpeed = 1;
-    fourDLastTickMs = performance.now();
     if (reducedMotion) {
       fourDPair = rotateInPlane(fourDPair, "xy", 0.6);
       fourDPair = rotateInPlane(fourDPair, "zw", 0.9);
@@ -307,6 +331,20 @@ function main(): void {
     scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
     ui.resetFourDSlice();
     ui.resetFourDTumble(fourDTumbleOn);
+  }
+
+  // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
+  // visit" baseline — running (paused under reduced motion, still an explicit
+  // opt-in there) at default speed. Fires from regenerate() on the mirrored
+  // triggers — (a) a non-flat→flat transition and (b) a whole-system
+  // replacement that lands on a flat system — plus once at boot, so a paused
+  // or re-sped orbit survives ordinary edits exactly like the tumble does.
+  // No orientation to reset: theta IS the live camera, and yanking it would
+  // discard the user's framing.
+  function resetAutoOrbitView(): void {
+    autoOrbitOn = !prefersReducedMotion();
+    autoOrbitSpeed = 1;
+    ui.resetAutoOrbit(autoOrbitOn);
   }
 
   // Re-run the chaos game: the only path that touches the RNG and changes point
@@ -344,11 +382,16 @@ function main(): void {
 
     if (nonFlat && (replaced || !wasNonFlat)) {
       resetFourDView();
-    } else if (!nonFlat && wasNonFlat) {
-      // scene.setFourDActive(false) (just above) restores the 3D material/
-      // fog/background, but does NOT touch the scaffold — a separate scene
-      // object that otherwise keeps tumbling over the 3D cloud forever.
-      scene.setFourDScaffold(null);
+    } else if (!nonFlat && (replaced || wasNonFlat)) {
+      // The mirrored "fresh visit" trigger for the 3D view (fr-1yn): a
+      // non-flat→flat flip or a whole-system replacement landing flat.
+      resetAutoOrbitView();
+      if (wasNonFlat) {
+        // scene.setFourDActive(false) (just above) restores the 3D material/
+        // fog/background, but does NOT touch the scaffold — a separate scene
+        // object that otherwise keeps tumbling over the 3D cloud forever.
+        scene.setFourDScaffold(null);
+      }
     }
 
     // 4D projection path: run the 4D chaos game and upload the projected xyz +
@@ -515,10 +558,10 @@ function main(): void {
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
   // fight with the animation — cancel outright on the next user gesture.
   // Capture phase so this runs before interactions.ts's own (bubble-phase)
-  // listeners on the same canvas. COORDINATION: the idle-turntable bead
-  // (fr-1yn, not yet implemented) needs an identical "last canvas input"
-  // listener — if it lands, merge into one shared helper here instead of two
-  // separate listener sets.
+  // listeners on the same canvas. (The auto-orbit — fr-1yn — needs no
+  // listener of its own here: it polls interactions' gestureActive() each
+  // frame instead, and composes with the tween anyway — theta vs.
+  // radius/target, disjoint fields.)
   function cancelCameraTween(): void {
     cameraTween = null;
   }
@@ -1604,9 +1647,17 @@ function main(): void {
     onFourDTumbleSpeedInput: (value) => {
       fourDTumbleSpeed = value;
     },
+    // Auto-orbit pause/resume + speed (fr-1yn): the 3D siblings of the tumble
+    // handlers above, same session-only pattern.
+    onAutoOrbitToggle: (checked) => {
+      autoOrbitOn = checked;
+    },
+    onAutoOrbitSpeedInput: (value) => {
+      autoOrbitSpeed = value;
+    },
   });
 
-  attachInteractions(scene, orbit, {
+  const gestures = attachInteractions(scene, orbit, {
     selectedTransform: selectedBox,
     frozen: () => state.flameActive,
     onTransformChange: (index, geometry) => {
@@ -1684,6 +1735,11 @@ function main(): void {
   // `viewIs4D` for a possibly-restored non-flat scene, and refreshGuides()
   // right after needs that to already be current, not defaulted to `false`.
   regenerate();
+  // A flat boot never routes through regenerate()'s flip/replacement branches,
+  // so seed the auto-orbit baseline (incl. the reduced-motion pause and the
+  // checkbox sync) explicitly. A non-flat boot leaves it to the first
+  // non-flat→flat transition, exactly like the tumble in the other direction.
+  if (!viewIs4D) resetAutoOrbitView();
   refreshGuides();
   // Match grid/axes to the initial (possibly restored) guide visibility, since
   // refreshGuides only governs the per-transform boxes.
@@ -1726,14 +1782,25 @@ function main(): void {
       }
       return;
     }
+    // One clamped dt for both kinds of automatic motion (4D tumble / 3D
+    // auto-orbit — mutually exclusive by viewIs4D). Clamp it: a backgrounded
+    // tab suspends RAF (and a render's early returns skip this path
+    // entirely), and an unclamped catch-up delta would violently snap the
+    // orientation on refocus/exit.
+    const now = performance.now();
+    const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
+    lastMotionTickMs = now;
+    if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
+      // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
+      // before applyCamera so it lands on this frame. Pure camera motion —
+      // no RNG, no regenerate, no scheduleSave (camera is never persisted).
+      // Paused while the user's hand is on the canvas (same theta a drag
+      // writes); composes freely with the auto-fit tween (radius/target).
+      orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
+    }
     scene.applyCamera(orbit);
     scene.updateFog();
     if (viewIs4D) {
-      const now = performance.now();
-      // Clamp dt: a backgrounded tab suspends RAF, and an unclamped catch-up
-      // delta would violently snap the orientation on refocus.
-      const dt = Math.min((now - fourDLastTickMs) / 1000, 0.1);
-      fourDLastTickMs = now;
       if (fourDTumbleOn) {
         fourDPair = rotateInPlane(
           fourDPair,
@@ -1747,8 +1814,8 @@ function main(): void {
         );
       }
       // Pushed every 4D frame, paused or not — 16 floats/frame is nothing and
-      // it keeps one code path. fourDLastTickMs still advances while paused,
-      // so resuming doesn't replay the gap as a jump. The point color
+      // it keeps one code path. lastMotionTickMs (above) still advances while
+      // paused, so resuming doesn't replay the gap as a jump. The point color
       // re-derives in-shader from the new rotation, so nothing else needs
       // updating per frame.
       scene.setRot4(rotorMatrix(fourDPair));

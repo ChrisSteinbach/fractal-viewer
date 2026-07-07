@@ -141,6 +141,11 @@ export interface UiHandlers {
   /** The symmetry axis dropdown changed — same reach as
    * {@link onSymmetryOrderInput}. */
   onSymmetryAxisChange: (axis: SymmetryAxis) => void;
+  /** The 3D auto-orbit (fr-1yn) was paused or resumed — the camera-side
+   * sibling of {@link onFourDTumbleToggle}. */
+  onAutoOrbitToggle: (checked: boolean) => void;
+  /** The 3D orbit-speed slider moved: `value` is the rate multiplier (×). */
+  onAutoOrbitSpeedInput: (value: number) => void;
   /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
   onFourDSliceToggle: (checked: boolean) => void;
   /** The 4D slice-position slider moved: `value` is the slice center in
@@ -677,6 +682,15 @@ export class Ui {
   private readonly solidProgress: HTMLElement;
   private readonly exitSolidBtn: HTMLButtonElement;
 
+  // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
+  // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
+  // shown exactly when the 4D block is not (flat system, no render active).
+  private readonly threeDControls: HTMLElement;
+  private readonly autoOrbitToggle: HTMLInputElement;
+  private readonly autoOrbitRow: HTMLElement;
+  private readonly autoOrbitSpeedSlider: HTMLInputElement;
+  private readonly autoOrbitSpeedLabel: HTMLElement;
+
   // 4D VIEW controls (fr-cbg/fr-woc/fr-6x2). "4D" is a DERIVED property of the
   // system now (fr-bf6, see affine4.ts's systemIsFlat/state.ts's
   // systemIsNonFlat) rather than a mode with its own entry/exit button, so only
@@ -804,6 +818,11 @@ export class Ui {
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
+    this.threeDControls = this.byId("threeDControls");
+    this.autoOrbitToggle = this.byId("autoOrbitToggle");
+    this.autoOrbitRow = this.byId("autoOrbitRow");
+    this.autoOrbitSpeedSlider = this.byId("autoOrbitSpeedSlider");
+    this.autoOrbitSpeedLabel = this.byId("autoOrbitSpeedLabel");
     this.fourDTumbleToggle = this.byId("fourDTumbleToggle");
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
@@ -955,6 +974,18 @@ export class Ui {
     this.solidResolutionSlider.addEventListener("input", () =>
       handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
     );
+    this.autoOrbitToggle.addEventListener("change", () => {
+      const on = this.autoOrbitToggle.checked;
+      // Same "row hides with its toggle" pattern as the 4D tumble below
+      // (orbit state is session-only and never enters AppState).
+      this.autoOrbitRow.classList.toggle("hidden", !on);
+      handlers.onAutoOrbitToggle(on);
+    });
+    this.autoOrbitSpeedSlider.addEventListener("input", () => {
+      const value = Number(this.autoOrbitSpeedSlider.value);
+      this.autoOrbitSpeedLabel.textContent = `${value.toFixed(1)}×`;
+      handlers.onAutoOrbitSpeedInput(value);
+    });
     this.fourDTumbleToggle.addEventListener("change", () => {
       const on = this.fourDTumbleToggle.checked;
       // The speed slider only means anything while the tumble is running —
@@ -993,6 +1024,16 @@ export class Ui {
     this.fourDSliceRow.classList.add("hidden");
     this.fourDSliceSlider.value = "0";
     this.fourDSliceLabel.textContent = "0.00";
+  }
+
+  /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`
+   * is false under prefers-reduced-motion, where the orbit starts paused but
+   * stays available as an explicit opt-in (mirrors {@link resetFourDTumble}). */
+  resetAutoOrbit(on: boolean): void {
+    this.autoOrbitToggle.checked = on;
+    this.autoOrbitRow.classList.toggle("hidden", !on);
+    this.autoOrbitSpeedSlider.value = "1";
+    this.autoOrbitSpeedLabel.textContent = "1.0×";
   }
 
   /** Reset the 4D tumble controls on every 4D entry — `on` is false under
@@ -1112,6 +1153,12 @@ export class Ui {
     this.flameControls.classList.toggle("hidden", !state.flameActive);
     this.solidControls.classList.toggle("hidden", !state.solidActive);
     this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
+    // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
+    // the 4D block: exactly one of the two shows outside a render. It hides
+    // during renders for the same frozen-view reason (the flame freezes the
+    // camera outright; the solid render keeps manual gestures but animate()'s
+    // early return stops the automatic motion, so the controls would be inert).
+    this.threeDControls.classList.toggle("hidden", nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
     this.symmetrySection.classList.toggle("hidden", nonFlat);
