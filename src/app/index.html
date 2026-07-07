@@ -487,11 +487,22 @@
       <div id="fourDControls" class="hidden">
         <h3>4D View</h3>
         <p class="flame-hint">
-          Color = side of our 3-space: <strong>blue −w · orange +w</strong> ·
-          gray ≈ w 0. Layers add up where the projection overlaps itself.
-          Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
-          ZW.
+          W-depth color = side of our 3-space:
+          <strong>cool −w · warm +w</strong> · dim gray ≈ w 0 (the legend keys
+          the active choice). Layers add up where the projection overlaps
+          itself. Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll
+          turns ZW.
         </p>
+        <label class="select-label">
+          4D Color
+          <select id="fourDColor">
+            <option value="wBlueOrange">W Depth (blue / orange)</option>
+            <option value="wPurpleGreen">W Depth (purple / green)</option>
+            <option value="wCyanMagenta">W Depth (cyan / magenta)</option>
+            <option value="transform">By Transform</option>
+            <option value="radius">By 4D Radius (warm→cool)</option>
+          </select>
+        </label>
         <label class="checkbox-label">
           <input type="checkbox" id="fourDTumbleToggle" checked />
           Auto-tumble (XY+ZW)

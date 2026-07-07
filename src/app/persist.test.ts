@@ -14,6 +14,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
@@ -77,6 +78,7 @@ function baseSnapshot(): SceneSnapshot {
     pointSize: 1,
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
+    fourDColor: "wBlueOrange",
     renderStyle: "depthFade",
     showGuides: true,
     flame: {
@@ -1613,6 +1615,49 @@ describe("decodeScene color contrast", () => {
   it("clamps an out-of-range value below the minimum up to the min", () => {
     const s: SceneSnapshot = { ...baseSnapshot(), colorGamma: -5 };
     expect(decodeScene(encodeScene(s))!.colorGamma).toBe(MIN_COLOR_GAMMA);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4D projection color mode (fr-d47)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene fourDColor", () => {
+  it("round-trips a non-default fourDColor", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), fourDColor: "wCyanMagenta" };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.fourDColor).toBe("wCyanMagenta");
+  });
+
+  it("defaults quietly for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `fourDColor` key at all — exactly what
+    // every link looked like before fr-d47.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      colorGamma: DEFAULT_COLOR_GAMMA,
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
+  });
+
+  it("falls back to wBlueOrange for an unrecognized fourDColor instead of rejecting the scene", () => {
+    // Like symmetry.axis / flame.paletteId, an unrecognized value does NOT
+    // nuke the whole scene — a 4D palette choice is cosmetic, not worth
+    // losing an otherwise-valid shared link over.
+    const raw = { ...baseSnapshot(), fourDColor: "neon" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
   });
 });
 

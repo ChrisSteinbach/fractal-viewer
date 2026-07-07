@@ -4,7 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
-import { transformColors } from "../fractal/color";
+import { transformColors, W_SIDE_PALETTES } from "../fractal/color";
 import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
@@ -152,17 +152,26 @@ const DOF_FRAGMENT = /* glsl */ `
 // Two choices here exist to make the FOURTH dimension legible rather than
 // looking like one more 3D coordinate ramp:
 //
-// - A DIVERGING palette on the SIGNED rotated w — cool blue on the −w side of
-//   our 3-space, warm orange on the +w side, dim desaturated gray near w = 0 —
-//   instead of the height/radius-style rainbow, which a still image cannot
-//   distinguish from the 3D "height" mode. Color answers "how far OUT of the
-//   visible hyperplane, and to which side".
+// - A DIVERGING palette on the SIGNED rotated w — a cool side color on the −w
+//   side of our 3-space, a warm one on the +w side (uSideNeg/uSidePos, fed
+//   from color.ts's W_SIDE_PALETTES — blue/orange by default), dim
+//   desaturated gray near w = 0 — instead of the height/radius-style rainbow,
+//   which a still image cannot distinguish from the 3D "height" mode. Color
+//   answers "how far OUT of the visible hyperplane, and to which side".
 // - Additive translucency (see the material setup): an orthographic projection
 //   folds several w-layers onto the same xyz spot, and opaque depth-tested
 //   points would let the front layer win — hiding exactly the self-overlap
 //   that makes a projection read as 4D. Additive blending superposes the
-//   layers, and where −w and +w sheets cross, blue + orange sum toward white:
-//   color mixtures that exist nowhere in the palette flag genuine 4D overlap.
+//   layers, and where −w and +w sheets cross, the cool + warm sides sum toward
+//   white: color mixtures that exist nowhere in the palette flag genuine 4D
+//   overlap.
+//
+// The baked 4D color modes (fr-d47 — "by transform" / "by 4D radius", both
+// rotation-invariant) swap only WHERE the side color comes from: uUseAttrColor
+// selects a per-point `color` attribute (color.ts's buildColors4) over the
+// sign-picked pair. The gray-notch magnitude modulation below applies either
+// way, so the fourth dimension stays legible in brightness while hue carries
+// the structural information.
 //
 // The soft w-slice (fr-6x2) rides the same alpha path: a Gaussian opacity
 // window in the signed rotated w, swept by a slider — depth-of-field in the
@@ -178,7 +187,11 @@ const FOUR_D_VERTEX = /* glsl */ `
   uniform float uSliceOn;
   uniform float uSliceCenter;
   uniform float uSliceWidth;
+  uniform vec3 uSideNeg;
+  uniform vec3 uSidePos;
+  uniform float uUseAttrColor;
   attribute float w;
+  attribute vec3 color;
   varying vec3 vColor;
   varying float vAlpha;
 
@@ -199,15 +212,18 @@ const FOUR_D_VERTEX = /* glsl */ `
     // support function bounds every stored point.
     float s = clamp(q.w * uInvWAmp4, -1.0, 1.0);
 
-    // Diverging palette: sign picks the side, magnitude drives saturation AND
-    // brightness (the 0.6 exponent lifts the mid-range, where heavy-tailed
-    // w-distributions still cluster even after the support normalization
-    // spreads the cloud over the full [-1, 1]). Near-zero w — the part of
-    // the cloud passing through our own 3-space — stays dim gray and recedes.
-    // (Palette mirrored in ui.ts's W_RAMP_GRADIENT so the legend matches the
-    // screen — fr-a3q. Keep the constants in sync.)
+    // Diverging palette: sign picks the side (or, for the baked fr-d47 modes,
+    // uUseAttrColor swaps in the per-point attribute), magnitude drives
+    // saturation AND brightness (the 0.6 exponent lifts the mid-range, where
+    // heavy-tailed w-distributions still cluster even after the support
+    // normalization spreads the cloud over the full [-1, 1]). Near-zero w —
+    // the part of the cloud passing through our own 3-space — stays dim gray
+    // and recedes. (The side pair comes from color.ts's W_SIDE_PALETTES via
+    // uniforms, so it can't drift from the legend; the ramp SHAPE constants —
+    // the 0.6 exponent, the 0.38 gray, the 0.30 + 0.70 brightness — are still
+    // mirrored in ui.ts's wRampGradient. Keep those in sync — fr-a3q.)
     float m = pow(abs(s), 0.6);
-    vec3 side = s < 0.0 ? vec3(0.30, 0.60, 1.00) : vec3(1.00, 0.50, 0.18);
+    vec3 side = mix(s < 0.0 ? uSideNeg : uSidePos, color, uUseAttrColor);
     vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);
 
     // Soft w-slice: a Gaussian window in s around uSliceCenter, with a floor so
@@ -457,6 +473,13 @@ export class FractalScene {
         uSliceOn: { value: 0 },
         uSliceCenter: { value: 0 },
         uSliceWidth: { value: FOUR_D_SLICE_WIDTH },
+        uSideNeg: {
+          value: new THREE.Vector3(...W_SIDE_PALETTES.wBlueOrange.neg),
+        },
+        uSidePos: {
+          value: new THREE.Vector3(...W_SIDE_PALETTES.wBlueOrange.pos),
+        },
+        uUseAttrColor: { value: 0 },
       },
       vertexShader: FOUR_D_VERTEX,
       fragmentShader: FOUR_D_FRAGMENT,
@@ -558,9 +581,11 @@ export class FractalScene {
    * `xyz` positions plus the separate `w` coordinate the shader colors by, and
    * the 4D `center`/`halfExtents` that drive the shader's rotation pivot and
    * w-color normalization. `radius` is now only the rotation-invariant
-   * bounding sphere used for frustum culling. The 4D shader reads no `color`
-   * attribute (color is computed from `w` and the live rotation), so any
-   * stale one is dropped.
+   * bounding sphere used for frustum culling. Any `color` attribute is
+   * dropped: it belonged to the previous cloud (possibly a different length),
+   * and main.ts re-points the color source — re-baking the attribute when the
+   * current 4D color mode needs one — via {@link setFourDColorSource} right
+   * after every upload.
    */
   setPoints4(
     positions: Float32Array,
@@ -613,6 +638,35 @@ export class FractalScene {
       "color",
       new THREE.BufferAttribute(colors, 3),
     );
+  }
+
+  /**
+   * Point the 4D shader's color at its source (fr-d47): either a diverging
+   * side-color pair (the "w depth" modes — pure shader work on the signed
+   * rotated w; see `color.ts`'s `W_SIDE_PALETTES`) or a baked per-point
+   * attribute (`buildColors4`'s rotation-invariant transform / 4D-radius
+   * modes). The gray-notch magnitude modulation applies either way — see
+   * FOUR_D_VERTEX. Passing sides drops any baked attribute so a stale buffer
+   * from a previous mode never lingers; the shader's `color` attribute then
+   * falls back to ShaderMaterial's default (white), which `uUseAttrColor = 0`
+   * multiplies out entirely.
+   */
+  setFourDColorSource(
+    source: { sides: { neg: Vec3; pos: Vec3 } } | { colors: Float32Array },
+  ): void {
+    const u = this.fourDMaterial.uniforms;
+    if ("sides" in source) {
+      (u.uSideNeg.value as THREE.Vector3).set(...source.sides.neg);
+      (u.uSidePos.value as THREE.Vector3).set(...source.sides.pos);
+      u.uUseAttrColor.value = 0;
+      this.pointGeometry.deleteAttribute("color");
+    } else {
+      this.pointGeometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(source.colors, 3),
+      );
+      u.uUseAttrColor.value = 1;
+    }
   }
 
   /** Rebuild the wireframe guide boxes from the current transform list. */

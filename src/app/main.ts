@@ -4,7 +4,12 @@ import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { RotorPair } from "./rotor4";
-import { buildColors } from "../fractal/color";
+import {
+  buildColors,
+  buildColors4,
+  fourDColorNeedsAttribute,
+  W_SIDE_PALETTES,
+} from "../fractal/color";
 import {
   DEFAULT_GAMMA_THRESHOLD,
   tonemapFlame,
@@ -58,6 +63,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setFourDColor,
   setGlowBrightness,
   setNumPoints,
   setPanelOpen,
@@ -353,6 +359,9 @@ function main(): void {
           (b4.maxW - b4.minW) / 2,
         ],
       );
+      // setPoints4 dropped the previous cloud's color attribute; re-point the
+      // shader at the current mode's source (re-baking for the baked modes).
+      applyFourDColor();
       ui.setPointCount(fourDResult.count);
       return;
     }
@@ -377,8 +386,8 @@ function main(): void {
   // scene. Leaves positions (and thus the RNG) untouched, so switching color
   // mode recolors the same shape instantly. No-op before the first generation.
   function recolor(): void {
-    // In 4D the point color is computed in the shader from the rotated w, so
-    // there is no CPU color buffer to rebuild.
+    // In 4D the point color is owned by the 4D shader path (see
+    // applyFourDColor below), not colorMode's CPU buffer.
     if (viewIs4D) return;
     if (!lastResult) return;
     const colors = buildColors(
@@ -388,6 +397,24 @@ function main(): void {
       state.colorGamma,
     );
     scene.setColors(colors);
+  }
+
+  // Point the 4D shader's color at the current fourDColor mode's source
+  // (fr-d47): the w-depth modes are pure shader work (a side-color uniform
+  // pair from W_SIDE_PALETTES), while the baked modes build a rotation-
+  // invariant per-point attribute from the cached 4D result — the 4D sibling
+  // of recolor(), and like it never re-runs the chaos game. No-op before the
+  // first 4D generation.
+  function applyFourDColor(): void {
+    if (!viewIs4D || !fourDResult) return;
+    const mode = state.fourDColor;
+    if (fourDColorNeedsAttribute(mode)) {
+      scene.setFourDColorSource({
+        colors: buildColors4(fourDResult, state.transforms.length, mode),
+      });
+    } else {
+      scene.setFourDColorSource({ sides: W_SIDE_PALETTES[mode] });
+    }
   }
 
   // Auto-fit the camera to a freshly-generated attractor (fr-0b8): a
@@ -1196,6 +1223,16 @@ function main(): void {
       state = setColorGamma(state, value);
       ui.updateLabels(state);
       recolor();
+    },
+    onFourDColor: (mode) => {
+      // The 4D color select only shows while non-flat — belt-and-braces,
+      // mirroring onColorMode's flat-side guard above.
+      if (!viewIs4D) return;
+      beginSceneEdit();
+      state = setFourDColor(state, mode);
+      // The legend keys off fourDColor while non-flat.
+      ui.updateLabels(state);
+      applyFourDColor();
     },
     onRenderStyle: (style) => {
       // renderStyleRow hides while non-flat (the 4D material/render path
