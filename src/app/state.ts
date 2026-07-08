@@ -9,6 +9,7 @@ import type {
   SymmetryParams,
   Transform,
 } from "../fractal/types";
+import { clamp } from "../fractal/vec";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 
 /**
@@ -224,6 +225,15 @@ export const MAX_NUM_POINTS = 5_000_000;
 export const MIN_NUM_POINTS = 1_000;
 /** Point-size multiplier; 1 renders each style at its authored size. */
 export const DEFAULT_POINT_SIZE = 1;
+/**
+ * Point-size multiplier bounds. `pointSize` scales each render style's
+ * authored base size; below the floor points all but vanish, above the
+ * ceiling they bloat into a featureless blob. Matches `index.html`'s
+ * `pointSizeSlider` range (pinned by ui.test.ts) — the magic 0.25/4 that used
+ * to live inline in `persist.ts`'s decoder.
+ */
+export const MIN_POINT_SIZE = 0.25;
+export const MAX_POINT_SIZE = 4;
 /** Neutral brightness multiplier for a freshly started flame render. */
 export const DEFAULT_FLAME_EXPOSURE = 1;
 /**
@@ -469,6 +479,184 @@ export const MAX_W_ANGLE = Math.PI;
 export const MIN_W_SHEAR = -2;
 export const MAX_W_SHEAR = 2;
 
+/**
+ * The range knowledge for one tunable numeric parameter, single-sourced so the
+ * clamping setters below and `persist.ts`'s strict decode boundary share ONE
+ * declaration of each field's bounds (and rounding/snapping behavior) instead
+ * of re-inlining `Math.max(MIN, Math.min(MAX, v))` at every site. This extends
+ * the codebase's enum single-source discipline (`COLOR_MODES` → type +
+ * validator) from strings to numbers: {@link PARAM} is the table, and
+ * {@link clampToSpec} is the shared consumer both sides call.
+ *
+ * The individual `MIN_/MAX_/DEFAULT_` constants above remain the documented,
+ * importable home for each literal value (and every existing call site and
+ * test keeps using them); {@link PARAM} merely gathers them into the
+ * `{ min, max, default, round?, snap? }` shape `clampToSpec` needs, adding the
+ * per-field `round`/`snap` behavior that used to live implicitly in each
+ * setter. No range literal is written twice.
+ */
+export interface ParamSpec {
+  readonly min: number;
+  readonly max: number;
+  readonly default: number;
+  /**
+   * Round the clamped result to the nearest integer — for parameters whose
+   * state must be whole (iteration budgets, the supersample factor, the
+   * symmetry order), matching what those setters did with an outer
+   * `Math.round`.
+   */
+  readonly round?: boolean;
+  /**
+   * Snap to the nearest multiple of this step BEFORE clamping — the solid
+   * grid's voxel step, where memory is O(n³) so only stepped resolutions are
+   * offered. Applied first (exactly as `setSolidResolution` did) so the clamp
+   * still guarantees the final value lands within `[min, max]`.
+   */
+  readonly snap?: number;
+}
+
+/**
+ * Snap (if the spec asks), clamp into `[min, max]`, then round (if the spec
+ * asks) — the one clamp implementation every numeric setter and the persist
+ * decoders share. Ordering matches the hand-written chains it replaces:
+ * `setSolidResolution` snapped to the voxel step and THEN clamped, and the
+ * integer setters clamped and THEN rounded.
+ */
+export function clampToSpec(spec: ParamSpec, value: number): number {
+  const snapped =
+    spec.snap !== undefined ? Math.round(value / spec.snap) * spec.snap : value;
+  const clamped = clamp(snapped, spec.min, spec.max);
+  return spec.round ? Math.round(clamped) : clamped;
+}
+
+/**
+ * Single source of range knowledge for every tunable numeric parameter (see
+ * {@link ParamSpec}). Keyed by the parameter name; `state.ts`'s setters and
+ * `persist.ts`'s decoders both consume these via {@link clampToSpec}, and
+ * `index.html`'s slider `min`/`max` attributes are pinned against the matching
+ * entries by a test (see ui.test.ts).
+ *
+ * `numPoints.min` is `0` — the DATA floor, deliberately below the UI slider's
+ * own {@link MIN_NUM_POINTS} (1000) floor: `persist.ts` has always accepted an
+ * empty-to-huge cloud from a shared link (pinned by persist.test.ts), and a
+ * crafted sub-1000 count survives decode exactly the way an off-detent flame
+ * iteration count does — the slider just snaps its thumb for display until the
+ * user next drags it. The log-scaled slider needs a positive floor (log 0 is
+ * −∞), which is why `MIN_NUM_POINTS` exists as a separate, higher bound.
+ */
+/**
+ * Identity helper that pins each entry's type to {@link ParamSpec} while
+ * INFERRING the key set. Typing the values as `ParamSpec` widens `min`/`max`/
+ * `default` to plain `number` (the source constants are `const` literals like
+ * `2.4`, whose narrow types would otherwise leak through property access and
+ * fight ordinary numeric reassignment in the decoders); inferring `K` keeps
+ * `PARAM.<name>` typo-checked, unlike a bare `Record<string, ParamSpec>`.
+ */
+function defineParams<K extends string>(
+  specs: Record<K, ParamSpec>,
+): Record<K, ParamSpec> {
+  return specs;
+}
+
+export const PARAM = defineParams({
+  numPoints: { min: 0, max: MAX_NUM_POINTS, default: DEFAULT_NUM_POINTS },
+  pointSize: {
+    min: MIN_POINT_SIZE,
+    max: MAX_POINT_SIZE,
+    default: DEFAULT_POINT_SIZE,
+  },
+  colorGamma: {
+    min: MIN_COLOR_GAMMA,
+    max: MAX_COLOR_GAMMA,
+    default: DEFAULT_COLOR_GAMMA,
+  },
+  flameExposure: {
+    min: MIN_FLAME_EXPOSURE,
+    max: MAX_FLAME_EXPOSURE,
+    default: DEFAULT_FLAME_EXPOSURE,
+  },
+  flameIterations: {
+    min: MIN_FLAME_ITERATIONS,
+    max: MAX_FLAME_ITERATIONS,
+    default: DEFAULT_FLAME_ITERATIONS,
+    round: true,
+  },
+  flameGamma: {
+    min: MIN_FLAME_GAMMA,
+    max: MAX_FLAME_GAMMA,
+    default: DEFAULT_FLAME_GAMMA,
+  },
+  flameVibrancy: {
+    min: MIN_FLAME_VIBRANCY,
+    max: MAX_FLAME_VIBRANCY,
+    default: DEFAULT_FLAME_VIBRANCY,
+  },
+  flameSupersample: {
+    min: MIN_FLAME_SUPERSAMPLE,
+    max: MAX_FLAME_SUPERSAMPLE,
+    default: DEFAULT_FLAME_SUPERSAMPLE,
+    round: true,
+  },
+  estimatorRadius: {
+    min: MIN_ESTIMATOR_RADIUS,
+    max: MAX_ESTIMATOR_RADIUS,
+    default: DEFAULT_ESTIMATOR_RADIUS,
+  },
+  estimatorMinimumRadius: {
+    min: MIN_ESTIMATOR_MINIMUM_RADIUS,
+    max: MAX_ESTIMATOR_MINIMUM_RADIUS,
+    default: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
+  },
+  estimatorCurve: {
+    min: MIN_ESTIMATOR_CURVE,
+    max: MAX_ESTIMATOR_CURVE,
+    default: DEFAULT_ESTIMATOR_CURVE,
+  },
+  solidResolution: {
+    min: MIN_SOLID_RESOLUTION,
+    max: MAX_SOLID_RESOLUTION,
+    default: DEFAULT_SOLID_RESOLUTION,
+    snap: VOXEL_RESOLUTION_STEP,
+  },
+  solidIterations: {
+    min: MIN_SOLID_ITERATIONS,
+    max: MAX_SOLID_ITERATIONS,
+    default: DEFAULT_SOLID_ITERATIONS,
+    round: true,
+  },
+  solidThreshold: {
+    min: MIN_SOLID_THRESHOLD,
+    max: MAX_SOLID_THRESHOLD,
+    default: DEFAULT_SOLID_THRESHOLD,
+  },
+  solidLightAzimuth: {
+    min: MIN_SOLID_LIGHT_AZIMUTH,
+    max: MAX_SOLID_LIGHT_AZIMUTH,
+    default: DEFAULT_SOLID_LIGHT_AZIMUTH,
+  },
+  solidLightElevation: {
+    min: MIN_SOLID_LIGHT_ELEVATION,
+    max: MAX_SOLID_LIGHT_ELEVATION,
+    default: DEFAULT_SOLID_LIGHT_ELEVATION,
+  },
+  solidAmbient: {
+    min: MIN_SOLID_AMBIENT,
+    max: MAX_SOLID_AMBIENT,
+    default: DEFAULT_SOLID_AMBIENT,
+  },
+  symmetryOrder: {
+    min: MIN_SYMMETRY_ORDER,
+    max: MAX_SYMMETRY_ORDER,
+    default: DEFAULT_SYMMETRY_ORDER,
+    round: true,
+  },
+  glowBrightness: {
+    min: MIN_GLOW_BRIGHTNESS,
+    max: MAX_GLOW_BRIGHTNESS,
+    default: DEFAULT_GLOW_BRIGHTNESS,
+  },
+});
+
 export function initialState(panelOpen: boolean): AppState {
   return {
     transforms: defaultTransforms(),
@@ -580,11 +768,11 @@ export function setFinalTransform(
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {
-  return { ...state, numPoints };
+  return { ...state, numPoints: clampToSpec(PARAM.numPoints, numPoints) };
 }
 
 export function setPointSize(state: AppState, pointSize: number): AppState {
-  return { ...state, pointSize };
+  return { ...state, pointSize: clampToSpec(PARAM.pointSize, pointSize) };
 }
 
 export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
@@ -621,13 +809,7 @@ export function setFourDDepthFade(
  * mode it applies to.
  */
 export function setColorGamma(state: AppState, colorGamma: number): AppState {
-  return {
-    ...state,
-    colorGamma: Math.max(
-      MIN_COLOR_GAMMA,
-      Math.min(MAX_COLOR_GAMMA, colorGamma),
-    ),
-  };
+  return { ...state, colorGamma: clampToSpec(PARAM.colorGamma, colorGamma) };
 }
 
 export function setRenderStyle(
@@ -655,10 +837,7 @@ export function setFlameExposure(state: AppState, exposure: number): AppState {
     ...state,
     flame: {
       ...state.flame,
-      exposure: Math.max(
-        MIN_FLAME_EXPOSURE,
-        Math.min(MAX_FLAME_EXPOSURE, exposure),
-      ),
+      exposure: clampToSpec(PARAM.flameExposure, exposure),
     },
   };
 }
@@ -676,12 +855,7 @@ export function setFlameIterations(
     ...state,
     flame: {
       ...state.flame,
-      iterations: Math.round(
-        Math.max(
-          MIN_FLAME_ITERATIONS,
-          Math.min(MAX_FLAME_ITERATIONS, iterations),
-        ),
-      ),
+      iterations: clampToSpec(PARAM.flameIterations, iterations),
     },
   };
 }
@@ -693,7 +867,7 @@ export function setFlameGamma(state: AppState, gamma: number): AppState {
     ...state,
     flame: {
       ...state.flame,
-      gamma: Math.max(MIN_FLAME_GAMMA, Math.min(MAX_FLAME_GAMMA, gamma)),
+      gamma: clampToSpec(PARAM.flameGamma, gamma),
     },
   };
 }
@@ -705,10 +879,7 @@ export function setFlameVibrancy(state: AppState, vibrancy: number): AppState {
     ...state,
     flame: {
       ...state.flame,
-      vibrancy: Math.max(
-        MIN_FLAME_VIBRANCY,
-        Math.min(MAX_FLAME_VIBRANCY, vibrancy),
-      ),
+      vibrancy: clampToSpec(PARAM.flameVibrancy, vibrancy),
     },
   };
 }
@@ -727,12 +898,7 @@ export function setFlameSupersample(
     ...state,
     flame: {
       ...state.flame,
-      supersample: Math.round(
-        Math.max(
-          MIN_FLAME_SUPERSAMPLE,
-          Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
-        ),
-      ),
+      supersample: clampToSpec(PARAM.flameSupersample, supersample),
     },
   };
 }
@@ -751,10 +917,7 @@ export function setFlameEstimatorRadius(
     ...state,
     flame: {
       ...state.flame,
-      estimatorRadius: Math.max(
-        MIN_ESTIMATOR_RADIUS,
-        Math.min(MAX_ESTIMATOR_RADIUS, estimatorRadius),
-      ),
+      estimatorRadius: clampToSpec(PARAM.estimatorRadius, estimatorRadius),
     },
   };
 }
@@ -769,9 +932,9 @@ export function setFlameEstimatorMinimumRadius(
     ...state,
     flame: {
       ...state.flame,
-      estimatorMinimumRadius: Math.max(
-        MIN_ESTIMATOR_MINIMUM_RADIUS,
-        Math.min(MAX_ESTIMATOR_MINIMUM_RADIUS, estimatorMinimumRadius),
+      estimatorMinimumRadius: clampToSpec(
+        PARAM.estimatorMinimumRadius,
+        estimatorMinimumRadius,
       ),
     },
   };
@@ -787,10 +950,7 @@ export function setFlameEstimatorCurve(
     ...state,
     flame: {
       ...state.flame,
-      estimatorCurve: Math.max(
-        MIN_ESTIMATOR_CURVE,
-        Math.min(MAX_ESTIMATOR_CURVE, estimatorCurve),
-      ),
+      estimatorCurve: clampToSpec(PARAM.estimatorCurve, estimatorCurve),
     },
   };
 }
@@ -826,16 +986,11 @@ export function setSolidResolution(
   state: AppState,
   resolution: number,
 ): AppState {
-  const snapped =
-    Math.round(resolution / VOXEL_RESOLUTION_STEP) * VOXEL_RESOLUTION_STEP;
   return {
     ...state,
     solid: {
       ...state.solid,
-      resolution: Math.max(
-        MIN_SOLID_RESOLUTION,
-        Math.min(MAX_SOLID_RESOLUTION, snapped),
-      ),
+      resolution: clampToSpec(PARAM.solidResolution, resolution),
     },
   };
 }
@@ -853,12 +1008,7 @@ export function setSolidIterations(
     ...state,
     solid: {
       ...state.solid,
-      iterations: Math.round(
-        Math.max(
-          MIN_SOLID_ITERATIONS,
-          Math.min(MAX_SOLID_ITERATIONS, iterations),
-        ),
-      ),
+      iterations: clampToSpec(PARAM.solidIterations, iterations),
     },
   };
 }
@@ -873,10 +1023,7 @@ export function setSolidThreshold(
     ...state,
     solid: {
       ...state.solid,
-      threshold: Math.max(
-        MIN_SOLID_THRESHOLD,
-        Math.min(MAX_SOLID_THRESHOLD, threshold),
-      ),
+      threshold: clampToSpec(PARAM.solidThreshold, threshold),
     },
   };
 }
@@ -891,10 +1038,7 @@ export function setSolidLightAzimuth(
     ...state,
     solid: {
       ...state.solid,
-      lightAzimuth: Math.max(
-        MIN_SOLID_LIGHT_AZIMUTH,
-        Math.min(MAX_SOLID_LIGHT_AZIMUTH, lightAzimuth),
-      ),
+      lightAzimuth: clampToSpec(PARAM.solidLightAzimuth, lightAzimuth),
     },
   };
 }
@@ -909,10 +1053,7 @@ export function setSolidLightElevation(
     ...state,
     solid: {
       ...state.solid,
-      lightElevation: Math.max(
-        MIN_SOLID_LIGHT_ELEVATION,
-        Math.min(MAX_SOLID_LIGHT_ELEVATION, lightElevation),
-      ),
+      lightElevation: clampToSpec(PARAM.solidLightElevation, lightElevation),
     },
   };
 }
@@ -924,10 +1065,7 @@ export function setSolidAmbient(state: AppState, ambient: number): AppState {
     ...state,
     solid: {
       ...state.solid,
-      ambient: Math.max(
-        MIN_SOLID_AMBIENT,
-        Math.min(MAX_SOLID_AMBIENT, ambient),
-      ),
+      ambient: clampToSpec(PARAM.solidAmbient, ambient),
     },
   };
 }
@@ -989,9 +1127,7 @@ export function setSymmetryOrder(state: AppState, order: number): AppState {
     ...state,
     symmetry: {
       ...state.symmetry,
-      order: Math.round(
-        Math.max(MIN_SYMMETRY_ORDER, Math.min(MAX_SYMMETRY_ORDER, order)),
-      ),
+      order: clampToSpec(PARAM.symmetryOrder, order),
     },
   };
 }
@@ -1019,9 +1155,6 @@ export function setGlowBrightness(
 ): AppState {
   return {
     ...state,
-    glowBrightness: Math.max(
-      MIN_GLOW_BRIGHTNESS,
-      Math.min(MAX_GLOW_BRIGHTNESS, glowBrightness),
-    ),
+    glowBrightness: clampToSpec(PARAM.glowBrightness, glowBrightness),
   };
 }

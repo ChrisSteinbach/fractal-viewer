@@ -57,9 +57,11 @@ import type { AppState, RenderStyle, SolidParams } from "./state";
  * The bespoke dynamic widgets — the transform list/editor, variation rows,
  * the 4D editor group, the legend, and the session-only orbit/tumble/slice
  * view controls (which bind to main.ts closure state, not AppState) — stay
- * hand-built in ui.ts. Slider min/max/step stay in `index.html` for now;
- * this table is the natural consumer of a future ParamSpec range table
- * (fr-2v7).
+ * hand-built in ui.ts. Slider min/max/step still live on each `index.html`
+ * row, but their ranges are now single-sourced by state.ts's `PARAM` table
+ * (fr-2v7) and pinned against it by a ui.test.ts test — the log-scaled point
+ * count / color-contrast sliders and the detent-indexed flame quality slider
+ * map their own domains onto those ranges via the helpers below.
  */
 
 /**
