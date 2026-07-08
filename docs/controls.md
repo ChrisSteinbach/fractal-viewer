@@ -135,7 +135,15 @@ Transform** sliders that appear in the panel while a transform is selected.
   speed** scales its rate from 0.1× to 3×. **W slice** carves a soft Gaussian
   cross-section out of the cloud (the rest stays as ghost context), its
   position slider sweeping along w — each position is a genuinely different
-  3D fractal. **Depth fade (dim far points)** (fr-3e0) attenuates each
+  3D fractal. **Slice-relative color** (fr-nn6, shown while the slice is on
+  and a W-Depth palette is active) recenters the diverging ramp on the slice
+  window: inside the slice everything sits near one w, so the faithful
+  whole-cloud ramp renders a slice at 0 almost entirely in the palette's
+  dim-gray notch — this option spreads the full palette across the visible
+  cross-section instead (±2 slice-widths; ghost context beyond that clamps
+  to the side colors), changing color only, never the slice's opacity
+  window, and carries into the flame/solid renders of that view. **Depth
+  fade (dim far points)** (fr-3e0) attenuates each
   point's contribution with _camera_ distance — the one 3D depth style whose
   mechanism survives the additive blending (fade-to-black is attenuation;
   fading toward a haze color would sum across the stacked w-layers and blow

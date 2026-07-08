@@ -191,4 +191,58 @@ export interface FourDView {
   /** Slice width (Gaussian falloff) — `scene.ts`'s `uSliceWidth`, sent as a
    * plain number (the main thread reads `FOUR_D_SLICE_WIDTH`). */
   sliceWidth: number;
+  /** Whether the w-ramp color modes recenter their ramp on the slice window
+   * (fr-nn6) — see {@link sliceColorRemap}. Meaningless (and ignored, via
+   * that function's `sliceOn` gate) while the slice is off. */
+  sliceRelativeColor: boolean;
+}
+
+/**
+ * How far out into the slice's Gaussian falloff the slice-relative w-ramp
+ * (fr-nn6) reaches before saturating: the ramp's full `[-1, 1]` spans
+ * `±SLICE_COLOR_SPAN` slice-widths around the slice center. 2 puts the
+ * palette's saturated ends at the faint outer edge of the visible
+ * cross-section (pure Gaussian weight `exp(-2) ≈ 0.135`), so essentially the
+ * whole visible slice traverses the whole diverging palette; anything
+ * further out — ghost context — clamps to the full side color, which still
+ * reads as "beyond the slice, on this side".
+ */
+export const SLICE_COLOR_SPAN = 2;
+
+/**
+ * The slice-relative w-ramp recolor (fr-nn6) as an affine remap of the
+ * normalized signed-w signal `s`: the "wRamp" color paths evaluate their
+ * diverging palette at `clamp((s - shift) * invScale, -1, 1)` instead of at
+ * `s` itself. With the w-slice on, everything visible sits near `s =
+ * sliceCenter`, so a slice at 0 renders almost entirely the ramp's dim-gray
+ * notch; recentering on `sliceCenter` and rescaling by {@link
+ * SLICE_COLOR_SPAN} slice-widths keeps the full diverging palette in play
+ * within the visible cross-section. The slice WEIGHT ({@link sliceWeight})
+ * is deliberately untouched — this remaps color only.
+ *
+ * Returns the identity remap (`shift = 0`, `invScale = 1`) unless the slice
+ * is on AND the option is chosen, so every consumer can apply the remap
+ * unconditionally (branchless in the hot loops/kernels) and still be
+ * bit-identical to the raw `s` when it's off (`s` is already clamped).
+ *
+ * The ONE definition of both the gate and the mapping: the CPU accumulators
+ * (`flame-4d.ts`, `voxel-4d.ts`), the GPU params packer (`flame-gpu-4d.ts`),
+ * and the live point-cloud shader's uniforms (`scene.ts`'s `setFourDSlice`)
+ * all call this, so the four coloring paths can never drift on when or how
+ * the remap applies — only the trivial `clamp((s - shift) * invScale)`
+ * evaluation is mirrored in GLSL/WGSL.
+ */
+export function sliceColorRemap(
+  view: Pick<
+    FourDView,
+    "sliceOn" | "sliceRelativeColor" | "sliceCenter" | "sliceWidth"
+  >,
+): { shift: number; invScale: number } {
+  if (!view.sliceOn || !view.sliceRelativeColor) {
+    return { shift: 0, invScale: 1 };
+  }
+  return {
+    shift: view.sliceCenter,
+    invScale: 1 / (SLICE_COLOR_SPAN * view.sliceWidth),
+  };
 }

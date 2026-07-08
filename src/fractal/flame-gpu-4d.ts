@@ -26,7 +26,9 @@
  * same final-transform adopt-only-if-finite lens, same 20-coefficient
  * rotor+camera projection rows (`clipX`/`clipY`/`clipW`/`sRaw` — see
  * `project4.ts`'s `composeFlameProjection4`), same soft w-slice Gaussian
- * with the point-cloud ghost floor (0.06), and the same four
+ * with the point-cloud ghost floor (0.06), same optional slice-relative
+ * w-ramp recolor (fr-nn6 — an affine remap of `s` packed from
+ * `project4.ts`'s `sliceColorRemap`, identity when off), and the same four
  * `FourDRenderColor` flavors (`color.ts`). Deliberate differences are the
  * 3D kernel's own, unchanged: f32 arithmetic instead of f64, and many
  * independent PCG32 chains instead of one mulberry32 orbit — statistically
@@ -56,6 +58,7 @@ import type { Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import type { FourDRenderColor } from "./color";
+import { sliceColorRemap } from "./project4";
 import type { FourDView } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
@@ -97,7 +100,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below write
  * ArrayBuffers to match, and `flame-gpu-4d.test.ts` pins them):
  *
- * Params4 (uniform, {@link PARAMS4_BYTES} = 192):
+ * Params4 (uniform, {@link PARAMS4_BYTES} = 208):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f | 48 projS vec4f
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
@@ -106,6 +109,9 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   144 colorKind u32 ({@link KERNEL_COLOR_KIND}) | 148 weighted u32 | 152 hasFinal u32 | 156 numChains u32
  *   160 totalWeight f32 | 164 colorDenom f32 | 168 invWAmp f32 | 172 sliceOn u32
  *   176 sliceCenter f32 | 180 sliceWidth f32 | 184 minD f32 | 188 invRadiusRange f32
+ *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the fr-nn6 remap —
+ *   `sliceColorRemap`'s (shift, invScale); identity (0, 1) when off) |
+ *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment)
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 192 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -134,7 +140,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * doc), so read it back with {@link convertGpuHistogram4}, never
  * `convertGpuHistogram`.
  */
-export const PARAMS4_BYTES = 192;
+export const PARAMS4_BYTES = 208;
 export const SLOT4_STRIDE_BYTES = 192;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
@@ -175,6 +181,8 @@ struct Params {
   sliceWidth: f32,
   minD: f32,
   invRadiusRange: f32,
+  sliceColorShift: f32,
+  sliceColorInvScale: f32,
 }
 
 struct Slot {
@@ -452,8 +460,15 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
               let ci = min(u32(colorCoord * 256.0), 255u);
               rgb = colors[ci].xyz;
             }
-            case 1u: { // wRamp: in-shader diverging ramp on s.
-              rgb = vec3u(round(wRampColor(s) * ${COLOR_FIXED_POINT_SCALE}.0));
+            case 1u: { // wRamp: in-shader diverging ramp on s, through the
+              // optional slice-relative remap (fr-nn6) — project4.ts's
+              // sliceColorRemap, identity (shift 0, invScale 1) when off.
+              let sc = clamp(
+                (s - params.sliceColorShift) * params.sliceColorInvScale,
+                -1.0,
+                1.0,
+              );
+              rgb = vec3u(round(wRampColor(sc) * ${COLOR_FIXED_POINT_SCALE}.0));
             }
             case 2u: { // transform: the picked transform's palette entry.
               rgb = colors[idx].xyz;
@@ -536,6 +551,10 @@ const PARAMS4_SLICE_CENTER = 44;
 const PARAMS4_SLICE_WIDTH = 45;
 const PARAMS4_MIN_D = 46;
 const PARAMS4_INV_RADIUS_RANGE = 47;
+const PARAMS4_SLICE_COLOR_SHIFT = 48;
+const PARAMS4_SLICE_COLOR_INV_SCALE = 49;
+// Elements 50-51 are the struct's trailing pad, left at the ArrayBuffer's
+// zero default.
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -822,6 +841,11 @@ export interface GpuParams4Fields {
  * guarded divisor, so the kernel multiplies where the CPU divides;
  * `"wRamp"` packs the side pair into `negColor`/`posColor` (w lanes unused);
  * the other modes leave those fields zeroed (the kernel never reads them).
+ *
+ * `sliceColorShift`/`sliceColorInvScale` come from `sliceColorRemap(view)`
+ * (fr-nn6) — the identity (0, 1) unless the slice is on with the
+ * slice-relative color option chosen, so they are packed unconditionally
+ * (only the wRamp color kind reads them).
  */
 export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   const { projection, view, color } = fields;
@@ -872,6 +896,9 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   u32[PARAMS4_SLICE_ON] = view.sliceOn ? 1 : 0;
   f32[PARAMS4_SLICE_CENTER] = view.sliceCenter;
   f32[PARAMS4_SLICE_WIDTH] = view.sliceWidth;
+  const remap = sliceColorRemap(view);
+  f32[PARAMS4_SLICE_COLOR_SHIFT] = remap.shift;
+  f32[PARAMS4_SLICE_COLOR_INV_SCALE] = remap.invScale;
   return buf;
 }
 

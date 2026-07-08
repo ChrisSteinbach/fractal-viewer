@@ -287,9 +287,12 @@ function main(): void {
   let fourDTumbleOn = true;
   let fourDTumbleSpeed = 1;
   // The soft w-slice (fr-6x2): session-only view state, reset by
-  // resetFourDView() alongside the rotor pair above.
+  // resetFourDView() alongside the rotor pair above. sliceRelColor (fr-nn6)
+  // recenters the w-ramp color modes' palette on the slice window — a
+  // property of the slice view, so it lives (and resets) with it.
   let fourDSliceOn = false;
   let fourDSliceCenter = 0;
+  let fourDSliceRelColor = false;
 
   // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
   // above — a slow turntable on the orbit camera's theta, so a flat system's
@@ -329,7 +332,8 @@ function main(): void {
     }
     fourDSliceOn = false;
     fourDSliceCenter = 0;
-    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+    fourDSliceRelColor = false;
+    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
     ui.resetFourDSlice();
     ui.resetFourDTumble(fourDTumbleOn);
   }
@@ -812,6 +816,7 @@ function main(): void {
       sliceOn: fourDSliceOn,
       sliceCenter: fourDSliceCenter,
       sliceWidth: FOUR_D_SLICE_WIDTH,
+      sliceRelativeColor: fourDSliceRelColor,
       colorMode: state.fourDColor,
       radiusMin,
       radiusMax,
@@ -1646,11 +1651,15 @@ function main(): void {
     // touches AppState or persistence, so these write straight to the scene.
     onFourDSliceToggle: (checked) => {
       fourDSliceOn = checked;
-      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
     },
     onFourDSliceInput: (value) => {
       fourDSliceCenter = value;
-      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter);
+      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
+    },
+    onFourDSliceRelColorToggle: (checked) => {
+      fourDSliceRelColor = checked;
+      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
     },
     // Tumble pause/resume + speed (fr-woc): also session-only view state, no
     // scheduleSave — animate() reads these two vars directly every frame, so

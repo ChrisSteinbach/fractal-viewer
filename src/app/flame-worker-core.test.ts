@@ -101,6 +101,7 @@ function defaultFourD(): NonNullable<
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 1,
+    sliceRelativeColor: false,
     colorMode: "wBlueOrange",
     radiusMin: 0,
     radiusMax: 1,
@@ -2041,6 +2042,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       sliceOn: false,
       sliceCenter: 0,
       sliceWidth: 1,
+      sliceRelativeColor: false,
     });
     expect(request.color.kind).toBe("wRamp");
     if (request.color.kind === "wRamp") {

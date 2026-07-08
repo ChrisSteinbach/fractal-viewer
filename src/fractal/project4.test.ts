@@ -2,6 +2,7 @@ import { rotationMatrix4 } from "./affine4";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
+  sliceColorRemap,
   sliceWeight,
 } from "./project4";
 import type { RotorProjection4 } from "./project4";
@@ -187,5 +188,40 @@ describe("sliceWeight", () => {
       expected,
       12,
     );
+  });
+});
+
+describe("sliceColorRemap", () => {
+  it("returns the identity (shift 0, invScale 1) when the slice is off, even with sliceRelativeColor true", () => {
+    const remap = sliceColorRemap({
+      sliceOn: false,
+      sliceRelativeColor: true,
+      sliceCenter: 0.4,
+      sliceWidth: 0.2,
+    });
+    expect(remap).toEqual({ shift: 0, invScale: 1 });
+  });
+
+  it("returns the identity when sliceRelativeColor is false, even with the slice on", () => {
+    const remap = sliceColorRemap({
+      sliceOn: true,
+      sliceRelativeColor: false,
+      sliceCenter: 0.4,
+      sliceWidth: 0.2,
+    });
+    expect(remap).toEqual({ shift: 0, invScale: 1 });
+  });
+
+  it("recenters on the slice when both the slice and the option are on", () => {
+    // The ramp's full [-1, 1] spans ±2 slice-widths (SLICE_COLOR_SPAN) around
+    // the slice center — 1 / (2 * 0.25) = 2, pinned here as its own literal
+    // rather than restating the constant.
+    const remap = sliceColorRemap({
+      sliceOn: true,
+      sliceRelativeColor: true,
+      sliceCenter: -0.5,
+      sliceWidth: 0.25,
+    });
+    expect(remap).toEqual({ shift: -0.5, invScale: 2 });
   });
 });
