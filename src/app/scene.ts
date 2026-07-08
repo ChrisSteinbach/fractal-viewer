@@ -4,8 +4,14 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
-import { transformColors, W_SIDE_PALETTES } from "../fractal/color";
-import { sliceColorRemap } from "../fractal/project4";
+import {
+  transformColors,
+  W_RAMP_BRIGHTNESS_FLOOR,
+  W_RAMP_EXPONENT,
+  W_RAMP_GRAY,
+  W_SIDE_PALETTES,
+} from "../fractal/color";
+import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
 import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
@@ -240,9 +246,9 @@ const FOUR_D_VERTEX = /* glsl */ `
     // normalization spreads the cloud over the full [-1, 1]). Near-zero w —
     // the part of the cloud passing through our own 3-space — stays dim gray
     // and recedes. (The side pair comes from color.ts's W_SIDE_PALETTES via
-    // uniforms, so it can't drift from the legend; the ramp SHAPE constants —
-    // the 0.6 exponent, the 0.38 gray, the 0.30 + 0.70 brightness — are still
-    // mirrored in ui.ts's wRampGradient. Keep those in sync — fr-a3q.)
+    // uniforms; the ramp SHAPE constants — the exponent, gray notch, and
+    // brightness floor — are interpolated from color.ts's W_RAMP_* exports
+    // (fr-3o2), so neither can drift from the CPU twin or the legend.)
     // Optional slice-relative recolor (fr-nn6): the w-ramp path evaluates the
     // ramp at an affine remap of s — recentered on the slice window, see
     // project4.ts's sliceColorRemap, whose (shift, invScale) these two
@@ -256,16 +262,16 @@ const FOUR_D_VERTEX = /* glsl */ `
       s,
       uUseAttrColor
     );
-    float m = pow(abs(sc), 0.6);
+    float m = pow(abs(sc), ${W_RAMP_EXPONENT});
     vec3 side = mix(sc < 0.0 ? uSideNeg : uSidePos, color, uUseAttrColor);
-    vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);
+    vColor = mix(vec3(${W_RAMP_GRAY}), side, m) * (${W_RAMP_BRIGHTNESS_FLOOR} + ${1 - W_RAMP_BRIGHTNESS_FLOOR} * m);
 
     // Soft w-slice: a Gaussian window in s around uSliceCenter, with a floor so
     // the rest of the projection stays visible as ghost context.
     float slice = 1.0;
     if (uSliceOn > 0.5) {
       float d = (s - uSliceCenter) / uSliceWidth;
-      slice = 0.06 + 0.94 * exp(-0.5 * d * d);
+      slice = ${SLICE_GHOST_FLOOR} + ${1 - SLICE_GHOST_FLOOR} * exp(-0.5 * d * d);
     }
     vAlpha = uIntensity * slice;
 

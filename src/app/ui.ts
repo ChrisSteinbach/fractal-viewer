@@ -5,6 +5,7 @@ import {
   fourDColorNeedsAttribute,
   transformColors,
   W_SIDE_PALETTES,
+  wRampColor,
 } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
@@ -365,30 +366,25 @@ const W_RAMP_STOPS = 33;
 /**
  * Build a 4D projection legend gradient (fr-a3q): the diverging signed-w
  * palette that `FOUR_D_VERTEX` (scene.ts) computes in the shader, reproduced
- * stop-for-stop from the same math — `m = |s|^0.6`,
- * `mix(vec3(0.38), side, m) * (0.30 + 0.70 * m)` with `neg` on the −w side
- * and `pos` on +w — the same can't-drift fidelity bar the colorMode legend
- * sets by sampling `buildColorModeLUT`. Since fr-d47 the side pair is shared
- * DATA (`W_SIDE_PALETTES`, also feeding the shader's uSideNeg/uSidePos
- * uniforms), so only the ramp's SHAPE constants remain mirrored from the GLSL
- * (with a keep-in-sync comment there). Two deliberate differences from the
- * coordinate ramps: it is signed (diverging around w = 0, our own 3-space),
- * and it does NOT respond to `colorGamma` — the shader never applies it.
- * Since fr-9bk the shader normalizes by the bounds box's w-support at the
- * CURRENT tumble rotation, so the strip's ends mean "the cloud's current w
- * extremes", not fixed w values — which is why the legend labels the ends
- * with signs, not numbers.
+ * stop-for-stop by calling `color.ts`'s {@link wRampColor} — the CPU twin of
+ * that in-shader ramp — so the legend can't drift from the render. Since
+ * fr-3o2 both draw the ramp's SHAPE from `wRampColor`'s `W_RAMP_*` constants
+ * and (since fr-d47) the side pair from `W_SIDE_PALETTES`: the same can't-drift
+ * fidelity bar the colorMode legend sets by sampling `buildColorModeLUT`. Two
+ * deliberate differences from the coordinate ramps: it is signed (diverging
+ * around w = 0, our own 3-space), and it does NOT respond to `colorGamma` —
+ * the shader never applies it. Since fr-9bk the shader normalizes by the
+ * bounds box's w-support at the CURRENT tumble rotation, so the strip's ends
+ * mean "the cloud's current w extremes", not fixed w values — which is why the
+ * legend labels the ends with signs, not numbers.
  */
 function wRampGradient(neg: Vec3, pos: Vec3): string {
+  const side = { neg, pos };
   const stops: string[] = [];
   for (let i = 0; i < W_RAMP_STOPS; i++) {
     const s = (i / (W_RAMP_STOPS - 1)) * 2 - 1;
-    const m = Math.pow(Math.abs(s), 0.6);
-    const [sideR, sideG, sideB] = s < 0 ? neg : pos;
-    const brightness = 0.3 + 0.7 * m;
-    const mixChannel = (side: number): number =>
-      (0.38 + (side - 0.38) * m) * brightness;
-    stops.push(cssRgb(mixChannel(sideR), mixChannel(sideG), mixChannel(sideB)));
+    const [r, g, b] = wRampColor(s, side);
+    stops.push(cssRgb(r, g, b));
   }
   return `linear-gradient(to right, ${stops.join(", ")})`;
 }

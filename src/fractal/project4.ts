@@ -143,15 +143,28 @@ export function composeFlameProjection4(
 }
 
 /**
+ * The ghost-context floor the flame and point-cloud soft w-slices share
+ * (fr-6x2): outside the Gaussian slice window a point still contributes this
+ * fraction, so the rest of the cloud reads as faint ghost context rather than
+ * vanishing. The single source of truth (fr-3o2) for the `0.06` the GLSL point
+ * shader (`scene.ts`), the WGSL flame kernel (`flame-gpu-4d.ts`), and
+ * `flame-4d.ts`'s CPU accumulator all pass as {@link sliceWeight}'s `floor`.
+ *
+ * The solid (voxel) render deliberately passes `0` instead — an
+ * outside-the-slice voxel contributes nothing at all, since voxel accumulation
+ * has no translucency to fall back on (see `voxel-4d.ts`). That distinction is
+ * intentional; only this point-cloud/flame floor is shared.
+ */
+export const SLICE_GHOST_FLOOR = 0.06;
+
+/**
  * The soft w-slice window (fr-6x2): a Gaussian opacity centered on `center`
  * with standard-deviation-like `width`, floored at `floor` so the rest of the
  * cloud stays visible as ghost context outside the slice. CPU twin of the
  * GLSL slice in `scene.ts`'s `FOUR_D_VERTEX` (`slice = floor + (1 − floor) *
- * exp(-0.5 * d * d)` where `d = (s − uSliceCenter) / uSliceWidth`) — keep the
- * two in sync. The flame render passes `floor = 0.06` to match the point-
- * cloud view's ghost-context floor exactly; the solid (voxel) render passes
- * `floor = 0` (an outside-the-slice voxel contributes nothing at all, since
- * voxel accumulation has no translucency to fall back on).
+ * exp(-0.5 * d * d)` where `d = (s − uSliceCenter) / uSliceWidth`). The flame
+ * and point-cloud paths pass {@link SLICE_GHOST_FLOOR}; the solid (voxel)
+ * render passes `floor = 0` (see {@link SLICE_GHOST_FLOOR}).
  */
 export function sliceWeight(
   s: number,
