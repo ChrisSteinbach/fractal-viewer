@@ -2,13 +2,8 @@ import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
-import {
-  identityRotorPair,
-  rotateInPlane,
-  rotorMatrix,
-  wSupport,
-} from "./rotor4";
-import type { RotorPair } from "./rotor4";
+import { wSupport } from "./rotor4";
+import { FourDView, viewTransition } from "./four-d-view";
 import {
   buildColors,
   buildColors4,
@@ -48,7 +43,7 @@ import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
-import { SceneHistory } from "./history";
+import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import { createCanvasRecorder, formatElapsed } from "./recorder";
 import {
   addTransform,
@@ -149,21 +144,12 @@ function flameHostOverride(): "local" | "worker" | null {
 }
 
 /**
- * Auto-tumble BASE rates for the 4D projection (fr-cbg spike): the XY- and
- * ZW-plane angular speeds in rad/s at the default 1x tumble speed (fr-woc
- * multiplies these by the user's speed slider — see `fourDTumbleSpeed`).
- * Slow and deliberately incommensurate-ish (~48 s and ~30 s per revolution at
- * 1x) so the double rotation never visibly loops.
- */
-const FOUR_D_XY_RATE = 0.13;
-const FOUR_D_ZW_RATE = 0.21;
-
-/**
  * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
  * default 1× orbit speed (the user's speed slider multiplies it — see
  * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
- * and in the same family as the 4D tumble rates above. Negative-theta
- * direction, matching a slow rightward drag (see OrbitCamera.rotate).
+ * and in the same family as the 4D tumble rates (see `four-d-view.ts`).
+ * Negative-theta direction, matching a slow rightward drag (see
+ * OrbitCamera.rotate).
  */
 const AUTO_ORBIT_RATE = 0.12;
 
@@ -251,24 +237,13 @@ function main(): void {
   // the camera on it right after regenerate() lands a fresh run (see
   // fitCameraToAttractor). Null whenever the view isn't showing 4D.
   let fourDResult: ChaosGame4Result | null = null;
-  // The accumulated 4D VIEW rotation (fr-woc): tumble ticks and Shift-drag/
-  // Shift-wheel deltas all compose into this one quaternion pair (see
-  // rotor4.ts), converted to a matrix only where scene.setRot4 needs it. That
-  // single accumulator is what makes pausing freeze the exact current
-  // orientation and what lets a drag mid-tumble just add on top, instead of
-  // fighting a separately-tracked clock. Session-only, like the slice below:
-  // reset to identity by resetFourDView() whenever the view starts showing a
-  // genuinely new 4D system, never persisted.
-  let fourDPair: RotorPair = identityRotorPair();
-  let fourDTumbleOn = true;
-  let fourDTumbleSpeed = 1;
-  // The soft w-slice (fr-6x2): session-only view state, reset by
-  // resetFourDView() alongside the rotor pair above. sliceRelColor (fr-nn6)
-  // recenters the w-ramp color modes' palette on the slice window — a
-  // property of the slice view, so it lives (and resets) with it.
-  let fourDSliceOn = false;
-  let fourDSliceCenter = 0;
-  let fourDSliceRelColor = false;
+  // The session-only 4D VIEW state (fr-woc/fr-6x2/fr-nn6): the accumulated
+  // rotor (tumble ticks and Shift-drag/Shift-wheel deltas all compose into it),
+  // the tumble pause/speed, and the soft w-slice. Reset to a fresh-visit
+  // baseline by resetFourDView() whenever the view starts showing a genuinely
+  // new 4D system, never persisted. The state machine + its math live in
+  // four-d-view.ts; this file just pushes matrix()/slice fields to the scene.
+  const fourDView = new FourDView();
 
   // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
   // above — a slow turntable on the orbit camera's theta, so a flat system's
@@ -287,31 +262,30 @@ function main(): void {
   // early), which the dt clamp in animate() absorbs on exit.
   let lastMotionTickMs = performance.now();
 
-  // Reset the 4D VIEW state to a "fresh visit" baseline — rotor pair to
-  // identity, tumble running (paused under reduced motion, but pre-seeded on
-  // one generic orientation so the projection still reads as 4D at a glance),
-  // default speed, slice off and centered. Extracted from the old per-mode
-  // entry sequence (fr-cbg/fr-woc/fr-6x2): now that "4D" is a property of the
-  // system rather than a mode, this fires from regenerate() on (a) a
-  // flat→non-flat transition and (b) a whole-system replacement (preset load
-  // / Surprise Me) that lands on a non-flat system — never on a subsequent
-  // edit to an already-4D system, so nudging a slider can't throw away an
-  // in-progress tumble/slice.
+  // Push the current soft-slice view state to the scene shader. Shared by
+  // resetFourDView() and the three slice handlers, all of which mutate a
+  // fourDView slice field and then re-upload the trio.
+  function pushFourDSlice(): void {
+    scene.setFourDSlice(
+      fourDView.sliceOn,
+      fourDView.sliceCenter,
+      fourDView.sliceRelColor,
+    );
+  }
+
+  // Reset the 4D VIEW state to a "fresh visit" baseline (rotor to identity,
+  // tumble running at default speed, slice off — the baseline itself, plus the
+  // reduced-motion seeding, lives in FourDView.reset) and push it to the scene
+  // + UI. Now that "4D" is a property of the system rather than a mode, this
+  // fires from regenerate() on (a) a flat→non-flat transition and (b) a
+  // whole-system replacement (preset load / Surprise Me) that lands on a
+  // non-flat system — never on a subsequent edit to an already-4D system, so
+  // nudging a slider can't throw away an in-progress tumble/slice.
   function resetFourDView(): void {
-    fourDPair = identityRotorPair();
-    const reducedMotion = prefersReducedMotion();
-    fourDTumbleOn = !reducedMotion;
-    fourDTumbleSpeed = 1;
-    if (reducedMotion) {
-      fourDPair = rotateInPlane(fourDPair, "xy", 0.6);
-      fourDPair = rotateInPlane(fourDPair, "zw", 0.9);
-    }
-    fourDSliceOn = false;
-    fourDSliceCenter = 0;
-    fourDSliceRelColor = false;
-    scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
+    fourDView.reset(prefersReducedMotion());
+    pushFourDSlice();
     ui.resetFourDSlice();
-    ui.resetFourDTumble(fourDTumbleOn);
+    ui.resetFourDTumble(fourDView.tumbleOn);
   }
 
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
@@ -361,18 +335,19 @@ function main(): void {
       ui.updateLabels(state);
     }
 
-    if (nonFlat && (replaced || !wasNonFlat)) {
-      resetFourDView();
-    } else if (!nonFlat && (replaced || wasNonFlat)) {
-      // The mirrored "fresh visit" trigger for the 3D view (fr-1yn): a
-      // non-flat→flat flip or a whole-system replacement landing flat.
-      resetAutoOrbitView();
-      if (wasNonFlat) {
-        // scene.setFourDActive(false) (just above) restores the 3D material/
-        // fog/background, but does NOT touch the scaffold — a separate scene
-        // object that otherwise keeps tumbling over the 3D cloud forever.
-        scene.setFourDScaffold(null);
-      }
+    // Decide what this flatness/replacement change resets (four-d-view.ts):
+    // a fresh visit to the 4D view, the mirrored fresh visit to the 3D
+    // auto-orbit (fr-1yn), and/or clearing a leftover 4D scaffold. The three
+    // outcomes are mutually exclusive-ish (resetFourD needs nonFlat, the other
+    // two need !nonFlat), so they read as independent guards here.
+    const transition = viewTransition(nonFlat, wasNonFlat, replaced);
+    if (transition.resetFourD) resetFourDView();
+    if (transition.resetAutoOrbit) resetAutoOrbitView();
+    if (transition.clearScaffold) {
+      // scene.setFourDActive(false) (just above) restores the 3D material/
+      // fog/background, but does NOT touch the scaffold — a separate scene
+      // object that otherwise keeps tumbling over the 3D cloud forever.
+      scene.setFourDScaffold(null);
     }
 
     // 4D projection path: run the 4D chaos game and upload the projected xyz +
@@ -747,13 +722,13 @@ function main(): void {
   // snapshot feeds both. Undefined while the view is 3D — the workers then
   // take their unchanged 3D paths. The tumble needs no explicit pause here:
   // animate() early-returns past the whole 4D block while either render is
-  // active, so fourDPair simply stops advancing (and onFourDRotate is gated
-  // the same way), making this snapshot valid for the render's whole life.
+  // active, so fourDView's rotor simply stops advancing (and onFourDRotate is
+  // gated the same way), making this snapshot valid for the render's whole life.
   function fourDRenderSnapshot():
     | NonNullable<Extract<FlameWorkerCommand, { type: "start" }>["fourD"]>
     | undefined {
     if (!viewIs4D || !fourDResult) return undefined;
-    const rotor = rotorMatrix(fourDPair);
+    const rotor = fourDView.matrix();
     const b = fourDResult.bounds;
     const halfExtents: Vec4 = [
       (b.maxX - b.minX) / 2,
@@ -789,10 +764,10 @@ function main(): void {
       rotor,
       center: fourDResult.center,
       invWAmp,
-      sliceOn: fourDSliceOn,
-      sliceCenter: fourDSliceCenter,
+      sliceOn: fourDView.sliceOn,
+      sliceCenter: fourDView.sliceCenter,
       sliceWidth: FOUR_D_SLICE_WIDTH,
-      sliceRelativeColor: fourDSliceRelColor,
+      sliceRelativeColor: fourDView.sliceRelColor,
       colorMode: state.fourDColor,
       radiusMin,
       radiusMax,
@@ -1069,66 +1044,6 @@ function main(): void {
     ui.renderTransformEditor(editing, sel);
   }
 
-  // Session-only undo/redo over encoded scene snapshots (see history.ts).
-  const history = new SceneHistory();
-  // True while the CURRENT edit burst already has a checkpoint — the 300 ms
-  // save debounce below defines "one burst", so a slider drag coalesces into
-  // a single undo step instead of one per tick.
-  let burstOpen = false;
-
-  // Debounced saver — persists 300 ms after the last scene-affecting change so
-  // rapid slider drags don't flood history/storage on every tick.
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  function scheduleSave(): void {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveScene(toSnapshot(state));
-      burstOpen = false;
-    }, 300);
-  }
-
-  // Flush any pending debounced save on page hide so an edit made less than
-  // 300 ms before the tab is closed or backgrounded is not lost. Reuses the
-  // guarded saveScene path, which already handles SecurityError (sandboxed
-  // iframes) and private-mode localStorage failures without throwing.
-  function flushSave(): void {
-    clearTimeout(saveTimer);
-    saveTimer = undefined;
-    saveScene(toSnapshot(state));
-    burstOpen = false;
-  }
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") flushSave();
-  });
-  window.addEventListener("pagehide", flushSave);
-
-  /**
-   * Bookkeeping for a scene-document edit that is ABOUT to happen: capture an
-   * undo checkpoint of the PRE-edit state on the leading edge of an edit
-   * burst, and schedule the trailing-edge debounced save. Must be called
-   * BEFORE the state mutation. The 300 ms save debounce defines "one burst",
-   * so a slider drag coalesces into a single undo step. "replace" (preset
-   * load / Surprise Me) always cuts a fresh checkpoint, even mid-burst, and
-   * tags the transition so undo/redo re-frames the camera when crossing it.
-   *
-   * Every handler that edits the persisted scene document must route its save
-   * through here (this is what used to be a bare scheduleSave() call at the
-   * end of each handler); scheduleSave() alone is only for paths that must
-   * not create an undo step (the undo/redo restore itself).
-   */
-  function beginSceneEdit(kind: "tweak" | "replace" = "tweak"): void {
-    if (!burstOpen || kind === "replace") {
-      history.checkpoint(encodeScene(toSnapshot(state)), kind === "replace");
-      burstOpen = true;
-      syncUndoUi();
-    }
-    scheduleSave();
-  }
-
-  function syncUndoUi(): void {
-    ui.setUndoRedo(history.canUndo, history.canRedo);
-  }
-
   /**
    * Apply a history snapshot: whole-system-replacement semantics, the same path
    * a boot-time hash/localStorage load takes. Any active flame/solid render is
@@ -1140,6 +1055,11 @@ function main(): void {
    * the camera only when the step crosses a whole-system replacement —
    * symmetric with how the camera moved when that replacement was applied;
    * ordinary parameter edits leave the user's framing alone.
+   *
+   * This is {@link EditSession}'s injected `restore`, so it must NOT cut an
+   * undo checkpoint (an undo/redo is not itself an edit) — the session arms
+   * the restored document's checkpoint-free debounced save on its own once
+   * this returns (see edit-session.ts).
    */
   function restoreSnapshot(snapshot: string, refit: boolean): void {
     const snap = decodeScene(snapshot);
@@ -1168,27 +1088,34 @@ function main(): void {
     refreshGuides();
     refreshUi();
     if (refit) fitCameraToAttractor();
-    // Persist the restored document WITHOUT opening an undo burst: an undo is
-    // not an edit (it must not checkpoint), so this is the one legitimate bare
-    // scheduleSave outside beginSceneEdit.
-    scheduleSave();
   }
 
-  function performUndo(): void {
-    // Settle an in-progress burst so it becomes its own undo step before we
-    // step behind it (mirrors flushSave's page-hide contract).
-    if (burstOpen) flushSave();
-    const entry = history.undo(encodeScene(toSnapshot(state)));
-    if (entry) restoreSnapshot(entry.snapshot, entry.replaced);
-    syncUndoUi();
-  }
+  // Session-only undo/redo plus the edit-burst / debounced-save policy layered
+  // over it (see edit-session.ts). The injected deps are the app's real
+  // capabilities: encode and persist the live scene document, apply a restored
+  // snapshot (restoreSnapshot above — which must not checkpoint), reflect
+  // undo/redo availability in the UI, and the debounced save-timer itself. Edit
+  // handlers call editSession.beginEdit() BEFORE mutating the document; Ctrl+Z/
+  // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
+  const editSession = new EditSession({
+    snapshot: () => encodeScene(toSnapshot(state)),
+    persist: () => saveScene(toSnapshot(state)),
+    restore: restoreSnapshot,
+    syncUi: (canUndo, canRedo) => ui.setUndoRedo(canUndo, canRedo),
+    schedule: (fn) => {
+      const id = setTimeout(fn, SAVE_DEBOUNCE_MS);
+      return () => clearTimeout(id);
+    },
+  });
 
-  function performRedo(): void {
-    if (burstOpen) flushSave();
-    const entry = history.redo(encodeScene(toSnapshot(state)));
-    if (entry) restoreSnapshot(entry.snapshot, entry.replaced);
-    syncUndoUi();
-  }
+  // Flush any pending debounced save on page hide so an edit made less than
+  // SAVE_DEBOUNCE_MS before the tab is closed or backgrounded is not lost.
+  // saveScene (via editSession.persist) already handles SecurityError
+  // (sandboxed iframes) and private-mode localStorage failures without throwing.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") editSession.flush();
+  });
+  window.addEventListener("pagehide", () => editSession.flush());
 
   /**
    * Shared choreography for edits that replace or modify the transform set.
@@ -1215,13 +1142,13 @@ function main(): void {
    *
    * Before applying the reducer, checkpoints an undo step and, after it, every
    * geometry edit refreshes the guide boxes and the UI, then schedules a
-   * debounced save (see `beginSceneEdit`).
+   * debounced save (see `editSession.beginEdit`).
    */
   function applyEdit(
     applyReducer: () => void,
     effect: "auto" | "always" = "auto",
   ): void {
-    beginSceneEdit(effect === "always" ? "replace" : "tweak");
+    editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     if (effect === "always" || state.autoUpdate) {
       regenerate(effect === "always");
@@ -1272,8 +1199,8 @@ function main(): void {
         state = removeTransform(state);
       });
     },
-    onUndo: () => performUndo(),
-    onRedo: () => performRedo(),
+    onUndo: () => editSession.undo(),
+    onRedo: () => editSession.redo(),
     onPreset: (preset) => {
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
@@ -1323,7 +1250,7 @@ function main(): void {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
       const previous = state;
-      if (spec.persisted !== false) beginSceneEdit();
+      if (spec.persisted !== false) editSession.beginEdit();
       state = applyScalarControl(state, spec, raw);
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
@@ -1353,7 +1280,7 @@ function main(): void {
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
-      beginSceneEdit();
+      editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
       ui.renderTransformList(
@@ -1382,7 +1309,7 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
-      beginSceneEdit();
+      editSession.beginEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
         state.transforms,
@@ -1404,27 +1331,28 @@ function main(): void {
     onEnterSolidRender: () => enterSolidMode(),
     onExitSolidRender: () => exitSolidMode(),
     // Slice state is session-only view state (like the tumble clock): it never
-    // touches AppState or persistence, so these write straight to the scene.
+    // touches AppState or persistence, so these write straight to fourDView and
+    // re-upload the slice trio to the scene (see pushFourDSlice).
     onFourDSliceToggle: (checked) => {
-      fourDSliceOn = checked;
-      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
+      fourDView.sliceOn = checked;
+      pushFourDSlice();
     },
     onFourDSliceInput: (value) => {
-      fourDSliceCenter = value;
-      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
+      fourDView.sliceCenter = value;
+      pushFourDSlice();
     },
     onFourDSliceRelColorToggle: (checked) => {
-      fourDSliceRelColor = checked;
-      scene.setFourDSlice(fourDSliceOn, fourDSliceCenter, fourDSliceRelColor);
+      fourDView.sliceRelColor = checked;
+      pushFourDSlice();
     },
     // Tumble pause/resume + speed (fr-woc): also session-only view state, no
-    // scheduleSave — animate() reads these two vars directly every frame, so
-    // there is nothing else to push here.
+    // save — animate() reads these fields off fourDView directly every frame,
+    // so there is nothing else to push here.
     onFourDTumbleToggle: (checked) => {
-      fourDTumbleOn = checked;
+      fourDView.tumbleOn = checked;
     },
     onFourDTumbleSpeedInput: (value) => {
-      fourDTumbleSpeed = value;
+      fourDView.tumbleSpeed = value;
     },
     // Auto-orbit pause/resume + speed (fr-1yn): the 3D siblings of the tumble
     // handlers above, same session-only pattern.
@@ -1440,7 +1368,7 @@ function main(): void {
     selectedTransform: selectedBox,
     frozen: () => state.flameActive,
     onTransformChange: (index, geometry) => {
-      beginSceneEdit();
+      editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
         state.transforms,
@@ -1460,10 +1388,8 @@ function main(): void {
       // blocks all drags during the flame render; the solid render keeps its
       // camera gestures live, so the w-plane gesture needs this gate.
       if (state.flameActive || state.solidActive) return;
-      if (xw !== 0) fourDPair = rotateInPlane(fourDPair, "xw", xw);
-      if (yw !== 0) fourDPair = rotateInPlane(fourDPair, "yw", yw);
-      if (zw !== 0) fourDPair = rotateInPlane(fourDPair, "zw", zw);
-      // animate() pushes rotorMatrix(fourDPair) next frame; nothing else to do.
+      fourDView.rotate(xw, yw, zw);
+      // animate() pushes fourDView.matrix() next frame; nothing else to do.
     },
   });
 
@@ -1494,11 +1420,11 @@ function main(): void {
     const key = e.key.toLowerCase();
     if (key === "z") {
       e.preventDefault();
-      if (e.shiftKey) performRedo();
-      else performUndo();
+      if (e.shiftKey) editSession.redo();
+      else editSession.undo();
     } else if (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
-      performRedo();
+      editSession.redo();
     }
   });
 
@@ -1528,7 +1454,7 @@ function main(): void {
   // refreshGuides only governs the per-transform boxes.
   scene.setGuidesVisible(state.showGuides);
   refreshUi();
-  syncUndoUi();
+  editSession.syncUi();
 
   // While a flame render is active, accumulation/downsample/tone-map all
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"
@@ -1576,7 +1502,7 @@ function main(): void {
     if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
       // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
       // before applyCamera so it lands on this frame. Pure camera motion —
-      // no RNG, no regenerate, no scheduleSave (camera is never persisted).
+      // no RNG, no regenerate, no save (camera is never persisted).
       // Paused while the user's hand is on the canvas (same theta a drag
       // writes); composes freely with the auto-fit tween (radius/target).
       orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
@@ -1584,24 +1510,14 @@ function main(): void {
     scene.applyCamera(orbit);
     scene.updateFog();
     if (viewIs4D) {
-      if (fourDTumbleOn) {
-        fourDPair = rotateInPlane(
-          fourDPair,
-          "xy",
-          dt * FOUR_D_XY_RATE * fourDTumbleSpeed,
-        );
-        fourDPair = rotateInPlane(
-          fourDPair,
-          "zw",
-          dt * FOUR_D_ZW_RATE * fourDTumbleSpeed,
-        );
-      }
-      // Pushed every 4D frame, paused or not — 16 floats/frame is nothing and
-      // it keeps one code path. lastMotionTickMs (above) still advances while
-      // paused, so resuming doesn't replay the gap as a jump. The point color
-      // re-derives in-shader from the new rotation, so nothing else needs
-      // updating per frame.
-      scene.setRot4(rotorMatrix(fourDPair));
+      // Advance the tumble (fourDView.tick is a no-op while paused) and push
+      // the rotor every 4D frame, paused or not — 16 floats/frame is nothing
+      // and it keeps one code path. lastMotionTickMs (above) still advances
+      // while paused, so resuming doesn't replay the gap as a jump. The point
+      // color re-derives in-shader from the new rotation, so nothing else
+      // needs updating per frame.
+      fourDView.tick(dt);
+      scene.setRot4(fourDView.matrix());
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse
       // ones. state.glowBrightness (fr-8b1) then layers the user's manual
