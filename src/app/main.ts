@@ -57,36 +57,10 @@ import {
   initialState,
   removeTransform,
   selectTransform,
-  setAutoUpdate,
-  setColorGamma,
-  setColorMode,
   setFinalTransform,
   setFlameActive,
-  setFlameEstimatorCurve,
-  setFlameEstimatorMinimumRadius,
-  setFlameEstimatorRadius,
-  setFlameExposure,
-  setFlameGamma,
-  setFlameIterations,
-  setFlamePaletteId,
-  setFlameSupersample,
-  setFlameVibrancy,
-  setFourDColor,
-  setFourDDepthFade,
-  setGlowBrightness,
-  setNumPoints,
   setPanelOpen,
-  setPointSize,
-  setRenderStyle,
-  setShowGuides,
   setSolidActive,
-  setSolidAmbient,
-  setSolidIterations,
-  setSolidLightAzimuth,
-  setSolidLightElevation,
-  setSolidPaletteId,
-  setSolidResolution,
-  setSolidThreshold,
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
@@ -94,6 +68,8 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState } from "./state";
+import { applyScalarControl } from "./control-spec";
+import type { ControlEffects } from "./control-spec";
 import {
   decodeScene,
   encodeScene,
@@ -1254,14 +1230,37 @@ function main(): void {
     refreshUi();
   }
 
-  // Only a handful of handlers below still guard on the view being 4D — the
-  // ones whose controls are hidden while it is (flame/solid entry, symmetry,
-  // color mode/contrast, depth style — see ui.ts's updateLabels), kept
-  // belt-and-braces so a stray call can't mutate a 3D-only concern that isn't
+  // The one place control-spec.ts's declared effects meet the app's real
+  // capabilities: scene pushes, render-worker forwards, and the refreshers.
+  // Function declarations hoist within main(), so referencing postFlame/
+  // enterSolidMode here is safe — the arrows only call them at input time.
+  const controlEffects: ControlEffects = {
+    scene,
+    postFlame,
+    postVoxel,
+    presentSharedFlameFrame: () => {
+      if (!flameShared) return false;
+      presentSharedFrame();
+      return true;
+    },
+    regenerateIfAutoUpdate: () => {
+      if (state.autoUpdate) regenerate();
+    },
+    recolor,
+    applyFourDColor,
+    restartSolidRender: () => enterSolidMode(),
+  };
+
+  // Every simple scalar control (slider/select/checkbox bound to one state
+  // field) shares the one pipeline in onScalarControl below, driven by
+  // control-spec.ts's SCALAR_CONTROLS table. Its `view` guard replaces the
+  // old per-handler viewIs4D checks — belt-and-braces for controls whose row
+  // is hidden in the other view (symmetry, color mode/contrast, depth style,
+  // the 4D color/fade), so a stray event can't mutate a concern that isn't
   // even on screen. Everything that edits the system, loads a preset/
-  // Surprise-Me system, or selects a transform is UNGUARDED (fr-bf6): the
-  // single editor and transform list are live for a non-flat system exactly
-  // like a flat one.
+  // Surprise-Me system, or selects a transform stays a bespoke handler and is
+  // UNGUARDED (fr-bf6): the single editor and transform list are live for a
+  // non-flat system exactly like a flat one.
   ui.bind({
     onAdd: () => {
       applyEdit(() => {
@@ -1315,23 +1314,19 @@ function main(): void {
       scene.setFourDScaffold(null);
       fitCameraToAttractor();
     },
-    onNumPointsInput: (value) => {
-      beginSceneEdit();
-      state = setNumPoints(state, value);
+    // The generic scalar pipeline (fr-dig): view guard → undo checkpoint +
+    // debounced save for document edits → the spec's own parse + reducer →
+    // label sync → the spec's declared side effects. Per-control semantics
+    // (worker forwards, restarts, live tone-maps) live on the SCALAR_CONTROLS
+    // entries in control-spec.ts, next to the control they belong to.
+    onScalarControl: (spec, raw) => {
+      if (spec.view === "flat" && viewIs4D) return;
+      if (spec.view === "nonFlat" && !viewIs4D) return;
+      const previous = state;
+      if (spec.persisted !== false) beginSceneEdit();
+      state = applyScalarControl(state, spec, raw);
       ui.updateLabels(state);
-    },
-    onPointSizeInput: (value) => {
-      beginSceneEdit();
-      state = setPointSize(state, value);
-      scene.setPointSize(value);
-      ui.updateLabels(state);
-    },
-    onGlowBrightnessInput: (value) => {
-      beginSceneEdit();
-      // No direct scene push needed: animate()'s per-frame glow-exposure
-      // calculation already reads state.glowBrightness as a multiplier.
-      state = setGlowBrightness(state, value);
-      ui.updateLabels(state);
+      spec.effect?.(state, controlEffects, previous);
     },
     onRegenerate: () => regenerate(),
     onRecordVideoToggle: () => {
@@ -1351,105 +1346,6 @@ function main(): void {
           : scene.captureFrame();
       link.download = `fractal-${Date.now()}.png`;
       link.click();
-    },
-    onToggleGuides: (checked) => {
-      beginSceneEdit();
-      state = setShowGuides(state, checked);
-      scene.setGuidesVisible(checked);
-      refreshUi();
-    },
-    onColorMode: (mode) => {
-      // colorModeRow hides while non-flat (the shader colors from the rotated
-      // w instead) — belt-and-braces.
-      if (viewIs4D) return;
-      beginSceneEdit();
-      state = setColorMode(state, mode);
-      // The color-contrast row's visibility (fr-8sk) depends on colorMode —
-      // same rationale as onRenderStyle's updateLabels call below for the
-      // glow-brightness row.
-      ui.updateLabels(state);
-      recolor();
-    },
-    onColorGammaInput: (value) => {
-      if (viewIs4D) return;
-      beginSceneEdit();
-      state = setColorGamma(state, value);
-      ui.updateLabels(state);
-      recolor();
-    },
-    onFourDColor: (mode) => {
-      // The 4D color select only shows while non-flat — belt-and-braces,
-      // mirroring onColorMode's flat-side guard above.
-      if (!viewIs4D) return;
-      beginSceneEdit();
-      state = setFourDColor(state, mode);
-      // The legend keys off fourDColor while non-flat.
-      ui.updateLabels(state);
-      applyFourDColor();
-    },
-    onFourDDepthFadeToggle: (checked) => {
-      // A persisted scene-document edit like onFourDColor (NOT session-only
-      // view state like the slice/tumble handlers below), so it routes
-      // through beginSceneEdit for undo + the debounced save. Same
-      // belt-and-braces flat-side guard: the checkbox only shows while
-      // non-flat.
-      if (!viewIs4D) return;
-      beginSceneEdit();
-      state = setFourDDepthFade(state, checked);
-      scene.setFourDDepthFade(checked);
-    },
-    onRenderStyle: (style) => {
-      // renderStyleRow hides while non-flat (the 4D material/render path
-      // ignores renderStyle entirely) — belt-and-braces.
-      if (viewIs4D) return;
-      beginSceneEdit();
-      state = setRenderStyle(state, style);
-      scene.setRenderStyle(style);
-      // Reset glow exposure so no stale factor sticks when switching away.
-      if (style !== "glow") scene.setGlowExposure(1);
-      // Refresh labels so the glow-brightness row (fr-8b1) shows/hides
-      // immediately — previously nothing in this handler depended on
-      // renderStyle-conditional DOM, so the sync was never needed here.
-      ui.updateLabels(state);
-    },
-    onToggleAutoUpdate: (checked) => {
-      state = setAutoUpdate(state, checked);
-    },
-    onSymmetryOrderInput: (value) => {
-      // symmetrySection hides while non-flat (the 4D chaos game has no
-      // symmetry parameter at all) — belt-and-braces.
-      if (viewIs4D) return;
-      beginSceneEdit();
-      state = setSymmetryOrder(state, value);
-      ui.updateLabels(state);
-      if (state.autoUpdate) regenerate();
-      postFlame({
-        type: "setSymmetry",
-        order: state.symmetry.order,
-        axis: state.symmetry.axis,
-      });
-      postVoxel({
-        type: "setSymmetry",
-        order: state.symmetry.order,
-        axis: state.symmetry.axis,
-      });
-    },
-    onSymmetryAxisChange: (axis) => {
-      if (viewIs4D) return;
-      beginSceneEdit();
-      state = setSymmetryAxis(state, axis);
-      ui.updateLabels(state);
-      if (state.autoUpdate) regenerate();
-      postFlame({
-        type: "setSymmetry",
-        order: state.symmetry.order,
-        axis: state.symmetry.axis,
-      });
-      postVoxel({
-        type: "setSymmetry",
-        order: state.symmetry.order,
-        axis: state.symmetry.axis,
-      });
     },
     onSelect: (index) => {
       state = selectTransform(state, index);
@@ -1505,148 +1401,8 @@ function main(): void {
     },
     onEnterFlameRender: () => enterFlameMode(),
     onExitFlameRender: () => exitFlameMode(),
-    onFlameExposureInput: (value) => {
-      beginSceneEdit();
-      state = setFlameExposure(state, value);
-      ui.updateLabels(state);
-      // Shared mode: the tone-map runs on THIS thread over the live shared
-      // buckets, so the change lands instantly — even mid-chunk, when the
-      // worker couldn't service a command anyway. Transfer mode: the worker
-      // owns the tone-map; forward as before. Same split for gamma/vibrancy.
-      if (flameShared) presentSharedFrame();
-      else postFlame({ type: "setExposure", exposure: state.flame.exposure });
-    },
-    onFlameIterationsInput: (value) => {
-      beginSceneEdit();
-      state = setFlameIterations(state, value);
-      ui.updateLabels(state);
-      postFlame({
-        type: "setIterationsBudget",
-        iterations: state.flame.iterations,
-      });
-    },
-    onFlameGammaInput: (value) => {
-      beginSceneEdit();
-      state = setFlameGamma(state, value);
-      ui.updateLabels(state);
-      if (flameShared) presentSharedFrame();
-      else postFlame({ type: "setGamma", gamma: state.flame.gamma });
-    },
-    onFlameVibrancyInput: (value) => {
-      beginSceneEdit();
-      state = setFlameVibrancy(state, value);
-      ui.updateLabels(state);
-      if (flameShared) presentSharedFrame();
-      else postFlame({ type: "setVibrancy", vibrancy: state.flame.vibrancy });
-    },
-    onFlameSupersampleInput: (value) => {
-      beginSceneEdit();
-      // The reducer clamps/rounds; the worker compares the settled value
-      // against its own effective supersample and restarts accumulation for
-      // us if it actually changed — no need to restart here directly (and
-      // refreshUi/regenerate would be premature: the display size hasn't
-      // changed, only the accumulator's).
-      state = setFlameSupersample(state, value);
-      ui.updateLabels(state);
-      postFlame({
-        type: "setSupersample",
-        supersample: state.flame.supersample,
-      });
-    },
-    onFlamePaletteChange: (paletteId) => {
-      beginSceneEdit();
-      // Like supersample this restarts accumulation in the worker (the color
-      // sums bake in the palette); the worker owns that restart, so this just
-      // updates state + label and forwards the new palette.
-      state = setFlamePaletteId(state, paletteId);
-      ui.updateLabels(state);
-      postFlame({ type: "setPalette", paletteId: state.flame.paletteId });
-    },
-    onFlameEstimatorRadiusInput: (value) => {
-      beginSceneEdit();
-      state = setFlameEstimatorRadius(state, value);
-      ui.updateLabels(state);
-      postFlame({
-        type: "setEstimatorRadius",
-        estimatorRadius: state.flame.estimatorRadius,
-      });
-    },
-    onFlameEstimatorMinimumRadiusInput: (value) => {
-      beginSceneEdit();
-      state = setFlameEstimatorMinimumRadius(state, value);
-      ui.updateLabels(state);
-      postFlame({
-        type: "setEstimatorMinimumRadius",
-        estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
-      });
-    },
-    onFlameEstimatorCurveInput: (value) => {
-      beginSceneEdit();
-      state = setFlameEstimatorCurve(state, value);
-      ui.updateLabels(state);
-      postFlame({
-        type: "setEstimatorCurve",
-        estimatorCurve: state.flame.estimatorCurve,
-      });
-    },
     onEnterSolidRender: () => enterSolidMode(),
     onExitSolidRender: () => exitSolidMode(),
-    onSolidThresholdInput: (value) => {
-      beginSceneEdit();
-      state = setSolidThreshold(state, value);
-      ui.updateLabels(state);
-      scene.setSolidParams(state.solid);
-    },
-    onSolidLightAzimuthInput: (value) => {
-      beginSceneEdit();
-      state = setSolidLightAzimuth(state, value);
-      ui.updateLabels(state);
-      scene.setSolidParams(state.solid);
-    },
-    onSolidLightElevationInput: (value) => {
-      beginSceneEdit();
-      state = setSolidLightElevation(state, value);
-      ui.updateLabels(state);
-      scene.setSolidParams(state.solid);
-    },
-    onSolidAmbientInput: (value) => {
-      beginSceneEdit();
-      state = setSolidAmbient(state, value);
-      ui.updateLabels(state);
-      scene.setSolidParams(state.solid);
-    },
-    onSolidPaletteChange: (paletteId) => {
-      beginSceneEdit();
-      // Like resolution this restarts accumulation in the worker (the
-      // colors bake into avgRGB); the worker owns that restart, so this
-      // just updates state + label and forwards the new palette.
-      state = setSolidPaletteId(state, paletteId);
-      ui.updateLabels(state);
-      postVoxel({ type: "setPalette", paletteId: state.solid.paletteId });
-    },
-    onSolidIterationsInput: (value) => {
-      beginSceneEdit();
-      state = setSolidIterations(state, value);
-      ui.updateLabels(state);
-      postVoxel({
-        type: "setIterationsBudget",
-        iterations: state.solid.iterations,
-      });
-    },
-    onSolidResolutionInput: (value) => {
-      beginSceneEdit();
-      // The reducer clamps/snaps to the voxel step; unlike the flame's
-      // supersample the worker has no live "change resolution" command (a
-      // grid's dimensions are fixed at allocation), so a genuine change while
-      // active restarts the whole session via enterSolidMode — a fresh
-      // worker, exactly like a Render click.
-      const previousResolution = state.solid.resolution;
-      state = setSolidResolution(state, value);
-      ui.updateLabels(state);
-      if (state.solidActive && state.solid.resolution !== previousResolution) {
-        enterSolidMode();
-      }
-    },
     // Slice state is session-only view state (like the tumble clock): it never
     // touches AppState or persistence, so these write straight to the scene.
     onFourDSliceToggle: (checked) => {

@@ -6,6 +6,9 @@ import {
   initialState,
   MAX_COLOR_GAMMA,
 } from "./state";
+import type { AppState } from "./state";
+import { applyScalarControl } from "./control-spec";
+import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import { FLAME_PALETTE_IDS, buildPaletteLUT } from "../fractal/palette";
 import { buildColorModeLUT } from "../fractal/color";
@@ -25,17 +28,10 @@ function noopHandlers(): UiHandlers {
     onRedo: vi.fn(),
     onPreset: vi.fn(),
     onSurprise: vi.fn(),
-    onNumPointsInput: vi.fn(),
-    onPointSizeInput: vi.fn(),
-    onGlowBrightnessInput: vi.fn(),
+    onScalarControl: vi.fn(),
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
     onRecordVideoToggle: vi.fn(),
-    onToggleGuides: vi.fn(),
-    onColorMode: vi.fn(),
-    onColorGammaInput: vi.fn(),
-    onRenderStyle: vi.fn(),
-    onToggleAutoUpdate: vi.fn(),
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
     onToggleFinalTransform: vi.fn(),
@@ -44,26 +40,8 @@ function noopHandlers(): UiHandlers {
     onClosePanel: vi.fn(),
     onEnterFlameRender: vi.fn(),
     onExitFlameRender: vi.fn(),
-    onFlameExposureInput: vi.fn(),
-    onFlameIterationsInput: vi.fn(),
-    onFlameGammaInput: vi.fn(),
-    onFlameVibrancyInput: vi.fn(),
-    onFlameSupersampleInput: vi.fn(),
-    onFlamePaletteChange: vi.fn(),
-    onFlameEstimatorRadiusInput: vi.fn(),
-    onFlameEstimatorMinimumRadiusInput: vi.fn(),
-    onFlameEstimatorCurveInput: vi.fn(),
     onEnterSolidRender: vi.fn(),
     onExitSolidRender: vi.fn(),
-    onSolidThresholdInput: vi.fn(),
-    onSolidLightAzimuthInput: vi.fn(),
-    onSolidLightElevationInput: vi.fn(),
-    onSolidAmbientInput: vi.fn(),
-    onSolidPaletteChange: vi.fn(),
-    onSolidIterationsInput: vi.fn(),
-    onSolidResolutionInput: vi.fn(),
-    onSymmetryOrderInput: vi.fn(),
-    onSymmetryAxisChange: vi.fn(),
     onAutoOrbitToggle: vi.fn(),
     onAutoOrbitSpeedInput: vi.fn(),
     onFourDSliceToggle: vi.fn(),
@@ -71,9 +49,25 @@ function noopHandlers(): UiHandlers {
     onFourDSliceRelColorToggle: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
-    onFourDColor: vi.fn(),
-    onFourDDepthFadeToggle: vi.fn(),
   };
+}
+
+/** noopHandlers plus a live scalar pipeline: onScalarControl threads each
+ * table-driven edit through applyScalarControl into a local AppState, so
+ * tests assert on the state outcome (the behavior), not on which callback
+ * carried which value. */
+function scalarHandlers(initial: AppState = initialState(true)): {
+  handlers: UiHandlers;
+  current: () => AppState;
+} {
+  let state = initial;
+  const handlers: UiHandlers = {
+    ...noopHandlers(),
+    onScalarControl: (spec: ScalarControlSpec, raw: string | boolean) => {
+      state = applyScalarControl(state, spec, raw);
+    },
+  };
+  return { handlers, current: () => state };
 }
 
 function transformButtons(): HTMLButtonElement[] {
@@ -223,8 +217,8 @@ describe("Ui.updateLabels", () => {
 });
 
 describe("Ui point size slider", () => {
-  it("reports the slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the slider's value to state.pointSize on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -234,7 +228,7 @@ describe("Ui point size slider", () => {
     slider.value = "1.75";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onPointSizeInput).toHaveBeenCalledWith(1.75);
+    expect(current().pointSize).toBe(1.75);
   });
 });
 
@@ -284,8 +278,8 @@ describe("Ui color contrast slider", () => {
   // dead center is exactly neutral 1 (no float fuzz — 5 ** 0 === 1), so the
   // default slider state can never drift the persisted gamma off its
   // backwards-compatible linear value.
-  it("reports MAX_COLOR_GAMMA when dragged to the far right", () => {
-    const handlers = noopHandlers();
+  it("state.colorGamma reaches MAX_COLOR_GAMMA at the far right", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -295,11 +289,11 @@ describe("Ui color contrast slider", () => {
     slider.value = "1";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onColorGammaInput).toHaveBeenCalledWith(MAX_COLOR_GAMMA);
+    expect(current().colorGamma).toBe(MAX_COLOR_GAMMA);
   });
 
-  it("reports exactly neutral gamma 1 at the slider's center", () => {
-    const handlers = noopHandlers();
+  it("state.colorGamma is exactly neutral 1 at the center", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -309,7 +303,7 @@ describe("Ui color contrast slider", () => {
     slider.value = "0";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onColorGammaInput).toHaveBeenCalledWith(1);
+    expect(current().colorGamma).toBe(1);
   });
 });
 
@@ -1565,8 +1559,8 @@ describe("Ui flame render controls", () => {
     );
   });
 
-  it("reports the exposure slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the exposure slider's value to state.flame.exposure on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1576,11 +1570,11 @@ describe("Ui flame render controls", () => {
     slider.value = "1.75";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameExposureInput).toHaveBeenCalledWith(1.75);
+    expect(current().flame.exposure).toBe(1.75);
   });
 
-  it("reports the iteration count mapped from the slider's detent index on input (fr-79p)", () => {
-    const handlers = noopHandlers();
+  it("applies the slider's detent index to state.flame.iterations on input (fr-79p)", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1590,9 +1584,7 @@ describe("Ui flame render controls", () => {
     slider.value = "3"; // detent index 3 -> FLAME_ITERATION_DETENTS[3]
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameIterationsInput).toHaveBeenCalledWith(
-      FLAME_ITERATION_DETENTS[3],
-    );
+    expect(current().flame.iterations).toBe(FLAME_ITERATION_DETENTS[3]);
   });
 
   it("reflects gamma, vibrancy, and supersample into their sliders and labels", () => {
@@ -1631,8 +1623,8 @@ describe("Ui flame render controls", () => {
     ).toContain("3×");
   });
 
-  it("reports the gamma slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the gamma slider's value to state.flame.gamma on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1642,11 +1634,11 @@ describe("Ui flame render controls", () => {
     slider.value = "4.5";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameGammaInput).toHaveBeenCalledWith(4.5);
+    expect(current().flame.gamma).toBe(4.5);
   });
 
-  it("reports the vibrancy slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the vibrancy slider's value to state.flame.vibrancy on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1656,11 +1648,11 @@ describe("Ui flame render controls", () => {
     slider.value = "0.25";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameVibrancyInput).toHaveBeenCalledWith(0.25);
+    expect(current().flame.vibrancy).toBe(0.25);
   });
 
-  it("reports the supersample slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the supersample slider's value to state.flame.supersample on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1670,7 +1662,7 @@ describe("Ui flame render controls", () => {
     slider.value = "3";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameSupersampleInput).toHaveBeenCalledWith(3);
+    expect(current().flame.supersample).toBe(3);
   });
 
   it("reflects the estimator params into their sliders and labels", () => {
@@ -1716,8 +1708,8 @@ describe("Ui flame render controls", () => {
     ).toBe("1.20");
   });
 
-  it("reports the estimator radius slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the estimator radius slider's value to state.flame.estimatorRadius on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1727,11 +1719,11 @@ describe("Ui flame render controls", () => {
     slider.value = "7.5";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameEstimatorRadiusInput).toHaveBeenCalledWith(7.5);
+    expect(current().flame.estimatorRadius).toBe(7.5);
   });
 
-  it("reports the estimator minimum radius slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the estimator minimum radius slider's value to state.flame.estimatorMinimumRadius on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1741,13 +1733,11 @@ describe("Ui flame render controls", () => {
     slider.value = "2.5";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameEstimatorMinimumRadiusInput).toHaveBeenCalledWith(
-      2.5,
-    );
+    expect(current().flame.estimatorMinimumRadius).toBe(2.5);
   });
 
-  it("reports the estimator curve slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the estimator curve slider's value to state.flame.estimatorCurve on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1757,7 +1747,7 @@ describe("Ui flame render controls", () => {
     slider.value = "0.8";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onFlameEstimatorCurveInput).toHaveBeenCalledWith(0.8);
+    expect(current().flame.estimatorCurve).toBe(0.8);
   });
 
   // Guards against the dropdown and the palette registry drifting apart — the
@@ -1780,8 +1770,8 @@ describe("Ui flame render controls", () => {
     ).toBe("aurora");
   });
 
-  it("reports the selected palette id on change", () => {
-    const handlers = noopHandlers();
+  it("applies the selected palette id to state.flame.paletteId on change", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -1789,7 +1779,7 @@ describe("Ui flame render controls", () => {
     select.value = "spectrum";
     select.dispatchEvent(new Event("change"));
 
-    expect(handlers.onFlamePaletteChange).toHaveBeenCalledWith("spectrum");
+    expect(current().flame.paletteId).toBe("spectrum");
   });
 });
 
@@ -2041,8 +2031,8 @@ describe("Ui solid render controls", () => {
     );
   });
 
-  it("reports the threshold slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the threshold slider's value to state.solid.threshold on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2052,11 +2042,11 @@ describe("Ui solid render controls", () => {
     slider.value = "0.45";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidThresholdInput).toHaveBeenCalledWith(0.45);
+    expect(current().solid.threshold).toBe(0.45);
   });
 
-  it("reports the light azimuth slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the light azimuth slider's value to state.solid.lightAzimuth on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2066,11 +2056,11 @@ describe("Ui solid render controls", () => {
     slider.value = "-90";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidLightAzimuthInput).toHaveBeenCalledWith(-90);
+    expect(current().solid.lightAzimuth).toBe(-90);
   });
 
-  it("reports the light elevation slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the light elevation slider's value to state.solid.lightElevation on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2080,11 +2070,11 @@ describe("Ui solid render controls", () => {
     slider.value = "35";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidLightElevationInput).toHaveBeenCalledWith(35);
+    expect(current().solid.lightElevation).toBe(35);
   });
 
-  it("reports the ambient slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the ambient slider's value to state.solid.ambient on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2094,7 +2084,7 @@ describe("Ui solid render controls", () => {
     slider.value = "0.4";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidAmbientInput).toHaveBeenCalledWith(0.4);
+    expect(current().solid.ambient).toBe(0.4);
   });
 
   it("reflects iterations and resolution into their sliders and labels", () => {
@@ -2125,8 +2115,8 @@ describe("Ui solid render controls", () => {
     ).toContain("224³");
   });
 
-  it("reports the iterations slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the iterations slider's value to state.solid.iterations on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2136,11 +2126,11 @@ describe("Ui solid render controls", () => {
     slider.value = "5000000";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidIterationsInput).toHaveBeenCalledWith(5_000_000);
+    expect(current().solid.iterations).toBe(5_000_000);
   });
 
-  it("reports the resolution slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the resolution slider's value to state.solid.resolution on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2150,7 +2140,7 @@ describe("Ui solid render controls", () => {
     slider.value = "224";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSolidResolutionInput).toHaveBeenCalledWith(224);
+    expect(current().solid.resolution).toBe(224);
   });
 
   it("offers exactly the registered palettes, in order", () => {
@@ -2171,8 +2161,8 @@ describe("Ui solid render controls", () => {
     ).toBe("aurora");
   });
 
-  it("reports the selected palette id on change", () => {
-    const handlers = noopHandlers();
+  it("applies the selected palette id to state.solid.paletteId on change", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2180,7 +2170,7 @@ describe("Ui solid render controls", () => {
     select.value = "spectrum";
     select.dispatchEvent(new Event("change"));
 
-    expect(handlers.onSolidPaletteChange).toHaveBeenCalledWith("spectrum");
+    expect(current().solid.paletteId).toBe("spectrum");
   });
 });
 
@@ -2446,15 +2436,15 @@ describe("Ui 4D depth-fade control (fr-3e0)", () => {
     return document.getElementById("fourDDepthFadeToggle") as HTMLInputElement;
   }
 
-  it("fires onFourDDepthFadeToggle with the checkbox state", () => {
-    const handlers = noopHandlers();
+  it("applies the checkbox state to state.fourDDepthFade on change", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
     toggle().checked = true;
     toggle().dispatchEvent(new Event("change"));
 
-    expect(handlers.onFourDDepthFadeToggle).toHaveBeenCalledWith(true);
+    expect(current().fourDDepthFade).toBe(true);
   });
 
   // Unlike the session-only slice/tumble toggles, the fade is part of the
@@ -2674,8 +2664,8 @@ describe("Ui symmetry controls", () => {
     ).toBe("z");
   });
 
-  it("reports the order slider's numeric value on input", () => {
-    const handlers = noopHandlers();
+  it("applies the order slider's value to state.symmetry.order on input", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2685,11 +2675,11 @@ describe("Ui symmetry controls", () => {
     slider.value = "6";
     slider.dispatchEvent(new Event("input"));
 
-    expect(handlers.onSymmetryOrderInput).toHaveBeenCalledWith(6);
+    expect(current().symmetry.order).toBe(6);
   });
 
-  it("reports the selected axis on change", () => {
-    const handlers = noopHandlers();
+  it("applies the selected axis to state.symmetry.axis on change", () => {
+    const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
@@ -2697,7 +2687,7 @@ describe("Ui symmetry controls", () => {
     select.value = "x";
     select.dispatchEvent(new Event("change"));
 
-    expect(handlers.onSymmetryAxisChange).toHaveBeenCalledWith("x");
+    expect(current().symmetry.axis).toBe("x");
   });
 
   it("hides the reduction note when the requested order fits under the transform limit", () => {
