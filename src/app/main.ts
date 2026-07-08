@@ -109,20 +109,37 @@ function showUpdateBanner(acceptUpdate: () => void): void {
   banner.classList.remove("hidden");
 }
 
+// User-facing note for a runtime accumulate failure (fr-09w), shared by the
+// flame and solid worker "error" handlers. Distinct from showRenderError's
+// default "try reloading" hint: a reload won't reliably fix a compute fault,
+// so this just states what happened rather than over-promising.
+const RENDER_ACCUMULATE_ERROR = "Render failed — returning to the explorer.";
+
 /**
- * Backstop for a flame/solid worker that fails to LOAD or crashes (fr-ssa):
- * both `worker.onerror` handlers fall back to the explorer, which otherwise
- * looks like "nothing happens" on Render. fr-k1z's update banner already
- * covers the common stale-deploy 404 proactively; this is defense in depth
- * for any other cause. A worker that fails to LOAD fires a bare Event (no
- * message/filename/error), so there's nothing worker-specific to show — a
- * fixed "try reloading" note is all we can offer. Dismissible; top-center so
- * it never overlaps the bottom-center update banner.
+ * Small dismissible notice (top-center, so it never overlaps the bottom-
+ * center update banner) shown when a flame/solid render fails and we fall
+ * back to the explorer — otherwise the fallback just looks like "nothing
+ * happens" on Render. Two triggers, two messages:
+ *
+ *  - Default ("try reloading", fr-ssa): a worker that fails to LOAD or
+ *    crashes (`worker.onerror`). A reload often clears this (a stale-deploy
+ *    404 — which fr-k1z's update banner also covers proactively — or a
+ *    transient load fault). The bare load-failure Event carries nothing
+ *    worker-specific to show, so the fixed hint is all we can offer.
+ *  - Custom (fr-09w): a loaded worker posts an "error" event because an
+ *    accumulate step failed at runtime. A reload won't reliably fix a compute
+ *    fault, so callers pass a message that states what happened. (The
+ *    technical detail stays in the console.error alongside the call.)
+ *
+ * The span text is set on every call so a custom message can never stick and
+ * mislabel a later default (load-failure) notice.
  */
-function showRenderError(): void {
+function showRenderError(message = "Render failed — try reloading."): void {
   const notice = document.getElementById("renderError");
   const dismiss = document.getElementById("renderErrorDismissBtn");
   if (!notice || !dismiss) return;
+  const text = notice.querySelector("span");
+  if (text) text.textContent = message;
   // onclick (not addEventListener) so repeated worker failures rewire the
   // dismiss handler idempotently instead of stacking duplicate listeners.
   dismiss.onclick = () => notice.classList.add("hidden");
@@ -706,6 +723,7 @@ function main(): void {
           "Flame render failed to accumulate; returning to explorer.",
           event.message,
         );
+        showRenderError(RENDER_ACCUMULATE_ERROR);
         exitFlameMode();
         break;
     }
@@ -953,6 +971,7 @@ function main(): void {
           "Solid render failed to accumulate; returning to explorer.",
           event.message,
         );
+        showRenderError(RENDER_ACCUMULATE_ERROR);
         exitSolidMode();
         break;
     }
