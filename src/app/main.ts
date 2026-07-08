@@ -109,6 +109,26 @@ function showUpdateBanner(acceptUpdate: () => void): void {
   banner.classList.remove("hidden");
 }
 
+/**
+ * Backstop for a flame/solid worker that fails to LOAD or crashes (fr-ssa):
+ * both `worker.onerror` handlers fall back to the explorer, which otherwise
+ * looks like "nothing happens" on Render. fr-k1z's update banner already
+ * covers the common stale-deploy 404 proactively; this is defense in depth
+ * for any other cause. A worker that fails to LOAD fires a bare Event (no
+ * message/filename/error), so there's nothing worker-specific to show — a
+ * fixed "try reloading" note is all we can offer. Dismissible; top-center so
+ * it never overlaps the bottom-center update banner.
+ */
+function showRenderError(): void {
+  const notice = document.getElementById("renderError");
+  const dismiss = document.getElementById("renderErrorDismissBtn");
+  if (!notice || !dismiss) return;
+  // onclick (not addEventListener) so repeated worker failures rewire the
+  // dismiss handler idempotently instead of stacking duplicate listeners.
+  dismiss.onclick = () => notice.classList.add("hidden");
+  notice.classList.remove("hidden");
+}
+
 function webglAvailable(): boolean {
   try {
     const canvas = document.createElement("canvas");
@@ -707,6 +727,7 @@ function main(): void {
       handleFlameEvent(e.data);
     worker.onerror = (e) => {
       console.error("Flame worker crashed; returning to explorer.", e);
+      showRenderError();
       exitFlameMode();
     };
     return {
@@ -956,6 +977,7 @@ function main(): void {
       handleSolidEvent(e.data);
     solidWorker.onerror = (e) => {
       console.error("Solid worker crashed; returning to explorer.", e);
+      showRenderError();
       exitSolidMode();
     };
 
