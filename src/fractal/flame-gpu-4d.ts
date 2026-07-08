@@ -58,7 +58,8 @@ import type { Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import type { FourDRenderColor } from "./color";
-import { sliceColorRemap } from "./project4";
+import { W_RAMP_BRIGHTNESS_FLOOR, W_RAMP_EXPONENT, W_RAMP_GRAY } from "./color";
+import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
@@ -152,9 +153,9 @@ export const FLAME_GPU_KERNEL_4D_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
 const PI: f32 = 3.14159265358979;
 const EPS: f32 = 1e-12;
-// The flame's ghost-context slice floor — flame-4d.ts's SLICE_FLOOR (0.06),
-// the point-cloud view's floor, NOT the solid render's 0. Keep in sync.
-const SLICE_FLOOR: f32 = 0.06;
+// The flame's ghost-context slice floor — project4.ts's SLICE_GHOST_FLOOR
+// (the point-cloud view's floor, NOT the solid render's 0), interpolated in.
+const SLICE_FLOOR: f32 = ${SLICE_GHOST_FLOOR};
 
 struct Params {
   projX: vec4f,
@@ -336,15 +337,15 @@ fn applySlot(slotIdx: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
   return q;
 }
 
-// The diverging rotated-w ramp — color.ts's wRampColor, mirrored constant
-// for constant (the 0.6 exponent, the 0.38 gray notch, the 0.30 + 0.70
-// brightness; that function's doc names this kernel's copy in its
-// keep-in-sync set). "s" arrives already clamped to [-1, 1].
+// The diverging rotated-w ramp — color.ts's wRampColor, with the shape
+// constants (exponent, gray notch, brightness floor) interpolated from its
+// W_RAMP_* exports (fr-3o2) so this kernel's copy can't drift from the CPU
+// twin. "s" arrives already clamped to [-1, 1].
 fn wRampColor(s: f32) -> vec3f {
-  let m = pow(abs(s), 0.6);
+  let m = pow(abs(s), ${W_RAMP_EXPONENT});
   let side = select(params.posColor.xyz, params.negColor.xyz, s < 0.0);
-  let brightness = 0.3 + 0.7 * m;
-  return (vec3f(0.38 * (1.0 - m)) + side * m) * brightness;
+  let brightness = ${W_RAMP_BRIGHTNESS_FLOOR} + ${1 - W_RAMP_BRIGHTNESS_FLOOR} * m;
+  return (vec3f(${W_RAMP_GRAY} * (1.0 - m)) + side * m) * brightness;
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE})

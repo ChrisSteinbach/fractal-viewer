@@ -44,7 +44,7 @@ import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import { wRampColor } from "./color";
 import type { FourDRenderColor } from "./color";
-import { sliceColorRemap, sliceWeight } from "./project4";
+import { sliceColorRemap, sliceWeight, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView } from "./project4";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
@@ -52,11 +52,6 @@ import type { Vec3 } from "./types";
 /** Color for a transform/bucket outside `palette` — shouldn't happen; mirrors
  * `flame.ts`'s `FALLBACK_COLOR` and `color.ts`'s `buildColors4` fallback. */
 const FALLBACK_COLOR: Vec3 = [1, 1, 1];
-
-/** The ghost-context floor the flame's soft w-slice uses — see this module's
- * doc for why it matches the point-cloud view's floor (0.06), not the solid
- * (voxel) render's (0). */
-const SLICE_FLOOR = 0.06;
 
 /**
  * Accumulate `iterations` more 4D chaos-game steps into a 2D histogram, seen
@@ -290,7 +285,7 @@ export function accumulateFlame4(
     // module's doc for why the floor matches the point cloud's (0.06), not
     // the solid render's (0).
     const weight = sliceOn
-      ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_FLOOR)
+      ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_GHOST_FLOOR)
       : 1;
 
     const bucket = row * width + col;

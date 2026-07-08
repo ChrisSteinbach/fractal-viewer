@@ -271,9 +271,9 @@ export function colorModeUsesGamma(mode: ColorMode): boolean {
  * pushes toward white, so genuine 4D self-overlap still flags itself in a
  * color no single point can have. Plain data rather than GLSL constants, so
  * the shader uniforms (scene.ts), the panel legend (ui.ts), and the tests all
- * read the ONE definition and can never drift on the palette itself — only
- * the ramp's shape constants remain mirrored in GLSL (see ui.ts's
- * `wRampGradient`).
+ * read the ONE definition and can never drift on the palette itself; since
+ * fr-3o2 the ramp's SHAPE constants are shared the same way (see
+ * {@link W_RAMP_EXPONENT}).
  */
 export const W_SIDE_PALETTES: Record<
   WDepthColorMode,
@@ -285,30 +285,48 @@ export const W_SIDE_PALETTES: Record<
 };
 
 /**
- * CPU twin of the FOUR_D_VERTEX diverging-w ramp (scene.ts:213-227): clamp
- * `s` to `[-1, 1]`; magnitude `m = |s|^0.6`; pick `side.neg` for `s < 0` else
- * `side.pos`; mix that side color with a dim gray notch by `m`, then scale by
- * `(0.30 + 0.70 * m)` — component-wise `(0.38 · (1 − m) + side_i · m) · (0.30
- * + 0.70 · m)`. For wherever a rotated-w color needs computing off the GPU —
- * the solid (voxel) render has no shader to color in, unlike the flame and
- * point-cloud paths.
+ * The diverging w-ramp's SHAPE constants — the single source of truth (fr-3o2)
+ * for the ramp math that {@link wRampColor} runs on the CPU and that the GLSL
+ * point shader (`scene.ts`'s `FOUR_D_VERTEX`) and WGSL flame kernel
+ * (`flame-gpu-4d.ts`) each interpolate into their shader strings, so the four
+ * copies can no longer drift the way the hand-mirrored constants once did:
  *
- * Joins the fr-a3q keep-in-sync set alongside {@link W_SIDE_PALETTES} and
- * ui.ts's `wRampGradient`: the side PALETTE is shared data (no drift
- * possible — all three read {@link W_SIDE_PALETTES} directly), but this
- * function's own ramp SHAPE constants — the 0.6 exponent, the 0.38 gray, the
- * 0.30 + 0.70 brightness — are mirrored from the GLSL by hand, same as
- * `wRampGradient`'s. Keep all three in sync.
+ * - {@link W_RAMP_EXPONENT} — the magnitude curve `m = |s|^exp`; the sub-unity
+ *   exponent lifts the mid-range so heavy-tailed w-distributions don't wash out
+ *   to gray after the support normalization spreads them over `[-1, 1]`.
+ * - {@link W_RAMP_GRAY} — the dim gray notch the ramp mixes toward at `w ≈ 0`,
+ *   the part of the cloud passing through our own 3-space.
+ * - {@link W_RAMP_BRIGHTNESS_FLOOR} — the brightness at `w ≈ 0`; brightness
+ *   ramps `floor + (1 − floor) · m` to full at the w extremes.
+ */
+export const W_RAMP_EXPONENT = 0.6;
+export const W_RAMP_GRAY = 0.38;
+export const W_RAMP_BRIGHTNESS_FLOOR = 0.3;
+
+/**
+ * CPU twin of the FOUR_D_VERTEX diverging-w ramp (`scene.ts`): clamp `s` to
+ * `[-1, 1]`; magnitude `m = |s|^`{@link W_RAMP_EXPONENT}; pick `side.neg` for
+ * `s < 0` else `side.pos`; mix that side color with the {@link W_RAMP_GRAY}
+ * notch by `m`, then scale by brightness `floor + (1 − floor) · m` from
+ * {@link W_RAMP_BRIGHTNESS_FLOOR} — component-wise `(gray · (1 − m) + side_i ·
+ * m) · brightness`. For wherever a rotated-w color needs computing off the
+ * GPU — the solid (voxel) render has no shader to color in, unlike the flame
+ * and point-cloud paths; `ui.ts`'s `wRampGradient` legend also samples it.
+ *
+ * Reads the shared SHAPE constants above and the side PALETTE from
+ * {@link W_SIDE_PALETTES}, so it cannot drift from the shaders that interpolate
+ * the same constants (fr-3o2) nor from the legend that calls this function.
  */
 export function wRampColor(s: number, side: { neg: Vec3; pos: Vec3 }): Vec3 {
   const clamped = s < -1 ? -1 : s > 1 ? 1 : s;
-  const m = Math.abs(clamped) ** 0.6;
+  const m = Math.abs(clamped) ** W_RAMP_EXPONENT;
   const sideColor = clamped < 0 ? side.neg : side.pos;
-  const brightness = 0.3 + 0.7 * m;
+  const brightness =
+    W_RAMP_BRIGHTNESS_FLOOR + (1 - W_RAMP_BRIGHTNESS_FLOOR) * m;
   return [
-    (0.38 * (1 - m) + sideColor[0] * m) * brightness,
-    (0.38 * (1 - m) + sideColor[1] * m) * brightness,
-    (0.38 * (1 - m) + sideColor[2] * m) * brightness,
+    (W_RAMP_GRAY * (1 - m) + sideColor[0] * m) * brightness,
+    (W_RAMP_GRAY * (1 - m) + sideColor[1] * m) * brightness,
+    (W_RAMP_GRAY * (1 - m) + sideColor[2] * m) * brightness,
   ];
 }
 
