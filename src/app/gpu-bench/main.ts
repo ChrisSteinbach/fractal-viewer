@@ -71,6 +71,7 @@ import type {
   Vec3,
   Vec4,
 } from "../../fractal/types";
+import { clamp } from "../../fractal/vec";
 import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
@@ -452,10 +453,6 @@ function requireElement<T extends Element>(id: string): T {
     throw new Error(`[gpu-bench] index.html is missing #${id}`);
   }
   return el as unknown as T;
-}
-
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
 }
 
 /** Human-scale throughput, e.g. `15.9 M iter/s` / `413 M iter/s` — matches

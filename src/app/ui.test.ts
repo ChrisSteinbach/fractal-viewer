@@ -5,8 +5,9 @@ import {
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
+  PARAM,
 } from "./state";
-import type { AppState } from "./state";
+import type { AppState, ParamSpec } from "./state";
 import { applyScalarControl } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
@@ -2718,6 +2719,53 @@ describe("Ui symmetry controls", () => {
     expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe(
       "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
+    );
+  });
+});
+
+// fr-2v7: index.html's slider min/max are single-sourced from state.ts's PARAM
+// table. This pins every DIRECTLY-mapped slider (HTML range == the parameter's
+// value range) against its spec, so editing a range in one place without the
+// other fails here. Excluded on purpose (their HTML range is a mapping DOMAIN,
+// not the parameter's value range — see control-spec.ts): numPointsSlider and
+// colorGammaSlider carry a log-scale position, flameIterationsSlider a detent
+// index, and symmetryOrderSlider's max is deliberately capped below its spec.
+describe("index.html slider ranges match PARAM (fr-2v7)", () => {
+  const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+  const attr = (id: string, name: string): string => {
+    const el = doc.getElementById(id);
+    if (!el) throw new Error(`No #${id} in index.html`);
+    const value = el.getAttribute(name);
+    if (value === null) throw new Error(`#${id} has no ${name} attribute`);
+    return value;
+  };
+
+  const DIRECT: ReadonlyArray<[string, ParamSpec]> = [
+    ["pointSizeSlider", PARAM.pointSize],
+    ["glowBrightnessSlider", PARAM.glowBrightness],
+    ["flameExposureSlider", PARAM.flameExposure],
+    ["flameGammaSlider", PARAM.flameGamma],
+    ["flameVibrancySlider", PARAM.flameVibrancy],
+    ["flameEstimatorRadiusSlider", PARAM.estimatorRadius],
+    ["flameEstimatorMinimumRadiusSlider", PARAM.estimatorMinimumRadius],
+    ["flameEstimatorCurveSlider", PARAM.estimatorCurve],
+    ["flameSupersampleSlider", PARAM.flameSupersample],
+    ["solidThresholdSlider", PARAM.solidThreshold],
+    ["solidLightAzimuthSlider", PARAM.solidLightAzimuth],
+    ["solidLightElevationSlider", PARAM.solidLightElevation],
+    ["solidAmbientSlider", PARAM.solidAmbient],
+    ["solidIterationsSlider", PARAM.solidIterations],
+    ["solidResolutionSlider", PARAM.solidResolution],
+  ];
+
+  it.each(DIRECT)("%s min/max match its ParamSpec", (id, spec) => {
+    expect(attr(id, "min")).toBe(String(spec.min));
+    expect(attr(id, "max")).toBe(String(spec.max));
+  });
+
+  it("solidResolutionSlider step matches PARAM.solidResolution.snap", () => {
+    expect(attr("solidResolutionSlider", "step")).toBe(
+      String(PARAM.solidResolution.snap),
     );
   });
 });

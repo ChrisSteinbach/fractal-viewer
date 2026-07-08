@@ -1,5 +1,6 @@
 import {
   addTransform,
+  clampToSpec,
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -34,6 +35,7 @@ import {
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
   MAX_GLOW_BRIGHTNESS,
+  MAX_POINT_SIZE,
   MAX_SOLID_AMBIENT,
   MAX_SOLID_ITERATIONS,
   MAX_SOLID_LIGHT_AZIMUTH,
@@ -51,6 +53,8 @@ import {
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
   MIN_GLOW_BRIGHTNESS,
+  MIN_NUM_POINTS,
+  MIN_POINT_SIZE,
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_LIGHT_AZIMUTH,
@@ -60,6 +64,7 @@ import {
   MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
   nearestFlameIterationDetentIndex,
+  PARAM,
   removeTransform,
   selectTransform,
   setColorGamma,
@@ -77,6 +82,7 @@ import {
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
+  setNumPoints,
   setPointSize,
   setRenderStyle,
   setSolidActive,
@@ -181,6 +187,61 @@ describe("setPointSize", () => {
     const next = setPointSize(state, 2.5);
     expect(next.pointSize).toBe(2.5);
     expect(state.pointSize).toBe(DEFAULT_POINT_SIZE);
+  });
+});
+
+describe("setPointSize clamps to PARAM.pointSize", () => {
+  it("clamps an over-range multiplier down to the ceiling", () => {
+    expect(setPointSize(initialState(true), 10).pointSize).toBe(MAX_POINT_SIZE);
+  });
+
+  it("clamps an under-range multiplier up to the floor", () => {
+    expect(setPointSize(initialState(true), 0.01).pointSize).toBe(
+      MIN_POINT_SIZE,
+    );
+  });
+});
+
+describe("setNumPoints clamps to PARAM.numPoints", () => {
+  it("clamps an over-range count down to the ceiling", () => {
+    expect(setNumPoints(initialState(true), 9_000_000).numPoints).toBe(
+      PARAM.numPoints.max,
+    );
+  });
+
+  it("clamps a negative count up to the data floor of 0", () => {
+    expect(setNumPoints(initialState(true), -5).numPoints).toBe(0);
+  });
+});
+
+// The persist decode boundary accepts a wider numPoints range than the UI
+// slider exposes: PARAM.numPoints.min is the DATA floor (0), deliberately
+// below MIN_NUM_POINTS (the log-scaled slider's own floor, which needs a
+// positive value since log 0 is -Infinity). This pins that intentional gap.
+describe("numPoints floor divergence (fr-2v7)", () => {
+  it("keeps the data floor at 0, strictly below the UI slider floor", () => {
+    expect(PARAM.numPoints.min).toBe(0);
+    expect(MIN_NUM_POINTS).toBeGreaterThan(PARAM.numPoints.min);
+  });
+});
+
+describe("clampToSpec", () => {
+  it("plain-clamps into [min, max]", () => {
+    expect(clampToSpec(PARAM.pointSize, 10)).toBe(4);
+    expect(clampToSpec(PARAM.pointSize, 0)).toBe(0.25);
+    expect(clampToSpec(PARAM.pointSize, 1.5)).toBe(1.5);
+  });
+
+  it("rounds to an integer when the spec asks", () => {
+    expect(clampToSpec(PARAM.flameSupersample, 2.4)).toBe(2);
+    expect(clampToSpec(PARAM.flameSupersample, 2.6)).toBe(3);
+  });
+
+  it("snaps to the step multiple before clamping", () => {
+    // 200/32 = 6.25 -> round 6 -> 192, already inside [64, 512].
+    expect(clampToSpec(PARAM.solidResolution, 200)).toBe(192);
+    // 10/32 = 0.3125 -> round 0 -> 0, then the clamp rescues it up to 64.
+    expect(clampToSpec(PARAM.solidResolution, 10)).toBe(64);
   });
 });
 

@@ -29,61 +29,10 @@ import type {
   WExtension,
 } from "../fractal/types";
 import {
-  DEFAULT_COLOR_GAMMA,
-  DEFAULT_FOUR_D_COLOR,
-  DEFAULT_ESTIMATOR_CURVE,
-  DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
-  DEFAULT_ESTIMATOR_RADIUS,
-  DEFAULT_FLAME_EXPOSURE,
-  DEFAULT_FLAME_GAMMA,
-  DEFAULT_FLAME_ITERATIONS,
   DEFAULT_FLAME_PALETTE,
-  DEFAULT_FLAME_SUPERSAMPLE,
-  DEFAULT_FLAME_VIBRANCY,
-  DEFAULT_GLOW_BRIGHTNESS,
-  DEFAULT_SOLID_AMBIENT,
-  DEFAULT_SOLID_ITERATIONS,
-  DEFAULT_SOLID_LIGHT_AZIMUTH,
-  DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_FOUR_D_COLOR,
   DEFAULT_SOLID_PALETTE,
-  DEFAULT_SOLID_RESOLUTION,
-  DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SYMMETRY_AXIS,
-  DEFAULT_SYMMETRY_ORDER,
-  MAX_COLOR_GAMMA,
-  MAX_ESTIMATOR_CURVE,
-  MAX_ESTIMATOR_MINIMUM_RADIUS,
-  MAX_ESTIMATOR_RADIUS,
-  MAX_FLAME_EXPOSURE,
-  MAX_FLAME_GAMMA,
-  MAX_FLAME_ITERATIONS,
-  MAX_FLAME_SUPERSAMPLE,
-  MAX_FLAME_VIBRANCY,
-  MAX_GLOW_BRIGHTNESS,
-  MAX_SOLID_AMBIENT,
-  MAX_SOLID_ITERATIONS,
-  MAX_SOLID_LIGHT_AZIMUTH,
-  MAX_SOLID_LIGHT_ELEVATION,
-  MAX_SOLID_RESOLUTION,
-  MAX_SOLID_THRESHOLD,
-  MAX_SYMMETRY_ORDER,
-  MIN_COLOR_GAMMA,
-  MIN_ESTIMATOR_CURVE,
-  MIN_ESTIMATOR_MINIMUM_RADIUS,
-  MIN_ESTIMATOR_RADIUS,
-  MIN_FLAME_EXPOSURE,
-  MIN_FLAME_GAMMA,
-  MIN_FLAME_ITERATIONS,
-  MIN_FLAME_SUPERSAMPLE,
-  MIN_FLAME_VIBRANCY,
-  MIN_GLOW_BRIGHTNESS,
-  MIN_SOLID_AMBIENT,
-  MIN_SOLID_ITERATIONS,
-  MIN_SOLID_LIGHT_AZIMUTH,
-  MIN_SOLID_LIGHT_ELEVATION,
-  MIN_SOLID_RESOLUTION,
-  MIN_SOLID_THRESHOLD,
-  MIN_SYMMETRY_ORDER,
   MAX_W_ANGLE,
   MAX_W_POSITION,
   MAX_W_SCALE,
@@ -92,12 +41,13 @@ import {
   MIN_W_POSITION,
   MIN_W_SCALE,
   MIN_W_SHEAR,
-  MAX_NUM_POINTS,
+  PARAM,
   RENDER_STYLES,
+  clampToSpec,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
-import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
+import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -294,10 +244,7 @@ function decodeVariations(raw: unknown): Variation[] | null {
     if (!Number.isFinite(weight)) return null;
     variations.push({
       type: v.type as VariationType,
-      weight: Math.max(
-        -MAX_VARIATION_WEIGHT,
-        Math.min(MAX_VARIATION_WEIGHT, weight),
-      ),
+      weight: clamp(weight, -MAX_VARIATION_WEIGHT, MAX_VARIATION_WEIGHT),
     });
   }
   return variations;
@@ -321,7 +268,7 @@ function decodeWField(raw: unknown, min: number, max: number): number | null {
   if (raw === null) return null;
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
-  return Math.max(min, Math.min(max, n));
+  return clamp(n, min, max);
 }
 
 /**
@@ -377,7 +324,7 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   if (tf.weight !== undefined) {
     const w = Number(tf.weight);
     if (!Number.isFinite(w)) return null;
-    decoded.weight = Math.max(0.0001, Math.min(10000, w));
+    decoded.weight = clamp(w, 0.0001, 10000);
   }
   // shear: optional. Present ⇒ must be a valid Vec3; absent stays undefined.
   if (tf.shear !== undefined) {
@@ -476,14 +423,14 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
 function decodeFlameParams(raw: unknown): FlameParams | null {
   if (raw === undefined) {
     return {
-      exposure: DEFAULT_FLAME_EXPOSURE,
-      iterations: DEFAULT_FLAME_ITERATIONS,
-      gamma: DEFAULT_FLAME_GAMMA,
-      vibrancy: DEFAULT_FLAME_VIBRANCY,
-      supersample: DEFAULT_FLAME_SUPERSAMPLE,
-      estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
-      estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
-      estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
+      exposure: PARAM.flameExposure.default,
+      iterations: PARAM.flameIterations.default,
+      gamma: PARAM.flameGamma.default,
+      vibrancy: PARAM.flameVibrancy.default,
+      supersample: PARAM.flameSupersample.default,
+      estimatorRadius: PARAM.estimatorRadius.default,
+      estimatorMinimumRadius: PARAM.estimatorMinimumRadius.default,
+      estimatorCurve: PARAM.estimatorCurve.default,
       paletteId: DEFAULT_FLAME_PALETTE,
     };
   }
@@ -500,32 +447,32 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
   // present-but-malformed one rejects the whole scene, same as exposure just
   // above — the three feature rollouts share one block but not one presence
   // rule per field.
-  let gamma = DEFAULT_FLAME_GAMMA;
+  let gamma = PARAM.flameGamma.default;
   if (f.gamma !== undefined) {
     gamma = Number(f.gamma);
     if (!Number.isFinite(gamma)) return null;
   }
-  let vibrancy = DEFAULT_FLAME_VIBRANCY;
+  let vibrancy = PARAM.flameVibrancy.default;
   if (f.vibrancy !== undefined) {
     vibrancy = Number(f.vibrancy);
     if (!Number.isFinite(vibrancy)) return null;
   }
-  let supersample = DEFAULT_FLAME_SUPERSAMPLE;
+  let supersample = PARAM.flameSupersample.default;
   if (f.supersample !== undefined) {
     supersample = Number(f.supersample);
     if (!Number.isFinite(supersample)) return null;
   }
-  let estimatorRadius = DEFAULT_ESTIMATOR_RADIUS;
+  let estimatorRadius = PARAM.estimatorRadius.default;
   if (f.estimatorRadius !== undefined) {
     estimatorRadius = Number(f.estimatorRadius);
     if (!Number.isFinite(estimatorRadius)) return null;
   }
-  let estimatorMinimumRadius = DEFAULT_ESTIMATOR_MINIMUM_RADIUS;
+  let estimatorMinimumRadius = PARAM.estimatorMinimumRadius.default;
   if (f.estimatorMinimumRadius !== undefined) {
     estimatorMinimumRadius = Number(f.estimatorMinimumRadius);
     if (!Number.isFinite(estimatorMinimumRadius)) return null;
   }
-  let estimatorCurve = DEFAULT_ESTIMATOR_CURVE;
+  let estimatorCurve = PARAM.estimatorCurve.default;
   if (f.estimatorCurve !== undefined) {
     estimatorCurve = Number(f.estimatorCurve);
     if (!Number.isFinite(estimatorCurve)) return null;
@@ -538,39 +485,17 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
       : DEFAULT_FLAME_PALETTE;
 
   return {
-    exposure: Math.max(
-      MIN_FLAME_EXPOSURE,
-      Math.min(MAX_FLAME_EXPOSURE, exposure),
+    exposure: clampToSpec(PARAM.flameExposure, exposure),
+    iterations: clampToSpec(PARAM.flameIterations, iterations),
+    gamma: clampToSpec(PARAM.flameGamma, gamma),
+    vibrancy: clampToSpec(PARAM.flameVibrancy, vibrancy),
+    supersample: clampToSpec(PARAM.flameSupersample, supersample),
+    estimatorRadius: clampToSpec(PARAM.estimatorRadius, estimatorRadius),
+    estimatorMinimumRadius: clampToSpec(
+      PARAM.estimatorMinimumRadius,
+      estimatorMinimumRadius,
     ),
-    iterations: Math.round(
-      Math.max(
-        MIN_FLAME_ITERATIONS,
-        Math.min(MAX_FLAME_ITERATIONS, iterations),
-      ),
-    ),
-    gamma: Math.max(MIN_FLAME_GAMMA, Math.min(MAX_FLAME_GAMMA, gamma)),
-    vibrancy: Math.max(
-      MIN_FLAME_VIBRANCY,
-      Math.min(MAX_FLAME_VIBRANCY, vibrancy),
-    ),
-    supersample: Math.round(
-      Math.max(
-        MIN_FLAME_SUPERSAMPLE,
-        Math.min(MAX_FLAME_SUPERSAMPLE, supersample),
-      ),
-    ),
-    estimatorRadius: Math.max(
-      MIN_ESTIMATOR_RADIUS,
-      Math.min(MAX_ESTIMATOR_RADIUS, estimatorRadius),
-    ),
-    estimatorMinimumRadius: Math.max(
-      MIN_ESTIMATOR_MINIMUM_RADIUS,
-      Math.min(MAX_ESTIMATOR_MINIMUM_RADIUS, estimatorMinimumRadius),
-    ),
-    estimatorCurve: Math.max(
-      MIN_ESTIMATOR_CURVE,
-      Math.min(MAX_ESTIMATOR_CURVE, estimatorCurve),
-    ),
+    estimatorCurve: clampToSpec(PARAM.estimatorCurve, estimatorCurve),
     paletteId,
   };
 }
@@ -590,12 +515,12 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
  */
 function decodeSolidParams(raw: unknown): SolidParams | null {
   const defaults: SolidParams = {
-    resolution: DEFAULT_SOLID_RESOLUTION,
-    iterations: DEFAULT_SOLID_ITERATIONS,
-    threshold: DEFAULT_SOLID_THRESHOLD,
-    lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
-    lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
-    ambient: DEFAULT_SOLID_AMBIENT,
+    resolution: PARAM.solidResolution.default,
+    iterations: PARAM.solidIterations.default,
+    threshold: PARAM.solidThreshold.default,
+    lightAzimuth: PARAM.solidLightAzimuth.default,
+    lightElevation: PARAM.solidLightElevation.default,
+    ambient: PARAM.solidAmbient.default,
     paletteId: DEFAULT_SOLID_PALETTE,
   };
   if (raw === undefined) return defaults;
@@ -626,36 +551,12 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
       : DEFAULT_SOLID_PALETTE;
 
   return {
-    resolution: Math.max(
-      MIN_SOLID_RESOLUTION,
-      Math.min(
-        MAX_SOLID_RESOLUTION,
-        Math.round(out.resolution / VOXEL_RESOLUTION_STEP) *
-          VOXEL_RESOLUTION_STEP,
-      ),
-    ),
-    iterations: Math.round(
-      Math.max(
-        MIN_SOLID_ITERATIONS,
-        Math.min(MAX_SOLID_ITERATIONS, out.iterations),
-      ),
-    ),
-    threshold: Math.max(
-      MIN_SOLID_THRESHOLD,
-      Math.min(MAX_SOLID_THRESHOLD, out.threshold),
-    ),
-    lightAzimuth: Math.max(
-      MIN_SOLID_LIGHT_AZIMUTH,
-      Math.min(MAX_SOLID_LIGHT_AZIMUTH, out.lightAzimuth),
-    ),
-    lightElevation: Math.max(
-      MIN_SOLID_LIGHT_ELEVATION,
-      Math.min(MAX_SOLID_LIGHT_ELEVATION, out.lightElevation),
-    ),
-    ambient: Math.max(
-      MIN_SOLID_AMBIENT,
-      Math.min(MAX_SOLID_AMBIENT, out.ambient),
-    ),
+    resolution: clampToSpec(PARAM.solidResolution, out.resolution),
+    iterations: clampToSpec(PARAM.solidIterations, out.iterations),
+    threshold: clampToSpec(PARAM.solidThreshold, out.threshold),
+    lightAzimuth: clampToSpec(PARAM.solidLightAzimuth, out.lightAzimuth),
+    lightElevation: clampToSpec(PARAM.solidLightElevation, out.lightElevation),
+    ambient: clampToSpec(PARAM.solidAmbient, out.ambient),
     paletteId,
   };
 }
@@ -675,11 +576,11 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
  */
 function decodeSymmetry(raw: unknown): SymmetryParams {
   if (typeof raw !== "object" || raw === null) {
-    return { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS };
+    return { order: PARAM.symmetryOrder.default, axis: DEFAULT_SYMMETRY_AXIS };
   }
   const s = raw as Record<string, unknown>;
 
-  let order = DEFAULT_SYMMETRY_ORDER;
+  let order = PARAM.symmetryOrder.default;
   const rawOrder = Number(s.order);
   if (Number.isFinite(rawOrder)) order = rawOrder;
 
@@ -689,9 +590,7 @@ function decodeSymmetry(raw: unknown): SymmetryParams {
       : DEFAULT_SYMMETRY_AXIS;
 
   return {
-    order: Math.round(
-      Math.max(MIN_SYMMETRY_ORDER, Math.min(MAX_SYMMETRY_ORDER, order)),
-    ),
+    order: clampToSpec(PARAM.symmetryOrder, order),
     axis,
   };
 }
@@ -863,8 +762,11 @@ export function encodeScene(s: SceneSnapshot): string {
  *
  * Validates strictly: requires the `v1=` prefix; 1..MAX_TRANSFORMS transforms
  * each with valid Vec3 fields; an optional finalTransform validated the same
- * way; exact colorMode / renderStyle matches. Clamps numPoints to [0, MAX_NUM_POINTS],
- * pointSize to [0.25, 4], flame.exposure to [{@link MIN_FLAME_EXPOSURE},
+ * way; exact colorMode / renderStyle matches. Clamps numPoints to
+ * [0, {@link MAX_NUM_POINTS}] (the 0 floor is the deliberate data floor,
+ * wider than the UI slider — see PARAM.numPoints in state.ts), pointSize to
+ * [{@link MIN_POINT_SIZE}, {@link MAX_POINT_SIZE}], flame.exposure to
+ * [{@link MIN_FLAME_EXPOSURE},
  * {@link MAX_FLAME_EXPOSURE}], flame.iterations to
  * [{@link MIN_FLAME_ITERATIONS}, {@link MAX_FLAME_ITERATIONS}], flame.gamma to
  * [{@link MIN_FLAME_GAMMA}, {@link MAX_FLAME_GAMMA}], flame.vibrancy to
@@ -934,15 +836,20 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     )
       return null;
 
-    // numPoints: coerce, reject non-finite, clamp to [0, MAX_NUM_POINTS]. ------
+    // numPoints: coerce, reject non-finite, clamp into PARAM.numPoints —
+    // whose floor is 0 (a shared link may carry an empty-to-huge cloud),
+    // deliberately BELOW the UI slider's own MIN_NUM_POINTS (1000) floor, so a
+    // crafted sub-1000 count survives decode the way an off-detent iteration
+    // count does. See PARAM.numPoints's doc in state.ts. -----------------------
     const rawNumPoints = Number(o.numPoints);
     if (!Number.isFinite(rawNumPoints)) return null;
-    const numPoints = Math.max(0, Math.min(MAX_NUM_POINTS, rawNumPoints));
+    const numPoints = clampToSpec(PARAM.numPoints, rawNumPoints);
 
-    // pointSize: coerce, reject non-finite, clamp to [0.25, 4]. ---------------
+    // pointSize: coerce, reject non-finite, clamp into PARAM.pointSize
+    // ([MIN_POINT_SIZE, MAX_POINT_SIZE]). ------------------------------------
     const rawPointSize = Number(o.pointSize);
     if (!Number.isFinite(rawPointSize)) return null;
-    const pointSize = Math.max(0.25, Math.min(4, rawPointSize));
+    const pointSize = clampToSpec(PARAM.pointSize, rawPointSize);
 
     // flame/solid: absent (an old link) defaults quietly; present-but-
     // malformed rejects the whole scene. See decodeFlameParams /
@@ -963,25 +870,19 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // override is a cosmetic tweak, not structural data worth losing an
     // otherwise-valid shared link over. A finite-but-out-of-range value
     // clamps instead.
-    let glowBrightness = DEFAULT_GLOW_BRIGHTNESS;
+    let glowBrightness = PARAM.glowBrightness.default;
     const rawGlowBrightness = Number(o.glowBrightness);
     if (Number.isFinite(rawGlowBrightness)) glowBrightness = rawGlowBrightness;
-    glowBrightness = Math.max(
-      MIN_GLOW_BRIGHTNESS,
-      Math.min(MAX_GLOW_BRIGHTNESS, glowBrightness),
-    );
+    glowBrightness = clampToSpec(PARAM.glowBrightness, glowBrightness);
 
     // colorGamma (fr-8sk): color-contrast exponent for the height/radius/
     // position color modes (see color.ts's colorModeUsesGamma). Same
     // never-rejects contract as glowBrightness just above — a contrast tweak
     // is cosmetic, not worth losing a shared link over.
-    let colorGamma = DEFAULT_COLOR_GAMMA;
+    let colorGamma = PARAM.colorGamma.default;
     const rawColorGamma = Number(o.colorGamma);
     if (Number.isFinite(rawColorGamma)) colorGamma = rawColorGamma;
-    colorGamma = Math.max(
-      MIN_COLOR_GAMMA,
-      Math.min(MAX_COLOR_GAMMA, colorGamma),
-    );
+    colorGamma = clampToSpec(PARAM.colorGamma, colorGamma);
 
     // fourDColor (fr-d47): how the 4D projection colors points. Same quiet-
     // fallback contract as symmetry.axis / flame.paletteId, NOT colorMode's

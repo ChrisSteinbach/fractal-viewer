@@ -46,6 +46,7 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
   MIN_GLOW_BRIGHTNESS,
+  MIN_NUM_POINTS,
   MIN_SOLID_AMBIENT,
   MIN_SOLID_ITERATIONS,
   MIN_SOLID_RESOLUTION,
@@ -1722,6 +1723,19 @@ describe("decodeScene clamping", () => {
       encodeScene({ ...baseSnapshot(), pointSize: 0.1 }),
     );
     expect(result!.pointSize).toBe(0.25);
+  });
+
+  // The decode boundary is deliberately WIDER than the UI slider: a crafted or
+  // legacy link may carry a count below MIN_NUM_POINTS (the slider's floor),
+  // and it must survive decode unchanged rather than being snapped up — the
+  // same way an off-detent flame iteration count survives. Only < 0 clamps (to
+  // 0) and > 5M clamps (to 5M), pinned by the two tests above.
+  it("keeps a numPoints below the UI slider floor unchanged", () => {
+    expect(500).toBeLessThan(MIN_NUM_POINTS);
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), numPoints: 500 }),
+    );
+    expect(result!.numPoints).toBe(500);
   });
 });
 
