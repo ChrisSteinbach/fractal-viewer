@@ -44,7 +44,7 @@ import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import { wRampColor } from "./color";
 import type { FourDRenderColor } from "./color";
-import { sliceWeight } from "./project4";
+import { sliceColorRemap, sliceWeight } from "./project4";
 import type { FourDView } from "./project4";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
@@ -172,6 +172,10 @@ export function accumulateFlame4(
   const rs4 = projection[19];
 
   const { invWAmp, sliceOn, sliceCenter, sliceWidth } = view;
+  // The slice-relative w-ramp recolor (fr-nn6) — identity (0, 1) unless the
+  // slice is on and the option was chosen, so the wRamp branch below applies
+  // it unconditionally (see sliceColorRemap's doc).
+  const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
 
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
@@ -307,7 +311,9 @@ export function accumulateFlame4(
         break;
       }
       case "wRamp": {
-        const rgb = wRampColor(s, color.side);
+        // The optional slice-relative remap of s (fr-nn6) — wRampColor's own
+        // clamp bounds the rescaled signal, exactly like the raw s's.
+        const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
         r = rgb[0];
         g = rgb[1];
         b = rgb[2];

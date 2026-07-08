@@ -2,6 +2,7 @@ import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
   buildColorModeLUT,
   colorModeUsesGamma,
+  fourDColorNeedsAttribute,
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
@@ -151,6 +152,10 @@ export interface UiHandlers {
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
+  /** The slice-relative color option (fr-nn6) was toggled — recenter the
+   * w-ramp color modes' diverging palette on the slice window. Session-only
+   * view state, exactly like the slice toggle/position above. */
+  onFourDSliceRelColorToggle: (checked: boolean) => void;
   /** The 4D auto-tumble was paused or resumed (fr-woc). */
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
@@ -706,6 +711,11 @@ export class Ui {
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
+  // Slice-relative color (fr-nn6): lives inside fourDSliceRow (so it hides
+  // with the slice), with its own row element hidden for the baked fr-d47
+  // modes — the remap only touches the w-ramp palettes (see updateLabels).
+  private readonly fourDSliceRelColorToggle: HTMLInputElement;
+  private readonly fourDSliceRelColorRow: HTMLElement;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
   // the slice controls above.
   private readonly fourDTumbleToggle: HTMLInputElement;
@@ -823,6 +833,8 @@ export class Ui {
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
+    this.fourDSliceRelColorToggle = this.byId("fourDSliceRelColorToggle");
+    this.fourDSliceRelColorRow = this.byId("fourDSliceRelColorRow");
     this.threeDControls = this.byId("threeDControls");
     this.autoOrbitToggle = this.byId("autoOrbitToggle");
     this.autoOrbitRow = this.byId("autoOrbitRow");
@@ -1018,6 +1030,11 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
+    this.fourDSliceRelColorToggle.addEventListener("change", () =>
+      handlers.onFourDSliceRelColorToggle(
+        this.fourDSliceRelColorToggle.checked,
+      ),
+    );
     this.fourDColorSelect.addEventListener("change", () =>
       handlers.onFourDColor(this.fourDColorSelect.value as FourDColorMode),
     );
@@ -1027,12 +1044,15 @@ export class Ui {
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
-   * a slice left behind by the previous visit never silently applies. */
+   * a slice left behind by the previous visit never silently applies. The
+   * slice-relative color option (fr-nn6) resets with it: it's slice view
+   * state, and the fresh-visit default is the faithful whole-cloud ramp. */
   resetFourDSlice(): void {
     this.fourDSliceToggle.checked = false;
     this.fourDSliceRow.classList.add("hidden");
     this.fourDSliceSlider.value = "0";
     this.fourDSliceLabel.textContent = "0.00";
+    this.fourDSliceRelColorToggle.checked = false;
   }
 
   /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`
@@ -1069,6 +1089,13 @@ export class Ui {
     this.colorGammaSlider.value = String(colorGammaToSlider(state.colorGamma));
     this.colorMode.value = state.colorMode;
     this.fourDColorSelect.value = state.fourDColor;
+    // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
+    // its row hides under the baked fr-d47 modes — the same single source of
+    // truth (color.ts) the shader's bake-vs-uniform dispatch keys on.
+    this.fourDSliceRelColorRow.classList.toggle(
+      "hidden",
+      fourDColorNeedsAttribute(state.fourDColor),
+    );
     this.fourDDepthFadeToggle.checked = state.fourDDepthFade;
     this.renderStyle.value = state.renderStyle;
     this.showGuides.checked = state.showGuides;

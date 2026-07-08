@@ -77,6 +77,7 @@ const FLAT_VIEW: FourDView = {
   sliceOn: false,
   sliceCenter: 0,
   sliceWidth: 1,
+  sliceRelativeColor: false,
 };
 
 describe("accumulateVoxels4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () => {
@@ -112,6 +113,7 @@ describe("accumulateVoxels4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () 
       sliceOn: false,
       sliceCenter: 0.1,
       sliceWidth: 0.6,
+      sliceRelativeColor: false,
     };
 
     const actual = accumulateVoxels4(
@@ -341,6 +343,7 @@ describe("accumulateVoxels4 bucketing and the w-slice (fr-4wd)", () => {
       sliceOn: true,
       sliceCenter: 1,
       sliceWidth: 0.05,
+      sliceRelativeColor: false,
     };
 
     accumulateVoxels4(
@@ -371,6 +374,7 @@ describe("accumulateVoxels4 bucketing and the w-slice (fr-4wd)", () => {
       sliceOn: true,
       sliceCenter: 0,
       sliceWidth: 0.5,
+      sliceRelativeColor: false,
     };
 
     accumulateVoxels4(
@@ -582,14 +586,26 @@ describe("computeVoxelBounds4", () => {
     const unsliced = computeVoxelBounds4(
       prepared,
       FLAT_ROTOR_PROJ,
-      { invWAmp: 1, sliceOn: false, sliceCenter: 0, sliceWidth: 1 },
+      {
+        invWAmp: 1,
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceWidth: 1,
+        sliceRelativeColor: false,
+      },
       mulberry32(seed),
       samples,
     );
     const sliced = computeVoxelBounds4(
       prepared,
       FLAT_ROTOR_PROJ,
-      { invWAmp: 1, sliceOn: true, sliceCenter: 0.8, sliceWidth: 0.15 },
+      {
+        invWAmp: 1,
+        sliceOn: true,
+        sliceCenter: 0.8,
+        sliceWidth: 0.15,
+        sliceRelativeColor: false,
+      },
       mulberry32(seed),
       samples,
     );
@@ -613,7 +629,13 @@ describe("computeVoxelBounds4", () => {
     const unsliced = computeVoxelBounds4(
       prepared,
       FLAT_ROTOR_PROJ,
-      { invWAmp: 1, sliceOn: false, sliceCenter: 0, sliceWidth: 1 },
+      {
+        invWAmp: 1,
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceWidth: 1,
+        sliceRelativeColor: false,
+      },
       mulberry32(seed),
       samples,
     );
@@ -623,7 +645,13 @@ describe("computeVoxelBounds4", () => {
     const farSlice = computeVoxelBounds4(
       prepared,
       FLAT_ROTOR_PROJ,
-      { invWAmp: 1, sliceOn: true, sliceCenter: 50, sliceWidth: 0.1 },
+      {
+        invWAmp: 1,
+        sliceOn: true,
+        sliceCenter: 50,
+        sliceWidth: 0.1,
+        sliceRelativeColor: false,
+      },
       mulberry32(seed),
       samples,
     );
@@ -687,6 +715,74 @@ describe("accumulateVoxels4 color kinds", () => {
     expect(grid.avgRGB[o]).toBeCloseTo(expected[0], 6);
     expect(grid.avgRGB[o + 1]).toBeCloseTo(expected[1], 6);
     expect(grid.avgRGB[o + 2]).toBeCloseTo(expected[2], 6);
+  });
+
+  it("wRamp: with the slice on and sliceRelativeColor, matches wRampColor at the slice-recentered signal", () => {
+    // Same fixture as the previous test (s = 0.5 exactly), sliceCenter 0.25
+    // sits close enough to it that the floor-0 slice weight
+    // (sliceWeight(0.5, 0.25, 0.3, 0) ≈ 0.71) stays well clear of the 1e-3
+    // skip gate. avgRGB is a weighted running MEAN (unlike the flame's
+    // weighted sum), so the expected color is just the recentered
+    // wRampColor triple directly — no weight multiplication needed.
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0.5]));
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    const view: FourDView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.3,
+      sliceRelativeColor: true,
+    };
+    const grid = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      1,
+      mulberry32(1),
+      FLAT_ROTOR_PROJ,
+      view,
+      { kind: "wRamp", side },
+    );
+    const s = 0.5;
+    const expected = wRampColor((s - 0.25) / (2 * 0.3), side);
+    const o = bucket * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(expected[0], 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(expected[1], 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(expected[2], 6);
+  });
+
+  it("wRamp: sliceRelativeColor changes the accumulated color but never the slice weight (density)", () => {
+    // sliceCenter (0.25) sits off the fixed point's s (0.5), so recentering
+    // the ramp on it genuinely changes which color is sampled — while
+    // density (built from sliceWeight, unaffected by sliceColorRemap) stays
+    // identical between the two runs.
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0.5]));
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    const baseView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.3,
+    };
+    const withoutRemap = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      1,
+      mulberry32(1),
+      FLAT_ROTOR_PROJ,
+      { ...baseView, sliceRelativeColor: false },
+      { kind: "wRamp", side },
+    );
+    const withRemap = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      1,
+      mulberry32(1),
+      FLAT_ROTOR_PROJ,
+      { ...baseView, sliceRelativeColor: true },
+      { kind: "wRamp", side },
+    );
+    expect(withRemap.density).toEqual(withoutRemap.density);
+    expect(withRemap.avgRGB).not.toEqual(withoutRemap.avgRGB);
   });
 
   it("transform: pins palette[idx] for the single transform that fired", () => {

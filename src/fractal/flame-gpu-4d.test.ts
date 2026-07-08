@@ -66,7 +66,7 @@ const CUM_WEIGHT = 45; // byte 180
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
-    expect(PARAMS4_BYTES).toBe(192);
+    expect(PARAMS4_BYTES).toBe(208);
     expect(SLOT4_STRIDE_BYTES).toBe(192);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(140);
@@ -459,12 +459,15 @@ describe("packGpuParams4", () => {
   const SLICE_WIDTH = 45;
   const MIN_D = 46;
   const INV_RADIUS_RANGE = 47;
+  const SLICE_COLOR_SHIFT = 48;
+  const SLICE_COLOR_INV_SCALE = 49;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
     sliceOn: true,
     sliceCenter: 0.25,
     sliceWidth: 0.3,
+    sliceRelativeColor: false,
   };
 
   function makeProjection(): Float64Array {
@@ -529,6 +532,46 @@ describe("packGpuParams4", () => {
     expect(u32[SLICE_ON]).toBe(1);
     expect(f32[SLICE_CENTER]).toBeCloseTo(0.25, 6);
     expect(f32[SLICE_WIDTH]).toBeCloseTo(0.3, 6);
+    // The fr-nn6 remap stays the identity here: VIEW's sliceRelativeColor is
+    // false, so sliceOn alone isn't enough to opt in (see sliceColorRemap).
+    expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
+    expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
+  });
+
+  it("packs the slice-relative color remap (fr-nn6) into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {
+    const buf = packGpuParams4(
+      fields4({
+        view: {
+          invWAmp: 1,
+          sliceOn: true,
+          sliceCenter: 0.25,
+          sliceWidth: 0.3,
+          sliceRelativeColor: true,
+        },
+      }),
+    );
+    const f32 = new Float32Array(buf);
+    expect(f32[SLICE_COLOR_SHIFT]).toBeCloseTo(0.25, 6);
+    // 1 / (SLICE_COLOR_SPAN * sliceWidth) = 1 / (2 * 0.3) = 1 / 0.6; f32
+    // storage rounds it, hence toBeCloseTo rather than toBe.
+    expect(f32[SLICE_COLOR_INV_SCALE]).toBeCloseTo(1 / 0.6, 5);
+  });
+
+  it("stays the identity (0, 1) when sliceRelativeColor is true but the slice is off", () => {
+    const buf = packGpuParams4(
+      fields4({
+        view: {
+          invWAmp: 1,
+          sliceOn: false,
+          sliceCenter: 0.25,
+          sliceWidth: 0.3,
+          sliceRelativeColor: true,
+        },
+      }),
+    );
+    const f32 = new Float32Array(buf);
+    expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
+    expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
   });
 
   it("packs the wRamp side colors into negColor/posColor xyz lanes, leaving center/minD/invRadiusRange at zero", () => {

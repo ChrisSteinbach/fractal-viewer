@@ -242,7 +242,9 @@ arbitrarily long session; it never touches the chaos game itself, which composes
 `rotationMatrix4` once per transform at generation time instead. This view
 state — the rotor pair, tumble on/off and speed, and an optional soft w-slice (a
 Gaussian opacity window around a chosen `w`, so a cross-section fades in without
-hard-culling the points outside it) — is session-only and resets to a fresh
+hard-culling the points outside it, with an opt-in slice-relative recolor that
+recenters the w-ramp palettes on the slice window — `project4.ts`'s
+`sliceColorRemap`, fr-nn6) — is session-only and resets to a fresh
 baseline only on a flat-to-non-flat transition or a whole-system replacement,
 never on an ordinary parameter edit. The 4D presets (`pentatope`,
 `doubleRotation`, and the fr-zde wave — `tesseract`, `sixteenCell`,

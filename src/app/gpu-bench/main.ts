@@ -258,6 +258,7 @@ interface ScenarioDef4D {
   sliceOn: boolean;
   sliceCenter: number;
   sliceWidth: number;
+  sliceRelativeColor: boolean;
 }
 
 type ScenarioDef = ScenarioDef3D | ScenarioDef4D;
@@ -330,6 +331,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 0.35,
+    sliceRelativeColor: false,
   },
   {
     kind: "4d",
@@ -343,6 +345,10 @@ const SCENARIOS: ScenarioDef[] = [
     sliceOn: true,
     sliceCenter: 0.25,
     sliceWidth: 0.3,
+    // The fr-nn6 slice-relative recolor rides this leg too: the remap is the
+    // identity arithmetic with non-neutral (shift, invScale), so this pins
+    // both kernels' wRamp path AND the remap in one scenario.
+    sliceRelativeColor: true,
   },
   {
     kind: "4d",
@@ -354,6 +360,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 0.35,
+    sliceRelativeColor: false,
   },
   {
     kind: "4d",
@@ -365,6 +372,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 0.35,
+    sliceRelativeColor: false,
   },
 ];
 
@@ -645,6 +653,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     sliceOn: def.sliceOn,
     sliceCenter: def.sliceCenter,
     sliceWidth: def.sliceWidth,
+    sliceRelativeColor: def.sliceRelativeColor,
   };
 
   // The "radius" mode's normalization range: min/max 4D distance from the

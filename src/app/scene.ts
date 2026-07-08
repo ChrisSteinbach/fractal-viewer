@@ -5,6 +5,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
 import { transformColors, W_SIDE_PALETTES } from "../fractal/color";
+import { sliceColorRemap } from "../fractal/project4";
 import { clone3 } from "../fractal/vec";
 import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
@@ -202,6 +203,8 @@ const FOUR_D_VERTEX = /* glsl */ `
   uniform float uSliceOn;
   uniform float uSliceCenter;
   uniform float uSliceWidth;
+  uniform float uSliceColorShift;
+  uniform float uSliceColorInvScale;
   uniform float uFadeOn;
   uniform float uFadeNear;
   uniform float uFadeFar;
@@ -240,8 +243,21 @@ const FOUR_D_VERTEX = /* glsl */ `
     // uniforms, so it can't drift from the legend; the ramp SHAPE constants —
     // the 0.6 exponent, the 0.38 gray, the 0.30 + 0.70 brightness — are still
     // mirrored in ui.ts's wRampGradient. Keep those in sync — fr-a3q.)
-    float m = pow(abs(s), 0.6);
-    vec3 side = mix(s < 0.0 ? uSideNeg : uSidePos, color, uUseAttrColor);
+    // Optional slice-relative recolor (fr-nn6): the w-ramp path evaluates the
+    // ramp at an affine remap of s — recentered on the slice window, see
+    // project4.ts's sliceColorRemap, whose (shift, invScale) these two
+    // uniforms carry (identity 0/1 when off, making sc == s exactly). The
+    // baked fr-d47 attribute modes keep the raw s: their hue is the
+    // attribute, and their gray-notch brightness stays faithful to the
+    // actual |w|. The slice WEIGHT below always uses the raw s — the remap
+    // changes color only.
+    float sc = mix(
+      clamp((s - uSliceColorShift) * uSliceColorInvScale, -1.0, 1.0),
+      s,
+      uUseAttrColor
+    );
+    float m = pow(abs(sc), 0.6);
+    vec3 side = mix(sc < 0.0 ? uSideNeg : uSidePos, color, uUseAttrColor);
     vColor = mix(vec3(0.38), side, m) * (0.30 + 0.70 * m);
 
     // Soft w-slice: a Gaussian window in s around uSliceCenter, with a floor so
@@ -499,6 +515,8 @@ export class FractalScene {
         uSliceOn: { value: 0 },
         uSliceCenter: { value: 0 },
         uSliceWidth: { value: FOUR_D_SLICE_WIDTH },
+        uSliceColorShift: { value: 0 },
+        uSliceColorInvScale: { value: 1 },
         uFadeOn: { value: 0 },
         uFadeNear: { value: 1 },
         uFadeFar: { value: 10 },
@@ -1001,12 +1019,25 @@ export class FractalScene {
    * so the unsliced projection stays as ghost context. The normalization
    * tracks the cloud's w-amplitude at the current rotation (fr-9bk), so
    * [-1, 1] always spans the occupied w-range — the slider has no dead zones
-   * on anisotropic clouds. One uniform write, so sweeping the slider costs
-   * nothing per frame.
+   * on anisotropic clouds. A handful of uniform writes, so sweeping the
+   * slider costs nothing per frame.
+   *
+   * `relativeColor` (fr-nn6) recenters the w-ramp color modes' diverging
+   * palette on the slice window — `sliceColorRemap` owns the gate and the
+   * mapping (identity uniforms when the slice is off or the option unchosen),
+   * so the shader's remap can't drift from the flame/solid renders'.
    */
-  setFourDSlice(on: boolean, center: number): void {
+  setFourDSlice(on: boolean, center: number, relativeColor: boolean): void {
     this.fourDMaterial.uniforms.uSliceOn.value = on ? 1 : 0;
     this.fourDMaterial.uniforms.uSliceCenter.value = center;
+    const { shift, invScale } = sliceColorRemap({
+      sliceOn: on,
+      sliceRelativeColor: relativeColor,
+      sliceCenter: center,
+      sliceWidth: FOUR_D_SLICE_WIDTH,
+    });
+    this.fourDMaterial.uniforms.uSliceColorShift.value = shift;
+    this.fourDMaterial.uniforms.uSliceColorInvScale.value = invScale;
   }
 
   /**

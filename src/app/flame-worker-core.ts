@@ -173,6 +173,9 @@ export type FlameWorkerCommand =
         /** Slice width — `uSliceWidth`, sent as a plain number (the main
          * thread reads `FOUR_D_SLICE_WIDTH`). */
         sliceWidth: number;
+        /** Whether the w-ramp color modes recenter their ramp on the slice
+         * window (fr-nn6) — `project4.ts`'s `FourDView.sliceRelativeColor`. */
+        sliceRelativeColor: boolean;
         /** The explorer's active 4D color mode — drives the "legacy"
          * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
         colorMode: FourDColorMode;
@@ -1131,6 +1134,7 @@ export class FlameWorkerSession {
         sliceOn: fourD.sliceOn,
         sliceCenter: fourD.sliceCenter,
         sliceWidth: fourD.sliceWidth,
+        sliceRelativeColor: fourD.sliceRelativeColor,
       };
       this.fourDColorMode = fourD.colorMode;
       this.fourDCenter = fourD.center;

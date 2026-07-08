@@ -73,6 +73,7 @@ function defaultFourD(): NonNullable<
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 1,
+    sliceRelativeColor: false,
     colorMode: "wBlueOrange",
     radiusMin: 0,
     radiusMax: 1,

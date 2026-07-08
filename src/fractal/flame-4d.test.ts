@@ -74,6 +74,7 @@ const FLAT_VIEW: FourDView = {
   sliceOn: false,
   sliceCenter: 0,
   sliceWidth: 1,
+  sliceRelativeColor: false,
 };
 
 describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () => {
@@ -120,6 +121,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
       sliceOn: false,
       sliceCenter: 0.1,
       sliceWidth: 0.6,
+      sliceRelativeColor: false,
     };
 
     const actual = accumulateFlame4(
@@ -341,6 +343,7 @@ describe("accumulateFlame4 soft w-slice floor (fr-6x2 ghost context)", () => {
       sliceOn: true,
       sliceCenter: 1,
       sliceWidth: 0.05,
+      sliceRelativeColor: false,
     };
     const width = 10;
     const height = 10;
@@ -425,6 +428,90 @@ describe("accumulateFlame4 color kinds", () => {
     expect(hist.sumRGB[o]).toBe(expected[0]);
     expect(hist.sumRGB[o + 1]).toBe(expected[1]);
     expect(hist.sumRGB[o + 2]).toBe(expected[2]);
+  });
+
+  it("wRamp: with the slice on and sliceRelativeColor, matches wRampColor at the slice-recentered signal", () => {
+    // Same fixture as the previous test (s = 0.5 exactly), now with the
+    // slice on and sliceRelativeColor true: the ramp evaluates at (s -
+    // sliceCenter) / (2 * sliceWidth) instead of the raw s. With the slice
+    // on, the single hit carries weight = sliceWeight(s, 0.25, 0.3, 0.06)
+    // (the flame's ghost floor) rather than 1, so sumRGB / hits cancels the
+    // weight back out to the plain wRampColor triple.
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0.5]));
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    const view: FourDView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.3,
+      sliceRelativeColor: true,
+    };
+    const hist = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      view,
+      width,
+      height,
+      1,
+      mulberry32(1),
+      { kind: "wRamp", side },
+    );
+    const s = 0.5;
+    const weight = sliceWeight(s, 0.25, 0.3, 0.06);
+    const expected = wRampColor((s - 0.25) / (2 * 0.3), side);
+    const o = centerBucket * 3;
+    expect(hist.hits[centerBucket]).toBeCloseTo(weight, 12);
+    expect(hist.sumRGB[o] / hist.hits[centerBucket]).toBeCloseTo(
+      expected[0],
+      12,
+    );
+    expect(hist.sumRGB[o + 1] / hist.hits[centerBucket]).toBeCloseTo(
+      expected[1],
+      12,
+    );
+    expect(hist.sumRGB[o + 2] / hist.hits[centerBucket]).toBeCloseTo(
+      expected[2],
+      12,
+    );
+  });
+
+  it("wRamp: sliceRelativeColor changes the accumulated color but never the slice weight", () => {
+    // sliceCenter (0.25) sits off the fixed point's s (0.5), so recentering
+    // the ramp on it genuinely changes which color is sampled — while the
+    // slice WEIGHT (sliceWeight, unaffected by sliceColorRemap) stays
+    // identical between the two runs.
+    const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0.5]));
+    const side = W_SIDE_PALETTES.wBlueOrange;
+    const baseView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceWidth: 0.3,
+    };
+    const withoutRemap = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      { ...baseView, sliceRelativeColor: false },
+      width,
+      height,
+      1,
+      mulberry32(1),
+      { kind: "wRamp", side },
+    );
+    const withRemap = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      { ...baseView, sliceRelativeColor: true },
+      width,
+      height,
+      1,
+      mulberry32(1),
+      { kind: "wRamp", side },
+    );
+    expect(Array.from(withRemap.hits)).toEqual(Array.from(withoutRemap.hits));
+    expect(Array.from(withRemap.sumRGB)).not.toEqual(
+      Array.from(withoutRemap.sumRGB),
+    );
   });
 
   it("transform: pins palette[idx] for the single transform that fired", () => {

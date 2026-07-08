@@ -68,6 +68,7 @@ function noopHandlers(): UiHandlers {
     onAutoOrbitSpeedInput: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
+    onFourDSliceRelColorToggle: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
     onFourDColor: vi.fn(),
@@ -2397,6 +2398,46 @@ describe("Ui 4D slice controls (fr-6x2)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
     expect(slider.value).toBe("0");
     expect(el("fourDSliceLabel").textContent).toBe("0.00");
+  });
+
+  it("fires onFourDSliceRelColorToggle with the checkbox state", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("fourDSliceRelColorToggle") as HTMLInputElement;
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change"));
+
+    expect(handlers.onFourDSliceRelColorToggle).toHaveBeenCalledWith(true);
+  });
+
+  it("resetFourDSlice unchecks the slice-relative color option", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const toggle = el("fourDSliceRelColorToggle") as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change"));
+
+    ui.resetFourDSlice();
+
+    expect(toggle.checked).toBe(false);
+  });
+
+  it("updateLabels hides the slice-relative color row for the baked 4D color modes and shows it for the w-depth modes", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels({ ...initialState(true), fourDColor: "transform" });
+    expect(el("fourDSliceRelColorRow").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...initialState(true), fourDColor: "radius" });
+    expect(el("fourDSliceRelColorRow").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...initialState(true), fourDColor: "wBlueOrange" });
+    expect(el("fourDSliceRelColorRow").classList.contains("hidden")).toBe(
+      false,
+    );
   });
 });
 

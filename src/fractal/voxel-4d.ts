@@ -20,7 +20,7 @@ import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { wRampColor } from "./color";
 import type { FourDRenderColor } from "./color";
 import type { FourDView, RotorProjection4 } from "./project4";
-import { sliceWeight } from "./project4";
+import { sliceColorRemap, sliceWeight } from "./project4";
 import { BOUNDS_MARGIN, BOUNDS_QUANTILE, VOXEL_BOUNDS_SAMPLES } from "./voxel";
 import type { VoxelBounds, VoxelGrid } from "./voxel";
 import type { Rng } from "./rng";
@@ -339,6 +339,10 @@ export function accumulateVoxels4(
   }
 
   const { invWAmp, sliceOn, sliceCenter, sliceWidth } = view;
+  // The slice-relative w-ramp recolor (fr-nn6) — identity (0, 1) unless the
+  // slice is on and the option was chosen, so the wRamp branch below applies
+  // it unconditionally (see sliceColorRemap's doc).
+  const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
   // Below this weight, a point's contribution would round away to nothing in
   // the packed texture — skip it entirely rather than pay for bucket math
   // and a color computation nobody will ever see (see this function's doc).
@@ -492,7 +496,9 @@ export function accumulateVoxels4(
         break;
       }
       case "wRamp": {
-        const rgb = wRampColor(s, color.side);
+        // The optional slice-relative remap of s (fr-nn6) — wRampColor's own
+        // clamp bounds the rescaled signal, exactly like the raw s's.
+        const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
         r = rgb[0];
         g = rgb[1];
         b = rgb[2];
