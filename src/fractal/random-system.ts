@@ -206,14 +206,38 @@ const FOUR_D_FORCE_POSITION_MAX = 0.5;
 
 /** Probe size for the quality gate: large enough for a candidate's bounds to
  * settle onto its attractor and to populate the occupancy grid, small enough
- * that rerolling is cheap. Shared by the flat (`runChaosGame`) and non-flat
- * (`runChaosGame4`) probes (see {@link randomSystem}) — a larger sample was
- * tried for the 4D branch during tuning and didn't meaningfully change the
+ * that rerolling is cheap — acceptance costs {@link STABILITY_PROBES} probes
+ * of this size, one probe per {@link scoreCandidate} call (fr-b5x's
+ * stability gate; see {@link randomSystem}). Shared by the flat
+ * (`runChaosGame`) and non-flat (`runChaosGame4`) probes — a larger sample
+ * was tried for the 4D branch during tuning and didn't meaningfully change the
  * gate's tail behavior (see {@link FOUR_D_RADIUS_CAP}'s doc for why), so
  * there was nothing 4D-specific to justify a separate budget here. */
 const PROBE_POINTS = 4000;
-/** Total candidates tried before giving up and returning the last one. */
+/** Total candidates tried before giving up and returning the best-scoring
+ * one seen (see {@link scoreCandidate}; fr-b5x — formerly the arbitrary
+ * LAST one rolled). Measured over 20000 seeded rolls — with the
+ * {@link STABILITY_PROBES} gate in place — not one burned through all 40,
+ * so the exhaustion fallback is a backstop for pathological rng streams,
+ * not a hot path; that is also why no test pins a specific exhausting seed
+ * (none exists to pin at any reasonable scan size). */
 const MAX_ATTEMPTS = 40;
+/**
+ * How many independent probes must ALL clear the gate before a candidate is
+ * accepted (fr-b5x's stability gate — see {@link randomSystem} for why one
+ * probe is not enough). Chosen from a measured ladder on the 2000-seed sweep
+ * (scripts/surprise-residual.harness.ts): accepted flat systems re-probing
+ * below the occupancy floor on one fresh stream went 39 → 27 → 14 → 8 for
+ * 1 → 2 → 3 → 4 probes (and reliably-thin all-3-streams failures 10 → 6 →
+ * 3 → 0). Stopped at 3: the step to 4 is inside the sweep's own sampling
+ * noise (±4 on those counts), while every extra probe compounds the
+ * acceptance odds AGAINST legitimately-sparse-but-STABLE systems
+ * (barnsleyFern-class rolls pass each probe at roughly 0.85-0.9, so they
+ * keep only that rate raised to this power) — pruning exactly the airy
+ * rolls worth keeping, to chase a tail already far below fr-wti's manual
+ * acceptance bar.
+ */
+const STABILITY_PROBES = 3;
 /** Below this, the second-largest per-axis extent reads as "no shape" (see
  * {@link isAcceptableSystem}). */
 const DEGENERATE_EXTENT_THRESHOLD = 0.05;
@@ -692,6 +716,63 @@ export function occupiedCellCount(
 }
 
 /**
+ * {@link scoreCandidate}'s sentinel for a probe whose BOUNDS gate failed:
+ * ranks strictly below every occupancy a real probe can produce (a
+ * {@link PROBE_POINTS}-point probe always occupies at least one cell), so in
+ * {@link randomSystem}'s best-candidate bookkeeping a degenerate,
+ * escape-wall-hugging, or (4D) w-flat/over-sprawling candidate always loses
+ * to a bounded-but-dusty one — dust at least renders as SOMETHING.
+ */
+const UNACCEPTABLE_BOUNDS_SCORE = -1;
+
+/**
+ * Probe a candidate once and score what came back:
+ * {@link UNACCEPTABLE_BOUNDS_SCORE} when the probe's bounds gate failed,
+ * otherwise the probe's occupied cell count. "This probe passed the gate" is
+ * exactly `score >= MIN_OCCUPIED_CELLS`. The probe branches on the
+ * candidate's flatness (`affine4.ts`'s `systemIsFlat`):
+ *
+ * - a FLAT candidate takes a short `runChaosGame` run — including any rolled
+ *   `symmetry`, so the gate judges the kaleidoscoped cloud the user will
+ *   actually see, bounds and occupancy alike — bounds-gated by
+ *   {@link isAcceptableSystem} (sane bounds — not collapsed, not hugging the
+ *   escape wall);
+ * - a NON-FLAT candidate is instead probed by lifting every map through
+ *   `toTransform4` and running `runChaosGame4`, bounds-gated by
+ *   {@link isAcceptableSystem4} (the 4D analogue: bounded radius, and with a
+ *   genuine w-extent), its occupancy counted over the result's projected xyz
+ *   positions.
+ *
+ * Scores are comparable across the two branches — same grid, same floor —
+ * so {@link randomSystem}'s best-candidate bookkeeping never needs to care
+ * which kind of candidate it is holding.
+ */
+function scoreCandidate(candidate: RandomSystem, rng: Rng): number {
+  if (systemIsFlat(candidate.transforms)) {
+    const { positions, count, bounds } = runChaosGame(
+      candidate.transforms,
+      PROBE_POINTS,
+      rng,
+      candidate.finalTransform,
+      candidate.symmetry ?? undefined,
+    );
+    if (!isAcceptableSystem(bounds)) return UNACCEPTABLE_BOUNDS_SCORE;
+    return occupiedCellCount(positions, count, bounds);
+  }
+  const finalTransform4 = candidate.finalTransform
+    ? toTransform4(candidate.finalTransform)
+    : null;
+  const { positions, count, bounds, radius } = runChaosGame4(
+    candidate.transforms.map(toTransform4),
+    PROBE_POINTS,
+    rng,
+    finalTransform4,
+  );
+  if (!isAcceptableSystem4(bounds, radius)) return UNACCEPTABLE_BOUNDS_SCORE;
+  return occupiedCellCount(positions, count, bounds);
+}
+
+/**
  * Generate a random IFS: 2-4 affine maps with weighted selection, shear, and
  * nonlinear variations, plus a chance of a final-transform lens — everything
  * the core supports, so "Surprise Me" can reach anywhere the manual editor
@@ -701,63 +782,56 @@ export function occupiedCellCount(
  * ({@link SYMMETRY_PROBABILITY}) of a rolled rotational symmetry
  * ({@link randomSymmetry}).
  *
- * Each candidate is probed and must pass a quality gate before it's
- * returned; a rejected candidate is discarded and a fresh one rolled, for up
- * to `MAX_ATTEMPTS` candidates total. Always returns something — the
- * last-rolled candidate survives even if every one failed the gate — so the
- * UI never needs a failure path. The gate itself branches on the
- * candidate's flatness (`affine4.ts`'s `systemIsFlat`):
+ * Each candidate is probed ({@link scoreCandidate} — bounds sanity plus
+ * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate
+ * on {@link STABILITY_PROBES} consecutive, independently-seeded probes
+ * before it's returned (fr-b5x). One probe is a {@link PROBE_POINTS}-point
+ * finite sample of a chaotic orbit, and some otherwise-plausible variation
+ * blends (spiral/handkerchief/swirl-heavy mixes especially) are multi-modal
+ * at that sample size: which lobe the orbit favors is decided by stream
+ * luck. Under a single-probe gate, a 2000-seed sweep found 39/1490 accepted
+ * flat systems re-probing below the occupancy floor on a fresh stream —
+ * every one an accepted-marginal system whose one generation-time probe had
+ * caught a lucky draw (none were exhaustion fallbacks; the gate never
+ * exhausted at all in that sweep). Each further probe — drawn from the
+ * continued rng stream, which is statistically exactly the "fresh stream"
+ * such a system fails on — must clear the same bar, turning the flaky-passer
+ * class from a coin flip into a long shot raised to the probe count. Later
+ * probes run only while every earlier one passed, so rejecting a bad
+ * candidate stays as cheap as it always was.
  *
- * - a FLAT candidate takes the exact probe this function always has: a
- *   short `runChaosGame` run — including any rolled `symmetry`, so the gate
- *   judges the kaleidoscoped cloud the user will actually see, bounds and
- *   occupancy alike — gated by {@link isAcceptableSystem} (sane bounds — not
- *   collapsed, not hugging the escape wall) and {@link occupiedCellCount} ≥
- *   `MIN_OCCUPIED_CELLS` (enough spatial detail to read as a shape rather
- *   than dust);
- * - a NON-FLAT candidate is instead probed by lifting every map through
- *   `toTransform4` and running `runChaosGame4`, gated by
- *   {@link isAcceptableSystem4} (the 4D analogue: bounded, and with a
- *   genuine w-extent) plus the same {@link occupiedCellCount} ≥
- *   `MIN_OCCUPIED_CELLS` check over the result's projected xyz positions.
+ * A rejected candidate is discarded and a fresh one rolled, for up to
+ * `MAX_ATTEMPTS` candidates total. Always returns something — so the UI
+ * never needs a failure path — and on exhaustion that is the BEST-scoring
+ * candidate seen (each judged by its worst probe), not the arbitrary
+ * last-rolled one (fr-b5x): the least-dusty near-miss beats whatever the
+ * final roll happened to produce.
  *
  * Takes only an injected {@link Rng} and never touches `Math.random`, so a
  * fixed seed reproduces the exact same system, gate probes included.
  */
 export function randomSystem(rng: Rng): RandomSystem {
   let candidate = randomCandidate(rng);
+  let best = candidate;
+  let bestScore = -Infinity;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) candidate = randomCandidate(rng);
-
-    if (systemIsFlat(candidate.transforms)) {
-      const { positions, count, bounds } = runChaosGame(
-        candidate.transforms,
-        PROBE_POINTS,
-        rng,
-        candidate.finalTransform,
-        candidate.symmetry ?? undefined,
-      );
-      if (
-        isAcceptableSystem(bounds) &&
-        occupiedCellCount(positions, count, bounds) >= MIN_OCCUPIED_CELLS
-      )
-        return candidate;
-    } else {
-      const finalTransform4 = candidate.finalTransform
-        ? toTransform4(candidate.finalTransform)
-        : null;
-      const { positions, count, bounds, radius } = runChaosGame4(
-        candidate.transforms.map(toTransform4),
-        PROBE_POINTS,
-        rng,
-        finalTransform4,
-      );
-      if (
-        isAcceptableSystem4(bounds, radius) &&
-        occupiedCellCount(positions, count, bounds) >= MIN_OCCUPIED_CELLS
-      )
-        return candidate;
+    let score = scoreCandidate(candidate, rng);
+    for (
+      let probe = 1;
+      probe < STABILITY_PROBES && score >= MIN_OCCUPIED_CELLS;
+      probe++
+    ) {
+      // Stability gate (fr-b5x): the same bar, on further independent
+      // probes. Folding each score in via min() also keeps the
+      // best-candidate bookkeeping below judging by worst evidence seen.
+      score = Math.min(score, scoreCandidate(candidate, rng));
+    }
+    if (score >= MIN_OCCUPIED_CELLS) return candidate;
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
     }
   }
-  return candidate;
+  return best;
 }

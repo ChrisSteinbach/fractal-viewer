@@ -3,7 +3,7 @@
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--ignore-https-errors"],
+      "args": ["@playwright/mcp@latest", "--ignore-https-errors", "--headless"],
       "env": {}
     }
   }
