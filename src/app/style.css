@@ -216,15 +216,22 @@ body {
   }
 }
 
-/* ── Update banner (bottom-center, fr-k1z) ─────────────────────────────────
-   Shown when register-sw.ts reports that a deploy's service worker replaced
-   this tab's controller while it was open. Bottom-center because the other
-   three corners are already spoken for: #help/#menuToggle own the top
-   corners, #legend owns the bottom-left. */
-#updateBanner {
-  display: flex;
+/* ── Floating notices (fr-k1z update banner + fr-ssa render error) ─────────
+   Small dismissible pills that report lifecycle events over the canvas.
+   #updateBanner (bottom-center) is shown when register-sw.ts reports that a
+   deploy's service worker replaced this tab's controller while it was open;
+   #renderError (top-center) when a flame/solid worker fails to load or
+   crashes. They take the two free edges — #help/#menuToggle own the top
+   corners and #legend the bottom-left — on opposite sides so the two never
+   overlap when both fire (a stale deploy can trigger each). */
+
+/* Shared visuals for both notices; everything EXCEPT `display` and the
+   vertical anchor (top/bottom), which stay per-ID below. `display` is per-ID
+   so the `.hidden` restatement can override it at matching specificity — an
+   ID-level `display` would outrank the `.hidden` utility (same trap as
+   #legendLabels/#legendSwatches above). */
+.notice {
   position: absolute;
-  bottom: 16px;
   left: 50%;
   align-items: center;
   gap: 12px;
@@ -241,15 +248,25 @@ body {
   z-index: 20;
 }
 
-/* #updateBanner sets its own `display` for layout, which (being an ID
-   selector) outranks the generic `.hidden` utility class on specificity
-   alone — same trap as #legendLabels/#legendSwatches above, same fix:
-   restate `display: none` at matching specificity. */
-#updateBanner.hidden {
+#updateBanner {
+  display: flex;
+  bottom: 16px;
+}
+
+#renderError {
+  display: flex;
+  top: 16px;
+}
+
+/* Each notice sets its own `display` for layout, which (being an ID selector)
+   outranks the generic `.hidden` utility class on specificity alone. Restate
+   `display: none` at matching specificity so hiding wins. */
+#updateBanner.hidden,
+#renderError.hidden {
   display: none;
 }
 
-#updateDismissBtn {
+.notice-dismiss {
   padding: 4px;
   border: none;
   background: none;
@@ -259,7 +276,7 @@ body {
   cursor: pointer;
 }
 
-#updateDismissBtn:hover {
+.notice-dismiss:hover {
   color: var(--text);
 }
 

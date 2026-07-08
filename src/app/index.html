@@ -21,15 +21,28 @@
     <div id="error"></div>
     <div id="loading">Loading…</div>
 
-    <div id="updateBanner" class="hidden" role="status">
+    <div id="updateBanner" class="notice hidden" role="status">
       <span>A new version is available.</span>
       <button class="btn btn-blue" id="updateReloadBtn" type="button">
         Reload
       </button>
       <button
+        class="notice-dismiss"
         id="updateDismissBtn"
         type="button"
         aria-label="Dismiss update notice"
+      >
+        ✕
+      </button>
+    </div>
+
+    <div id="renderError" class="notice hidden" role="alert">
+      <span>Render failed — try reloading.</span>
+      <button
+        class="notice-dismiss"
+        id="renderErrorDismissBtn"
+        type="button"
+        aria-label="Dismiss render error"
       >
         ✕
       </button>
