@@ -67,6 +67,11 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `history.ts` — session-only undo/redo stacks over the encoded scene
     snapshot (pure, tested).
   - `ui.ts` — control panel + transform list, built with `createElement`.
+  - `control-spec.ts` — declarative spec table for the panel's simple scalar
+    controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
+    listeners, and label sync from it; `main.ts` derives the one generic
+    handler. Adding a scalar setting = one spec entry + one index.html row
+    (pure, tested).
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.

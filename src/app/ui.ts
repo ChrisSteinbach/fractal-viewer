@@ -10,9 +10,6 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
-  ColorMode,
-  FourDColorMode,
-  SymmetryAxis,
   Transform,
   Variation,
   VariationType,
@@ -22,23 +19,20 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
-import type { AppState, RenderStyle } from "./state";
+import type { AppState } from "./state";
 import {
-  FLAME_ITERATION_DETENTS,
-  MAX_COLOR_GAMMA,
-  MAX_NUM_POINTS,
   MAX_W_ANGLE,
   MAX_W_POSITION,
   MAX_W_SCALE,
   MAX_W_SHEAR,
-  MIN_NUM_POINTS,
   MIN_W_ANGLE,
   MIN_W_POSITION,
   MIN_W_SCALE,
   MIN_W_SHEAR,
-  nearestFlameIterationDetentIndex,
   systemIsNonFlat,
 } from "./state";
+import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
+import type { ScalarControlSpec } from "./control-spec";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -75,23 +69,18 @@ export interface UiHandlers {
   onPreset: (preset: Preset) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
-  onNumPointsInput: (value: number) => void;
-  onPointSizeInput: (value: number) => void;
-  /** The glow-brightness slider changed — a manual multiplier on top of the
-   * glow render's per-frame auto-exposure (see main.ts's `animate`). Only
-   * shown while `renderStyle === "glow"`. */
-  onGlowBrightnessInput: (value: number) => void;
+  /**
+   * A table-driven scalar control changed (see control-spec.ts's
+   * SCALAR_CONTROLS): `raw` is the element's `value` string (range/select)
+   * or `checked` flag (checkbox), applied via `applyScalarControl`.
+   * Per-control semantics — which edits restart accumulation, which are
+   * live-reactive, which forward to a render worker — are documented on the
+   * spec entries themselves.
+   */
+  onScalarControl: (spec: ScalarControlSpec, raw: string | boolean) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
-  onToggleGuides: (checked: boolean) => void;
-  onColorMode: (mode: ColorMode) => void;
-  /** The color-contrast slider changed (fr-8sk) — the value passed is the
-   * actual gamma, already converted from the slider's log-scale position.
-   * Only shown while the active color mode is height/radius/position. */
-  onColorGammaInput: (value: number) => void;
-  onRenderStyle: (style: RenderStyle) => void;
-  onToggleAutoUpdate: (checked: boolean) => void;
   onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
@@ -105,43 +94,11 @@ export interface UiHandlers {
   onEnterFlameRender: () => void;
   /** "Back to Explorer" was clicked: discard the in-progress render. */
   onExitFlameRender: () => void;
-  onFlameExposureInput: (value: number) => void;
-  onFlameIterationsInput: (value: number) => void;
-  onFlameGammaInput: (value: number) => void;
-  onFlameVibrancyInput: (value: number) => void;
-  /** The supersample slider changed — the app restarts accumulation. */
-  onFlameSupersampleInput: (value: number) => void;
-  /** The palette dropdown changed — the app restarts accumulation (the
-   * accumulated color sums bake in the palette). */
-  onFlamePaletteChange: (paletteId: FlamePaletteId) => void;
-  /** Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
-   * gamma/vibrancy: re-run just the finished-frame adaptive pass, never a
-   * re-accumulate. */
-  onFlameEstimatorRadiusInput: (value: number) => void;
-  onFlameEstimatorMinimumRadiusInput: (value: number) => void;
-  onFlameEstimatorCurveInput: (value: number) => void;
   /** "Render Solid View" was clicked: start accumulating the density volume
    * (the camera stays LIVE, unlike the flame render). */
   onEnterSolidRender: () => void;
   /** The solid render's "Back to Explorer" was clicked. */
   onExitSolidRender: () => void;
-  /** Surface/lighting sliders — pure GPU uniforms, live at full frame rate. */
-  onSolidThresholdInput: (value: number) => void;
-  onSolidLightAzimuthInput: (value: number) => void;
-  onSolidLightElevationInput: (value: number) => void;
-  onSolidAmbientInput: (value: number) => void;
-  /** The solid palette dropdown changed — the app restarts accumulation (the
-   * accumulated colors bake in the palette). */
-  onSolidPaletteChange: (paletteId: FlamePaletteId) => void;
-  onSolidIterationsInput: (value: number) => void;
-  /** The resolution slider changed — the app restarts accumulation. */
-  onSolidResolutionInput: (value: number) => void;
-  /** The symmetry order slider changed — reshapes the live point cloud (and
-   * any active flame/solid render), not just a render-only setting. */
-  onSymmetryOrderInput: (value: number) => void;
-  /** The symmetry axis dropdown changed — same reach as
-   * {@link onSymmetryOrderInput}. */
-  onSymmetryAxisChange: (axis: SymmetryAxis) => void;
   /** The 3D auto-orbit (fr-1yn) was paused or resumed — the camera-side
    * sibling of {@link onFourDTumbleToggle}. */
   onAutoOrbitToggle: (checked: boolean) => void;
@@ -160,14 +117,6 @@ export interface UiHandlers {
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
-  /** The 4D color select changed (fr-d47) — the app re-points the 4D
-   * shader's color source (and re-bakes the attribute for the baked modes)
-   * without re-running the chaos game. */
-  onFourDColor: (mode: FourDColorMode) => void;
-  /** The 4D camera-depth fade (fr-3e0) was toggled. Unlike the session-only
-   * slice/tumble toggles above, this edits the persisted scene document —
-   * it's a look preference like {@link onFourDColor}'s. */
-  onFourDDepthFadeToggle: (checked: boolean) => void;
 }
 
 /**
@@ -324,63 +273,6 @@ function weightToSlider(weight: number): number {
 }
 function sliderToWeight(slider: number): number {
   return 10 ** slider;
-}
-
-/**
- * Point-count slider: log-scaled so the low end (1k–100k) has fine control
- * while the top end (100k–5M) is still reachable without a 5000-step slider.
- * The HTML range goes 0–1000; these helpers convert between that and real
- * point counts.
- */
-const NUM_POINTS_SLIDER_MAX = 1000;
-const LOG_MIN = Math.log(MIN_NUM_POINTS);
-const LOG_MAX = Math.log(MAX_NUM_POINTS);
-function numPointsToSlider(n: number): number {
-  const clamped = Math.max(MIN_NUM_POINTS, Math.min(MAX_NUM_POINTS, n));
-  return (
-    ((Math.log(clamped) - LOG_MIN) / (LOG_MAX - LOG_MIN)) *
-    NUM_POINTS_SLIDER_MAX
-  );
-}
-function sliderToNumPoints(s: number): number {
-  const t = s / NUM_POINTS_SLIDER_MAX;
-  // Round to the nearest 1000 so the label reads cleanly.
-  return Math.round(Math.exp(LOG_MIN + t * (LOG_MAX - LOG_MIN)) / 1000) * 1000;
-}
-
-/**
- * Log-scale mapping for the color-contrast slider (fr-8sk): position `v` in
- * `[-1, 1]` maps to gamma in `[MIN_COLOR_GAMMA, MAX_COLOR_GAMMA]` via
- * `MAX_COLOR_GAMMA ** v`. Works because `MIN_COLOR_GAMMA === 1 /
- * MAX_COLOR_GAMMA`, which puts neutral gamma `1.0` exactly at the slider's
- * center (`v = 0`) and mirrors the low/high halves logarithmically, so
- * "spread the low end" and "spread the high end" get equal-feeling ranges of
- * travel either side of neutral.
- */
-function sliderToColorGamma(v: number): number {
-  return MAX_COLOR_GAMMA ** v;
-}
-function colorGammaToSlider(gamma: number): number {
-  return Math.log(gamma) / Math.log(MAX_COLOR_GAMMA);
-}
-
-/**
- * Format an iteration count for display (fr-79p): millions with one decimal
- * below 1e9 — the flame progress line's long-standing look, e.g. "20.0M" —
- * and billions with up to two decimals at 1e9 and above, trailing zeros (and
- * a bare trailing dot) trimmed, e.g. "1.5B", "2B". Without the billions branch
- * a GPU-scale budget would print as an unreadable "2000.0M"; kept local to
- * `ui.ts` (not exported from `state.ts`) since it's a display concern, not
- * app state. Shared by {@link Ui.setFlameProgress} and the Quality label in
- * {@link Ui.updateLabels} — the solid render is CPU-only and out of scope
- * (fr-79p), so {@link Ui.setSolidProgress} keeps its own plain-millions format.
- */
-function formatIterationCount(n: number): string {
-  if (n >= 1_000_000_000) {
-    const billions = (n / 1_000_000_000).toFixed(2).replace(/\.?0+$/, "");
-    return `${billions}B`;
-  }
-  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 /**
@@ -624,23 +516,8 @@ export class Ui {
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   private readonly recordVideoBtn: HTMLButtonElement;
-  private readonly numPointsLabel: HTMLElement;
-  private readonly numPointsSlider: HTMLInputElement;
-  private readonly pointSizeLabel: HTMLElement;
-  private readonly pointSizeSlider: HTMLInputElement;
   private readonly glowBrightnessRow: HTMLElement;
-  private readonly glowBrightnessLabel: HTMLElement;
-  private readonly glowBrightnessSlider: HTMLInputElement;
   private readonly colorGammaRow: HTMLElement;
-  private readonly colorGammaLabel: HTMLElement;
-  private readonly colorGammaSlider: HTMLInputElement;
-  private readonly showGuides: HTMLInputElement;
-  private readonly colorMode: HTMLSelectElement;
-  private readonly renderStyle: HTMLSelectElement;
-  private readonly autoUpdate: HTMLInputElement;
-  private readonly symmetryOrderLabel: HTMLElement;
-  private readonly symmetryOrderSlider: HTMLInputElement;
-  private readonly symmetryAxisSelect: HTMLSelectElement;
   private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
@@ -649,44 +526,14 @@ export class Ui {
   private readonly flameEntry: HTMLElement;
   private readonly renderBtn: HTMLButtonElement;
   private readonly flameControls: HTMLElement;
-  private readonly flameExposureLabel: HTMLElement;
-  private readonly flameExposureSlider: HTMLInputElement;
-  private readonly flameIterationsLabel: HTMLElement;
-  private readonly flameIterationsSlider: HTMLInputElement;
-  private readonly flameGammaLabel: HTMLElement;
-  private readonly flameGammaSlider: HTMLInputElement;
-  private readonly flameVibrancyLabel: HTMLElement;
-  private readonly flameVibrancySlider: HTMLInputElement;
-  private readonly flameSupersampleLabel: HTMLElement;
-  private readonly flameSupersampleSlider: HTMLInputElement;
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
-  private readonly flamePalette: HTMLSelectElement;
-  private readonly flameEstimatorRadiusLabel: HTMLElement;
-  private readonly flameEstimatorRadiusSlider: HTMLInputElement;
-  private readonly flameEstimatorMinimumRadiusLabel: HTMLElement;
-  private readonly flameEstimatorMinimumRadiusSlider: HTMLInputElement;
-  private readonly flameEstimatorCurveLabel: HTMLElement;
-  private readonly flameEstimatorCurveSlider: HTMLInputElement;
   private readonly flameProgress: HTMLElement;
   private readonly exitRenderBtn: HTMLButtonElement;
 
   private readonly solidEntry: HTMLElement;
   private readonly solidBtn: HTMLButtonElement;
   private readonly solidControls: HTMLElement;
-  private readonly solidThresholdLabel: HTMLElement;
-  private readonly solidThresholdSlider: HTMLInputElement;
-  private readonly solidLightAzimuthLabel: HTMLElement;
-  private readonly solidLightAzimuthSlider: HTMLInputElement;
-  private readonly solidLightElevationLabel: HTMLElement;
-  private readonly solidLightElevationSlider: HTMLInputElement;
-  private readonly solidAmbientLabel: HTMLElement;
-  private readonly solidAmbientSlider: HTMLInputElement;
-  private readonly solidPalette: HTMLSelectElement;
-  private readonly solidIterationsLabel: HTMLElement;
-  private readonly solidIterationsSlider: HTMLInputElement;
-  private readonly solidResolutionLabel: HTMLElement;
-  private readonly solidResolutionSlider: HTMLInputElement;
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
   private readonly exitSolidBtn: HTMLButtonElement;
@@ -722,11 +569,25 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
-  private readonly fourDColorSelect: HTMLSelectElement;
-  private readonly fourDDepthFadeToggle: HTMLInputElement;
   private readonly colorModeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
+
+  /**
+   * The table-driven scalar controls (see control-spec.ts's SCALAR_CONTROLS),
+   * bound to their live elements once in the constructor — replacing the old
+   * per-control element fields. The constructor loop throws on any missing
+   * element (via {@link byId}), so ui.test.ts's index.html coverage test
+   * still guards every table id.
+   */
+  private readonly scalars = new Map<
+    string,
+    {
+      spec: ScalarControlSpec;
+      input: HTMLInputElement | HTMLSelectElement;
+      label: HTMLElement | null;
+    }
+  >();
 
   private editor: EditorState | null = null;
 
@@ -760,23 +621,8 @@ export class Ui {
     this.savePngBtn = this.byId("savePngBtn");
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
-    this.numPointsLabel = this.byId("numPointsLabel");
-    this.numPointsSlider = this.byId("numPointsSlider");
-    this.pointSizeLabel = this.byId("pointSizeLabel");
-    this.pointSizeSlider = this.byId("pointSizeSlider");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
-    this.glowBrightnessLabel = this.byId("glowBrightnessLabel");
-    this.glowBrightnessSlider = this.byId("glowBrightnessSlider");
     this.colorGammaRow = this.byId("colorGammaRow");
-    this.colorGammaLabel = this.byId("colorGammaLabel");
-    this.colorGammaSlider = this.byId("colorGammaSlider");
-    this.showGuides = this.byId("showGuides");
-    this.colorMode = this.byId("colorMode");
-    this.renderStyle = this.byId("renderStyle");
-    this.autoUpdate = this.byId("autoUpdate");
-    this.symmetryOrderLabel = this.byId("symmetryOrderLabel");
-    this.symmetryOrderSlider = this.byId("symmetryOrderSlider");
-    this.symmetryAxisSelect = this.byId("symmetryAxis");
     this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
@@ -784,47 +630,13 @@ export class Ui {
     this.flameEntry = this.byId("flameEntry");
     this.renderBtn = this.byId("renderBtn");
     this.flameControls = this.byId("flameControls");
-    this.flameExposureLabel = this.byId("flameExposureLabel");
-    this.flameExposureSlider = this.byId("flameExposureSlider");
-    this.flameIterationsLabel = this.byId("flameIterationsLabel");
-    this.flameIterationsSlider = this.byId("flameIterationsSlider");
-    this.flameGammaLabel = this.byId("flameGammaLabel");
-    this.flameGammaSlider = this.byId("flameGammaSlider");
-    this.flameVibrancyLabel = this.byId("flameVibrancyLabel");
-    this.flameVibrancySlider = this.byId("flameVibrancySlider");
-    this.flameSupersampleLabel = this.byId("flameSupersampleLabel");
-    this.flameSupersampleSlider = this.byId("flameSupersampleSlider");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
-    this.flamePalette = this.byId("flamePalette");
-    this.flameEstimatorRadiusLabel = this.byId("flameEstimatorRadiusLabel");
-    this.flameEstimatorRadiusSlider = this.byId("flameEstimatorRadiusSlider");
-    this.flameEstimatorMinimumRadiusLabel = this.byId(
-      "flameEstimatorMinimumRadiusLabel",
-    );
-    this.flameEstimatorMinimumRadiusSlider = this.byId(
-      "flameEstimatorMinimumRadiusSlider",
-    );
-    this.flameEstimatorCurveLabel = this.byId("flameEstimatorCurveLabel");
-    this.flameEstimatorCurveSlider = this.byId("flameEstimatorCurveSlider");
     this.flameProgress = this.byId("flameProgress");
     this.exitRenderBtn = this.byId("exitRenderBtn");
     this.solidEntry = this.byId("solidEntry");
     this.solidBtn = this.byId("solidBtn");
     this.solidControls = this.byId("solidControls");
-    this.solidThresholdLabel = this.byId("solidThresholdLabel");
-    this.solidThresholdSlider = this.byId("solidThresholdSlider");
-    this.solidLightAzimuthLabel = this.byId("solidLightAzimuthLabel");
-    this.solidLightAzimuthSlider = this.byId("solidLightAzimuthSlider");
-    this.solidLightElevationLabel = this.byId("solidLightElevationLabel");
-    this.solidLightElevationSlider = this.byId("solidLightElevationSlider");
-    this.solidAmbientLabel = this.byId("solidAmbientLabel");
-    this.solidAmbientSlider = this.byId("solidAmbientSlider");
-    this.solidPalette = this.byId("solidPalette");
-    this.solidIterationsLabel = this.byId("solidIterationsLabel");
-    this.solidIterationsSlider = this.byId("solidIterationsSlider");
-    this.solidResolutionLabel = this.byId("solidResolutionLabel");
-    this.solidResolutionSlider = this.byId("solidResolutionSlider");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
     this.exitSolidBtn = this.byId("exitSolidBtn");
@@ -844,11 +656,35 @@ export class Ui {
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
-    this.fourDColorSelect = this.byId("fourDColor");
-    this.fourDDepthFadeToggle = this.byId("fourDDepthFadeToggle");
     this.colorModeRow = this.byId("colorModeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
+    for (const spec of SCALAR_CONTROLS) {
+      this.scalars.set(spec.id, {
+        spec,
+        input: this.byId(spec.id),
+        label: spec.label ? this.byId(spec.label.id) : null,
+      });
+    }
+  }
+
+  /** The live input element behind a table-driven control, for the few spots
+   * outside the generic sync that need the element itself (e.g. the legend's
+   * palette display names). Throws on an unknown id — a table id typo is a
+   * programming error, same contract as {@link byId}. */
+  private scalarInput(id: string): HTMLInputElement | HTMLSelectElement {
+    const bound = this.scalars.get(id);
+    if (!bound) throw new Error(`No scalar control spec for #${id}`);
+    return bound.input;
+  }
+
+  /** {@link scalarInput} narrowed to a `<select>` (for `.options` access). */
+  private scalarSelect(id: string): HTMLSelectElement {
+    const input = this.scalarInput(id);
+    if (!(input instanceof HTMLSelectElement)) {
+      throw new Error(`Scalar control #${id} is not a <select>`);
+    }
+    return input;
   }
 
   private byId<T extends HTMLElement>(id: string): T {
@@ -879,42 +715,21 @@ export class Ui {
     this.recordVideoBtn.addEventListener("click", () =>
       handlers.onRecordVideoToggle(),
     );
-    this.numPointsSlider.addEventListener("input", () =>
-      handlers.onNumPointsInput(
-        sliderToNumPoints(Number(this.numPointsSlider.value)),
-      ),
-    );
-    this.pointSizeSlider.addEventListener("input", () =>
-      handlers.onPointSizeInput(Number(this.pointSizeSlider.value)),
-    );
-    this.glowBrightnessSlider.addEventListener("input", () =>
-      handlers.onGlowBrightnessInput(Number(this.glowBrightnessSlider.value)),
-    );
-    this.colorGammaSlider.addEventListener("input", () =>
-      handlers.onColorGammaInput(
-        sliderToColorGamma(Number(this.colorGammaSlider.value)),
-      ),
-    );
-    this.showGuides.addEventListener("change", () =>
-      handlers.onToggleGuides(this.showGuides.checked),
-    );
-    this.colorMode.addEventListener("change", () =>
-      handlers.onColorMode(this.colorMode.value as ColorMode),
-    );
-    this.renderStyle.addEventListener("change", () =>
-      handlers.onRenderStyle(this.renderStyle.value as RenderStyle),
-    );
-    this.autoUpdate.addEventListener("change", () =>
-      handlers.onToggleAutoUpdate(this.autoUpdate.checked),
-    );
-    this.symmetryOrderSlider.addEventListener("input", () =>
-      handlers.onSymmetryOrderInput(Number(this.symmetryOrderSlider.value)),
-    );
-    this.symmetryAxisSelect.addEventListener("change", () =>
-      handlers.onSymmetryAxisChange(
-        this.symmetryAxisSelect.value as SymmetryAxis,
-      ),
-    );
+    // Every table-driven scalar control (see control-spec.ts) shares one
+    // listener shape: read the element's raw value/checked and hand it, with
+    // its spec, to the app's single scalar pipeline. Sliders report "input"
+    // (live while dragging); selects and checkboxes report "change".
+    for (const { spec, input } of this.scalars.values()) {
+      const event = spec.kind === "range" ? "input" : "change";
+      input.addEventListener(event, () =>
+        handlers.onScalarControl(
+          spec,
+          spec.kind === "checkbox" && input instanceof HTMLInputElement
+            ? input.checked
+            : input.value,
+        ),
+      );
+    }
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
@@ -924,73 +739,11 @@ export class Ui {
     this.exitRenderBtn.addEventListener("click", () =>
       handlers.onExitFlameRender(),
     );
-    this.flameExposureSlider.addEventListener("input", () =>
-      handlers.onFlameExposureInput(Number(this.flameExposureSlider.value)),
-    );
-    this.flameIterationsSlider.addEventListener("input", () =>
-      handlers.onFlameIterationsInput(
-        FLAME_ITERATION_DETENTS[Number(this.flameIterationsSlider.value)],
-      ),
-    );
-    this.flameGammaSlider.addEventListener("input", () =>
-      handlers.onFlameGammaInput(Number(this.flameGammaSlider.value)),
-    );
-    this.flameVibrancySlider.addEventListener("input", () =>
-      handlers.onFlameVibrancyInput(Number(this.flameVibrancySlider.value)),
-    );
-    this.flameSupersampleSlider.addEventListener("input", () =>
-      handlers.onFlameSupersampleInput(
-        Number(this.flameSupersampleSlider.value),
-      ),
-    );
-    this.flamePalette.addEventListener("change", () =>
-      handlers.onFlamePaletteChange(this.flamePalette.value as FlamePaletteId),
-    );
-    this.flameEstimatorRadiusSlider.addEventListener("input", () =>
-      handlers.onFlameEstimatorRadiusInput(
-        Number(this.flameEstimatorRadiusSlider.value),
-      ),
-    );
-    this.flameEstimatorMinimumRadiusSlider.addEventListener("input", () =>
-      handlers.onFlameEstimatorMinimumRadiusInput(
-        Number(this.flameEstimatorMinimumRadiusSlider.value),
-      ),
-    );
-    this.flameEstimatorCurveSlider.addEventListener("input", () =>
-      handlers.onFlameEstimatorCurveInput(
-        Number(this.flameEstimatorCurveSlider.value),
-      ),
-    );
     this.solidBtn.addEventListener("click", () =>
       handlers.onEnterSolidRender(),
     );
     this.exitSolidBtn.addEventListener("click", () =>
       handlers.onExitSolidRender(),
-    );
-    this.solidThresholdSlider.addEventListener("input", () =>
-      handlers.onSolidThresholdInput(Number(this.solidThresholdSlider.value)),
-    );
-    this.solidLightAzimuthSlider.addEventListener("input", () =>
-      handlers.onSolidLightAzimuthInput(
-        Number(this.solidLightAzimuthSlider.value),
-      ),
-    );
-    this.solidLightElevationSlider.addEventListener("input", () =>
-      handlers.onSolidLightElevationInput(
-        Number(this.solidLightElevationSlider.value),
-      ),
-    );
-    this.solidAmbientSlider.addEventListener("input", () =>
-      handlers.onSolidAmbientInput(Number(this.solidAmbientSlider.value)),
-    );
-    this.solidPalette.addEventListener("change", () =>
-      handlers.onSolidPaletteChange(this.solidPalette.value as FlamePaletteId),
-    );
-    this.solidIterationsSlider.addEventListener("input", () =>
-      handlers.onSolidIterationsInput(Number(this.solidIterationsSlider.value)),
-    );
-    this.solidResolutionSlider.addEventListener("input", () =>
-      handlers.onSolidResolutionInput(Number(this.solidResolutionSlider.value)),
     );
     this.autoOrbitToggle.addEventListener("change", () => {
       const on = this.autoOrbitToggle.checked;
@@ -1035,12 +788,6 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    this.fourDColorSelect.addEventListener("change", () =>
-      handlers.onFourDColor(this.fourDColorSelect.value as FourDColorMode),
-    );
-    this.fourDDepthFadeToggle.addEventListener("change", () =>
-      handlers.onFourDDepthFadeToggle(this.fourDDepthFadeToggle.checked),
-    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -1079,16 +826,19 @@ export class Ui {
   updateLabels(state: AppState): void {
     this.transformCount.textContent = String(state.transforms.length);
     this.removeBtn.disabled = state.transforms.length <= 1;
-    this.numPointsLabel.textContent = state.numPoints.toLocaleString();
-    this.numPointsSlider.value = String(numPointsToSlider(state.numPoints));
-    this.pointSizeLabel.textContent = `${state.pointSize.toFixed(2)}×`;
-    this.pointSizeSlider.value = String(state.pointSize);
-    this.glowBrightnessLabel.textContent = `${state.glowBrightness.toFixed(2)}×`;
-    this.glowBrightnessSlider.value = String(state.glowBrightness);
-    this.colorGammaLabel.textContent = state.colorGamma.toFixed(2);
-    this.colorGammaSlider.value = String(colorGammaToSlider(state.colorGamma));
-    this.colorMode.value = state.colorMode;
-    this.fourDColorSelect.value = state.fourDColor;
+    // One table-driven sync for every scalar control (see control-spec.ts's
+    // SCALAR_CONTROLS): the element's value/checked from the spec's `read`,
+    // the readout text from its `label` — replacing the old per-control
+    // lines. Kind discriminates the spec union; the instanceof narrows the
+    // element to match (a checkbox spec is always bound to an <input>).
+    for (const { spec, input, label } of this.scalars.values()) {
+      if (spec.kind === "checkbox") {
+        if (input instanceof HTMLInputElement) input.checked = spec.read(state);
+      } else {
+        input.value = spec.read(state);
+      }
+      if (spec.label && label) label.textContent = spec.label.text(state);
+    }
     // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
     // its row hides under the baked fr-d47 modes — the same single source of
     // truth (color.ts) the shader's bake-vs-uniform dispatch keys on.
@@ -1096,14 +846,7 @@ export class Ui {
       "hidden",
       fourDColorNeedsAttribute(state.fourDColor),
     );
-    this.fourDDepthFadeToggle.checked = state.fourDDepthFade;
-    this.renderStyle.value = state.renderStyle;
-    this.showGuides.checked = state.showGuides;
-    this.autoUpdate.checked = state.autoUpdate;
 
-    this.symmetryOrderSlider.value = String(state.symmetry.order);
-    this.symmetryOrderLabel.textContent = `${state.symmetry.order}-fold`;
-    this.symmetryAxisSelect.value = state.symmetry.axis;
     const effectiveOrder = effectiveSymmetryOrder(
       state.symmetry.order,
       state.transforms.length,
@@ -1117,53 +860,6 @@ export class Ui {
     }
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
-
-    this.flameExposureLabel.textContent = `${state.flame.exposure.toFixed(2)}×`;
-    this.flameExposureSlider.value = String(state.flame.exposure);
-    this.flameIterationsLabel.textContent = `${formatIterationCount(
-      state.flame.iterations,
-    )} iterations`;
-    // The slider carries a detent INDEX (fr-79p), not the raw count: a
-    // persisted/shared scene can hold a non-detent value (e.g. an old scene's
-    // 37M), so the thumb snaps to display at the nearest detent while state
-    // keeps the exact value until the user actually moves the slider.
-    this.flameIterationsSlider.value = String(
-      nearestFlameIterationDetentIndex(state.flame.iterations),
-    );
-
-    this.flameGammaLabel.textContent = state.flame.gamma.toFixed(2);
-    this.flameGammaSlider.value = String(state.flame.gamma);
-    this.flameVibrancyLabel.textContent = `${Math.round(state.flame.vibrancy * 100)}%`;
-    this.flameVibrancySlider.value = String(state.flame.vibrancy);
-    this.flameSupersampleLabel.textContent = `${state.flame.supersample}×`;
-    this.flameSupersampleSlider.value = String(state.flame.supersample);
-    this.flamePalette.value = state.flame.paletteId;
-
-    this.flameEstimatorRadiusLabel.textContent = `${state.flame.estimatorRadius.toFixed(1)}px`;
-    this.flameEstimatorRadiusSlider.value = String(state.flame.estimatorRadius);
-    this.flameEstimatorMinimumRadiusLabel.textContent = `${state.flame.estimatorMinimumRadius.toFixed(1)}px`;
-    this.flameEstimatorMinimumRadiusSlider.value = String(
-      state.flame.estimatorMinimumRadius,
-    );
-    this.flameEstimatorCurveLabel.textContent =
-      state.flame.estimatorCurve.toFixed(2);
-    this.flameEstimatorCurveSlider.value = String(state.flame.estimatorCurve);
-
-    this.solidThresholdLabel.textContent = state.solid.threshold.toFixed(2);
-    this.solidThresholdSlider.value = String(state.solid.threshold);
-    this.solidLightAzimuthLabel.textContent = `${Math.round(state.solid.lightAzimuth)}°`;
-    this.solidLightAzimuthSlider.value = String(state.solid.lightAzimuth);
-    this.solidLightElevationLabel.textContent = `${Math.round(state.solid.lightElevation)}°`;
-    this.solidLightElevationSlider.value = String(state.solid.lightElevation);
-    this.solidAmbientLabel.textContent = `${Math.round(state.solid.ambient * 100)}%`;
-    this.solidAmbientSlider.value = String(state.solid.ambient);
-    this.solidPalette.value = state.solid.paletteId;
-    this.solidIterationsLabel.textContent = `${(
-      state.solid.iterations / 1_000_000
-    ).toFixed(0)}M iterations`;
-    this.solidIterationsSlider.value = String(state.solid.iterations);
-    this.solidResolutionLabel.textContent = `${state.solid.resolution}³`;
-    this.solidResolutionSlider.value = String(state.solid.resolution);
 
     // Either render mode takes over the panel — editing controls that can't
     // affect the in-progress render would just be confusing.
@@ -1362,9 +1058,15 @@ export class Ui {
     }
 
     const render = state.flameActive
-      ? { paletteId: state.flame.paletteId, select: this.flamePalette }
+      ? {
+          paletteId: state.flame.paletteId,
+          select: this.scalarSelect("flamePalette"),
+        }
       : state.solidActive
-        ? { paletteId: state.solid.paletteId, select: this.solidPalette }
+        ? {
+            paletteId: state.solid.paletteId,
+            select: this.scalarSelect("solidPalette"),
+          }
         : null;
     if (render !== null) {
       // `buildPaletteLUT` returning null IS the "no coordinate gradient"
