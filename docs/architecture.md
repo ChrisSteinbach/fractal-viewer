@@ -347,6 +347,22 @@ also doubles as the phone-benchmarking path, since it works interactively
 over the LAN like any other dev page. See `docs/spike-fr-53k-gpu-flame-accum.md`
 for the original spike's go/no-go decision and measured numbers.
 
+Agreement is necessary but not sufficient — a render that matches the CPU
+oracle can still have its tab OOM-killed or thermally throttled under
+sustained load on a memory- and heat-constrained phone. That survival check is
+a separate on-device soak: `scripts/gpu-flame-soak.mjs` attaches to the phone's
+live Chrome over the DevTools Protocol (`adb forward` + `connectOverCDP`) and,
+alongside `adb shell`, samples the app's own backend/clamp/error notices,
+`/proc/meminfo` MemAvailable (the real OOM oracle — `performance.memory` can't
+see the GPU storage or MAP_READ staging buffers), SoC temperature, and a
+low-memory-killer / device-lost logcat scan while you drive a full-res render
+by hand over the LAN. fr-7su's run (arm valhall, Android 10) passed cleanly:
+minutes of continuous GPU accumulation with no thermal/memory kill, the GPU
+path running _cooler_ than the CPU fallback it offloads, and — the device's
+`maxStorageBufferBindingSize` binding at 256 MiB — a graceful limit-guard CPU
+fallback once supersampling pushes the histogram past that ceiling
+(`flame-gpu-backend.ts`).
+
 The 4D flame render takes the same GPU path (fr-e26): `src/fractal/
 flame-gpu-4d.ts` lifts the kernel one dimension — 4x4+translation affines,
 the `variations4` registry, the 20-coefficient rotor+camera projection, the

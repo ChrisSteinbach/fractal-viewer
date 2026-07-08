@@ -14,3 +14,5 @@ coverage/
 # Local benchmark artifacts (gpu-bench runner output, ad-hoc result dumps).
 bench-results/
 /result.json
+# fr-7su phone soak monitor output (gpu-flame-soak.mjs).
+soak-log/
