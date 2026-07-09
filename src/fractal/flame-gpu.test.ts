@@ -416,7 +416,7 @@ describe("packGpuChains", () => {
     expect(Array.from(a)).toEqual(Array.from(b));
   });
 
-  it("draws pos.xyz, a fixed 0.5 color coordinate, and one aux.x seed per chain, in exactly that order", () => {
+  it("draws pos.xyz, a fixed 0.5 color coordinate, one aux.x seed, and one odd aux.y stream increment per chain, in exactly that order", () => {
     const numChains = 3;
     const seed = 42;
     const buf = packGpuChains(numChains, seed);
@@ -434,12 +434,26 @@ describe("packGpuChains", () => {
       const expectedY = rng() - 0.5;
       const expectedZ = rng() - 0.5;
       const expectedAux = Math.floor(rng() * 0x100000000) >>> 0;
+      const expectedInc = ((Math.floor(rng() * 0x100000000) << 1) | 1) >>> 0;
       expect(f32[base]).toBeCloseTo(expectedX, 6);
       expect(f32[base + 1]).toBeCloseTo(expectedY, 6);
       expect(f32[base + 2]).toBeCloseTo(expectedZ, 6);
       expect(f32[base + 3]).toBe(0.5);
       expect(u32[base + 4]).toBe(expectedAux);
+      expect(u32[base + 5]).toBe(expectedInc);
     }
+  });
+
+  it("gives every chain an odd stream increment, distinct across chains", () => {
+    const numChains = 512;
+    const u32 = new Uint32Array(packGpuChains(numChains, 1234));
+    const incs: number[] = [];
+    for (let c = 0; c < numChains; c++) {
+      const inc = u32[c * (CHAIN_STRIDE_BYTES / 4) + 5];
+      expect(inc & 1).toBe(1);
+      incs.push(inc);
+    }
+    expect(new Set(incs).size).toBe(numChains);
   });
 
   it("sizes the buffer as numChains * CHAIN_STRIDE_BYTES", () => {
