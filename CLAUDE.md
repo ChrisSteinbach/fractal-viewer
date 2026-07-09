@@ -42,9 +42,22 @@ and UI**, so the interesting math is unit-tested without a browser:
 - **`src/fractal/`** — Dependency-free core. No Three.js, no DOM.
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
     Three.js conventions so output is identical to the original viewer.
+  - `affine4.ts` — the 4D affine group (4×4 + translation), `toTransform4`
+    (lift a 3D `Transform` to 4D), and the `systemIsFlat` predicate that decides
+    whether a system is 4D at all — derived from the transforms, never stored.
   - `chaos-game.ts` — the IFS iterator: warm-up, escape-reset, bounds tracking.
     Takes an injected RNG so runs are reproducible in tests.
-  - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the six color-mode palettes.
+  - `chaos-game-4d.ts` — the 4D twin of `chaos-game.ts` (`runChaosGame4`): the
+    same warm-up/escape/reseed/bounds loop unrolled to four coordinates. 4D has
+    no kaleidoscope symmetry by design.
+  - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the five color-mode palettes.
+  - `flame.ts` — the CPU fractal-flame still: accumulate the chaos game into a
+    2-D hit/color histogram (`accumulateFlame`) and tone-map it (`tonemapFlame`:
+    exposure/gamma/vibrancy over a log-density curve). CPU oracle for
+    `flame-gpu.ts`.
+  - `flame-4d.ts` — the 4D twin (`accumulateFlame4`), CPU oracle for
+    `flame-gpu-4d.ts`; slices with the `0.06` ghost floor like the point cloud
+    (unlike the solid render's `0`).
   - `flame-gpu.ts` — the WebGPU flame kernel (WGSL) + pure packing/dispatch-
     planning/histogram-conversion layer; Vitest-tested like the rest of this
     directory, pinned against `flame.ts`'s `accumulateFlame` (its CPU oracle)
@@ -53,13 +66,32 @@ and UI**, so the interesting math is unit-tested without a browser:
     (4x4+t affines, `variations4`, the rotor+camera projection, the four
     `FourDRenderColor` modes, fixed-point soft-slice weights), pinned against
     `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios.
+  - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
+    256×3 LUT) shared by the flame and solid renders; the `"legacy"` sentinel
+    falls back to flat per-transform hue.
   - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
     octahedron/icosahedron/dodecahedron flakes) + add-transform.
+  - `project4.ts` — the SO(4) rotor→matrix + camera projection the 4D renders
+    share, the frozen-view snapshot shape (`FourDView`), `sliceWeight`, and the
+    single-source-of-truth `SLICE_GHOST_FLOOR` (`0.06`).
   - `rng.ts` — seedable mulberry32 PRNG.
+  - `variations.ts` — the dozen nonlinear fractal-flame variations (`spherical`,
+    `swirl`, `julia`, …) as pure, total functions; `composeVariations` blends a
+    transform's weighted list.
+  - `variations4.ts` — the same twelve variations lifted one dimension up,
+    reproducing their 3D counterparts bit-for-bit at `w = 0`.
+  - `voxel.ts` — the solid render core: accumulate the chaos game into a
+    world-space 3-D density grid (`accumulateVoxels`), size it
+    (`computeVoxelBounds`), and pack it to an RGBA8 volume (`voxelTextureData`:
+    color in RGB, log-density in alpha). `buildColorModeLUT` reuses `color.ts`'s
+    modes + gamma so solid colors match the live cloud.
+  - `voxel-4d.ts` — the 4D twin (`computeVoxelBounds4` / `accumulateVoxels4`);
+    slices with a `0` floor, not the flame's `0.06`.
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — the main Three.js wrapper (scene, camera, renderer, point
-    cloud, guide boxes, fog). Three.js is confined to this file and
-    `interactions.ts`; everything else works with plain numbers.
+    cloud, guide boxes, fog). Three.js is confined to this file,
+    `interactions.ts`, and `voxel-material.ts`; everything else works with plain
+    numbers.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
@@ -80,6 +112,29 @@ and UI**, so the interesting math is unit-tested without a browser:
     kernels from inside the flame worker (one shared driver, two packing
     factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
     seam (WebGPU when available, CPU otherwise).
+  - `flame-worker.ts` / `flame-worker-core.ts` — the flame render worker: thin
+    `postMessage` glue around a plain-testable session (`FlameWorkerSession`)
+    driving CPU (`accumulateFlame` / `accumulateFlame4`) or WebGPU accumulation
+    behind the `FlameAccumBackend` seam; SharedArrayBuffer fast path,
+    postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D.
+  - `voxel-worker.ts` / `voxel-worker-core.ts` — the solid render worker, same
+    shape as the flame worker but postMessage-transfer only (the solid render
+    has no live tone-map to fast-path).
+  - `voxel-material.ts` — the Three.js GLSL3 raymarcher `ShaderMaterial` that
+    displays the voxel volume (isosurface march + gradient-normal shading; live
+    threshold/light/ambient uniforms `scene.ts` pushes with no worker round-trip).
+  - `render-session.ts` — the `enter` / `exit` / `terminate` + first-frame-gate
+    choreography shared by the flame and solid render controllers
+    (`RenderSession`); the two render modes are session-only `flameActive` /
+    `solidActive` state, never persisted.
+  - `flame-session-host.ts` — hosts a flame session on the main thread instead
+    of a worker where a worker can't reach WebGPU (Firefox exposes
+    `navigator.gpu` only on the main thread).
+  - `four-d-view.ts` — the session-only 4D view state (the `RotorPair`,
+    auto-tumble, soft w-slice); `main.ts` freezes it into a render's `fourD`
+    snapshot when the system is 4D.
+  - `rotor4.ts` — SO(4) rotation as a renormalizable unit-quaternion pair
+    (`RotorPair`), composed cheaply over a long session.
   - `register-sw.ts` — service-worker registration + the reload-once
     cross-origin-isolation bootstrap (gives the flame worker its
     SharedArrayBuffer fast path; postMessage transfer is the fallback).
