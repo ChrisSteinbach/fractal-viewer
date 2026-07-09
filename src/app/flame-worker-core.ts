@@ -273,6 +273,30 @@ export type FlameWorkerEvent =
   | { type: "error"; message: string }
   | {
       /**
+       * Emitted when THIS session's WebGPU backend could not be CREATED — the
+       * `createGpuBackend`/`createGpuBackend4` factory threw (see
+       * {@link createGpuBackendWithFallback}) — immediately before the session
+       * ratchets `gpuFailed` and falls back to CPU for the rest of its life.
+       * At most once per session (the ratchet means the factory is attempted
+       * only once), and NOT emitted for a GPU failure that surfaces mid-render
+       * (a failed dispatch/snapshot restarts on CPU in place — see `runChunk`),
+       * only for the clean "GPU never came up at all" case.
+       *
+       * Purely ADVISORY: the session still falls back to CPU entirely on its
+       * own, so a host that ignores this event behaves exactly as before. The
+       * MAIN thread uses it (fr-e07) to ESCALATE a WORKER-hosted session to the
+       * main-thread GPU host ({@link createLocalFlameSessionHost}) when the main
+       * thread itself has WebGPU — a real win on a browser/driver where the
+       * worker's GPU is flaky but the main thread's works (a transient
+       * worker-GPU hiccup on Firefox desktop is what surfaced this). A session
+       * that is ALREADY main-thread-hosted has nothing better to escalate to,
+       * so main.ts ignores its `gpuUnavailable` and lets the CPU fallback that
+       * is already under way stand as the correct final fallback.
+       */
+      type: "gpuUnavailable";
+    }
+  | {
+      /**
        * Emitted right before the synchronous, unchunked adaptive
        * density-estimation pass (fr-17t) — on the finished frame, and again
        * on every live estimator-param/budget change that re-runs it once
@@ -1490,6 +1514,10 @@ export class FlameWorkerSession {
       this.log(
         `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
       );
+      // Advisory signal for the host BEFORE the CPU fallback below stands: a
+      // worker-hosted session's main thread may escalate to its own GPU host
+      // instead of accepting CPU (fr-e07). See the event's doc.
+      this.emit({ type: "gpuUnavailable" });
       return this.makeCpuBackend();
     }
   }
@@ -1506,6 +1534,10 @@ export class FlameWorkerSession {
       this.log(
         `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
       );
+      // Advisory signal for the host BEFORE the CPU fallback below stands: a
+      // worker-hosted session's main thread may escalate to its own GPU host
+      // instead of accepting CPU (fr-e07). See the event's doc.
+      this.emit({ type: "gpuUnavailable" });
       return this.makeCpu4DBackend();
     }
   }

@@ -552,6 +552,19 @@ function main(): void {
   }
   let flameShared: FlameSharedSession | null = null;
 
+  // fr-e07: which host the CURRENT flame session runs on, and a one-shot
+  // request to force the local (main-thread GPU) host on the next `start`.
+  // When a WORKER-hosted session reports `gpuUnavailable` (its WebGPU backend
+  // failed to come up — see the event's doc) and THIS thread has its own
+  // WebGPU, we escalate to the main-thread GPU host rather than accept the
+  // worker's CPU fallback: a transient/browser-specific worker-GPU failure
+  // (a real Firefox-desktop report) needn't cost the whole render its GPU when
+  // the main thread's GPU works. `escalateFlameToLocalHost` is consumed (and
+  // cleared) by the next `start`, so an ordinary later Render re-evaluates the
+  // host choice from scratch.
+  let flameHostKind: "worker" | "local" | null = null;
+  let escalateFlameToLocalHost = false;
+
   // Allocate the two shared display-resolution frame slots, or null to fall
   // back to transfer mode: when the page isn't cross-origin isolated the
   // SharedArrayBuffer constructor isn't even exposed, and when it is, the
@@ -626,6 +639,38 @@ function main(): void {
       case "backend":
         ui.setFlameBackendNote(event.backend, event.adapter);
         break;
+      case "gpuUnavailable":
+        // fr-e07: a worker-hosted session's WebGPU backend failed to come up
+        // and it is about to render on CPU. If this session runs in a WORKER
+        // and THIS thread has its own usable-context WebGPU (fine-pointer +
+        // navigator.gpu — the same signals the local-host auto-detect uses),
+        // escalate to the main-thread GPU host instead of accepting the
+        // worker's CPU fallback. The local host reaches the very same GPU
+        // factory on a thread where it may well succeed (the worker-GPU
+        // failure can be transient or browser-specific). A session that is
+        // already local-hosted (flameHostKind !== "worker") has nothing better
+        // to escalate to, so its own gpuUnavailable is ignored here and its CPU
+        // fallback stands as the correct final fallback. An explicit
+        // `?flamehost=worker` pin is honored — no escalation — so the worker
+        // path stays testable in isolation.
+        if (
+          flameHostKind === "worker" &&
+          flameHostOverride() !== "worker" &&
+          !!navigator.gpu &&
+          !window.matchMedia("(pointer: coarse)").matches
+        ) {
+          console.info(
+            "Flame render: worker GPU unavailable; escalating to the main-thread GPU session.",
+          );
+          escalateFlameToLocalHost = true;
+          // Re-enter with the forced local host. enter() terminates the worker
+          // host first (its hardened terminate() detaches handlers, so the
+          // worker's already-queued CPU-fallback events can't reach this
+          // handler and disturb the fresh local session), then start() honors
+          // the escalation flag.
+          flameSession.enter();
+        }
+        break;
       case "estimating":
         ui.setFlameEstimating();
         break;
@@ -661,7 +706,20 @@ function main(): void {
     };
     return {
       post: (command) => worker.postMessage(command),
-      terminate: () => worker.terminate(),
+      terminate: () => {
+        // Detach the handlers BEFORE terminating so a message the worker
+        // already queued to this thread (a "progress"/"backend"/"error"/
+        // "gpuUnavailable" posted just before this) can't still reach
+        // handleFlameEvent and act on a session this host no longer
+        // represents — e.g. a stale "error" calling flameSession.exit() out
+        // from under a freshly-escalated local session, or a stale
+        // "gpuUnavailable" re-triggering escalation (fr-e07). A terminated
+        // worker posts nothing new; this closes the already-queued gap the
+        // local host already gets for free from its `closed` guard.
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.terminate();
+      },
     };
   }
 
@@ -747,8 +805,15 @@ function main(): void {
       // resolves `true`, so the auto-detect condition below never picks local
       // on its own (see flameHostOverride's doc).
       const override = flameHostOverride();
+      // One-shot escalation request from a prior worker session's
+      // `gpuUnavailable` (fr-e07): capture it, then clear it so this is the
+      // only render it forces — a later ordinary Render re-evaluates the host
+      // choice from scratch.
+      const escalating = escalateFlameToLocalHost;
+      escalateFlameToLocalHost = false;
       const useLocalHost =
         override === "local" ||
+        escalating ||
         (override !== "worker" &&
           !coarse &&
           !!navigator.gpu &&
@@ -756,14 +821,18 @@ function main(): void {
 
       let host: FlameSessionHost;
       if (useLocalHost) {
+        flameHostKind = "local";
         console.info(
-          "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
+          escalating
+            ? "Flame render: main-thread session (escalated after the worker's GPU was unavailable)."
+            : "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
         );
         // Same-thread transfer is already zero-copy — no SharedArrayBuffer
         // upgrade to allocate (and nothing here would ever populate it).
         flameShared = null;
         host = createLocalFlameSessionHost(handleFlameEvent);
       } else {
+        flameHostKind = "worker";
         flameShared = tryCreateFlameSharedSession(width, height);
         console.info(
           flameShared

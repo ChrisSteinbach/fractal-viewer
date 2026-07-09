@@ -248,6 +248,12 @@ function backendEvents(
   return events.filter((e) => e.type === "backend");
 }
 
+function gpuUnavailableEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "gpuUnavailable" }>[] {
+  return events.filter((e) => e.type === "gpuUnavailable");
+}
+
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -1436,6 +1442,98 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     ]);
   });
 
+  it("emits gpuUnavailable when the 3D GPU factory rejects, before the CPU fallback runs", async () => {
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      throw new Error("no suitable GPU adapter");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(gpuUnavailableEvents(events)).toHaveLength(1);
+    // The real CPU accumulate still ran, undeterred by the signal.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", adapter: undefined },
+    ]);
+
+    // The signal precedes the CPU backend event, so a host can escalate
+    // before any CPU frame lands.
+    const firstBackend = events.findIndex((e) => e.type === "backend");
+    const firstUnavailable = events.findIndex(
+      (e) => e.type === "gpuUnavailable",
+    );
+    expect(firstUnavailable).toBeGreaterThanOrEqual(0);
+    expect(firstUnavailable).toBeLessThan(firstBackend);
+  });
+
+  it("emits gpuUnavailable only once even when a later restart re-attempts a session whose GPU already failed", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      throw new Error("no suitable GPU adapter");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    session.handle({ type: "setSupersample", supersample: 2 });
+    await drainAsync(scheduler);
+
+    // The gpuFailed ratchet means neither the factory nor the signal repeats
+    // on the restart.
+    expect(factoryCalls).toBe(1);
+    expect(gpuUnavailableEvents(events)).toHaveLength(1);
+  });
+
+  it("does not emit gpuUnavailable when the GPU factory resolves a working backend", async () => {
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "Fake Adapter",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+  });
+
+  it("does not emit gpuUnavailable when a GPU dispatch fails mid-render (only a create failure signals it)", async () => {
+    let accumulateCalls = 0;
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => {
+        accumulateCalls++;
+        if (accumulateCalls === 1) return 10; // first chunk succeeds.
+        throw new Error("device lost");
+      },
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    await drainAsync(scheduler);
+
+    // Confirms the fixture really did reach a mid-run dispatch failure (gpu
+    // create succeeded, then fell back to cpu after accumulate rejected).
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // Create-only scope: a dispatch failure must NOT signal gpuUnavailable.
+    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+  });
+
   it("restarts on CPU from scratch when the GPU backend's accumulate rejects mid-run", async () => {
     let accumulateCalls = 0;
     const backend: FlameAccumBackend = {
@@ -2095,6 +2193,23 @@ describe("FlameWorkerSession 4D flame render", () => {
       { type: "backend", backend: "cpu", adapter: undefined },
       { type: "backend", backend: "cpu", adapter: undefined }, // the restart re-emits, still cpu.
     ]);
+  });
+
+  it("emits gpuUnavailable when the 4D GPU factory rejects", async () => {
+    const createGpuBackend4 = async (): Promise<FlameAccumBackend> => {
+      throw new Error("no suitable GPU adapter");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend4 });
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(gpuUnavailableEvents(events)).toHaveLength(1);
   });
 
   it("a 3D session never calls the 4D factory", async () => {
