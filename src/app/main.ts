@@ -73,6 +73,7 @@ import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
+import { createFrameCoalescer } from "./regen-scheduler";
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -366,6 +367,12 @@ function main(): void {
   // treatment even when the PREVIOUS system was already non-flat too (e.g.
   // switching from the double-rotation spiral straight to the pentatope).
   function regenerate(replaced = false): void {
+    // This synchronous run produces the freshest cloud, so drop any coalesced
+    // run a drag/slider burst left queued for the next frame (fr-acc) — it
+    // would otherwise fire a redundant second generation. Harmlessly a no-op
+    // when nothing is pending, including when this call IS the coalesced run
+    // (the coalescer clears its handle before invoking us).
+    regenScheduler.cancel();
     const nonFlat = systemIsNonFlat(state);
     const wasNonFlat = viewIs4D;
     viewIs4D = nonFlat;
@@ -447,6 +454,20 @@ function main(): void {
     scene.setPoints(lastResult.positions, colors);
     ui.setPointCount(lastResult.count);
   }
+
+  // Coalesce the high-frequency regenerate() triggers — a guide-box drag's
+  // pointermove and a panel slider's input both fire many times per frame — to
+  // at most ONE run per animation frame (fr-acc). regenerate() is O(numPoints)
+  // and stays synchronous (so the preset/Surprise-Me/undo/boot paths that read
+  // the fresh lastResult right after it for camera framing keep working); this
+  // just stops a single drag from running a whole chaos game on every event.
+  // Only the drag/slider sites schedule() through here; every one-shot path
+  // still calls regenerate() directly (and cancels any pending frame).
+  const regenScheduler = createFrameCoalescer(
+    () => regenerate(),
+    (cb) => requestAnimationFrame(cb),
+    (handle) => cancelAnimationFrame(handle),
+  );
 
   // Rebuild only the color buffer over the cached cloud and push it to the
   // scene. Leaves positions (and thus the RNG) untouched, so switching color
@@ -1271,7 +1292,7 @@ function main(): void {
       return true;
     },
     regenerateIfAutoUpdate: () => {
-      if (state.autoUpdate) regenerate();
+      if (state.autoUpdate) regenScheduler.schedule();
     },
     recolor,
     applyFourDColor,
@@ -1423,7 +1444,7 @@ function main(): void {
         state.selectedTransform,
         state.finalTransform ?? null,
       );
-      if (state.autoUpdate) regenerate();
+      if (state.autoUpdate) regenScheduler.schedule();
     },
     onToggleFinalTransform: (checked) => {
       applyEdit(() => {
@@ -1451,7 +1472,7 @@ function main(): void {
         state.selectedTransform,
         state.finalTransform ?? null,
       );
-      if (state.autoUpdate) regenerate();
+      if (state.autoUpdate) regenScheduler.schedule();
     },
     onTogglePanel: () => {
       state = setPanelOpen(state, !state.panelOpen);
@@ -1511,7 +1532,7 @@ function main(): void {
         state.finalTransform ?? null,
       );
       ui.renderTransformEditor(state.transforms[index], index);
-      if (state.autoUpdate) regenerate();
+      if (state.autoUpdate) regenScheduler.schedule();
     },
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
