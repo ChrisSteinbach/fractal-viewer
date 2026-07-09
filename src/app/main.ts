@@ -68,6 +68,8 @@ import {
   saveScene,
   toSnapshot,
 } from "./persist";
+import type { SceneSnapshot } from "./persist";
+import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
@@ -148,6 +150,23 @@ function webglAvailable(): boolean {
     const gl =
       canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl");
     return Boolean(window.WebGLRenderingContext && gl);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy `text` to the clipboard, resolving `true` on success (fr-cai's "Copy
+ * link"). Uses the async Clipboard API — available in the app's HTTPS/secure
+ * contexts under the button's user gesture — and resolves `false` when it's
+ * unavailable or rejects, so the caller can flash a fallback message instead
+ * of throwing.
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     return false;
   }
@@ -238,6 +257,14 @@ function main(): void {
       console.error(`Video recording: ${message}`);
     },
   });
+
+  // The saved-scene collection (fr-cai): a persistent multi-slot library the
+  // user explicitly saves into, layered over the SAME encodeScene codec the
+  // single-scene autosave and undo history use — so a saved entry is just an
+  // immutable encoded string plus a thumbnail, and loading one is a
+  // whole-system replacement like a preset (see loadEncodedScene). Distinct
+  // localStorage key, so it never disturbs the live scene or its history.
+  const collection = new SceneCollection();
 
   // The most recent chaos-game run, cached so a color-mode change can recolor
   // the existing cloud (see `recolor`) instead of re-rolling the RNG and drawing
@@ -1088,25 +1115,23 @@ function main(): void {
   }
 
   /**
-   * Apply a history snapshot: whole-system-replacement semantics, the same path
-   * a boot-time hash/localStorage load takes. Any active flame/solid render is
-   * exited first (they are session-only overlays OF the document; the app
-   * "boots into the explorer" and so does time travel). View state stays live
-   * except where the restored document invalidates it: the selection is
+   * Apply an already-decoded snapshot to the live app with whole-system-
+   * replacement semantics, the same path a boot-time hash/localStorage load
+   * takes. Any active flame/solid render is exited first (they are
+   * session-only overlays OF the document; the app "boots into the explorer"
+   * and so does time travel / a gallery load). View state stays live except
+   * where the restored document invalidates it: the selection is
    * clamped/cleared exactly like removeTransform does, and the preset scaffold
    * is cleared (preset-load decoration, not document state). `refit` re-frames
-   * the camera only when the step crosses a whole-system replacement —
-   * symmetric with how the camera moved when that replacement was applied;
-   * ordinary parameter edits leave the user's framing alone.
+   * the camera when the load is a whole-system replacement — symmetric with
+   * how the camera moved when that replacement was first applied.
    *
-   * This is {@link EditSession}'s injected `restore`, so it must NOT cut an
-   * undo checkpoint (an undo/redo is not itself an edit) — the session arms
-   * the restored document's checkpoint-free debounced save on its own once
-   * this returns (see edit-session.ts).
+   * Cutting (or not) an undo checkpoint is the CALLER's business, not this
+   * function's: {@link restoreSnapshot} (EditSession's `restore`) must not
+   * checkpoint, while {@link loadEncodedScene} (a gallery load, a genuine
+   * user edit) checkpoints via `beginEdit("replace")` before calling in.
    */
-  function restoreSnapshot(snapshot: string, refit: boolean): void {
-    const snap = decodeScene(snapshot);
-    if (!snap) return; // can't happen: entries are encodeScene output
+  function applyDecodedSnapshot(snap: SceneSnapshot, refit: boolean): void {
     if (state.flameActive) flameSession.exit();
     if (state.solidActive) solidSession.exit();
     state = fromSnapshot(snap, state);
@@ -1131,6 +1156,20 @@ function main(): void {
     refreshGuides();
     refreshUi();
     if (refit) fitCameraToAttractor();
+  }
+
+  /**
+   * Apply a history snapshot — {@link EditSession}'s injected `restore`. Decodes
+   * the entry and hands it to {@link applyDecodedSnapshot}. It must NOT cut an
+   * undo checkpoint (an undo/redo is not itself an edit) — the session arms the
+   * restored document's checkpoint-free debounced save on its own once this
+   * returns (see edit-session.ts). `refit` re-frames only when the step crosses
+   * a whole-system replacement; ordinary parameter edits leave framing alone.
+   */
+  function restoreSnapshot(snapshot: string, refit: boolean): void {
+    const snap = decodeScene(snapshot);
+    if (!snap) return; // can't happen: entries are encodeScene output
+    applyDecodedSnapshot(snap, refit);
   }
 
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
@@ -1159,6 +1198,24 @@ function main(): void {
     if (document.visibilityState === "hidden") editSession.flush();
   });
   window.addEventListener("pagehide", () => editSession.flush());
+
+  /**
+   * Load a saved (encoded) scene from the collection gallery (fr-cai) as a
+   * whole-system replacement — the same treatment a preset load / Surprise Me
+   * gets. Unlike {@link restoreSnapshot} (EditSession's checkpoint-free
+   * `restore`), a gallery load IS a genuine user edit, so it cuts its own
+   * "replace" undo checkpoint (making the load undoable and arming the
+   * debounced save) via `beginEdit("replace")` before applying, and re-frames
+   * the camera. A corrupt entry (decode returns null — can't happen for our own
+   * encodeScene output, but the collection is untrusted localStorage) is
+   * ignored rather than blanking the current scene.
+   */
+  function loadEncodedScene(encoded: string): void {
+    const snap = decodeScene(encoded);
+    if (!snap) return;
+    editSession.beginEdit("replace");
+    applyDecodedSnapshot(snap, true);
+  }
 
   /**
    * Shared choreography for edits that replace or modify the transform set.
@@ -1301,6 +1358,41 @@ function main(): void {
     onRegenerate: () => regenerate(),
     onRecordVideoToggle: () => {
       recorder.toggle();
+    },
+    // Saved-scene collection (fr-cai). Save/copy act on the CURRENT document
+    // (the same encodeScene(toSnapshot(state)) the autosave/undo use); the
+    // thumbnail is a downsampled snapshot of the live cloud. These are reachable
+    // only from the explorer (their section hides during a render), so the
+    // thumbnail is always the point cloud, never a frozen flame/solid frame.
+    onSaveToCollection: () => {
+      collection.add(encodeScene(toSnapshot(state)), scene.captureThumbnail());
+      ui.setCollectionCount(collection.size);
+      ui.flashToast("Saved to collection");
+    },
+    onOpenGallery: () => {
+      ui.openGallery(collection.all());
+    },
+    onLoadFromCollection: (id) => {
+      const entry = collection.all().find((s) => s.id === id);
+      if (!entry) return; // deleted between render and click — nothing to load.
+      ui.closeGallery();
+      loadEncodedScene(entry.encoded);
+    },
+    onDeleteFromCollection: (id) => {
+      collection.remove(id);
+      ui.setCollectionCount(collection.size);
+      ui.renderGallery(collection.all()); // refresh the still-open modal in place.
+    },
+    onCopyLink: () => {
+      // Build the link from CURRENT state rather than reading location.hash,
+      // which the autosave only writes on its 300ms debounce (so it can lag a
+      // just-made edit). origin + pathname drops any existing hash/query.
+      const link = `${location.origin}${location.pathname}#${encodeScene(
+        toSnapshot(state),
+      )}`;
+      void copyToClipboard(link).then((ok) =>
+        ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
+      );
     },
     onSavePng: () => {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
@@ -1498,6 +1590,7 @@ function main(): void {
   scene.setGuidesVisible(state.showGuides);
   refreshUi();
   editSession.syncUi();
+  ui.setCollectionCount(collection.size);
 
   // While a flame render is active, accumulation/downsample/tone-map all
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"

@@ -20,6 +20,7 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
+import type { SavedScene } from "./collection";
 import type { AppState } from "./state";
 import {
   MAX_W_ANGLE,
@@ -82,6 +83,19 @@ export interface UiHandlers {
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
+  /** "★ Save to collection" was clicked: snapshot the current scene into the
+   * saved-scene collection (fr-cai). */
+  onSaveToCollection: () => void;
+  /** "▦ Gallery" was clicked: open the saved-scene gallery modal. The app
+   * hands the current collection back via {@link Ui.openGallery}. */
+  onOpenGallery: () => void;
+  /** A gallery thumbnail was clicked: load that saved scene by its id
+   * (whole-system replacement, like a preset load). */
+  onLoadFromCollection: (id: string) => void;
+  /** A gallery card's ✕ was clicked: delete that saved scene by its id. */
+  onDeleteFromCollection: (id: string) => void;
+  /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
+  onCopyLink: () => void;
   onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
@@ -471,6 +485,27 @@ interface EditorState {
   fourD: FourDControls;
 }
 
+/** How long a {@link Ui.flashToast} confirmation stays on screen. */
+const TOAST_DURATION_MS = 1800;
+
+/**
+ * Compact "Jul 9, 14:32" label for a saved scene's `createdAt`, used as the
+ * gallery card caption and its accessible name. Locale-formatted (the browser's
+ * own month names / time format), so no hand-rolled date strings to maintain.
+ */
+function galleryTimestamp(ms: number): string {
+  const date = new Date(ms);
+  const day = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${day}, ${time}`;
+}
+
 /**
  * Owns the control panel and the dynamic transform list. All DOM is built with
  * `createElement`/`textContent` (never `innerHTML`) so user-influenced strings
@@ -512,6 +547,19 @@ export class Ui {
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   private readonly recordVideoBtn: HTMLButtonElement;
+
+  // Saved-scene collection (fr-cai): the panel's Save/Gallery/Copy-link
+  // buttons, the gallery-count readout, and the gallery modal + its parts.
+  private readonly saveCollectionBtn: HTMLButtonElement;
+  private readonly galleryBtn: HTMLButtonElement;
+  private readonly copyLinkBtn: HTMLButtonElement;
+  private readonly collectionCount: HTMLElement;
+  private readonly galleryModal: HTMLElement;
+  private readonly galleryBackdrop: HTMLElement;
+  private readonly galleryCloseBtn: HTMLButtonElement;
+  private readonly galleryGrid: HTMLElement;
+  private readonly galleryEmpty: HTMLElement;
+  private readonly toast: HTMLElement;
   private readonly glowBrightnessRow: HTMLElement;
   private readonly colorGammaRow: HTMLElement;
   private readonly symmetryNote: HTMLElement;
@@ -587,6 +635,17 @@ export class Ui {
 
   private editor: EditorState | null = null;
 
+  /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Escape-to-close for the gallery, attached to the document only while the
+   * modal is open (see {@link openGallery}/{@link closeGallery}) so it never
+   * lingers or double-binds. An arrow field so add/removeEventListener share
+   * one stable reference. */
+  private readonly onGalleryKeydown = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") this.closeGallery();
+  };
+
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
@@ -617,6 +676,16 @@ export class Ui {
     this.savePngBtn = this.byId("savePngBtn");
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
+    this.saveCollectionBtn = this.byId("saveCollectionBtn");
+    this.galleryBtn = this.byId("galleryBtn");
+    this.copyLinkBtn = this.byId("copyLinkBtn");
+    this.collectionCount = this.byId("collectionCount");
+    this.galleryModal = this.byId("galleryModal");
+    this.galleryBackdrop = this.byId("galleryBackdrop");
+    this.galleryCloseBtn = this.byId("galleryCloseBtn");
+    this.galleryGrid = this.byId("galleryGrid");
+    this.galleryEmpty = this.byId("galleryEmpty");
+    this.toast = this.byId("toast");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.colorGammaRow = this.byId("colorGammaRow");
     this.symmetryNote = this.byId("symmetryNote");
@@ -711,6 +780,16 @@ export class Ui {
     this.recordVideoBtn.addEventListener("click", () =>
       handlers.onRecordVideoToggle(),
     );
+    this.saveCollectionBtn.addEventListener("click", () =>
+      handlers.onSaveToCollection(),
+    );
+    this.galleryBtn.addEventListener("click", () => handlers.onOpenGallery());
+    this.copyLinkBtn.addEventListener("click", () => handlers.onCopyLink());
+    // Closing the gallery is a pure view concern (no app state to update), so
+    // the Ui owns it directly rather than routing through a handler — the ✕,
+    // the backdrop, and Escape (bound only while open) all just closeGallery().
+    this.galleryCloseBtn.addEventListener("click", () => this.closeGallery());
+    this.galleryBackdrop.addEventListener("click", () => this.closeGallery());
     // Every table-driven scalar control (see control-spec.ts) shares one
     // listener shape: read the element's raw value/checked and hand it, with
     // its spec, to the app's single scalar pipeline. Sliders report "input"
@@ -1002,6 +1081,102 @@ export class Ui {
       : "● Record video";
     this.recordVideoBtn.classList.toggle("btn-ghost", !recording);
     this.recordVideoBtn.classList.toggle("btn-red", recording);
+  }
+
+  /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai). */
+  setCollectionCount(count: number): void {
+    this.collectionCount.textContent = String(count);
+  }
+
+  /** Open the gallery modal over `scenes` (newest-first) and arm Escape-to-close. */
+  openGallery(scenes: SavedScene[]): void {
+    this.renderGallery(scenes);
+    this.galleryModal.classList.remove("hidden");
+    this.doc.addEventListener("keydown", this.onGalleryKeydown);
+  }
+
+  /** Hide the gallery modal and drop its Escape listener. Idempotent. */
+  closeGallery(): void {
+    this.galleryModal.classList.add("hidden");
+    this.doc.removeEventListener("keydown", this.onGalleryKeydown);
+  }
+
+  /**
+   * (Re)build the gallery grid from `scenes` (newest-first). Called by
+   * {@link openGallery} and again after a delete so the open modal refreshes
+   * in place. Each card is a thumbnail "load" button with a timestamp caption
+   * plus a corner ✕ delete; all DOM is built with `createElement`, never
+   * `innerHTML`, so a saved `thumbnail`/`id` can never be interpreted as
+   * markup (they set `img.src` / drive `textContent` only).
+   */
+  renderGallery(scenes: SavedScene[]): void {
+    this.galleryGrid.replaceChildren();
+    this.galleryEmpty.classList.toggle("hidden", scenes.length > 0);
+    for (const scene of scenes) {
+      this.galleryGrid.appendChild(this.galleryCard(scene));
+    }
+  }
+
+  private galleryCard(scene: SavedScene): HTMLElement {
+    const label = galleryTimestamp(scene.createdAt);
+    const card = this.doc.createElement("div");
+    card.className = "gallery-card";
+
+    const load = this.doc.createElement("button");
+    load.type = "button";
+    load.className = "gallery-card-load";
+    load.setAttribute("aria-label", `Load saved system from ${label}`);
+    load.addEventListener("click", () =>
+      this.handlers?.onLoadFromCollection(scene.id),
+    );
+
+    if (scene.thumbnail) {
+      const img = this.doc.createElement("img");
+      img.src = scene.thumbnail;
+      img.alt = "";
+      img.loading = "lazy";
+      load.appendChild(img);
+    } else {
+      // Capture failed at save time — a neutral placeholder still reads as "a
+      // saved system" and stays clickable.
+      const placeholder = this.doc.createElement("div");
+      placeholder.className = "gallery-card-noimg";
+      placeholder.textContent = "◆";
+      load.appendChild(placeholder);
+    }
+
+    const caption = this.doc.createElement("div");
+    caption.className = "gallery-card-caption";
+    caption.textContent = label;
+    load.appendChild(caption);
+    card.appendChild(load);
+
+    const del = this.doc.createElement("button");
+    del.type = "button";
+    del.className = "gallery-card-delete";
+    del.textContent = "✕";
+    del.setAttribute("aria-label", `Delete saved system from ${label}`);
+    // A sibling of the load button (not nested), so its click never reaches
+    // the load handler — no stopPropagation needed.
+    del.addEventListener("click", () =>
+      this.handlers?.onDeleteFromCollection(scene.id),
+    );
+    card.appendChild(del);
+
+    return card;
+  }
+
+  /** Flash a brief bottom-center confirmation ("Saved to collection", "Link
+   * copied"), auto-hiding after {@link TOAST_DURATION_MS}. Re-arming cancels
+   * the previous hide so rapid actions don't leave it stuck or flickering. */
+  flashToast(message: string): void {
+    this.toast.textContent = message;
+    this.toast.classList.remove("hidden");
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      this.toast.classList.add("hidden");
+      this.toastTimer = null;
+    }, TOAST_DURATION_MS);
   }
 
   /**

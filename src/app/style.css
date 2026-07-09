@@ -736,3 +736,206 @@ summary.editor-group-title {
   background: var(--surface-3);
   color: var(--text);
 }
+
+/* ── Collection gallery (fr-cai) ──────────────────────────────────────────────
+   A full-screen modal over the whole app (above the #panel at z-index 99) that
+   lays the saved scenes out as a thumbnail grid. Its own scrim/backdrop, so it
+   reads as a distinct layer rather than part of the side panel. */
+.gallery-modal {
+  display: flex;
+  position: fixed;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 200;
+}
+
+/* `.gallery-modal` sets `display: flex`; restate the hide at matching-or-higher
+   specificity (two classes beats the single `.hidden`) so hiding still wins,
+   the same trap the #updateBanner/#renderError notices document above. */
+.gallery-modal.hidden {
+  display: none;
+}
+
+.gallery-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(8 9 14 / 62%);
+  backdrop-filter: blur(4px);
+}
+
+.gallery-dialog {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  width: min(92vw, 680px);
+  max-height: min(82vh, 680px);
+  padding: 18px 18px 22px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow);
+}
+
+.gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.gallery-title {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.gallery-empty {
+  padding: 28px 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+  gap: 12px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.gallery-card {
+  position: relative;
+}
+
+/* The whole thumbnail is the "load this scene" button. */
+.gallery-card-load {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.gallery-card-load:hover,
+.gallery-card-load:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.gallery-card-load img,
+.gallery-card-noimg {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: rgb(0 0 0 / 35%);
+}
+
+.gallery-card-noimg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 22px;
+}
+
+.gallery-card-caption {
+  overflow: hidden;
+  padding: 5px 7px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Per-card delete, kept visible (touch has no hover) but subtle until focus. */
+.gallery-card-delete {
+  display: flex;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  opacity: 0.62;
+  background: rgb(8 9 14 / 62%);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
+}
+
+.gallery-card-delete:hover,
+.gallery-card-delete:focus-visible {
+  opacity: 1;
+  background: var(--bad);
+  outline: none;
+}
+
+/* ── Toast (fr-cai) ───────────────────────────────────────────────────────────
+   Transient bottom-center confirmation for "Saved" / "Link copied". Sits above
+   everything, briefly, then hides. */
+.toast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  padding: 9px 16px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 300;
+  animation: toast-in 0.18s ease;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card-load:hover,
+  .gallery-card-load:focus-visible {
+    transform: none;
+  }
+
+  .toast {
+    animation: none;
+  }
+}
