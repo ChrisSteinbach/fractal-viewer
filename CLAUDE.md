@@ -74,12 +74,27 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `project4.ts` — the SO(4) rotor→matrix + camera projection the 4D renders
     share, the frozen-view snapshot shape (`FourDView`), `sliceWeight`, and the
     single-source-of-truth `SLICE_GHOST_FLOOR` (`0.06`).
+  - `random-system.ts` — the "Surprise Me" generator (`randomSystem`): rolls a
+    complete random IFS (2–4 maps, optional final-transform lens, optional
+    kaleidoscope, 25% chance of a 4D `w` extension) and quality-gates each
+    candidate with short chaos-game probes (bounds sanity + grid occupancy),
+    rerolling up to 40× and keeping the best rather than ever failing. Takes an
+    injected `Rng`, so rolls are reproducible in tests.
   - `rng.ts` — seedable mulberry32 PRNG.
+  - `types.ts` — the dependency-free type vocabulary the whole codebase is
+    written against: `Transform` / `Transform4`, `Vec3` / `Vec4`, `Bounds` /
+    `Bounds4`, and the `WExtension` that makes a system 4D — plus the
+    `VARIATION_TYPES` / `COLOR_MODES` / `FOUR_D_COLOR_MODES` / `SYMMETRY_AXES`
+    const arrays, each the single source of truth for a derived union type and a
+    `persist.ts` validator.
   - `variations.ts` — the dozen nonlinear fractal-flame variations (`spherical`,
     `swirl`, `julia`, …) as pure, total functions; `composeVariations` blends a
     transform's weighted list.
   - `variations4.ts` — the same twelve variations lifted one dimension up,
     reproducing their 3D counterparts bit-for-bit at `w = 0`.
+  - `vec.ts` — three tiny generic numeric helpers (`clamp`, `clone3`, `to255`),
+    dependency-free so the plain-number app modules can share them; nothing in the
+    fractal core itself imports it.
   - `voxel.ts` — the solid render core: accumulate the chaos game into a
     world-space 3-D density grid (`accumulateVoxels`), size it
     (`computeVoxelBounds`), and pack it to an RGBA8 volume (`voxelTextureData`:
@@ -93,18 +108,32 @@ and UI**, so the interesting math is unit-tested without a browser:
     `interactions.ts`, and `voxel-material.ts`; everything else works with plain
     numbers.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
+  - `camera-tween.ts` — smoothstep glide of the orbit camera's target + radius to
+    auto-frame a freshly generated attractor (preset load / Surprise Me) instead
+    of snapping; leaves the orbit angles alone and honors reduced motion (pure,
+    tested, injected clock).
+  - `exposure.ts` — `glowExposure`: a density-adaptive brightness multiplier for
+    the live cloud's `"glow"` render style, derived from screen-space
+    points-per-pixel so additive points don't blow out to white (pure, tested).
+    Not the flame tone-map's `exposure` — this only scales `glowMaterial.opacity`.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
     localStorage so systems are shareable and survive reloads. Pure codec with a
     strict, never-throwing decoder; storage/location are injected (tested).
   - `history.ts` — session-only undo/redo stacks over the encoded scene
     snapshot (pure, tested).
+  - `edit-session.ts` — the burst-coalescing policy over `history.ts`: collapses a
+    rapid edit burst (e.g. a slider drag) into one undo checkpoint and one
+    debounced save, and drives undo/redo. Every side effect (snapshot, persist,
+    restore, UI sync, the timer) is injected; pure, tested.
   - `ui.ts` — control panel + transform list, built with `createElement`.
   - `control-spec.ts` — declarative spec table for the panel's simple scalar
     controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
     listeners, and label sync from it; `main.ts` derives the one generic
     handler. Adding a scalar setting = one spec entry + one index.html row
     (pure, tested).
+  - `constants.ts` — shared UI/interaction magic numbers (`MOBILE_BREAKPOINT`, the
+    guide-box scale clamps) kept out of `src/fractal/` on purpose.
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
@@ -117,6 +146,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     driving CPU (`accumulateFlame` / `accumulateFlame4`) or WebGPU accumulation
     behind the `FlameAccumBackend` seam; SharedArrayBuffer fast path,
     postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D.
+  - `flame-perf.ts` — `FlamePerfMeter`, opt-in flame-throughput diagnostics
+    (behind the `?flameperf` URL param): windows the worker's per-chunk timing
+    samples into a throughput summary. Pure, tested; deliberately changes no
+    render behavior.
   - `voxel-worker.ts` / `voxel-worker-core.ts` — the solid render worker, same
     shape as the flame worker but postMessage-transfer only (the solid render
     has no live tone-map to fast-path).
@@ -135,6 +168,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     snapshot when the system is 4D.
   - `rotor4.ts` — SO(4) rotation as a renormalizable unit-quaternion pair
     (`RotorPair`), composed cheaply over a long session.
+  - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — the video-capture
+    feature: `createCanvasRecorder` streams the shared WebGL canvas through
+    `MediaRecorder` to a downloadable clip (MP4 preferred for upload
+    compatibility, WebM fallback); the two dependency-free binary patchers rewrite
+    the duration metadata the browser's `MediaRecorder` leaves unset so uploads
+    are accepted. Pure helpers are tested; the `MediaRecorder` glue is verified
+    in-browser.
   - `register-sw.ts` — service-worker registration + the reload-once
     cross-origin-isolation bootstrap (gives the flame worker its
     SharedArrayBuffer fast path; postMessage transfer is the fallback).
