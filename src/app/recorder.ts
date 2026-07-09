@@ -239,8 +239,7 @@ function downloadBlob(blob: Blob, filename: string): void {
   link.href = url;
   link.download = filename;
   link.click();
-  // Give the download time to begin before releasing the blob URL
-  // (same cleanup discipline as the probe-worker URL in flame-session-host).
+  // Give the download time to begin before releasing the blob URL.
   setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 10_000);

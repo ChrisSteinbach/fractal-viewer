@@ -18,11 +18,7 @@ import {
 import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
-import {
-  createLocalFlameSessionHost,
-  probeWorkerWebGpu,
-} from "./flame-session-host";
-import type { FlameSessionHost } from "./flame-session-host";
+import type { RenderSessionHandle } from "./render-session";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { glowExposure } from "./exposure";
@@ -180,20 +176,6 @@ function prefersReducedMotion(): boolean {
   return (
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true
   );
-}
-
-/**
- * Manual escape hatch for which {@link FlameSessionHost} the flame session's
- * `start` picks (fr-1ib): `?flamehost=local` forces the main-thread session,
- * `?flamehost=worker` forces the real Worker one, anything else (including
- * the param being absent) defers to the auto-detect logic. This is also
- * the only way to exercise the local host in Chrome, where dedicated
- * workers DO have WebGPU — `workerWebGpu` there resolves `true`, so the
- * auto-detect condition never picks local on its own.
- */
-function flameHostOverride(): "local" | "worker" | null {
-  const value = new URLSearchParams(window.location.search).get("flamehost");
-  return value === "local" || value === "worker" ? value : null;
 }
 
 /**
@@ -559,46 +541,20 @@ function main(): void {
   scene.canvas.addEventListener("wheel", cancelTween, cancelTweenOptions);
   scene.canvas.addEventListener("touchstart", cancelTween, cancelTweenOptions);
 
-  // Probed once, here at boot (fr-1ib) — well before a human could
-  // plausibly click Render — whether dedicated WORKERS on this browser
-  // actually have usable WebGPU. Firefox 152 is a real counterexample:
-  // `navigator.gpu` exists on the main thread but not inside dedicated
-  // workers, so the flame worker's own GPU attempt would silently always
-  // fail there, and the fastest machine measured during fr-npb's
-  // benchmarking (an RX 7900 XTX) would render on CPU forever. `null` (still
-  // unresolved, or never probed at all — coarse-pointer/no-navigator.gpu
-  // devices skip it outright: the answer only picks worker- vs main-thread
-  // HOSTING via `useLocalHost` below, which is fine-pointer-only. A phone's
-  // worker session still attempts GPU on its own (fr-hs9) and self-falls-
-  // back through the gpuFailed ratchet, no pre-probe needed) always
-  // conservatively takes the worker path the flame session already used before
-  // this existed. See flame-session-host.ts's `probeWorkerWebGpu` for the
-  // probe itself and the flame session's `start` below for how it's used.
-  let workerWebGpu: boolean | null = null;
-  if (navigator.gpu && !window.matchMedia("(pointer: coarse)").matches) {
-    void probeWorkerWebGpu().then((ok) => {
-      workerWebGpu = ok;
-    });
-  }
-
-  // Flame render session (fr-o7s/fr-ucs/fr-73y): a session (either a real
-  // Web Worker, or — fr-1ib — the SAME FlameWorkerSession hosted on this
-  // main thread when workers here lack WebGPU but the main thread has it —
-  // owns the supersampled accumulation, the OOM guard, the throttled
-  // downsample, and (in transfer mode) the tone-map (see
-  // flame-worker-core.ts) — this is thin glue that spins one up per render
-  // and forwards UI events as messages. When the page is cross-origin
-  // isolated (fr-96i: natively in dev via vite's server headers; in
-  // production via the COOP/COEP-injecting service worker in sw/sw.ts,
-  // since GitHub Pages cannot send those headers itself), a WORKER-hosted
-  // render upgrades to a SharedArrayBuffer transport: the worker downsamples
-  // into shared display-resolution buckets and THIS thread tone-maps a live
-  // view of them (see presentSharedFrame), so exposure/gamma/vibrancy
-  // changes land instantly with no worker round trip and nothing per-tick
-  // crosses but a few scalars. Without isolation — and always for the
-  // main-thread host, which is already zero-copy same-thread — it falls
-  // back to fr-73y's postMessage transfer of a tone-mapped image. Either way
-  // the big oversampled accumulator never leaves the session.
+  // Flame render session (fr-o7s/fr-ucs/fr-73y): a dedicated Worker owns the
+  // supersampled accumulation, the OOM guard, the throttled downsample, and
+  // (in transfer mode) the tone-map (see flame-worker-core.ts) — this is
+  // thin glue that spins one up per render and forwards UI events as
+  // messages. When the page is cross-origin isolated (fr-96i: natively in
+  // dev via vite's server headers; in production via the COOP/COEP-injecting
+  // service worker in sw/sw.ts, since GitHub Pages cannot send those headers
+  // itself), the render upgrades to a SharedArrayBuffer transport: the worker
+  // downsamples into shared display-resolution buckets and THIS thread
+  // tone-maps a live view of them (see presentSharedFrame), so
+  // exposure/gamma/vibrancy changes land instantly with no worker round trip
+  // and nothing per-tick crosses but a few scalars. Without isolation it
+  // falls back to fr-73y's postMessage transfer of a tone-mapped image.
+  // Either way the big oversampled accumulator never leaves the worker.
   // The shared-transport session (fr-96i): the two SAB-backed frame slots
   // this side allocated for the current render, plus which slot the worker
   // most recently told us to read (and its maxHits — the one tonemapFlame
@@ -612,20 +568,7 @@ function main(): void {
   }
   let flameShared: FlameSharedSession | null = null;
 
-  // fr-e07/fr-8ck: which host the CURRENT flame session runs on, and whether a
-  // worker-hosted session's WebGPU has failed this page session. When a
-  // WORKER-hosted session reports `gpuUnavailable` with `reason: "no-webgpu"`
-  // (the worker CONTEXT has no usable WebGPU — fr-1ib's Firefox gap; see the
-  // event's doc for why no other reason escalates) and THIS thread has its own
-  // WebGPU, we escalate to the main-thread GPU host rather than accept the
-  // worker's CPU fallback. `preferLocalHost` is STICKY, not one-shot: once the
-  // worker context has proven GPU-less we keep using the main-thread host for
-  // the rest of the session, so only the FIRST render eats the wasted worker
-  // attempt. Chrome, where the worker GPU works, never sets it and keeps the
-  // off-main-thread worker path. Resets on reload.
-  let flameHostKind: "worker" | "local" | null = null;
-  let preferLocalHost = false;
-  // Why the CURRENT render's session gave up on GPU (null while it hasn't):
+  // Why the CURRENT render's worker gave up on GPU (null while it hasn't):
   // remembered from the `gpuUnavailable` event so the subsequent `backend`
   // event's CPU note can say WHY it reads "CPU accumulation" — the absence of
   // that why is what made field reports of this flakiness undiagnosable
@@ -718,45 +661,11 @@ function main(): void {
         );
         break;
       case "gpuUnavailable":
-        // fr-e07/fr-8ck: a worker-hosted session's WebGPU backend failed for
-        // good (its own recovery ladder is exhausted — see the event's doc)
-        // and it is about to render on CPU. If the failure is that the worker
-        // CONTEXT has no usable WebGPU (`reason: "no-webgpu"` — fr-1ib's
-        // Firefox gap), this session runs in a WORKER, and THIS thread has
-        // its own WebGPU (fine-pointer + navigator.gpu — the same signals the
-        // local-host auto-detect uses), escalate to the main-thread GPU host
-        // instead of accepting the worker's CPU fallback, and REMEMBER it
-        // (`preferLocalHost`) so the rest of this page session renders on the
-        // main thread from the start — only this first render pays the wasted
-        // worker attempt. Any OTHER reason (out-of-memory, device loss, a
-        // compile error) is NOT escalated (fr-2w5): the main thread's GPU is
-        // the same hardware and allocator and fails identically — fr-e07's
-        // field test watched both hosts OOM the same 24 GB card back to back,
-        // so escalating just doubles the failure the user sits through. A
-        // session that is already local-hosted (flameHostKind !== "worker")
-        // has nothing better to escalate to, so its own gpuUnavailable is
-        // ignored and its CPU fallback stands as the final one. An explicit
-        // `?flamehost=worker` pin is honored — no escalation — so the worker
-        // path stays testable in isolation.
+        // The worker's GPU recovery ladder is exhausted — it will fall back to
+        // CPU accumulation. Record the reason so the subsequent "backend"
+        // event's CPU note can say WHY (fr-2w5). No escalation: the worker's
+        // CPU path is the correct, universal fallback (fr-27h).
         flameGpuUnavailableReason = event.reason;
-        if (
-          event.reason === "no-webgpu" &&
-          flameHostKind === "worker" &&
-          flameHostOverride() !== "worker" &&
-          !!navigator.gpu &&
-          !window.matchMedia("(pointer: coarse)").matches
-        ) {
-          console.info(
-            "Flame render: worker context has no usable WebGPU; escalating to the main-thread GPU session for the rest of this session.",
-          );
-          preferLocalHost = true;
-          // Re-enter now on the local host. enter() terminates the worker host
-          // first (its hardened terminate() detaches handlers, so the worker's
-          // already-queued CPU-fallback events can't reach this handler and
-          // disturb the fresh local session), then start() honors the sticky
-          // preference.
-          flameSession.enter();
-        }
         break;
       case "estimating":
         ui.setFlameEstimating();
@@ -772,15 +681,9 @@ function main(): void {
     }
   }
 
-  // Wraps a real flame Worker in the same FlameSessionHost surface the
-  // main-thread session (flame-session-host.ts) implements, so the flame
-  // RenderSession (its start/post/exit) doesn't need to know which one is
-  // actually running (fr-1ib). `onerror` — a real Worker's uncaught-
-  // exception signal — has no main-thread-host equivalent (there is no
-  // second thread here to crash independently of this one), so it stays
-  // worker-specific, wired up here rather than folded into
-  // FlameSessionHost's shared surface.
-  function createWorkerFlameSessionHost(): FlameSessionHost {
+  // Wraps the real flame Worker in a RenderSessionHandle so RenderSession's
+  // start/post/exit can drive it uniformly (same shape the solid worker uses).
+  function createFlameWorkerHost(): RenderSessionHandle<FlameWorkerCommand> {
     const worker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
       type: "module",
     });
@@ -795,14 +698,10 @@ function main(): void {
       post: (command) => worker.postMessage(command),
       terminate: () => {
         // Detach the handlers BEFORE terminating so a message the worker
-        // already queued to this thread (a "progress"/"backend"/"error"/
-        // "gpuUnavailable" posted just before this) can't still reach
-        // handleFlameEvent and act on a session this host no longer
-        // represents — e.g. a stale "error" calling flameSession.exit() out
-        // from under a freshly-escalated local session, or a stale
-        // "gpuUnavailable" re-triggering escalation (fr-e07). A terminated
-        // worker posts nothing new; this closes the already-queued gap the
-        // local host already gets for free from its `closed` guard.
+        // already queued to this thread can't still reach handleFlameEvent
+        // and act on a session this host no longer represents (e.g. a stale
+        // "error" calling flameSession.exit() after re-entry). A terminated
+        // worker posts nothing new; this closes the already-queued gap.
         worker.onmessage = null;
         worker.onerror = null;
         worker.terminate();
@@ -869,15 +768,15 @@ function main(): void {
     };
   }
 
-  // The flame render session (fr-o7s/fr-1ib): freeze the current camera and
-  // converge a flame render of it in a fresh worker/host. Entered only from
-  // the Render button — never automatically — so the explorer stays the
-  // default, always-interactive experience; exited on Back, on a render
-  // error, or on an undo/redo. The enter/exit/terminate + first-frame-gate
-  // choreography is shared with the solid session below through RenderSession
-  // (render-session.ts); only the genuine flame specifics — the WebGPU host
-  // choice, the SharedArrayBuffer transport, and the `start` payload — live in
-  // these injected deps. The defensive double-entry terminate lives in
+  // The flame render session (fr-o7s): freeze the current camera and converge
+  // a flame render of it in a fresh dedicated Worker. Entered only from the
+  // Render button — never automatically — so the explorer stays the default,
+  // always-interactive experience; exited on Back, on a render error, or on
+  // an undo/redo. The enter/exit/terminate + first-frame-gate choreography is
+  // shared with the solid session below through RenderSession
+  // (render-session.ts); only the genuine flame specifics — the
+  // SharedArrayBuffer transport and the `start` payload — live in these
+  // injected deps. The defensive double-entry terminate lives in
   // RenderSession.enter, so `start` only builds and kicks off.
   const flameSession = new RenderSession<FlameWorkerCommand>({
     start: () => {
@@ -887,44 +786,14 @@ function main(): void {
       // Phone/tablet-class devices: shared with the memory-budget computation
       // below, so only read matchMedia once.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
-      // The manual override is also how the local host gets verified in
-      // Chrome, where dedicated workers have WebGPU that WORKS — `workerWebGpu`
-      // resolves `true` and it never fails, so neither the auto-detect nor the
-      // fr-8ck sticky path below ever picks local there on its own; the override
-      // is the only way to force it (see flameHostOverride's doc).
-      const override = flameHostOverride();
-      const useLocalHost =
-        override === "local" ||
-        // fr-8ck: sticky — a worker GPU failure earlier this session pins us to
-        // the reliable main-thread host for every render that follows.
-        preferLocalHost ||
-        (override !== "worker" &&
-          !coarse &&
-          !!navigator.gpu &&
-          workerWebGpu === false);
 
-      let host: FlameSessionHost;
-      if (useLocalHost) {
-        flameHostKind = "local";
-        console.info(
-          preferLocalHost
-            ? "Flame render: main-thread session (worker GPU failed earlier this session; using the main-thread GPU)."
-            : "Flame render: main-thread session (main-thread GPU host).",
-        );
-        // Same-thread transfer is already zero-copy — no SharedArrayBuffer
-        // upgrade to allocate (and nothing here would ever populate it).
-        flameShared = null;
-        host = createLocalFlameSessionHost(handleFlameEvent);
-      } else {
-        flameHostKind = "worker";
-        flameShared = tryCreateFlameSharedSession(width, height);
-        console.info(
-          flameShared
-            ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
-            : "Flame render: postMessage-transfer transport.",
-        );
-        host = createWorkerFlameSessionHost();
-      }
+      flameShared = tryCreateFlameSharedSession(width, height);
+      console.info(
+        flameShared
+          ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
+          : "Flame render: postMessage-transfer transport.",
+      );
+      const host = createFlameWorkerHost();
 
       // Post the `start` via the freshly-created host, NOT flameSession.post:
       // RenderSession.enter only stores this returned handle afterwards, so
@@ -938,9 +807,7 @@ function main(): void {
         height,
         // A worker needs an explicit numeric seed — a live Rng (like
         // Math.random) can't cross postMessage — which as a side effect makes
-        // a render a reproducible pure function of its inputs. Harmless to
-        // draw the same way for the local host too (nothing there needs
-        // postMessage), keeping `start`'s construction identical either way.
+        // a render a reproducible pure function of its inputs.
         seed: Math.floor(Math.random() * 0xffffffff),
         requestedSupersample: state.flame.supersample,
         // Device-aware memory budget for the supersampled accumulator (fr-7c8).
@@ -963,24 +830,17 @@ function main(): void {
         axis: state.symmetry.axis,
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
-        // Always undefined for the local host (see above).
         sharedFrames: flameShared?.frames,
-        // WebGPU accumulation (fr-npb/fr-1ib/fr-hs9): "auto" everywhere — try
-        // GPU first, fall back to CPU automatically via the session's
-        // gpuFailed ratchet. Coarse-pointer (phone/tablet) devices were "off"
-        // until fr-hs9's phone validation (Android Chrome, arm valhall):
-        // agreement pass on every gpu-bench scenario including the fr-ee9
-        // display-downsample legs, at ~19-36x the CPU worker's iteration
-        // rate. Mobile-specific ceilings need nothing extra here — a device
-        // whose maxStorageBufferBindingSize can't fit the histogram fails
-        // backend creation cleanly into that same CPU fallback (see
-        // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
+        // WebGPU accumulation (fr-npb/fr-hs9): "auto" everywhere — try GPU
+        // first, fall back to CPU automatically via the worker's gpuFailed
+        // ratchet. A device whose maxStorageBufferBindingSize can't fit the
+        // histogram fails backend creation cleanly into that same CPU fallback
+        // (see flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
         // takes the same auto-with-fallback path through the 4D kernel
         // (fr-e26, flame-gpu-4d.ts).
         gpuPreference: "auto",
         // Per-chunk throughput instrumentation, off unless `?flameperf` asks
-        // (fr-ul2). Independent of the host choice above — it works for the
-        // worker and the main-thread session alike.
+        // (fr-ul2).
         instrument: flamePerfEnabled(),
         // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
         fourD: fourDRenderSnapshot(),

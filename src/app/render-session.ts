@@ -1,29 +1,28 @@
 /**
  * The enter / exit / terminate + first-frame-gate choreography shared by
- * main.ts's two render controllers — the flame render (fr-o7s/fr-1ib) and the
+ * main.ts's two render controllers — the flame render (fr-o7s) and the
  * solid voxel render (fr-v4f). Both are session-only overlays OF the explorer:
  * a Render click freezes (flame) or accumulates a world-space volume over
- * (solid) the current system in a fresh worker/host, and the app returns to the
+ * (solid) the current system in a fresh worker, and the app returns to the
  * live explorer on Back, on a render error, or on an undo/redo that
  * time-travels the document.
  *
  * The two controllers were near-twins — the solid one's comment literally said
  * it "mirrors the flame session above exactly". Both share: the enter/exit
  * ordering; a defensive "double-entry" terminate guarding against a leaked
- * worker/host; the first-frame gate (main.ts's animate() keeps showing the
+ * worker; the first-frame gate (main.ts's animate() keeps showing the
  * frozen/live explorer until the session's first image/grid lands, avoiding a
  * flash of the render canvas's blank-or-stale contents during the worker
  * startup gap); and the error->exit fallback. They differ only in their
- * GENUINE specifics — the flame render freezes the camera and owns a WebGPU
- * host choice + SharedArrayBuffer transport; the solid render keeps the camera
+ * GENUINE specifics — the flame render freezes the camera and owns a
+ * SharedArrayBuffer transport; the solid render keeps the camera
  * live and drops the transform selection (its lens has no guide box, so pointer
  * gestures should orbit instead of dragging a box that is no longer shown).
  * This class owns the shared skeleton; every genuine difference is injected via
  * {@link RenderSessionDeps}.
  *
  * No DOM, no Three.js, no worker globals: the handle is any
- * `{ post, terminate }` (a real Worker wrapped in one, or the main-thread
- * {@link FlameSessionHost}, which already IS that shape), and every side effect
+ * `{ post, terminate }` (a real Worker wrapped in one), and every side effect
  * is injected — so the choreography is unit-tested with fakes the same way
  * `EditSession` and `FourDView` are, no browser required.
  */
@@ -31,8 +30,7 @@
 /**
  * A running render session, reduced to the two operations this controller
  * needs after the mode-specific `start` hands one back: forward a command to
- * it, and tear it down. main.ts's flame path returns a `FlameSessionHost`
- * (main-thread session, or a real flame Worker wrapped in the same surface);
+ * it, and tear it down. main.ts's flame path wraps the flame Worker in one;
  * its solid path wraps the voxel Worker's `postMessage`/`terminate` in one.
  * `C` is the mode's worker command type (`FlameWorkerCommand` /
  * `VoxelWorkerCommand`).
@@ -146,9 +144,8 @@ export class RenderSession<C> {
   /**
    * Discard the in-progress render and return to the explorer. Terminates the
    * session outright rather than winding it down — an in-flight accumulate
-   * chunk can't be interrupted mid-call anyway (a worker is single-threaded JS
-   * too, and the main-thread host has no second thread), and the next
-   * {@link enter} spins up a fresh session regardless. Idempotent: calling
+   * chunk can't be interrupted mid-call anyway (a worker is single-threaded
+   * JS too), and the next {@link enter} spins up a fresh session regardless. Idempotent: calling
    * `exit` with nothing running just clears notes and re-flips the
    * already-off flag, which is how main.ts's undo/redo can call it
    * unconditionally.

@@ -290,12 +290,12 @@ heavier, on-demand renders. Both replay the identical chaos game — same
 transforms, variations, final-transform lens, symmetry — but accumulate its
 plotted points into a different structure and present the result differently.
 Each is session-only state (`flameActive` / `solidActive` in `AppState`, never
-persisted), toggled from the panel, and each normally runs in its own Web Worker
+persisted), toggled from the panel, and each runs in its own Web Worker
 (see "Render workers" below) so its hundreds of millions of iterations never
 touch the main thread.
 
 `render-session.ts` factors out what the two modes share: a `RenderSession` owns
-the worker/host lifecycle (`enter` / `exit` / a defensive `terminate`) and a
+the worker lifecycle (`enter` / `exit` / a defensive `terminate`) and a
 **first-frame gate** — `main.ts`'s animation loop keeps drawing the ordinary
 explorer until the worker's first frame arrives, then swaps the canvas over, so
 entering a render never flashes empty. What differs stays in `main.ts`. The
@@ -303,10 +303,7 @@ flame **freezes** the view: the 3D scene stops drawing and pointer gestures are
 blocked (the still belongs to one fixed camera), and once the first image lands
 the canvas shows only a full-screen flame quad. The solid keeps the **live**
 orbit camera every frame and raymarches a world-space volume, so its result is
-still something you fly around. On Firefox, whose workers don't expose
-`navigator.gpu`, `flame-session-host.ts` can host the flame session on the main
-thread instead, reaching the same WebGPU backend through the same interface a
-worker would.
+still something you fly around.
 
 **The flame still** (`flame.ts`) is the fractal-flame image proper: a 2-D
 histogram, one bucket per display pixel, accumulating a **hit count** and a

@@ -159,8 +159,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     GPU failures run a recovery ladder (`handleGpuFailure`, fr-2w5): retry ON
     the GPU at a smaller supersample, one fresh-device retry (refusing a
     software adapter after real hardware), and only then the permanent CPU
-    fallback — whose `gpuUnavailable` reason gates main.ts's worker→main-host
-    escalation to genuine no-WebGPU-in-worker cases.
+    fallback — whose `gpuUnavailable` reason annotates the UI's CPU backend
+    note (fr-27h removed the former worker→main-host escalation: CPU is the
+    one fallback, on every browser).
   - `flame-perf.ts` — `FlamePerfMeter`, opt-in flame-throughput diagnostics
     (behind the `?flameperf` URL param): windows the worker's per-chunk timing
     samples into a throughput summary. Pure, tested; deliberately changes no
@@ -175,9 +176,6 @@ and UI**, so the interesting math is unit-tested without a browser:
     choreography shared by the flame and solid render controllers
     (`RenderSession`); the two render modes are session-only `flameActive` /
     `solidActive` state, never persisted.
-  - `flame-session-host.ts` — hosts a flame session on the main thread instead
-    of a worker where a worker can't reach WebGPU (Firefox exposes
-    `navigator.gpu` only on the main thread).
   - `four-d-view.ts` — the session-only 4D view state (the `RotorPair`,
     auto-tumble, soft w-slice); `main.ts` freezes it into a render's `fourD`
     snapshot when the system is 4D.

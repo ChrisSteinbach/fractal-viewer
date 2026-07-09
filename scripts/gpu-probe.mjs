@@ -254,8 +254,7 @@ async function pageProbe(ladderMax) {
     return { deviceLimits, steps, solo, uncaptured, lost };
   }
 
-  /** Same census, from inside a dedicated worker (Blob URL, like
-   * probeWorkerWebGpu). */
+  /** Same census, from inside a dedicated worker (via a Blob-URL worker). */
   function workerCensus() {
     return new Promise((resolve) => {
       const code = `(${(async () => {
