@@ -4,7 +4,12 @@ import {
   embedTransform3,
   toTransform4,
 } from "./affine4";
-import { ESCAPE_LIMIT, MAX_TRANSFORMS, runChaosGame } from "./chaos-game";
+import {
+  ESCAPE_LIMIT,
+  MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  runChaosGame,
+} from "./chaos-game";
 import {
   pickIndex4,
   plotPoint4,
@@ -12,10 +17,12 @@ import {
   runChaosGame4,
   stepOrbit4,
 } from "./chaos-game-4d";
+import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { pentatope, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
+import type { Rng } from "./rng";
 import { composeVariations4 } from "./variations4";
-import type { Transform, Transform4 } from "./types";
+import type { Bounds4, Transform, Transform4, Vec4 } from "./types";
 
 // presets4.ts (the fr-cbg spike's native-Transform4 preset module) was
 // deleted once fr-bf6 unified "4D" into an ordinary Transform's optional `w`
@@ -527,5 +534,221 @@ describe("plotPoint4", () => {
     const prepared = prepareChaosGame4(makeMaps(4), lens);
     const result = plotPoint4(prepared, 0.3, 0.1, -0.2, 0.15, mulberry32(1));
     expect(result).toEqual([0.3, 0.1, -0.2, 0.15]);
+  });
+});
+
+describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () => {
+  // runChaosGame4's recording loop is hand-inlined (mirroring
+  // flame-4d.ts's accumulateFlame4) to avoid allocating an OrbitStep4
+  // object and two Vec4 arrays per point. This block pins that inlined loop
+  // against the real, unmodified stepOrbit4/plotPoint4 building blocks it
+  // must stay byte-for-byte equivalent to — if the inlined copy ever drifts
+  // from the real thing, one of the scenarios below catches it. 4D has no
+  // symmetry (see PreparedChaosGame4's doc), so unlike the 3D oracle in
+  // chaos-game.test.ts there is no postRotations scenario here.
+  //
+  // referenceChaosGame4 is the oracle computation itself (the exact loop
+  // shape runChaosGame4 used to run before it was inlined: seed x/y/z/w,
+  // warm up through the real stepOrbit4, then per point stepOrbit4 +
+  // plotPoint4, bounds tracked with the same if-comparisons runChaosGame4
+  // uses, then a second pass for the exact center/radius) — identical by
+  // construction for every scenario, so it is shared rather than re-typed
+  // four times; each scenario below still states its own
+  // system/seed/point-count inline so it reads standalone.
+  function referenceChaosGame4(
+    prepared: PreparedChaosGame4,
+    numPoints: number,
+    rng: Rng,
+  ): {
+    positions: Float32Array;
+    w: Float32Array;
+    transformIndices: Uint8Array;
+    bounds: Bounds4;
+    center: Vec4;
+    radius: number;
+  } {
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+    }
+
+    const positions = new Float32Array(numPoints * 3);
+    const wBuffer = new Float32Array(numPoints);
+    const transformIndices = new Uint8Array(numPoints);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    let minW = Infinity;
+    let maxW = -Infinity;
+    for (let i = 0; i < numPoints; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      wBuffer[i] = pw;
+      transformIndices[i] = s.index;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+      if (pz < minZ) minZ = pz;
+      if (pz > maxZ) maxZ = pz;
+      if (pw < minW) minW = pw;
+      if (pw > maxW) maxW = pw;
+    }
+
+    const center: Vec4 = [
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+      (minW + maxW) / 2,
+    ];
+
+    let radiusSq = 0;
+    for (let i = 0; i < numPoints; i++) {
+      const dx = positions[i * 3] - center[0];
+      const dy = positions[i * 3 + 1] - center[1];
+      const dz = positions[i * 3 + 2] - center[2];
+      const dw = wBuffer[i] - center[3];
+      const d2 = dx * dx + dy * dy + dz * dz + dw * dw;
+      if (d2 > radiusSq) radiusSq = d2;
+    }
+    const radius = Math.sqrt(radiusSq);
+
+    return {
+      positions,
+      w: wBuffer,
+      transformIndices,
+      bounds: { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW },
+      center,
+      radius,
+    };
+  }
+
+  it("matches for a plain multi-transform system (no variations, no final transform)", () => {
+    const transforms = pentatopeGasket();
+    const numPoints = 800;
+    const seed = 42;
+
+    const actual = runChaosGame4(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.count).toBe(numPoints);
+    expect(actual.bounds).toEqual(reference.bounds);
+    expect(actual.center).toEqual(reference.center);
+    expect(actual.radius).toBe(reference.radius);
+  });
+
+  it("matches for a system with a variation on one transform (warp !== null branch)", () => {
+    const transforms: Transform4[] = [
+      {
+        position: [0.3, 0.1, -0.2, 0.15],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        variations: [{ type: "spherical", weight: 0.6 }],
+      },
+      { position: [-0.3, 0.2, 0.15, -0.1], scale: [0.5, 0.5, 0.5, 0.5] },
+    ];
+    const numPoints = 600;
+    const seed = 7;
+
+    const actual = runChaosGame4(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+    expect(actual.center).toEqual(reference.center);
+    expect(actual.radius).toBe(reference.radius);
+  });
+
+  it("matches for a system with a final-transform lens that itself has a variation (inlined plotPoint4's affine+warp)", () => {
+    const transforms = pentatopeGasket();
+    const lens: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+      variations: [{ type: "julia", weight: 1 }],
+    };
+    const numPoints = 500;
+    const seed = 9;
+
+    const actual = runChaosGame4(transforms, numPoints, mulberry32(seed), lens);
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms, lens),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+    expect(actual.center).toEqual(reference.center);
+    expect(actual.radius).toBe(reference.radius);
+  });
+
+  it("matches for a weighted system (pickIndex4's weighted path)", () => {
+    const transforms: Transform4[] = [
+      { position: [0.3, 0, 0, 0], scale: [0.5, 0.5, 0.5, 0.5], weight: 3 },
+      { position: [-0.3, 0, 0, 0], scale: [0.5, 0.5, 0.5, 0.5], weight: 1 },
+    ];
+    const numPoints = 900;
+    const seed = 5;
+
+    const actual = runChaosGame4(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+    expect(actual.center).toEqual(reference.center);
+    expect(actual.radius).toBe(reference.radius);
   });
 });
