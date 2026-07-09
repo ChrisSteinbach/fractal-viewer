@@ -420,23 +420,112 @@ export function runChaosGame4(
   let minW = Infinity;
   let maxW = -Infinity;
 
-  for (let i = 0; i < numPoints; i++) {
-    const s = stepOrbit4(prepared, x, y, z, w, rng);
-    x = s.x;
-    y = s.y;
-    z = s.z;
-    w = s.w;
+  // Hand-inlined stepOrbit4 + plotPoint4 (mirrors flame-4d.ts's
+  // accumulateFlame4 and voxel-4d.ts's accumulateVoxels4): at hundreds of
+  // thousands to millions of points, the OrbitStep4 object and the two Vec4
+  // arrays those functions allocate per call become real GC pressure.
+  // Checked against the real stepOrbit4/plotPoint4 by the oracle test in
+  // chaos-game-4d.test.ts ("allocation-free oracle"), so the two paths can
+  // never silently drift apart.
+  const { affines, variations, finalAffine, finalWarp } = prepared;
 
+  for (let i = 0; i < numPoints; i++) {
+    // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ----------------------
+    const idx = pickIndex4(prepared, rng);
+    const aff = affines[idx];
+    const m = aff.m;
+    const t = aff.t;
+    const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
+    const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
+    const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
+    const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
+
+    const warp = variations[idx];
+    let nx: number;
+    let ny: number;
+    let nz: number;
+    let nw: number;
+    if (warp === null) {
+      nx = ax;
+      ny = ay;
+      nz = az;
+      nw = aw;
+    } else {
+      // Nonlinear maps can send a point to infinity — or, at a singularity,
+      // to NaN. The reseed guard below catches both (NaN fails
+      // Number.isFinite), stopping a bad landing from poisoning the orbit.
+      const q = warp(ax, ay, az, aw, rng);
+      nx = q[0];
+      ny = q[1];
+      nz = q[2];
+      nw = q[3];
+    }
+
+    if (
+      !Number.isFinite(nx) ||
+      !Number.isFinite(ny) ||
+      !Number.isFinite(nz) ||
+      !Number.isFinite(nw) ||
+      Math.abs(nx) > ESCAPE_LIMIT ||
+      Math.abs(ny) > ESCAPE_LIMIT ||
+      Math.abs(nz) > ESCAPE_LIMIT ||
+      Math.abs(nw) > ESCAPE_LIMIT
+    ) {
+      nx = rng() - 0.5;
+      ny = rng() - 0.5;
+      nz = rng() - 0.5;
+      nw = rng() - 0.5;
+    }
+    x = nx;
+    y = ny;
+    z = nz;
+    w = nw;
+
+    // --- inlined plotPoint4(prepared, x, y, z, w, rng) ----------------------
     // The plotted point is the orbit point, optionally bent through the lens
     // (final transform's affine + warp). The orbit state x/y/z/w is left
     // untouched, so the lens never feeds back into the iteration.
-    const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+    let px = x;
+    let py = y;
+    let pz = z;
+    let pw = w;
+    if (finalAffine !== null) {
+      const fm = finalAffine.m;
+      const ft = finalAffine.t;
+      let fx = fm[0] * x + fm[1] * y + fm[2] * z + fm[3] * w + ft[0];
+      let fy = fm[4] * x + fm[5] * y + fm[6] * z + fm[7] * w + ft[1];
+      let fz = fm[8] * x + fm[9] * y + fm[10] * z + fm[11] * w + ft[2];
+      let fw = fm[12] * x + fm[13] * y + fm[14] * z + fm[15] * w + ft[3];
+      if (finalWarp !== null) {
+        const q = finalWarp(fx, fy, fz, fw, rng);
+        fx = q[0];
+        fy = q[1];
+        fz = q[2];
+        fw = q[3];
+      }
+      if (
+        Number.isFinite(fx) &&
+        Number.isFinite(fy) &&
+        Number.isFinite(fz) &&
+        Number.isFinite(fw)
+      ) {
+        px = fx;
+        py = fy;
+        pz = fz;
+        pw = fw;
+      }
+    }
 
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
     wBuffer[i] = pw;
-    transformIndices[i] = s.index;
+    // 4D has no symmetry-expanded copies (see PreparedChaosGame4's doc), so
+    // the recorded index is always the raw picked slot — matching
+    // stepOrbit4's own OrbitStep4.index exactly, including the
+    // escape-reseed case (idx is the TRIGGERING transform, fixed before the
+    // reseed branch above runs).
+    transformIndices[i] = idx;
 
     if (px < minX) minX = px;
     if (px > maxX) maxX = px;

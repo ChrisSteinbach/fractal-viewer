@@ -462,21 +462,110 @@ export function runChaosGame(
   let minR = Infinity;
   let maxR = -Infinity;
 
-  for (let i = 0; i < numPoints; i++) {
-    const s = stepOrbit(prepared, x, y, z, rng);
-    x = s.x;
-    y = s.y;
-    z = s.z;
+  // Hand-inlined stepOrbit + plotPoint (mirrors flame.ts's accumulateFlame
+  // and voxel.ts's accumulateVoxels): at hundreds of thousands to millions
+  // of points, the OrbitStep object and the two Vec3 arrays those functions
+  // allocate per call become real GC pressure. Checked against the real
+  // stepOrbit/plotPoint by the oracle test in chaos-game.test.ts
+  // ("allocation-free oracle"), so the two paths can never silently drift
+  // apart.
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount } = prepared;
 
+  for (let i = 0; i < numPoints; i++) {
+    // --- inlined stepOrbit(prepared, x, y, z, rng) --------------------------
+    const idx = pickIndex(prepared, rng);
+    const aff = affines[idx];
+    const m = aff.m;
+    const t = aff.t;
+    const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
+    const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
+    const az = m[6] * x + m[7] * y + m[8] * z + t[2];
+
+    const warp = variations[idx];
+    let nx: number;
+    let ny: number;
+    let nz: number;
+    if (warp === null) {
+      nx = ax;
+      ny = ay;
+      nz = az;
+    } else {
+      // Nonlinear maps can send a point to infinity — or, at a singularity,
+      // to NaN. The reseed guard below catches both (NaN fails
+      // Number.isFinite), stopping a bad landing from poisoning the orbit.
+      const q = warp(ax, ay, az, rng);
+      nx = q[0];
+      ny = q[1];
+      nz = q[2];
+    }
+
+    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // see stepOrbit, which this mirrors exactly. `null` (order 1, and every
+    // unrotated copy-0 slot at any order) skips this, so the orbit stays
+    // byte-identical to the pre-symmetry loop exactly where there is nothing
+    // to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz;
+      const ry = post[3] * nx + post[4] * ny + post[5] * nz;
+      const rz = post[6] * nx + post[7] * ny + post[8] * nz;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+    }
+
+    if (
+      !Number.isFinite(nx) ||
+      !Number.isFinite(ny) ||
+      !Number.isFinite(nz) ||
+      Math.abs(nx) > ESCAPE_LIMIT ||
+      Math.abs(ny) > ESCAPE_LIMIT ||
+      Math.abs(nz) > ESCAPE_LIMIT
+    ) {
+      nx = rng() - 0.5;
+      ny = rng() - 0.5;
+      nz = rng() - 0.5;
+    }
+    x = nx;
+    y = ny;
+    z = nz;
+
+    // --- inlined plotPoint(prepared, x, y, z, rng) ---------------------------
     // The plotted point is the orbit point, optionally bent by the final
     // transform. The orbit state x/y/z is left untouched, so the lens never
     // feeds back into the iteration.
-    const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+    let px = x;
+    let py = y;
+    let pz = z;
+    if (finalAffine !== null) {
+      const fm = finalAffine.m;
+      const ft = finalAffine.t;
+      let fx = fm[0] * x + fm[1] * y + fm[2] * z + ft[0];
+      let fy = fm[3] * x + fm[4] * y + fm[5] * z + ft[1];
+      let fz = fm[6] * x + fm[7] * y + fm[8] * z + ft[2];
+      if (finalWarp !== null) {
+        const q = finalWarp(fx, fy, fz, rng);
+        fx = q[0];
+        fy = q[1];
+        fz = q[2];
+      }
+      if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
+        px = fx;
+        py = fy;
+        pz = fz;
+      }
+    }
 
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
-    transformIndices[i] = s.index;
+    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // PreparedChaosGame.baseTransformCount — matching stepOrbit's own
+    // OrbitStep.index exactly, including the escape-reseed case (idx is the
+    // TRIGGERING transform, fixed before the reseed branch above runs).
+    transformIndices[i] = idx % baseTransformCount;
 
     minX = Math.min(minX, px);
     maxX = Math.max(maxX, px);

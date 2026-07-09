@@ -7,11 +7,13 @@ import {
   runChaosGame,
   stepOrbit,
 } from "./chaos-game";
+import type { PreparedChaosGame } from "./chaos-game";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { composeVariations } from "./variations";
 import { mulberry32 } from "./rng";
+import type { Rng } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
-import type { Transform } from "./types";
+import type { Bounds, Transform } from "./types";
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -637,5 +639,246 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
     expect(Array.from(symmetric.positions)).not.toEqual(
       Array.from(unsymmetric.positions),
     );
+  });
+});
+
+describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => {
+  // runChaosGame's recording loop is hand-inlined (mirroring flame.ts's
+  // accumulateFlame) to avoid allocating an OrbitStep object and two Vec3
+  // arrays per point. This block pins that inlined loop against the real,
+  // unmodified stepOrbit/plotPoint building blocks it must stay
+  // byte-for-byte equivalent to — if the inlined copy ever drifts from the
+  // real thing, one of the scenarios below catches it.
+  //
+  // referenceChaosGame is the oracle computation itself (the exact loop
+  // shape runChaosGame used to run before it was inlined: seed x/y/z, warm
+  // up through the real stepOrbit, then per point stepOrbit + plotPoint,
+  // bounds tracked with the same Math.min/Math.max calls runChaosGame
+  // uses) — identical by construction for every scenario, so it is shared
+  // rather than re-typed five times; each scenario below still states its
+  // own system/seed/point-count inline so it reads standalone.
+  function referenceChaosGame(
+    prepared: PreparedChaosGame,
+    numPoints: number,
+    rng: Rng,
+  ): {
+    positions: Float32Array;
+    transformIndices: Uint8Array;
+    bounds: Bounds;
+  } {
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+
+    const positions = new Float32Array(numPoints * 3);
+    const transformIndices = new Uint8Array(numPoints);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    let minR = Infinity;
+    let maxR = -Infinity;
+    for (let i = 0; i < numPoints; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      transformIndices[i] = s.index;
+      minX = Math.min(minX, px);
+      maxX = Math.max(maxX, px);
+      minY = Math.min(minY, py);
+      maxY = Math.max(maxY, py);
+      minZ = Math.min(minZ, pz);
+      maxZ = Math.max(maxZ, pz);
+      const r = Math.sqrt(px * px + py * py + pz * pz);
+      minR = Math.min(minR, r);
+      maxR = Math.max(maxR, r);
+    }
+
+    return {
+      positions,
+      transformIndices,
+      bounds: { minX, maxX, minY, maxY, minZ, maxZ, minR, maxR },
+    };
+  }
+
+  it("matches for a plain multi-transform system (no variations, no final transform)", () => {
+    const transforms = sierpinskiTetrahedron();
+    const numPoints = 800;
+    const seed = 42;
+
+    const actual = runChaosGame(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.count).toBe(numPoints);
+    expect(actual.bounds).toEqual(reference.bounds);
+  });
+
+  it("matches for a system with a variation on one transform (warp !== null branch)", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0.1, -0.2],
+        rotation: [0.2, 0.4, 0.1],
+        scale: [0.5, 0.5, 0.5],
+        variations: [{ type: "swirl", weight: 1 }],
+      },
+      {
+        id: 1,
+        position: [-0.3, 0.2, 0.15],
+        rotation: [0, 0.3, 0.5],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    const numPoints = 600;
+    const seed = 9;
+
+    const actual = runChaosGame(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+  });
+
+  it("matches for a system with a final-transform lens that itself has a variation (inlined plotPoint's affine+warp)", () => {
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.2, -0.1, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1.2, 1.2, 1.2],
+      variations: [{ type: "julia", weight: 1 }],
+    };
+    const numPoints = 500;
+    const seed = 7;
+
+    const actual = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      finalTransform,
+    );
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms, finalTransform),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+  });
+
+  it("matches for a system with symmetry order > 1 (postRotations branch)", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.05, -0.05],
+        rotation: [0.1, 0.2, 0.05],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.05, 0.1],
+        rotation: [0, 0.1, 0.2],
+        scale: [0.5, 0.5, 0.5],
+        variations: [{ type: "swirl", weight: 1 }],
+      },
+    ];
+    const symmetry = { order: 3, axis: "y" } as const;
+    const numPoints = 700;
+    const seed = 21;
+
+    const actual = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      null,
+      symmetry,
+    );
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms, null, symmetry),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+  });
+
+  it("matches for a weighted system (pickIndex's weighted path)", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 3,
+      },
+      {
+        id: 1,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1,
+      },
+    ];
+    const numPoints = 900;
+    const seed = 5;
+
+    const actual = runChaosGame(transforms, numPoints, mulberry32(seed));
+    const reference = referenceChaosGame(
+      prepareChaosGame(transforms),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
   });
 });
