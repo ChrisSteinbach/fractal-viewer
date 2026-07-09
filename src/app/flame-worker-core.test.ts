@@ -2322,3 +2322,41 @@ describe("FlameWorkerSession 4D flame render", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// fr-ul2 throughput instrumentation wiring (the meter's own math is covered by
+// flame-perf.test.ts — these pin that the session actually drives it, and only
+// when opted in). A large fixed clock step makes a single chunk's summed
+// wall+gap cross the meter's window, so one render is enough to emit.
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession instrumentation", () => {
+  it("logs a throughput summary when the start command opts into instrument", () => {
+    const logs: string[] = [];
+    const { session, scheduler } = harness({
+      now: fakeClock(2000),
+      log: (message) => logs.push(message),
+    });
+    session.handle(startCommand({ instrument: true, iterationsBudget: 500 }));
+    scheduler.drain();
+
+    // A CPU render (no GPU factory) still reports its accumulate/readback/gap
+    // split — the meter is backend-agnostic.
+    expect(logs.some((m) => m.includes("flame perf"))).toBe(true);
+    expect(logs.some((m) => m.includes("[cpu]"))).toBe(true);
+  });
+
+  it("logs nothing extra when instrument is absent (the production default)", () => {
+    const logs: string[] = [];
+    const { session, scheduler } = harness({
+      now: fakeClock(2000),
+      log: (message) => logs.push(message),
+    });
+    session.handle(startCommand({ iterationsBudget: 500 }));
+    scheduler.drain();
+
+    // No instrument flag: the meter is never constructed, so the loop's guarded
+    // clock reads and the summary log never happen.
+    expect(logs.some((m) => m.includes("flame perf"))).toBe(false);
+  });
+});

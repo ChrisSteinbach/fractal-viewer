@@ -74,6 +74,7 @@ import { buildPaletteLUT } from "../fractal/palette";
 import type { FlamePaletteId } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
+import { FlamePerfMeter } from "./flame-perf";
 import type {
   FourDColorMode,
   SymmetryAxis,
@@ -207,6 +208,19 @@ export type FlameWorkerCommand =
        * signal that GPU is available.
        */
       gpuPreference?: "auto" | "off";
+      /**
+       * Opt into per-chunk throughput instrumentation (fr-ul2): when true, the
+       * session times each accumulation chunk's accumulate / readback / inter-
+       * chunk-gap phases and periodically logs a {@link FlamePerfMeter} summary
+       * via the `log` dep. Absent/false (production default) leaves the loop
+       * byte-for-byte unchanged — every added clock read is guarded — so this
+       * is a diagnostics-only opt-in (main.ts wires it to a `?flameperf` URL
+       * param, the same shape as `?flamehost`). Exists to pin down the real-app
+       * mobile-GPU throughput deficit vs the `/gpu-bench/` raw-kernel number,
+       * which the bench can't reproduce because it times `accumulate()` alone
+       * (no readback, no scheduling gap — see gpu-bench's `runGpuTimed`).
+       */
+      instrument?: boolean;
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setExposure"; exposure: number }
@@ -894,6 +908,15 @@ export class FlameWorkerSession {
    * with no `createGpuBackend` factory wired up (every pre-fr-npb caller)
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
+  /** fr-ul2 throughput instrumentation, all inert unless the `start` command
+   * set `instrument` (see its doc). `perf` accumulates per-chunk phase timings
+   * and periodically yields a summary to `log`; `lastChunkEndAt` is the clock
+   * reading at the previous chunk's end, so the next chunk can attribute the
+   * scheduling gap between them. Every clock read that feeds these is guarded
+   * by `this.instrument`, so a non-instrumented run's timing is unchanged. */
+  private instrument = false;
+  private perf: FlamePerfMeter | null = null;
+  private lastChunkEndAt: number | undefined = undefined;
 
   /** The latest accumulation snapshot: CPU backend, the live accumulator
    * object itself (identical semantics to before this backend seam
@@ -1202,6 +1225,9 @@ export class FlameWorkerSession {
     this.maxSafeSupersample = Infinity; // a fresh session has no learned ceiling yet.
     this.maxAccumBuckets = cmd.maxAccumBuckets ?? this.defaultMaxAccumBuckets;
     this.gpuPreference = cmd.gpuPreference ?? "off";
+    this.instrument = cmd.instrument ?? false;
+    this.perf = this.instrument ? new FlamePerfMeter() : null;
+    this.lastChunkEndAt = undefined;
     this.startAccumulation(cmd.requestedSupersample);
   }
 
@@ -1776,6 +1802,17 @@ export class FlameWorkerSession {
     }
     const backend = this.backend;
 
+    // fr-ul2 instrumentation: this chunk's steady-state start (AFTER any
+    // one-time backend creation above, so backend-bring-up cost isn't charged
+    // to steady-state throughput) and the scheduling gap since the previous
+    // chunk's work ended. Both guarded — a non-instrumented run reads the
+    // clock exactly where it always did (t0/t1 around accumulate).
+    const tEntry = this.instrument ? this.now() : 0;
+    const gapMs =
+      this.instrument && this.lastChunkEndAt !== undefined
+        ? tEntry - this.lastChunkEndAt
+        : 0;
+
     const chunk = Math.min(
       this.chunkSize,
       this.iterationsBudget - this.iterationsDone,
@@ -1874,6 +1911,11 @@ export class FlameWorkerSession {
       finished ||
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
+    // fr-ul2: bracket the WHOLE redisplay (readback + convert + display) so its
+    // cost is attributed apart from accumulate. Reading the clock here (not
+    // inside the branches) leaves their control flow untouched; a superseded/
+    // failed readback returns early and never reaches the meter feed below.
+    const tReadback0 = this.instrument && due ? this.now() : 0;
     if (due) {
       if (!finished && backend.snapshotDisplay !== undefined) {
         // GPU progressive display path (fr-ee9): the downsample runs
@@ -1978,6 +2020,25 @@ export class FlameWorkerSession {
           this.finalFrameDisplayed = true;
         }
       }
+    }
+
+    // fr-ul2: feed this chunk's phase timings to the meter and periodically log
+    // a summary. Reaching here means the chunk's accumulate (and any due
+    // redisplay) both succeeded for the current generation. `now` also stamps
+    // the chunk's end so the NEXT chunk can attribute the scheduling gap.
+    if (this.instrument && this.perf) {
+      const now = this.now();
+      const summary = this.perf.record({
+        accumulateMs: t1 - t0,
+        iterations: actual,
+        readbackMs: due ? now - tReadback0 : 0,
+        gapMs,
+        wallMs: now - tEntry,
+        chunkSize: this.chunkSize,
+        backendKind: backend.kind,
+      });
+      if (summary !== null) this.log(summary);
+      this.lastChunkEndAt = now;
     }
 
     if (finished) {

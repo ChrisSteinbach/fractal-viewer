@@ -177,6 +177,18 @@ function flameHostOverride(): "local" | "worker" | null {
 }
 
 /**
+ * fr-ul2: `?flameperf` (present with or without a value) opts the flame render
+ * into per-chunk throughput instrumentation — see the flame `start` command's
+ * `instrument` field. Diagnostics only, off unless the URL asks, so a phone
+ * soak (fr-7su) can log the accumulate / readback / scheduling-gap split that
+ * pins the real-app mobile-GPU throughput deficit without shipping the timing
+ * overhead to every render.
+ */
+function flamePerfEnabled(): boolean {
+  return new URLSearchParams(window.location.search).has("flameperf");
+}
+
+/**
  * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
  * default 1× orbit speed (the user's speed slider multiplies it — see
  * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
@@ -894,6 +906,10 @@ function main(): void {
         // takes the same auto-with-fallback path through the 4D kernel
         // (fr-e26, flame-gpu-4d.ts).
         gpuPreference: "auto",
+        // Per-chunk throughput instrumentation, off unless `?flameperf` asks
+        // (fr-ul2). Independent of the host choice above — it works for the
+        // worker and the main-thread session alike.
+        instrument: flamePerfEnabled(),
         // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
         fourD: fourDRenderSnapshot(),
       });
