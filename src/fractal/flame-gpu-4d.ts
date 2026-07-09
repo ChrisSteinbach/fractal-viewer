@@ -31,8 +31,9 @@
  * `project4.ts`'s `sliceColorRemap`, identity when off), and the same four
  * `FourDRenderColor` flavors (`color.ts`). Deliberate differences are the
  * 3D kernel's own, unchanged: f32 arithmetic instead of f64, and many
- * independent PCG32 chains instead of one mulberry32 orbit — statistically
- * the same render, not a byte-identical one.
+ * independent PCG32 chains instead of one mulberry32 orbit (each on its own
+ * per-chain stream — see the 3D kernel's pcgNext doc, fr-8xn) —
+ * statistically the same render, not a byte-identical one.
  *
  * **The one genuinely new mechanism over the 3D kernel: fixed-point slice
  * weighting.** `accumulateFlame4` adds a FRACTIONAL weight per hit
@@ -128,7 +129,8 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   spare for the color coordinate) | 16 aux vec4u (x rng state, y the color
  *   coordinate BITCAST to u32 — an f32 stored bit-exactly in a u32 lane; the
  *   kernel round-trips it with WGSL `bitcast`, and `packGpuChains4` writes it
- *   through the buffer's own Float32Array view at the same element)
+ *   through the buffer's own Float32Array view at the same element, z the
+ *   chain's odd PCG stream increment)
  *
  * colors: array<vec4u, 256> — gradient LUT (structural/radius) or
  * per-transform palette (transform mode), channels pre-scaled by
@@ -225,17 +227,19 @@ fn addU64(base: u32, v: u32) {
   }
 }
 
-// PCG-RXS-M-XS 32 — identical to the 3D kernel's.
-fn pcgNext(state: ptr<function, u32>) -> u32 {
-  let s = *state * 747796405u + 2891336453u;
-  *state = s;
+// PCG-RXS-M-XS 32 with per-chain streams — identical to the 3D kernel's
+// (see its stream-selector doc, fr-8xn); here the odd increment rides in
+// aux.z, since aux.y already carries the bitcast color coordinate.
+fn pcgNext(rng: ptr<function, vec2u>) -> u32 {
+  let s = (*rng).x * 747796405u + (*rng).y;
+  (*rng).x = s;
   let word = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
   return (word >> 22u) ^ word;
 }
 
 // [0, 1) — identical to the 3D kernel's (top 24 bits, strictly below 1).
-fn rand01(state: ptr<function, u32>) -> f32 {
-  return f32(pcgNext(state) >> 8u) * (1.0 / 16777216.0);
+fn rand01(rng: ptr<function, vec2u>) -> f32 {
+  return f32(pcgNext(rng) >> 8u) * (1.0 / 16777216.0);
 }
 
 // The 4D variation registry (variations4.ts's VARIATIONS4), case-indexed by
@@ -243,7 +247,7 @@ fn rand01(state: ptr<function, u32>) -> f32 {
 // lifted per variations4.ts's own convention: radial warps (spherical,
 // bubble) and swirl use the FULL 4D radius, angular warps act in the
 // xy-plane and carry z AND w through, sinusoidal folds all four axes.
-fn applyVariation(t: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
+fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
   switch t {
     case 0u: { // linear
       return p;
@@ -298,7 +302,7 @@ fn applyVariation(t: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
     case 11u: { // julia — draws one bit, like the CPU's rng() < 0.5.
       let rq = sqrt(length(p.xy));
       var th = atan2(p.y, p.x) / 2.0;
-      if (rand01(state) >= 0.5) {
+      if (rand01(rng) >= 0.5) {
         th += PI;
       }
       return vec4f(rq * cos(th), rq * sin(th), p.z, p.w);
@@ -313,7 +317,7 @@ fn applyVariation(t: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
 // blend (left to right, so stochastic variations consume the RNG in list
 // order). No symmetry post-rotation — 4D has none. Mirrors accumulateFlame4's
 // inlined stepOrbit4 body.
-fn applySlot(slotIdx: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
+fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
   let s = slots[slotIdx];
   let a = vec4f(
     dot(s.rowX, p),
@@ -330,7 +334,7 @@ fn applySlot(slotIdx: u32, p: vec4f, state: ptr<function, u32>) -> vec4f {
       // applySlot.
       let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
       let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      acc += w * applyVariation(ty, a, state);
+      acc += w * applyVariation(ty, a, rng);
     }
     q = acc;
   }
@@ -355,7 +359,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   var pos = chains[chainIdx].pos;
-  var rng = chains[chainIdx].aux.x;
+  var rng = chains[chainIdx].aux.xz;
   var colorCoord = bitcast<f32>(chains[chainIdx].aux.y);
 
   for (var n = 0u; n < params.itersPerInvocation; n++) {
@@ -490,7 +494,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   chains[chainIdx].pos = pos;
-  chains[chainIdx].aux.x = rng;
+  chains[chainIdx].aux.x = rng.x;
   chains[chainIdx].aux.y = bitcast<u32>(colorCoord);
 }
 `;
@@ -524,6 +528,7 @@ const CHAIN4_AUX_RNG = 4; // aux.x: rng state.
 /** aux.y: the color coordinate — an f32 written through the buffer's
  * Float32Array view into a u32 lane; the kernel bitcasts it back. */
 const CHAIN4_AUX_COLOR = 5;
+const CHAIN4_AUX_INC = 6; // aux.z: odd PCG stream increment (aux.w unused, left zeroed).
 
 const PARAMS4_PROJ_X = 0;
 const PARAMS4_PROJ_Y = 4;
@@ -778,7 +783,9 @@ function writeSlot4Variations(
  * more than 3D), the color coordinate set to `0.5` directly (flam3's
  * initial midpoint, no draw) into the aux.y lane via the buffer's OWN
  * Float32Array view (the kernel bitcasts it back — see the byte-layout doc),
- * then one uniform 32-bit draw for the chain's PCG32 seed.
+ * then one uniform 32-bit draw for the chain's PCG32 seed, then one more
+ * forced odd (`(draw << 1) | 1`) for its PCG stream increment into aux.z —
+ * the 3D packer's exact convention (see `writeChainSeed`'s doc, fr-8xn).
  */
 export function packGpuChains4(numChains: number, seed: number): ArrayBuffer {
   const rng: Rng = mulberry32(seed);
@@ -793,6 +800,8 @@ export function packGpuChains4(numChains: number, seed: number): ArrayBuffer {
     f32[base + CHAIN4_POS + 3] = rng() - 0.5;
     f32[base + CHAIN4_AUX_COLOR] = 0.5;
     u32[base + CHAIN4_AUX_RNG] = Math.floor(rng() * 0x100000000) >>> 0;
+    u32[base + CHAIN4_AUX_INC] =
+      ((Math.floor(rng() * 0x100000000) << 1) | 1) >>> 0;
   }
   return buf;
 }

@@ -23,9 +23,11 @@
  * flam3 color-coordinate walk, same NDC → pixel bucketing. Deliberate
  * differences, measured and accepted in fr-53k's go/no-go
  * (`docs/spike-fr-53k-gpu-flame-accum.md`): f32 arithmetic instead of f64,
- * and many independent PCG32 chains instead of one mulberry32 orbit — the
- * output is a statistically indistinguishable render of the same
- * attractor, not a byte-identical one.
+ * and many independent PCG32 chains instead of one mulberry32 orbit — each
+ * chain on its own PCG stream (a per-chain odd increment, fr-8xn), so
+ * distinct chains walk distinct full-period LCG cycles rather than
+ * phase-shifted copies of one shared cycle. The output is a statistically
+ * indistinguishable render of the same attractor, not a byte-identical one.
  *
  * Two production changes over the spike kernel:
  *
@@ -123,7 +125,8 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   192 varCount u32 | 196 hasPost u32 | 200 cumWeight f32 | 204 pad
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
- *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng state)
+ *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
+ *   state, y the chain's odd PCG stream increment)
  *
  * colors: array<vec4u, 256> — legacy palette (entry per base transform) or
  * 256-entry gradient LUT, channels pre-scaled by
@@ -212,24 +215,30 @@ fn addU64(base: u32, v: u32) {
   }
 }
 
-// PCG-RXS-M-XS 32: one u32 of state per chain, standard for GPU flames.
-fn pcgNext(state: ptr<function, u32>) -> u32 {
-  let s = *state * 747796405u + 2891336453u;
-  *state = s;
+// PCG-RXS-M-XS 32 with per-chain streams: rng.x the mutable state, rng.y the
+// chain's odd LCG increment — PCG's stream selector (fr-8xn). A shared
+// increment would put every chain on the SAME full-period 2^32 cycle
+// (Hull–Dobell: c odd, a = 1 mod 4), making chains phase-shifted copies of
+// one sequence that replay each other's draws wherever their states drift
+// near; distinct odd increments select distinct cycles, so chains are
+// genuinely independent. Only .x advances — .y is read-only here.
+fn pcgNext(rng: ptr<function, vec2u>) -> u32 {
+  let s = (*rng).x * 747796405u + (*rng).y;
+  (*rng).x = s;
   let word = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
   return (word >> 22u) ^ word;
 }
 
 // [0, 1): top 24 bits are exact in f32, so the result is strictly below 1
 // (f32(u32max) would round UP to 2^32 and return exactly 1.0).
-fn rand01(state: ptr<function, u32>) -> f32 {
-  return f32(pcgNext(state) >> 8u) * (1.0 / 16777216.0);
+fn rand01(rng: ptr<function, vec2u>) -> f32 {
+  return f32(pcgNext(rng) >> 8u) * (1.0 / 16777216.0);
 }
 
 // The variation registry (variations.ts's VARIATIONS), case-indexed by
 // KERNEL_VARIATION_INDEX. Same 3-D generalization: radial warps use the
 // full 3-D radius, angular warps act in the xy-plane and carry z through.
-fn applyVariation(t: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
+fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
   switch t {
     case 0u: { // linear
       return p;
@@ -284,7 +293,7 @@ fn applyVariation(t: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
     case 11u: { // julia — draws one bit, like the CPU's rng() < 0.5.
       let rq = sqrt(length(p.xy));
       var th = atan2(p.y, p.x) / 2.0;
-      if (rand01(state) >= 0.5) {
+      if (rand01(rng) >= 0.5) {
         th += PI;
       }
       return vec3f(rq * cos(th), rq * sin(th), p.z);
@@ -298,7 +307,7 @@ fn applyVariation(t: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
 // One slot's full map: affine, then the weighted variation blend (left to
 // right, so stochastic variations consume the RNG in list order), then the
 // symmetry post-rotation. Mirrors accumulateFlame's inlined stepOrbit body.
-fn applySlot(slotIdx: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
+fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
   let s = slots[slotIdx];
   let a = vec3f(
     dot(s.rowX.xyz, p) + s.rowX.w,
@@ -317,7 +326,7 @@ fn applySlot(slotIdx: u32, p: vec3f, state: ptr<function, u32>) -> vec3f {
       // stays in cache; "s" still serves every constant-index field.
       let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
       let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      acc += w * applyVariation(ty, a, state);
+      acc += w * applyVariation(ty, a, rng);
     }
     q = acc;
   }
@@ -339,7 +348,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   }
   var pos = chains[chainIdx].pos.xyz;
   var colorCoord = chains[chainIdx].pos.w;
-  var rng = chains[chainIdx].aux.x;
+  var rng = chains[chainIdx].aux.xy;
 
   for (var n = 0u; n < params.itersPerInvocation; n++) {
     // --- pickIndex (chaos-game.ts): uniform draw, or weighted lower bound.
@@ -423,7 +432,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   chains[chainIdx].pos = vec4f(pos, colorCoord);
-  chains[chainIdx].aux.x = rng;
+  chains[chainIdx].aux.x = rng.x;
 }
 `;
 
@@ -460,7 +469,8 @@ const SLOT_CUM_WEIGHT = 50;
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
-const CHAIN_AUX_X = 4; // aux.x: rng state (aux.yzw unused, left zeroed).
+const CHAIN_AUX_X = 4; // aux.x: rng state.
+const CHAIN_AUX_INC = 5; // aux.y: odd PCG stream increment (aux.zw unused, left zeroed).
 
 /** Entries in the `colors` LUT/palette table — always the full 256, however
  * many are actually meaningful (see {@link packGpuSystem}'s `colorMode`). */
@@ -830,7 +840,10 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
  * `rng() - 0.5` each (`accumulateFlame`'s fresh-orbit convention), the color
  * coordinate set to `0.5` directly (flam3's initial midpoint —
  * `FlameHistogram`'s own default — with no draw), then one uniform 32-bit
- * draw for the kernel's own per-chain PCG32 seed.
+ * draw for the kernel's own per-chain PCG32 seed, then one more forced odd
+ * (`(draw << 1) | 1`, PCG's stream-selector convention) for the chain's
+ * private LCG increment — distinct streams, not phase shifts of one shared
+ * cycle (fr-8xn).
  */
 function writeChainSeed(
   f32: Float32Array,
@@ -843,6 +856,8 @@ function writeChainSeed(
   f32[base + CHAIN_POS + 2] = rng() - 0.5;
   f32[base + CHAIN_POS + 3] = 0.5;
   u32[base + CHAIN_AUX_X] = Math.floor(rng() * 0x100000000) >>> 0;
+  u32[base + CHAIN_AUX_INC] =
+    ((Math.floor(rng() * 0x100000000) << 1) | 1) >>> 0;
 }
 
 /**
@@ -853,6 +868,8 @@ function writeChainSeed(
  * buffer is one deterministic sequence — reproducible in tests with no GPU
  * involved — rather than `numChains` independently-seeded (and therefore
  * correlated) streams.
+ * On the GPU side each chain also carries its own odd PCG increment, so
+ * distinct chains advance distinct full-period streams (fr-8xn).
  */
 export function packGpuChains(numChains: number, seed: number): ArrayBuffer {
   const rng = mulberry32(seed);
