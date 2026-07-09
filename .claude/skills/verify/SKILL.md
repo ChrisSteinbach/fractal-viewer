@@ -5,6 +5,47 @@ description: Build, serve, and drive the production app (including the service-w
 
 # Verifying changes by running the app
 
+## Headless WebGL: boot the app on a no-GPU / CI box
+
+The default MCP Playwright browser (HeadlessChrome) and the system
+`google-chrome` both return `null` from `canvas.getContext("webgl2")`, so
+`main.ts`'s `webglAvailable()` boot guard trips ("WebGL is not supported"),
+`FractalScene` is never constructed, and the Render buttons never appear — **no
+frontend change can be verified in the browser.** A real software-GL context
+(ANGLE + SwiftShader) fixes this.
+
+**One command** — spawns the dev server, boots the app under SwiftShader, and
+asserts a WebGL context + no boot error + a non-zero point count (exit 0 =
+booted and rendered):
+
+```bash
+node scripts/webgl-smoke.mjs                                # spawns its own `npm run dev`
+node scripts/webgl-smoke.mjs --url=https://localhost:5173   # reuse a running server
+node scripts/webgl-smoke.mjs --screenshot=smoke.png         # + capture a frame
+```
+
+A correct boot logs the renderer as `ANGLE (… SwiftShader …)`. Use it as a fast
+regression gate for anything touching the boot path, the scene, or WebGL. It is
+the committed form of the recipe below.
+
+**Driving a browser yourself** (a bespoke Playwright script — *not* the MCP
+browser, which has no WebGL) needs the same four things lined up;
+`scripts/webgl-smoke.mjs` and the `scripts/gpu-flame-*.mjs` monitors are the
+worked examples:
+
+- **Bundled Chromium, not system Chrome** — only Playwright's bundle ships
+  SwiftShader/ANGLE: `executablePath: chromium.executablePath()`
+  (`playwright-core`).
+- **`headless: false` + pass `--headless=new` yourself** — asking Playwright
+  for `headless: true` gets Chrome's OLD headless mode, which never yields a
+  WebGL context. `false` stops Playwright injecting that old flag; new headless
+  is then requested explicitly via the arg.
+- **Clear `DISPLAY`** (`delete env.DISPLAY` in the child env) — otherwise Chrome
+  tries a (broken, over-SSH) X11 GLX instead of the offscreen SwiftShader path.
+- **`args: --headless=new --enable-unsafe-swiftshader --use-gl=angle
+  --use-angle=swiftshader --no-sandbox`**, plus `newPage({ ignoreHTTPSErrors:
+  true })` for the dev server's self-signed cert.
+
 ## Dev server (no service worker)
 
 `npm run dev` — HTTPS (self-signed via basicSsl), COOP/COEP sent natively by

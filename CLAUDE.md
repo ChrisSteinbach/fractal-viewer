@@ -20,6 +20,7 @@ npm run format:fix    # Prettier auto-fix only
 npm run dev           # Start Vite dev server (HTTPS, binds 0.0.0.0 for phones)
 npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
+npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
