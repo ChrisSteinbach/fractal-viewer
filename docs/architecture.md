@@ -210,10 +210,13 @@ flat system takes the untouched `runChaosGame` path, byte-identical to before
 this feature existed; a non-flat one lifts every transform (and the enabled final
 transform, if any) through `toTransform4` and calls `runChaosGame4` instead,
 uploading the result with `scene.setPoints4` rather than `scene.setPoints`. Point
-color is a separate concern from generating the cloud — see below. Flame, solid,
-and rotational symmetry stay 3D-only by design — a recorded decision (fr-bf6),
-not an oversight — and simply hide their controls whenever the system is
-non-flat rather than being generalized to a fourth dimension.
+color is a separate concern from generating the cloud — see below. Rotational
+symmetry stays 3D-only by design — a recorded decision (fr-bf6), not an
+oversight, and the 4D chaos game genuinely has no kaleidoscope-symmetry step —
+so its control simply hides whenever the system is non-flat. The flame and solid
+renders were once 3D-only under that same reasoning but have since gained 4D
+variants (fr-5b3/fr-4wd), covered under "The flame still and the solid voxel
+render" below.
 
 Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
@@ -270,6 +273,106 @@ pastes), so it is a strict, **never-throwing** boundary: it rejects an unknown
 version, bad base64/JSON, the wrong transform shape, or an unknown color/depth
 enum, and clamps numeric ranges. Storage and location are injected, so the codec
 is unit-tested with no real browser.
+
+## The flame still and the solid voxel render
+
+Beyond the live point cloud, a converged system can be committed to one of two
+heavier, on-demand renders. Both replay the identical chaos game — same
+transforms, variations, final-transform lens, symmetry — but accumulate its
+plotted points into a different structure and present the result differently.
+Each is session-only state (`flameActive` / `solidActive` in `AppState`, never
+persisted), toggled from the panel, and each normally runs in its own Web Worker
+(see "Render workers" below) so its hundreds of millions of iterations never
+touch the main thread.
+
+`render-session.ts` factors out what the two modes share: a `RenderSession` owns
+the worker/host lifecycle (`enter` / `exit` / a defensive `terminate`) and a
+**first-frame gate** — `main.ts`'s animation loop keeps drawing the ordinary
+explorer until the worker's first frame arrives, then swaps the canvas over, so
+entering a render never flashes empty. What differs stays in `main.ts`. The
+flame **freezes** the view: the 3D scene stops drawing and pointer gestures are
+blocked (the still belongs to one fixed camera), and once the first image lands
+the canvas shows only a full-screen flame quad. The solid keeps the **live**
+orbit camera every frame and raymarches a world-space volume, so its result is
+still something you fly around. On Firefox, whose workers don't expose
+`navigator.gpu`, `flame-session-host.ts` can host the flame session on the main
+thread instead, reaching the same WebGPU backend through the same interface a
+worker would.
+
+**The flame still** (`flame.ts`) is the fractal-flame image proper: a 2-D
+histogram, one bucket per display pixel, accumulating a **hit count** and a
+**summed color** (`FlameHistogram`), then tone-mapped to an image. Its buckets
+are `Float64Array`, not `Float32` — a converged bucket's summed color can climb
+past 2²⁴ and silently stop growing in f32 while its hit count keeps rising,
+desaturating exactly the brightest region. `tonemapFlame` sends accumulated
+density through a `log1p(hits) / log1p(maxHits)` curve under four controls:
+`exposure`, `gamma` (with a `gammaThreshold` below which a linear chord replaces
+the power curve, so lone speckles don't blow up), and `vibrancy` (density-scaled
+color vs. a flat gamma curve) — collapsing byte-for-byte to the pre-gamma
+tone-map at `gamma: 1, vibrancy: 1`. Supersampled buckets are boxed down each
+frame by the cheap fixed-radius `downsampleFlame`; a finished or paused render
+can also run `adaptiveDownsampleFlame`, the flam3 density-estimation filter whose
+per-cell blur radius widens where samples are sparse. Handing a previous
+histogram back resumes the orbit exactly, so a render refines progressively
+rather than restarting.
+
+Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
+(`channel(t) = a + b·cos(2π(c·t + d))`), precomputed once per render into a flat
+256×3 LUT by `buildPaletteLUT`. A structural color coordinate rides the orbit —
+nudged halfway toward the chosen transform's palette slot each step, consuming no
+RNG — and indexes that LUT, so orbit-adjacent points share a hue (flam3-style
+structural coloring). The sentinel `"legacy"` palette opts out of the gradient
+for a flat per-transform hue. The same palettes serve the solid render.
+
+**The solid voxel render** (`voxel.ts`) trades the 2-D histogram for a
+world-space **3-D density grid**. An affine IFS carries no analytic distance
+field to raymarch, so the solid render marches _measured_ density — the chaos
+game's own per-voxel hit counts — paying the convergence cost once rather than
+per view. `computeVoxelBounds` sizes the grid from a pilot orbit using trimmed
+per-axis quantiles (robust to a stray variation outlier), cubed and padded; each
+voxel keeps a hit count plus a **running-mean** color (accurate in f32 without
+the flame's f64 trick). Color tracks the live point cloud exactly — the same
+`colorMode` formulas and the same `colorGamma` contrast exponent, baked once into
+a `buildColorModeLUT`, so a solidified attractor can never drift in hue from the
+explorer it was captured from — or a palette gradient, as in the flame.
+`voxelTextureData` packs the grid into an RGBA8 volume: color in RGB,
+**log-normalized density in alpha** via the same `log1p` curve the flame
+tone-maps with, so "solid enough to cross the isosurface" and "bright in a flame
+of the same system" line up.
+
+`voxel-material.ts` is the GPU side — a Three.js GLSL3 `ShaderMaterial` (the
+third place Three.js appears in the shipped app, alongside `scene.ts` and
+`interactions.ts`) that raymarches the volume behind a full-screen quad:
+reconstruct each pixel's camera ray, intersect the grid's box, march from a
+dithered start until density crosses the threshold, bisect to localize the
+isosurface, then shade it from a central-difference density gradient with a hard
+shadow ray, a short ambient-occlusion tap, and Blinn-Phong lighting. Threshold,
+light direction, and ambient are plain uniforms `scene.ts` pushes live, so those
+controls re-render with no worker round-trip — which is also why the solid worker
+needs no SharedArrayBuffer fast path (nothing on the main thread is tone-mapping),
+unlike the flame.
+
+Both renders extend to 4D (fr-5b3/fr-4wd). There is no separate 4D worker: the
+flame and solid `start` commands each carry an optional `fourD` block whose mere
+presence flips the session onto the 4D chaos game and `accumulateFlame4` /
+`accumulateVoxels4`. That block is a **frozen snapshot** of the current 4D view,
+captured the instant Render is clicked — the accumulated rotor, the cloud's 4D
+center and rotated-w support, the slice window (`sliceOn` / `sliceCenter` /
+`sliceWidth`) and its optional slice-relative recolor, and the lifted
+`Transform4`s. It stays valid for the render's whole life for nothing: the
+animation loop early-returns past the tumble step while a render is active, so
+the frozen rotor simply never advances. The 4D flame rides the same WebGPU path
+as the 3D one (fr-e26; see "GPU accumulation backend"), with `accumulateFlame4`
+as its CPU oracle and fallback.
+
+One asymmetry is deliberate: the **soft w-slice floor**. The point cloud and the
+flame both slice with a small `SLICE_GHOST_FLOOR` (`0.06`, the single source of
+truth in `project4.ts`), so geometry outside the slice window still registers as
+faint ghost context in the additive render — the flame renders _the current
+view_, ghosts included. The solid render slices with a floor of **`0`** instead:
+an out-of-slice voxel contributes nothing, because a solid isosurface has no
+translucency to fade a 6% pedestal into and would just fog the whole projection
+with dross nobody asked to see solidified.
 
 ## Render workers & cross-origin isolation
 
