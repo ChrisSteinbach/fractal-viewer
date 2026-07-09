@@ -1396,11 +1396,19 @@ export class Ui {
    * mid-session fallback to CPU) is visible rather than silent. `adapter`
    * is whatever label the GPU backend factory discovered (e.g. a
    * `GPUAdapterInfo` description); omitted for the CPU backend, or a GPU one
-   * with no better label to offer. `null` hides the note, mirroring
+   * with no better label to offer. `detail` (fr-2w5) is a short
+   * why-am-I-on-CPU annotation ("GPU failed", "WebGPU unavailable") shown
+   * when the CPU backend is a FALLBACK rather than the natural choice —
+   * the one-word answer that makes a field report of "it says CPU"
+   * diagnosable. `null` hides the note, mirroring
    * {@link setFlameSupersampleNote}'s contract (cleared at the start of
    * every render, before the fresh worker reports its own).
    */
-  setFlameBackendNote(backend: "gpu" | "cpu" | null, adapter?: string): void {
+  setFlameBackendNote(
+    backend: "gpu" | "cpu" | null,
+    adapter?: string,
+    detail?: string,
+  ): void {
     if (backend === null) {
       this.flameBackendNote.textContent = "";
       this.flameBackendNote.classList.add("hidden");
@@ -1409,7 +1417,7 @@ export class Ui {
     this.flameBackendNote.textContent =
       backend === "gpu"
         ? `GPU accumulation${adapter ? ` (${adapter})` : ""}`
-        : "CPU accumulation";
+        : `CPU accumulation${detail ? ` — ${detail}` : ""}`;
     this.flameBackendNote.classList.remove("hidden");
   }
 

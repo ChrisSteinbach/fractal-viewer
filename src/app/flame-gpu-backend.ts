@@ -29,13 +29,19 @@
  * line of driver code, so the two paths can never drift on the driving.
  *
  * This module never falls back to CPU itself — every failure mode here is a
- * plain thrown (`create`) or rejected (`accumulate`) `Error` with a message
- * naming what went wrong; `flame-worker-core.ts`'s `FlameWorkerSession` (the
- * `gpuFailed` ratchet in `createGpuBackendWithFallback`/`runChunk`) owns all
- * recovery. Diagnostics that aren't part of that control flow (a genuinely
- * lost device, an uncaptured device error mid-render) just `console.error` —
- * the session's own `log` sink is what tells the user-visible fallback
- * story once the next `accumulate()` throws.
+ * thrown (`create`) or rejected (`accumulate`) error with a message naming
+ * what went wrong, and (fr-2w5) a CLASS naming its kind:
+ * `FlameGpuUnavailableError` when the context has no usable WebGPU,
+ * `FlameGpuSizeError` when the accumulation size is what failed (device
+ * limits, or a scoped out-of-memory at resource creation), plain `Error`
+ * otherwise. `flame-worker-core.ts`'s `FlameWorkerSession`
+ * (`handleGpuFailure` — the supersample-shrink ladder in front of the
+ * `gpuFailed` ratchet) owns all recovery and keys its retry policy off
+ * those classes. Diagnostics that aren't part of that control flow (a
+ * genuinely lost device, an uncaptured device error mid-render, the
+ * one-line backend-up breadcrumb) just `console.info`/`console.error` — the
+ * session's own `log` sink is what tells the user-visible fallback story
+ * once the next `accumulate()` throws.
  */
 import {
   BYTES_PER_GPU_BUCKET,
@@ -65,6 +71,10 @@ import {
 } from "../fractal/flame-gpu-4d";
 import { createFlameHistogram } from "../fractal/flame";
 import type { FlameHistogram } from "../fractal/flame";
+import {
+  FlameGpuSizeError,
+  FlameGpuUnavailableError,
+} from "./flame-worker-core";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
@@ -191,6 +201,9 @@ interface GpuFlameBackendInit {
   width: number;
   height: number;
   adapterLabel?: string;
+  /** Whether the adapter is a software fallback — see
+   * {@link FlameAccumBackend.software}. */
+  software: boolean;
   /** fr-ee9: the progressive-display two-pass separable downsample's
    * pipelines, buffers, and shared bind group — see `snapshotDisplay`'s doc. */
   downsampleXPipeline: GPUComputePipeline;
@@ -219,6 +232,7 @@ interface GpuFlameBackendInit {
 class GpuFlameBackend implements FlameAccumBackend {
   readonly kind = "gpu" as const;
   readonly adapterLabel?: string;
+  readonly software: boolean;
 
   private readonly device: GPUDevice;
   private readonly accumulatePipeline: GPUComputePipeline;
@@ -236,12 +250,19 @@ class GpuFlameBackend implements FlameAccumBackend {
   private readonly height: number;
   private readonly histBytes: number;
   private readonly workgroupCount = NUM_CHAINS / WORKGROUP_SIZE;
-  /** The `snapshot()` target, allocated ONCE and reused every call — the
-   * GPU counterpart of `CpuFlameBackend` handing back its own live
-   * accumulator object every time. The converters' `out` contract
-   * unconditionally overwrites every bucket, so reuse is indistinguishable
-   * from a fresh allocation to any caller. */
-  private readonly outHistogram: FlameHistogram;
+  /** The `snapshot()` target, allocated LAZILY on the first `snapshot()`
+   * call and reused every call after — the GPU counterpart of
+   * `CpuFlameBackend` handing back its own live accumulator object every
+   * time. The converters' `out` contract unconditionally overwrites every
+   * bucket, so reuse is indistinguishable from a fresh allocation to any
+   * caller. Lazy (fr-2w5/fr-7su) because these are accumulation-resolution
+   * Float64 arrays on the CPU heap — up to gigabytes at a desktop
+   * resolution x supersample — and progressive redisplays never touch them
+   * (they use `snapshotDisplay`): only the finished frame does. Allocating
+   * them eagerly at create time taxed every GPU render with memory
+   * pressure that (fr-2w5's measurements) directly shrinks how much the
+   * GPU allocator will grant this same render's device buffers. */
+  private outHistogram: FlameHistogram | null = null;
   /** fr-ee9: the progressive-display two-pass downsample's pipelines,
    * buffers, and shared bind group — see `snapshotDisplay`'s doc. */
   private readonly downsampleXPipeline: GPUComputePipeline;
@@ -293,8 +314,8 @@ class GpuFlameBackend implements FlameAccumBackend {
     this.width = init.width;
     this.height = init.height;
     this.adapterLabel = init.adapterLabel;
+    this.software = init.software;
     this.histBytes = init.width * init.height * BYTES_PER_GPU_BUCKET;
-    this.outHistogram = createFlameHistogram(init.width, init.height);
     this.downsampleXPipeline = init.downsampleXPipeline;
     this.downsampleYPipeline = init.downsampleYPipeline;
     this.downsampleBindGroup = init.downsampleBindGroup;
@@ -384,6 +405,13 @@ class GpuFlameBackend implements FlameAccumBackend {
   }
 
   async snapshot(): Promise<FlameHistogram> {
+    if (this.lost) {
+      throw new Error("Flame GPU: device is lost, cannot snapshot");
+    }
+    // Deferred from construction — see this field's doc. A CPU allocation
+    // failure here rejects like any other snapshot failure, into the
+    // session's ordinary recovery.
+    this.outHistogram ??= createFlameHistogram(this.width, this.height);
     const encoder = this.device.createCommandEncoder({
       label: "flame-gpu hist readback",
     });
@@ -472,19 +500,30 @@ class GpuFlameBackend implements FlameAccumBackend {
  *
  * Every early-exit here is a thrown `Error` (which, inside this `async`
  * function, becomes a REJECTED promise) with a message naming what failed;
- * see the module doc for why this never attempts its own CPU fallback.
+ * see the module doc for why this never attempts its own CPU fallback. The
+ * error's CLASS is the session's classification signal (fr-2w5):
+ * {@link FlameGpuUnavailableError} for a context with no usable WebGPU at
+ * all, {@link FlameGpuSizeError} for size-caused failures — the device-limit
+ * guards AND any scoped out-of-memory error from resource creation, which
+ * the session's supersample ladder retries smaller — anything else for
+ * failures where a retry makes no sense (e.g. a WGSL compile error).
  */
 async function createBackendForProgram(
   program: GpuProgramSpec,
 ): Promise<FlameAccumBackend> {
   if (!navigator.gpu) {
-    throw new Error(
+    throw new FlameGpuUnavailableError(
       "Flame GPU: WebGPU is not available (navigator.gpu is undefined)",
     );
   }
-  const adapter = await navigator.gpu.requestAdapter();
+  // powerPreference is advisory, but on dual-GPU machines the default may
+  // be the low-power integrated adapter (often with smaller limits); a
+  // long-running compute burst is the textbook high-performance case.
+  const adapter = await navigator.gpu.requestAdapter({
+    powerPreference: "high-performance",
+  });
   if (!adapter) {
-    throw new Error(
+    throw new FlameGpuUnavailableError(
       "Flame GPU: navigator.gpu.requestAdapter() returned null — no compatible GPU adapter",
     );
   }
@@ -500,19 +539,68 @@ async function createBackendForProgram(
       maxBufferSize: adapter.limits.maxBufferSize,
     },
   });
+  try {
+    return await buildBackendOnDevice(device, adapter, program);
+  } catch (e) {
+    // Whatever partial resources were created die with the device — without
+    // this, every failed attempt (e.g. each step of the session's
+    // supersample ladder) would leak a live GPUDevice until GC.
+    device.destroy();
+    throw e;
+  }
+}
 
+/**
+ * The resource-building body of {@link createBackendForProgram}, split out
+ * so its caller can own exactly one `device.destroy()`-on-throw path. All
+ * resource creation — buffers, pipelines, bind groups, AND the warmup
+ * dispatch — runs inside a pair of error scopes, because WebGPU's
+ * `createBuffer` NEVER throws on allocation failure: it returns an
+ * invalid-but-real-looking buffer whose failure otherwise surfaces only
+ * when something touches it mid-render, seconds later and with a message
+ * naming the wrong thing ("invalid due to a previous error" at the first
+ * snapshot readback — fr-2w5 reproduced exactly this at 4K x supersample 3,
+ * and fr-e07's Firefox field report was the same mechanism). The scopes
+ * convert that into a create-time, classified, retryable failure. Measured
+ * on both Chrome and Firefox: allocation refusals DO report synchronously
+ * through `pushErrorScope("out-of-memory")` here, at sizes far below the
+ * limits the adapter reports (see the fr-2w5 bead / scripts/gpu-probe.mjs).
+ */
+async function buildBackendOnDevice(
+  device: GPUDevice,
+  adapter: GPUAdapter,
+  program: GpuProgramSpec,
+): Promise<FlameAccumBackend> {
   const histBytes = program.width * program.height * BYTES_PER_GPU_BUCKET;
   if (histBytes > device.limits.maxStorageBufferBindingSize) {
     // The session's own RAM budget already sized the accumulation
     // resolution for a CPU Float64 histogram; this device's storage-buffer
     // ceiling is a SEPARATE, GPU-specific limit that can bind tighter — the
-    // session runs this render on CPU instead when this throws.
-    throw new Error(
+    // session retries a smaller supersample (or runs on CPU) when this
+    // throws.
+    throw new FlameGpuSizeError(
       `Flame GPU: histogram buffer for ${program.width}x${program.height} ` +
         `needs ${histBytes} bytes, exceeding this device's ` +
         `maxStorageBufferBindingSize (${device.limits.maxStorageBufferBindingSize} bytes)`,
     );
   }
+  if (histBytes > device.limits.maxBufferSize) {
+    // Same size, different limit: the MAP_READ staging twin is not a
+    // storage BINDING, so only maxBufferSize governs it (and buffer
+    // creation in general) — a device could pass the binding guard above
+    // yet be unable to create the staging buffer at all.
+    throw new FlameGpuSizeError(
+      `Flame GPU: histogram staging buffer needs ${histBytes} bytes, ` +
+        `exceeding this device's maxBufferSize (${device.limits.maxBufferSize} bytes)`,
+    );
+  }
+
+  // See this function's doc: everything from here to the matching pops runs
+  // under an out-of-memory + validation scope pair, so an allocation the
+  // reported limits permit but the allocator refuses fails HERE, classified,
+  // not seconds later at the first readback.
+  device.pushErrorScope("out-of-memory");
+  device.pushErrorScope("validation");
 
   const paramsBuffer = device.createBuffer({
     label: "flame-gpu params",
@@ -791,7 +879,9 @@ async function createBackendForProgram(
   // Run every chain forward WARMUP_ITERATIONS steps without recording (the
   // PLOT=0 pipeline), BEFORE this factory resolves — the GPU counterpart of
   // the CPU accumulators' fresh-start warmup loop, so the session's very
-  // first real accumulate() call starts already on the attractor.
+  // first real accumulate() call starts already on the attractor. Runs
+  // inside the error scopes too: a validation error here means the whole
+  // setup is broken and every later dispatch would silently no-op.
   const workgroupCount = NUM_CHAINS / WORKGROUP_SIZE;
   {
     const encoder = device.createCommandEncoder({
@@ -806,15 +896,63 @@ async function createBackendForProgram(
     await device.queue.onSubmittedWorkDone();
   }
 
+  // Close the scope pair opened before the first createBuffer (pop order is
+  // the reverse of push). An OOM here is the "reported limits lie" case this
+  // module's doc describes — classified FlameGpuSizeError so the session's
+  // supersample ladder retries smaller ON this GPU instead of writing the
+  // GPU off for the session.
+  const validationError = await device.popErrorScope();
+  const oomError = await device.popErrorScope();
+  if (oomError) {
+    throw new FlameGpuSizeError(
+      `Flame GPU: out of memory creating resources for a ` +
+        `${program.width}x${program.height} accumulation (~${Math.round(
+          (histBytes * 2) / (1024 * 1024),
+        )} MiB histogram + staging): ${oomError.message}`,
+    );
+  }
+  if (validationError) {
+    throw new Error(
+      `Flame GPU: validation error during setup: ${validationError.message}`,
+    );
+  }
+
   // Firefox (and possibly others) blanks vendor/architecture rather than
   // omitting them — filter empties instead of trusting the whole info
   // object's truthiness, so a blank-but-present adapter.info still yields
   // `undefined` (no bare parenthesis in the UI note) rather than "".
   const info = adapter.info;
-  const adapterLabel =
-    [info.vendor, info.architecture].filter(Boolean).join(" ") || undefined;
+  // A fallback adapter is SOFTWARE WebGPU (SwiftShader-class) — flagged on
+  // the backend for the session's device-loss-retry policy, and labeled so
+  // the UI note never passes software rasterization off as the real GPU.
+  // `isFallbackAdapter` still lives on the adapter itself in older
+  // implementations — read both homes.
+  const software =
+    info.isFallbackAdapter === true ||
+    (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter === true;
+  const baseLabel = [info.vendor, info.architecture].filter(Boolean).join(" ");
+  const adapterLabel = software
+    ? `${baseLabel || "fallback adapter"} (software)`
+    : baseLabel || undefined;
+
+  // The one create-time diagnostic breadcrumb (fr-2w5): when a field report
+  // says "it picked X", this line says what the context offered and what
+  // was asked of it. console.info, not the session's log sink — same
+  // pattern as the device-lost diagnostics in GpuFlameBackend's
+  // constructor: informational, not part of the fallback control flow.
+  console.info(
+    `Flame GPU: backend up on "${adapterLabel ?? "unnamed adapter"}" — ` +
+      `${program.width}x${program.height} accumulation, ` +
+      `${Math.round(histBytes / (1024 * 1024))} MiB histogram + equal staging ` +
+      `(device maxStorageBufferBindingSize ${Math.round(
+        device.limits.maxStorageBufferBindingSize / (1024 * 1024),
+      )} MiB, maxBufferSize ${Math.round(
+        device.limits.maxBufferSize / (1024 * 1024),
+      )} MiB)`,
+  );
 
   return new GpuFlameBackend({
+    software,
     device,
     accumulatePipeline,
     bindGroup,

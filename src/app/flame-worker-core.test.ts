@@ -13,6 +13,8 @@ import type { Transform4 } from "../fractal/types";
 import {
   FLAME_FILTER_RADIUS,
   flameAccumBudgetBuckets,
+  FlameGpuSizeError,
+  FlameGpuUnavailableError,
   FlameWorkerSession,
 } from "./flame-worker-core";
 import type {
@@ -20,6 +22,7 @@ import type {
   FlameWorkerCommand,
   FlameWorkerDeps,
   FlameWorkerEvent,
+  GpuBackendRequest,
   GpuBackendRequest4,
   SharedFrameBuffers,
 } from "./flame-worker-core";
@@ -1508,7 +1511,237 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(gpuUnavailableEvents(events)).toHaveLength(0);
   });
 
-  it("emits gpuUnavailable when a GPU accumulate fails mid-render (fr-8ck), while still restarting on CPU", async () => {
+  it("retries the GPU factory at supersample 1 when creation size-fails at 2, staying on the GPU (fr-2w5 ladder)", async () => {
+    const requestedWidths: number[] = [];
+    const workingBackend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "Fake Adapter",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (
+      request: GpuBackendRequest,
+    ): Promise<FlameAccumBackend> => {
+      requestedWidths.push(request.width);
+      if (request.width > 8) {
+        // The 16x16 (2x-supersampled) histogram is "too big for this
+        // device" — the classified size failure flame-gpu-backend.ts throws
+        // for a device-limit guard or a scoped create-time OOM.
+        throw new FlameGpuSizeError("histogram exceeds device limits");
+      }
+      return workingBackend;
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        gpuPreference: "auto",
+        requestedSupersample: 2,
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // 2x failed, 1x succeeded — ON the GPU, never touching CPU: the whole
+    // point of the ladder (fr-e07's prescribed real fix). No gpuUnavailable:
+    // the GPU did not become unavailable, it just needed a smaller size.
+    expect(requestedWidths).toEqual([16, 8]);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "gpu", adapter: "Fake Adapter" },
+    ]);
+    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+    // The supersample note tells the user the render runs at 1x of the 2x
+    // they asked for — same note the memory-budget clamp uses.
+    expect(noteEvents(events).at(-1)).toEqual({
+      type: "supersampleNote",
+      effective: 1,
+      requested: 2,
+    });
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("does not ladder a FlameGpuUnavailableError: no retry, immediate CPU, reason 'no-webgpu'", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      throw new FlameGpuUnavailableError("navigator.gpu is undefined");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        gpuPreference: "auto",
+        requestedSupersample: 2,
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // Even at supersample 2 (ladder headroom available), a context with no
+    // WebGPU at all gets no size retries — no size would help. The reason
+    // lets the main thread escalate a worker-hosted session to its own
+    // (independent) WebGPU context — the fr-1ib Firefox gap.
+    expect(factoryCalls).toBe(1);
+    expect(gpuUnavailableEvents(events)).toEqual([
+      { type: "gpuUnavailable", reason: "no-webgpu" },
+    ]);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["cpu"]);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("falls back to CPU at the FULL budgeted supersample after the GPU ladder exhausts (the CPU render regains 2x)", async () => {
+    const requestedWidths: number[] = [];
+    const createGpuBackend = async (
+      request: GpuBackendRequest,
+    ): Promise<FlameAccumBackend> => {
+      requestedWidths.push(request.width);
+      throw new FlameGpuSizeError("histogram exceeds device limits");
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        gpuPreference: "auto",
+        requestedSupersample: 2,
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // The ladder tried 2x then 1x on the GPU; even 1x failed, so the session
+    // ratchets to CPU — and the CPU accumulation runs at the memory budget's
+    // own 2x again (the GPU-learned ceiling must not degrade a render the
+    // GPU isn't even doing), which the final supersample note reflects by
+    // reporting nothing reduced.
+    expect(requestedWidths).toEqual([16, 8]);
+    expect(gpuUnavailableEvents(events)).toEqual([
+      { type: "gpuUnavailable", reason: "error" },
+    ]);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["cpu"]);
+    expect(noteEvents(events).at(-1)).toEqual({
+      type: "supersampleNote",
+      effective: null,
+      requested: 2,
+    });
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("retries a mid-render GPU failure at the next supersample down, staying on the GPU", async () => {
+    const requestedWidths: number[] = [];
+    const failingBackend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async () => {
+        throw new Error("Not enough memory left"); // Firefox's mid-render allocator refusal, verbatim.
+      },
+      snapshot: async () => createFlameHistogram(16, 16),
+      destroy: () => {},
+    };
+    const workingBackend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (
+      request: GpuBackendRequest,
+    ): Promise<FlameAccumBackend> => {
+      requestedWidths.push(request.width);
+      return request.width > 8 ? failingBackend : workingBackend;
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        gpuPreference: "auto",
+        requestedSupersample: 2,
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // A mid-render failure at 2x is very often a size/pressure signal
+    // (fr-2w5's measurements: create-time scopes can't catch everything,
+    // e.g. Firefox's mapAsync-time refusals), so the ladder retries smaller
+    // ON the GPU rather than writing it off for the session.
+    expect(requestedWidths).toEqual([16, 8]);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "gpu"]);
+    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("refuses a software (fallback-adapter) backend on the device-loss retry when the session had real hardware", async () => {
+    let softwareDestroyed = 0;
+    const hardwareBackend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "real hw",
+      accumulate: async () => {
+        throw new Error("device lost"); // the hardware dies immediately.
+      },
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const softwareBackend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "google swiftshader (software)",
+      software: true,
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {
+        softwareDestroyed++;
+      },
+    };
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      // Exactly Chrome's post-GPU-process-crash shape (fr-2w5's E4b): the
+      // first request gets real hardware; after the crash, requestAdapter
+      // silently succeeds with SwiftShader.
+      return factoryCalls === 1 ? hardwareBackend : softwareBackend;
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    // The device-loss retry got SwiftShader where the session had real
+    // hardware — refused (destroyed, never installed) rather than silently
+    // rendering 10-100x slower; the session ends on CPU.
+    expect(factoryCalls).toBe(2);
+    expect(softwareDestroyed).toBe(1);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    expect(gpuUnavailableEvents(events)).toEqual([
+      { type: "gpuUnavailable", reason: "error" },
+    ]);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("accepts a software backend when it is all the context ever offered (SwiftShader-only machines/CI)", async () => {
+    const softwareBackend: FlameAccumBackend = {
+      kind: "gpu",
+      adapterLabel: "google swiftshader (software)",
+      software: true,
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> =>
+      softwareBackend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events)).toEqual([
+      {
+        type: "backend",
+        backend: "gpu",
+        adapter: "google swiftshader (software)",
+      },
+    ]);
+    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
+
+  it("emits gpuUnavailable with reason 'error' when GPU accumulate keeps failing mid-render, after one fresh-device retry (fr-2w5)", async () => {
     let accumulateCalls = 0;
     const backend: FlameAccumBackend = {
       kind: "gpu",
@@ -1527,14 +1760,22 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     );
     await drainAsync(scheduler);
 
-    // The create succeeded (gpu), then a mid-render accumulate failure restarts
-    // on cpu — and, unlike a create failure, this is what the Firefox worker-OOM
-    // actually looks like, so it MUST signal so the host can escalate (fr-8ck).
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // The create succeeded (gpu), a mid-render failure at supersample 1 gets
+    // ONE fresh-device retry (a lost device usually comes back — fr-2w5's
+    // E4b), the retry's own first chunk fails too, and only then does the
+    // session ratchet to cpu — with reason "error", NOT "no-webgpu": this is
+    // the Firefox mid-render OOM shape, and escalating it to the main-thread
+    // host would just re-fail on the same hardware (fr-e07's field lesson).
+    expect(backendEvents(events).map((e) => e.backend)).toEqual([
+      "gpu",
+      "gpu",
+      "cpu",
+    ]);
     expect(gpuUnavailableEvents(events)).toHaveLength(1); // once, before the CPU restart.
+    expect(gpuUnavailableEvents(events)[0].reason).toBe("error");
   });
 
-  it("emits gpuUnavailable when a GPU snapshot fails mid-render (the Firefox worker-OOM shape), still restarting on CPU", async () => {
+  it("emits gpuUnavailable when a GPU snapshot keeps failing mid-render (the Firefox worker-OOM shape), still ending on CPU", async () => {
     const backend: FlameAccumBackend = {
       kind: "gpu",
       accumulate: async (n) => n, // accumulate succeeds...
@@ -1550,8 +1791,14 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     );
     await drainAsync(scheduler);
 
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    // gpu, the fresh-device retry's gpu, then the permanent cpu fallback.
+    expect(backendEvents(events).map((e) => e.backend)).toEqual([
+      "gpu",
+      "gpu",
+      "cpu",
+    ]);
     expect(gpuUnavailableEvents(events)).toHaveLength(1);
+    expect(gpuUnavailableEvents(events)[0].reason).toBe("error");
   });
 
   it("restarts on CPU from scratch when the GPU backend's accumulate rejects mid-run", async () => {
@@ -1573,11 +1820,17 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     );
     await drainAsync(scheduler);
 
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual([
+      "gpu",
+      "gpu", // the one fresh-device retry (fr-2w5) — its first chunk fails too.
+      "cpu",
+    ]);
     // 10 (the GPU chunk that succeeded before the failure) then 40 (the
     // CPU restart running from iterationsDone = 0, not 10 + 40 = 50) — the
     // only way to land on exactly this sequence is a genuine from-scratch
-    // restart, not the GPU failure just being papered over.
+    // restart, not the GPU failure just being papered over. The retry
+    // attempt contributes no progress event of its own: its very first
+    // accumulate throws.
     expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([
       10, 40,
     ]);
@@ -1613,13 +1866,18 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     // below.
     await drainAsync(scheduler);
 
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    expect(backendEvents(events).map((e) => e.backend)).toEqual([
+      "gpu",
+      "gpu", // the one fresh-device retry (fr-2w5) — its first due snapshot fails too.
+      "cpu",
+    ]);
     // 10 (the one GPU due tick whose snapshot succeeded — chunks 2 and 3
     // aren't due under a zero-step clock) then 40 (the CPU restart running
     // from iterationsDone = 0, not 10 + 40 = 50) — same reset-semantics
     // proof as the accumulate-rejection test above, now for a snapshot
     // failure landing on the FINISHING due tick (accumulate having just
-    // succeeded).
+    // succeeded). The retry attempt's own first due tick fails before any
+    // progress event.
     expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([
       10, 40,
     ]);
@@ -1856,12 +2114,17 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
     );
     await drainAsync(scheduler);
 
-    expect(snapshotDisplayCalls).toBe(1);
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
-    // The one GPU due tick's snapshotDisplay rejected before ever reporting
-    // progress (unlike the mirrored snapshot-rejection test, whose accumulate
-    // succeeds and reports once before its failing due tick) — so the only
-    // progress event at all is the CPU restart's own finish, from scratch.
+    expect(snapshotDisplayCalls).toBe(2); // the first attempt's due tick + the fresh-device retry's (fr-2w5).
+    expect(backendEvents(events).map((e) => e.backend)).toEqual([
+      "gpu",
+      "gpu",
+      "cpu",
+    ]);
+    // Neither GPU attempt's due tick ever reported progress (snapshotDisplay
+    // rejected both times, unlike the mirrored snapshot-rejection test,
+    // whose accumulate succeeds and reports once before its failing due
+    // tick) — so the only progress event at all is the CPU restart's own
+    // finish, from scratch.
     expect(progressEvents(events).map((p) => p.iterationsDone)).toEqual([40]);
     expect(events.filter((e) => e.type === "error")).toHaveLength(0); // recovered, not surfaced as a fatal error.
   });

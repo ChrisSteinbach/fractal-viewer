@@ -614,19 +614,23 @@ function main(): void {
 
   // fr-e07/fr-8ck: which host the CURRENT flame session runs on, and whether a
   // worker-hosted session's WebGPU has failed this page session. When a
-  // WORKER-hosted session reports `gpuUnavailable` (its WebGPU backend failed —
-  // at create OR mid-render, see the event's doc) and THIS thread has its own
+  // WORKER-hosted session reports `gpuUnavailable` with `reason: "no-webgpu"`
+  // (the worker CONTEXT has no usable WebGPU — fr-1ib's Firefox gap; see the
+  // event's doc for why no other reason escalates) and THIS thread has its own
   // WebGPU, we escalate to the main-thread GPU host rather than accept the
-  // worker's CPU fallback: the motivating case is a Firefox desktop whose
-  // worker-context WebGPU OOMs ~2s into a render ("Not enough memory left" on a
-  // card with ample VRAM — a worker bug) while the main thread's GPU renders it
-  // fine. `preferLocalHost` is STICKY, not one-shot: once the worker GPU has
-  // failed we keep using the reliable main-thread host for the rest of the
-  // session, so only the FIRST render eats the wasted worker attempt. Chrome,
-  // where the worker GPU works, never sets it and keeps the off-main-thread
-  // worker path. Resets on reload.
+  // worker's CPU fallback. `preferLocalHost` is STICKY, not one-shot: once the
+  // worker context has proven GPU-less we keep using the main-thread host for
+  // the rest of the session, so only the FIRST render eats the wasted worker
+  // attempt. Chrome, where the worker GPU works, never sets it and keeps the
+  // off-main-thread worker path. Resets on reload.
   let flameHostKind: "worker" | "local" | null = null;
   let preferLocalHost = false;
+  // Why the CURRENT render's session gave up on GPU (null while it hasn't):
+  // remembered from the `gpuUnavailable` event so the subsequent `backend`
+  // event's CPU note can say WHY it reads "CPU accumulation" — the absence of
+  // that why is what made field reports of this flakiness undiagnosable
+  // (fr-2w5). Cleared by `clearNotes` on every fresh session start.
+  let flameGpuUnavailableReason: "no-webgpu" | "error" | null = null;
 
   // Allocate the two shared display-resolution frame slots, or null to fall
   // back to transfer mode: when the page isn't cross-origin isolated the
@@ -700,31 +704,50 @@ function main(): void {
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
       case "backend":
-        ui.setFlameBackendNote(event.backend, event.adapter);
+        ui.setFlameBackendNote(
+          event.backend,
+          event.adapter,
+          // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
+          // briefly. A CPU backend with no preceding gpuUnavailable is just
+          // a CPU render (GPU never attempted): no reason to show.
+          event.backend === "cpu" && flameGpuUnavailableReason !== null
+            ? flameGpuUnavailableReason === "no-webgpu"
+              ? "WebGPU unavailable"
+              : "GPU failed"
+            : undefined,
+        );
         break;
       case "gpuUnavailable":
-        // fr-e07/fr-8ck: a worker-hosted session's WebGPU backend failed (at
-        // create OR mid-render — e.g. Firefox's worker-context OOM ~2s in) and
-        // it is about to render on CPU. If this session runs in a WORKER and
-        // THIS thread has its own usable-context WebGPU (fine-pointer +
-        // navigator.gpu — the same signals the local-host auto-detect uses),
-        // escalate to the main-thread GPU host instead of accepting the
-        // worker's CPU fallback, and REMEMBER it (`preferLocalHost`) so the rest
-        // of this page session skips the broken worker GPU and renders on the
+        // fr-e07/fr-8ck: a worker-hosted session's WebGPU backend failed for
+        // good (its own recovery ladder is exhausted — see the event's doc)
+        // and it is about to render on CPU. If the failure is that the worker
+        // CONTEXT has no usable WebGPU (`reason: "no-webgpu"` — fr-1ib's
+        // Firefox gap), this session runs in a WORKER, and THIS thread has
+        // its own WebGPU (fine-pointer + navigator.gpu — the same signals the
+        // local-host auto-detect uses), escalate to the main-thread GPU host
+        // instead of accepting the worker's CPU fallback, and REMEMBER it
+        // (`preferLocalHost`) so the rest of this page session renders on the
         // main thread from the start — only this first render pays the wasted
-        // worker attempt. A session that is already local-hosted (flameHostKind
-        // !== "worker") has nothing better to escalate to, so its own
-        // gpuUnavailable is ignored and its CPU fallback stands as the final
-        // one. An explicit `?flamehost=worker` pin is honored — no escalation —
-        // so the worker path stays testable in isolation.
+        // worker attempt. Any OTHER reason (out-of-memory, device loss, a
+        // compile error) is NOT escalated (fr-2w5): the main thread's GPU is
+        // the same hardware and allocator and fails identically — fr-e07's
+        // field test watched both hosts OOM the same 24 GB card back to back,
+        // so escalating just doubles the failure the user sits through. A
+        // session that is already local-hosted (flameHostKind !== "worker")
+        // has nothing better to escalate to, so its own gpuUnavailable is
+        // ignored and its CPU fallback stands as the final one. An explicit
+        // `?flamehost=worker` pin is honored — no escalation — so the worker
+        // path stays testable in isolation.
+        flameGpuUnavailableReason = event.reason;
         if (
+          event.reason === "no-webgpu" &&
           flameHostKind === "worker" &&
           flameHostOverride() !== "worker" &&
           !!navigator.gpu &&
           !window.matchMedia("(pointer: coarse)").matches
         ) {
           console.info(
-            "Flame render: worker GPU unavailable; escalating to the main-thread GPU session for the rest of this session.",
+            "Flame render: worker context has no usable WebGPU; escalating to the main-thread GPU session for the rest of this session.",
           );
           preferLocalHost = true;
           // Re-enter now on the local host. enter() terminates the worker host
@@ -967,6 +990,7 @@ function main(): void {
     clearNotes: () => {
       ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh session reports its own.
       ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh session reports its own.
+      flameGpuUnavailableReason = null; // a fresh session gets a fresh GPU verdict.
     },
     resetProgress: () => {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
