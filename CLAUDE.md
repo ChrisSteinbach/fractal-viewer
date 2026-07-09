@@ -106,7 +106,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `scene.ts` — the main Three.js wrapper (scene, camera, renderer, point
     cloud, guide boxes, fog). Three.js is confined to this file,
     `interactions.ts`, and `voxel-material.ts`; everything else works with plain
-    numbers.
+    numbers. `captureThumbnail` renders one frame down to a small JPEG data URL
+    for the collection gallery (fr-cai).
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `camera-tween.ts` — smoothstep glide of the orbit camera's target + radius to
     auto-frame a freshly generated attractor (preset load / Surprise Me) instead
@@ -126,6 +127,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     rapid edit burst (e.g. a slider drag) into one undo checkpoint and one
     debounced save, and drives undo/redo. Every side effect (snapshot, persist,
     restore, UI sync, the timer) is injected; pure, tested.
+  - `collection.ts` — the saved-scene collection (fr-cai): a persistent
+    multi-slot library of encoded scenes + thumbnails under its own
+    localStorage key, layered over the same `encodeScene` codec as the
+    single-scene autosave (`persist.ts`) and undo history (`history.ts`).
+    Pure, injected storage/clock, tested.
   - `ui.ts` — control panel + transform list, built with `createElement`.
   - `control-spec.ts` — declarative spec table for the panel's simple scalar
     controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,

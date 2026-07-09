@@ -157,6 +157,19 @@
           </button>
         </div>
 
+        <div id="collectionSection">
+          <h3>Collection</h3>
+          <button class="btn btn-green" id="saveCollectionBtn" type="button">
+            ★ Save to collection
+          </button>
+          <button class="btn btn-ghost" id="galleryBtn" type="button">
+            ▦ Gallery (<span id="collectionCount">0</span>)
+          </button>
+          <button class="btn btn-ghost" id="copyLinkBtn" type="button">
+            🔗 Copy link
+          </button>
+        </div>
+
         <h3>Appearance</h3>
         <label class="select-label">
           Points: <span id="numPointsLabel">100,000</span>
@@ -593,6 +606,36 @@
         </label>
       </div>
     </div>
+
+    <div
+      id="galleryModal"
+      class="gallery-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Saved collection"
+    >
+      <div id="galleryBackdrop" class="gallery-backdrop"></div>
+      <div class="gallery-dialog">
+        <div class="gallery-header">
+          <h2 class="gallery-title">Collection</h2>
+          <button
+            id="galleryCloseBtn"
+            class="notice-dismiss"
+            type="button"
+            aria-label="Close collection"
+          >
+            ✕
+          </button>
+        </div>
+        <p id="galleryEmpty" class="gallery-empty hidden">
+          No saved systems yet. Roll “Surprise Me”, shape a system you like,
+          then ★ Save to collection to keep it here.
+        </p>
+        <div id="galleryGrid" class="gallery-grid"></div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
     <script type="module" src="./main.ts"></script>
   </body>

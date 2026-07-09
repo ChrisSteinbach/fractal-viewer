@@ -33,6 +33,11 @@ function noopHandlers(): UiHandlers {
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
     onRecordVideoToggle: vi.fn(),
+    onSaveToCollection: vi.fn(),
+    onOpenGallery: vi.fn(),
+    onLoadFromCollection: vi.fn(),
+    onDeleteFromCollection: vi.fn(),
+    onCopyLink: vi.fn(),
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
     onToggleFinalTransform: vi.fn(),
@@ -2767,5 +2772,90 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     expect(attr("solidResolutionSlider", "step")).toBe(
       String(PARAM.solidResolution.snap),
     );
+  });
+});
+
+describe("Ui collection gallery", () => {
+  const saved = (
+    id: string,
+    thumbnail = "data:image/jpeg;base64,x",
+    createdAt = 1_700_000_000_000,
+  ) => ({ id, encoded: `v1=${id}`, thumbnail, createdAt });
+
+  const cards = () => document.querySelectorAll("#galleryGrid .gallery-card");
+
+  it("opens the modal with one card per saved scene", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a"), saved("b")]);
+    expect(
+      document.getElementById("galleryModal")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(cards()).toHaveLength(2);
+  });
+
+  it("shows the empty-state and no cards for an empty collection", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([]);
+    expect(
+      document.getElementById("galleryEmpty")?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(cards()).toHaveLength(0);
+  });
+
+  it("renders a thumbnail img when present and a placeholder when blank", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([
+      saved("withThumb", "data:image/jpeg;base64,abc"),
+      saved("noThumb", ""),
+    ]);
+    const [first, second] = cards();
+    expect(first.querySelector("img")?.getAttribute("src")).toBe(
+      "data:image/jpeg;base64,abc",
+    );
+    expect(second.querySelector("img")).toBeNull();
+    expect(second.querySelector(".gallery-card-noimg")).not.toBeNull();
+  });
+
+  it("fires onLoadFromCollection with the scene id when a card is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openGallery([saved("target")]);
+    document
+      .querySelector<HTMLButtonElement>("#galleryGrid .gallery-card-load")
+      ?.click();
+    expect(handlers.onLoadFromCollection).toHaveBeenCalledWith("target");
+  });
+
+  it("fires onDeleteFromCollection, not onLoadFromCollection, when a card's ✕ is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openGallery([saved("doomed")]);
+    document
+      .querySelector<HTMLButtonElement>("#galleryGrid .gallery-card-delete")
+      ?.click();
+    expect(handlers.onDeleteFromCollection).toHaveBeenCalledWith("doomed");
+    expect(handlers.onLoadFromCollection).not.toHaveBeenCalled();
+  });
+
+  it("reflects the saved count on the gallery button", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.setCollectionCount(7);
+    expect(document.getElementById("collectionCount")?.textContent).toBe("7");
+  });
+
+  it("closeGallery hides the modal again", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a")]);
+    ui.closeGallery();
+    expect(
+      document.getElementById("galleryModal")?.classList.contains("hidden"),
+    ).toBe(true);
   });
 });

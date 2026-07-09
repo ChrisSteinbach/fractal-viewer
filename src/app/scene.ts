@@ -1182,6 +1182,32 @@ export class FractalScene {
   }
 
   /**
+   * Render one frame and read it back as a small JPEG data URL — the thumbnail
+   * source for the saved-scene collection (fr-cai). Uses the same
+   * synchronous-render-then-read trick as {@link captureFrame} (the renderer
+   * runs without `preserveDrawingBuffer`), but downsamples to at most `maxDim`
+   * px on the long side and JPEG-compresses, so a whole collection of
+   * thumbnails stays well within the localStorage budget. Returns `""` when a
+   * 2D context is unavailable — the collection treats an empty thumbnail as
+   * "no image" and renders a placeholder card.
+   */
+  captureThumbnail(maxDim = 160): string {
+    this.render();
+    const src = this.renderer.domElement;
+    const longSide = Math.max(src.width, src.height);
+    const scale = longSide > maxDim ? maxDim / longSide : 1;
+    const w = Math.max(1, Math.round(src.width * scale));
+    const h = Math.max(1, Math.round(src.height * scale));
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext("2d");
+    if (!ctx) return "";
+    ctx.drawImage(src, 0, 0, w, h);
+    return out.toDataURL("image/jpeg", 0.72);
+  }
+
+  /**
    * Physical pixel size of the drawing buffer (accounts for
    * `devicePixelRatio`) — the resolution a flame render should target so it
    * matches what is currently on screen 1:1.
