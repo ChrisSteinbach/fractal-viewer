@@ -224,14 +224,23 @@ async function main() {
     console.error(
       `[gpu-flame-bench] launching ${args.chrome} (headless=${!args.headed})`,
     );
+    // Playwright's `headless: true` launches Chrome's OLD headless mode,
+    // which has no GPU stack at all — navigator.gpu never exists there, so
+    // the agreement check could only ever report "skipped" (fr-2w5; same
+    // trap scripts/webgl-smoke.mjs documents). NEW headless mode must be
+    // requested explicitly: `headless: false` stops Playwright injecting
+    // the old flag, and `--headless=new` opts into the mode that keeps the
+    // GPU process.
+    const launchFlags = [
+      "--enable-unsafe-webgpu",
+      "--enable-features=Vulkan",
+      "--ignore-gpu-blocklist",
+    ];
+    if (!args.headed) launchFlags.push("--headless=new");
     browser = await chromium.launch({
       executablePath: args.chrome,
-      headless: !args.headed,
-      args: [
-        "--enable-unsafe-webgpu",
-        "--enable-features=Vulkan",
-        "--ignore-gpu-blocklist",
-      ],
+      headless: false,
+      args: launchFlags,
     });
     // Wide enough that a scenario's three 960px canvases sit un-clipped in
     // one row — page.png would otherwise cut off the GPU/diff canvases.

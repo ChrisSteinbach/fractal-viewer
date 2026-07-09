@@ -146,12 +146,21 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
     kernels from inside the flame worker (one shared driver, two packing
     factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
-    seam (WebGPU when available, CPU otherwise).
+    seam (WebGPU when available, CPU otherwise). All resource creation is
+    error-scoped, so allocation refusals fail at create time as a classified
+    `FlameGpuSizeError` — reported device limits overstate real, dynamic
+    allocator ceilings (fr-2w5; see
+    `docs/investigation-fr-2w5-gpu-selection.md`).
   - `flame-worker.ts` / `flame-worker-core.ts` — the flame render worker: thin
     `postMessage` glue around a plain-testable session (`FlameWorkerSession`)
     driving CPU (`accumulateFlame` / `accumulateFlame4`) or WebGPU accumulation
     behind the `FlameAccumBackend` seam; SharedArrayBuffer fast path,
     postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D.
+    GPU failures run a recovery ladder (`handleGpuFailure`, fr-2w5): retry ON
+    the GPU at a smaller supersample, one fresh-device retry (refusing a
+    software adapter after real hardware), and only then the permanent CPU
+    fallback — whose `gpuUnavailable` reason gates main.ts's worker→main-host
+    escalation to genuine no-WebGPU-in-worker cases.
   - `flame-perf.ts` — `FlamePerfMeter`, opt-in flame-throughput diagnostics
     (behind the `?flameperf` URL param): windows the worker's per-chunk timing
     samples into a throughput summary. Pure, tested; deliberately changes no

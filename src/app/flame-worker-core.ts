@@ -34,9 +34,11 @@
  * (fr-npb): CPU by default, or — when the `start` command's
  * `gpuPreference` opts in and the real worker wires up a `createGpuBackend`
  * factory — a WebGPU accumulator (`flame-gpu.ts`), which `runChunk` drives
- * through the exact same chunk/redisplay loop and falls back to CPU (once
- * per session — see `gpuFailed`) on any GPU failure. See that interface's
- * doc for the seam's contract.
+ * through the exact same chunk/redisplay loop. A GPU failure runs through
+ * {@link handleGpuFailure}'s recovery ladder (fr-2w5) — retry ON the GPU at
+ * a smaller supersample, one fresh-device retry — before the permanent
+ * once-per-session CPU fallback (`gpuFailed`). See that interface's doc for
+ * the seam's contract.
  */
 import {
   accumulateFlame,
@@ -149,8 +151,8 @@ export type FlameWorkerCommand =
        * always sends both), but are simply unused when this is present.
        * `gpuPreference` applies to 4D sessions too (fr-e26): `"auto"` tries
        * the `createGpuBackend4` factory (`flame-gpu-4d.ts`'s WGSL kernel)
-       * with the same fall-back-to-CPU/`gpuFailed`-ratchet discipline as
-       * the 3D path.
+       * with the same recovery-ladder-then-CPU discipline as the 3D path
+       * (see `handleGpuFailure`).
        */
       fourD?: {
         /** The 4D transform set — see `chaos-game-4d.ts`'s `PreparedChaosGame4`. */
@@ -287,32 +289,31 @@ export type FlameWorkerEvent =
   | { type: "error"; message: string }
   | {
       /**
-       * Emitted the first time THIS session's WebGPU backend fails — whether at
-       * CREATE (the `createGpuBackend`/`createGpuBackend4` factory threw, see
-       * {@link createGpuBackendWithFallback}) or MID-RENDER (a dispatch/
-       * snapshot/downsample failed, see `runChunk`'s catches) — right as the
-       * session ratchets `gpuFailed` and falls back to CPU for the rest of its
-       * life. At most once per session: `gpuFailed` ratchets once, and once set
-       * no further GPU work runs, so no later failure can re-emit (all six
-       * failure sites route through {@link failGpuBackendToCpu}, which emits
-       * only on the false→true transition). Fires for mid-render failures too
-       * (fr-8ck) because the real-world case that motivated this — a Firefox
-       * desktop whose worker-context WebGPU allocation fails ~2s into a render
-       * with "Not enough memory left" (a worker bug, not real VRAM exhaustion:
-       * the main thread's GPU renders the same histogram fine) — surfaces as a
-       * mid-render snapshot failure, not a create failure.
+       * Emitted when THIS session gives up on WebGPU for good — after the
+       * failure-recovery ladder (see {@link handleGpuFailure}: supersample
+       * shrink-and-retry, the one device-loss retry) is exhausted or the
+       * failure class rules retrying out — right as the session ratchets
+       * `gpuFailed` and falls back to CPU for the rest of its life. At most
+       * once per session: `gpuFailed` ratchets once, and once set no further
+       * GPU work runs, so no later failure can re-emit (every failure site
+       * routes through {@link failGpuBackendToCpu}, which emits only on the
+       * false→true transition). NOT emitted for ladder retries that stay on
+       * GPU — those only log.
        *
        * Purely ADVISORY: the session still falls back to CPU entirely on its
        * own, so a host that ignores this event behaves exactly as before. The
        * MAIN thread uses it (fr-e07/fr-8ck) to ESCALATE a WORKER-hosted session
        * to the main-thread GPU host ({@link createLocalFlameSessionHost}) — and
-       * to STICK with it for the rest of the session — when the main thread
-       * itself has WebGPU: a win on a browser/driver where the worker's GPU is
-       * broken but the main thread's works. A session that is ALREADY
-       * main-thread-hosted has nothing better to escalate to, so main.ts ignores
-       * its `gpuUnavailable` and lets the CPU fallback stand as the final one.
+       * to STICK with it for the rest of the session — but ONLY for
+       * `reason: "no-webgpu"` (fr-2w5): the worker CONTEXT lacks usable WebGPU
+       * (fr-1ib's Firefox gap), where the main thread's own independent context
+       * can genuinely win. A `reason: "error"` failure (out-of-memory, device
+       * loss, a compile error) would fail identically on the main thread —
+       * fr-e07's field lesson: both contexts OOM'd the same 24 GB card — so
+       * escalating it just doubles the failure the user watches.
        */
       type: "gpuUnavailable";
+      reason: "no-webgpu" | "error";
     }
   | {
       /**
@@ -360,8 +361,10 @@ export interface FlameWorkerDeps {
    * pre-fr-npb caller, and the real worker until GPU wiring lands there —
    * means CPU-only, unconditionally, regardless of `gpuPreference`: this
    * factory's presence, not the preference field, is what actually gates
-   * the attempt. Rejection is non-fatal: `runChunk` falls back to CPU and
-   * never retries the factory again this session (see `gpuFailed`).
+   * the attempt. Rejection is non-fatal: {@link handleGpuFailure} decides
+   * between retrying the factory at a smaller supersample (fr-2w5's ladder
+   * — a {@link FlameGpuSizeError} or any failure at supersample > 1) and
+   * the permanent CPU fallback (see `gpuFailed`).
    */
   createGpuBackend?: (request: GpuBackendRequest) => Promise<FlameAccumBackend>;
   /**
@@ -507,6 +510,34 @@ function describeError(e: unknown): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * A GPU backend-factory failure caused by the ACCUMULATION SIZE — the
+ * histogram (or its staging twin) exceeds a device limit, or its allocation
+ * was refused by the browser's allocator (a scoped out-of-memory error at
+ * create time). Thrown by `flame-gpu-backend.ts`'s factories; defined HERE,
+ * next to the seam those factories implement, so the session can classify
+ * failures by `instanceof` without importing the WebGPU-touching module
+ * (which imports this one — the classes living there would be a cycle).
+ *
+ * The session treats this class as RETRYABLE AT A SMALLER SIZE (fr-2w5's
+ * supersample ladder): the same GPU that refuses a `w*ss × h*ss` histogram
+ * almost always accepts `ss-1` — measured ceilings sit far below reported
+ * limits and even move run-to-run with memory pressure, so "this size
+ * failed" carries no information about smaller sizes.
+ */
+export class FlameGpuSizeError extends Error {}
+
+/**
+ * WebGPU is not usable in the calling CONTEXT at all: `navigator.gpu` is
+ * missing or `requestAdapter()` returned null. Same placement rationale as
+ * {@link FlameGpuSizeError}. The session treats this as permanent for the
+ * session (no size would help) and reports it as `reason: "no-webgpu"` on
+ * the `gpuUnavailable` event — the one failure class where escalating a
+ * worker-hosted session to the main thread (whose WebGPU context is
+ * independent — fr-1ib's Firefox gap) can actually win.
+ */
+export class FlameGpuUnavailableError extends Error {}
+
+/**
  * One accumulation run's engine — the seam a WebGPU accumulator
  * (`flame-gpu.ts`) plugs into alongside the CPU implementation below. The
  * session (`runChunk`) drives whichever backend is current in chunks and
@@ -579,6 +610,16 @@ export interface FlameAccumBackend {
    * event for the UI to display. `undefined` for the CPU backend, and for
    * any GPU backend that has no better label to offer. */
   readonly adapterLabel?: string;
+  /**
+   * True when this GPU backend runs on a FALLBACK (software) adapter —
+   * SwiftShader-class, not real hardware. Chrome hands exactly that out
+   * right after a GPU-process crash (fr-2w5's E4 experiment: the crashed
+   * hardware gets blocklisted for a while and `requestAdapter()` silently
+   * succeeds with `google/swiftshader`), so the session's device-loss retry
+   * checks this to avoid trading a hardware backend for a 10-100x slower
+   * software one without saying so. Absent/`undefined` on the CPU backend.
+   */
+  readonly software?: boolean;
 }
 
 /**
@@ -903,11 +944,35 @@ export class FlameWorkerSession {
    * flight is detected and that stale work is discarded rather than
    * clobbering the new accumulation's state (see `runChunk`'s doc). */
   private generation = 0;
-  /** Ratchets from `false` to `true` the first time the GPU backend fails
-   * (creation or accumulation) and never resets — a device's GPU either
-   * works or it doesn't, so there is no point re-attempting the factory
-   * after this session has already seen it fail once. */
+  /** Ratchets from `false` to `true` when this session gives up on WebGPU
+   * for good — a context-level failure (no adapter, a compile error), or the
+   * recovery ladder in {@link handleGpuFailure} exhausted — and never
+   * resets. NOT set by an individual size/mid-render failure while the
+   * ladder still has smaller supersamples (or the one device-loss retry)
+   * left to try: fr-2w5's measurements showed GPU allocation ceilings sit
+   * far below reported limits AND move run-to-run with memory pressure, so
+   * "failed once at this size" says nothing about smaller sizes. */
   private gpuFailed = false;
+  /** GPU-only supersample ceiling, learned by {@link handleGpuFailure}'s
+   * shrink-and-retry ladder: ratchets DOWN from the failing effective
+   * supersample so the retry recomputes a smaller accumulation and stays ON
+   * the GPU (fr-e07's prescribed real fix). Consulted by
+   * `computeEffectiveSupersample` only while GPU is still eligible — once
+   * `gpuFailed` sets, the CPU fallback recomputes WITHOUT this clamp and
+   * gets its full budgeted supersample back. Session-lifetime, reset by
+   * `start`. */
+  private gpuMaxSupersample = Infinity;
+  /** Whether this session has already spent its ONE free full-size GPU
+   * retry after a mid-render failure at supersample 1 (typically a lost
+   * device — a driver reset or GPU-process crash — where a fresh
+   * adapter/device often works again). One, not unlimited: a machine whose
+   * GPU keeps dying mid-render should land on CPU, not oscillate. */
+  private gpuLossRetried = false;
+  /** True once a HARDWARE (non-fallback-adapter) GPU backend has run this
+   * session — the device-loss retry refuses a `software` replacement when
+   * this is set (see {@link FlameAccumBackend.software}: Chrome hands out
+   * SwiftShader right after a GPU-process crash). */
+  private hadHardwareGpu = false;
   /** From the `start` command (see its doc); `"off"` unless the main thread
    * explicitly opts in. Read fresh on every backend creation, so a `start`
    * with no `createGpuBackend` factory wired up (every pre-fr-npb caller)
@@ -1228,6 +1293,9 @@ export class FlameWorkerSession {
       estimatorCurve: cmd.estimatorCurve,
     };
     this.maxSafeSupersample = Infinity; // a fresh session has no learned ceiling yet.
+    this.gpuMaxSupersample = Infinity; // ...nor a learned GPU-size ceiling,
+    this.gpuLossRetried = false; // ...nor a spent device-loss retry,
+    this.hadHardwareGpu = false; // ...nor a hardware adapter sighting.
     this.maxAccumBuckets = cmd.maxAccumBuckets ?? this.defaultMaxAccumBuckets;
     this.gpuPreference = cmd.gpuPreference ?? "off";
     this.instrument = cmd.instrument ?? false;
@@ -1285,6 +1353,24 @@ export class FlameWorkerSession {
     }
   }
 
+  /**
+   * Whether the NEXT backend creation will attempt GPU: the `start` opted
+   * in, this session hasn't permanently given up on GPU, and the current
+   * dimension actually has a factory wired up. Shared by `createBackend`
+   * (which acts on it) and `computeEffectiveSupersample` (whose GPU-size
+   * clamp must apply exactly when the GPU will be attempted — clamping a
+   * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
+   */
+  private gpuEligible(): boolean {
+    return (
+      this.gpuPreference === "auto" &&
+      !this.gpuFailed &&
+      (this.is4D
+        ? this.createGpuBackend4 !== undefined
+        : this.createGpuBackend !== undefined)
+    );
+  }
+
   private computeEffectiveSupersample(requested: number): number {
     const budgeted = clampSupersampleToBudget(
       this.width,
@@ -1292,7 +1378,13 @@ export class FlameWorkerSession {
       requested,
       this.maxAccumBuckets,
     );
-    return Math.min(budgeted, this.maxSafeSupersample);
+    // The GPU-learned ceiling applies only while a GPU backend is what this
+    // accumulation will actually run on — once GPU is off the table
+    // (`gpuFailed`), the CPU path gets its full budgeted supersample back.
+    const gpuClamped = this.gpuEligible()
+      ? Math.min(budgeted, this.gpuMaxSupersample)
+      : budgeted;
+    return Math.min(gpuClamped, this.maxSafeSupersample);
   }
 
   /**
@@ -1513,69 +1605,222 @@ export class FlameWorkerSession {
    * `runChunk`'s generation re-check destroys whatever comes back, so a
    * stale read can never be installed.
    */
-  private createBackend(): FlameAccumBackend | Promise<FlameAccumBackend> {
-    if (this.gpuPreference === "auto" && !this.gpuFailed) {
+  private createBackend():
+    FlameAccumBackend | Promise<FlameAccumBackend | null> {
+    if (this.gpuEligible()) {
       if (this.is4D) {
-        const gpuFactory4 = this.createGpuBackend4;
-        if (gpuFactory4) {
-          return this.createGpuBackend4WithFallback(gpuFactory4);
-        }
-      } else {
-        const gpuFactory = this.createGpuBackend;
-        if (gpuFactory) {
-          return this.createGpuBackendWithFallback(gpuFactory);
-        }
+        return this.createGpuBackend4WithFallback(this.createGpuBackend4!);
       }
+      return this.createGpuBackendWithFallback(this.createGpuBackend!);
     }
     return this.is4D ? this.makeCpu4DBackend() : this.makeCpuBackend();
   }
 
   /** Ratchet `gpuFailed`, log the failure, and emit `gpuUnavailable` ONCE (on
    * the false→true transition) so a worker host's main thread can escalate to
-   * its own GPU before the CPU fallback stands (fr-e07/fr-8ck — see the event's
-   * doc). Shared by all six GPU-failure sites: the two create-time factories
-   * below and `runChunk`'s four mid-render catches. The transition guard on the
-   * emit is purely defensive — once `gpuFailed` is set no further GPU work runs
-   * this session, so no second site is ever reached — but it keeps the "at most
-   * once per session" contract true by construction rather than by that
-   * argument alone. */
-  private failGpuBackendToCpu(logMessage: string): void {
-    if (!this.gpuFailed) this.emit({ type: "gpuUnavailable" });
+   * its own GPU — for `reason: "no-webgpu"` only, see the event's doc — before
+   * the CPU fallback stands. Reached only through {@link handleGpuFailure},
+   * which owns the retry ladder in front of this permanent ratchet. The
+   * transition guard on the emit is purely defensive — once `gpuFailed` is set
+   * no further GPU work runs this session, so no second site is ever reached —
+   * but it keeps the "at most once per session" contract true by construction
+   * rather than by that argument alone. */
+  private failGpuBackendToCpu(
+    logMessage: string,
+    reason: "no-webgpu" | "error",
+  ): void {
+    if (!this.gpuFailed) this.emit({ type: "gpuUnavailable", reason });
     this.gpuFailed = true;
     this.log(logMessage);
   }
 
+  /**
+   * The one GPU-failure policy, shared by every failure site — the factory
+   * catches below and `runChunk`'s mid-render catches (fr-2w5). Decides
+   * between the recovery ladder (stay on GPU at a smaller size, or one
+   * fresh-device retry) and the permanent CPU ratchet, restarting the
+   * accumulation whenever its effective size must change or the failed
+   * backend had already been driving it (`site === "midrender"` — its
+   * partial progress is unreadable). Returns what the caller should do:
+   *
+   * - `"restarted"`: a new generation owns the render (every ladder retry,
+   *   every mid-render fallback, and any create-time fallback whose CPU
+   *   supersample differs from the GPU-clamped one) — bail out through the
+   *   standard stale-chunk dance. `startAccumulation` is called with
+   *   `running` still true, so its `ensureRunning` no-ops and the caller's
+   *   own `running = false; ensureRunning()` remains the SINGLE re-arm
+   *   point, exactly like every other supersede in `runChunk`.
+   * - `"cpu"`: permanent ratchet at create time with the accumulation size
+   *   unchanged — continue THIS accumulation on a CPU backend.
+   *
+   * The ladder, concretely (all measurements fr-2w5):
+   * - {@link FlameGpuUnavailableError} → permanent, `"no-webgpu"` (the one
+   *   escalatable class — a different CONTEXT can have WebGPU).
+   * - Any other failure with effective supersample > 1 → learn
+   *   `gpuMaxSupersample = effective - 1` and retry ON the GPU: reported
+   *   limits overstate real, pressure-dependent allocator ceilings so badly
+   *   (4 GiB reported vs ~1.5-2 GiB real on the measured Chrome/Iris Xe;
+   *   1 GiB reported vs <1 GiB mappable on Firefox) that one step down
+   *   almost always fits — and a GPU render at 1x beats a CPU render at 2x
+   *   by an order of magnitude in the iterations that actually converge the
+   *   image (fr-e07's prescribed, never-implemented real fix).
+   * - At supersample 1, one `gpuLossRetried` full-size mid-render retry (a
+   *   lost device — driver reset/GPU-process crash — usually comes back
+   *   with a fresh adapter), then permanent `"error"`. NOT escalated: the
+   *   main thread's GPU would fail the same way (fr-e07's field lesson).
+   */
+  private handleGpuFailure(
+    e: unknown,
+    site: "create" | "midrender",
+    what: string,
+  ): "restarted" | "cpu" {
+    const err = describeError(e);
+    if (e instanceof FlameGpuUnavailableError) {
+      this.failGpuBackendToCpu(
+        `Flame: ${what} failed, falling back to CPU (${err}).`,
+        "no-webgpu",
+      );
+      return this.fallCpuDisposition(site);
+    }
+    if (this.effectiveSupersample > 1) {
+      this.gpuMaxSupersample = this.effectiveSupersample - 1;
+      this.log(
+        `Flame: ${what} failed at ${this.effectiveSupersample}x supersample (${err}); ` +
+          `retrying on the GPU at ${this.gpuMaxSupersample}x.`,
+      );
+      return this.restartAccumulation();
+    }
+    if (site === "midrender" && !this.gpuLossRetried) {
+      this.gpuLossRetried = true;
+      this.log(
+        `Flame: ${what} failed mid-render (${err}); retrying once with a fresh GPU device.`,
+      );
+      return this.restartAccumulation();
+    }
+    this.failGpuBackendToCpu(
+      `Flame: ${what} failed, falling back to CPU (${err}).`,
+      "error",
+    );
+    return this.fallCpuDisposition(site);
+  }
+
+  /** Restart the accumulation in place under the current learned ceilings —
+   * see {@link handleGpuFailure}'s `"restarted"` contract for the `running`
+   * discipline this relies on. */
+  private restartAccumulation(): "restarted" {
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+    return "restarted";
+  }
+
+  /** How a PERMANENT (post-ratchet) CPU fallback proceeds. Mid-render: the
+   * dead backend's progress is unreadable — always restart. Create-time:
+   * continue this accumulation on CPU as-is, UNLESS dropping the GPU
+   * eligibility changed the effective supersample (the GPU ladder had
+   * clamped it below what the CPU's memory budget affords — a ratcheted
+   * session no longer applies `gpuMaxSupersample`, see
+   * `computeEffectiveSupersample`), in which case restart at the size the
+   * CPU render actually deserves. */
+  private fallCpuDisposition(
+    site: "create" | "midrender",
+  ): "restarted" | "cpu" {
+    if (site === "midrender") return this.restartAccumulation();
+    const cpuEffective = this.computeEffectiveSupersample(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+    if (cpuEffective !== this.effectiveSupersample) {
+      return this.restartAccumulation();
+    }
+    return "cpu";
+  }
+
   /** The genuinely-async half of {@link createBackend}'s 3D branch: try the
-   * GPU factory, and on ANY throw/reject, ratchet `gpuFailed` (so this
-   * session never retries it) and fall back to CPU. Takes `gpuFactory` as a
-   * parameter, already known non-`undefined` by the caller, rather than
-   * re-reading `this.createGpuBackend` and asserting it non-null here. */
+   * GPU factory, and on a throw/reject let {@link handleGpuFailure} decide —
+   * retry at a smaller size (the accumulation restarts; `null` tells
+   * `runChunk` this chunk is superseded) or fall back to CPU for this same
+   * accumulation. Takes `gpuFactory` as a parameter, already known
+   * non-`undefined` by the caller, rather than re-reading
+   * `this.createGpuBackend` and asserting it non-null here. */
   private async createGpuBackendWithFallback(
     gpuFactory: (request: GpuBackendRequest) => Promise<FlameAccumBackend>,
-  ): Promise<FlameAccumBackend> {
+  ): Promise<FlameAccumBackend | null> {
+    let backend: FlameAccumBackend;
     try {
-      return await gpuFactory(this.buildGpuBackendRequest());
+      backend = await gpuFactory(this.buildGpuBackendRequest());
     } catch (e) {
-      this.failGpuBackendToCpu(
-        `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
-      );
-      return this.makeCpuBackend();
+      if (
+        this.handleGpuFailure(e, "create", "GPU backend creation") === "cpu"
+      ) {
+        return this.makeCpuBackend();
+      }
+      return null;
+    }
+    switch (this.vetGpuBackend(backend)) {
+      case "ok":
+        return backend;
+      case "cpu":
+        return this.makeCpuBackend();
+      case "restarted":
+        return null;
     }
   }
 
   /** The 4D twin of {@link createGpuBackendWithFallback} (fr-e26) — same
-   * ratchet, same log shape, `Cpu4DFlameBackend` as the fallback. */
+   * policy, `Cpu4DFlameBackend` as the CPU fallback. */
   private async createGpuBackend4WithFallback(
     gpuFactory4: (request: GpuBackendRequest4) => Promise<FlameAccumBackend>,
-  ): Promise<FlameAccumBackend> {
+  ): Promise<FlameAccumBackend | null> {
+    let backend: FlameAccumBackend;
     try {
-      return await gpuFactory4(this.buildGpuBackendRequest4());
+      backend = await gpuFactory4(this.buildGpuBackendRequest4());
     } catch (e) {
-      this.failGpuBackendToCpu(
-        `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
-      );
-      return this.makeCpu4DBackend();
+      if (
+        this.handleGpuFailure(e, "create", "GPU backend creation") === "cpu"
+      ) {
+        return this.makeCpu4DBackend();
+      }
+      return null;
     }
+    switch (this.vetGpuBackend(backend)) {
+      case "ok":
+        return backend;
+      case "cpu":
+        return this.makeCpu4DBackend();
+      case "restarted":
+        return null;
+    }
+  }
+
+  /**
+   * Post-create vetting shared by both factories: refuse a SOFTWARE
+   * (fallback-adapter) backend when this session has already run on real
+   * hardware — the shape Chrome produces right after a GPU-process crash
+   * (the device-loss retry's fresh `requestAdapter()` silently hands back
+   * SwiftShader; see {@link FlameAccumBackend.software}) — rather than
+   * silently continuing 10-100x slower. Refusal is the PERMANENT ratchet
+   * (not the ladder — a smaller supersample would still be SwiftShader), so
+   * it routes through {@link fallCpuDisposition} like any other permanent
+   * fallback. First-time software adapters pass: a machine whose ONLY
+   * WebGPU is software (SwiftShader-backed CI, some VMs) still gets the
+   * parallel backend, clearly labeled by the factory. Also the one place
+   * `hadHardwareGpu` is learned.
+   */
+  private vetGpuBackend(
+    backend: FlameAccumBackend,
+  ): "ok" | "restarted" | "cpu" {
+    if (backend.software === true && this.hadHardwareGpu) {
+      backend.destroy();
+      this.failGpuBackendToCpu(
+        "Flame: fresh GPU adapter is a software fallback (hardware adapter lost); falling back to CPU.",
+        "error",
+      );
+      return this.fallCpuDisposition("create");
+    }
+    if (backend.kind === "gpu" && backend.software !== true) {
+      this.hadHardwareGpu = true;
+    }
+    return "ok";
   }
 
   /** Non-null assertions throughout: only ever called (via
@@ -1727,9 +1972,9 @@ export class FlameWorkerSession {
           snap = isPromiseLike(snapResult) ? await snapResult : snapResult;
         } catch (e) {
           // Mirrors the due branch's own finished-snapshot catch below
-          // exactly (gen-recheck first, then the GPU-ratchet-restart / CPU-
-          // error split) — kept as a separate, inline copy rather than a
-          // shared helper: the two call sites sit in different control-flow
+          // exactly (gen-recheck first, then the GPU-recovery / CPU-error
+          // split) — kept as a separate, inline copy rather than a shared
+          // helper: the two call sites sit in different control-flow
           // shapes (this one always bails outright; the due branch's falls
           // through to the reschedule-or-stop tail), and threading a helper
           // through both would either flatten that difference back out via
@@ -1741,15 +1986,12 @@ export class FlameWorkerSession {
             this.ensureRunning();
             return;
           }
-          this.running = false;
           if (backend.kind === "gpu") {
-            this.failGpuBackendToCpu(
-              `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
-            );
-            this.startAccumulation(
-              this.lastRequestedSupersample ?? this.effectiveSupersample,
-            );
+            this.handleGpuFailure(e, "midrender", "GPU snapshot");
+            this.running = false;
+            this.ensureRunning();
           } else {
+            this.running = false;
             this.emit({ type: "error", message: describeError(e) });
           }
           return;
@@ -1779,12 +2021,14 @@ export class FlameWorkerSession {
       const created = isPromiseLike(createdResult)
         ? await createdResult
         : createdResult;
-      if (gen !== this.generation) {
-        // Superseded while the factory was in flight (see this method's
-        // doc). Nobody else references `created` — it was never installed
-        // as `this.backend` — so release it now rather than leak it (a
-        // no-op for CPU, real cleanup for GPU).
-        created.destroy();
+      if (created === null || gen !== this.generation) {
+        // Superseded while the factory was in flight — by a live command's
+        // restart, or (`null`, fr-2w5) by the factory's own failure ladder
+        // restarting at a smaller supersample (see this method's doc and
+        // handleGpuFailure). Nobody else references `created` — it was
+        // never installed as `this.backend` — so release it now rather
+        // than leak it (a no-op for CPU, real cleanup for GPU).
+        created?.destroy();
         this.running = false;
         this.ensureRunning();
         return;
@@ -1862,22 +2106,19 @@ export class FlameWorkerSession {
         this.ensureRunning();
         return;
       }
-      this.running = false;
       if (backend.kind === "gpu") {
-        // GPU failure recovery is unconditional and unlearned (unlike the
-        // CPU ratchet below): a GPU accumulate failure isn't a
-        // "this-size-doesn't-fit" signal the way a CPU allocation failure
-        // is, so there's no smaller size worth trying first — drop to CPU
-        // for the rest of the session and restart the current accumulation
-        // there from scratch.
-        this.failGpuBackendToCpu(
-          `Flame: GPU accumulation failed, restarting on CPU (${describeError(e)}).`,
-        );
-        this.startAccumulation(
-          this.lastRequestedSupersample ?? this.effectiveSupersample,
-        );
+        // GPU failure recovery (fr-2w5): a GPU accumulate failure at a big
+        // supersample IS very often a size signal — fr-2w5 measured
+        // allocation ceilings far below reported limits, moving with live
+        // memory pressure, and surfacing mid-render when create-time scopes
+        // miss them — so handleGpuFailure's ladder retries smaller ON the
+        // GPU (then one fresh-device retry, then the permanent CPU ratchet).
+        this.handleGpuFailure(e, "midrender", "GPU accumulation");
+        this.running = false;
+        this.ensureRunning();
         return;
       }
+      this.running = false;
       if (wasFreshStart && this.effectiveSupersample > 1) {
         // The proactive budget estimate (clampSupersampleToBudget) wasn't
         // conservative enough for this device at this size — learn that and
@@ -1943,10 +2184,10 @@ export class FlameWorkerSession {
             : resultOrPromise;
         } catch (e) {
           // Mirrors the full-snapshot catch below (gen-recheck first, then
-          // ratchet + restart) but with no CPU flavor to fall through to:
-          // `snapshotDisplay` only ever exists on a GPU backend (see that
-          // method's doc — the CPU backend never implements it), so
-          // unconditionally ratcheting `gpuFailed` here (rather than
+          // the GPU recovery ladder) but with no CPU flavor to fall through
+          // to: `snapshotDisplay` only ever exists on a GPU backend (see
+          // that method's doc — the CPU backend never implements it), so
+          // routing to handleGpuFailure unconditionally (rather than
           // branching on `backend.kind`, as the other two catches in this
           // method do) is exact, not a simplifying assumption.
           if (gen !== this.generation) {
@@ -1954,13 +2195,9 @@ export class FlameWorkerSession {
             this.ensureRunning();
             return;
           }
+          this.handleGpuFailure(e, "midrender", "GPU display downsample");
           this.running = false;
-          this.failGpuBackendToCpu(
-            `Flame: GPU display downsample failed, restarting on CPU (${describeError(e)}).`,
-          );
-          this.startAccumulation(
-            this.lastRequestedSupersample ?? this.effectiveSupersample,
-          );
+          this.ensureRunning();
           return;
         }
         if (gen !== this.generation) {
@@ -1990,19 +2227,16 @@ export class FlameWorkerSession {
             this.ensureRunning();
             return;
           }
-          this.running = false;
           if (backend.kind === "gpu") {
-            this.failGpuBackendToCpu(
-              `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
-            );
-            this.startAccumulation(
-              this.lastRequestedSupersample ?? this.effectiveSupersample,
-            );
+            this.handleGpuFailure(e, "midrender", "GPU snapshot");
+            this.running = false;
+            this.ensureRunning();
           } else {
             // CpuFlameBackend.snapshot only throws on a broken invariant (see
             // its doc) — not a retryable/ratchetable condition like the CPU
             // accumulate OOM path above — so there is nothing smaller to try;
             // surface it exactly like the accumulate catch's own CPU branch.
+            this.running = false;
             this.emit({ type: "error", message: describeError(e) });
           }
           return;
