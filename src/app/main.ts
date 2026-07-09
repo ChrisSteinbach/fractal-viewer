@@ -38,6 +38,7 @@ import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
+import { RenderSession } from "./render-session";
 import { createCanvasRecorder, formatElapsed } from "./recorder";
 import {
   addTransform,
@@ -162,8 +163,8 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Manual escape hatch for which {@link FlameSessionHost} `enterFlameMode`
- * picks (fr-1ib): `?flamehost=local` forces the main-thread session,
+ * Manual escape hatch for which {@link FlameSessionHost} the flame session's
+ * `start` picks (fr-1ib): `?flamehost=local` forces the main-thread session,
  * `?flamehost=worker` forces the real Worker one, anything else (including
  * the param being absent) defers to the auto-detect logic. This is also
  * the only way to exercise the local host in Chrome, where dedicated
@@ -510,9 +511,9 @@ function main(): void {
   // HOSTING via `useLocalHost` below, which is fine-pointer-only. A phone's
   // worker session still attempts GPU on its own (fr-hs9) and self-falls-
   // back through the gpuFailed ratchet, no pre-probe needed) always
-  // conservatively takes the worker path enterFlameMode already used before
+  // conservatively takes the worker path the flame session already used before
   // this existed. See flame-session-host.ts's `probeWorkerWebGpu` for the
-  // probe itself and enterFlameMode below for how the answer is used.
+  // probe itself and the flame session's `start` below for how it's used.
   let workerWebGpu: boolean | null = null;
   if (navigator.gpu && !window.matchMedia("(pointer: coarse)").matches) {
     void probeWorkerWebGpu().then((ok) => {
@@ -538,16 +539,6 @@ function main(): void {
   // main-thread host, which is already zero-copy same-thread — it falls
   // back to fr-73y's postMessage transfer of a tone-mapped image. Either way
   // the big oversampled accumulator never leaves the session.
-  let flameHost: FlameSessionHost | null = null;
-  // True once the CURRENT session's first "progress" image has arrived.
-  // Spinning up a worker (and the round trip to its first accumulate +
-  // downsample + tone-map) takes real time, unlike fr-o7s's synchronous
-  // first stepFlame call — animate() uses this to keep showing the frozen
-  // explorer view for that gap instead of a flash of the flame canvas's
-  // stale contents (blank on a first-ever render, or the PREVIOUS render's
-  // image on a repeat one, since neither enter nor exit clears it).
-  let flameHasImage = false;
-
   // The shared-transport session (fr-96i): the two SAB-backed frame slots
   // this side allocated for the current render, plus which slot the worker
   // most recently told us to read (and its maxHits — the one tonemapFlame
@@ -610,16 +601,12 @@ function main(): void {
     scene.setFlameImage(image, width, height);
   }
 
-  function postFlame(command: FlameWorkerCommand): void {
-    flameHost?.post(command);
-  }
-
   function handleFlameEvent(event: FlameWorkerEvent): void {
     switch (event.type) {
       case "progress":
         scene.setFlameImage(event.image, event.width, event.height);
         ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
-        flameHasImage = true;
+        flameSession.markFirstFrame();
         break;
       case "sharedFrame":
         // Shared-mode counterpart to "progress": the frame is already in
@@ -630,7 +617,7 @@ function main(): void {
           flameShared.last = { slot: event.slot, maxHits: event.maxHits };
           presentSharedFrame();
           ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
-          flameHasImage = true;
+          flameSession.markFirstFrame();
         }
         break;
       case "supersampleNote":
@@ -648,14 +635,14 @@ function main(): void {
           event.message,
         );
         showRenderError(RENDER_ACCUMULATE_ERROR);
-        exitFlameMode();
+        flameSession.exit();
         break;
     }
   }
 
   // Wraps a real flame Worker in the same FlameSessionHost surface the
-  // main-thread session (flame-session-host.ts) implements, so
-  // enterFlameMode/postFlame/exitFlameMode don't need to know which one is
+  // main-thread session (flame-session-host.ts) implements, so the flame
+  // RenderSession (its start/post/exit) doesn't need to know which one is
   // actually running (fr-1ib). `onerror` — a real Worker's uncaught-
   // exception signal — has no main-thread-host equivalent (there is no
   // second thread here to crash independently of this one), so it stays
@@ -670,7 +657,7 @@ function main(): void {
     worker.onerror = (e) => {
       console.error("Flame worker crashed; returning to explorer.", e);
       showRenderError();
-      exitFlameMode();
+      flameSession.exit();
     };
     return {
       post: (command) => worker.postMessage(command),
@@ -737,139 +724,134 @@ function main(): void {
     };
   }
 
-  // Freeze the current camera and start converging a flame render of it in a
-  // fresh session. Called only from the Render button — never automatically —
-  // so the explorer stays the default, always-interactive experience.
-  function enterFlameMode(): void {
-    flameHost?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker/session.
-    const { width, height } = scene.flameRenderSize();
-    const projection = scene.flameProjectionMatrix();
-    ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh session reports its own.
-    ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh session reports its own.
-    ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
-    flameHasImage = false; // keep showing the frozen explorer (see animate()) until this session's first image arrives.
+  // The flame render session (fr-o7s/fr-1ib): freeze the current camera and
+  // converge a flame render of it in a fresh worker/host. Entered only from
+  // the Render button — never automatically — so the explorer stays the
+  // default, always-interactive experience; exited on Back, on a render
+  // error, or on an undo/redo. The enter/exit/terminate + first-frame-gate
+  // choreography is shared with the solid session below through RenderSession
+  // (render-session.ts); only the genuine flame specifics — the WebGPU host
+  // choice, the SharedArrayBuffer transport, and the `start` payload — live in
+  // these injected deps. The defensive double-entry terminate lives in
+  // RenderSession.enter, so `start` only builds and kicks off.
+  const flameSession = new RenderSession<FlameWorkerCommand>({
+    start: () => {
+      const { width, height } = scene.flameRenderSize();
+      const projection = scene.flameProjectionMatrix();
 
-    // Phone/tablet-class devices: shared with the memory-budget computation
-    // below, so only read matchMedia once.
-    const coarse = window.matchMedia("(pointer: coarse)").matches;
-    // The manual override is also how the local host gets verified in
-    // Chrome, where dedicated workers DO have WebGPU — `workerWebGpu` there
-    // resolves `true`, so the auto-detect condition below never picks local
-    // on its own (see flameHostOverride's doc).
-    const override = flameHostOverride();
-    const useLocalHost =
-      override === "local" ||
-      (override !== "worker" &&
-        !coarse &&
-        !!navigator.gpu &&
-        workerWebGpu === false);
+      // Phone/tablet-class devices: shared with the memory-budget computation
+      // below, so only read matchMedia once.
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      // The manual override is also how the local host gets verified in
+      // Chrome, where dedicated workers DO have WebGPU — `workerWebGpu` there
+      // resolves `true`, so the auto-detect condition below never picks local
+      // on its own (see flameHostOverride's doc).
+      const override = flameHostOverride();
+      const useLocalHost =
+        override === "local" ||
+        (override !== "worker" &&
+          !coarse &&
+          !!navigator.gpu &&
+          workerWebGpu === false);
 
-    if (useLocalHost) {
-      console.info(
-        "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
-      );
-      // Same-thread transfer is already zero-copy — no SharedArrayBuffer
-      // upgrade to allocate (and nothing here would ever populate it).
-      flameShared = null;
-      flameHost = createLocalFlameSessionHost(handleFlameEvent);
-    } else {
-      flameShared = tryCreateFlameSharedSession(width, height);
-      console.info(
-        flameShared
-          ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
-          : "Flame render: postMessage-transfer transport.",
-      );
-      flameHost = createWorkerFlameSessionHost();
-    }
+      let host: FlameSessionHost;
+      if (useLocalHost) {
+        console.info(
+          "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
+        );
+        // Same-thread transfer is already zero-copy — no SharedArrayBuffer
+        // upgrade to allocate (and nothing here would ever populate it).
+        flameShared = null;
+        host = createLocalFlameSessionHost(handleFlameEvent);
+      } else {
+        flameShared = tryCreateFlameSharedSession(width, height);
+        console.info(
+          flameShared
+            ? "Flame render: SharedArrayBuffer transport (cross-origin isolated)."
+            : "Flame render: postMessage-transfer transport.",
+        );
+        host = createWorkerFlameSessionHost();
+      }
 
-    postFlame({
-      type: "start",
-      transforms: state.transforms,
-      finalTransform: state.finalTransform ?? null,
-      projection,
-      width,
-      height,
-      // A worker needs an explicit numeric seed — a live Rng (like
-      // Math.random) can't cross postMessage — which as a side effect makes
-      // a render a reproducible pure function of its inputs. Harmless to
-      // draw the same way for the local host too (nothing there needs
-      // postMessage), keeping `start`'s construction identical either way.
-      seed: Math.floor(Math.random() * 0xffffffff),
-      requestedSupersample: state.flame.supersample,
-      // Device-aware memory budget for the supersampled accumulator (fr-7c8).
-      // Computed here because its inputs — deviceMemory (Chromium-only,
-      // hence the cast; absent from TS's DOM lib) and pointer coarseness —
-      // are main-thread/window facilities a worker can't reliably read.
-      maxAccumBuckets: flameAccumBudgetBuckets(
-        (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
-        coarse,
-      ),
-      iterationsBudget: state.flame.iterations,
-      exposure: state.flame.exposure,
-      gamma: state.flame.gamma,
-      vibrancy: state.flame.vibrancy,
-      estimatorRadius: state.flame.estimatorRadius,
-      estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
-      estimatorCurve: state.flame.estimatorCurve,
-      paletteId: state.flame.paletteId,
-      order: state.symmetry.order,
-      axis: state.symmetry.axis,
-      // SAB-backed views structured-clone by SHARING their buffers — the
-      // worker sees the same memory these frames wrap, nothing is copied.
-      // Always undefined for the local host (see above).
-      sharedFrames: flameShared?.frames,
-      // WebGPU accumulation (fr-npb/fr-1ib/fr-hs9): "auto" everywhere — try
-      // GPU first, fall back to CPU automatically via the session's
-      // gpuFailed ratchet. Coarse-pointer (phone/tablet) devices were "off"
-      // until fr-hs9's phone validation (Android Chrome, arm valhall):
-      // agreement pass on every gpu-bench scenario including the fr-ee9
-      // display-downsample legs, at ~19-36x the CPU worker's iteration
-      // rate. Mobile-specific ceilings need nothing extra here — a device
-      // whose maxStorageBufferBindingSize can't fit the histogram fails
-      // backend creation cleanly into that same CPU fallback (see
-      // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
-      // takes the same auto-with-fallback path through the 4D kernel
-      // (fr-e26, flame-gpu-4d.ts).
-      gpuPreference: "auto",
-      // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
-      fourD: fourDRenderSnapshot(),
-    });
+      // Post the `start` via the freshly-created host, NOT flameSession.post:
+      // RenderSession.enter only stores this returned handle afterwards, so
+      // flameSession.post can't reach the new session yet.
+      host.post({
+        type: "start",
+        transforms: state.transforms,
+        finalTransform: state.finalTransform ?? null,
+        projection,
+        width,
+        height,
+        // A worker needs an explicit numeric seed — a live Rng (like
+        // Math.random) can't cross postMessage — which as a side effect makes
+        // a render a reproducible pure function of its inputs. Harmless to
+        // draw the same way for the local host too (nothing there needs
+        // postMessage), keeping `start`'s construction identical either way.
+        seed: Math.floor(Math.random() * 0xffffffff),
+        requestedSupersample: state.flame.supersample,
+        // Device-aware memory budget for the supersampled accumulator (fr-7c8).
+        // Computed here because its inputs — deviceMemory (Chromium-only,
+        // hence the cast; absent from TS's DOM lib) and pointer coarseness —
+        // are main-thread/window facilities a worker can't reliably read.
+        maxAccumBuckets: flameAccumBudgetBuckets(
+          (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+          coarse,
+        ),
+        iterationsBudget: state.flame.iterations,
+        exposure: state.flame.exposure,
+        gamma: state.flame.gamma,
+        vibrancy: state.flame.vibrancy,
+        estimatorRadius: state.flame.estimatorRadius,
+        estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
+        estimatorCurve: state.flame.estimatorCurve,
+        paletteId: state.flame.paletteId,
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+        // SAB-backed views structured-clone by SHARING their buffers — the
+        // worker sees the same memory these frames wrap, nothing is copied.
+        // Always undefined for the local host (see above).
+        sharedFrames: flameShared?.frames,
+        // WebGPU accumulation (fr-npb/fr-1ib/fr-hs9): "auto" everywhere — try
+        // GPU first, fall back to CPU automatically via the session's
+        // gpuFailed ratchet. Coarse-pointer (phone/tablet) devices were "off"
+        // until fr-hs9's phone validation (Android Chrome, arm valhall):
+        // agreement pass on every gpu-bench scenario including the fr-ee9
+        // display-downsample legs, at ~19-36x the CPU worker's iteration
+        // rate. Mobile-specific ceilings need nothing extra here — a device
+        // whose maxStorageBufferBindingSize can't fit the histogram fails
+        // backend creation cleanly into that same CPU fallback (see
+        // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
+        // takes the same auto-with-fallback path through the 4D kernel
+        // (fr-e26, flame-gpu-4d.ts).
+        gpuPreference: "auto",
+        // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
+        fourD: fourDRenderSnapshot(),
+      });
+      return host;
+    },
+    clearNotes: () => {
+      ui.setFlameSupersampleNote(null); // clear any note from a previous render before the fresh session reports its own.
+      ui.setFlameBackendNote(null); // clear any note from a previous render before the fresh session reports its own.
+    },
+    resetProgress: () => {
+      ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
+    },
+    activate: () => {
+      state = setFlameActive(state, true);
+      refreshUi();
+    },
+    deactivate: () => {
+      flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
+      state = setFlameActive(state, false);
+      refreshUi();
+    },
+  });
 
-    state = setFlameActive(state, true);
-    refreshUi();
-  }
-
-  // Discard the in-progress render and return to the live explorer, exactly
-  // as it was left (the camera/orbit was never touched while rendering). The
-  // session is torn down outright rather than asked to wind down: an
-  // in-flight accumulate chunk can't be interrupted mid-call anyway (a
-  // worker is single-threaded JS too, and the main-thread host has no
-  // second thread to begin with), and the next Render click spins up a
-  // fresh session rather than trying to reuse this one.
-  function exitFlameMode(): void {
-    flameHost?.terminate();
-    flameHost = null;
-    flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
-    ui.setFlameSupersampleNote(null);
-    ui.setFlameBackendNote(null);
-    flameHasImage = false; // tidy up so a stray flame frame can't leak into a future session's gap.
-    state = setFlameActive(state, false);
-    refreshUi();
-  }
-
-  // Solid render session (fr-v4f): mirrors the flame session above exactly,
-  // except the accumulated volume is world-space, so — unlike the frozen
-  // flame view — the camera stays LIVE while it converges (see animate()).
-  let solidWorker: Worker | null = null;
-  // True once the CURRENT session's first "grid" event has arrived; like
-  // flameHasImage, keeps the live explorer showing during the worker's
-  // startup gap instead of flashing an empty/stale volume.
-  let solidHasTexture = false;
-
-  function postVoxel(command: VoxelWorkerCommand): void {
-    solidWorker?.postMessage(command);
-  }
-
+  // The solid voxel render's worker-event handler: "grid" is this session's
+  // first-frame signal (see RenderSession.hasFirstFrame), "error" falls back to
+  // the explorer. The session itself — its start payload + enter/exit — is the
+  // const solidSession below.
   function handleSolidEvent(event: VoxelWorkerEvent): void {
     switch (event.type) {
       case "grid":
@@ -880,7 +862,7 @@ function main(): void {
           event.boundsMax,
         );
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
-        solidHasTexture = true;
+        solidSession.markFirstFrame();
         break;
       case "progress":
         // Counters-only label refresh (the displayed texture is already
@@ -896,81 +878,91 @@ function main(): void {
           event.message,
         );
         showRenderError(RENDER_ACCUMULATE_ERROR);
-        exitSolidMode();
+        solidSession.exit();
         break;
     }
   }
 
-  // Start accumulating a density volume of the current system in a fresh
-  // worker. Unlike enterFlameMode this does NOT freeze the camera: the grid
-  // is world-space, so the live orbit keeps working over it (see animate()).
-  // Also drops any transform selection, since the lens has no guide box in
-  // this mode and pointer gestures should orbit the camera instead of
-  // dragging one that's no longer shown.
-  function enterSolidMode(): void {
-    solidWorker?.terminate(); // defensive: guard against a theoretical double-entry leaking a worker.
-    ui.setSolidResolutionNote(null); // clear any note from a previous render before the fresh worker reports its own.
-    ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
-    solidHasTexture = false; // keep showing the live explorer (see animate()) until this session's first grid arrives.
+  // The solid voxel render session (fr-v4f): accumulate a world-space density
+  // volume of the current system in a fresh worker. Its enter/exit/terminate +
+  // first-frame-gate choreography is shared with the flame session above
+  // through RenderSession (render-session.ts); its genuine differences are that
+  // the volume is world-space — so, unlike the frozen flame view, the camera
+  // stays LIVE while it converges (see animate()) — and that entering drops the
+  // transform selection (the lens has no guide box in this mode, so pointer
+  // gestures should orbit the camera instead of dragging one that's no longer
+  // shown). The defensive double-entry terminate lives in RenderSession.enter,
+  // so `start` only builds and kicks off.
+  const solidSession = new RenderSession<VoxelWorkerCommand>({
+    start: () => {
+      const worker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
+        type: "module",
+      });
+      worker.onmessage = (e: MessageEvent<VoxelWorkerEvent>) =>
+        handleSolidEvent(e.data);
+      worker.onerror = (e) => {
+        console.error("Solid worker crashed; returning to explorer.", e);
+        showRenderError();
+        solidSession.exit();
+      };
+      const handle = {
+        post: (command: VoxelWorkerCommand) => worker.postMessage(command),
+        terminate: () => worker.terminate(),
+      };
 
-    solidWorker = new Worker(new URL("./voxel-worker.ts", import.meta.url), {
-      type: "module",
-    });
-    solidWorker.onmessage = (e: MessageEvent<VoxelWorkerEvent>) =>
-      handleSolidEvent(e.data);
-    solidWorker.onerror = (e) => {
-      console.error("Solid worker crashed; returning to explorer.", e);
-      showRenderError();
-      exitSolidMode();
-    };
-
-    postVoxel({
-      type: "start",
-      transforms: state.transforms,
-      finalTransform: state.finalTransform ?? null,
-      resolution: state.solid.resolution,
-      // The explorer's Color Mode carries into the voxel colors (fr-c1d);
-      // entering the mode snapshots it, exactly like the transform set.
-      colorMode: state.colorMode,
-      // Snapshotted alongside colorMode (fr-8sk) so the solid render's
-      // baked-in LUT/position coloring matches the explorer's contrast.
-      colorGamma: state.colorGamma,
-      paletteId: state.solid.paletteId,
-      iterationsBudget: state.solid.iterations,
-      // A worker needs an explicit numeric seed — a live Rng (like
-      // Math.random) can't cross postMessage — which as a side effect makes
-      // a render a reproducible pure function of its inputs.
-      seed: Math.floor(Math.random() * 0xffffffff),
-      // Device-aware memory budget for the voxel grid + texture (fr-8x7) —
-      // the same two main-thread-only signals, for the same reasons, as the
-      // flame render's maxAccumBuckets above (fr-7c8).
-      maxVoxels: voxelAccumBudgetVoxels(
-        (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
-        window.matchMedia("(pointer: coarse)").matches,
-      ),
-      order: state.symmetry.order,
-      axis: state.symmetry.axis,
-      // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
-      fourD: fourDRenderSnapshot(),
-    });
-
-    state = selectTransform(state, null);
-    state = setSolidActive(state, true);
-    refreshGuides();
-    refreshUi();
-  }
-
-  // Discard the in-progress accumulation and return to the live explorer.
-  // Like exitFlameMode, terminates outright rather than asking the worker to
-  // wind down — the next Render click spins up a fresh one regardless.
-  function exitSolidMode(): void {
-    solidWorker?.terminate();
-    solidWorker = null;
-    solidHasTexture = false; // tidy up so a stray volume can't leak into a future session's gap.
-    ui.setSolidResolutionNote(null);
-    state = setSolidActive(state, false);
-    refreshUi();
-  }
+      // Post the `start` via the fresh handle — typed, so the payload is
+      // checked — NOT solidSession.post: RenderSession.enter only stores this
+      // returned handle afterwards, so solidSession.post can't reach it yet.
+      handle.post({
+        type: "start",
+        transforms: state.transforms,
+        finalTransform: state.finalTransform ?? null,
+        resolution: state.solid.resolution,
+        // The explorer's Color Mode carries into the voxel colors (fr-c1d);
+        // entering the mode snapshots it, exactly like the transform set.
+        colorMode: state.colorMode,
+        // Snapshotted alongside colorMode (fr-8sk) so the solid render's
+        // baked-in LUT/position coloring matches the explorer's contrast.
+        colorGamma: state.colorGamma,
+        paletteId: state.solid.paletteId,
+        iterationsBudget: state.solid.iterations,
+        // A worker needs an explicit numeric seed — a live Rng (like
+        // Math.random) can't cross postMessage — which as a side effect makes
+        // a render a reproducible pure function of its inputs.
+        seed: Math.floor(Math.random() * 0xffffffff),
+        // Device-aware memory budget for the voxel grid + texture (fr-8x7) —
+        // the same two main-thread-only signals, for the same reasons, as the
+        // flame render's maxAccumBuckets above (fr-7c8).
+        maxVoxels: voxelAccumBudgetVoxels(
+          (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+          window.matchMedia("(pointer: coarse)").matches,
+        ),
+        order: state.symmetry.order,
+        axis: state.symmetry.axis,
+        // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
+        fourD: fourDRenderSnapshot(),
+      });
+      return handle;
+    },
+    clearNotes: () => {
+      ui.setSolidResolutionNote(null); // clear any note from a previous render before the fresh worker reports its own.
+    },
+    resetProgress: () => {
+      ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
+    },
+    activate: () => {
+      // Drop any transform selection: the lens has no guide box in this mode,
+      // so a raycast drag should orbit the camera, not grab a hidden box.
+      state = selectTransform(state, null);
+      state = setSolidActive(state, true);
+      refreshGuides();
+      refreshUi();
+    },
+    deactivate: () => {
+      state = setSolidActive(state, false);
+      refreshUi();
+    },
+  });
 
   // The lens has no guide box, so map its selection (like camera) to "nothing
   // highlighted" — only a numbered transform highlights a box or is draggable.
@@ -1029,8 +1021,8 @@ function main(): void {
   function restoreSnapshot(snapshot: string, refit: boolean): void {
     const snap = decodeScene(snapshot);
     if (!snap) return; // can't happen: entries are encodeScene output
-    if (state.flameActive) exitFlameMode();
-    if (state.solidActive) exitSolidMode();
+    if (state.flameActive) flameSession.exit();
+    if (state.solidActive) solidSession.exit();
     state = fromSnapshot(snap, state);
     if (
       typeof state.selectedTransform === "number" &&
@@ -1123,13 +1115,13 @@ function main(): void {
   }
 
   // The one place control-spec.ts's declared effects meet the app's real
-  // capabilities: scene pushes, render-worker forwards, and the refreshers.
-  // Function declarations hoist within main(), so referencing postFlame/
-  // enterSolidMode here is safe — the arrows only call them at input time.
+  // capabilities: scene pushes, render-session forwards, and the refreshers.
+  // The arrows only fire at input time — well after boot — so forwarding to
+  // the flame/solid RenderSessions (declared above) is safe.
   const controlEffects: ControlEffects = {
     scene,
-    postFlame,
-    postVoxel,
+    postFlame: (command) => flameSession.post(command),
+    postVoxel: (command) => solidSession.post(command),
     presentSharedFlameFrame: () => {
       if (!flameShared) return false;
       presentSharedFrame();
@@ -1140,7 +1132,7 @@ function main(): void {
     },
     recolor,
     applyFourDColor,
-    restartSolidRender: () => enterSolidMode(),
+    restartSolidRender: () => solidSession.enter(),
   };
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -1291,10 +1283,10 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
-    onEnterFlameRender: () => enterFlameMode(),
-    onExitFlameRender: () => exitFlameMode(),
-    onEnterSolidRender: () => enterSolidMode(),
-    onExitSolidRender: () => exitSolidMode(),
+    onEnterFlameRender: () => flameSession.enter(),
+    onExitFlameRender: () => flameSession.exit(),
+    onEnterSolidRender: () => solidSession.enter(),
+    onExitSolidRender: () => solidSession.exit(),
     // Slice state is session-only view state (like the tumble clock): it never
     // touches AppState or persistence, so these write straight to fourDView and
     // re-upload the slice trio to the scene (see pushFourDSlice).
@@ -1433,7 +1425,7 @@ function main(): void {
       // applying the live orbit camera so the user can keep looking around
       // while accumulation converges.
       scene.applyCamera(orbit);
-      if (solidHasTexture) {
+      if (solidSession.hasFirstFrame) {
         scene.renderSolid();
       } else {
         // Keep showing the live explorer (fog + point cloud) until the
@@ -1449,7 +1441,7 @@ function main(): void {
       // further orbit input while flameActive) until the worker's first
       // image lands, then switch over — avoids a flash of the flame
       // canvas's stale contents during the worker startup gap.
-      if (flameHasImage) {
+      if (flameSession.hasFirstFrame) {
         scene.renderFlame();
       } else {
         scene.render();
