@@ -287,25 +287,30 @@ export type FlameWorkerEvent =
   | { type: "error"; message: string }
   | {
       /**
-       * Emitted when THIS session's WebGPU backend could not be CREATED — the
-       * `createGpuBackend`/`createGpuBackend4` factory threw (see
-       * {@link createGpuBackendWithFallback}) — immediately before the session
-       * ratchets `gpuFailed` and falls back to CPU for the rest of its life.
-       * At most once per session (the ratchet means the factory is attempted
-       * only once), and NOT emitted for a GPU failure that surfaces mid-render
-       * (a failed dispatch/snapshot restarts on CPU in place — see `runChunk`),
-       * only for the clean "GPU never came up at all" case.
+       * Emitted the first time THIS session's WebGPU backend fails — whether at
+       * CREATE (the `createGpuBackend`/`createGpuBackend4` factory threw, see
+       * {@link createGpuBackendWithFallback}) or MID-RENDER (a dispatch/
+       * snapshot/downsample failed, see `runChunk`'s catches) — right as the
+       * session ratchets `gpuFailed` and falls back to CPU for the rest of its
+       * life. At most once per session: `gpuFailed` ratchets once, and once set
+       * no further GPU work runs, so no later failure can re-emit (all six
+       * failure sites route through {@link failGpuBackendToCpu}, which emits
+       * only on the false→true transition). Fires for mid-render failures too
+       * (fr-8ck) because the real-world case that motivated this — a Firefox
+       * desktop whose worker-context WebGPU allocation fails ~2s into a render
+       * with "Not enough memory left" (a worker bug, not real VRAM exhaustion:
+       * the main thread's GPU renders the same histogram fine) — surfaces as a
+       * mid-render snapshot failure, not a create failure.
        *
        * Purely ADVISORY: the session still falls back to CPU entirely on its
        * own, so a host that ignores this event behaves exactly as before. The
-       * MAIN thread uses it (fr-e07) to ESCALATE a WORKER-hosted session to the
-       * main-thread GPU host ({@link createLocalFlameSessionHost}) when the main
-       * thread itself has WebGPU — a real win on a browser/driver where the
-       * worker's GPU is flaky but the main thread's works (a transient
-       * worker-GPU hiccup on Firefox desktop is what surfaced this). A session
-       * that is ALREADY main-thread-hosted has nothing better to escalate to,
-       * so main.ts ignores its `gpuUnavailable` and lets the CPU fallback that
-       * is already under way stand as the correct final fallback.
+       * MAIN thread uses it (fr-e07/fr-8ck) to ESCALATE a WORKER-hosted session
+       * to the main-thread GPU host ({@link createLocalFlameSessionHost}) — and
+       * to STICK with it for the rest of the session — when the main thread
+       * itself has WebGPU: a win on a browser/driver where the worker's GPU is
+       * broken but the main thread's works. A session that is ALREADY
+       * main-thread-hosted has nothing better to escalate to, so main.ts ignores
+       * its `gpuUnavailable` and lets the CPU fallback stand as the final one.
        */
       type: "gpuUnavailable";
     }
@@ -1525,6 +1530,21 @@ export class FlameWorkerSession {
     return this.is4D ? this.makeCpu4DBackend() : this.makeCpuBackend();
   }
 
+  /** Ratchet `gpuFailed`, log the failure, and emit `gpuUnavailable` ONCE (on
+   * the false→true transition) so a worker host's main thread can escalate to
+   * its own GPU before the CPU fallback stands (fr-e07/fr-8ck — see the event's
+   * doc). Shared by all six GPU-failure sites: the two create-time factories
+   * below and `runChunk`'s four mid-render catches. The transition guard on the
+   * emit is purely defensive — once `gpuFailed` is set no further GPU work runs
+   * this session, so no second site is ever reached — but it keeps the "at most
+   * once per session" contract true by construction rather than by that
+   * argument alone. */
+  private failGpuBackendToCpu(logMessage: string): void {
+    if (!this.gpuFailed) this.emit({ type: "gpuUnavailable" });
+    this.gpuFailed = true;
+    this.log(logMessage);
+  }
+
   /** The genuinely-async half of {@link createBackend}'s 3D branch: try the
    * GPU factory, and on ANY throw/reject, ratchet `gpuFailed` (so this
    * session never retries it) and fall back to CPU. Takes `gpuFactory` as a
@@ -1536,14 +1556,9 @@ export class FlameWorkerSession {
     try {
       return await gpuFactory(this.buildGpuBackendRequest());
     } catch (e) {
-      this.gpuFailed = true;
-      this.log(
+      this.failGpuBackendToCpu(
         `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
       );
-      // Advisory signal for the host BEFORE the CPU fallback below stands: a
-      // worker-hosted session's main thread may escalate to its own GPU host
-      // instead of accepting CPU (fr-e07). See the event's doc.
-      this.emit({ type: "gpuUnavailable" });
       return this.makeCpuBackend();
     }
   }
@@ -1556,14 +1571,9 @@ export class FlameWorkerSession {
     try {
       return await gpuFactory4(this.buildGpuBackendRequest4());
     } catch (e) {
-      this.gpuFailed = true;
-      this.log(
+      this.failGpuBackendToCpu(
         `Flame: GPU backend unavailable, falling back to CPU (${describeError(e)}).`,
       );
-      // Advisory signal for the host BEFORE the CPU fallback below stands: a
-      // worker-hosted session's main thread may escalate to its own GPU host
-      // instead of accepting CPU (fr-e07). See the event's doc.
-      this.emit({ type: "gpuUnavailable" });
       return this.makeCpu4DBackend();
     }
   }
@@ -1733,8 +1743,7 @@ export class FlameWorkerSession {
           }
           this.running = false;
           if (backend.kind === "gpu") {
-            this.gpuFailed = true;
-            this.log(
+            this.failGpuBackendToCpu(
               `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
             );
             this.startAccumulation(
@@ -1861,8 +1870,7 @@ export class FlameWorkerSession {
         // is, so there's no smaller size worth trying first — drop to CPU
         // for the rest of the session and restart the current accumulation
         // there from scratch.
-        this.gpuFailed = true;
-        this.log(
+        this.failGpuBackendToCpu(
           `Flame: GPU accumulation failed, restarting on CPU (${describeError(e)}).`,
         );
         this.startAccumulation(
@@ -1947,8 +1955,7 @@ export class FlameWorkerSession {
             return;
           }
           this.running = false;
-          this.gpuFailed = true;
-          this.log(
+          this.failGpuBackendToCpu(
             `Flame: GPU display downsample failed, restarting on CPU (${describeError(e)}).`,
           );
           this.startAccumulation(
@@ -1985,8 +1992,7 @@ export class FlameWorkerSession {
           }
           this.running = false;
           if (backend.kind === "gpu") {
-            this.gpuFailed = true;
-            this.log(
+            this.failGpuBackendToCpu(
               `Flame: GPU snapshot failed, restarting on CPU (${describeError(e)}).`,
             );
             this.startAccumulation(

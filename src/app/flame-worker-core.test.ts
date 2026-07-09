@@ -1508,7 +1508,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(gpuUnavailableEvents(events)).toHaveLength(0);
   });
 
-  it("does not emit gpuUnavailable when a GPU dispatch fails mid-render (only a create failure signals it)", async () => {
+  it("emits gpuUnavailable when a GPU accumulate fails mid-render (fr-8ck), while still restarting on CPU", async () => {
     let accumulateCalls = 0;
     const backend: FlameAccumBackend = {
       kind: "gpu",
@@ -1527,11 +1527,31 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     );
     await drainAsync(scheduler);
 
-    // Confirms the fixture really did reach a mid-run dispatch failure (gpu
-    // create succeeded, then fell back to cpu after accumulate rejected).
+    // The create succeeded (gpu), then a mid-render accumulate failure restarts
+    // on cpu — and, unlike a create failure, this is what the Firefox worker-OOM
+    // actually looks like, so it MUST signal so the host can escalate (fr-8ck).
     expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
-    // Create-only scope: a dispatch failure must NOT signal gpuUnavailable.
-    expect(gpuUnavailableEvents(events)).toHaveLength(0);
+    expect(gpuUnavailableEvents(events)).toHaveLength(1); // once, before the CPU restart.
+  });
+
+  it("emits gpuUnavailable when a GPU snapshot fails mid-render (the Firefox worker-OOM shape), still restarting on CPU", async () => {
+    const backend: FlameAccumBackend = {
+      kind: "gpu",
+      accumulate: async (n) => n, // accumulate succeeds...
+      snapshot: async () => {
+        throw new Error("Mapping WebGPU buffer failed: Invalid buffer"); // ...then the readback OOMs, exactly like the report.
+      },
+      destroy: () => {},
+    };
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
+    expect(gpuUnavailableEvents(events)).toHaveLength(1);
   });
 
   it("restarts on CPU from scratch when the GPU backend's accumulate rejects mid-run", async () => {
