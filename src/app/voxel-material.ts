@@ -189,7 +189,14 @@ const VOXEL_FRAGMENT = /* glsl */ `
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
 
     float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
-    vec3 col = base * lit + specular * shadow * vec3(1.0);
+    // Light in linear space (fr-8id): base is sRGB-authored (color.ts), so
+    // decode with gamma 2.2, apply the light/specular product there, and
+    // re-encode for the pass-through canvas (ColorManagement is off). A fully
+    // lit, specular-free surface round-trips to base verbatim — the authored-
+    // color invariant the rest of the app keeps — while midtones and shadows
+    // are no longer crushed ~2x by scaling the gamma encoding itself.
+    vec3 linBase = pow(base, vec3(2.2));
+    vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
 
     outColor = vec4(col, 1.0);
   }
