@@ -17,6 +17,7 @@ import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
+import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 import type { RenderStyle, SolidParams } from "./state";
 import {
   configureVoxelTexture,
@@ -30,9 +31,21 @@ import {
 // instead of running Three.js's sRGB<->linear conversions.
 THREE.ColorManagement.enabled = false;
 
-const BACKGROUND = 0x1a1a2e;
-// Cooler, lighter "atmosphere" distant points fade into for the aerial style.
-const AERIAL_HAZE = 0x4a5a86;
+/** Midpoint of a backdrop's two stops — the single color that best stands in
+ * for a vertical gradient across the whole frame. Numeric Color constructor
+ * on purpose: it never applies color-space conversion. */
+function backdropMidpoint(stops: { top: string; bottom: string }): THREE.Color {
+  const [tr, tg, tb] = hexToRgb01(stops.top);
+  const [br, bg, bb] = hexToRgb01(stops.bottom);
+  return new THREE.Color((tr + br) / 2, (tg + bg) / 2, (tb + bb) / 2);
+}
+
+// Fog colors are derived from the backdrop gradients rather than authored
+// separately, so fogged points always veil toward what's actually behind them
+// and can't drift when a backdrop is retuned (fr-1lj). The haze pair is the
+// cooler, lighter "atmosphere" distant points fade into for the aerial style.
+const DARK_FOG = backdropMidpoint(DARK_BACKDROP);
+const HAZE_FOG = backdropMidpoint(HAZE_BACKDROP);
 const FOG_MARGIN = 1.2;
 
 // Authored base point size per render style. The UI scales all of them by a
@@ -434,10 +447,16 @@ export class FractalScene {
     const height = container.clientHeight || window.innerHeight;
 
     this.scene = new THREE.Scene();
-    this.darkBackground = gradientBackground("#0d0d18", "#1f2039");
-    this.hazeBackground = gradientBackground("#3c4a72", "#5d6d9b");
+    this.darkBackground = gradientBackground(
+      DARK_BACKDROP.top,
+      DARK_BACKDROP.bottom,
+    );
+    this.hazeBackground = gradientBackground(
+      HAZE_BACKDROP.top,
+      HAZE_BACKDROP.bottom,
+    );
     this.scene.background = this.darkBackground;
-    this.fog = new THREE.Fog(BACKGROUND, 1, 10);
+    this.fog = new THREE.Fog(DARK_FOG, 1, 10);
     this.scene.fog = this.fog;
 
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
@@ -865,13 +884,13 @@ export class FractalScene {
     switch (style) {
       case "depthFade":
         this.pointCloud.material = this.baseMaterial;
-        this.fog.color.setHex(BACKGROUND);
+        this.fog.color.copy(DARK_FOG);
         this.scene.fog = this.fog;
         this.scene.background = this.darkBackground;
         break;
       case "aerial":
         this.pointCloud.material = this.baseMaterial;
-        this.fog.color.setHex(AERIAL_HAZE);
+        this.fog.color.copy(HAZE_FOG);
         this.scene.fog = this.fog;
         this.scene.background = this.hazeBackground;
         break;

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
  * The solid render's GPU raymarcher (fr-v4f): a full-screen-quad
@@ -17,10 +18,12 @@ import * as THREE from "three";
  */
 
 /** Screen-space gradient the raymarcher paints on a miss — the same authored
- * sRGB stops as `scene.ts`'s `darkBackground` ("#0d0d18" top, "#1f2039"
- * bottom), so entering the mode doesn't visibly swap backdrops. */
-const BG_TOP = new THREE.Vector3(0x0d / 255, 0x0d / 255, 0x18 / 255);
-const BG_BOTTOM = new THREE.Vector3(0x1f / 255, 0x20 / 255, 0x39 / 255);
+ * sRGB stops as `scene.ts`'s `darkBackground` (both read `DARK_BACKDROP`), so
+ * entering the mode doesn't visibly swap backdrops. Parsed with the pure
+ * helper, not `new THREE.Color(hex)`: this module evaluates before scene.ts
+ * disables ColorManagement, and the string constructor would linearize. */
+const BG_TOP = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.top));
+const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
 const VOXEL_VERTEX = /* glsl */ `
   out vec2 vUv;
