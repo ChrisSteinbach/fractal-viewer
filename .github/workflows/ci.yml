@@ -86,3 +86,27 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 30
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # playwright-core (the only Playwright package here) exposes the
+      # `playwright-core` bin, NOT `playwright`; using `npx playwright` would
+      # auto-fetch an unpinned full package. --with-deps adds the browser's
+      # OS libraries (SwiftShader/ANGLE ship inside the bundled Chromium).
+      - name: Install Playwright Chromium + system deps
+        run: npx playwright-core install --with-deps chromium
+
+      # scripts/webgl-smoke.mjs spawns its own `npm run dev` and tears it down.
+      - name: WebGL smoke test (SwiftShader software GL)
+        run: npm run smoke
