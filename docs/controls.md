@@ -71,6 +71,18 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **Presets** — a dropdown that replaces the whole system with one of seven named
   fractals: Sierpinski tetrahedron, Menger sponge, spiral, Sierpinski pyramid,
   octahedron flake, or a 12-map icosahedron or 20-map dodecahedron flake.
+- **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
+  layered over the same encoded-scene format as the single autosaved scene
+  (see **Sharing & persistence** below). Explorer-only — it hides during a
+  flame/solid render. **★ Save to collection** saves the current system with a
+  thumbnail of the live cloud and confirms with a toast. **▦ Gallery (N)** (N
+  tracks the live count) opens a modal grid of saved thumbnails; clicking one
+  loads it as a whole-system replacement (the same undoable treatment as a
+  preset load or Surprise Me) — so you can save a keeper, keep tweaking, and
+  still load it back exactly as saved. Each card has a ✕ to delete it; Escape,
+  the backdrop, or the header ✕ close the modal. **🔗 Copy link** copies a
+  shareable `#v1=…` link built fresh from the current state, not the
+  (debounced) address bar.
 - **Points** — slider for the point count (0–500k); takes effect on **Regenerate
   Points** (or immediately on other edits when auto-update is on).
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
@@ -172,6 +184,10 @@ as you edit, and mirrored to `localStorage`. So:
 - **Copy the address bar to share a fractal.** Opening that link recreates the
   exact system; a pasted link takes priority over any locally saved scene.
 - **Reloads restore your last scene** even without a link, from `localStorage`.
+- **Keep more than one with the Collection.** ★ Save to collection stores any
+  number of systems in a persistent gallery; reload one from ▦ Gallery, or
+  copy a fresh link for the current scene with 🔗 Copy link — the multi-slot
+  counterpart to this single autosaved scene (see **Collection** above).
 
 Camera angle, selection, and panel state are intentionally left out — a shared
 link is about the _system_, not where you happened to be looking. See

@@ -274,6 +274,15 @@ version, bad base64/JSON, the wrong transform shape, or an unknown color/depth
 enum, and clamps numeric ranges. Storage and location are injected, so the codec
 is unit-tested with no real browser.
 
+`collection.ts` (fr-cai) layers a second, user-driven path over the same codec.
+Where `persist.ts` autosaves the single current scene, `collection.ts` keeps a
+multi-slot library — any number of saved `encodeScene` strings, each paired
+with a small JPEG thumbnail, under its own `localStorage` key — so saving or
+deleting a kept discovery never disturbs the live scene or its undo history.
+Loading an entry from the collection is a whole-system replacement, the same
+treatment a preset load gets, which is what makes it non-destructive: keep a
+discovery, keep tweaking, and it's still there to load back.
+
 ## The flame still and the solid voxel render
 
 Beyond the live point cloud, a converged system can be committed to one of two
