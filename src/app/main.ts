@@ -177,18 +177,6 @@ function flameHostOverride(): "local" | "worker" | null {
 }
 
 /**
- * fr-ul2: `?flameperf` (present with or without a value) opts the flame render
- * into per-chunk throughput instrumentation — see the flame `start` command's
- * `instrument` field. Diagnostics only, off unless the URL asks, so a phone
- * soak (fr-7su) can log the accumulate / readback / scheduling-gap split that
- * pins the real-app mobile-GPU throughput deficit without shipping the timing
- * overhead to every render.
- */
-function flamePerfEnabled(): boolean {
-  return new URLSearchParams(window.location.search).has("flameperf");
-}
-
-/**
  * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
  * default 1× orbit speed (the user's speed slider multiplies it — see
  * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
@@ -564,22 +552,6 @@ function main(): void {
   }
   let flameShared: FlameSharedSession | null = null;
 
-  // fr-e07/fr-8ck: which host the CURRENT flame session runs on, and whether a
-  // worker-hosted session's WebGPU has failed this page session. When a
-  // WORKER-hosted session reports `gpuUnavailable` (its WebGPU backend failed —
-  // at create OR mid-render, see the event's doc) and THIS thread has its own
-  // WebGPU, we escalate to the main-thread GPU host rather than accept the
-  // worker's CPU fallback: the motivating case is a Firefox desktop whose
-  // worker-context WebGPU OOMs ~2s into a render ("Not enough memory left" on a
-  // card with ample VRAM — a worker bug) while the main thread's GPU renders it
-  // fine. `preferLocalHost` is STICKY, not one-shot: once the worker GPU has
-  // failed we keep using the reliable main-thread host for the rest of the
-  // session, so only the FIRST render eats the wasted worker attempt. Chrome,
-  // where the worker GPU works, never sets it and keeps the off-main-thread
-  // worker path. Resets on reload.
-  let flameHostKind: "worker" | "local" | null = null;
-  let preferLocalHost = false;
-
   // Allocate the two shared display-resolution frame slots, or null to fall
   // back to transfer mode: when the page isn't cross-origin isolated the
   // SharedArrayBuffer constructor isn't even exposed, and when it is, the
@@ -654,39 +626,6 @@ function main(): void {
       case "backend":
         ui.setFlameBackendNote(event.backend, event.adapter);
         break;
-      case "gpuUnavailable":
-        // fr-e07/fr-8ck: a worker-hosted session's WebGPU backend failed (at
-        // create OR mid-render — e.g. Firefox's worker-context OOM ~2s in) and
-        // it is about to render on CPU. If this session runs in a WORKER and
-        // THIS thread has its own usable-context WebGPU (fine-pointer +
-        // navigator.gpu — the same signals the local-host auto-detect uses),
-        // escalate to the main-thread GPU host instead of accepting the
-        // worker's CPU fallback, and REMEMBER it (`preferLocalHost`) so the rest
-        // of this page session skips the broken worker GPU and renders on the
-        // main thread from the start — only this first render pays the wasted
-        // worker attempt. A session that is already local-hosted (flameHostKind
-        // !== "worker") has nothing better to escalate to, so its own
-        // gpuUnavailable is ignored and its CPU fallback stands as the final
-        // one. An explicit `?flamehost=worker` pin is honored — no escalation —
-        // so the worker path stays testable in isolation.
-        if (
-          flameHostKind === "worker" &&
-          flameHostOverride() !== "worker" &&
-          !!navigator.gpu &&
-          !window.matchMedia("(pointer: coarse)").matches
-        ) {
-          console.info(
-            "Flame render: worker GPU unavailable; escalating to the main-thread GPU session for the rest of this session.",
-          );
-          preferLocalHost = true;
-          // Re-enter now on the local host. enter() terminates the worker host
-          // first (its hardened terminate() detaches handlers, so the worker's
-          // already-queued CPU-fallback events can't reach this handler and
-          // disturb the fresh local session), then start() honors the sticky
-          // preference.
-          flameSession.enter();
-        }
-        break;
       case "estimating":
         ui.setFlameEstimating();
         break;
@@ -722,20 +661,7 @@ function main(): void {
     };
     return {
       post: (command) => worker.postMessage(command),
-      terminate: () => {
-        // Detach the handlers BEFORE terminating so a message the worker
-        // already queued to this thread (a "progress"/"backend"/"error"/
-        // "gpuUnavailable" posted just before this) can't still reach
-        // handleFlameEvent and act on a session this host no longer
-        // represents — e.g. a stale "error" calling flameSession.exit() out
-        // from under a freshly-escalated local session, or a stale
-        // "gpuUnavailable" re-triggering escalation (fr-e07). A terminated
-        // worker posts nothing new; this closes the already-queued gap the
-        // local host already gets for free from its `closed` guard.
-        worker.onmessage = null;
-        worker.onerror = null;
-        worker.terminate();
-      },
+      terminate: () => worker.terminate(),
     };
   }
 
@@ -817,16 +743,12 @@ function main(): void {
       // below, so only read matchMedia once.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
       // The manual override is also how the local host gets verified in
-      // Chrome, where dedicated workers have WebGPU that WORKS — `workerWebGpu`
-      // resolves `true` and it never fails, so neither the auto-detect nor the
-      // fr-8ck sticky path below ever picks local there on its own; the override
-      // is the only way to force it (see flameHostOverride's doc).
+      // Chrome, where dedicated workers DO have WebGPU — `workerWebGpu` there
+      // resolves `true`, so the auto-detect condition below never picks local
+      // on its own (see flameHostOverride's doc).
       const override = flameHostOverride();
       const useLocalHost =
         override === "local" ||
-        // fr-8ck: sticky — a worker GPU failure earlier this session pins us to
-        // the reliable main-thread host for every render that follows.
-        preferLocalHost ||
         (override !== "worker" &&
           !coarse &&
           !!navigator.gpu &&
@@ -834,18 +756,14 @@ function main(): void {
 
       let host: FlameSessionHost;
       if (useLocalHost) {
-        flameHostKind = "local";
         console.info(
-          preferLocalHost
-            ? "Flame render: main-thread session (worker GPU failed earlier this session; using the main-thread GPU)."
-            : "Flame render: main-thread session (main-thread GPU host).",
+          "Flame render: main-thread session (WebGPU available on the main thread but not in workers).",
         );
         // Same-thread transfer is already zero-copy — no SharedArrayBuffer
         // upgrade to allocate (and nothing here would ever populate it).
         flameShared = null;
         host = createLocalFlameSessionHost(handleFlameEvent);
       } else {
-        flameHostKind = "worker";
         flameShared = tryCreateFlameSharedSession(width, height);
         console.info(
           flameShared
@@ -907,10 +825,6 @@ function main(): void {
         // takes the same auto-with-fallback path through the 4D kernel
         // (fr-e26, flame-gpu-4d.ts).
         gpuPreference: "auto",
-        // Per-chunk throughput instrumentation, off unless `?flameperf` asks
-        // (fr-ul2). Independent of the host choice above — it works for the
-        // worker and the main-thread session alike.
-        instrument: flamePerfEnabled(),
         // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
         fourD: fourDRenderSnapshot(),
       });

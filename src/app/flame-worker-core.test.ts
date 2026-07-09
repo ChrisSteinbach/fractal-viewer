@@ -248,12 +248,6 @@ function backendEvents(
   return events.filter((e) => e.type === "backend");
 }
 
-function gpuUnavailableEvents(
-  events: FlameWorkerEvent[],
-): Extract<FlameWorkerEvent, { type: "gpuUnavailable" }>[] {
-  return events.filter((e) => e.type === "gpuUnavailable");
-}
-
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -1442,118 +1436,6 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     ]);
   });
 
-  it("emits gpuUnavailable when the 3D GPU factory rejects, before the CPU fallback runs", async () => {
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
-      throw new Error("no suitable GPU adapter");
-    };
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
-    );
-    await drainAsync(scheduler);
-
-    expect(gpuUnavailableEvents(events)).toHaveLength(1);
-    // The real CPU accumulate still ran, undeterred by the signal.
-    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
-    expect(backendEvents(events)).toEqual([
-      { type: "backend", backend: "cpu", adapter: undefined },
-    ]);
-
-    // The signal precedes the CPU backend event, so a host can escalate
-    // before any CPU frame lands.
-    const firstBackend = events.findIndex((e) => e.type === "backend");
-    const firstUnavailable = events.findIndex(
-      (e) => e.type === "gpuUnavailable",
-    );
-    expect(firstUnavailable).toBeGreaterThanOrEqual(0);
-    expect(firstUnavailable).toBeLessThan(firstBackend);
-  });
-
-  it("emits gpuUnavailable only once even when a later restart re-attempts a session whose GPU already failed", async () => {
-    let factoryCalls = 0;
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
-      factoryCalls++;
-      throw new Error("no suitable GPU adapter");
-    };
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
-    );
-    await drainAsync(scheduler);
-
-    session.handle({ type: "setSupersample", supersample: 2 });
-    await drainAsync(scheduler);
-
-    // The gpuFailed ratchet means neither the factory nor the signal repeats
-    // on the restart.
-    expect(factoryCalls).toBe(1);
-    expect(gpuUnavailableEvents(events)).toHaveLength(1);
-  });
-
-  it("does not emit gpuUnavailable when the GPU factory resolves a working backend", async () => {
-    const backend: FlameAccumBackend = {
-      kind: "gpu",
-      adapterLabel: "Fake Adapter",
-      accumulate: async (n) => n,
-      snapshot: async () => createFlameHistogram(8, 8),
-      destroy: () => {},
-    };
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 500 }),
-    );
-    await drainAsync(scheduler);
-
-    expect(gpuUnavailableEvents(events)).toHaveLength(0);
-  });
-
-  it("emits gpuUnavailable when a GPU accumulate fails mid-render (fr-8ck), while still restarting on CPU", async () => {
-    let accumulateCalls = 0;
-    const backend: FlameAccumBackend = {
-      kind: "gpu",
-      accumulate: async () => {
-        accumulateCalls++;
-        if (accumulateCalls === 1) return 10; // first chunk succeeds.
-        throw new Error("device lost");
-      },
-      snapshot: async () => createFlameHistogram(8, 8),
-      destroy: () => {},
-    };
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
-    );
-    await drainAsync(scheduler);
-
-    // The create succeeded (gpu), then a mid-render accumulate failure restarts
-    // on cpu — and, unlike a create failure, this is what the Firefox worker-OOM
-    // actually looks like, so it MUST signal so the host can escalate (fr-8ck).
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
-    expect(gpuUnavailableEvents(events)).toHaveLength(1); // once, before the CPU restart.
-  });
-
-  it("emits gpuUnavailable when a GPU snapshot fails mid-render (the Firefox worker-OOM shape), still restarting on CPU", async () => {
-    const backend: FlameAccumBackend = {
-      kind: "gpu",
-      accumulate: async (n) => n, // accumulate succeeds...
-      snapshot: async () => {
-        throw new Error("Mapping WebGPU buffer failed: Invalid buffer"); // ...then the readback OOMs, exactly like the report.
-      },
-      destroy: () => {},
-    };
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
-    );
-    await drainAsync(scheduler);
-
-    expect(backendEvents(events).map((e) => e.backend)).toEqual(["gpu", "cpu"]);
-    expect(gpuUnavailableEvents(events)).toHaveLength(1);
-  });
-
   it("restarts on CPU from scratch when the GPU backend's accumulate rejects mid-run", async () => {
     let accumulateCalls = 0;
     const backend: FlameAccumBackend = {
@@ -2215,23 +2097,6 @@ describe("FlameWorkerSession 4D flame render", () => {
     ]);
   });
 
-  it("emits gpuUnavailable when the 4D GPU factory rejects", async () => {
-    const createGpuBackend4 = async (): Promise<FlameAccumBackend> => {
-      throw new Error("no suitable GPU adapter");
-    };
-    const { session, events, scheduler } = harness({ createGpuBackend4 });
-    session.handle(
-      startCommand({
-        fourD: defaultFourD(),
-        gpuPreference: "auto",
-        iterationsBudget: 500,
-      }),
-    );
-    await drainAsync(scheduler);
-
-    expect(gpuUnavailableEvents(events)).toHaveLength(1);
-  });
-
   it("a 3D session never calls the 4D factory", async () => {
     let factory3Calls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
@@ -2340,43 +2205,5 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(backendEvents(events)).toEqual([
       { type: "backend", backend: "cpu", adapter: undefined },
     ]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// fr-ul2 throughput instrumentation wiring (the meter's own math is covered by
-// flame-perf.test.ts — these pin that the session actually drives it, and only
-// when opted in). A large fixed clock step makes a single chunk's summed
-// wall+gap cross the meter's window, so one render is enough to emit.
-// ---------------------------------------------------------------------------
-
-describe("FlameWorkerSession instrumentation", () => {
-  it("logs a throughput summary when the start command opts into instrument", () => {
-    const logs: string[] = [];
-    const { session, scheduler } = harness({
-      now: fakeClock(2000),
-      log: (message) => logs.push(message),
-    });
-    session.handle(startCommand({ instrument: true, iterationsBudget: 500 }));
-    scheduler.drain();
-
-    // A CPU render (no GPU factory) still reports its accumulate/readback/gap
-    // split — the meter is backend-agnostic.
-    expect(logs.some((m) => m.includes("flame perf"))).toBe(true);
-    expect(logs.some((m) => m.includes("[cpu]"))).toBe(true);
-  });
-
-  it("logs nothing extra when instrument is absent (the production default)", () => {
-    const logs: string[] = [];
-    const { session, scheduler } = harness({
-      now: fakeClock(2000),
-      log: (message) => logs.push(message),
-    });
-    session.handle(startCommand({ iterationsBudget: 500 }));
-    scheduler.drain();
-
-    // No instrument flag: the meter is never constructed, so the loop's guarded
-    // clock reads and the summary log never happen.
-    expect(logs.some((m) => m.includes("flame perf"))).toBe(false);
   });
 });
