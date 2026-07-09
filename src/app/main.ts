@@ -32,13 +32,7 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import { randomSystem } from "../fractal/random-system";
-import {
-  BOOT_CAMERA_POSITION,
-  boundsCenter,
-  fitRadius,
-  OrbitCamera,
-  smoothstep,
-} from "./orbit";
+import { BOOT_CAMERA_POSITION, OrbitCamera } from "./orbit";
 import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
@@ -74,7 +68,8 @@ import {
   toSnapshot,
 } from "./persist";
 import { MOBILE_BREAKPOINT } from "./constants";
-import type { Bounds, Vec3, Vec4 } from "../fractal/types";
+import type { Vec4 } from "../fractal/types";
+import { CameraTween, fourDFramingBounds } from "./camera-tween";
 
 function showError(message: string): void {
   const loading = document.getElementById("loading");
@@ -189,31 +184,6 @@ function flameHostOverride(): "local" | "worker" | null {
  * OrbitCamera.rotate).
  */
 const AUTO_ORBIT_RATE = 0.12;
-
-/**
- * Synthesize a 3D {@link Bounds} for framing a 4D projection: an axis-aligned
- * box on the cloud's xyz center whose half-DIAGONAL equals `radius`, so
- * orbit.ts's `fitRadius` (which reads the box as a bounding sphere of radius =
- * half-diagonal) frames exactly the radius-`radius` 4D ball. Half-extent per
- * axis is radius/√3 ⇒ half-diagonal √3·(radius/√3) = radius. Because `radius`
- * is a rotation-invariant max-distance-from-center, this framing holds at every
- * tumble angle and never needs to re-run. `minR`/`maxR` aren't read by
- * `fitRadius`/`boundsCenter` but are filled to `[0, radius]` for a well-formed
- * box.
- */
-function fourDFramingBounds(center: Vec4, radius: number): Bounds {
-  const h = radius / Math.sqrt(3);
-  return {
-    minX: center[0] - h,
-    maxX: center[0] + h,
-    minY: center[1] - h,
-    maxY: center[1] + h,
-    minZ: center[2] - h,
-    maxZ: center[2] + h,
-    minR: 0,
-    maxR: radius,
-  };
-}
 
 function main(): void {
   const container = document.getElementById("container");
@@ -482,70 +452,34 @@ function main(): void {
   // to meet it. Never triggered by Regenerate or a geometry edit (those
   // would fight the user's own framing) — call sites are onPreset/onSurprise
   // below, right after `applyEdit`'s synchronous regenerate lands a fresh
-  // `lastResult`/`fourDResult`.
-  interface CameraTween {
-    startMs: number;
-    fromRadius: number;
-    toRadius: number;
-    fromTarget: Vec3;
-    toTarget: Vec3;
-  }
-  const CAMERA_TWEEN_MS = 600;
-  let cameraTween: CameraTween | null = null;
+  // `lastResult`/`fourDResult`. The glide itself — interpolation, reduced-
+  // motion snap, and the 4D framing box (fourDFramingBounds) — lives in
+  // camera-tween.ts; this file only decides WHICH bounds to frame and hands
+  // it the live camera fov/aspect.
+  const cameraTween = new CameraTween(
+    orbit,
+    () => performance.now(),
+    prefersReducedMotion,
+  );
 
-  // The bounds-consuming core of the auto-fit, shared by the 3D path (below,
-  // passing lastResult.bounds) and fitCameraToAttractor's 4D branch (passing a
-  // synthesized box — see fourDFramingBounds).
-  function fitCameraToBounds(bounds: Bounds): void {
-    const toTarget = boundsCenter(bounds);
-    const toRadius = fitRadius(
-      bounds,
-      (scene.camera.fov * Math.PI) / 180,
-      scene.camera.aspect,
-    );
-    if (prefersReducedMotion()) {
-      orbit.target[0] = toTarget[0];
-      orbit.target[1] = toTarget[1];
-      orbit.target[2] = toTarget[2];
-      orbit.spherical.radius = toRadius;
-      cameraTween = null;
-      return;
-    }
-    cameraTween = {
-      startMs: performance.now(),
-      fromRadius: orbit.spherical.radius,
-      toRadius,
-      fromTarget: [orbit.target[0], orbit.target[1], orbit.target[2]],
-      toTarget,
-    };
-  }
-
+  // Choose the bounds for the current view and glide the camera to frame them:
+  // the 4D branch synthesizes a rotation-invariant box (fourDFramingBounds);
+  // the 3D branch frames the latest run's bounds. A no-op until a run exists.
   function fitCameraToAttractor(): void {
+    const framing = { fov: scene.camera.fov, aspect: scene.camera.aspect };
     if (viewIs4D) {
       // radius is rotation-invariant, so framing the synthesized box once
-      // holds at every tumble angle (see fourDFramingBounds/fitCameraToBounds).
+      // holds at every tumble angle (see fourDFramingBounds).
       if (fourDResult) {
-        fitCameraToBounds(
+        cameraTween.fitToBounds(
           fourDFramingBounds(fourDResult.center, fourDResult.radius),
+          framing,
         );
       }
       return;
     }
     if (!lastResult) return;
-    fitCameraToBounds(lastResult.bounds);
-  }
-
-  // Advance the in-flight camera tween, if any; called from animate() before
-  // applyCamera so the frame it takes effect on is the one that gets drawn.
-  function advanceCameraTween(): void {
-    if (!cameraTween) return;
-    const { startMs, fromRadius, toRadius, fromTarget, toTarget } = cameraTween;
-    const t = smoothstep((performance.now() - startMs) / CAMERA_TWEEN_MS);
-    orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
-    orbit.target[0] = fromTarget[0] + (toTarget[0] - fromTarget[0]) * t;
-    orbit.target[1] = fromTarget[1] + (toTarget[1] - fromTarget[1]) * t;
-    orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
-    if (t >= 1) cameraTween = null;
+    cameraTween.fitToBounds(lastResult.bounds, framing);
   }
 
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
@@ -555,24 +489,14 @@ function main(): void {
   // listener of its own here: it polls interactions' gestureActive() each
   // frame instead, and composes with the tween anyway — theta vs.
   // radius/target, disjoint fields.)
-  function cancelCameraTween(): void {
-    cameraTween = null;
-  }
+  const cancelTween = (): void => cameraTween.cancel();
   const cancelTweenOptions: AddEventListenerOptions = {
     capture: true,
     passive: true,
   };
-  scene.canvas.addEventListener(
-    "pointerdown",
-    cancelCameraTween,
-    cancelTweenOptions,
-  );
-  scene.canvas.addEventListener("wheel", cancelCameraTween, cancelTweenOptions);
-  scene.canvas.addEventListener(
-    "touchstart",
-    cancelCameraTween,
-    cancelTweenOptions,
-  );
+  scene.canvas.addEventListener("pointerdown", cancelTween, cancelTweenOptions);
+  scene.canvas.addEventListener("wheel", cancelTween, cancelTweenOptions);
+  scene.canvas.addEventListener("touchstart", cancelTween, cancelTweenOptions);
 
   // Probed once, here at boot (fr-1ib) — well before a human could
   // plausibly click Render — whether dedicated WORKERS on this browser
@@ -1503,7 +1427,7 @@ function main(): void {
   // image was most recently uploaded via scene.setFlameImage.
   function animate(): void {
     requestAnimationFrame(animate);
-    advanceCameraTween();
+    cameraTween.advance();
     if (state.solidActive) {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around

@@ -154,7 +154,8 @@ export function fitRadius(
 /**
  * Cubic ease with a clamped input: 0 at `x <= 0`, 1 at `x >= 1`, smooth
  * (zero slope at both ends) in between. Used to animate the camera tween's
- * progress ratio (`elapsed / durationMs`) in `main.ts`'s `animate()`.
+ * progress ratio (`elapsed / CAMERA_TWEEN_MS`) in `camera-tween.ts`'s
+ * `CameraTween.advance`.
  */
 export function smoothstep(x: number): number {
   const t = clamp(x, 0, 1);
