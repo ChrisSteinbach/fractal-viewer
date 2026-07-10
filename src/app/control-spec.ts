@@ -1,5 +1,6 @@
 import type { ColorMode, FourDColorMode, SymmetryAxis } from "../fractal/types";
-import type { FlamePaletteId } from "../fractal/palette";
+import { resolvePalette } from "../fractal/palette";
+import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
 import {
@@ -492,9 +493,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "select",
     id: "flamePalette",
     read: (s) => s.flame.paletteId,
-    apply: (s, raw) => setFlamePaletteId(s, raw as FlamePaletteId),
+    apply: (s, raw) => setFlamePaletteId(s, raw as PaletteSelection),
     effect: (s, fx) =>
-      fx.postFlame({ type: "setPalette", paletteId: s.flame.paletteId }),
+      fx.postFlame({
+        type: "setPalette",
+        palette: resolvePalette(s.flame.paletteId, s.customPalette),
+      }),
   },
   // Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
   // gamma/vibrancy: the worker re-runs just the finished-frame adaptive
@@ -595,9 +599,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     kind: "select",
     id: "solidPalette",
     read: (s) => s.solid.paletteId,
-    apply: (s, raw) => setSolidPaletteId(s, raw as FlamePaletteId),
+    apply: (s, raw) => setSolidPaletteId(s, raw as PaletteSelection),
     effect: (s, fx) =>
-      fx.postVoxel({ type: "setPalette", paletteId: s.solid.paletteId }),
+      fx.postVoxel({
+        type: "setPalette",
+        palette: resolvePalette(s.solid.paletteId, s.customPalette),
+      }),
   },
   {
     kind: "range",

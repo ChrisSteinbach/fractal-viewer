@@ -73,7 +73,7 @@ import {
 } from "../fractal/project4";
 import type { FourDView } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
-import type { FlamePaletteId } from "../fractal/palette";
+import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import { FlamePerfMeter } from "./flame-perf";
@@ -137,8 +137,12 @@ export type FlameWorkerCommand =
       estimatorRadius: number;
       estimatorMinimumRadius: number;
       estimatorCurve: number;
-      /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
-      paletteId: FlamePaletteId;
+      /**
+       * Structural-coloring palette (fr-6us); `"legacy"` = per-transform
+       * hue; since fr-55k may also be a self-contained `CustomPalette`
+       * payload.
+       */
+      palette: PaletteSpec;
       /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
       order: number;
       axis: SymmetryAxis;
@@ -232,7 +236,7 @@ export type FlameWorkerCommand =
   | { type: "setEstimatorRadius"; estimatorRadius: number }
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
   | { type: "setEstimatorCurve"; estimatorCurve: number }
-  | { type: "setPalette"; paletteId: FlamePaletteId }
+  | { type: "setPalette"; palette: PaletteSpec }
   | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
 
 /** Worker → main thread. */
@@ -628,8 +632,9 @@ export interface GpuBackendRequest {
   /** Kaleidoscope symmetry (fr-6im) — see `chaos-game.ts`'s `prepareChaosGame`. */
   order: number;
   axis: SymmetryAxis;
-  /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue. */
-  paletteId: FlamePaletteId;
+  /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue;
+   * since fr-55k may also be a self-contained `CustomPalette` payload. */
+  palette: PaletteSpec;
   projection: Mat4;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
    * the display resolution `start.width`/`height` carry. */
@@ -662,7 +667,7 @@ export interface GpuBackendRequest {
  * packers consume. `projection`, `view`, and `color` are the SAME objects
  * the CPU oracle (`accumulateFlame4`, via `Cpu4DFlameBackend`) takes, so
  * the two engines cannot disagree on what is being rendered. There is no
- * symmetry (`order`/`axis`) and no `paletteId`: 4D has no kaleidoscope
+ * symmetry (`order`/`axis`) and no `palette`: 4D has no kaleidoscope
  * symmetry, and the palette dispatch is already resolved into `color` by
  * the session's own `buildFourDColor`.
  */
@@ -892,7 +897,7 @@ export class FlameWorkerSession {
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
   /** Built once per `startAccumulation` (never per chunk — see
-   * `buildFourDColor`) from the current `paletteId`/`colorLUT` and the
+   * `buildFourDColor`) from the current `paletteSpec`/`colorLUT` and the
    * `fourD` block's `colorMode`. `null` for a 3D session. */
   private fourDColor: FourDRenderColor | null = null;
   private palette: ReturnType<typeof transformColors> = [];
@@ -901,8 +906,10 @@ export class FlameWorkerSession {
   private colorLUT: Float32Array | null = null;
   /** The palette `colorLUT` was built from — `colorLUT` alone loses this
    * (`"legacy"` and any future no-op palette both look like `null`), and a
-   * `GpuBackendRequest` needs the id itself, not the CPU-side LUT. */
-  private paletteId: FlamePaletteId = "legacy";
+   * `GpuBackendRequest` needs the spec itself, not the CPU-side LUT. Named
+   * `paletteSpec`, not `palette`, to avoid colliding with the CPU legacy
+   * per-transform color table above. */
+  private paletteSpec: PaletteSpec = "legacy";
   /** The raw (un-rotated) transforms/finalTransform from the last "start" —
    * retained so setSymmetry can re-prepare with a NEW symmetry without the
    * main thread resending the whole transform list. */
@@ -1170,7 +1177,7 @@ export class FlameWorkerSession {
         this.setEstimatorParam("estimatorCurve", command.estimatorCurve);
         break;
       case "setPalette":
-        this.setPalette(command.paletteId);
+        this.setPalette(command.palette);
         break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.axis);
@@ -1190,8 +1197,8 @@ export class FlameWorkerSession {
     this.projection = cmd.projection;
     this.palette = transformColors(cmd.transforms.length);
     // null for "legacy" — accumulateFlame then colors by transform (palette).
-    this.colorLUT = buildPaletteLUT(cmd.paletteId);
-    this.paletteId = cmd.paletteId;
+    this.colorLUT = buildPaletteLUT(cmd.palette);
+    this.paletteSpec = cmd.palette;
     this.is4D = cmd.fourD !== undefined;
     if (cmd.fourD) {
       const fourD = cmd.fourD;
@@ -1282,13 +1289,13 @@ export class FlameWorkerSession {
 
   /**
    * Build this session's {@link FourDRenderColor} from the CURRENT
-   * `paletteId`/`colorLUT` and the `start` command's `fourD` block — called
-   * once per `startAccumulation` (never per chunk), so a live `setPalette`
-   * rebuilds it fresh on every restart. A non-`"legacy"` `paletteId` always
-   * wins (structural coloring, exactly mirroring the 3D path's own
-   * `colorLUT !== null` precedence); `"legacy"` dispatches on the
-   * explorer's own 4D color mode — see `color.ts`'s `FourDRenderColor` doc
-   * for what each variant reproduces.
+   * `paletteSpec`/`colorLUT` and the `start` command's `fourD` block —
+   * called once per `startAccumulation` (never per chunk), so a live
+   * `setPalette` rebuilds it fresh on every restart. A non-`"legacy"`
+   * `paletteSpec` always wins (structural coloring, exactly mirroring the
+   * 3D path's own `colorLUT !== null` precedence); `"legacy"` dispatches on
+   * the explorer's own 4D color mode — see `color.ts`'s `FourDRenderColor`
+   * doc for what each variant reproduces.
    */
   private buildFourDColor(): FourDRenderColor {
     if (this.colorLUT !== null) {
@@ -1382,7 +1389,7 @@ export class FlameWorkerSession {
     // lazily creates a GPU backend (see its doc).
     this.chunkSize = this.initialChunkSize;
     // The color sums a fresh accumulation will produce depend on the
-    // CURRENT paletteId/colorMode — rebuilt here (not just in `start`) so a
+    // CURRENT paletteSpec/colorMode — rebuilt here (not just in `start`) so a
     // live setPalette's restart picks up the new palette (see
     // buildFourDColor's doc).
     if (this.is4D) {
@@ -1492,10 +1499,10 @@ export class FlameWorkerSession {
     }
   }
 
-  private setPalette(paletteId: FlamePaletteId): void {
+  private setPalette(palette: PaletteSpec): void {
     if (!this.hasGeometry()) return; // no active session yet.
-    this.colorLUT = buildPaletteLUT(paletteId);
-    this.paletteId = paletteId;
+    this.colorLUT = buildPaletteLUT(palette);
+    this.paletteSpec = palette;
     // sumRGB has the old palette's colors baked into it, so — unlike a
     // tone-map param — this can't be re-applied to the existing accumulation;
     // it has to accumulate afresh. Same restart path setSupersample uses (the
@@ -1827,7 +1834,7 @@ export class FlameWorkerSession {
       finalTransform: this.baseFinalTransform,
       order: this.symmetryOrder,
       axis: this.symmetryAxis,
-      paletteId: this.paletteId,
+      palette: this.paletteSpec,
       projection: this.projection!,
       width: this.accumWidth,
       height: this.accumHeight,

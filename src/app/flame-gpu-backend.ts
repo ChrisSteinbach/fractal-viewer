@@ -996,7 +996,7 @@ export async function createGpuFlameBackend(
     transforms: request.transforms,
     finalTransform: request.finalTransform,
     symmetry: { order: request.order, axis: request.axis },
-    paletteId: request.paletteId,
+    palette: request.palette,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
   // backend ever runs is the warmup one (see createBackendForProgram), which

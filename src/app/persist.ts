@@ -9,8 +9,20 @@
  * module stays fully testable without a real DOM.
  */
 import { isFlatTransform } from "../fractal/affine4";
-import { FLAME_PALETTE_IDS } from "../fractal/palette";
-import type { FlamePaletteId } from "../fractal/palette";
+import {
+  CUSTOM_PALETTE_ID,
+  FLAME_PALETTE_IDS,
+  MAX_CUSTOM_PALETTE_STOPS,
+  MIN_CUSTOM_PALETTE_STOPS,
+  hexToRgb,
+  rgbToHex,
+} from "../fractal/palette";
+import type {
+  CustomPalette,
+  FlamePaletteId,
+  PaletteSelection,
+  RgbStop,
+} from "../fractal/palette";
 import {
   COLOR_MODES,
   FOUR_D_COLOR_MODES,
@@ -101,6 +113,14 @@ export interface SceneSnapshot {
    * session-only.
    */
   glowBrightness: number;
+  /**
+   * The one user-authored gradient slot (fr-55k, see
+   * {@link AppState.customPalette}). Optional like `finalTransform` — absent
+   * until a palette selection first lands on Custom — unlike the always-
+   * present settings blocks above (`flame`/`solid`/`symmetry`/
+   * `glowBrightness`).
+   */
+  customPalette?: CustomPalette;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -135,6 +155,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     solid: state.solid,
     symmetry: state.symmetry,
     glowBrightness: state.glowBrightness,
+    customPalette: state.customPalette,
   };
 }
 
@@ -175,9 +196,15 @@ const VALID_RENDER_STYLES = new Set<string>(RENDER_STYLES);
 /** Exact set of valid VariationType values. */
 const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
 
-/** Exact set of valid palette ids (see `palette.ts`'s `FLAME_PALETTES`),
- * shared by the flame (`flame.paletteId`) and solid (`solid.paletteId`,
- * fr-1kt) validators. */
+/**
+ * Exact set of valid BUILT-IN palette ids (see `palette.ts`'s
+ * `FLAME_PALETTES`), shared by the flame (`flame.paletteId`) and solid
+ * (`solid.paletteId`, fr-1kt) validators. Deliberately excludes
+ * {@link CUSTOM_PALETTE_ID} (fr-55k): `"custom"` is only ever valid alongside
+ * an actually-decoded `customPalette` payload, a condition this fixed set
+ * can't express — `decodeFlameParams`/`decodeSolidParams` check for that
+ * separately via their `hasCustomPalette` parameter.
+ */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
 
 /**
@@ -411,6 +438,49 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
 }
 
 /**
+ * Validate the untrusted `customPalette` scene field (fr-55k): the one
+ * user-authored gradient slot (see `state.ts`'s `AppState.customPalette`).
+ * QUIET fallback semantics, like `symmetry`/`glowBrightness` rather than
+ * `transforms`'s reject-the-scene rule — a custom gradient is cosmetic, never
+ * worth losing an otherwise-valid shared link over. Returns `undefined` for
+ * anything malformed (rather than `null`): "absent" and "invalid" collapse to
+ * the exact same quiet fallback here, unlike `decodeTransform`, whose `null`
+ * distinguishes "reject the scene" from a genuinely absent optional field.
+ *
+ * Unlike the live gradient editor's reducer (`setCustomPaletteStops` in
+ * `state.ts`), which TRIMS an overlong stop list down to
+ * {@link MAX_CUSTOM_PALETTE_STOPS} rather than reject it, a hand-crafted stop
+ * count outside [{@link MIN_CUSTOM_PALETTE_STOPS}, {@link MAX_CUSTOM_PALETTE_STOPS}]
+ * here drops the WHOLE payload — the quiet-fallback contract for a malformed
+ * enum-ish field is "drop the field", not "repair it" (see `decodeSymmetry`'s
+ * axis or `decodeFlameParams`'s paletteId for the same rule applied to a
+ * single value rather than an array).
+ *
+ * Called BEFORE `decodeFlameParams`/`decodeSolidParams` in `decodeScene`, so
+ * its result can tell them whether a `"custom"` paletteId selection actually
+ * has a payload to back it.
+ */
+function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const p = raw as Record<string, unknown>;
+  if (!Array.isArray(p.stops)) return undefined;
+  if (
+    p.stops.length < MIN_CUSTOM_PALETTE_STOPS ||
+    p.stops.length > MAX_CUSTOM_PALETTE_STOPS
+  )
+    return undefined;
+
+  const stops: RgbStop[] = [];
+  for (const entry of p.stops) {
+    if (typeof entry !== "string") return undefined;
+    const stop = hexToRgb(entry);
+    if (stop === null) return undefined;
+    stops.push(stop);
+  }
+  return { stops };
+}
+
+/**
  * Validate the untrusted `flame` render-settings block. `flame` predates
  * this feature's rollout (and `gamma`/`vibrancy`/`supersample` predate
  * fr-ucs's rollout within it, and `estimatorRadius`/`estimatorMinimumRadius`/
@@ -432,8 +502,21 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * clamp the numeric fields already use. That fallback is `"legacy"`, NOT the
  * fresh-session `DEFAULT_FLAME_PALETTE` (a gradient since fr-9mw) — see
  * {@link FALLBACK_PALETTE_ID}.
+ *
+ * `hasCustomPalette` (fr-55k) is the caller's answer to "did a valid
+ * `customPalette` payload actually decode alongside this block" (see
+ * {@link decodeCustomPalette}, called BEFORE this function in `decodeScene`).
+ * {@link CUSTOM_PALETTE_ID} is deliberately absent from `VALID_PALETTE_IDS`
+ * (see its own doc), so a `"custom"` id is accepted ONLY when
+ * `hasCustomPalette` is true; a `"custom"` selection with no stop data to
+ * back it can't be honored, so it takes the exact same quiet
+ * `FALLBACK_PALETTE_ID` fallback an unrecognized id takes, rather than
+ * rejecting the scene.
  */
-function decodeFlameParams(raw: unknown): FlameParams | null {
+function decodeFlameParams(
+  raw: unknown,
+  hasCustomPalette: boolean,
+): FlameParams | null {
   if (raw === undefined) {
     return {
       exposure: PARAM.flameExposure.default,
@@ -490,11 +573,14 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
     estimatorCurve = Number(f.estimatorCurve);
     if (!Number.isFinite(estimatorCurve)) return null;
   }
-  // paletteId: unknown or missing quietly becomes "legacy" (see the doc above)
-  // rather than rejecting the scene.
-  const paletteId: FlamePaletteId =
-    typeof f.paletteId === "string" && VALID_PALETTE_IDS.has(f.paletteId)
-      ? (f.paletteId as FlamePaletteId)
+  // paletteId: unknown or missing quietly becomes "legacy" (see the doc
+  // above) rather than rejecting the scene. "custom" (fr-55k) is accepted
+  // only alongside a valid decoded customPalette payload.
+  const paletteId: PaletteSelection =
+    typeof f.paletteId === "string" &&
+    (VALID_PALETTE_IDS.has(f.paletteId) ||
+      (f.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
+      ? (f.paletteId as PaletteSelection)
       : FALLBACK_PALETTE_ID;
 
   return {
@@ -525,9 +611,16 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
  * `paletteId` (fr-1kt) is the one exception to the reject-on-malformed rule,
  * mirroring `flame.paletteId`: an unknown or missing id decodes to `"legacy"`
  * ({@link FALLBACK_PALETTE_ID}, not the fresh-session default) rather than
- * rejecting the scene.
+ * rejecting the scene. `hasCustomPalette` (fr-55k) extends that mirror
+ * exactly like `decodeFlameParams`'s own parameter: a `"custom"` id is
+ * accepted only when a valid `customPalette` payload actually decoded
+ * alongside it (see {@link decodeCustomPalette}), otherwise it takes the
+ * same quiet fallback an unrecognized id takes.
  */
-function decodeSolidParams(raw: unknown): SolidParams | null {
+function decodeSolidParams(
+  raw: unknown,
+  hasCustomPalette: boolean,
+): SolidParams | null {
   const defaults: SolidParams = {
     resolution: PARAM.solidResolution.default,
     iterations: PARAM.solidIterations.default,
@@ -559,9 +652,13 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
 
   // paletteId (fr-1kt): unknown or missing quietly becomes "legacy" — same
   // quiet-fallback contract as flame.paletteId (see decodeFlameParams).
-  const paletteId: FlamePaletteId =
-    typeof s.paletteId === "string" && VALID_PALETTE_IDS.has(s.paletteId)
-      ? (s.paletteId as FlamePaletteId)
+  // "custom" (fr-55k) is accepted only alongside a valid decoded
+  // customPalette payload.
+  const paletteId: PaletteSelection =
+    typeof s.paletteId === "string" &&
+    (VALID_PALETTE_IDS.has(s.paletteId) ||
+      (s.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
+      ? (s.paletteId as PaletteSelection)
       : FALLBACK_PALETTE_ID;
 
   return {
@@ -716,6 +813,7 @@ export function encodeScene(s: SceneSnapshot): string {
     solid: SolidParams;
     symmetry: SymmetryParams;
     glowBrightness: number;
+    customPalette?: { stops: string[] };
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -766,6 +864,11 @@ export function encodeScene(s: SceneSnapshot): string {
   // carried the field) and lens-free systems keep their short URLs.
   if (s.finalTransform)
     payload.finalTransform = encodeTransform(s.finalTransform);
+  // Written only when present, like finalTransform above — so old links (and
+  // never-authored scenes) stay byte-identical and keep their short URLs.
+  // Encoded as hex strings (fr-55k) for URL compactness — see rgbToHex.
+  if (s.customPalette)
+    payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
   return "v1=" + toBase64url(JSON.stringify(payload));
 }
 
@@ -806,6 +909,16 @@ export function encodeScene(s: SceneSnapshot): string {
  * values become {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade
  * (fr-3e0) follows showGuides's boolean-coercion contract: any truthy value is
  * on, and absent (any pre-fr-3e0 link) coerces to off — the default.
+ *
+ * customPalette (fr-55k) is the one user-authored gradient slot: optional
+ * like finalTransform rather than always-present like flame/solid/symmetry,
+ * and never rejects the scene — absent, malformed, or an out-of-range stop
+ * count all quietly decode to `undefined` (see {@link decodeCustomPalette}),
+ * the same cosmetic-field spirit as glowBrightness/colorGamma. Consequently,
+ * flame.paletteId / solid.paletteId accept the `"custom"` id only when a
+ * valid customPalette payload actually decoded alongside it; a `"custom"`
+ * selection with nothing to back it falls back to `"legacy"` exactly like any
+ * other unrecognized id (see {@link decodeFlameParams}).
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -865,12 +978,18 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = clampToSpec(PARAM.pointSize, rawPointSize);
 
+    // customPalette (fr-55k): decoded BEFORE flame/solid so their paletteId
+    // logic can tell whether a "custom" selection actually has a payload to
+    // back it. Never rejects the scene — see decodeCustomPalette.
+    const customPalette = decodeCustomPalette(o.customPalette);
+
     // flame/solid: absent (an old link) defaults quietly; present-but-
     // malformed rejects the whole scene. See decodeFlameParams /
-    // decodeSolidParams.
-    const flame = decodeFlameParams(o.flame);
+    // decodeSolidParams. A "custom" paletteId is honored only when
+    // customPalette (above) actually decoded.
+    const flame = decodeFlameParams(o.flame, customPalette !== undefined);
     if (flame === null) return null;
-    const solid = decodeSolidParams(o.solid);
+    const solid = decodeSolidParams(o.solid, customPalette !== undefined);
     if (solid === null) return null;
 
     // symmetry: never rejects — a missing block or malformed field quietly
@@ -924,6 +1043,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       solid,
       symmetry,
       glowBrightness,
+      customPalette,
     };
   } catch {
     return null;

@@ -1,6 +1,17 @@
 import { isFlatTransform, systemIsFlat } from "../fractal/affine4";
 import { appendTransform, defaultTransforms } from "../fractal/presets";
-import type { FlamePaletteId } from "../fractal/palette";
+import {
+  CUSTOM_PALETTE_ID,
+  MAX_CUSTOM_PALETTE_STOPS,
+  MIN_CUSTOM_PALETTE_STOPS,
+  seedCustomStops,
+} from "../fractal/palette";
+import type {
+  CustomPalette,
+  FlamePaletteId,
+  PaletteSelection,
+  RgbStop,
+} from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
@@ -100,14 +111,15 @@ export interface FlameParams {
   /**
    * Structural-coloring palette (fr-6us; see `palette.ts`). A cosine-gradient
    * id paints continuous color along the orbit; `"legacy"` keeps the original
-   * per-transform-hue coloring. Fresh sessions default to a gradient
-   * ({@link DEFAULT_FLAME_PALETTE}, fr-9mw), while decoded scenes whose link
-   * predates the field fall back to `"legacy"` (see `persist.ts`), so existing
-   * scenes/renders are unchanged. Changing it restarts accumulation — the
-   * accumulated color sums bake in the palette, so there is nothing to keep
-   * (see `main.ts`).
+   * per-transform-hue coloring; `"custom"` (fr-55k) selects the user-authored
+   * gradient in {@link AppState.customPalette}. Fresh sessions default to a
+   * gradient ({@link DEFAULT_FLAME_PALETTE}, fr-9mw), while decoded scenes
+   * whose link predates the field fall back to `"legacy"` (see `persist.ts`),
+   * so existing scenes/renders are unchanged. Changing it restarts
+   * accumulation — the accumulated color sums bake in the palette, so there
+   * is nothing to keep (see `main.ts`).
    */
-  paletteId: FlamePaletteId;
+  paletteId: PaletteSelection;
 }
 
 /**
@@ -139,17 +151,18 @@ export interface SolidParams {
    * stay. Live-reactive. */
   ambient: number;
   /**
-   * Structural-coloring palette (fr-1kt; shares fr-6us's `FlamePaletteId`
-   * enum — see `palette.ts`). A cosine-gradient id paints continuous color
+   * Structural-coloring palette (fr-1kt; shares fr-6us's `PaletteSelection`
+   * union — see `palette.ts`). A cosine-gradient id paints continuous color
    * along the orbit, overriding colorMode entirely; `"legacy"` keeps the
-   * colorMode-driven coloring (fr-c1d). Fresh sessions default to a gradient
-   * ({@link DEFAULT_SOLID_PALETTE}, fr-9mw), while decoded scenes whose link
-   * predates the field fall back to `"legacy"` (see `persist.ts`), so
-   * existing scenes/renders are unchanged. Changing it restarts
-   * accumulation — the accumulated avgRGB bakes in the palette, so there is
-   * nothing to keep (see `main.ts`).
+   * colorMode-driven coloring (fr-c1d); `"custom"` (fr-55k) selects the
+   * user-authored gradient in {@link AppState.customPalette}. Fresh sessions
+   * default to a gradient ({@link DEFAULT_SOLID_PALETTE}, fr-9mw), while
+   * decoded scenes whose link predates the field fall back to `"legacy"` (see
+   * `persist.ts`), so existing scenes/renders are unchanged. Changing it
+   * restarts accumulation — the accumulated avgRGB bakes in the palette, so
+   * there is nothing to keep (see `main.ts`).
    */
-  paletteId: FlamePaletteId;
+  paletteId: PaletteSelection;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -236,6 +249,17 @@ export interface AppState {
    * no other fields.
    */
   glowBrightness: number;
+  /**
+   * The one user-authored gradient slot (fr-55k), shared by the flame and
+   * solid renders — each opts in independently via its own
+   * `paletteId === "custom"`. Absent until a palette select first lands on
+   * Custom, at which point {@link setFlamePaletteId}/{@link setSolidPaletteId}
+   * seed it from the palette being replaced (see `palette.ts`'s
+   * `seedCustomStops`), so Custom starts as a tweakable copy of the current
+   * look. Persists like `flame`/`solid` (see `persist.ts`) and survives while
+   * unselected, so switching away and back never loses an authored gradient.
+   */
+  customPalette?: CustomPalette;
 }
 
 /** An IFS needs at least one map. */
@@ -986,12 +1010,26 @@ export function setFlameEstimatorCurve(
  * enum (see `palette.ts`), and the UI only offers valid ids (persistence
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
  * worker when it changes; see `main.ts`.
+ *
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * yet set — seeds it from the palette being REPLACED (the previous
+ * `flame.paletteId`), via `palette.ts`'s {@link seedCustomStops}, so Custom
+ * starts as a tweakable copy of the look the user was just seeing. Picking a
+ * preset id, or re-picking Custom when a payload already exists, leaves
+ * `customPalette` untouched — selecting a palette must never clear the one
+ * authored-gradient slot.
  */
 export function setFlamePaletteId(
   state: AppState,
-  paletteId: FlamePaletteId,
+  paletteId: PaletteSelection,
 ): AppState {
-  return { ...state, flame: { ...state.flame, paletteId } };
+  return {
+    ...state,
+    flame: { ...state.flame, paletteId },
+    ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
+      ? { customPalette: { stops: seedCustomStops(state.flame.paletteId) } }
+      : {}),
+  };
 }
 
 /**
@@ -1107,12 +1145,59 @@ export function setSolidAmbient(state: AppState, ambient: number): AppState {
  * enum (see `palette.ts`), and the UI only offers valid ids (persistence
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
  * worker when it changes; see `main.ts`.
+ *
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * yet set — seeds it from the palette being REPLACED (the previous
+ * `solid.paletteId`), via `palette.ts`'s {@link seedCustomStops}, exactly like
+ * {@link setFlamePaletteId}. Picking a preset id, or re-picking Custom when a
+ * payload already exists, leaves `customPalette` untouched.
  */
 export function setSolidPaletteId(
   state: AppState,
-  paletteId: FlamePaletteId,
+  paletteId: PaletteSelection,
 ): AppState {
-  return { ...state, solid: { ...state.solid, paletteId } };
+  return {
+    ...state,
+    solid: { ...state.solid, paletteId },
+    ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
+      ? { customPalette: { stops: seedCustomStops(state.solid.paletteId) } }
+      : {}),
+  };
+}
+
+/**
+ * Replace the user-authored gradient's stops (fr-55k) — the gradient editor's
+ * add/remove/recolor/reorder edits all funnel through this one reducer,
+ * passing their whole new stop list. Never throws: fewer than
+ * {@link MIN_CUSTOM_PALETTE_STOPS} isn't a gradient — the UI never actually
+ * sends this, so it's a defensive no-op rather than a real path — and a
+ * non-finite channel (also not a value the UI's `<input type="color">` →
+ * `hexToRgb` path can produce) is likewise rejected; both return `state`
+ * unchanged rather than storing garbage. Anything past
+ * {@link MAX_CUSTOM_PALETTE_STOPS} is silently truncated first, so a
+ * non-finite channel past the limit can't reject a list that would have been
+ * fine once trimmed. Every surviving stop is copied into a fresh tuple with
+ * each channel clamped to `[0, 1]`. Deliberately leaves `flame.paletteId` /
+ * `solid.paletteId` untouched — editing the shared slot while it isn't the
+ * active selection on either render is inert, like any other render-settings
+ * edit made while a different setting is selected. `persist.ts` re-validates
+ * untrusted (URL-hash-decoded) stop data separately; this reducer only guards
+ * the live-editor input path.
+ */
+export function setCustomPaletteStops(
+  state: AppState,
+  stops: readonly RgbStop[],
+): AppState {
+  if (stops.length < MIN_CUSTOM_PALETTE_STOPS) return state;
+  const trimmed = stops.slice(0, MAX_CUSTOM_PALETTE_STOPS);
+  if (trimmed.some((stop) => stop.some((channel) => !Number.isFinite(channel))))
+    return state;
+  const cleaned: RgbStop[] = trimmed.map(([r, g, b]): RgbStop => [
+    clamp(r, 0, 1),
+    clamp(g, 0, 1),
+    clamp(b, 0, 1),
+  ]);
+  return { ...state, customPalette: { stops: cleaned } };
 }
 
 /**

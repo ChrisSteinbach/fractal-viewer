@@ -73,7 +73,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     (and the same static variation-switch pin in vitest).
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
     256×3 LUT) shared by the flame and solid renders; the `"legacy"` sentinel
-    falls back to flat per-transform hue.
+    falls back to flat per-transform hue. Since fr-55k also the user-authored
+    `CustomPalette` (2–8 evenly spaced sRGB stops, sampled piecewise-linearly
+    into the same LUT): `PaletteSelection` (preset id | `"custom"`) is the
+    UI/state vocabulary, `PaletteSpec` (preset id | payload) the worker/GPU
+    wire's, `resolvePalette` the bridge — plus the stop seeding
+    (`seedCustomStops`) and strict `#rrggbb` codecs the editor and `persist.ts`
+    share.
   - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
     octahedron/icosahedron/dodecahedron flakes) + add-transform.
   - `project4.ts` — the SO(4) rotor→matrix + camera projection the 4D renders

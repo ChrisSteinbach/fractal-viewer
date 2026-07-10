@@ -6,12 +6,21 @@ import {
   initialState,
   MAX_COLOR_GAMMA,
   PARAM,
+  setFlamePaletteId,
+  setSolidPaletteId,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
 import { applyScalarControl } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
-import { FLAME_PALETTE_IDS, buildPaletteLUT } from "../fractal/palette";
+import {
+  CUSTOM_PALETTE_ID,
+  FLAME_PALETTE_IDS,
+  MAX_CUSTOM_PALETTE_STOPS,
+  MIN_CUSTOM_PALETTE_STOPS,
+  buildPaletteLUT,
+} from "../fractal/palette";
+import type { RgbStop } from "../fractal/palette";
 import { buildColorModeLUT } from "../fractal/color";
 import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES } from "../fractal/types";
@@ -53,6 +62,7 @@ function noopHandlers(): UiHandlers {
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
     onWatchBuild: vi.fn(),
+    onCustomPaletteStops: vi.fn(),
   };
 }
 
@@ -1790,12 +1800,13 @@ describe("Ui flame render controls", () => {
   });
 
   // Guards against the dropdown and the palette registry drifting apart — the
-  // options must match FLAME_PALETTES exactly, in order (legacy first).
-  it("offers exactly the registered flame palettes, in order", () => {
+  // options must match FLAME_PALETTES exactly, in order (legacy first),
+  // followed by the Custom sentinel (fr-55k) last.
+  it("offers exactly the registered flame palettes plus Custom, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#flamePalette option"),
     ).map((o) => o.value);
-    expect(values).toEqual([...FLAME_PALETTE_IDS]);
+    expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
   });
 
   it("reflects the palette id into the select", () => {
@@ -2118,11 +2129,12 @@ describe("Ui solid render controls", () => {
     expect(current().solid.resolution).toBe(224);
   });
 
-  it("offers exactly the registered palettes, in order", () => {
+  // Followed by the Custom sentinel (fr-55k) last, mirroring #flamePalette.
+  it("offers exactly the registered palettes plus Custom, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#solidPalette option"),
     ).map((o) => o.value);
-    expect(values).toEqual([...FLAME_PALETTE_IDS]);
+    expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
   });
 
   it("reflects the palette id into the select", () => {
@@ -2148,6 +2160,199 @@ describe("Ui solid render controls", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(current().solid.paletteId).toBe("sunset");
+  });
+});
+
+describe("custom palette editor (fr-55k)", () => {
+  it("hides the flame custom-palette row while the palette is a preset id", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+    expect(
+      document
+        .getElementById("flameCustomPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
+  });
+
+  it("shows the flame custom-palette row once flame.paletteId is custom", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setFlamePaletteId(initialState(true), "custom"));
+    expect(
+      document
+        .getElementById("flameCustomPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+  });
+
+  it("renders one color input per stop with hex values matching the stops", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    const values = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#flameCustomPaletteStops input[type='color']",
+      ),
+    ).map((input) => input.value);
+    expect(values).toEqual(["#ff0000", "#00ff00"]);
+  });
+
+  it("calls onCustomPaletteStops with the whole parsed stop list when a stop is recolored", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    const [first] = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#flameCustomPaletteStops input[type='color']",
+      ),
+    );
+    first.value = "#0000ff";
+    // The recolor listener is delegated on the stops container, so the event
+    // must bubble to be seen.
+    first.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
+      [0, 0, 1],
+      [0, 1, 0],
+    ]);
+  });
+
+  it("calls onCustomPaletteStops with the last stop duplicated when + Stop is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    document.getElementById("flameCustomPaletteAdd")?.click();
+
+    expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 1, 0],
+    ]);
+  });
+
+  it("calls onCustomPaletteStops with the last stop dropped when − Stop is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+        ],
+      },
+    });
+
+    document.getElementById("flameCustomPaletteRemove")?.click();
+
+    expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
+      [1, 0, 0],
+      [0, 1, 0],
+    ]);
+  });
+
+  it("disables + Stop once the palette already has MAX_CUSTOM_PALETTE_STOPS stops", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: Array.from(
+          { length: MAX_CUSTOM_PALETTE_STOPS },
+          (_, i): RgbStop => [i / (MAX_CUSTOM_PALETTE_STOPS - 1), 0, 0],
+        ),
+      },
+    });
+
+    expect(
+      (document.getElementById("flameCustomPaletteAdd") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("disables − Stop once the palette is down to MIN_CUSTOM_PALETTE_STOPS stops", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: Array.from(
+          { length: MIN_CUSTOM_PALETTE_STOPS },
+          (_, i): RgbStop => [i / (MIN_CUSTOM_PALETTE_STOPS - 1), 0, 0],
+        ),
+      },
+    });
+
+    expect(
+      (document.getElementById("flameCustomPaletteRemove") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("sets the strip's inline background to a CSS gradient", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    expect(
+      document.getElementById("flameCustomPaletteStrip")?.style.background,
+    ).toContain("linear-gradient");
+  });
+
+  it("shows the solid custom-palette row keyed on solid.paletteId, independent of flame", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setSolidPaletteId(initialState(true), "custom"));
+    expect(
+      document
+        .getElementById("solidCustomPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(
+      document
+        .getElementById("flameCustomPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
   });
 });
 
