@@ -31,7 +31,7 @@ import {
   PRESET_SCAFFOLDS,
   presetTransforms,
 } from "../fractal/presets";
-import { resolvePalette } from "../fractal/palette";
+import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera } from "./orbit";
 import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
@@ -48,6 +48,7 @@ import {
   initialState,
   removeTransform,
   selectTransform,
+  setCustomPaletteStops,
   setFinalTransform,
   setPanelOpen,
   setRenderMode,
@@ -1467,6 +1468,26 @@ function main(): void {
       state = applyScalarControl(state, spec, raw);
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
+    },
+    // The gradient editor (fr-55k) is a bespoke widget like the transform
+    // sliders, not a table-driven scalar: its value is a stop LIST. Same
+    // pipeline shape as onScalarControl — undo checkpoint + debounced save,
+    // reducer, label sync, then the render-worker forward — except the
+    // forward goes to whichever render(s) currently select the custom
+    // palette (each post is a no-op while that worker is inactive). A drag
+    // inside a color picker fires a burst of input events; beginEdit
+    // coalesces them into one undo step exactly like a slider drag, and the
+    // worker's setPalette restart re-accumulates the preview live. The live
+    // point cloud never uses palettes, so there is nothing to regenerate.
+    onCustomPaletteStops: (stops) => {
+      editSession.beginEdit();
+      state = setCustomPaletteStops(state, stops);
+      ui.updateLabels(state);
+      const palette = resolvePalette(CUSTOM_PALETTE_ID, state.customPalette);
+      if (state.flame.paletteId === CUSTOM_PALETTE_ID)
+        flameSession.post({ type: "setPalette", palette });
+      if (state.solid.paletteId === CUSTOM_PALETTE_ID)
+        solidSession.post({ type: "setPalette", palette });
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own

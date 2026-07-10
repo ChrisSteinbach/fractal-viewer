@@ -7,8 +7,20 @@ import {
   W_SIDE_PALETTES,
   wRampColor,
 } from "../fractal/color";
-import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
-import type { PaletteSelection } from "../fractal/palette";
+import {
+  buildPaletteLUT,
+  CUSTOM_PALETTE_ID,
+  hexToRgb,
+  MAX_CUSTOM_PALETTE_STOPS,
+  MIN_CUSTOM_PALETTE_STOPS,
+  resolvePalette,
+  rgbToHex,
+} from "../fractal/palette";
+import type {
+  CustomPalette,
+  PaletteSelection,
+  RgbStop,
+} from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
   Transform,
@@ -136,6 +148,10 @@ export interface UiHandlers {
   /** "▶ Watch it build" was clicked (in the About dialog or the panel):
    * replay how the chaos game accretes the current cloud, point by point. */
   onWatchBuild: () => void;
+  /** The gradient editor (fr-55k) changed the custom palette's stop list —
+   * a recolor, an added stop, or a removed stop; `stops` is the editor's
+   * whole new list, parsed and ready for `setCustomPaletteStops`. */
+  onCustomPaletteStops: (stops: RgbStop[]) => void;
 }
 
 /**
@@ -651,6 +667,23 @@ export class Ui {
     }
   >();
 
+  /** The gradient-stop editor rows shown under the flame/solid palette
+   * `<select>`s once set to Custom (fr-55k): a live gradient strip preview,
+   * one `<input type="color">` per stop, and the add/remove-stop buttons.
+   * Both editors read/write the SAME shared `AppState.customPalette` slot
+   * (see {@link syncCustomPaletteEditors}) — only which row is visible
+   * differs, keyed on that render's own palette select. */
+  private readonly customPaletteEditors: Record<
+    "flame" | "solid",
+    {
+      row: HTMLElement;
+      strip: HTMLElement;
+      stops: HTMLElement;
+      add: HTMLButtonElement;
+      remove: HTMLButtonElement;
+    }
+  >;
+
   /** Which accordion section is open, remembered per render mode (fr-99o) so
    * switching Points ↔ Flame ↔ Solid restores each mode's working section
    * instead of landing on an all-collapsed panel. `""` = the user
@@ -776,6 +809,22 @@ export class Ui {
         label: spec.label ? this.byId(spec.label.id) : null,
       });
     }
+    this.customPaletteEditors = {
+      flame: {
+        row: this.byId("flameCustomPaletteRow"),
+        strip: this.byId("flameCustomPaletteStrip"),
+        stops: this.byId("flameCustomPaletteStops"),
+        add: this.byId("flameCustomPaletteAdd"),
+        remove: this.byId("flameCustomPaletteRemove"),
+      },
+      solid: {
+        row: this.byId("solidCustomPaletteRow"),
+        strip: this.byId("solidCustomPaletteStrip"),
+        stops: this.byId("solidCustomPaletteStops"),
+        add: this.byId("solidCustomPaletteAdd"),
+        remove: this.byId("solidCustomPaletteRemove"),
+      },
+    };
 
     // Panel accordion (fr-zoi): the sections are exclusive-open
     // <details name="panel-section"> groups, so the browser owns which one is
@@ -841,6 +890,28 @@ export class Ui {
     const el = this.doc.getElementById(id);
     if (!el) throw new Error(`Missing required element #${id}`);
     return el as T;
+  }
+
+  /**
+   * Read a gradient editor's current stop list from its `stops` container, in
+   * DOM order (fr-55k) — shared by the delegated recolor listener and the
+   * add/remove button handlers below, all of which need "the stops as they
+   * stand right now" before computing their own edit. Returns `null` if any
+   * child color input's value fails to parse, so the delegated listener can
+   * ignore the whole event rather than act on a partial read; this can't
+   * actually happen for a real `<input type="color">`, whose value is always
+   * a well-formed `#rrggbb`.
+   */
+  private readCustomPaletteStops(container: HTMLElement): RgbStop[] | null {
+    const stops: RgbStop[] = [];
+    for (const input of Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="color"]'),
+    )) {
+      const stop = hexToRgb(input.value);
+      if (!stop) return null;
+      stops.push(stop);
+    }
+    return stops;
   }
 
   bind(handlers: UiHandlers): void {
@@ -951,6 +1022,28 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
+    // Custom palette gradient editor (fr-55k): the flame and solid rows share
+    // this same wiring, each against its own DOM elements. The recolor
+    // listener is delegated on the `stops` container (rather than bound per
+    // input) so it survives syncCustomPaletteEditors rebuilding the inputs
+    // on an add/remove.
+    for (const kind of ["flame", "solid"] as const) {
+      const editor = this.customPaletteEditors[kind];
+      editor.stops.addEventListener("input", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (stops) handlers.onCustomPaletteStops(stops);
+      });
+      editor.add.addEventListener("click", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (!stops || stops.length >= MAX_CUSTOM_PALETTE_STOPS) return;
+        handlers.onCustomPaletteStops([...stops, stops[stops.length - 1]]);
+      });
+      editor.remove.addEventListener("click", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (!stops || stops.length <= MIN_CUSTOM_PALETTE_STOPS) return;
+        handlers.onCustomPaletteStops(stops.slice(0, -1));
+      });
+    }
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -1002,6 +1095,7 @@ export class Ui {
       }
       if (spec.label && label) label.textContent = spec.label.text(state);
     }
+    this.syncCustomPaletteEditors(state);
     // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
     // its row hides under the baked fr-d47 modes — the same single source of
     // truth (color.ts) the shader's bake-vs-uniform dispatch keys on.
@@ -1185,6 +1279,64 @@ export class Ui {
       state.panelOpen && window.innerWidth <= MOBILE_BREAKPOINT,
     );
     this.menuToggle.textContent = state.panelOpen ? "✕" : "☰";
+  }
+
+  /**
+   * Sync the flame/solid gradient-stop editors (fr-55k) to
+   * `state.customPalette`, called from {@link updateLabels} right after the
+   * table-driven scalar sync loop. Each editor's row shows only while its
+   * OWN render's palette select is on {@link CUSTOM_PALETTE_ID}; both edit
+   * the same shared slot (see `state.ts`'s `AppState.customPalette`), so
+   * switching which render is "custom" never loses an in-progress edit. The
+   * stop inputs are only rebuilt when their count changes (add/remove, or a
+   * fresh seed) — an ordinary recolor instead updates each input's value in
+   * place, so it never clobbers a color picker mid-drag with a redundant
+   * write.
+   */
+  private syncCustomPaletteEditors(state: AppState): void {
+    for (const kind of ["flame", "solid"] as const) {
+      const editor = this.customPaletteEditors[kind];
+      const paletteId =
+        kind === "flame" ? state.flame.paletteId : state.solid.paletteId;
+      const isCustom = paletteId === CUSTOM_PALETTE_ID;
+      editor.row.classList.toggle("hidden", !isCustom);
+      if (!isCustom) continue;
+
+      // Safe: resolvePalette always returns a CustomPalette (never a bare
+      // FlamePaletteId) when the selection is CUSTOM_PALETTE_ID — see its doc.
+      const resolved = resolvePalette(
+        CUSTOM_PALETTE_ID,
+        state.customPalette,
+      ) as CustomPalette;
+      const { stops } = resolved;
+
+      const inputs = Array.from(
+        editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
+      );
+      if (inputs.length !== stops.length) {
+        editor.stops.replaceChildren();
+        stops.forEach((stop, i) => {
+          const input = this.doc.createElement("input");
+          input.type = "color";
+          input.value = rgbToHex(stop);
+          // The swatch is the input's whole visible face — no room for a
+          // text label, so name it for assistive tech instead.
+          input.setAttribute("aria-label", `Color stop ${i + 1}`);
+          editor.stops.appendChild(input);
+        });
+      } else {
+        inputs.forEach((input, i) => {
+          const hex = rgbToHex(stops[i]);
+          if (input.value !== hex) input.value = hex;
+        });
+      }
+
+      // Safe: buildPaletteLUT only returns null for the "legacy" sentinel,
+      // never for a CustomPalette payload.
+      editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
+      editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
+      editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+    }
   }
 
   setPointCount(count: number): void {

@@ -781,6 +781,50 @@ summary.editor-group-title {
   line-height: 1.4;
 }
 
+/* Custom palette gradient editor (fr-55k): shown under a palette <select>
+   once it's set to Custom — a live strip preview, one color swatch per
+   stop, and the add/remove-stop buttons. */
+.custom-palette-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.custom-palette-strip {
+  width: 100%;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.custom-palette-stops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.custom-palette-stops input[type="color"] {
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.custom-palette-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.custom-palette-actions button {
+  flex: 1;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;
