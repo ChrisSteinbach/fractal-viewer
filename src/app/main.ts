@@ -6,6 +6,7 @@ import { FourDView, viewTransition } from "./four-d-view";
 import {
   buildColors,
   buildColors4,
+  colorModeUsesRampPalette,
   fourDColorNeedsAttribute,
   W_SIDE_PALETTES,
 } from "../fractal/color";
@@ -444,6 +445,9 @@ function main(): void {
       fourD: systemIsNonFlat(state),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
+      // Resolved here (not the bare selection) — the "custom" sentinel has
+      // no payload to cross the wire with; see palette.ts's PaletteSpec.
+      rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
       replaced,
       fit,
     };
@@ -519,13 +523,19 @@ function main(): void {
     } else {
       lastResult = result;
       scene.setPoints(result.positions, result.colors);
-      // The colors were baked worker-side at REQUEST-time mode/contrast; if
-      // either changed while this generation was in flight, recolor the
-      // fresh cloud from live state (recolor() reads the just-cached
-      // lastResult) rather than flashing the stale palette.
+      // The colors were baked worker-side at REQUEST-time mode/contrast/ramp
+      // palette; if any changed while this generation was in flight, recolor
+      // the fresh cloud from live state (recolor() reads the just-cached
+      // lastResult) rather than flashing the stale palette. The rampPalette
+      // compare is by reference for a resolved CustomPalette — faithful,
+      // because state updates are immutable (an edited gradient is always a
+      // fresh object); a same-content re-resolution could only cause a
+      // redundant recolor, never a missed one.
       if (
         request.colorMode !== state.colorMode ||
-        request.colorGamma !== state.colorGamma
+        request.colorGamma !== state.colorGamma ||
+        request.rampPalette !==
+          resolvePalette(state.rampPaletteId, state.customPalette)
       ) {
         recolor();
       }
@@ -635,6 +645,7 @@ function main(): void {
       state.transforms,
       state.colorMode,
       state.colorGamma,
+      resolvePalette(state.rampPaletteId, state.customPalette),
     );
     scene.setColors(colors);
   }
@@ -1119,6 +1130,12 @@ function main(): void {
         // baked-in LUT/position coloring matches the explorer's contrast.
         colorGamma: state.colorGamma,
         palette: resolvePalette(state.solid.paletteId, state.customPalette),
+        // The height/radius ramps' gradient palette (fr-3b6), snapshotted at
+        // entry exactly like colorMode/colorGamma above — it only matters
+        // while `palette` is "legacy" (the colorMode-driven path), and the
+        // ramp select is unreachable while this render is active, so there
+        // is no live command for it.
+        rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
         iterationsBudget: state.solid.iterations,
         // A worker needs an explicit numeric seed — a live Rng (like
         // Math.random) can't cross postMessage — which as a side effect makes
@@ -1478,7 +1495,8 @@ function main(): void {
     // inside a color picker fires a burst of input events; beginEdit
     // coalesces them into one undo step exactly like a slider drag, and the
     // worker's setPalette restart re-accumulates the preview live. The live
-    // point cloud never uses palettes, so there is nothing to regenerate.
+    // point cloud's height/radius ramps can select the custom gradient too
+    // (fr-3b6) — a recolor over the cached run, never a regenerate.
     onCustomPaletteStops: (stops) => {
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
@@ -1488,6 +1506,15 @@ function main(): void {
         flameSession.post({ type: "setPalette", palette });
       if (state.solid.paletteId === CUSTOM_PALETTE_ID)
         solidSession.post({ type: "setPalette", palette });
+      // The edited gradient is baked into the live cloud's color buffer
+      // whenever the ramp palette selects it and the active color mode has a
+      // ramp to recolor (colorModeUsesRampPalette) — even while a flame/solid
+      // render is showing, so the explorer never returns stale-colored.
+      if (
+        state.rampPaletteId === CUSTOM_PALETTE_ID &&
+        colorModeUsesRampPalette(state.colorMode)
+      )
+        recolor();
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own

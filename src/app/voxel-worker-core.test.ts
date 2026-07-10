@@ -26,6 +26,7 @@ function startCommand(
     colorMode: "transform",
     colorGamma: 1,
     palette: "legacy",
+    rampPalette: "legacy",
     iterationsBudget: 500,
     seed: 1,
     order: 1,
@@ -251,6 +252,28 @@ describe("VoxelWorkerSession start", () => {
       return grids[grids.length - 1].texture;
     };
     expect(run()).toEqual(run());
+  });
+
+  it("carries the ramp palette into the height ramp's voxel colors (fr-3b6)", () => {
+    // Same seed and geometry, differing ONLY in the start command's
+    // rampPalette: the height-mode colors must come out different — pinning
+    // that the wire field actually reaches accumulateVoxels (the ramp's
+    // exact colors are color.test.ts's business).
+    const run = (rampPalette: "legacy" | "spectrum"): Uint8Array => {
+      const { session, events, scheduler } = harness();
+      session.handle(
+        startCommand({
+          colorMode: "height",
+          rampPalette,
+          seed: 5,
+          iterationsBudget: 2000,
+        }),
+      );
+      scheduler.drain();
+      const grids = gridEvents(events);
+      return grids[grids.length - 1].texture;
+    };
+    expect(run("spectrum")).not.toEqual(run("legacy"));
   });
 });
 

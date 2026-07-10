@@ -4,10 +4,13 @@ import {
   buildColors,
   buildColors4,
   colorModeUsesGamma,
+  colorModeUsesRampPalette,
   hslToRgb,
   transformColors,
   wRampColor,
 } from "./color";
+import { buildPaletteLUT } from "./palette";
+import type { CustomPalette } from "./palette";
 import { runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import { defaultTransforms } from "./presets";
@@ -339,6 +342,161 @@ describe("buildColorModeLUT", () => {
       [contrasty[last], contrasty[last + 1], contrasty[last + 2]],
       [linear[last], linear[last + 1], linear[last + 2]],
     );
+  });
+});
+
+describe("buildColorModeLUT rampPalette (fr-3b6)", () => {
+  const blackToWhite: CustomPalette = {
+    stops: [
+      [0, 0, 0],
+      [1, 1, 1],
+    ],
+  };
+
+  it("samples a preset palette directly at colorGamma 1 (spectrum, endpoints)", () => {
+    const spectrum = buildPaletteLUT("spectrum");
+    if (!spectrum) throw new Error("spectrum should have a LUT");
+    const lut = buildColorModeLUT("height", 1, "spectrum");
+    expectRgbClose(
+      [lut[0], lut[1], lut[2]],
+      [spectrum[0], spectrum[1], spectrum[2]],
+    );
+    expectRgbClose(
+      [lut[765], lut[766], lut[767]],
+      [spectrum[765], spectrum[766], spectrum[767]],
+    );
+  });
+
+  it("is an identity resample of a linear custom palette at colorGamma 1", () => {
+    const lut = buildColorModeLUT("height", 1, blackToWhite);
+    for (const j of [0, 64, 128, 255]) {
+      expect(lut[j * 3]).toBeCloseTo(j / 255, 6);
+    }
+  });
+
+  it("bakes colorGamma into the palette path", () => {
+    const lut = buildColorModeLUT("height", 2, blackToWhite);
+    const expected = Math.min(255, ((128 / 255) ** 2 * 256) | 0) / 255;
+    expect(lut[128 * 3]).toBeCloseTo(expected, 6);
+  });
+
+  it('treats an explicit "legacy" the same as omitting rampPalette, for both modes', () => {
+    expect(buildColorModeLUT("height", 1)).toEqual(
+      buildColorModeLUT("height", 1, "legacy"),
+    );
+    expect(buildColorModeLUT("radius", 1)).toEqual(
+      buildColorModeLUT("radius", 1, "legacy"),
+    );
+  });
+});
+
+describe("buildColors rampPalette (fr-3b6)", () => {
+  const blackToWhite: CustomPalette = {
+    stops: [
+      [0, 0, 0],
+      [1, 1, 1],
+    ],
+  };
+  const unitBounds: Bounds = {
+    minX: 0,
+    maxX: 1,
+    minY: 0,
+    maxY: 1,
+    minZ: 0,
+    maxZ: 1,
+    minR: 0,
+    maxR: 1,
+  };
+
+  it("colors height mode by the custom palette instead of the built-in ramp", () => {
+    const heights = [0, 0.5, 1];
+    const positions = new Float32Array(heights.length * 3);
+    heights.forEach((t, n) => {
+      positions[n * 3 + 1] = t;
+    });
+    const cloud: ChaosGameResult = {
+      positions,
+      transformIndices: new Uint8Array(heights.length),
+      count: heights.length,
+      bounds: unitBounds,
+    };
+
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "height",
+      1,
+      blackToWhite,
+    );
+
+    // Exact at the endpoints — no rounding left to do at t = 0 or t = 1.
+    expect(colors[0]).toBe(0);
+    expect(colors[1]).toBe(0);
+    expect(colors[2]).toBe(0);
+    expect(colors[6]).toBe(1);
+    expect(colors[7]).toBe(1);
+    expect(colors[8]).toBe(1);
+    // t = 0.5 goes through the same floor-based bucketing as the flame's
+    // palette LUT indexing (writePaletteRampColor), not a plain lerp at 0.5.
+    const expectedMid = Math.min(255, (0.5 * 256) | 0) / 255;
+    expect(colors[3]).toBeCloseTo(expectedMid, 6);
+    expect(colors[4]).toBeCloseTo(expectedMid, 6);
+    expect(colors[5]).toBeCloseTo(expectedMid, 6);
+  });
+
+  it("colors radius mode by a preset palette's endpoints", () => {
+    const ember = buildPaletteLUT("ember");
+    if (!ember) throw new Error("ember should have a LUT");
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0]); // r = 0, r = 1
+    const cloud: ChaosGameResult = {
+      positions,
+      transformIndices: new Uint8Array(2),
+      count: 2,
+      bounds: unitBounds,
+    };
+
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "radius",
+      1,
+      "ember",
+    );
+
+    expectRgbClose(
+      [colors[0], colors[1], colors[2]],
+      [ember[0], ember[1], ember[2]],
+    );
+    expectRgbClose(
+      [colors[3], colors[4], colors[5]],
+      [ember[765], ember[766], ember[767]],
+    );
+  });
+
+  it('treats an explicit "legacy" the same as omitting rampPalette, at a non-default gamma', () => {
+    const result = runChaosGame(defaultTransforms(), 300, mulberry32(5));
+    const omitted = buildColors(result, defaultTransforms(), "height", 2);
+    const explicit = buildColors(
+      result,
+      defaultTransforms(),
+      "height",
+      2,
+      "legacy",
+    );
+    expect(explicit).toEqual(omitted);
+  });
+});
+
+describe("colorModeUsesRampPalette", () => {
+  it("is true for height and radius", () => {
+    expect(colorModeUsesRampPalette("height")).toBe(true);
+    expect(colorModeUsesRampPalette("radius")).toBe(true);
+  });
+
+  it("is false for transform, position, and uniform", () => {
+    expect(colorModeUsesRampPalette("transform")).toBe(false);
+    expect(colorModeUsesRampPalette("position")).toBe(false);
+    expect(colorModeUsesRampPalette("uniform")).toBe(false);
   });
 });
 

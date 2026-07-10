@@ -133,6 +133,17 @@ The solid render's voxel LUT (`buildColorModeLUT` in `voxel.ts`) is built with
 the exact same gamma, so a converged solid's colors and the live explorer's
 point colors can never drift apart.
 
+The `height`/`radius` ramps' colors themselves are also swappable (fr-3b6,
+`colorModeUsesRampPalette`): a scene-level **ramp palette** selection
+(`AppState.rampPaletteId` — a `palette.ts` preset, the user's custom gradient,
+or the default `"legacy"` built-in ramps) makes both ramps sample the chosen
+gradient at the same gamma-mapped coordinate instead of the built-in HSL
+formulas. One definition again: `writePaletteRampColor` in `color.ts` is
+shared by `buildColors`' branches and `buildColorModeLUT`, so the explorer's
+points, the solid render's colorMode-driven voxels, and the panel legend all
+recolor together. The 4D projection's radius mode deliberately stays on the
+fixed built-in ramp (fr-6ue tracks whether it should follow).
+
 ## Data flow
 
 ```
@@ -363,7 +374,8 @@ Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
 nudged halfway toward the chosen transform's palette slot each step, consuming no
 RNG — and indexes that LUT, so orbit-adjacent points share a hue (flam3-style
 structural coloring). The sentinel `"legacy"` palette opts out of the gradient
-for a flat per-transform hue. The same palettes serve the solid render.
+for a flat per-transform hue. The same palettes serve the solid render — and,
+since fr-3b6, the explorer's height/radius ramp recolor (see **Color modes**).
 A user-authored **custom palette** (fr-55k) joins the presets as 2–8 evenly
 spaced sRGB stops sampled piecewise-linearly into the same LUT, so it flows
 through the CPU accumulators, the WGSL kernels' packed color table, and the

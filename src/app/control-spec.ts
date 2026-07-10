@@ -26,6 +26,7 @@ import {
   setGlowBrightness,
   setNumPoints,
   setPointSize,
+  setRampPaletteId,
   setRenderStyle,
   setShowGuides,
   setSolidAmbient,
@@ -315,6 +316,21 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     view: "flat",
     read: (s) => s.colorMode,
     apply: (s, raw) => setColorMode(s, raw as ColorMode),
+    effect: (s, fx) => fx.recolor(),
+  },
+  {
+    // The ramp-palette select (fr-3b6): swaps the height/radius color-mode
+    // ramps' built-in colors for a gradient palette (see color.ts's
+    // buildColorModeLUT). Recolors the live cloud over the cached run — like
+    // colorMode/colorGamma, never a regenerate. No worker forward: the solid
+    // render snapshots it at entry (main.ts) and this row is unreachable
+    // while a render is active. Only shown while the active color mode has a
+    // ramp to recolor (see ui.ts's rampPaletteRow gating).
+    kind: "select",
+    id: "rampPalette",
+    view: "flat",
+    read: (s) => s.rampPaletteId,
+    apply: (s, raw) => setRampPaletteId(s, raw as PaletteSelection),
     effect: (s, fx) => fx.recolor(),
   },
   {

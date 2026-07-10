@@ -95,6 +95,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.colorMode).toBe("height");
   });
 
+  it("rampPalette select apply sets rampPaletteId from the option value", () => {
+    const spec = specById("rampPalette");
+
+    const state = applyScalarControl(initialState(true), spec, "ember");
+
+    expect(state.rampPaletteId).toBe("ember");
+  });
+
   it("showGuides checkbox apply sets showGuides from the checked flag", () => {
     const spec = specById("showGuides");
 
@@ -136,6 +144,13 @@ describe("read: state -> element value", () => {
     const state = { ...initialState(true), fourDDepthFade: true };
 
     expect(spec.read(state)).toBe(true);
+  });
+
+  it("rampPalette read reflects state.rampPaletteId", () => {
+    const spec = specById("rampPalette");
+    const state = { ...initialState(true), rampPaletteId: "ember" as const };
+
+    expect(spec.read(state)).toBe("ember");
   });
 });
 
@@ -185,6 +200,17 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setGuidesVisible).toHaveBeenCalledWith(false);
+    });
+
+    it("rampPalette effect calls fx.recolor()", () => {
+      const spec = specById("rampPalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "ember");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.recolor).toHaveBeenCalled();
     });
   });
 
@@ -502,6 +528,7 @@ describe("table policy", () => {
       [
         "colorGammaSlider",
         "colorMode",
+        "rampPalette",
         "renderStyle",
         "symmetryAxis",
         "symmetryOrderSlider",

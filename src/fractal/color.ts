@@ -1,5 +1,7 @@
 import type { ChaosGameResult } from "./chaos-game";
 import type { ChaosGame4Result } from "./chaos-game-4d";
+import { buildPaletteLUT } from "./palette";
+import type { PaletteSpec } from "./palette";
 import type {
   ColorMode,
   FourDAttributeColorMode,
@@ -98,6 +100,29 @@ function writeRadiusColor(out: Float32Array, o: number, t: number): void {
   writeHsl(out, o, t * 0.7, 0.85, 0.55);
 }
 
+/**
+ * The palette-driven counterpart of {@link writeHeightColor} /
+ * {@link writeRadiusColor} (fr-3b6): paints `paletteLUT`'s color at
+ * normalized coordinate `t` into `out` at offset `o`, indexing with the same
+ * `Math.min(255, (t * 256) | 0)` convention the flame/voxel structural hot
+ * loops use for palette LUTs (see `flame.ts`'s `accumulateFlame`). The ONE
+ * palette-ramp definition: `buildColors`' height/radius branches and
+ * {@link buildColorModeLUT} both call this, exactly as the built-in ramps
+ * share `writeHeightColor`/`writeRadiusColor`, so the explorer's points, the
+ * solid render's voxels, and the legend can never drift apart.
+ */
+function writePaletteRampColor(
+  out: Float32Array,
+  o: number,
+  t: number,
+  paletteLUT: Float32Array,
+): void {
+  const p = Math.min(255, (t * 256) | 0) * 3;
+  out[o] = paletteLUT[p];
+  out[o + 1] = paletteLUT[p + 1];
+  out[o + 2] = paletteLUT[p + 2];
+}
+
 /** The "uniform" mode's cyan, shared by `buildColors` and the solid render. */
 export const UNIFORM_POINT_COLOR: Vec3 = [0.4, 0.8, 1.0];
 
@@ -141,15 +166,26 @@ function applyColorGamma(t: number, colorGamma: number): number {
  * same render (see {@link colorModeUsesGamma}) — this LUT and `buildColors`'
  * height/radius branches are the ONE ramp definition, shared so the solid
  * render's voxel colors and the explorer's point colors can never drift apart.
+ *
+ * `rampPalette` (fr-3b6) swaps the built-in ramp for a gradient palette —
+ * `"legacy"` (the default) keeps the built-in writers bit-identically; a
+ * non-legacy spec makes entry `i` {@link writePaletteRampColor} at the same
+ * gamma-mapped `t`. With `colorGamma` at its default of `1`, the palette path
+ * is an identity resample of {@link buildPaletteLUT}'s own table — entry `j`
+ * maps back to palette entry `j`.
  */
 export function buildColorModeLUT(
   mode: "height" | "radius",
   colorGamma = 1,
+  rampPalette: PaletteSpec = "legacy",
 ): Float32Array {
+  const paletteLUT = buildPaletteLUT(rampPalette);
   const lut = new Float32Array(256 * 3);
   const write = mode === "height" ? writeHeightColor : writeRadiusColor;
   for (let i = 0; i < 256; i++) {
-    write(lut, i * 3, applyColorGamma(i / 255, colorGamma));
+    const t = applyColorGamma(i / 255, colorGamma);
+    if (paletteLUT === null) write(lut, i * 3, t);
+    else writePaletteRampColor(lut, i * 3, t, paletteLUT);
   }
   return lut;
 }
@@ -170,12 +206,18 @@ export function buildColorModeLUT(
  * today's linear mapping, applied via a short-circuit that never calls `**`
  * — and `"transform"`/`"uniform"` ignore it entirely, having no coordinate
  * to reshape.
+ *
+ * `rampPalette` (fr-3b6) applies ONLY to the height/radius modes, replacing
+ * the built-in ramp with the gradient palette sampled at the same
+ * gamma-mapped coordinate; `"legacy"` (the default) is bit-identical to
+ * before the parameter existed.
  */
 export function buildColors(
   result: ChaosGameResult,
   transforms: Transform[],
   mode: ColorMode,
   colorGamma = 1,
+  rampPalette: PaletteSpec = "legacy",
 ): Float32Array {
   const { positions, transformIndices, count, bounds } = result;
   const colors = new Float32Array(count * 3);
@@ -199,24 +241,56 @@ export function buildColors(
       break;
     }
     case "height": {
-      // Blue (low) → green (mid) → red (high).
-      for (let i = 0; i < count; i++) {
-        const py = positions[i * 3 + 1];
-        const t = (py - bounds.minY) / rangeY;
-        writeHeightColor(colors, i * 3, applyColorGamma(t, g));
+      // Blue (low) → green (mid) → red (high). The palette LUT is built once
+      // per call (not per point) and the null-check hoisted out of the loop
+      // — two branch-free loop variants, mirroring how the function already
+      // keeps every other mode's loop branch-free. The `paletteLUT === null`
+      // ("legacy") loop is byte-identical to the pre-fr-3b6 code.
+      const paletteLUT = buildPaletteLUT(rampPalette);
+      if (paletteLUT === null) {
+        for (let i = 0; i < count; i++) {
+          const py = positions[i * 3 + 1];
+          const t = (py - bounds.minY) / rangeY;
+          writeHeightColor(colors, i * 3, applyColorGamma(t, g));
+        }
+      } else {
+        for (let i = 0; i < count; i++) {
+          const py = positions[i * 3 + 1];
+          const t = (py - bounds.minY) / rangeY;
+          writePaletteRampColor(
+            colors,
+            i * 3,
+            applyColorGamma(t, g),
+            paletteLUT,
+          );
+        }
       }
       break;
     }
     case "radius": {
-      // Inner = warm, outer = cool.
-      for (let i = 0; i < count; i++) {
-        const o = i * 3;
-        const px = positions[o];
-        const py = positions[o + 1];
-        const pz = positions[o + 2];
-        const r = Math.sqrt(px * px + py * py + pz * pz);
-        const t = (r - bounds.minR) / rangeR;
-        writeRadiusColor(colors, o, applyColorGamma(t, g));
+      // Inner = warm, outer = cool. Same hoisted-LUT, two-loop-variant shape
+      // as the height case above, for the same reason.
+      const paletteLUT = buildPaletteLUT(rampPalette);
+      if (paletteLUT === null) {
+        for (let i = 0; i < count; i++) {
+          const o = i * 3;
+          const px = positions[o];
+          const py = positions[o + 1];
+          const pz = positions[o + 2];
+          const r = Math.sqrt(px * px + py * py + pz * pz);
+          const t = (r - bounds.minR) / rangeR;
+          writeRadiusColor(colors, o, applyColorGamma(t, g));
+        }
+      } else {
+        for (let i = 0; i < count; i++) {
+          const o = i * 3;
+          const px = positions[o];
+          const py = positions[o + 1];
+          const pz = positions[o + 2];
+          const r = Math.sqrt(px * px + py * py + pz * pz);
+          const t = (r - bounds.minR) / rangeR;
+          writePaletteRampColor(colors, o, applyColorGamma(t, g), paletteLUT);
+        }
       }
       break;
     }
@@ -260,6 +334,14 @@ export function buildColors(
  * Single source of truth: the UI's slider-row visibility keys on this. */
 export function colorModeUsesGamma(mode: ColorMode): boolean {
   return mode === "height" || mode === "radius" || mode === "position";
+}
+
+/** True for the color modes whose ramp can be palette-driven (fr-3b6) —
+ * deliberately narrower than {@link colorModeUsesGamma} (position normalizes
+ * coordinates but is XYZ→RGB, not a 1-D ramp). Single source of truth for the
+ * UI's ramp-palette row visibility and main.ts's custom-stop recolor guard. */
+export function colorModeUsesRampPalette(mode: ColorMode): boolean {
+  return mode === "height" || mode === "radius";
 }
 
 /**

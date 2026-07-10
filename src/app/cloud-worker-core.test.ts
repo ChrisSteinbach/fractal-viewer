@@ -30,6 +30,7 @@ function cloudRequest(overrides: Partial<CloudRequest> = {}): CloudRequest {
     fourD: false,
     colorMode: "transform",
     colorGamma: 1,
+    rampPalette: "legacy",
     replaced: false,
     fit: false,
     ...overrides,
@@ -84,6 +85,33 @@ describe("generateCloud 3D", () => {
     const expectedColors = buildColors(direct, req.transforms, "height", 1.4);
 
     expect(result.colors).toEqual(expectedColors);
+  });
+
+  it("bakes the request's ramp palette into the height/radius colors (fr-3b6, oracle)", () => {
+    const req = cloudRequest({ colorMode: "radius", rampPalette: "spectrum" });
+    const result = as3D(generateCloud(req));
+
+    const direct = runChaosGame(
+      req.transforms,
+      req.numPoints,
+      mulberry32(req.seed),
+      req.finalTransform,
+      req.symmetry,
+    );
+    const expectedColors = buildColors(
+      direct,
+      req.transforms,
+      "radius",
+      1,
+      "spectrum",
+    );
+
+    expect(result.colors).toEqual(expectedColors);
+    // And the palette genuinely changed the bake — guards against the
+    // parameter silently not reaching buildColors.
+    expect(result.colors).not.toEqual(
+      buildColors(direct, req.transforms, "radius", 1),
+    );
   });
 
   it("passes symmetry through to runChaosGame, differing from the order-1 output", () => {

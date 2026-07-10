@@ -51,7 +51,11 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `chaos-game-4d.ts` — the 4D twin of `chaos-game.ts` (`runChaosGame4`): the
     same warm-up/escape/reseed/bounds loop unrolled to four coordinates. 4D has
     no kaleidoscope symmetry by design.
-  - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the five color-mode palettes.
+  - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the five color-mode
+    palettes; since fr-3b6 the height/radius ramps can sample a gradient
+    palette instead of the built-in HSL formulas (`rampPaletteId`,
+    `"legacy"` = the built-ins) — `buildColorModeLUT`/`writePaletteRampColor`
+    is the ONE ramp definition the explorer, solid render, and legend share.
   - `flame.ts` — the CPU fractal-flame still: accumulate the chaos game into a
     2-D hit/color histogram (`accumulateFlame`) and tone-map it (`tonemapFlame`:
     exposure/gamma/vibrancy over a log-density curve). CPU oracle for
@@ -72,7 +76,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios
     (and the same static variation-switch pin in vitest).
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
-    256×3 LUT) shared by the flame and solid renders; the `"legacy"` sentinel
+    256×3 LUT) shared by the flame and solid renders and (fr-3b6) the
+    explorer's height/radius ramp recolor; the `"legacy"` sentinel
     falls back to flat per-transform hue. Since fr-55k also the user-authored
     `CustomPalette` (2–8 evenly spaced sRGB stops, sampled piecewise-linearly
     into the same LUT): `PaletteSelection` (preset id | `"custom"`) is the

@@ -26,6 +26,7 @@ import {
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
+  DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
@@ -102,6 +103,7 @@ function baseSnapshot(): SceneSnapshot {
     pointSize: 1,
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
+    rampPaletteId: DEFAULT_RAMP_PALETTE,
     fourDColor: "wBlueOrange",
     fourDDepthFade: false,
     renderStyle: "depthFade",
@@ -1644,6 +1646,81 @@ describe("decodeScene customPalette", () => {
       ],
     });
     expect(result!.flame.paletteId).toBe("custom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ramp palette (fr-3b6) — the height/radius color-mode ramps' gradient
+// selection. A top-level sibling of colorGamma, not nested under flame/solid,
+// but sharing their exact quiet-fallback contract and the one customPalette
+// slot (see decodeFlameParams / decodeCustomPalette).
+// ---------------------------------------------------------------------------
+
+describe("decodeScene rampPaletteId", () => {
+  it("round-trips a non-default rampPaletteId", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), rampPaletteId: "ember" };
+    expect(decodeScene(encodeScene(s))!.rampPaletteId).toBe("ember");
+  });
+
+  it("defaults quietly to legacy for a link encoded before this feature existed", () => {
+    // A hand-built payload with no `rampPaletteId` key at all — exactly what
+    // every link looked like before fr-3b6.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      colorGamma: DEFAULT_COLOR_GAMMA,
+      fourDColor: "wBlueOrange",
+      fourDDepthFade: false,
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.rampPaletteId).toBe("legacy");
+  });
+
+  it("falls back to legacy for an unknown rampPaletteId instead of rejecting the scene", () => {
+    // Unlike every other top-level field, an unknown ramp palette does NOT
+    // nuke the whole scene — mirrors flame.paletteId's fallback behavior.
+    const raw = { ...baseSnapshot(), rampPaletteId: "chartreuse" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.rampPaletteId).toBe("legacy");
+  });
+
+  it("falls back to legacy for a custom rampPaletteId with no customPalette payload", () => {
+    const raw = { ...baseSnapshot(), rampPaletteId: "custom" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.rampPaletteId).toBe("legacy");
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("round-trips a custom rampPaletteId selection alongside its customPalette payload", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      rampPaletteId: "custom",
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [0.2, 0.4, 0.6],
+        [0.8, 0.4, 0.2],
+      ],
+    });
+    expect(result!.rampPaletteId).toBe("custom");
   });
 });
 

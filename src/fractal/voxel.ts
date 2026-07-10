@@ -36,6 +36,7 @@ import {
   UNIFORM_POINT_COLOR,
   buildColorModeLUT,
 } from "./color";
+import type { PaletteSpec } from "./palette";
 import type { Rng } from "./rng";
 import type { Bounds, ColorMode, Vec3 } from "./types";
 
@@ -349,6 +350,14 @@ function colorModeCode(mode: ColorMode): number {
  * `buildColors` uses, or the solid render's voxels and the explorer's points
  * would drift apart (see `color.ts`'s `colorModeUsesGamma`). `1` (the
  * default) is neutral and never calls `**`.
+ *
+ * `rampPalette` (fr-3b6) swaps the height/radius ramps' built-in colors for a
+ * gradient palette via the same shared `buildColorModeLUT`; like `colorGamma`
+ * it MUST be the same value the caller's `buildColors` uses, so the solid
+ * render's voxels and the explorer's points can't drift apart. `"legacy"`
+ * (the default) is the built-in ramps, unchanged. It is unrelated to
+ * `colorLUT` (the structural orbit gradient), which overrides `colorMode`
+ * entirely and so makes `rampPalette` inert.
  */
 export function accumulateVoxels(
   prepared: PreparedChaosGame,
@@ -359,6 +368,7 @@ export function accumulateVoxels(
   colorMode: ColorMode = "transform",
   colorLUT?: Float32Array,
   colorGamma = 1,
+  rampPalette: PaletteSpec = "legacy",
 ): VoxelGrid {
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -376,6 +386,7 @@ export function accumulateVoxels(
       ? buildColorModeLUT(
           mode === MODE_HEIGHT ? "height" : "radius",
           colorGamma,
+          rampPalette,
         )
       : null;
   const cb = grid.bounds.color;

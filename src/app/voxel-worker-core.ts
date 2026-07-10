@@ -78,6 +78,19 @@ export type VoxelWorkerCommand =
        * also be a self-contained `CustomPalette` payload.
        */
       palette: PaletteSpec;
+      /**
+       * Gradient palette for the colorMode-driven height/radius RAMPS
+       * (fr-3b6) — deliberately named apart from `palette` above, because
+       * this session carries TWO palette concepts: `palette` is the
+       * STRUCTURAL orbit gradient that overrides `colorMode` entirely, while
+       * `rampPalette` recolors the height/radius ramps within the
+       * colorMode-driven `"legacy"` path, and so only matters while
+       * `palette` is `"legacy"`. Snapshotted at render entry exactly like
+       * `colorMode`/`colorGamma` — the ramp select is only reachable in the
+       * points view, so there is no live command for it (unlike
+       * `setPalette`). `"legacy"` = the built-in ramps.
+       */
+      rampPalette: PaletteSpec;
       iterationsBudget: number;
       /** Explicit numeric seed (not a live `Rng`, which can't cross
        * postMessage) — also makes a render a reproducible pure function of
@@ -351,6 +364,11 @@ export class VoxelWorkerSession {
   /** Contrast exponent for the coordinate-normalized color modes (fr-8sk) —
    * see `voxel.ts`'s `accumulateVoxels`. */
   private colorGamma = 1;
+  /** Gradient palette for the colorMode-driven height/radius ramps (fr-3b6)
+   * — see the `start` command's `rampPalette` doc for how it differs from
+   * `colorLUT` below (the STRUCTURAL palette, which overrides colorMode and
+   * so makes this inert while non-null). */
+  private rampPalette: PaletteSpec = "legacy";
   /** Gradient lookup table for structural coloring, or `null` for the
    * colorMode-driven `"legacy"` palette — see `voxel.ts`'s `accumulateVoxels`. */
   private colorLUT: Float32Array | null = null;
@@ -481,6 +499,7 @@ export class VoxelWorkerSession {
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
     this.colorGamma = cmd.colorGamma;
+    this.rampPalette = cmd.rampPalette;
     // null for "legacy" — accumulateVoxels/buildFourDColor then falls back
     // to colorMode/the explorer's 4D color mode respectively.
     this.colorLUT = buildPaletteLUT(cmd.palette);
@@ -722,6 +741,7 @@ export class VoxelWorkerSession {
         this.colorMode,
         this.colorLUT ?? undefined,
         this.colorGamma,
+        this.rampPalette,
       );
     }
     const t1 = this.now();

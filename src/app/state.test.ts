@@ -14,6 +14,7 @@ import {
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_POINT_SIZE,
+  DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_AMBIENT,
   DEFAULT_SOLID_ITERATIONS,
   DEFAULT_SOLID_LIGHT_AZIMUTH,
@@ -84,6 +85,7 @@ import {
   setGlowBrightness,
   setNumPoints,
   setPointSize,
+  setRampPaletteId,
   setRenderMode,
   setRenderStyle,
   setSolidAmbient,
@@ -164,6 +166,16 @@ describe("initialState", () => {
     const state = initialState(true);
     expect(state.flame.paletteId).toBe("spectrum");
     expect(state.solid.paletteId).toBe("spectrum");
+  });
+
+  // fr-3b6: unlike the flame/solid palettes (spectrum by default, fr-9mw),
+  // the height/radius ramp palette defaults to "legacy" — the built-in
+  // coordinate ramps are a designed look in their own right, not a
+  // placeholder to upgrade to a gradient.
+  it("boots with the legacy ramp palette", () => {
+    const state = initialState(true);
+    expect(state.rampPaletteId).toBe("legacy");
+    expect(state.rampPaletteId).toBe(DEFAULT_RAMP_PALETTE);
   });
 
   // The startup fractal must match a menu preset so it can be reselected.
@@ -1084,5 +1096,52 @@ describe("setColorGamma", () => {
     expect(setColorGamma(initialState(true), -5).colorGamma).toBe(
       MIN_COLOR_GAMMA,
     );
+  });
+});
+
+describe("setRampPaletteId", () => {
+  it("sets the ramp palette id immutably", () => {
+    const state = initialState(true);
+    // "aurora", not the "legacy" default — a no-op write couldn't prove
+    // immutability.
+    const next = setRampPaletteId(state, "aurora");
+    expect(next.rampPaletteId).toBe("aurora");
+    expect(state.rampPaletteId).toBe(DEFAULT_RAMP_PALETTE);
+  });
+
+  it("leaves the flame/solid palette ids untouched", () => {
+    const state = initialState(true);
+    const next = setRampPaletteId(state, "ember");
+    expect(next.flame.paletteId).toBe(state.flame.paletteId);
+    expect(next.solid.paletteId).toBe(state.solid.paletteId);
+  });
+
+  // fr-3b6: the first switch to Custom seeds a tweakable copy of whatever
+  // ramp gradient the user was just looking at — "ember", not the "legacy"
+  // default, to prove it seeds from the ACTUAL previous id rather than some
+  // hardcoded fallback.
+  it("seeds customPalette from the previous ramp palette on first switch to custom", () => {
+    const state = setRampPaletteId(initialState(true), "ember");
+    const next = setRampPaletteId(state, "custom");
+    expect(next.rampPaletteId).toBe("custom");
+    expect(next.customPalette).toEqual({ stops: seedCustomStops("ember") });
+  });
+
+  it("keeps the existing custom stops instead of re-seeding when selecting custom again", () => {
+    const seeded = setRampPaletteId(initialState(true), "custom");
+    const customStops = [
+      [0.1, 0.2, 0.3],
+      [0.9, 0.8, 0.7],
+    ] as const;
+    const withStops = setCustomPaletteStops(seeded, customStops);
+    const next = setRampPaletteId(withStops, "custom");
+    expect(next.customPalette).toEqual({ stops: customStops });
+  });
+
+  it("keeps customPalette intact when switching back to a preset id", () => {
+    const seeded = setRampPaletteId(initialState(true), "custom");
+    const next = setRampPaletteId(seeded, "aurora");
+    expect(next.rampPaletteId).toBe("aurora");
+    expect(next.customPalette).toBe(seeded.customPalette);
   });
 });

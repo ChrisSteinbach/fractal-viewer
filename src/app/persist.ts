@@ -78,6 +78,13 @@ export interface SceneSnapshot {
    */
   colorGamma: number;
   /**
+   * Ramp palette for the height/radius color modes (fr-3b6, see
+   * {@link AppState.rampPaletteId}). Persists like `colorMode`/`colorGamma`
+   * — always present in the snapshot; the decoder's quiet fallback for
+   * absent/unknown values is `"legacy"` (see decodeScene).
+   */
+  rampPaletteId: PaletteSelection;
+  /**
    * 4D projection color mode (fr-d47, see {@link AppState.fourDColor}).
    * Persists like `colorMode` — always present, not session-only (unlike the
    * tumble/slice view state, which never persists).
@@ -147,6 +154,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     pointSize: state.pointSize,
     colorMode: state.colorMode,
     colorGamma: state.colorGamma,
+    rampPaletteId: state.rampPaletteId,
     fourDColor: state.fourDColor,
     fourDDepthFade: state.fourDDepthFade,
     renderStyle: state.renderStyle,
@@ -805,6 +813,7 @@ export function encodeScene(s: SceneSnapshot): string {
     pointSize: number;
     colorMode: ColorMode;
     colorGamma: number;
+    rampPaletteId: PaletteSelection;
     fourDColor: FourDColorMode;
     fourDDepthFade: boolean;
     renderStyle: RenderStyle;
@@ -822,6 +831,10 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written, like glowBrightness — a small, always-present setting,
     // not a per-transform optional feature like finalTransform/weight/shear.
     colorGamma: round4(s.colorGamma),
+    // Always written, like colorGamma above (fr-3b6) — even while a color
+    // mode it doesn't affect is active, where it is inert exactly the way
+    // colorGamma is.
+    rampPaletteId: s.rampPaletteId,
     // Always written for the same reason — even for a flat system, where it
     // is inert exactly the way colorMode is inert for a non-flat one.
     fourDColor: s.fourDColor,
@@ -894,8 +907,10 @@ export function encodeScene(s: SceneSnapshot): string {
  * [{@link MIN_ESTIMATOR_MINIMUM_RADIUS}, {@link MAX_ESTIMATOR_MINIMUM_RADIUS}],
  * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
  * {@link MAX_ESTIMATOR_CURVE}]. An unknown/missing flame.paletteId falls back
- * to `"legacy"` (see {@link decodeFlameParams}). Likewise, symmetry.order
- * clamps to [{@link MIN_SYMMETRY_ORDER}, {@link MAX_SYMMETRY_ORDER}] and an
+ * to `"legacy"` (see {@link decodeFlameParams}); rampPaletteId (fr-3b6)
+ * follows the identical quiet-fallback contract at the top level. Likewise,
+ * symmetry.order clamps to [{@link MIN_SYMMETRY_ORDER},
+ * {@link MAX_SYMMETRY_ORDER}] and an
  * unrecognized/missing symmetry.axis falls back to `"y"` — neither ever
  * rejects the scene on malformed input (see {@link decodeSymmetry}). Same
  * spirit for glowBrightness: it clamps to [{@link MIN_GLOW_BRIGHTNESS},
@@ -1028,6 +1043,18 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? (o.fourDColor as FourDColorMode)
         : DEFAULT_FOUR_D_COLOR;
 
+    // rampPaletteId (fr-3b6): the height/radius ramps' gradient palette. The
+    // same quiet-fallback contract as flame.paletteId / solid.paletteId (see
+    // decodeFlameParams): absent (every pre-fr-3b6 link) or unknown falls back
+    // to "legacy" — the built-in ramps — and "custom" is honored only alongside
+    // the valid decoded customPalette payload above.
+    const rampPaletteId: PaletteSelection =
+      typeof o.rampPaletteId === "string" &&
+      (VALID_PALETTE_IDS.has(o.rampPaletteId) ||
+        (o.rampPaletteId === CUSTOM_PALETTE_ID && customPalette !== undefined))
+        ? (o.rampPaletteId as PaletteSelection)
+        : FALLBACK_PALETTE_ID;
+
     return {
       transforms,
       finalTransform,
@@ -1035,6 +1062,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       pointSize,
       colorMode: colorMode as ColorMode,
       colorGamma,
+      rampPaletteId,
       fourDColor,
       fourDDepthFade: Boolean(o.fourDDepthFade),
       renderStyle: renderStyle as RenderStyle,
