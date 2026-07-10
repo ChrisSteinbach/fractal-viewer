@@ -60,7 +60,7 @@ function startCommand(
     estimatorRadius: 4,
     estimatorMinimumRadius: 0,
     estimatorCurve: 0.4,
-    paletteId: "legacy",
+    palette: "legacy",
     order: 1,
     axis: "y",
     ...overrides,
@@ -701,12 +701,12 @@ describe("FlameWorkerSession setSupersample", () => {
 describe("FlameWorkerSession setPalette", () => {
   it("restarts a finished render so it re-accumulates in the new palette", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 10 });
-    session.handle(startCommand({ iterationsBudget: 20, paletteId: "legacy" }));
+    session.handle(startCommand({ iterationsBudget: 20, palette: "legacy" }));
     scheduler.drain();
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(20);
     const framesBefore = progressEvents(events).length;
 
-    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    session.handle({ type: "setPalette", palette: "spectrum" });
     scheduler.drain();
 
     // A finished render produces no more frames on its own; that it climbs back
@@ -716,11 +716,9 @@ describe("FlameWorkerSession setPalette", () => {
   });
 
   it("colors differently under a gradient palette than legacy for the same seed", () => {
-    function finalImage(paletteId: "legacy" | "spectrum"): Uint8ClampedArray {
+    function finalImage(palette: "legacy" | "spectrum"): Uint8ClampedArray {
       const { session, events, scheduler } = harness();
-      session.handle(
-        startCommand({ seed: 7, iterationsBudget: 500, paletteId }),
-      );
+      session.handle(startCommand({ seed: 7, iterationsBudget: 500, palette }));
       scheduler.drain();
       return progressEvents(events).at(-1)!.image;
     }
@@ -2359,7 +2357,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       startCommand({
         fourD,
         gpuPreference: "auto",
-        paletteId: "legacy",
+        palette: "legacy",
         width: 8,
         height: 8,
         requestedSupersample: 2,
@@ -2425,7 +2423,7 @@ describe("FlameWorkerSession 4D flame render", () => {
 
     // gpuFailed ratchets for the rest of the session — a later restart must
     // not retry the 4D factory either.
-    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    session.handle({ type: "setPalette", palette: "spectrum" });
     await drainAsync(scheduler);
 
     expect(factory4Calls).toBe(1);
@@ -2531,7 +2529,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       startCommand({
         fourD: defaultFourD(),
         iterationsBudget: 20,
-        paletteId: "legacy",
+        palette: "legacy",
       }),
     );
     scheduler.drain();
@@ -2539,7 +2537,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     const framesBefore = progressEvents(events).length;
     const backendsBefore = backendEvents(events).length;
 
-    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    session.handle({ type: "setPalette", palette: "spectrum" });
     scheduler.drain();
 
     // A finished render produces no more frames on its own; that it climbs

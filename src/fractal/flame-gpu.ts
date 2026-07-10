@@ -49,7 +49,7 @@ import type { Rng } from "./rng";
 import type { SymmetryParams, Transform, VariationType } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram, Mat4 } from "./flame";
-import type { FlamePaletteId } from "./palette";
+import type { PaletteSpec } from "./palette";
 // The packing functions appended below the kernel need these value imports,
 // which the byte-layout/kernel section above did not — kept as separate
 // statements (rather than merged into the type-only imports above) so the
@@ -655,16 +655,16 @@ export function writeColorEntry(
  * A chaos-game system in exactly the shape {@link packGpuSystem} needs — the
  * GPU counterpart of the arguments `prepareChaosGame` (`transforms`,
  * `finalTransform`, `symmetry`) and `accumulateFlame` (`palette`/`colorLUT`,
- * folded here into one `paletteId`) take.
+ * folded here into one `palette`) take.
  */
 export interface GpuFlameSystemSpec {
   transforms: Transform[];
   finalTransform: Transform | null;
   symmetry: SymmetryParams;
   /** `"legacy"` selects the kernel's per-(base)transform color mode
-   * (`colorMode` 0); any other id selects the 256-entry gradient LUT mode
+   * (`colorMode` 0); anything else selects the 256-entry gradient LUT mode
    * (`colorMode` 1) — see `palette.ts`'s `buildPaletteLUT`. */
-  paletteId: FlamePaletteId;
+  palette: PaletteSpec;
 }
 
 /**
@@ -729,14 +729,14 @@ export interface PackedGpuSystem {
  * lens never rotates). Absent ⇒ the slot stays at the `ArrayBuffer`'s zero
  * default and `hasFinal` is `false`.
  *
- * **Colors**: `paletteId === "legacy"` packs `transformColors
- * (baseTransformCount)` (one entry per BASE map, `colorMode = 0`); any other
- * id packs the 256-entry `buildPaletteLUT(paletteId)` gradient (`colorMode =
+ * **Colors**: `palette === "legacy"` packs `transformColors
+ * (baseTransformCount)` (one entry per BASE map, `colorMode = 0`); anything
+ * else packs the 256-entry `buildPaletteLUT(palette)` gradient (`colorMode =
  * 1`). Either way each channel goes through {@link writeColorEntry}'s
  * fixed-point scale.
  */
 export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
-  const { transforms, finalTransform, symmetry, paletteId } = spec;
+  const { transforms, finalTransform, symmetry, palette } = spec;
   if (transforms.length > MAX_TRANSFORMS) {
     throw new RangeError(
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms.length}`,
@@ -801,19 +801,22 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
 
   const colors = new ArrayBuffer(COLORS_BYTES);
   const colorsU32 = new Uint32Array(colors);
-  const colorMode: 0 | 1 = paletteId === "legacy" ? 0 : 1;
+  const colorMode: 0 | 1 = palette === "legacy" ? 0 : 1;
   if (colorMode === 0) {
-    const palette = transformColors(baseTransformCount);
-    for (let i = 0; i < palette.length; i++) {
-      const [r, g, b] = palette[i];
+    // Named `transformPalette`, not `palette` — the spec's own `palette` is
+    // in scope here, and a same-named inner local would be easy to misread
+    // even though this legacy branch never touches the outer one.
+    const transformPalette = transformColors(baseTransformCount);
+    for (let i = 0; i < transformPalette.length; i++) {
+      const [r, g, b] = transformPalette[i];
       writeColorEntry(colorsU32, i, r, g, b);
     }
   } else {
-    const lut = buildPaletteLUT(paletteId);
+    const lut = buildPaletteLUT(palette);
     // Only "legacy" (handled above) ever returns null — see palette.ts.
     if (!lut) {
       throw new Error(
-        `packGpuSystem: buildPaletteLUT(${paletteId}) returned null unexpectedly`,
+        "packGpuSystem: buildPaletteLUT returned null for a non-legacy palette",
       );
     }
     for (let i = 0; i < COLOR_LUT_ENTRIES; i++) {

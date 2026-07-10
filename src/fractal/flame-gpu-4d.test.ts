@@ -38,7 +38,7 @@ function makeTransforms4(count: number): Transform4[] {
 /** Default spec for tests that don't care about the specific system —
  * override just the field under test. `wRamp` is the simplest color kind
  * (leaves the colors buffer untouched), matching the 3D sibling's use of
- * `paletteId: "legacy"` as its own no-fuss default. */
+ * `palette: "legacy"` as its own no-fuss default. */
 function baseSpec4(
   overrides: Partial<GpuFlameSystemSpec4> = {},
 ): GpuFlameSystemSpec4 {

@@ -45,7 +45,7 @@ function baseSpec(
     transforms: makeTransforms(2),
     finalTransform: null,
     symmetry: { order: 1, axis: "y" },
-    paletteId: "legacy",
+    palette: "legacy",
     ...overrides,
   };
 }
@@ -136,7 +136,7 @@ describe("packGpuSystem slot layout (byte-layout pinning)", () => {
       transforms: LAYOUT_TRANSFORMS,
       finalTransform: LAYOUT_FINAL,
       symmetry: { order: 2, axis: "y" },
-      paletteId: "legacy",
+      palette: "legacy",
     };
   }
 
@@ -348,7 +348,7 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
       transforms,
       finalTransform: null,
       symmetry,
-      paletteId: "legacy",
+      palette: "legacy",
     });
 
     expect(packed.transformCount).toBe(prepared.transformCount);
@@ -383,7 +383,7 @@ describe("packGpuSystem colors", () => {
   });
 
   it("packs a 256-entry gradient LUT with colorMode 1 for a non-legacy palette id", () => {
-    const packed = packGpuSystem(baseSpec({ paletteId: "spectrum" }));
+    const packed = packGpuSystem(baseSpec({ palette: "spectrum" }));
     expect(packed.colorMode).toBe(1);
     const colorsU32 = new Uint32Array(packed.colors);
     const lut = buildPaletteLUT("spectrum");

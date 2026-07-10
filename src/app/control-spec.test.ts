@@ -310,7 +310,7 @@ describe("effects", () => {
 
       expect(fx.postFlame).toHaveBeenCalledWith({
         type: "setPalette",
-        paletteId: "spectrum",
+        palette: "spectrum",
       });
     });
 
@@ -412,7 +412,7 @@ describe("effects", () => {
 
       expect(fx.postVoxel).toHaveBeenCalledWith({
         type: "setPalette",
-        paletteId: "spectrum",
+        palette: "spectrum",
       });
     });
 

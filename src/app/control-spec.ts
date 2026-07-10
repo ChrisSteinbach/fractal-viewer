@@ -494,7 +494,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.flame.paletteId,
     apply: (s, raw) => setFlamePaletteId(s, raw as FlamePaletteId),
     effect: (s, fx) =>
-      fx.postFlame({ type: "setPalette", paletteId: s.flame.paletteId }),
+      fx.postFlame({ type: "setPalette", palette: s.flame.paletteId }),
   },
   // Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
   // gamma/vibrancy: the worker re-runs just the finished-frame adaptive
@@ -597,7 +597,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.solid.paletteId,
     apply: (s, raw) => setSolidPaletteId(s, raw as FlamePaletteId),
     effect: (s, fx) =>
-      fx.postVoxel({ type: "setPalette", paletteId: s.solid.paletteId }),
+      fx.postVoxel({ type: "setPalette", palette: s.solid.paletteId }),
   },
   {
     kind: "range",

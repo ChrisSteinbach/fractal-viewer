@@ -995,7 +995,7 @@ function main(): void {
         estimatorRadius: state.flame.estimatorRadius,
         estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
         estimatorCurve: state.flame.estimatorCurve,
-        paletteId: state.flame.paletteId,
+        palette: state.flame.paletteId,
         order: state.symmetry.order,
         axis: state.symmetry.axis,
         // SAB-backed views structured-clone by SHARING their buffers — the
@@ -1116,7 +1116,7 @@ function main(): void {
         // Snapshotted alongside colorMode (fr-8sk) so the solid render's
         // baked-in LUT/position coloring matches the explorer's contrast.
         colorGamma: state.colorGamma,
-        paletteId: state.solid.paletteId,
+        palette: state.solid.paletteId,
         iterationsBudget: state.solid.iterations,
         // A worker needs an explicit numeric seed — a live Rng (like
         // Math.random) can't cross postMessage — which as a side effect makes

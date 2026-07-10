@@ -41,7 +41,7 @@ import type { FourDRenderColor } from "../fractal/color";
 import { composeRotorProjection4 } from "../fractal/project4";
 import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
-import type { FlamePaletteId } from "../fractal/palette";
+import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Rng } from "../fractal/rng";
 import type {
@@ -72,9 +72,12 @@ export type VoxelWorkerCommand =
       /** Contrast exponent for the coordinate-normalized color modes
        * (fr-8sk) — snapshotted at render entry exactly like `colorMode`. */
       colorGamma: number;
-      /** Structural-coloring palette (fr-1kt, mirroring the flame's fr-6us);
-       * "legacy" = the existing colorMode-driven coloring. */
-      paletteId: FlamePaletteId;
+      /**
+       * Structural-coloring palette (fr-1kt, mirroring the flame's fr-6us);
+       * "legacy" = the existing colorMode-driven coloring; since fr-55k may
+       * also be a self-contained `CustomPalette` payload.
+       */
+      palette: PaletteSpec;
       iterationsBudget: number;
       /** Explicit numeric seed (not a live `Rng`, which can't cross
        * postMessage) — also makes a render a reproducible pure function of
@@ -141,7 +144,7 @@ export type VoxelWorkerCommand =
       };
     }
   | { type: "setIterationsBudget"; iterations: number }
-  | { type: "setPalette"; paletteId: FlamePaletteId }
+  | { type: "setPalette"; palette: PaletteSpec }
   | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
 
 /** Worker → main thread. */
@@ -454,7 +457,7 @@ export class VoxelWorkerSession {
         break;
       }
       case "setPalette":
-        this.setPalette(command.paletteId);
+        this.setPalette(command.palette);
         break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.axis);
@@ -480,7 +483,7 @@ export class VoxelWorkerSession {
     this.colorGamma = cmd.colorGamma;
     // null for "legacy" — accumulateVoxels/buildFourDColor then falls back
     // to colorMode/the explorer's 4D color mode respectively.
-    this.colorLUT = buildPaletteLUT(cmd.paletteId);
+    this.colorLUT = buildPaletteLUT(cmd.palette);
     this.iterationsBudget = cmd.iterationsBudget;
     this.requestedResolution = cmd.resolution;
     this.maxVoxels = cmd.maxVoxels ?? this.defaultMaxVoxels;
@@ -587,9 +590,9 @@ export class VoxelWorkerSession {
    * re-run), so this reallocates an identical-size grid at the same bounds
    * — the same restart path setSymmetry uses.
    */
-  private setPalette(paletteId: FlamePaletteId): void {
+  private setPalette(palette: PaletteSpec): void {
     if (!this.hasGeometry()) return; // no active session yet.
-    this.colorLUT = buildPaletteLUT(paletteId);
+    this.colorLUT = buildPaletteLUT(palette);
     this.startAccumulation();
   }
 

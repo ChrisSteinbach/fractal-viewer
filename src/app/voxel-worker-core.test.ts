@@ -25,7 +25,7 @@ function startCommand(
     resolution: 32,
     colorMode: "transform",
     colorGamma: 1,
-    paletteId: "legacy",
+    palette: "legacy",
     iterationsBudget: 500,
     seed: 1,
     order: 1,
@@ -325,14 +325,12 @@ describe("VoxelWorkerSession setIterationsBudget", () => {
 describe("VoxelWorkerSession setPalette", () => {
   it("restarts a finished render so it re-accumulates in the new palette", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 100 });
-    session.handle(
-      startCommand({ iterationsBudget: 200, paletteId: "legacy" }),
-    );
+    session.handle(startCommand({ iterationsBudget: 200, palette: "legacy" }));
     scheduler.drain();
     expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
     const gridsBefore = gridEvents(events).length;
 
-    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    session.handle({ type: "setPalette", palette: "spectrum" });
     scheduler.drain();
 
     // A finished render produces no more grids on its own; that it climbs
@@ -343,10 +341,10 @@ describe("VoxelWorkerSession setPalette", () => {
   });
 
   it("colors differently under a gradient palette than legacy for the same seed", () => {
-    function finalTexture(paletteId: "legacy" | "spectrum"): Uint8Array {
+    function finalTexture(palette: "legacy" | "spectrum"): Uint8Array {
       const { session, events, scheduler } = harness();
       session.handle(
-        startCommand({ seed: 7, iterationsBudget: 2000, paletteId }),
+        startCommand({ seed: 7, iterationsBudget: 2000, palette }),
       );
       scheduler.drain();
       return gridEvents(events).at(-1)!.texture;
@@ -362,7 +360,7 @@ describe("VoxelWorkerSession setPalette", () => {
   it("is a no-op and does not throw when sent before any start", () => {
     const { session, events } = harness();
     expect(() =>
-      session.handle({ type: "setPalette", paletteId: "spectrum" }),
+      session.handle({ type: "setPalette", palette: "spectrum" }),
     ).not.toThrow();
     expect(events).toHaveLength(0);
   });
@@ -575,14 +573,14 @@ describe("VoxelWorkerSession 4D solid render", () => {
       startCommand({
         fourD: defaultFourD(),
         iterationsBudget: 200,
-        paletteId: "legacy",
+        palette: "legacy",
       }),
     );
     scheduler.drain();
     expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
     const gridsBefore = gridEvents(events).length;
 
-    session.handle({ type: "setPalette", paletteId: "spectrum" });
+    session.handle({ type: "setPalette", palette: "spectrum" });
     scheduler.drain();
 
     // A finished render produces no more grids on its own; that it climbs
