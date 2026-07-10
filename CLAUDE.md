@@ -144,6 +144,11 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
     localStorage so systems are shareable and survive reloads. Pure codec with a
     strict, never-throwing decoder; storage/location are injected (tested).
+    Since fr-1k4 the saved/shared/collection document also carries the
+    orbit-camera pose (`CameraPose`, optional; a malformed pose drops to
+    `undefined` instead of rejecting the scene) so a reopened PWA / reloaded
+    tab restores its framing — undo-history snapshots stay camera-less on
+    purpose (history.ts dedupes by string equality).
   - `history.ts` — session-only undo/redo stacks over the encoded scene
     snapshot (pure, tested).
   - `edit-session.ts` — the burst-coalescing policy over `history.ts`: collapses a

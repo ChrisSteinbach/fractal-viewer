@@ -70,7 +70,7 @@ import {
   saveScene,
   toSnapshot,
 } from "./persist";
-import type { SceneSnapshot } from "./persist";
+import type { CameraPose, SceneSnapshot } from "./persist";
 import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Vec4 } from "../fractal/types";
@@ -708,6 +708,35 @@ function main(): void {
     cameraTween.fitToBounds(lastResult.bounds, framing);
   }
 
+  /**
+   * The live orbit pose as a persistable document field (fr-1k4). Attached
+   * by {@link currentDocument} to every saved / shared / collection document
+   * — never to undo-history snapshots (see SceneSnapshot.camera's doc).
+   */
+  function cameraPose(): CameraPose {
+    return {
+      target: [orbit.target[0], orbit.target[1], orbit.target[2]],
+      radius: orbit.spherical.radius,
+      theta: orbit.spherical.theta,
+      phi: orbit.spherical.phi,
+    };
+  }
+
+  /**
+   * Restore a persisted orbit pose (fr-1k4) — the mirror of
+   * {@link cameraPose}. Cancels any in-flight fit glide first: a restored
+   * pose IS the framing, so nothing should keep gliding somewhere else.
+   */
+  function applyCameraPose(pose: CameraPose): void {
+    cameraTween.cancel();
+    orbit.target[0] = pose.target[0];
+    orbit.target[1] = pose.target[1];
+    orbit.target[2] = pose.target[2];
+    orbit.spherical.radius = pose.radius;
+    orbit.spherical.theta = pose.theta;
+    orbit.spherical.phi = pose.phi;
+  }
+
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
   // fight with the animation — cancel outright on the next user gesture.
   // Capture phase so this runs before interactions.ts's own (bubble-phase)
@@ -1295,6 +1324,17 @@ function main(): void {
     applyDecodedSnapshot(snap, refit);
   }
 
+  /**
+   * The full persistable document: the scene ({@link toSnapshot}) plus the
+   * live camera pose (fr-1k4). Used for the autosave/hash, the collection,
+   * and share links. Undo-history snapshots deliberately stay camera-less
+   * (see SceneSnapshot.camera's doc) — that's why `snapshot` below does NOT
+   * use this.
+   */
+  function currentDocument(): SceneSnapshot {
+    return { ...toSnapshot(state), camera: cameraPose() };
+  }
+
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
   // over it (see edit-session.ts). The injected deps are the app's real
   // capabilities: encode and persist the live scene document, apply a restored
@@ -1304,7 +1344,7 @@ function main(): void {
   // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
   const editSession = new EditSession({
     snapshot: () => encodeScene(toSnapshot(state)),
-    persist: () => saveScene(toSnapshot(state)),
+    persist: () => saveScene(currentDocument()),
     restore: restoreSnapshot,
     syncUi: (canUndo, canRedo) => ui.setUndoRedo(canUndo, canRedo),
     schedule: (fn) => {
@@ -1328,16 +1368,19 @@ function main(): void {
    * gets. Unlike {@link restoreSnapshot} (EditSession's checkpoint-free
    * `restore`), a gallery load IS a genuine user edit, so it cuts its own
    * "replace" undo checkpoint (making the load undoable and arming the
-   * debounced save) via `beginEdit("replace")` before applying, and re-frames
-   * the camera. A corrupt entry (decode returns null — can't happen for our own
-   * encodeScene output, but the collection is untrusted localStorage) is
-   * ignored rather than blanking the current scene.
+   * debounced save) via `beginEdit("replace")` before applying, and restores
+   * the framing: the pose saved with the scene when there is one (fr-1k4),
+   * an auto-fit for pose-less pre-fr-1k4 entries. A corrupt entry (decode
+   * returns null — can't happen for our own encodeScene output, but the
+   * collection is untrusted localStorage) is ignored rather than blanking
+   * the current scene.
    */
   function loadEncodedScene(encoded: string): void {
     const snap = decodeScene(encoded);
     if (!snap) return;
     editSession.beginEdit("replace");
-    applyDecodedSnapshot(snap, true);
+    applyDecodedSnapshot(snap, snap.camera === undefined);
+    if (snap.camera) applyCameraPose(snap.camera);
   }
 
   /**
@@ -1534,12 +1577,13 @@ function main(): void {
       recorder.toggle();
     },
     // Saved-scene collection (fr-cai). Save/copy act on the CURRENT document
-    // (the same encodeScene(toSnapshot(state)) the autosave/undo use); the
+    // (the same encodeScene(currentDocument()) the autosave uses — camera
+    // pose included, fr-1k4, so a loaded entry restores its framing); the
     // thumbnail is a downsampled snapshot of the live cloud. These are reachable
     // only from the explorer (their section hides during a render), so the
     // thumbnail is always the point cloud, never a frozen flame/solid frame.
     onSaveToCollection: () => {
-      collection.add(encodeScene(toSnapshot(state)), scene.captureThumbnail());
+      collection.add(encodeScene(currentDocument()), scene.captureThumbnail());
       ui.setCollectionCount(collection.size);
       ui.flashToast("Saved to collection");
     },
@@ -1561,8 +1605,10 @@ function main(): void {
       // Build the link from CURRENT state rather than reading location.hash,
       // which the autosave only writes on its 300ms debounce (so it can lag a
       // just-made edit). origin + pathname drops any existing hash/query.
+      // currentDocument() includes the camera pose (fr-1k4): the link opens
+      // framed exactly as the sender sees it.
       const link = `${location.origin}${location.pathname}#${encodeScene(
-        toSnapshot(state),
+        currentDocument(),
       )}`;
       void copyToClipboard(link).then((ok) =>
         ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
@@ -1758,6 +1804,18 @@ function main(): void {
   // scene before the refreshGuides()/resetAutoOrbitView() reads just below,
   // which need it current, not defaulted to `false`.
   cloudGenerator.generateSync(cloudParams(false, false));
+  // Restore the framing the restored scene was last seen with (fr-1k4): a
+  // reopened PWA / reloaded tab used to silently reset to the default boot
+  // camera, leaving the cloud off-centre and the orbit pivoting around empty
+  // space. A pose-less save (pre-fr-1k4) auto-frames the attractor instead —
+  // instantly, not the preset-load glide: a boot is a cut, not a transition.
+  // A genuinely fresh visit keeps the tuned default boot camera.
+  if (saved?.camera) {
+    applyCameraPose(saved.camera);
+  } else if (saved) {
+    fitCameraToAttractor();
+    cameraTween.finish();
+  }
   // A flat boot never routes through regenerate()'s flip/replacement branches,
   // so seed the auto-orbit baseline (incl. the reduced-motion pause and the
   // checkbox sync) explicitly. A non-flat boot leaves it to the first
