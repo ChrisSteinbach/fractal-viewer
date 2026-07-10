@@ -217,7 +217,7 @@ export type FlameWorkerCommand =
        * via the `log` dep. Absent/false (production default) leaves the loop
        * byte-for-byte unchanged — every added clock read is guarded — so this
        * is a diagnostics-only opt-in (main.ts wires it to a `?flameperf` URL
-       * param, the same shape as `?flamehost`). Exists to pin down the real-app
+       * param). Exists to pin down the real-app
        * mobile-GPU throughput deficit vs the `/gpu-bench/` raw-kernel number,
        * which the bench can't reproduce because it times `accumulate()` alone
        * (no readback, no scheduling gap — see gpu-bench's `runGpuTimed`).
@@ -302,15 +302,8 @@ export type FlameWorkerEvent =
        *
        * Purely ADVISORY: the session still falls back to CPU entirely on its
        * own, so a host that ignores this event behaves exactly as before. The
-       * MAIN thread uses it (fr-e07/fr-8ck) to ESCALATE a WORKER-hosted session
-       * to the main-thread GPU host ({@link createLocalFlameSessionHost}) — and
-       * to STICK with it for the rest of the session — but ONLY for
-       * `reason: "no-webgpu"` (fr-2w5): the worker CONTEXT lacks usable WebGPU
-       * (fr-1ib's Firefox gap), where the main thread's own independent context
-       * can genuinely win. A `reason: "error"` failure (out-of-memory, device
-       * loss, a compile error) would fail identically on the main thread —
-       * fr-e07's field lesson: both contexts OOM'd the same 24 GB card — so
-       * escalating it just doubles the failure the user watches.
+       * main thread uses it (fr-2w5) to annotate the subsequent "backend"
+       * event's CPU note with WHY the GPU path was abandoned.
        */
       type: "gpuUnavailable";
       reason: "no-webgpu" | "error";
@@ -531,9 +524,7 @@ export class FlameGpuSizeError extends Error {}
  * missing or `requestAdapter()` returned null. Same placement rationale as
  * {@link FlameGpuSizeError}. The session treats this as permanent for the
  * session (no size would help) and reports it as `reason: "no-webgpu"` on
- * the `gpuUnavailable` event — the one failure class where escalating a
- * worker-hosted session to the main thread (whose WebGPU context is
- * independent — fr-1ib's Firefox gap) can actually win.
+ * the `gpuUnavailable` event.
  */
 export class FlameGpuUnavailableError extends Error {}
 
@@ -852,7 +843,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
  * instance per `start` — a supersample change restarts accumulation
  * in-place (see {@link startAccumulation}), it does not create a new session;
  * the main thread gets a fresh session by terminating the worker and
- * spinning up a new one (see `main.ts`'s `enterFlameMode`/`exitFlameMode`),
+ * spinning up a new one (see `main.ts`'s flame `RenderSession`),
  * so there is no `cancel` command here — an in-flight synchronous
  * `accumulateFlame` call can't be interrupted mid-call regardless (workers
  * are single-threaded JS too), and `Worker.terminate()` from the main thread
@@ -1090,14 +1081,6 @@ export class FlameWorkerSession {
    * stale/superseded/still-running bail still means nothing is pending
    * anymore, so the next live change should queue a fresh one. */
   private estimatorRedisplayPending = false;
-  /** Set once by {@link dispose} and never cleared (fr-1ib) — unlike a
-   * restart (which bumps `generation` to hand the loop off to a NEW
-   * accumulation), disposal has nothing to hand off TO: this is what makes
-   * both `ensureRunning` and `runChunk`'s own re-check refuse to ever
-   * schedule/run another chunk again, including one already sitting in the
-   * schedule queue when `dispose()` ran. */
-  private disposed = false;
-
   constructor(deps: FlameWorkerDeps) {
     this.now = deps.now;
     this.schedule = deps.schedule;
@@ -1193,27 +1176,6 @@ export class FlameWorkerSession {
         this.setSymmetry(command.order, command.axis);
         break;
     }
-  }
-
-  /**
-   * Permanently stop this session and release its backend (fr-1ib) — for a
-   * host that runs a session OUTSIDE a dedicated Worker (`flame-session-
-   * host.ts`), which has no single call that reclaims a same-thread
-   * session's GPU resources the way killing a whole Worker thread does for
-   * the worker-hosted case. Bumps `generation` (so a chunk already in
-   * flight discovers, on its next check, that it has been superseded — see
-   * `runChunk`'s doc) and destroys the current backend (a no-op if none
-   * exists yet, e.g. disposing a session that never started). Unlike a
-   * restart, there is nothing to hand off TO: `disposed` latches
-   * permanently, so neither that hand-off's `ensureRunning()` call nor a
-   * chunk already sitting in the schedule queue can ever start another one.
-   * Idempotent.
-   */
-  dispose(): void {
-    this.disposed = true;
-    this.generation++;
-    this.backend?.destroy();
-    this.backend = null;
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
@@ -1473,7 +1435,7 @@ export class FlameWorkerSession {
    * replaying the full pass before the next command is even read (fr-3fv).
    *
    * So instead of running it inline, defer the pass through `schedule`
-   * (`(fn) => setTimeout(fn, 0)` in the real hosts) and coalesce with
+   * (`(fn) => setTimeout(fn, 0)` in the real worker) and coalesce with
    * `estimatorRedisplayPending` so a burst only ever has ONE deferred pass
    * outstanding. `estimatorParams` above is still updated eagerly on every
    * call — only the expensive part is deferred. `setTimeout(fn, 0)` lands
@@ -1490,10 +1452,10 @@ export class FlameWorkerSession {
    * and no perceptible added latency when the pass itself is fast.
    *
    * The deferred callback re-validates before doing the expensive work,
-   * mirroring `runChunk`'s own supersede discipline: `disposed`/`gen` cover
-   * disposal and a restart in the meantime (a DIFFERENT accumulation's own
-   * finished branch already reads estimatorParams fresh on its own, so this
-   * stale task has nothing useful left to do). `running` additionally
+   * mirroring `runChunk`'s own supersede discipline: `gen` covers a restart
+   * in the meantime (a DIFFERENT accumulation's own finished branch already
+   * reads estimatorParams fresh on its own, so this stale task has nothing
+   * useful left to do). `running` additionally
    * covers `setIterationsBudget` resuming accumulation WITHOUT bumping
    * `generation` (see that case's comment) — without this check, a
    * deferred pass firing mid-resume would waste a full pass on a histogram
@@ -1510,7 +1472,7 @@ export class FlameWorkerSession {
     const gen = this.generation;
     this.schedule(() => {
       this.estimatorRedisplayPending = false;
-      if (this.disposed || gen !== this.generation || this.running) return;
+      if (gen !== this.generation || this.running) return;
       this.redisplayWithFreshEstimate();
     });
   }
@@ -1570,7 +1532,6 @@ export class FlameWorkerSession {
   }
 
   private ensureRunning(): void {
-    if (this.disposed) return;
     if (this.running) return;
     if (!this.hasGeometry()) return;
     if (this.iterationsDone >= this.iterationsBudget) return;
@@ -1617,9 +1578,8 @@ export class FlameWorkerSession {
   }
 
   /** Ratchet `gpuFailed`, log the failure, and emit `gpuUnavailable` ONCE (on
-   * the false→true transition) so a worker host's main thread can escalate to
-   * its own GPU — for `reason: "no-webgpu"` only, see the event's doc — before
-   * the CPU fallback stands. Reached only through {@link handleGpuFailure},
+   * the false→true transition) so the main thread can annotate the CPU
+   * fallback's backend note with WHY. Reached only through {@link handleGpuFailure},
    * which owns the retry ladder in front of this permanent ratchet. The
    * transition guard on the emit is purely defensive — once `gpuFailed` is set
    * no further GPU work runs this session, so no second site is ever reached —
@@ -1654,8 +1614,8 @@ export class FlameWorkerSession {
    *   unchanged — continue THIS accumulation on a CPU backend.
    *
    * The ladder, concretely (all measurements fr-2w5):
-   * - {@link FlameGpuUnavailableError} → permanent, `"no-webgpu"` (the one
-   *   escalatable class — a different CONTEXT can have WebGPU).
+   * - {@link FlameGpuUnavailableError} → permanent, `"no-webgpu"` (no size
+   *   or retry would help — the context simply has no WebGPU).
    * - Any other failure with effective supersample > 1 → learn
    *   `gpuMaxSupersample = effective - 1` and retry ON the GPU: reported
    *   limits overstate real, pressure-dependent allocator ceilings so badly
@@ -1666,8 +1626,7 @@ export class FlameWorkerSession {
    *   image (fr-e07's prescribed, never-implemented real fix).
    * - At supersample 1, one `gpuLossRetried` full-size mid-render retry (a
    *   lost device — driver reset/GPU-process crash — usually comes back
-   *   with a fresh adapter), then permanent `"error"`. NOT escalated: the
-   *   main thread's GPU would fail the same way (fr-e07's field lesson).
+   *   with a fresh adapter), then permanent `"error"`.
    */
   private handleGpuFailure(
     e: unknown,
@@ -1933,16 +1892,12 @@ export class FlameWorkerSession {
     const gen = this.generation;
     // Re-checked here, not just in ensureRunning's gate before scheduling:
     // a chunk already scheduled runs regardless of what happens in between
-    // (JS is single-threaded, but a `setIterationsBudget` command — or a
-    // `dispose()` call, fr-1ib — handled before this chunk fires doesn't
-    // retroactively unschedule it). `disposed` needs this check for the same
-    // reason: without it, a chunk already sitting in the schedule queue when
-    // `dispose()` runs would resume here, find `this.backend` null (dispose
-    // destroyed and cleared it), and spin up a BRAND NEW backend — exactly
-    // the resurrection `dispose()` exists to rule out. `hasGeometry()`
-    // covers whichever dimension this session runs in (fr-e26 — this one
-    // loop now drives 3D and 4D alike; see `createBackend`).
-    if (this.disposed || !this.hasGeometry()) {
+    // (JS is single-threaded, but a `setIterationsBudget` command handled
+    // before this chunk fires doesn't retroactively unschedule it).
+    // `hasGeometry()` covers whichever dimension this session runs in
+    // (fr-e26 — this one loop now drives 3D and 4D alike; see
+    // `createBackend`).
+    if (!this.hasGeometry()) {
       this.running = false;
       return;
     }
@@ -1951,7 +1906,7 @@ export class FlameWorkerSession {
     // never raised past it) must stop here too — without this,
     // `iterationsBudget - iterationsDone` below goes negative and silently
     // corrupts the progress count instead of just finishing. Split out from
-    // the disposed/prepared/projection bail above (fr-ee9): unlike those,
+    // the prepared/projection bail above (fr-ee9): unlike that,
     // this case may still owe the finished-frame adaptive display — a
     // snapshotDisplay-capable (GPU) backend's progressive due ticks
     // deliberately never refresh `this.histogram` (see

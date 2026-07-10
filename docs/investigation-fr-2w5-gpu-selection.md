@@ -129,6 +129,11 @@ render.
   worker-hosted session to the main-thread host (fr-1ib's Firefox gap); size
   and device failures no longer double-fail. The CPU backend note now carries
   why ("CPU accumulation — GPU failed" / "— WebGPU unavailable").
+  _Postscript: fr-27h later removed the escalation and the main-thread host
+  entirely — current Firefox has worker WebGPU (see this doc's own Firefox 151
+  worker-GPU verification below), so the gap it guarded had closed; a
+  `no-webgpu` worker context now takes the CPU fallback directly, annotated by
+  the same reason._
 
 ## Verification
 

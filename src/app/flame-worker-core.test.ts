@@ -1462,8 +1462,8 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
       { type: "backend", backend: "cpu", adapter: undefined },
     ]);
 
-    // The signal precedes the CPU backend event, so a host can escalate
-    // before any CPU frame lands.
+    // The signal precedes the CPU backend event, so the host has the reason
+    // in hand when the backend note arrives (main.ts's CPU-note annotation).
     const firstBackend = events.findIndex((e) => e.type === "backend");
     const firstUnavailable = events.findIndex(
       (e) => e.type === "gpuUnavailable",
@@ -1578,8 +1578,8 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 
     // Even at supersample 2 (ladder headroom available), a context with no
     // WebGPU at all gets no size retries — no size would help. The reason
-    // lets the main thread escalate a worker-hosted session to its own
-    // (independent) WebGPU context — the fr-1ib Firefox gap.
+    // lets the main thread's CPU note say "WebGPU unavailable" rather than
+    // the misleading "GPU failed".
     expect(factoryCalls).toBe(1);
     expect(gpuUnavailableEvents(events)).toEqual([
       { type: "gpuUnavailable", reason: "no-webgpu" },
@@ -1764,8 +1764,8 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     // ONE fresh-device retry (a lost device usually comes back — fr-2w5's
     // E4b), the retry's own first chunk fails too, and only then does the
     // session ratchet to cpu — with reason "error", NOT "no-webgpu": this is
-    // the Firefox mid-render OOM shape, and escalating it to the main-thread
-    // host would just re-fail on the same hardware (fr-e07's field lesson).
+    // the Firefox mid-render OOM shape (a hardware/allocator failure, not a
+    // missing API).
     expect(backendEvents(events).map((e) => e.backend)).toEqual([
       "gpu",
       "gpu",
@@ -2283,49 +2283,6 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
       estimatingAfterFirstFinish,
     );
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(120);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// dispose (fr-1ib): the main-thread session host's equivalent of a real
-// Worker's terminate() — releases the backend and permanently stops the
-// chunk loop, including a chunk already sitting in the schedule queue.
-// ---------------------------------------------------------------------------
-
-describe("FlameWorkerSession dispose", () => {
-  it("destroys the current backend and refuses to run an already-scheduled chunk, without resurrecting a new backend", async () => {
-    let destroyCalls = 0;
-    const backend: FlameAccumBackend = {
-      kind: "gpu",
-      accumulate: async () => 10, // always retires exactly 10, regardless of what's requested — forces a second chunk.
-      snapshot: async () => createFlameHistogram(8, 8),
-      destroy: () => {
-        destroyCalls++;
-      },
-    };
-    const createGpuBackend = async (): Promise<FlameAccumBackend> => backend;
-    const { session, events, scheduler } = harness({ createGpuBackend });
-    session.handle(
-      startCommand({ gpuPreference: "auto", iterationsBudget: 40 }),
-    );
-    scheduler.step(); // kicks off backend creation + the first accumulate/snapshot.
-    await flushMicrotasks();
-    // One chunk in: 10 done (not yet 40), so a second chunk is ALREADY
-    // sitting in the schedule queue, not yet run — the scenario dispose()
-    // has to guard against (runChunk's own re-check, not just ensureRunning's).
-    expect(progressEvents(events)).toHaveLength(1);
-    expect(destroyCalls).toBe(0);
-
-    session.dispose();
-    expect(destroyCalls).toBe(1); // destroyed synchronously, inside dispose().
-
-    scheduler.step(); // runs the already-queued second chunk.
-    await flushMicrotasks();
-
-    expect(scheduler.step()).toBe(false); // nothing further was ever scheduled.
-    expect(progressEvents(events)).toHaveLength(1); // the queued chunk never got to accumulate/report.
-    expect(backendEvents(events)).toHaveLength(1); // no second "backend" event — no new backend was created.
-    expect(destroyCalls).toBe(1); // still exactly once — no double-destroy either.
   });
 });
 
