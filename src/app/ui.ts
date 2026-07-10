@@ -632,6 +632,21 @@ export class Ui {
     }
   >();
 
+  /** Which accordion section is open, remembered per render mode (fr-99o) so
+   * switching Points ↔ Flame ↔ Solid restores each mode's working section
+   * instead of landing on an all-collapsed panel. `""` = the user
+   * deliberately collapsed everything in that mode. Session-only, like
+   * `renderMode` itself. */
+  private readonly openSectionByMode: Record<RenderMode, string> = {
+    points: "presetSection",
+    flame: "flameToneSection",
+    solid: "solidSurfaceSection",
+  };
+
+  /** The render mode {@link updateLabels} last saw — its change is what
+   * triggers the accordion restore above. */
+  private sectionMode: RenderMode = "points";
+
   private editor: EditorState | null = null;
 
   /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
@@ -732,15 +747,29 @@ export class Ui {
 
     // Panel accordion (fr-zoi): the sections are exclusive-open
     // <details name="panel-section"> groups, so the browser owns which one is
-    // open (plus the keyboard/AT semantics) — no state to keep here. The one
-    // gap: when the section that just auto-closed sat ABOVE the tapped one,
-    // the collapse shifts the tapped summary up — on a phone, clean out of
-    // view — so re-anchor the opened section after that same-frame reflow.
+    // open (plus the keyboard/AT semantics). Ui adds just two things on top:
+    // the per-render-mode memory of the open section (fr-99o — recorded here,
+    // restored in updateLabels), and a scroll re-anchor, because when the
+    // section that just auto-closed sat ABOVE the tapped one, the collapse
+    // shifts the tapped summary up — on a phone, clean out of view.
     for (const section of Array.from(
       this.panel.querySelectorAll<HTMLDetailsElement>("details.panel-section"),
     )) {
       section.addEventListener("toggle", () => {
-        if (!section.open) return;
+        if (!section.open) {
+          // A deliberate collapse (nothing left open) clears the mode's
+          // memory; the auto-close half of an exclusive switch does not,
+          // because the newly-opened section is already open in the DOM by
+          // the time either element's toggle event fires.
+          if (
+            this.openSectionByMode[this.sectionMode] === section.id &&
+            !this.panel.querySelector("details.panel-section[open]")
+          ) {
+            this.openSectionByMode[this.sectionMode] = "";
+          }
+          return;
+        }
+        this.openSectionByMode[this.sectionMode] = section.id;
         const summary = section.querySelector("summary");
         // jsdom implements neither requestAnimationFrame (without
         // pretendToBeVisual) nor scrollIntoView — and this is polish, not
@@ -1010,6 +1039,38 @@ export class Ui {
       "hidden",
       nonFlat || !colorModeUsesGamma(state.colorMode),
     );
+    // Accordion restore (fr-99o): entering a render mode re-opens the section
+    // the user last had open there (defaults: Presets / Tone / Surface — see
+    // openSectionByMode). Setting .open trips the details name-group
+    // exclusivity, so the previous mode's section closes by itself. Runs
+    // after the visibility gating above so the hidden check reads this
+    // update's state, and only on an actual mode change so a collapse the
+    // user makes within a mode is respected until they leave it.
+    if (state.renderMode !== this.sectionMode) {
+      this.sectionMode = state.renderMode;
+      const remembered = this.openSectionByMode[state.renderMode];
+      const target = remembered ? this.doc.getElementById(remembered) : null;
+      if (
+        target instanceof HTMLDetailsElement &&
+        !target.classList.contains("hidden")
+      ) {
+        target.open = true;
+      } else {
+        // Nothing to restore (the user had collapsed everything here, or the
+        // remembered section is gated away): close the outgoing mode's
+        // section ourselves — normally the exclusivity does it — so no
+        // hidden-open state lingers behind the swapped panel. The close
+        // can't clear the outgoing mode's memory: the toggle handler checks
+        // against the CURRENT mode, which this switch already changed.
+        for (const open of Array.from(
+          this.panel.querySelectorAll<HTMLDetailsElement>(
+            "details.panel-section[open]",
+          ),
+        )) {
+          open.open = false;
+        }
+      }
+    }
     this.updateLegend(state, nonFlat);
 
     if (state.renderMode === "flame") {

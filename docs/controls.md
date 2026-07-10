@@ -67,8 +67,13 @@ The panel's categories — **Export**, **Transforms**, **Presets**,
 **Collection**, **Appearance**, **Symmetry**, and **3D View**/**4D View** — are
 collapsible sections, and opening one closes the previous (fr-zoi), so the
 whole panel stays about one phone-screen tall instead of demanding a long
-scroll. Scroll swipes that happen to land on a slider scroll the panel without
-editing its value; horizontal drags (and taps) still adjust it as usual.
+scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
+**Tone** / **Blur** / **Quality** for Flame, **Surface** / **Lighting** /
+**Quality** for Solid, with the render's progress readout pinned above the
+sections — and the panel remembers which section was open in each mode, so
+switching Points ↔ Flame ↔ Solid restores where you were. Scroll swipes that
+happen to land on a slider scroll the panel without editing its value;
+horizontal drags (and taps) still adjust it as usual.
 
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in

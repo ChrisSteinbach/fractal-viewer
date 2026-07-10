@@ -2771,6 +2771,66 @@ describe("panel accordion sections (fr-zoi)", () => {
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
 
+  // fr-99o: each render mode remembers its own open section; switching modes
+  // restores it (defaults: Presets / Tone / Surface). jsdom doesn't enforce
+  // the name-group exclusivity — real browsers close the others — so these
+  // assert only what Ui itself does: open the target on a mode change.
+  const details = (id: string): HTMLDetailsElement => {
+    const el = document.getElementById(id);
+    if (!(el instanceof HTMLDetailsElement))
+      throw new Error(`No <details> #${id}`);
+    return el;
+  };
+
+  it("entering flame mode opens its Tone section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+    expect(details("flameToneSection").open).toBe(true);
+  });
+
+  it("entering solid mode opens its Surface section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
+    expect(details("solidSurfaceSection").open).toBe(true);
+  });
+
+  it("returning to points restores the explorer's section", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    ui.updateLabels({ ...state, renderMode: "flame" });
+    // In a real browser the name group closes Presets when Tone opens;
+    // simulate that half of the exchange.
+    details("presetSection").open = false;
+    ui.updateLabels(state);
+    expect(details("presetSection").open).toBe(true);
+  });
+
+  it("does not force a section back open while the mode is unchanged", () => {
+    const ui = new Ui(document);
+    const flame = { ...initialState(true), renderMode: "flame" as const };
+    ui.updateLabels(flame);
+    details("flameToneSection").open = false; // user collapses it
+    ui.updateLabels({ ...flame });
+    expect(details("flameToneSection").open).toBe(false);
+  });
+
+  it("closes the outgoing mode's section when the new mode has nothing to restore", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    // Deliberately collapse the explorer's open section. jsdom doesn't fire
+    // toggle on .open changes, so dispatch it as a browser would.
+    const presets = details("presetSection");
+    presets.open = false;
+    presets.dispatchEvent(new Event("toggle"));
+
+    ui.updateLabels({ ...state, renderMode: "flame" }); // Tone opens
+    expect(details("flameToneSection").open).toBe(true);
+    ui.updateLabels(state); // points remembers "collapsed everything"
+
+    expect(details("flameToneSection").open).toBe(false);
+    expect(presets.open).toBe(false);
+  });
+
   it("keeps the editor's 4D disclosure out of the accordion group", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());

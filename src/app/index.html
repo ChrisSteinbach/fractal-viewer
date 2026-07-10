@@ -358,112 +358,136 @@
           surfaces, switch to Solid. The live view is paused while Flame is
           active — switch back to Points to keep exploring.
         </p>
-        <label class="select-label">
-          Exposure: <span id="flameExposureLabel">1.00×</span>
-          <input
-            type="range"
-            id="flameExposureSlider"
-            min="0.2"
-            max="4"
-            step="0.05"
-            value="1"
-          />
-        </label>
-        <label class="select-label">
-          Gamma: <span id="flameGammaLabel">2.40</span>
-          <input
-            type="range"
-            id="flameGammaSlider"
-            min="1"
-            max="6"
-            step="0.1"
-            value="2.4"
-          />
-        </label>
-        <label class="select-label">
-          Vibrancy: <span id="flameVibrancyLabel">100%</span>
-          <input
-            type="range"
-            id="flameVibrancySlider"
-            min="0"
-            max="1"
-            step="0.05"
-            value="1"
-          />
-        </label>
-        <label class="select-label">
-          Blur Radius: <span id="flameEstimatorRadiusLabel">6.0px</span>
-          <input
-            type="range"
-            id="flameEstimatorRadiusSlider"
-            min="1"
-            max="15"
-            step="0.5"
-            value="6"
-          />
-        </label>
-        <label class="select-label">
-          Sharp Radius:
-          <span id="flameEstimatorMinimumRadiusLabel">0.0px</span>
-          <input
-            type="range"
-            id="flameEstimatorMinimumRadiusSlider"
-            min="0"
-            max="15"
-            step="0.5"
-            value="0"
-          />
-        </label>
-        <label class="select-label">
-          Blur Falloff: <span id="flameEstimatorCurveLabel">0.40</span>
-          <input
-            type="range"
-            id="flameEstimatorCurveSlider"
-            min="0.1"
-            max="3"
-            step="0.05"
-            value="0.4"
-          />
-        </label>
-        <label class="select-label">
-          Quality: <span id="flameIterationsLabel">20M iterations</span>
-          <input
-            type="range"
-            id="flameIterationsSlider"
-            min="0"
-            max="10"
-            step="1"
-            value="4"
-          />
-        </label>
-        <label class="select-label">
-          Palette (restarts render)
-          <select id="flamePalette">
-            <option value="legacy">By Transform (legacy)</option>
-            <option value="spectrum">Spectrum</option>
-            <option value="sunset">Sunset</option>
-            <option value="dusk">Dusk</option>
-            <option value="lagoon">Lagoon</option>
-            <option value="ember">Ember</option>
-            <option value="aurora">Aurora</option>
-            <option value="moss">Moss</option>
-          </select>
-        </label>
-        <label class="select-label">
-          Supersample (restarts render):
-          <span id="flameSupersampleLabel">2×</span>
-          <input
-            type="range"
-            id="flameSupersampleSlider"
-            min="1"
-            max="3"
-            step="1"
-            value="2"
-          />
-        </label>
-        <p id="flameSupersampleNote" class="flame-note hidden"></p>
-        <p id="flameBackendNote" class="flame-note hidden"></p>
         <div id="flameProgress" class="flame-progress">0%</div>
+        <p id="flameBackendNote" class="flame-note hidden"></p>
+
+        <details
+          class="panel-section"
+          id="flameToneSection"
+          name="panel-section"
+        >
+          <summary>Tone</summary>
+          <label class="select-label">
+            Exposure: <span id="flameExposureLabel">1.00×</span>
+            <input
+              type="range"
+              id="flameExposureSlider"
+              min="0.2"
+              max="4"
+              step="0.05"
+              value="1"
+            />
+          </label>
+          <label class="select-label">
+            Gamma: <span id="flameGammaLabel">2.40</span>
+            <input
+              type="range"
+              id="flameGammaSlider"
+              min="1"
+              max="6"
+              step="0.1"
+              value="2.4"
+            />
+          </label>
+          <label class="select-label">
+            Vibrancy: <span id="flameVibrancyLabel">100%</span>
+            <input
+              type="range"
+              id="flameVibrancySlider"
+              min="0"
+              max="1"
+              step="0.05"
+              value="1"
+            />
+          </label>
+          <label class="select-label">
+            Palette (restarts render)
+            <select id="flamePalette">
+              <option value="legacy">By Transform (legacy)</option>
+              <option value="spectrum">Spectrum</option>
+              <option value="sunset">Sunset</option>
+              <option value="dusk">Dusk</option>
+              <option value="lagoon">Lagoon</option>
+              <option value="ember">Ember</option>
+              <option value="aurora">Aurora</option>
+              <option value="moss">Moss</option>
+            </select>
+          </label>
+        </details>
+
+        <details
+          class="panel-section"
+          id="flameBlurSection"
+          name="panel-section"
+        >
+          <summary>Blur</summary>
+          <label class="select-label">
+            Blur Radius: <span id="flameEstimatorRadiusLabel">6.0px</span>
+            <input
+              type="range"
+              id="flameEstimatorRadiusSlider"
+              min="1"
+              max="15"
+              step="0.5"
+              value="6"
+            />
+          </label>
+          <label class="select-label">
+            Sharp Radius:
+            <span id="flameEstimatorMinimumRadiusLabel">0.0px</span>
+            <input
+              type="range"
+              id="flameEstimatorMinimumRadiusSlider"
+              min="0"
+              max="15"
+              step="0.5"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Blur Falloff: <span id="flameEstimatorCurveLabel">0.40</span>
+            <input
+              type="range"
+              id="flameEstimatorCurveSlider"
+              min="0.1"
+              max="3"
+              step="0.05"
+              value="0.4"
+            />
+          </label>
+        </details>
+
+        <details
+          class="panel-section"
+          id="flameQualitySection"
+          name="panel-section"
+        >
+          <summary>Quality</summary>
+          <label class="select-label">
+            Quality: <span id="flameIterationsLabel">20M iterations</span>
+            <input
+              type="range"
+              id="flameIterationsSlider"
+              min="0"
+              max="10"
+              step="1"
+              value="4"
+            />
+          </label>
+          <label class="select-label">
+            Supersample (restarts render):
+            <span id="flameSupersampleLabel">2×</span>
+            <input
+              type="range"
+              id="flameSupersampleSlider"
+              min="1"
+              max="3"
+              step="1"
+              value="2"
+            />
+          </label>
+          <p id="flameSupersampleNote" class="flame-note hidden"></p>
+        </details>
       </div>
 
       <div id="solidControls" class="hidden">
@@ -473,88 +497,112 @@
           palette. Keep orbiting while it converges — the light and surface
           react live.
         </p>
-        <label class="select-label">
-          Surface Level: <span id="solidThresholdLabel">0.30</span>
-          <input
-            type="range"
-            id="solidThresholdSlider"
-            min="0.02"
-            max="0.95"
-            step="0.01"
-            value="0.3"
-          />
-        </label>
-        <label class="select-label">
-          Light Angle: <span id="solidLightAzimuthLabel">135°</span>
-          <input
-            type="range"
-            id="solidLightAzimuthSlider"
-            min="-180"
-            max="180"
-            step="5"
-            value="135"
-          />
-        </label>
-        <label class="select-label">
-          Light Height: <span id="solidLightElevationLabel">50°</span>
-          <input
-            type="range"
-            id="solidLightElevationSlider"
-            min="5"
-            max="85"
-            step="5"
-            value="50"
-          />
-        </label>
-        <label class="select-label">
-          Ambient: <span id="solidAmbientLabel">25%</span>
-          <input
-            type="range"
-            id="solidAmbientSlider"
-            min="0"
-            max="0.8"
-            step="0.05"
-            value="0.25"
-          />
-        </label>
-        <label class="select-label">
-          Quality: <span id="solidIterationsLabel">20M iterations</span>
-          <input
-            type="range"
-            id="solidIterationsSlider"
-            min="1000000"
-            max="100000000"
-            step="1000000"
-            value="20000000"
-          />
-        </label>
-        <label class="select-label">
-          Palette (restarts render)
-          <select id="solidPalette">
-            <option value="legacy">By Color Mode (legacy)</option>
-            <option value="spectrum">Spectrum</option>
-            <option value="sunset">Sunset</option>
-            <option value="dusk">Dusk</option>
-            <option value="lagoon">Lagoon</option>
-            <option value="ember">Ember</option>
-            <option value="aurora">Aurora</option>
-            <option value="moss">Moss</option>
-          </select>
-        </label>
-        <label class="select-label">
-          Detail (restarts render):
-          <span id="solidResolutionLabel">192³</span>
-          <input
-            type="range"
-            id="solidResolutionSlider"
-            min="64"
-            max="512"
-            step="32"
-            value="192"
-          />
-        </label>
-        <p id="solidResolutionNote" class="flame-note hidden"></p>
         <div id="solidProgress" class="flame-progress">0%</div>
+
+        <details
+          class="panel-section"
+          id="solidSurfaceSection"
+          name="panel-section"
+        >
+          <summary>Surface</summary>
+          <label class="select-label">
+            Surface Level: <span id="solidThresholdLabel">0.30</span>
+            <input
+              type="range"
+              id="solidThresholdSlider"
+              min="0.02"
+              max="0.95"
+              step="0.01"
+              value="0.3"
+            />
+          </label>
+          <label class="select-label">
+            Palette (restarts render)
+            <select id="solidPalette">
+              <option value="legacy">By Color Mode (legacy)</option>
+              <option value="spectrum">Spectrum</option>
+              <option value="sunset">Sunset</option>
+              <option value="dusk">Dusk</option>
+              <option value="lagoon">Lagoon</option>
+              <option value="ember">Ember</option>
+              <option value="aurora">Aurora</option>
+              <option value="moss">Moss</option>
+            </select>
+          </label>
+        </details>
+
+        <details
+          class="panel-section"
+          id="solidLightingSection"
+          name="panel-section"
+        >
+          <summary>Lighting</summary>
+          <label class="select-label">
+            Light Angle: <span id="solidLightAzimuthLabel">135°</span>
+            <input
+              type="range"
+              id="solidLightAzimuthSlider"
+              min="-180"
+              max="180"
+              step="5"
+              value="135"
+            />
+          </label>
+          <label class="select-label">
+            Light Height: <span id="solidLightElevationLabel">50°</span>
+            <input
+              type="range"
+              id="solidLightElevationSlider"
+              min="5"
+              max="85"
+              step="5"
+              value="50"
+            />
+          </label>
+          <label class="select-label">
+            Ambient: <span id="solidAmbientLabel">25%</span>
+            <input
+              type="range"
+              id="solidAmbientSlider"
+              min="0"
+              max="0.8"
+              step="0.05"
+              value="0.25"
+            />
+          </label>
+        </details>
+
+        <details
+          class="panel-section"
+          id="solidQualitySection"
+          name="panel-section"
+        >
+          <summary>Quality</summary>
+          <label class="select-label">
+            Quality: <span id="solidIterationsLabel">20M iterations</span>
+            <input
+              type="range"
+              id="solidIterationsSlider"
+              min="1000000"
+              max="100000000"
+              step="1000000"
+              value="20000000"
+            />
+          </label>
+          <label class="select-label">
+            Detail (restarts render):
+            <span id="solidResolutionLabel">192³</span>
+            <input
+              type="range"
+              id="solidResolutionSlider"
+              min="64"
+              max="512"
+              step="32"
+              value="192"
+            />
+          </label>
+          <p id="solidResolutionNote" class="flame-note hidden"></p>
+        </details>
       </div>
 
       <details
