@@ -77,6 +77,27 @@ const EFFECTIVE_DIMENSION_FLOOR = 1.8;
 const SCALE_MIN = 0.35;
 const SCALE_MAX = 0.85;
 const UNIFORM_SCALE_PROBABILITY = 0.7;
+/**
+ * Per-map odds of rolling a MIRRORED map (fr-o1y): exactly one axis of the
+ * rolled scale is negated, making the map orientation-reversing — the
+ * handedness-flipping family the chiralLace preset celebrates, which the
+ * all-positive {@link SCALE_MIN}..{@link SCALE_MAX} magnitudes could never
+ * reach. One axis, never two: with `det R = det U = 1` in the engine's
+ * `M = R · diag(scale) · U` decomposition, `det M` flips sign exactly when
+ * an ODD number of scale entries are negative — negating two axes is just a
+ * π-rotation about the third, territory the free ±π rotation roll already
+ * covers.
+ *
+ * Applied AFTER {@link randomScale} (see {@link randomReflection}), so the
+ * magnitude story — dimension floor, clamps, jitter — is untouched: a
+ * mirror changes handedness, not contraction (`|det M|` is unchanged), so
+ * the bounds/occupancy gates judge mirrored candidates on the same terms as
+ * everything else, with no re-tuning. Kept the rarest of the per-map rolls:
+ * at 0.1 roughly a quarter of returned systems carry at least one mirrored
+ * map — the same order as the module's other rare-spice features
+ * ({@link FOUR_D_PROBABILITY}, {@link SYMMETRY_PROBABILITY}).
+ */
+const REFLECTION_PROBABILITY = 0.1;
 const SHEAR_RANGE = 0.3;
 const ZERO_SHEAR_PROBABILITY = 0.7;
 /** weight = floor(1 + WEIGHT_ROLL · rng() · rng()): the product of two
@@ -340,6 +361,20 @@ function randomScale(rng: Rng, baseScale: number, scaleFloor: number): Vec3 {
   ];
 }
 
+/**
+ * Maybe mirror a rolled scale (fr-o1y): with
+ * {@link REFLECTION_PROBABILITY}, negate one uniformly-chosen axis.
+ * Gate-first like {@link randomShear}, so a miss costs exactly one draw and
+ * a hit exactly two.
+ */
+function randomReflection(rng: Rng, scale: Vec3): Vec3 {
+  if (rng() >= REFLECTION_PROBABILITY) return scale;
+  const mirrored: Vec3 = [...scale];
+  const axis = Math.floor(rng() * 3);
+  mirrored[axis] = -mirrored[axis];
+  return mirrored;
+}
+
 function randomShear(rng: Rng): Vec3 {
   if (rng() < ZERO_SHEAR_PROBABILITY) return [0, 0, 0];
   return randomVec3(rng, -SHEAR_RANGE, SHEAR_RANGE);
@@ -447,7 +482,7 @@ function randomTransform(
     id,
     position: randomVec3(rng, -POSITION_RANGE, POSITION_RANGE),
     rotation: randomVec3(rng, -Math.PI, Math.PI),
-    scale: randomScale(rng, baseScale, scaleFloor),
+    scale: randomReflection(rng, randomScale(rng, baseScale, scaleFloor)),
     weight: randomWeight(rng),
     shear: randomShear(rng),
     ...(variations ? { variations } : {}),
@@ -773,14 +808,15 @@ function scoreCandidate(candidate: RandomSystem, rng: Rng): number {
 }
 
 /**
- * Generate a random IFS: 2-4 affine maps with weighted selection, shear, and
- * nonlinear variations, plus a chance of a final-transform lens — everything
- * the core supports, so "Surprise Me" can reach anywhere the manual editor
- * can — and, occasionally ({@link FOUR_D_PROBABILITY}), a sparse `w`
- * extension on some of the base maps (fr-bf6.5), landing a genuinely 4D
- * system. A flat candidate additionally has a chance
- * ({@link SYMMETRY_PROBABILITY}) of a rolled rotational symmetry
- * ({@link randomSymmetry}).
+ * Generate a random IFS: 2-4 affine maps with weighted selection, shear,
+ * nonlinear variations, and an occasional single-axis mirror
+ * ({@link REFLECTION_PROBABILITY} — fr-o1y), plus a chance of a
+ * final-transform lens — everything the core supports, so "Surprise Me" can
+ * reach anywhere the manual editor can — and, occasionally
+ * ({@link FOUR_D_PROBABILITY}), a sparse `w` extension on some of the base
+ * maps (fr-bf6.5), landing a genuinely 4D system. A flat candidate
+ * additionally has a chance ({@link SYMMETRY_PROBABILITY}) of a rolled
+ * rotational symmetry ({@link randomSymmetry}).
  *
  * Each candidate is probed ({@link scoreCandidate} — bounds sanity plus
  * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate
