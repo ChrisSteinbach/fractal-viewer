@@ -31,7 +31,14 @@ body {
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   overflow: hidden;
-  touch-action: none;
+
+  /* Pinch-zoom must stay available for WCAG 1.4.4 (fr-vfk), so no blanket
+     `none` here — browsers check every ancestor up to the root for viewport
+     zoom, and `none` on <body> would veto pinch everywhere, even over the
+     panel. `manipulation` keeps pan + pinch-zoom but drops double-tap-zoom,
+     so rapid taps on panel buttons don't lurch the page. The canvas opts
+     itself out below. */
+  touch-action: manipulation;
 }
 
 #container {
@@ -39,6 +46,12 @@ body {
   inset: 0;
   width: 100vw;
   height: 100vh;
+
+  /* The canvas owns every touch gesture — 1-finger orbit, 2-finger camera
+     pan/zoom (interactions.ts relies on this, not preventDefault, in camera
+     mode). Scoped here rather than on <body> so browser pinch-zoom still
+     works over the panel and help overlays (fr-vfk). */
+  touch-action: none;
 }
 
 /* Cinematic framing: darken the corners so the eye settles on the attractor.
