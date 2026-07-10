@@ -143,6 +143,26 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
+  - `regen-scheduler.ts` — the rAF coalescer (fr-acc) in front of
+    `regenerate()`: collapses a drag/slider burst into one generation request
+    per animation frame instead of one per input event. Now bounds
+    request-building/postMessage traffic to the cloud worker (fr-5kx); in the
+    generator's synchronous fallback mode it's again all that stops a drag
+    from running a full generation per input event.
+  - `cloud-worker.ts` / `cloud-worker-core.ts` — the live point cloud's
+    generation worker (fr-5kx): a one-shot request → response, not a session
+    state machine like flame/voxel have. Seeded chaos game (`generateCloud`);
+    the 3D path bakes its color buffer (`buildColors`) worker-side and the 4D
+    path lifts transforms through `toTransform4` worker-side too, so a
+    regeneration costs the main thread only a transferable-buffer upload.
+  - `cloud-generator.ts` — the main-thread client for the cloud worker
+    (fr-5kx): at most one request in flight, latest wins, OR-merging a
+    coalesced request's `replaced`/`fit` flags so a superseded preset load's
+    fresh-visit reset and camera fit still land. Falls back to running the
+    same `generateCloud` synchronously if the worker never loads or crashes —
+    the live cloud IS the app, unlike the optional flame/solid overlays — and
+    `generateSync` takes that path deliberately at boot. Pure, injected deps,
+    tested.
   - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
     kernels from inside the flame worker (one shared driver, two packing
     factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`

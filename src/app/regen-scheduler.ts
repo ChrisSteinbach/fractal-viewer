@@ -1,23 +1,26 @@
 /**
  * Coalesces a burst of point-cloud regenerations into at most one run per
- * animation frame (fr-acc). The interactive point cloud is regenerated
- * synchronously on the main thread (`main.ts`'s `regenerate()`); during a
- * guide-box drag or a panel-slider drag the triggering event fires many times
- * per frame, and — before this — each one ran a whole O(numPoints) chaos game,
- * so a single drag stalled the render/input loop with a burst of redundant
- * generations. This collapses a frame's worth of requests into one deferred
- * run: the very next animation frame regenerates once, reflecting the latest
- * state, and every intermediate request within that frame is dropped.
+ * animation frame (fr-acc). During a guide-box drag or a panel-slider drag
+ * the triggering event fires many times per frame; this collapses a frame's
+ * worth of requests into one deferred run — the very next animation frame
+ * regenerates once, reflecting the latest state, and every intermediate
+ * request within that frame is dropped.
+ *
+ * Originally this was the only thing standing between a drag and a whole
+ * synchronous O(numPoints) chaos game per input event. Generation now runs
+ * in a Web Worker (fr-5kx; see `cloud-generator.ts`), so per-frame this
+ * bounds request-building and postMessage traffic — and in the generator's
+ * synchronous fallback mode (worker failed to load or crashed) it is once
+ * again all that stops a drag from running a full generation per event.
  *
  * Deliberately tiny and dependency-injected (`raf`/`caf`) so the coalescing
  * policy is unit-tested without a browser — the same injected-scheduler
  * discipline `edit-session.ts` uses for its debounced save. Only the
  * high-frequency drag/slider paths schedule through here; the one-shot
  * regenerations (preset load, Surprise Me, undo/redo restore, the explicit
- * Regenerate button, boot) stay synchronous because they read the fresh
- * `lastResult`/`fourDResult` immediately afterward (camera auto-framing), and
- * instead {@link FrameCoalescer.cancel} any pending coalesced run they have
- * just superseded so it can't fire a redundant second time next frame.
+ * Regenerate button) call `regenerate()` directly, which instead
+ * {@link FrameCoalescer.cancel}s any pending coalesced run it has just
+ * superseded so that run can't fire a redundant second request next frame.
  */
 export interface FrameCoalescer {
   /**
