@@ -345,6 +345,12 @@ export function attachInteractions(
   document.addEventListener("touchmove", onPointerMove, { passive: false });
   document.addEventListener("mouseup", onPointerUp);
   document.addEventListener("touchend", onPointerUp);
+  // Android fires touchcancel — NOT touchend — when the system claims a
+  // gesture mid-touch (navigation swipe, app switch, notification shade).
+  // Without this the orbitMode/dragging latch sticks, so gestureActive()
+  // reports a phantom gesture forever (pausing the auto-orbit) and the next
+  // touch resumes a stale mode (fr-1k4).
+  document.addEventListener("touchcancel", onPointerUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("contextmenu", onContextMenu);
 

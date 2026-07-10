@@ -56,12 +56,36 @@ import {
   clampToSpec,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
+import { clampPhi, clampRadius } from "./orbit";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+/**
+ * Orbit-camera pose (fr-1k4): the target point and Three.js-convention
+ * spherical offset needed to restore the exact framing a scene was viewed
+ * with (see `orbit.ts`'s `OrbitCamera`/`Spherical`, which this mirrors field
+ * for field). Lives on `SceneSnapshot` as the optional
+ * {@link SceneSnapshot.camera} field — see its doc for who attaches/omits it.
+ */
+export interface CameraPose {
+  target: Vec3;
+  /**
+   * Orbit distance from `target`; clamped to `orbit.ts`'s
+   * [{@link MIN_RADIUS}, {@link MAX_RADIUS}] on decode.
+   */
+  radius: number;
+  /** Azimuth, in radians; unbounded — never clamped, matching `OrbitCamera`. */
+  theta: number;
+  /**
+   * Polar angle, in radians; clamped to `orbit.ts`'s [{@link MIN_PHI},
+   * {@link MAX_PHI}] on decode.
+   */
+  phi: number;
+}
 
 /** The persistent subset of AppState — everything needed to recreate the scene. */
 export interface SceneSnapshot {
@@ -128,6 +152,18 @@ export interface SceneSnapshot {
    * `glowBrightness`).
    */
   customPalette?: CustomPalette;
+  /**
+   * Optional orbit-camera pose (fr-1k4): the view a saved/shared/collection
+   * scene was framed with (see {@link CameraPose}). Absent in every
+   * pre-fr-1k4 save or link, the same way `customPalette` was absent before
+   * fr-55k — and DELIBERATELY absent from undo-history snapshots:
+   * `history.ts` dedupes checkpoints by comparing `encodeScene` output with
+   * `===`, and even tiny camera drift between two otherwise-identical states
+   * would defeat that dedup. `main.ts` (not this module) attaches `camera`
+   * only when writing a persisted / shared / collection document, never to
+   * an in-session undo checkpoint.
+   */
+  camera?: CameraPose;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -170,15 +206,20 @@ export function toSnapshot(state: AppState): SceneSnapshot {
 /**
  * Merge a restored snapshot over a base AppState (typically `initialState`),
  * overwriting exactly the persisted fields while leaving session-only state
- * (selection, autoUpdate, panel) from `base` intact. `SceneSnapshot` is a
- * structural subset of `AppState`, so the spread needs no field list of its
- * own — it stays the exact inverse of `toSnapshot` with nothing to hand-sync.
+ * (selection, autoUpdate, panel) from `base` intact. `SceneSnapshot` USED TO
+ * be a pure structural subset of `AppState`, so the spread needed no field
+ * list of its own; since fr-1k4 that's no longer quite true — `camera` is a
+ * document-only field with no `AppState` counterpart (it's applied instead
+ * by `main.ts`'s boot/load call sites), so it is explicitly destructured out
+ * and never spread. The rest stays the exact inverse of `toSnapshot`, with
+ * nothing else to hand-sync.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
   base: AppState,
 ): AppState {
-  return { ...base, ...snapshot };
+  const { camera: _camera, ...rest } = snapshot;
+  return { ...base, ...rest };
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +280,15 @@ const MAX_VARIATIONS = 32;
 
 /** Reject wildly out-of-range blend weights from hand-crafted input; clamp the rest. */
 const MAX_VARIATION_WEIGHT = 100;
+
+/**
+ * Sanity bound on each component of an untrusted `camera.target` (fr-1k4):
+ * real attractor targets sit within a few units of the origin, and
+ * `orbit.ts`'s own {@link MAX_RADIUS} (the orbit-distance ceiling) is only
+ * 100 — so 1000 is generous headroom while still rejecting a wildly
+ * hand-crafted value. See {@link decodeCameraPose}.
+ */
+const CAMERA_TARGET_LIMIT = 1000;
 
 // ---------------------------------------------------------------------------
 // Codec helpers
@@ -714,6 +764,53 @@ function decodeSymmetry(raw: unknown): SymmetryParams {
   };
 }
 
+/**
+ * Validate the untrusted `camera` scene field (fr-1k4): the orbit-camera
+ * pose a save/share/collection document was written with (see
+ * {@link CameraPose}). Its validation policy is deliberately DIFFERENT from
+ * the core fields above (`transforms`/`colorMode`/`renderStyle`/...): those
+ * reject the WHOLE scene on anything malformed, but a camera pose is a view,
+ * not structural data — an optional field must never cost the user their
+ * scene, and an old link (or any foreign hash from a build that never wrote
+ * this field, or an undo-history snapshot, which never carries one at all —
+ * see {@link SceneSnapshot.camera}'s doc) has to keep decoding. So this
+ * returns `undefined` (drop only the camera) rather than `null` (reject the
+ * scene) for anything malformed:
+ *
+ * - not a non-null object;
+ * - `target` not exactly 3 finite numbers (via {@link isVec3}), or any
+ *   component's absolute value exceeds {@link CAMERA_TARGET_LIMIT};
+ * - `radius` / `theta` / `phi` not literally typeof `"number"` and finite —
+ *   deliberately NOT the `Number(x)` coercion most other fields in this file
+ *   use, so a string like `"7"` is rejected rather than silently accepted.
+ *
+ * A validated pose clamps `radius` to `orbit.ts`'s [{@link MIN_RADIUS},
+ * {@link MAX_RADIUS}] and `phi` to its [{@link MIN_PHI}, {@link MAX_PHI}];
+ * `theta` (azimuth) is stored as-is, unbounded, matching `OrbitCamera`'s own
+ * contract.
+ */
+function decodeCameraPose(raw: unknown): CameraPose | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const c = raw as Record<string, unknown>;
+
+  if (!isVec3(c.target)) return undefined;
+  if (c.target.some((n) => Math.abs(n) > CAMERA_TARGET_LIMIT)) {
+    return undefined;
+  }
+
+  const { radius, theta, phi } = c;
+  if (typeof radius !== "number" || !Number.isFinite(radius)) return undefined;
+  if (typeof theta !== "number" || !Number.isFinite(theta)) return undefined;
+  if (typeof phi !== "number" || !Number.isFinite(phi)) return undefined;
+
+  return {
+    target: c.target,
+    radius: clampRadius(radius),
+    theta,
+    phi: clampPhi(phi),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -823,6 +920,12 @@ export function encodeScene(s: SceneSnapshot): string {
     symmetry: SymmetryParams;
     glowBrightness: number;
     customPalette?: { stops: string[] };
+    camera?: {
+      target: number[];
+      radius: number;
+      theta: number;
+      phi: number;
+    };
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -882,6 +985,17 @@ export function encodeScene(s: SceneSnapshot): string {
   // Encoded as hex strings (fr-55k) for URL compactness — see rgbToHex.
   if (s.customPalette)
     payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
+  // Written only when present, like finalTransform/customPalette above — an
+  // undo-history snapshot (which never carries a camera — see
+  // SceneSnapshot.camera's doc) and every pre-fr-1k4 link stay byte-identical.
+  if (s.camera) {
+    payload.camera = {
+      target: s.camera.target.map(round4),
+      radius: round4(s.camera.radius),
+      theta: round4(s.camera.theta),
+      phi: round4(s.camera.phi),
+    };
+  }
   return "v1=" + toBase64url(JSON.stringify(payload));
 }
 
@@ -934,6 +1048,12 @@ export function encodeScene(s: SceneSnapshot): string {
  * valid customPalette payload actually decoded alongside it; a `"custom"`
  * selection with nothing to back it falls back to `"legacy"` exactly like any
  * other unrecognized id (see {@link decodeFlameParams}).
+ *
+ * camera (fr-1k4) is the optional orbit-camera pose (see {@link CameraPose}).
+ * Its policy is stricter than customPalette's in one way (no `Number(x)`
+ * string coercion — see {@link decodeCameraPose}) but the same in spirit:
+ * absent or malformed NEVER rejects the scene, it just decodes to
+ * `undefined`, same as customPalette above.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1055,6 +1175,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? (o.rampPaletteId as PaletteSelection)
         : FALLBACK_PALETTE_ID;
 
+    // camera (fr-1k4): the optional orbit-camera pose. Never rejects the
+    // scene — a malformed or absent value quietly decodes to undefined,
+    // exactly like customPalette above. See decodeCameraPose.
+    const camera = decodeCameraPose(o.camera);
+
     return {
       transforms,
       finalTransform,
@@ -1072,6 +1197,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       symmetry,
       glowBrightness,
       customPalette,
+      camera,
     };
   } catch {
     return null;

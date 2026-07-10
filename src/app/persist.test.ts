@@ -13,6 +13,7 @@ import {
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
+import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import {
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
@@ -2128,5 +2129,169 @@ describe("loadScene", () => {
     const result = loadScene({ location: { hash: "" }, storage });
 
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Camera pose (fr-1k4) — the optional orbit-camera view a saved/shared/
+// collection document was framed with. Deliberately absent from undo-history
+// snapshots (see SceneSnapshot.camera's doc), so `fromSnapshot` must strip it
+// rather than let it leak into AppState. Its decode policy is even more
+// lenient than customPalette's: a malformed camera drops ONLY the camera —
+// never the whole scene — because an optional view must never cost the user
+// their scene.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene camera", () => {
+  it("round-trips a camera pose, rounding each field to 4 decimal places", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      camera: {
+        target: [1.23456, -2, 0.5],
+        radius: 6.24619,
+        theta: 0.30671,
+        phi: 1.05599,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.camera).not.toBeUndefined();
+    expect(result!.camera!.target[0]).toBeCloseTo(1.2346, 4);
+    expect(result!.camera!.target[1]).toBeCloseTo(-2, 4);
+    expect(result!.camera!.target[2]).toBeCloseTo(0.5, 4);
+    expect(result!.camera!.radius).toBeCloseTo(6.2462, 4);
+    expect(result!.camera!.theta).toBeCloseTo(0.3067, 4);
+    expect(result!.camera!.phi).toBeCloseTo(1.056, 4);
+  });
+
+  it("omits camera from the encoded payload and decodes back to undefined when the snapshot has none", () => {
+    const payload = decodePayload(encodeScene(baseSnapshot()));
+    expect("camera" in payload).toBe(false);
+    expect(decodeScene(encodeScene(baseSnapshot()))!.camera).toBeUndefined();
+  });
+
+  it("keeps decoding a scene with no camera field at all as a valid, non-null scene", () => {
+    // A hand-built payload with no `camera` key at all — exactly what every
+    // link looked like before fr-1k4.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when the field is not an object", () => {
+    const raw = { ...baseSnapshot(), camera: 5 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when target does not have exactly 3 components", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2], radius: 5, theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when a target component is non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [0, NaN, 0], radius: 5, theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when radius is a numeric string instead of a number", () => {
+    // Unlike most other fields in this file, camera does NOT coerce with
+    // Number(x) — a string like "7" must not sneak past as a valid radius.
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: "7", theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when phi is infinite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 5, theta: 0.5, phi: Infinity },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("drops the camera when a target component exceeds the sanity bound", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [2000, 0, 0], radius: 5, theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.camera).toBeUndefined();
+  });
+
+  it("clamps radius below the minimum up to MIN_RADIUS", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 0.5, theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.camera!.radius).toBe(MIN_RADIUS);
+  });
+
+  it("clamps radius above the maximum down to MAX_RADIUS", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 500, theta: 0.5, phi: 1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.camera!.radius).toBe(MAX_RADIUS);
+  });
+
+  it("clamps phi below the minimum up to MIN_PHI", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 5, theta: 0.5, phi: -1 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.camera!.phi).toBe(MIN_PHI);
+  });
+
+  it("clamps phi above the maximum down to MAX_PHI", () => {
+    const raw = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 5, theta: 0.5, phi: 9 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.camera!.phi).toBe(MAX_PHI);
+  });
+});
+
+describe("fromSnapshot camera", () => {
+  it("does not leak a camera key into the returned AppState", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      camera: { target: [1, 2, 3], radius: 5, theta: 0.5, phi: 1 },
+    };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect("camera" in result).toBe(false);
   });
 });
