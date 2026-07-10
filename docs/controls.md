@@ -1,8 +1,8 @@
 # Controls
 
 The viewer has two interaction modes. Switch between them from the panel's
-**Select to Edit** list: choose **🎥 Camera View** for camera mode, or a specific
-**Transform N** to edit that map. The help box (top-left) always shows the active
+**Transforms** section (its **Select to edit** list): choose **🎥 Camera View**
+for camera mode, or a specific **Transform N** to edit that map. The help box (top-left) always shows the active
 mode and its gestures, adapting the wording to the device: mouse verbs
 ("Drag", "Right-drag", "Scroll") on pointer devices, finger gestures on touch.
 
@@ -63,14 +63,27 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 ## Panel controls
 
-- **Edit Transform N** — appears under **Select to Edit** while a transform is
-  selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in degrees), and
-  scale (X/Y/Z) give exact per-axis control on every device. The sliders track
-  the guide box live and stay in sync with the drag gestures above.
+The panel's categories — **Export**, **Transforms**, **Presets**,
+**Collection**, **Appearance**, **Symmetry**, and **3D View**/**4D View** — are
+collapsible sections, and opening one closes the previous (fr-zoi), so the
+whole panel stays about one phone-screen tall instead of demanding a long
+scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
+**Tone** / **Blur** / **Quality** for Flame, **Surface** / **Lighting** /
+**Quality** for Solid, with the render's progress readout pinned above the
+sections — and the panel remembers which section was open in each mode, so
+switching Points ↔ Flame ↔ Solid restores where you were. Scroll swipes that
+happen to land on a slider scroll the panel without editing its value;
+horizontal drags (and taps) still adjust it as usual.
+
+- **Edit Transform N** — appears under **Transforms → Select to edit** while a
+  transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
+  degrees), and scale (X/Y/Z) give exact per-axis control on every device. The
+  sliders track the guide box live and stay in sync with the drag gestures
+  above.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
-- **Presets** — a dropdown that replaces the whole system with one of seven named
-  fractals: Sierpinski tetrahedron, Menger sponge, spiral, Sierpinski pyramid,
-  octahedron flake, or a 12-map icosahedron or 20-map dodecahedron flake.
+- **Presets** — a dropdown that replaces the whole system with a named fractal,
+  from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
+  and 20-map dodecahedron flakes, plus dedicated **Flame** and **4D** groups.
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Explorer-only — it hides during a
@@ -98,11 +111,12 @@ Transform** sliders that appear in the panel while a transform is selected.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active.
-- **Final Transform** — _Enable lens (warps the whole cloud)_ turns on a **final
-  transform**: one more affine + variation map applied to every point as it is
-  plotted, bending the whole attractor at once (the fractal-flame _final xform_;
+- **Final-transform lens** — the _(warps the whole cloud)_ checkbox in the
+  **Transforms** section turns on a **final transform**: one more affine +
+  variation map applied to every point as it is plotted, bending the whole
+  attractor at once (the fractal-flame _final xform_;
   see [architecture.md](architecture.md#final-transform)). It appears as a
-  **✦ Final Transform** row under **Select to Edit** with the usual
+  **✦ Final Transform** row under **Select to edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
 - **3D View** — appears while the current system is _flat_, in the same panel

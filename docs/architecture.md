@@ -99,7 +99,7 @@ point rather than writing `NaN`/`Inf` into the buffer.
 
 Being a global effect, the lens lives in `AppState.finalTransform` (not the
 transform array) and persists across preset loads like `colorMode` /
-`renderStyle`. The panel's **Final Transform** toggle enables a default (identity,
+`renderStyle`. The panel's **Final-transform lens** toggle enables a default (identity,
 no-op) lens and reveals it as a `"final"` row in the edit list; selecting it opens
 the ordinary transform editor, minus the selection **Weight** (meaningless for a
 map applied to every point). `chaos-game.test.ts` pins the plot-time-only

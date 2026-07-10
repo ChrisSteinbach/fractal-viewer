@@ -2245,8 +2245,12 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     expect(el("presetSection").classList.contains("hidden")).toBe(false);
+    // The list and editor live inside the Transforms accordion section
+    // (fr-zoi), so its visibility is theirs.
     expect(el("transformsSection").classList.contains("hidden")).toBe(false);
-    expect(el("transformEditSection").classList.contains("hidden")).toBe(false);
+    expect(el("transformList").closest("details")?.id).toBe(
+      "transformsSection",
+    );
   });
 
   it("keeps the point-size, regenerate, and guides controls live for a non-flat system", () => {
@@ -2739,6 +2743,115 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     expect(attr("solidResolutionSlider", "step")).toBe(
       String(PARAM.solidResolution.snap),
     );
+  });
+});
+
+// fr-zoi: the panel's categories are an exclusive-open accordion of native
+// <details name="panel-section"> — one shared name, so the browser closes the
+// rest when one opens. These pin the markup contract that behavior rides on;
+// jsdom doesn't enforce the exclusivity itself, real browsers do.
+describe("panel accordion sections (fr-zoi)", () => {
+  const sections = (): HTMLDetailsElement[] =>
+    Array.from(
+      document.querySelectorAll<HTMLDetailsElement>(
+        "#panel details.panel-section",
+      ),
+    );
+
+  it("every section joins the one exclusive name group and has a summary", () => {
+    expect(sections().length).toBeGreaterThanOrEqual(7);
+    for (const section of sections()) {
+      expect(section.getAttribute("name")).toBe("panel-section");
+      expect(section.querySelector("summary")).not.toBeNull();
+    }
+  });
+
+  it("boots with exactly one section open — Presets", () => {
+    const open = sections().filter((section) => section.open);
+    expect(open.map((section) => section.id)).toEqual(["presetSection"]);
+  });
+
+  // fr-99o: each render mode remembers its own open section; switching modes
+  // restores it (defaults: Presets / Tone / Surface). jsdom doesn't enforce
+  // the name-group exclusivity — real browsers close the others — so these
+  // assert only what Ui itself does: open the target on a mode change.
+  const details = (id: string): HTMLDetailsElement => {
+    const el = document.getElementById(id);
+    if (!(el instanceof HTMLDetailsElement))
+      throw new Error(`No <details> #${id}`);
+    return el;
+  };
+
+  it("entering flame mode opens its Tone section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+    expect(details("flameToneSection").open).toBe(true);
+  });
+
+  it("entering solid mode opens its Surface section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
+    expect(details("solidSurfaceSection").open).toBe(true);
+  });
+
+  it("returning to points restores the explorer's section", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    ui.updateLabels({ ...state, renderMode: "flame" });
+    // In a real browser the name group closes Presets when Tone opens;
+    // simulate that half of the exchange.
+    details("presetSection").open = false;
+    ui.updateLabels(state);
+    expect(details("presetSection").open).toBe(true);
+  });
+
+  it("does not force a section back open while the mode is unchanged", () => {
+    const ui = new Ui(document);
+    const flame = { ...initialState(true), renderMode: "flame" as const };
+    ui.updateLabels(flame);
+    details("flameToneSection").open = false; // user collapses it
+    ui.updateLabels({ ...flame });
+    expect(details("flameToneSection").open).toBe(false);
+  });
+
+  it("closes the outgoing mode's section when the new mode has nothing to restore", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    // Deliberately collapse the explorer's open section. jsdom doesn't fire
+    // toggle on .open changes, so dispatch it as a browser would.
+    const presets = details("presetSection");
+    presets.open = false;
+    presets.dispatchEvent(new Event("toggle"));
+
+    ui.updateLabels({ ...state, renderMode: "flame" }); // Tone opens
+    expect(details("flameToneSection").open).toBe(true);
+    ui.updateLabels(state); // points remembers "collapsed everything"
+
+    expect(details("flameToneSection").open).toBe(false);
+    expect(presets.open).toBe(false);
+  });
+
+  it("keeps the editor's 4D disclosure out of the accordion group", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    const editorDetails = document.querySelector<HTMLDetailsElement>(
+      "#transformEditor details",
+    );
+    expect(editorDetails).not.toBeNull();
+    // The 4D group nests INSIDE the Transforms section; a details name group
+    // must not contain nested members, so sharing "panel-section" would hand
+    // browsers an invalid group (and the exclusivity would misfire).
+    expect(editorDetails?.getAttribute("name")).toBeNull();
   });
 });
 
