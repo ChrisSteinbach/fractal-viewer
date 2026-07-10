@@ -89,6 +89,31 @@ Drive it with the Playwright MCP browser. Useful checks from
    reloaded — it re-shows the banner instead (replaced-controller path).
 5. Revert the temporary marker and rebuild when done.
 
+## Touch gestures (pinch-zoom / panel scroll) under emulation
+
+Verified recipe from fr-vfk — a bespoke script on the SwiftShader launch above,
+with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
+
+- **`isMobile` viewports come out oversized on this box** when combined with
+  the SwiftShader flags: `window.innerWidth` reports ~1.5–1.9× the requested
+  width, nondeterministically (even Playwright's bundled `Pixel 7` preset
+  lands above the app's 640px mobile breakpoint). Request a much smaller
+  viewport (e.g. 280×622) and retry context creation until `innerWidth` is
+  under the breakpoint; take gesture coordinates from live
+  `getBoundingClientRect()`, never from `innerWidth` or hardcoded pixels.
+- **`Input.synthesizePinchGesture`, `Input.synthesizeScrollGesture`, and
+  `Emulation.resetPageScaleFactor` silently no-op here** — they resolve
+  without error and do nothing. Drive gestures with raw
+  `Input.dispatchTouchEvent` sequences instead (touchStart with two points,
+  stepped touchMoves spreading/closing them, touchEnd) — the browser's
+  gesture recognizer turns those into real pinch/pan. Assert on effects
+  (`window.visualViewport.scale`, element `scrollTop`), never on the CDP
+  call succeeding.
+- Pair every "gesture is blocked" assertion with the same mechanism
+  producing a positive effect elsewhere on the page (e.g. pinch over
+  `#container` must NOT zoom, the same pinch over `#panel` MUST) — otherwise
+  a broken gesture pipeline reads as a pass.
+
 ## Gotchas
 
 - `pkill -f "http.server 8737"` matches your own shell's command line and
