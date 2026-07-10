@@ -79,7 +79,6 @@
       </button>
       <h2 id="panelTitle">3D IFS Fractal</h2>
 
-      <h3>Render Mode</h3>
       <div
         id="renderModeSwitch"
         class="segmented"
@@ -115,13 +114,15 @@
         </button>
       </div>
 
-      <h3>Export</h3>
-      <button class="btn btn-ghost" id="savePngBtn" type="button">
-        ⤓ Save PNG
-      </button>
-      <button class="btn btn-ghost" id="recordVideoBtn" type="button">
-        ● Record video
-      </button>
+      <details class="panel-section" id="exportSection" name="panel-section">
+        <summary>Export</summary>
+        <button class="btn btn-ghost" id="savePngBtn" type="button">
+          ⤓ Save PNG
+        </button>
+        <button class="btn btn-ghost" id="recordVideoBtn" type="button">
+          ● Record video
+        </button>
+      </details>
 
       <div id="explorerControls">
         <div class="btn-row">
@@ -144,8 +145,12 @@
             ↪ Redo
           </button>
         </div>
-        <div id="transformsSection">
-          <h3>Transforms (<span id="transformCount">4</span>)</h3>
+        <details
+          class="panel-section"
+          id="transformsSection"
+          name="panel-section"
+        >
+          <summary>Transforms (<span id="transformCount">4</span>)</summary>
           <div class="btn-row">
             <button class="btn btn-green" id="addBtn" type="button">
               + Add
@@ -158,10 +163,22 @@
             <input type="checkbox" id="autoUpdate" checked />
             Auto-update on change
           </label>
-        </div>
+          <label class="checkbox-label">
+            <input type="checkbox" id="finalTransformToggle" />
+            Final-transform lens (warps the whole cloud)
+          </label>
+          <div class="editor-group-title">Select to edit</div>
+          <div class="transform-list" id="transformList"></div>
+          <div id="transformEditor"></div>
+        </details>
 
-        <div id="presetSection">
-          <h3>Presets</h3>
+        <details
+          class="panel-section"
+          id="presetSection"
+          name="panel-section"
+          open
+        >
+          <summary>Presets</summary>
           <select id="presetSelect" aria-label="Load a preset">
             <option value="" selected>Load a preset…</option>
             <option value="default">Twisted Tetrahedron</option>
@@ -193,10 +210,14 @@
           <button class="btn btn-blue" id="surpriseBtn" type="button">
             Surprise Me
           </button>
-        </div>
+        </details>
 
-        <div id="collectionSection">
-          <h3>Collection</h3>
+        <details
+          class="panel-section"
+          id="collectionSection"
+          name="panel-section"
+        >
+          <summary>Collection</summary>
           <button class="btn btn-green" id="saveCollectionBtn" type="button">
             ★ Save to collection
           </button>
@@ -206,97 +227,107 @@
           <button class="btn btn-ghost" id="copyLinkBtn" type="button">
             🔗 Copy link
           </button>
-        </div>
+        </details>
 
-        <h3>Appearance</h3>
-        <label class="select-label">
-          Points: <span id="numPointsLabel">100,000</span>
-          <input
-            type="range"
-            id="numPointsSlider"
-            min="0"
-            max="1000"
-            step="1"
-            value="540"
-          />
-        </label>
-        <button class="btn btn-blue" id="regenerateBtn" type="button">
-          Regenerate Points
-        </button>
-
-        <label class="select-label">
-          Point Size: <span id="pointSizeLabel">1.00×</span>
-          <input
-            type="range"
-            id="pointSizeSlider"
-            min="0.25"
-            max="4"
-            step="0.05"
-            value="1"
-          />
-        </label>
-
-        <div id="colorModeRow">
+        <details
+          class="panel-section"
+          id="appearanceSection"
+          name="panel-section"
+        >
+          <summary>Appearance</summary>
           <label class="select-label">
-            Color Mode
-            <select id="colorMode">
-              <option value="transform">By Transform</option>
-              <option value="height">By Height (terrain)</option>
-              <option value="radius">By Radius (warm→cool)</option>
-              <option value="position">By Position (XYZ→RGB)</option>
-              <option value="uniform">Uniform Cyan</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="colorGammaRow" class="hidden">
-          <label class="select-label">
-            Color Contrast: <span id="colorGammaLabel">1.00</span>
+            Points: <span id="numPointsLabel">100,000</span>
             <input
               type="range"
-              id="colorGammaSlider"
-              min="-1"
-              max="1"
-              step="0.01"
-              value="0"
+              id="numPointsSlider"
+              min="0"
+              max="1000"
+              step="1"
+              value="540"
             />
           </label>
-        </div>
+          <button class="btn btn-blue" id="regenerateBtn" type="button">
+            Regenerate Points
+          </button>
 
-        <div id="renderStyleRow">
           <label class="select-label">
-            Depth Style
-            <select id="renderStyle">
-              <option value="depthFade">Depth Fade (current)</option>
-              <option value="aerial">Aerial Haze</option>
-              <option value="glow">Glow + Bloom</option>
-              <option value="dof">Depth of Field</option>
-              <option value="edl">Eye-Dome Lighting</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="glowBrightnessRow" class="hidden">
-          <label class="select-label">
-            Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
+            Point Size: <span id="pointSizeLabel">1.00×</span>
             <input
               type="range"
-              id="glowBrightnessSlider"
-              min="0.1"
-              max="3"
+              id="pointSizeSlider"
+              min="0.25"
+              max="4"
               step="0.05"
               value="1"
             />
           </label>
-        </div>
 
-        <label class="checkbox-label">
-          <input type="checkbox" id="showGuides" checked />
-          Show guides
-        </label>
+          <div id="colorModeRow">
+            <label class="select-label">
+              Color Mode
+              <select id="colorMode">
+                <option value="transform">By Transform</option>
+                <option value="height">By Height (terrain)</option>
+                <option value="radius">By Radius (warm→cool)</option>
+                <option value="position">By Position (XYZ→RGB)</option>
+                <option value="uniform">Uniform Cyan</option>
+              </select>
+            </label>
+          </div>
 
-        <div id="symmetrySection">
-          <h3>Symmetry</h3>
+          <div id="colorGammaRow" class="hidden">
+            <label class="select-label">
+              Color Contrast: <span id="colorGammaLabel">1.00</span>
+              <input
+                type="range"
+                id="colorGammaSlider"
+                min="-1"
+                max="1"
+                step="0.01"
+                value="0"
+              />
+            </label>
+          </div>
+
+          <div id="renderStyleRow">
+            <label class="select-label">
+              Depth Style
+              <select id="renderStyle">
+                <option value="depthFade">Depth Fade (current)</option>
+                <option value="aerial">Aerial Haze</option>
+                <option value="glow">Glow + Bloom</option>
+                <option value="dof">Depth of Field</option>
+                <option value="edl">Eye-Dome Lighting</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="glowBrightnessRow" class="hidden">
+            <label class="select-label">
+              Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
+              <input
+                type="range"
+                id="glowBrightnessSlider"
+                min="0.1"
+                max="3"
+                step="0.05"
+                value="1"
+              />
+            </label>
+          </div>
+
+          <label class="checkbox-label">
+            <input type="checkbox" id="showGuides" checked />
+            Show guides
+          </label>
+        </details>
+
+        <details
+          class="panel-section"
+          id="symmetrySection"
+          name="panel-section"
+        >
+          <summary>Symmetry</summary>
           <label class="select-label">
             Order: <span id="symmetryOrderLabel">1-fold</span>
             <input
@@ -317,19 +348,7 @@
             </select>
           </label>
           <p id="symmetryNote" class="flame-note hidden"></p>
-        </div>
-
-        <div id="transformEditSection">
-          <h3>Final Transform</h3>
-          <label class="checkbox-label">
-            <input type="checkbox" id="finalTransformToggle" />
-            Enable lens (warps the whole cloud)
-          </label>
-
-          <h3>Select to Edit</h3>
-          <div class="transform-list" id="transformList"></div>
-          <div id="transformEditor"></div>
-        </div>
+        </details>
       </div>
 
       <div id="flameControls" class="hidden">
@@ -538,8 +557,12 @@
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
 
-      <div id="threeDControls" class="hidden">
-        <h3>3D View</h3>
+      <details
+        class="panel-section hidden"
+        id="threeDControls"
+        name="panel-section"
+      >
+        <summary>3D View</summary>
         <label class="checkbox-label">
           <input type="checkbox" id="autoOrbitToggle" checked />
           Auto-orbit (turntable)
@@ -557,10 +580,14 @@
             />
           </label>
         </div>
-      </div>
+      </details>
 
-      <div id="fourDControls" class="hidden">
-        <h3>4D View</h3>
+      <details
+        class="panel-section hidden"
+        id="fourDControls"
+        name="panel-section"
+      >
+        <summary>4D View</summary>
         <p class="flame-hint">
           W-depth color = side of our 3-space:
           <strong>cool −w · warm +w</strong> · dim gray ≈ w 0 (the legend keys
@@ -624,7 +651,7 @@
           <input type="checkbox" id="fourDDepthFadeToggle" />
           Depth fade (dim far points)
         </label>
-      </div>
+      </details>
     </div>
 
     <div

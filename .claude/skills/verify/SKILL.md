@@ -113,6 +113,18 @@ with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
   producing a positive effect elsewhere on the page (e.g. pinch over
   `#container` must NOT zoom, the same pinch over `#panel` MUST) — otherwise
   a broken gesture pipeline reads as a pass.
+- **Park scrollers mid-range before asserting a swipe scrolls** (fr-zoi):
+  `scrollIntoView({ block: "center" })` on a low element can pin the panel at
+  max `scrollTop`, and a swipe in the only direction tested then reads
+  "didn't scroll" when the truth is "no room". Set `scrollTop` to something
+  like `min(60, max/2)` and exercise both directions.
+- **Blink commits a range input's tap-jump on `pointerdown`** — before
+  `touch-action: pan-y` can classify the gesture — and signals "this touch
+  now pans" with **`pointercancel`** (touch events keep flowing; there is no
+  `touchcancel`), even when the scroller has no room to move.
+  `src/app/slider-scroll-guard.ts` is built on exactly that sequence;
+  page-side event-log listeners (`pointerdown … pointercancel touchmove…`)
+  are how it was established (fr-zoi).
 
 ## Gotchas
 

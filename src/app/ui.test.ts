@@ -2245,8 +2245,12 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     expect(el("presetSection").classList.contains("hidden")).toBe(false);
+    // The list and editor live inside the Transforms accordion section
+    // (fr-zoi), so its visibility is theirs.
     expect(el("transformsSection").classList.contains("hidden")).toBe(false);
-    expect(el("transformEditSection").classList.contains("hidden")).toBe(false);
+    expect(el("transformList").closest("details")?.id).toBe(
+      "transformsSection",
+    );
   });
 
   it("keeps the point-size, regenerate, and guides controls live for a non-flat system", () => {
@@ -2739,6 +2743,55 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     expect(attr("solidResolutionSlider", "step")).toBe(
       String(PARAM.solidResolution.snap),
     );
+  });
+});
+
+// fr-zoi: the panel's categories are an exclusive-open accordion of native
+// <details name="panel-section"> — one shared name, so the browser closes the
+// rest when one opens. These pin the markup contract that behavior rides on;
+// jsdom doesn't enforce the exclusivity itself, real browsers do.
+describe("panel accordion sections (fr-zoi)", () => {
+  const sections = (): HTMLDetailsElement[] =>
+    Array.from(
+      document.querySelectorAll<HTMLDetailsElement>(
+        "#panel details.panel-section",
+      ),
+    );
+
+  it("every section joins the one exclusive name group and has a summary", () => {
+    expect(sections().length).toBeGreaterThanOrEqual(7);
+    for (const section of sections()) {
+      expect(section.getAttribute("name")).toBe("panel-section");
+      expect(section.querySelector("summary")).not.toBeNull();
+    }
+  });
+
+  it("boots with exactly one section open — Presets", () => {
+    const open = sections().filter((section) => section.open);
+    expect(open.map((section) => section.id)).toEqual(["presetSection"]);
+  });
+
+  it("keeps the editor's 4D disclosure out of the accordion group", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    const editorDetails = document.querySelector<HTMLDetailsElement>(
+      "#transformEditor details",
+    );
+    expect(editorDetails).not.toBeNull();
+    // The 4D group nests INSIDE the Transforms section; a details name group
+    // must not contain nested members, so sharing "panel-section" would hand
+    // browsers an invalid group (and the exclusivity would misfire).
+    expect(editorDetails?.getAttribute("name")).toBeNull();
   });
 });
 

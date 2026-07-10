@@ -133,7 +133,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     localStorage key, layered over the same `encodeScene` codec as the
     single-scene autosave (`persist.ts`) and undo history (`history.ts`).
     Pure, injected storage/clock, tested.
-  - `ui.ts` — control panel + transform list, built with `createElement`.
+  - `ui.ts` — control panel + transform list, built with `createElement`. The
+    panel's categories are an exclusive-open accordion of native
+    `<details name="panel-section">` sections (fr-zoi) — the browser owns
+    which one is open; `Ui` only re-anchors the tapped summary after the
+    exclusivity reflow.
   - `control-spec.ts` — declarative spec table for the panel's simple scalar
     controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
     listeners, and label sync from it; `main.ts` derives the one generic
@@ -143,6 +147,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     guide-box scale clamps) kept out of `src/fractal/` on purpose.
   - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
     raycasting for transform drags).
+  - `slider-scroll-guard.ts` — undoes the tap-jump a panel slider commits on
+    `pointerdown` when the touch turns out to be a panel scroll (fr-zoi):
+    Blink jumps the thumb before `touch-action: pan-y` can classify the
+    gesture, then fires `pointercancel` once it claims the pan — the guard
+    snapshots the value pre-jump and restores it on that signal (plus a
+    pure-vertical `pointerup`/`touchend` fallback for engines without the
+    cancel). Delegated on `#panel`, so the dynamic editor sliders are covered
+    (tested).
   - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
   - `regen-scheduler.ts` — the rAF coalescer (fr-acc) in front of
     `regenerate()`: collapses a drag/slider burst into one generation request

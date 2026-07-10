@@ -339,6 +339,10 @@ body {
   transform: translateX(100%);
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
   overflow-y: auto;
+
+  /* Don't chain an overshooting panel scroll to the viewport — on mobile
+     that gesture becomes pull-to-refresh and reloads the app (fr-zoi). */
+  overscroll-behavior: contain;
   z-index: 99;
 }
 
@@ -354,13 +358,29 @@ body {
   letter-spacing: 0.01em;
 }
 
-#panel h3 {
+/* ── Accordion sections (fr-zoi) ──────────────────────────────────────────
+   The panel's categories are native exclusive-open disclosures
+   (<details name="panel-section">): opening one closes the rest, so the
+   panel stays about one phone-screen tall instead of demanding a long —
+   and accident-prone, see the range-input touch-action below — scroll.
+   Browsers without the name attribute degrade to independently collapsible
+   sections. The summaries inherit the look of the h3 headings they replaced;
+   the native marker is the collapsed/expanded affordance, same as the
+   editor's "4D" group (fr-bf6.3). */
+.panel-section > summary {
   margin: 20px 0 9px;
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.panel-section > summary:hover {
+  color: var(--text-dim);
 }
 
 .btn {
@@ -498,6 +518,14 @@ input[type="range"] {
   margin: 10px 0;
   accent-color: var(--accent);
   cursor: pointer;
+
+  /* Sliders span the panel's full width, so most scroll swipes start on one —
+     without this, the thumb grabs the touch and the value changes instead of
+     the panel scrolling (fr-zoi). pan-y hands vertical pans to the scroll
+     container; horizontal drags still slide the thumb. Blink still commits
+     the tap-jump on pointerdown before the pan is recognized — ui.ts's
+     slider-scroll-guard.ts undoes that once the browser claims the gesture. */
+  touch-action: pan-y;
 }
 
 .checkbox-label {
@@ -556,6 +584,10 @@ input[type="range"] {
   max-height: 300px;
   padding-right: 2px;
   overflow-y: auto;
+
+  /* Same trap as #panel: flicking past the list's end shouldn't scroll the
+     panel underneath it (fr-zoi). */
+  overscroll-behavior: contain;
 }
 
 .transform-btn {

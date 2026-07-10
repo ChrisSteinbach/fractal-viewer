@@ -42,6 +42,7 @@ import {
   MAX_GUIDE_SCALE,
 } from "./constants";
 import { videoCaptureSupported } from "./recorder";
+import { installSliderScrollGuard } from "./slider-scroll-guard";
 
 export type { Preset };
 
@@ -728,6 +729,32 @@ export class Ui {
         label: spec.label ? this.byId(spec.label.id) : null,
       });
     }
+
+    // Panel accordion (fr-zoi): the sections are exclusive-open
+    // <details name="panel-section"> groups, so the browser owns which one is
+    // open (plus the keyboard/AT semantics) — no state to keep here. The one
+    // gap: when the section that just auto-closed sat ABOVE the tapped one,
+    // the collapse shifts the tapped summary up — on a phone, clean out of
+    // view — so re-anchor the opened section after that same-frame reflow.
+    for (const section of Array.from(
+      this.panel.querySelectorAll<HTMLDetailsElement>("details.panel-section"),
+    )) {
+      section.addEventListener("toggle", () => {
+        if (!section.open) return;
+        const summary = section.querySelector("summary");
+        // jsdom implements neither requestAnimationFrame (without
+        // pretendToBeVisual) nor scrollIntoView — and this is polish, not
+        // correctness, so skip it quietly where it's unavailable.
+        if (typeof summary?.scrollIntoView !== "function") return;
+        this.doc.defaultView?.requestAnimationFrame?.(() => {
+          summary.scrollIntoView({ block: "nearest" });
+        });
+      });
+    }
+
+    // A vertical scroll swipe that lands on a slider must not edit it — see
+    // slider-scroll-guard.ts for the full story (fr-zoi).
+    installSliderScrollGuard(this.panel);
   }
 
   /** The live input element behind a table-driven control, for the few spots
