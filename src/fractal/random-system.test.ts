@@ -34,7 +34,7 @@ describe("randomSystem", () => {
     }
   });
 
-  it("keeps every transform's position, rotation, scale, and shear within their documented ranges", () => {
+  it("keeps every transform's position, rotation, scale magnitude, and shear within their documented ranges", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = randomSystem(mulberry32(seed));
       for (const t of transforms) {
@@ -47,8 +47,8 @@ describe("randomSystem", () => {
           expect(v).toBeLessThanOrEqual(Math.PI);
         }
         for (const v of t.scale) {
-          expect(v).toBeGreaterThanOrEqual(0.35);
-          expect(v).toBeLessThanOrEqual(0.85);
+          expect(Math.abs(v)).toBeGreaterThanOrEqual(0.35);
+          expect(Math.abs(v)).toBeLessThanOrEqual(0.85);
         }
         expect(t.shear).toBeDefined();
         for (const v of t.shear ?? []) {
@@ -119,13 +119,13 @@ describe("randomSystem", () => {
       const { transforms } = randomSystem(mulberry32(seed));
       const floor = Math.pow(transforms.length, -1 / 1.8);
       for (const t of transforms) {
-        const [sx, sy, sz] = t.scale;
-        // Exact equality identifies the uniform-scale branch: the
-        // anisotropic branch's three independent continuous draws can never
-        // coincide.
+        const [sx, sy, sz] = t.scale.map(Math.abs);
+        // Exact magnitude equality identifies the uniform-scale branch (a
+        // mirror roll — fr-o1y — only flips one sign): the anisotropic
+        // branch's three independent continuous draws can never coincide.
         if (sx !== sy || sy !== sz) continue;
         uniformScaleMapsSeen++;
-        expect(t.scale[0]).toBeGreaterThanOrEqual(floor - 1e-12);
+        expect(sx).toBeGreaterThanOrEqual(floor - 1e-12);
       }
     }
     expect(uniformScaleMapsSeen).toBeGreaterThan(0);
@@ -143,6 +143,28 @@ describe("randomSystem", () => {
       expect(Math.max(w0, w1)).toBeLessThanOrEqual(4 * Math.min(w0, w1));
     }
     expect(twoMapSystemsSeen).toBeGreaterThan(0);
+  });
+
+  it("occasionally mirrors a map — exactly one negated scale axis, never two or three (fr-o1y)", () => {
+    let systemsWithMirror = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      let mirrorSeen = false;
+      for (const t of transforms) {
+        const negatives = t.scale.filter((v) => v < 0).length;
+        // 0 = plain map, 1 = a genuine mirror. 2 would be a redundant
+        // π-rotation and 3 a compound the roll is designed never to produce.
+        expect([0, 1]).toContain(negatives);
+        if (negatives === 1) mirrorSeen = true;
+      }
+      if (mirrorSeen) systemsWithMirror++;
+    }
+    const fraction = systemsWithMirror / FOUR_D_SEED_SAMPLE_SIZE;
+    // Generous band around the per-map 0.1 design rate (REFLECTION_
+    // PROBABILITY; ≈1 - 0.9^n per system at n maps): loose enough to never
+    // flake, tight enough to catch a broken or always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.1);
+    expect(fraction).toBeLessThanOrEqual(0.45);
   });
 });
 
