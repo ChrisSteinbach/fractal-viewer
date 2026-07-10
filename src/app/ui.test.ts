@@ -534,6 +534,42 @@ describe("Ui color legend (fr-dsz)", () => {
     );
   });
 
+  it("shows the ramp palette's own colors in the height legend when rampPaletteId is a gradient, with low/high labels unchanged", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      rampPaletteId: "legacy",
+    });
+    const legacyBackground = legendBar().style.backgroundImage;
+
+    // "ember" (not "spectrum"): its non-integer c coefficients on two
+    // channels (palette.ts) are what give the flame palette legend test
+    // above a genuine endpoint order too — same reason it applies here.
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      rampPaletteId: "ember",
+    });
+
+    expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelHigh().textContent).toBe("high");
+    const background = legendBar().style.backgroundImage;
+    expect(background).not.toBe(legacyBackground);
+
+    // Endpoints derived from the same rampPalette-aware LUT the height mode
+    // now samples (buildColorModeLUT's third argument), in left-to-right
+    // order — the fr-dsz can't-drift bar, extended to fr-3b6's gradient ramps.
+    const lut = buildColorModeLUT("height", 1, "ember");
+    const lowRgb = lutRgb(lut, 0);
+    const highRgb = lutRgb(lut, 255);
+    expect(background).toContain(lowRgb);
+    expect(background).toContain(highRgb);
+    expect(background.indexOf(lowRgb)).toBeLessThan(
+      background.indexOf(highRgb),
+    );
+  });
+
   it("shows the legend again after returning from a flame render", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -2353,6 +2389,123 @@ describe("custom palette editor (fr-55k)", () => {
         .getElementById("flameCustomPaletteRow")
         ?.classList.contains("hidden"),
     ).toBe(true);
+  });
+});
+
+describe("Ui ramp palette (fr-3b6)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  // Mirrors the flame/solid palette select coverage above: the options must
+  // match FLAME_PALETTE_IDS exactly, in order, followed by the Custom
+  // sentinel — the ramp select shares the same registry.
+  it("offers exactly the registered flame palettes plus Custom, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#rampPalette option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
+  });
+
+  // Unlike the flame/solid selects ("By Transform (legacy)" / "By Color Mode
+  // (legacy)"), the ramp select's legacy option names the built-in ramps
+  // directly — there is no separate colorMode-driven look to defer to here.
+  it("labels the legacy option 'Built-in ramp'", () => {
+    const legacyOption = document.querySelector<HTMLOptionElement>(
+      '#rampPalette option[value="legacy"]',
+    );
+    expect(legacyOption?.textContent).toBe("Built-in ramp");
+  });
+
+  it("is hidden while the color mode is transform", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "transform" });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("is shown while the color mode is height", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("is shown while the color mode is radius", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "radius" });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("is hidden while the color mode is position", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "position" });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("is hidden while the color mode is uniform", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "uniform" });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("is hidden while the system is non-flat, even with colorMode height", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      transforms: nonFlatTransforms(),
+    });
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the ramp custom-palette row once rampPaletteId is custom, with stops reflecting state.customPalette", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      rampPaletteId: "custom",
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(false);
+    const values = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#rampCustomPaletteStops input[type='color']",
+      ),
+    ).map((input) => input.value);
+    expect(values).toEqual(["#ff0000", "#00ff00"]);
+  });
+
+  it("keeps the ramp custom-palette row hidden while rampPaletteId is a preset id", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      rampPaletteId: "spectrum",
+    });
+    expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("does not show the flame/solid custom-palette rows just because rampPaletteId is custom", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "height",
+      rampPaletteId: "custom",
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    expect(el("flameCustomPaletteRow").classList.contains("hidden")).toBe(true);
+    expect(el("solidCustomPaletteRow").classList.contains("hidden")).toBe(true);
   });
 });
 

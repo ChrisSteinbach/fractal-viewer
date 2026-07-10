@@ -14,6 +14,7 @@ import {
   transformColors,
 } from "./color";
 import { buildPaletteLUT } from "./palette";
+import type { CustomPalette } from "./palette";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -324,6 +325,53 @@ describe("accumulateVoxels color contrast (fr-8sk)", () => {
 
     expect(contrasty.density).toEqual(linear.density);
     expect(contrasty.avgRGB).not.toEqual(linear.avgRGB);
+  });
+});
+
+describe("accumulateVoxels rampPalette (fr-3b6)", () => {
+  it("colors by a custom ramp palette instead of the built-in height ramp", () => {
+    const blackToWhite: CustomPalette = {
+      stops: [
+        [0, 0, 0],
+        [1, 1, 1],
+      ],
+    };
+
+    const builtIn = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(
+      prepareChaosGame(fixedPointSystem([0, 0, 0])),
+      builtIn,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "height",
+    );
+
+    const palette = createVoxelGrid(4, unitishBounds(1));
+    accumulateVoxels(
+      prepareChaosGame(fixedPointSystem([0, 0, 0])),
+      palette,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "height",
+      undefined,
+      1,
+      blackToWhite,
+    );
+
+    // Same voxel/index math as the built-in-ramp test above (y = 0 in a
+    // [-1, 1] color range: t = 0.5 → LUT index (0.5*255+0.5)|0) — only the
+    // ramp LUT's source palette differs.
+    const lut = buildColorModeLUT("height", 1, blackToWhite);
+    const li = ((0.5 * 255 + 0.5) | 0) * 3;
+    const o = (2 * 16 + 2 * 4 + 2) * 3;
+    expect(palette.avgRGB[o]).toBeCloseTo(lut[li], 6);
+    expect(palette.avgRGB[o + 1]).toBeCloseTo(lut[li + 1], 6);
+    expect(palette.avgRGB[o + 2]).toBeCloseTo(lut[li + 2], 6);
+    // And it must actually differ from the built-in HSL ramp's color at the
+    // same voxel, proving the palette path — not the legacy ramp — ran.
+    expect(Array.from(palette.avgRGB)).not.toEqual(Array.from(builtIn.avgRGB));
   });
 });
 

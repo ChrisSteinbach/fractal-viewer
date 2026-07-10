@@ -2,6 +2,7 @@ import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
   buildColorModeLUT,
   colorModeUsesGamma,
+  colorModeUsesRampPalette,
   fourDColorNeedsAttribute,
   transformColors,
   W_SIDE_PALETTES,
@@ -19,6 +20,7 @@ import {
 import type {
   CustomPalette,
   PaletteSelection,
+  PaletteSpec,
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
@@ -381,10 +383,17 @@ function lutGradient(lut: Float32Array): string {
  * Build the legend's CSS `linear-gradient` for the height/radius color modes
  * by sampling {@link buildColorModeLUT} — the same lookup table the solid
  * render's hot loop uses, so the legend bar can never drift from the actual
- * ramp (or from the current color-contrast setting).
+ * ramp (or from the current color-contrast setting). Since fr-3b6 the
+ * height/radius legend also samples the same rampPalette-aware LUT the
+ * renders use (`rampPalette` defaults to `"legacy"`, the built-in ramp), so a
+ * gradient-driven ramp legend can't drift either.
  */
-function legendGradient(mode: "height" | "radius", colorGamma: number): string {
-  return lutGradient(buildColorModeLUT(mode, colorGamma));
+function legendGradient(
+  mode: "height" | "radius",
+  colorGamma: number,
+  rampPalette: PaletteSpec = "legacy",
+): string {
+  return lutGradient(buildColorModeLUT(mode, colorGamma, rampPalette));
 }
 
 /**
@@ -598,6 +607,7 @@ export class Ui {
 
   private readonly glowBrightnessRow: HTMLElement;
   private readonly colorGammaRow: HTMLElement;
+  private readonly rampPaletteRow: HTMLElement;
   private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
@@ -667,14 +677,15 @@ export class Ui {
     }
   >();
 
-  /** The gradient-stop editor rows shown under the flame/solid palette
-   * `<select>`s once set to Custom (fr-55k): a live gradient strip preview,
-   * one `<input type="color">` per stop, and the add/remove-stop buttons.
-   * Both editors read/write the SAME shared `AppState.customPalette` slot
-   * (see {@link syncCustomPaletteEditors}) — only which row is visible
-   * differs, keyed on that render's own palette select. */
+  /** The gradient-stop editor rows shown under the flame/solid/ramp palette
+   * `<select>`s once set to Custom (fr-55k; the ramp row since fr-3b6): a
+   * live gradient strip preview, one `<input type="color">` per stop, and the
+   * add/remove-stop buttons. All three editors read/write the SAME shared
+   * `AppState.customPalette` slot (see {@link syncCustomPaletteEditors}) —
+   * only which row is visible differs, keyed on that palette select's own
+   * paletteId (flame/solid) or `rampPaletteId` (ramp). */
   private readonly customPaletteEditors: Record<
-    "flame" | "solid",
+    "flame" | "solid" | "ramp",
     {
       row: HTMLElement;
       strip: HTMLElement;
@@ -767,6 +778,7 @@ export class Ui {
     this.replayCaption = this.byId("replayCaption");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.colorGammaRow = this.byId("colorGammaRow");
+    this.rampPaletteRow = this.byId("rampPaletteRow");
     this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
@@ -823,6 +835,13 @@ export class Ui {
         stops: this.byId("solidCustomPaletteStops"),
         add: this.byId("solidCustomPaletteAdd"),
         remove: this.byId("solidCustomPaletteRemove"),
+      },
+      ramp: {
+        row: this.byId("rampCustomPaletteRow"),
+        strip: this.byId("rampCustomPaletteStrip"),
+        stops: this.byId("rampCustomPaletteStops"),
+        add: this.byId("rampCustomPaletteAdd"),
+        remove: this.byId("rampCustomPaletteRemove"),
       },
     };
 
@@ -1022,12 +1041,12 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    // Custom palette gradient editor (fr-55k): the flame and solid rows share
-    // this same wiring, each against its own DOM elements. The recolor
-    // listener is delegated on the `stops` container (rather than bound per
-    // input) so it survives syncCustomPaletteEditors rebuilding the inputs
-    // on an add/remove.
-    for (const kind of ["flame", "solid"] as const) {
+    // Custom palette gradient editor (fr-55k; the ramp row since fr-3b6): the
+    // flame/solid/ramp rows share this same wiring, each against its own DOM
+    // elements. The recolor listener is delegated on the `stops` container
+    // (rather than bound per input) so it survives syncCustomPaletteEditors
+    // rebuilding the inputs on an add/remove.
+    for (const kind of ["flame", "solid", "ramp"] as const) {
       const editor = this.customPaletteEditors[kind];
       editor.stops.addEventListener("input", () => {
         const stops = this.readCustomPaletteStops(editor.stops);
@@ -1168,6 +1187,14 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
+    // The ramp palette only means anything for the color modes that ARE a
+    // 1-D ramp (fr-3b6; height/radius — narrower than the contrast slider's
+    // gating, see color.ts's colorModeUsesRampPalette), and never while
+    // non-flat, where colorMode itself doesn't reach the 4D projection.
+    this.rampPaletteRow.classList.toggle(
+      "hidden",
+      nonFlat || !colorModeUsesRampPalette(state.colorMode),
+    );
     // Contrast only means anything for the coordinate-normalized color modes
     // (and never while non-flat, whose color comes straight from the rotated
     // 4th coordinate in-shader instead of colorMode).
@@ -1282,23 +1309,33 @@ export class Ui {
   }
 
   /**
-   * Sync the flame/solid gradient-stop editors (fr-55k) to
-   * `state.customPalette`, called from {@link updateLabels} right after the
-   * table-driven scalar sync loop. Each editor's row shows only while its
-   * OWN render's palette select is on {@link CUSTOM_PALETTE_ID}; both edit
-   * the same shared slot (see `state.ts`'s `AppState.customPalette`), so
-   * switching which render is "custom" never loses an in-progress edit. The
-   * stop inputs are only rebuilt when their count changes (add/remove, or a
-   * fresh seed) — an ordinary recolor instead updates each input's value in
-   * place, so it never clobbers a color picker mid-drag with a redundant
-   * write.
+   * Sync the flame/solid/ramp gradient-stop editors (fr-55k; the ramp row
+   * since fr-3b6) to `state.customPalette`, called from {@link updateLabels}
+   * right after the table-driven scalar sync loop. Three rows now: the
+   * flame/solid rows show only while their OWN render's palette select is on
+   * {@link CUSTOM_PALETTE_ID}; the ramp row additionally sits INSIDE
+   * `#rampPaletteRow`, so the color-mode/4D gating {@link updateLabels}
+   * applies to that container (via `colorModeUsesRampPalette`) composes on
+   * top of the isCustom gating handled here — both must hold for the ramp
+   * editor to actually show. All three edit the same shared slot (see
+   * `state.ts`'s `AppState.customPalette`), so switching which one is
+   * "custom" never loses an in-progress edit. The stop inputs are only
+   * rebuilt when their count changes (add/remove, or a fresh seed) — an
+   * ordinary recolor instead updates each input's value in place, so it
+   * never clobbers a color picker mid-drag with a redundant write.
    */
   private syncCustomPaletteEditors(state: AppState): void {
-    for (const kind of ["flame", "solid"] as const) {
+    const paletteIdByKind: Record<
+      "flame" | "solid" | "ramp",
+      PaletteSelection
+    > = {
+      flame: state.flame.paletteId,
+      solid: state.solid.paletteId,
+      ramp: state.rampPaletteId,
+    };
+    for (const kind of ["flame", "solid", "ramp"] as const) {
       const editor = this.customPaletteEditors[kind];
-      const paletteId =
-        kind === "flame" ? state.flame.paletteId : state.solid.paletteId;
-      const isCustom = paletteId === CUSTOM_PALETTE_ID;
+      const isCustom = paletteIdByKind[kind] === CUSTOM_PALETTE_ID;
       editor.row.classList.toggle("hidden", !isCustom);
       if (!isCustom) continue;
 
@@ -1504,9 +1541,11 @@ export class Ui {
    * - Otherwise the active Color Mode's key: height/radius get a gradient
    *   bar sampled from {@link buildColorModeLUT} (so it can never drift from
    *   the rendered ramp, or from the current color-contrast setting) with
-   *   low/high or center/edge labels; position gets a short axis-mapping
-   *   note (xyz→rgb is not a single ramp); transform gets one swatch per
-   *   transform; uniform hides the legend (nothing to key).
+   *   low/high or center/edge labels — since fr-3b6 sampling the
+   *   rampPalette-aware LUT, so a gradient-driven ramp shows its own colors
+   *   with the same labels; position gets a short axis-mapping note (xyz→rgb
+   *   is not a single ramp); transform gets one swatch per transform;
+   *   uniform hides the legend (nothing to key).
    *
    * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
    * than recomputing `systemIsNonFlat` here, so the two never risk reading a
@@ -1522,7 +1561,10 @@ export class Ui {
       if (mode === "radius") {
         // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
         // cloud's 4D center. Gamma-neutral: the 4D shader never applies
-        // colorGamma, so the legend must not pretend it does.
+        // colorGamma, so the legend must not pretend it does. The 4D radius
+        // ramp deliberately does NOT follow rampPaletteId (fr-6ue tracks
+        // whether it should) — it stays the fixed built-in ramp, exactly like
+        // the render workers' own 4D radius LUT.
         this.showLegendBar(legendGradient("radius", 1), "center", "", "edge");
         return;
       }
@@ -1567,7 +1609,11 @@ export class Ui {
     }
     if (mode === "height" || mode === "radius") {
       this.showLegendBar(
-        legendGradient(mode, state.colorGamma),
+        legendGradient(
+          mode,
+          state.colorGamma,
+          resolvePalette(state.rampPaletteId, state.customPalette),
+        ),
         mode === "height" ? "low" : "center",
         "",
         mode === "height" ? "high" : "edge",

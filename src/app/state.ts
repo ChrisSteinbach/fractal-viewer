@@ -215,6 +215,20 @@ export interface AppState {
    * `glowBrightness` — not session-only.
    */
   colorGamma: number;
+  /**
+   * Which gradient palette the height/radius color-mode ramps sample
+   * (fr-3b6) — everywhere the ONE ramp definition flows: the explorer's
+   * point colors (`buildColors`), the solid render's `"legacy"`-palette
+   * colorMode path (`accumulateVoxels`), and the panel legend, all via
+   * `color.ts`'s `buildColorModeLUT`. `"legacy"` keeps the built-in ramps;
+   * `"custom"` selects the user-authored gradient in
+   * {@link AppState.customPalette}, exactly like the flame/solid
+   * `paletteId`s. Inert for the other color modes (transform/position/
+   * uniform have no 1-D ramp) and for the 4D projection (whose own radius
+   * mode deliberately stays on the fixed built-in ramp). Persists like
+   * `colorMode` / `colorGamma`.
+   */
+  rampPaletteId: PaletteSelection;
   renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
@@ -464,6 +478,17 @@ export const MAX_SOLID_AMBIENT = 0.8;
  * exactly as it did before palettes existed.
  */
 export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "spectrum";
+/**
+ * Default ramp palette for the explorer's height/radius color modes (fr-3b6)
+ * — `"legacy"`, the built-in blue→green→red / warm→cool ramps. Deliberately
+ * NOT a gradient, unlike {@link DEFAULT_FLAME_PALETTE} /
+ * {@link DEFAULT_SOLID_PALETTE} (which fr-9mw moved to `"spectrum"` for
+ * fresh sessions): the built-in coordinate ramps are a designed default look
+ * in their own right, so the gradient override stays opt-in, and fresh
+ * sessions and pre-fr-3b6 links render identically (here the fresh-session
+ * default and `persist.ts`'s decode fallback coincide).
+ */
+export const DEFAULT_RAMP_PALETTE: FlamePaletteId = "legacy";
 /** 1 = off: today's unreplicated system, unchanged until symmetry is turned on. */
 export const DEFAULT_SYMMETRY_ORDER = 1;
 export const MIN_SYMMETRY_ORDER = 1;
@@ -717,6 +742,7 @@ export function initialState(panelOpen: boolean): AppState {
     showGuides: true,
     colorMode: "transform",
     colorGamma: DEFAULT_COLOR_GAMMA,
+    rampPaletteId: DEFAULT_RAMP_PALETTE,
     fourDColor: DEFAULT_FOUR_D_COLOR,
     fourDDepthFade: false,
     renderStyle: "depthFade",
@@ -860,6 +886,32 @@ export function setFourDDepthFade(
  */
 export function setColorGamma(state: AppState, colorGamma: number): AppState {
   return { ...state, colorGamma: clampToSpec(PARAM.colorGamma, colorGamma) };
+}
+
+/**
+ * Set the height/radius ramps' gradient palette (fr-3b6). Not clamped — it
+ * is an enum (see `palette.ts`), and the UI only offers valid ids
+ * (persistence validates untrusted input in `decodeScene`). Recolors the
+ * live cloud over the cached run — never a regenerate (see `main.ts`).
+ *
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} — `customPalette` not yet set
+ * — seeds it from the palette being REPLACED (the previous `rampPaletteId`),
+ * via `palette.ts`'s {@link seedCustomStops}, exactly like
+ * {@link setFlamePaletteId} / {@link setSolidPaletteId}. Picking a preset
+ * id, or re-picking Custom when a payload already exists, leaves
+ * `customPalette` untouched.
+ */
+export function setRampPaletteId(
+  state: AppState,
+  paletteId: PaletteSelection,
+): AppState {
+  return {
+    ...state,
+    rampPaletteId: paletteId,
+    ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
+      ? { customPalette: { stops: seedCustomStops(state.rampPaletteId) } }
+      : {}),
+  };
 }
 
 export function setRenderStyle(

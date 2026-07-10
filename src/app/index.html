@@ -288,6 +288,51 @@
             </label>
           </div>
 
+          <div id="rampPaletteRow" class="hidden">
+            <label class="select-label">
+              Ramp Palette
+              <select id="rampPalette">
+                <option value="legacy">Built-in ramp</option>
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div id="rampCustomPaletteRow" class="custom-palette-row hidden">
+              <div
+                id="rampCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="rampCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="rampCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last color stop"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="rampCustomPaletteAdd"
+                  type="button"
+                  title="Add a color stop"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div id="colorGammaRow" class="hidden">
             <label class="select-label">
               Color Contrast: <span id="colorGammaLabel">1.00</span>

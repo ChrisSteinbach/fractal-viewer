@@ -22,6 +22,7 @@ function params(overrides: Partial<CloudParams> = {}): CloudParams {
     fourD: false,
     colorMode: "transform",
     colorGamma: 1,
+    rampPalette: "legacy",
     replaced: false,
     fit: false,
     ...overrides,
