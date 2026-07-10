@@ -24,6 +24,7 @@ import {
 } from "./flame-gpu";
 import { createFlameHistogram } from "./flame";
 import { mulberry32 } from "./rng";
+import { VARIATION_TYPES } from "./types";
 import type { Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
 
@@ -786,5 +787,57 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
   it("declares the PLOT override and the accumulate entry point", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("override PLOT: bool = true;");
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn accumulate(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fr-jnu: the 4D twin of flame-gpu.test.ts's "FLAME_GPU_KERNEL_WGSL
+// variation switch" block. The exact case numbering (linear: 0, sinusoidal:
+// 1, ...) is pinned ONCE, in that file — this file doesn't repeat the
+// literal because the 4D kernel is hand-written against the SAME
+// KERNEL_VARIATION_INDEX table, imported from flame-gpu.ts rather than kept
+// as a 4D-local copy (fr-e26; see this module's own doc comment). What these
+// tests check is that the 4D kernel's switch actually matches that shared
+// table — the same silent-`linear`-fallback failure mode as the 3D kernel
+// if it doesn't.
+// ---------------------------------------------------------------------------
+
+describe("FLAME_GPU_KERNEL_4D_WGSL variation switch", () => {
+  /** Slices out just the `applyVariation` function body from a kernel
+   * source. Duplicated from flame-gpu.test.ts rather than shared — this
+   * repo's tests are deliberately DAMP. The 4D kernel has OTHER switches
+   * later in its source (a color-mode dispatch with its own `case 0u: { //
+   * structural:` etc.) that would poison a whole-source case scan, so this
+   * narrows to the one function between `fn applyVariation` and the next
+   * top-level `fn `. */
+  function applyVariationBody(wgsl: string): string {
+    const start = wgsl.indexOf("fn applyVariation");
+    const end = wgsl.indexOf("\nfn ", start);
+    return wgsl.slice(start, end === -1 ? wgsl.length : end);
+  }
+
+  it("has a case for every variation type at its index, labeled with that variation's name", () => {
+    const body = applyVariationBody(FLAME_GPU_KERNEL_4D_WGSL);
+    // The 4D kernel's case comments carry extra suffixes after the name
+    // (e.g. "// spherical — full 4D radius."), unlike the 3D kernel's bare
+    // "// spherical" — the \b boundary matches the name either way.
+    for (const name of VARIATION_TYPES) {
+      expect(body).toMatch(
+        new RegExp(`case ${KERNEL_VARIATION_INDEX[name]}u: \\{ // ${name}\\b`),
+      );
+    }
+  });
+
+  it("switches on exactly the KERNEL_VARIATION_INDEX values — no missing or extra cases", () => {
+    const body = applyVariationBody(FLAME_GPU_KERNEL_4D_WGSL);
+    const cases = [...body.matchAll(/case (\d+)u:/g)]
+      .map((m) => Number(m[1]))
+      .sort((a, b) => a - b);
+    const expected = Object.values(KERNEL_VARIATION_INDEX).sort(
+      (a, b) => a - b,
+    );
+    // Same silent failure as the 3D kernel: a case missing from the switch
+    // falls into WGSL's `default` and renders as `linear`.
+    expect(cases).toEqual(expected);
   });
 });

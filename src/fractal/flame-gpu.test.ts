@@ -2,6 +2,7 @@ import {
   CHAIN_STRIDE_BYTES,
   COLOR_FIXED_POINT_SCALE,
   DOWNSAMPLE_PARAMS_BYTES,
+  FLAME_GPU_KERNEL_WGSL,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
   MAX_SLOT_VARIATIONS,
@@ -23,6 +24,7 @@ import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
+import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform } from "./types";
 
 function makeTransforms(count: number): Transform[] {
@@ -873,5 +875,80 @@ describe("convertGpuDisplayHistogram", () => {
     expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(
       RangeError,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fr-jnu: static tripwire tests for the variation switch's STRUCTURE. WGSL
+// cannot execute under Vitest, so these tests can't check the variation
+// FORMULAS — that's pinned by the browser agreement harness
+// (src/app/gpu-bench/) against flame.ts's accumulateFlame. What CAN run here
+// is a plain string/regex scan of FLAME_GPU_KERNEL_WGSL's applyVariation
+// switch, pinned against KERNEL_VARIATION_INDEX: today, adding a
+// VariationType without extending the WGSL switch, or renumbering
+// KERNEL_VARIATION_INDEX against the WGSL cases, renders silently as
+// `linear` (the switch's `default`) with a green CI.
+// ---------------------------------------------------------------------------
+
+describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
+  /** Slices out just the `applyVariation` function body from a kernel
+   * source. The 4D kernel (flame-gpu-4d.ts) has OTHER switches later in its
+   * source — a color-mode dispatch with its own `case 0u: { // structural:`
+   * etc. — that would poison a whole-source case scan, so this narrows to
+   * the one function between `fn applyVariation` and the next top-level
+   * `fn `. */
+  function applyVariationBody(wgsl: string): string {
+    const start = wgsl.indexOf("fn applyVariation");
+    const end = wgsl.indexOf("\nfn ", start);
+    return wgsl.slice(start, end === -1 ? wgsl.length : end);
+  }
+
+  it("pins KERNEL_VARIATION_INDEX to the exact case numbering both WGSL kernels are written against", () => {
+    // The tripwire itself: renumbering this table without re-verifying BOTH
+    // kernels' switches must be a loud, deliberate edit here, not a silent
+    // one-line change.
+    expect(KERNEL_VARIATION_INDEX).toEqual({
+      linear: 0,
+      sinusoidal: 1,
+      spherical: 2,
+      swirl: 3,
+      horseshoe: 4,
+      polar: 5,
+      handkerchief: 6,
+      heart: 7,
+      disc: 8,
+      spiral: 9,
+      bubble: 10,
+      julia: 11,
+    });
+  });
+
+  it("carries one variation lane per VariationType", () => {
+    expect(MAX_SLOT_VARIATIONS).toBe(VARIATION_TYPES.length);
+  });
+
+  it("has a case for every variation type at its index, labeled with that variation's name", () => {
+    const body = applyVariationBody(FLAME_GPU_KERNEL_WGSL);
+    // The `// name` label rides each case's body, so a KERNEL_VARIATION_INDEX
+    // entry renumbered to point at ANOTHER variation's case fails here even
+    // though the case-number SET (checked next) still matches.
+    for (const name of VARIATION_TYPES) {
+      expect(body).toMatch(
+        new RegExp(`case ${KERNEL_VARIATION_INDEX[name]}u: \\{ // ${name}\\b`),
+      );
+    }
+  });
+
+  it("switches on exactly the KERNEL_VARIATION_INDEX values — no missing or extra cases", () => {
+    const body = applyVariationBody(FLAME_GPU_KERNEL_WGSL);
+    const cases = [...body.matchAll(/case (\d+)u:/g)]
+      .map((m) => Number(m[1]))
+      .sort((a, b) => a - b);
+    const expected = Object.values(KERNEL_VARIATION_INDEX).sort(
+      (a, b) => a - b,
+    );
+    // A case missing from the switch falls into WGSL's `default` and
+    // renders as `linear` — the exact silent failure this guards against.
+    expect(cases).toEqual(expected);
   });
 });
