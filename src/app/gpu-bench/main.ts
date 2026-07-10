@@ -134,7 +134,11 @@ interface ComparisonMetrics {
   /** `maxHits` of the ACCUMULATION (not display) histograms. */
   maxHitsCpu: number;
   maxHitsGpu: number;
-  /** `maeRGB < AGREEMENT_MAE_THRESHOLD && every |biasRGB| <
+  /** The MAE bar `pass` was judged against — `AGREEMENT_MAE_THRESHOLD`
+   * unless the scenario overrides it (see `ScenarioDef3D.maeThreshold`);
+   * recorded so results.json shows the ruler, not just the verdict. */
+  maeThreshold: number;
+  /** `maeRGB < maeThreshold && every |biasRGB| <
    * AGREEMENT_BIAS_THRESHOLD` — the agreement CHECK, not just a report; see
    * `computeAgreement` for how this rolls up into the top-level verdict. */
   pass: boolean;
@@ -236,6 +240,18 @@ interface ScenarioDef3D {
   paletteId: FlamePaletteId;
   cameraPos: [number, number, number];
   lookAt: [number, number, number];
+  /**
+   * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
+   * between two INDEPENDENT samplings of the same attractor never reaches 0
+   * — it has a Monte-Carlo noise floor that is a property of the SCENARIO
+   * (how much of the frame is sparse, few-hits-per-bucket haze, where one
+   * hit of shot noise is a large tone-mapped delta), not of the kernels.
+   * The compact-filament presets floor around ~0.3 (fr-53k), which is what
+   * the default threshold's 1.0 was calibrated against; a diffuse scenario
+   * with a higher measured floor documents it and overrides here rather
+   * than loosening the bar for everyone.
+   */
+  maeThreshold?: number;
 }
 
 /**
@@ -253,6 +269,7 @@ interface ScenarioDef4D {
   kind: "4d";
   name: string;
   system: () => Transform[];
+  finalTransform: Transform | null;
   rotation: Rotation4;
   paletteId: FlamePaletteId;
   colorMode: FourDColorMode;
@@ -260,6 +277,9 @@ interface ScenarioDef4D {
   sliceCenter: number;
   sliceWidth: number;
   sliceRelativeColor: boolean;
+  /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
+   * floor override, one dimension up. */
+  maeThreshold?: number;
 }
 
 type ScenarioDef = ScenarioDef3D | ScenarioDef4D;
@@ -275,6 +295,91 @@ const SIERPINSKI_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
  * all actually depend on the 4D machinery rather than degenerating to a
  * w-dropped 3D render. */
 const BENCH_TUMBLE: Rotation4 = { xy: 0.35, xw: 0.65, yw: 0.4, zw: 0.55 };
+
+/**
+ * fr-jnu: the "variation zoo" — three contractive maps that between them
+ * enable all 12 VariationTypes exactly once (4 lanes each), so one scenario
+ * pins every hand-written WGSL variation formula against the CPU oracle's
+ * variations.ts. Grouping is deliberate: the origin-divergent warps
+ * (spherical, spiral) sit on one map, blended with bounded ones, so the
+ * occasional origin-adjacent point escapes and reseeds (identically on both
+ * sides) instead of the whole system blowing up. Non-1 weights exercise the
+ * weighted binary-search pick (the 3D kernel's was previously unpinned).
+ */
+function variationZoo(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.15, 0.2],
+      rotation: [0.3, 0.2, 0.4],
+      scale: [0.55, 0.55, 0.55],
+      weight: 2,
+      variations: [
+        { type: "linear", weight: 0.35 },
+        { type: "sinusoidal", weight: 0.55 },
+        { type: "swirl", weight: 0.4 },
+        { type: "bubble", weight: 0.6 },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.35, 0.3, -0.15],
+      rotation: [0.1, 0.5, 1.1],
+      scale: [0.5, 0.5, 0.5],
+      weight: 1,
+      variations: [
+        { type: "polar", weight: 0.6 },
+        { type: "handkerchief", weight: 0.35 },
+        { type: "heart", weight: 0.35 },
+        { type: "disc", weight: 0.55 },
+      ],
+    },
+    {
+      id: 2,
+      position: [0.1, -0.4, 0.3],
+      rotation: [0.7, 0.15, 0.25],
+      scale: [0.5, 0.5, 0.5],
+      weight: 1.5,
+      variations: [
+        { type: "spherical", weight: 0.45 },
+        { type: "horseshoe", weight: 0.4 },
+        { type: "spiral", weight: 0.3 },
+        { type: "julia", weight: 0.5 },
+      ],
+    },
+  ];
+}
+
+/**
+ * fr-jnu: a gentle final-transform lens (small rotation, mild sinusoidal
+ * fold) for the zoo scenarios — pins the kernels' hasFinal slot path
+ * (applySlot on the lens slot, adopt-only-if-finite), which no other
+ * scenario exercises in either dimension.
+ */
+function variationZooLens(): Transform {
+  return {
+    id: 99,
+    position: [0.05, -0.05, 0.1],
+    rotation: [0.15, 0.35, 0.1],
+    scale: [0.85, 0.85, 0.85],
+    variations: [
+      { type: "linear", weight: 0.75 },
+      { type: "sinusoidal", weight: 0.3 },
+    ],
+  };
+}
+
+/** fr-jnu: the zoo lifted to 4D — the same three maps with w-mixing blocks
+ * (a w rotation, a w offset + rotation, an independent w scale), so the 4D
+ * kernel's variations4 lanes run over genuinely 4D orbits. */
+function variationZoo4(): Transform[] {
+  const [t0, t1, t2] = variationZoo();
+  return [
+    { ...t0, w: { rotation: { xw: 0.45 } } },
+    { ...t1, w: { position: 0.3, rotation: { yw: 0.3 } } },
+    { ...t2, w: { scale: 0.6 } },
+  ];
+}
 
 const SCENARIOS: ScenarioDef[] = [
   {
@@ -318,14 +423,48 @@ const SCENARIOS: ScenarioDef[] = [
     paletteId: "aurora",
     ...SIERPINSKI_CAMERA,
   },
-  // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds,
-  // both slice states, and both pick paths (hyperfern and doubleRotation
-  // both carry non-1 weights, exercising the weighted binary search; the
-  // 3D scenarios above already pin the uniform pick).
+  {
+    kind: "3d",
+    name: "variation-zoo",
+    transforms: variationZoo(),
+    finalTransform: variationZooLens(),
+    symmetry: { order: 1, axis: "y" },
+    paletteId: "legacy",
+    // Frames the zoo's dense mass (probed at 400k points: x ∈ [0.06, 1.73],
+    // y ∈ [-1.27, 1.27], z ∈ [-1.03, 1.10] at the 1%-99% percentiles, ~0.05%
+    // escape-tail outliers beyond 2x that box).
+    cameraPos: [3.4, 1.6, 3.3],
+    lookAt: [0.9, 0, 0.05],
+    // Measured equal-N noise floor (fr-jnu control experiment): the CPU
+    // oracle against ITSELF at two seeds (0xc0ffee vs 0xbadcafe, 50.3M
+    // iterations each, this exact camera/tonemap pipeline) gives maeRGB
+    // 2.379 — the 12-warp blend renders as diffuse few-hits-per-bucket haze
+    // over ~26% of the accumulation buckets, and single-hit shot noise
+    // through the log-density tonemap dominates the mean. The measured
+    // CPU-vs-GPU MAE was 2.391 (SwiftShader), i.e. the kernel adds ~0.01
+    // over the floor. 4.0 = floor + ~1.6 detection margin: hundreds of
+    // standard errors above run-to-run floor fluctuation, while a real
+    // formula divergence (even one mislabeled case body at weight 0.35)
+    // restructures whole filaments and measures in the tens.
+    maeThreshold: 4,
+    // Uniquely pins (fr-jnu): all 12 VariationTypes in the 3D WGSL kernel
+    // (see variationZoo's doc), the 3D kernel's WEIGHTED transform pick
+    // (sierpinski/fern/swirl/kaleido above are all uniform-weight systems),
+    // and the 3D final-transform lens slot — none of which any other 3D
+    // scenario here exercises.
+  },
+  // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds and
+  // both slice states; hyperfern/doubleRotation both carry non-1 weights,
+  // exercising the 4D kernel's weighted binary-search pick (mirroring the 3D
+  // zoo's weighted-pick coverage above). fr-jnu's variation-zoo-4d below
+  // closes the remaining gap: every variations4 formula over a genuinely 4D
+  // orbit, plus the 4D kernel's final-transform lens slot — neither
+  // exercised by hyperfern/doubleRotation.
   {
     kind: "4d",
     name: "hyperfern-structural",
     system: hyperfern,
+    finalTransform: null,
     rotation: BENCH_TUMBLE,
     paletteId: "ember", // non-legacy => structural LUT coloring.
     colorMode: "wBlueOrange", // ignored under a non-legacy palette.
@@ -338,6 +477,7 @@ const SCENARIOS: ScenarioDef[] = [
     kind: "4d",
     name: "doublerot-wramp-slice",
     system: doubleRotation,
+    finalTransform: null,
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "wBlueOrange", // wRamp, computed in-shader on the GPU side.
@@ -355,6 +495,7 @@ const SCENARIOS: ScenarioDef[] = [
     kind: "4d",
     name: "hyperfern-transform",
     system: hyperfern,
+    finalTransform: null,
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "transform",
@@ -367,6 +508,7 @@ const SCENARIOS: ScenarioDef[] = [
     kind: "4d",
     name: "doublerot-radius",
     system: doubleRotation,
+    finalTransform: null,
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "radius",
@@ -374,6 +516,23 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
+  },
+  {
+    kind: "4d",
+    name: "variation-zoo-4d",
+    system: variationZoo4,
+    finalTransform: variationZooLens(),
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // Uniquely pins (fr-jnu): every variations4 formula in the 4D WGSL
+    // kernel, run over genuinely 4D orbits via variationZoo4's w-mixing
+    // blocks (see its doc), and the 4D kernel's final-transform lens slot —
+    // neither exercised by the four 4D scenarios above.
   },
 ];
 
@@ -425,7 +584,10 @@ const EQUAL_N_ITERATIONS = EQUAL_N_CALL_ITERATIONS * EQUAL_N_CALLS; // 50,331,64
 /** Agreement thresholds (fr-npb): below these, CPU/GPU output is accepted as
  * the same statistical render (Monte-Carlo shot noise, not divergence) — see
  * `docs/spike-fr-53k-gpu-flame-accum.md`'s measured figures, which sit
- * comfortably under both. */
+ * comfortably under both. The MAE threshold is the DEFAULT bar, calibrated
+ * on the compact-filament presets' ~0.3 noise floor; a scenario whose
+ * equal-N floor is intrinsically higher overrides it per scenario
+ * (`ScenarioDef3D.maeThreshold`) with its own measured floor documented. */
 const AGREEMENT_MAE_THRESHOLD = 1.0;
 const AGREEMENT_BIAS_THRESHOLD = 0.3;
 
@@ -620,21 +782,30 @@ const EXPLORER_CLOUD_POINTS = 100_000;
  *
  * The frozen view is derived exactly the way `main.ts`'s
  * `fourDRenderSnapshot` derives the app's: run the explorer's own cloud
- * (`runChaosGame4`), then take its bounds' half-extents into
- * `wSupport(rotor, halfExtents)` for `invWAmp` (same 1e-6 degenerate
- * floor), its center as the rotor pivot, and its min/max 4D distance from
- * center as the "radius" color mode's normalization range. The camera isn't
- * authored per scenario like the 3D defs': it looks at the cloud's own
- * xyz-center from a fixed offset direction at `3 * radius` — far enough to
- * frame any of these systems at any tumble angle under the shared 50° FOV.
+ * (`runChaosGame4`, through `def.finalTransform` when the scenario has one —
+ * see `toTransform4`'s `null`-preserving lift below), then take its bounds'
+ * half-extents into `wSupport(rotor, halfExtents)` for `invWAmp` (same 1e-6
+ * degenerate floor), its center as the rotor pivot, and its min/max 4D
+ * distance from center as the "radius" color mode's normalization range. The
+ * camera isn't authored per scenario like the 3D defs': it looks at the
+ * cloud's own xyz-center from a fixed offset direction at `3 * radius` — far
+ * enough to frame any of these systems at any tumble angle under the shared
+ * 50° FOV.
  */
 function prepare4D(def: ScenarioDef4D): ScenarioEngines {
   const transforms4 = def.system().map(toTransform4);
-  const prepared4: PreparedChaosGame4 = prepareChaosGame4(transforms4, null);
+  const final4 =
+    def.finalTransform === null ? null : toTransform4(def.finalTransform);
+  const prepared4: PreparedChaosGame4 = prepareChaosGame4(transforms4, final4);
+  // Lensed cloud: the view (bounds/center/radius statistics below) derives
+  // from the explorer cloud exactly the way the app's own explorer cloud
+  // does — through the final-transform lens when the scenario has one, not
+  // the pre-lens orbit.
   const cloud = runChaosGame4(
     transforms4,
     EXPLORER_CLOUD_POINTS,
     mulberry32(SEED),
+    final4,
   );
   const rotor = rotationMatrix4(def.rotation);
   const b = cloud.bounds;
@@ -711,7 +882,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     createBackend: () =>
       createGpuFlameBackend4({
         transforms4,
-        finalTransform4: null,
+        finalTransform4: final4,
         projection,
         view,
         color,
@@ -1011,14 +1182,18 @@ function buildDiffImage(
 }
 
 /** Whether this scenario's raw diff metrics clear the agreement thresholds —
- * the one place `AGREEMENT_MAE_THRESHOLD`/`AGREEMENT_BIAS_THRESHOLD` are
- * actually applied. */
+ * the one place `maeThreshold`/`AGREEMENT_BIAS_THRESHOLD` are actually
+ * applied. `maeThreshold` is the scenario's own bar (its `maeThreshold`
+ * override, or `AGREEMENT_MAE_THRESHOLD`); bias has no scenario-dependent
+ * noise floor (shot noise cancels in a SIGNED mean), so its threshold stays
+ * global. */
 function passesAgreement(
   maeRGB: number,
   biasRGB: [number, number, number],
+  maeThreshold: number,
 ): boolean {
   return (
-    maeRGB < AGREEMENT_MAE_THRESHOLD &&
+    maeRGB < maeThreshold &&
     biasRGB.every((b) => Math.abs(b) < AGREEMENT_BIAS_THRESHOLD)
   );
 }
@@ -1345,13 +1520,15 @@ async function runScenario(
         DISPLAY_HEIGHT,
       );
       drawImage(dom.diffCanvas, diff.diffImage);
+      const maeThreshold = def.maeThreshold ?? AGREEMENT_MAE_THRESHOLD;
       comparison = {
         maeRGB: diff.maeRGB,
         biasRGB: diff.biasRGB,
         maxAbs: diff.maxAbs,
         maxHitsCpu: cpuHist.maxHits,
         maxHitsGpu: gpuEqualN.histogram.maxHits,
-        pass: passesAgreement(diff.maeRGB, diff.biasRGB),
+        maeThreshold,
+        pass: passesAgreement(diff.maeRGB, diff.biasRGB, maeThreshold),
       };
       displayDownsample = gpuEqualN.gpuDisplayDownsample
         ? compareDisplayDownsample(gpuEqualN.gpuDisplayDownsample, gpuDisplay)
