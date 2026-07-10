@@ -194,8 +194,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     threshold/light/ambient uniforms `scene.ts` pushes with no worker round-trip).
   - `render-session.ts` — the `enter` / `exit` / `terminate` + first-frame-gate
     choreography shared by the flame and solid render controllers
-    (`RenderSession`); the two render modes are session-only `flameActive` /
-    `solidActive` state, never persisted.
+    (`RenderSession`); which renderer is showing is the session-only
+    `renderMode` (`"points" | "flame" | "solid"`, fr-39y) in `AppState`,
+    switched by the panel's segmented control and never persisted. A preset
+    can hint the mode it showcases (`PRESET_RENDER_HINTS` in `presets.ts`).
   - `four-d-view.ts` — the session-only 4D view state (the `RotorPair`,
     auto-tumble, soft w-slice); `main.ts` freezes it into a render's `fourD`
     snapshot when the system is 4D.

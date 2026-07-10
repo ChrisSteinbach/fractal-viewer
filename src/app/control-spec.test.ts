@@ -432,7 +432,7 @@ describe("effects", () => {
 
     it("solidResolutionSlider effect restarts the solid render when active and the resolution actually changed", () => {
       const spec = specById("solidResolutionSlider");
-      const previous = { ...initialState(true), solidActive: true };
+      const previous = { ...initialState(true), renderMode: "solid" as const };
       const state = applyScalarControl(previous, spec, "224");
       const fx = mockEffects();
 
@@ -443,7 +443,7 @@ describe("effects", () => {
 
     it("solidResolutionSlider effect does not restart when active but the resolution is unchanged", () => {
       const spec = specById("solidResolutionSlider");
-      const previous = { ...initialState(true), solidActive: true };
+      const previous = { ...initialState(true), renderMode: "solid" as const };
       const state = applyScalarControl(
         previous,
         spec,

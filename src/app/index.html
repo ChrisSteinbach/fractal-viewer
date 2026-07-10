@@ -79,6 +79,42 @@
       </button>
       <h2 id="panelTitle">3D IFS Fractal</h2>
 
+      <h3>Render Mode</h3>
+      <div
+        id="renderModeSwitch"
+        class="segmented"
+        role="group"
+        aria-label="Render mode"
+      >
+        <button
+          class="segment"
+          id="modePointsBtn"
+          type="button"
+          aria-pressed="true"
+          title="The live, interactive point cloud"
+        >
+          ∴ Points
+        </button>
+        <button
+          class="segment"
+          id="modeFlameBtn"
+          type="button"
+          aria-pressed="false"
+          title="Fractal-flame exposure of the current view"
+        >
+          ✺ Flame
+        </button>
+        <button
+          class="segment"
+          id="modeSolidBtn"
+          type="button"
+          aria-pressed="false"
+          title="Lit, shadowed solid built from the density"
+        >
+          ◆ Solid
+        </button>
+      </div>
+
       <h3>Export</h3>
       <button class="btn btn-ghost" id="savePngBtn" type="button">
         ⤓ Save PNG
@@ -140,8 +176,10 @@
             <option value="chiral">Chiral Lace</option>
             <option value="barnsley">Barnsley Fern</option>
             <option value="curling">Curling Fern</option>
-            <option value="radiolarian">Radiolarian (flame)</option>
-            <option value="swirl">Swirl (flame)</option>
+            <optgroup label="Flame">
+              <option value="radiolarian">Radiolarian</option>
+              <option value="swirl">Swirl</option>
+            </optgroup>
             <optgroup label="4D">
               <option value="pentatope">Pentatope Gasket</option>
               <option value="sixteenCell">16-Cell Flake</option>
@@ -294,18 +332,12 @@
         </div>
       </div>
 
-      <div id="flameEntry">
-        <h3>Flame Render</h3>
-        <button class="btn btn-blue" id="renderBtn" type="button">
-          ✺ Render Current View
-        </button>
-      </div>
       <div id="flameControls" class="hidden">
         <p class="flame-hint">
           The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D
           image that converges through the frozen camera. For crisp lit
-          surfaces, use Solid Render instead. The live view is paused until you
-          go back.
+          surfaces, switch to Solid. The live view is paused while Flame is
+          active — switch back to Points to keep exploring.
         </p>
         <label class="select-label">
           Exposure: <span id="flameExposureLabel">1.00×</span>
@@ -413,17 +445,8 @@
         <p id="flameSupersampleNote" class="flame-note hidden"></p>
         <p id="flameBackendNote" class="flame-note hidden"></p>
         <div id="flameProgress" class="flame-progress">0%</div>
-        <button class="btn btn-ghost" id="exitRenderBtn" type="button">
-          ← Back to Explorer
-        </button>
       </div>
 
-      <div id="solidEntry">
-        <h3>Solid Render</h3>
-        <button class="btn btn-blue" id="solidBtn" type="button">
-          ◆ Render Solid View
-        </button>
-      </div>
       <div id="solidControls" class="hidden">
         <p class="flame-hint">
           Builds a lit, shadowed solid from the attractor&#8217;s density,
@@ -513,9 +536,6 @@
         </label>
         <p id="solidResolutionNote" class="flame-note hidden"></p>
         <div id="solidProgress" class="flame-progress">0%</div>
-        <button class="btn btn-ghost" id="exitSolidBtn" type="button">
-          ← Back to Explorer
-        </button>
       </div>
 
       <div id="threeDControls" class="hidden">

@@ -44,10 +44,7 @@ function noopHandlers(): UiHandlers {
     onFinalTransformGeometry: vi.fn(),
     onTogglePanel: vi.fn(),
     onClosePanel: vi.fn(),
-    onEnterFlameRender: vi.fn(),
-    onExitFlameRender: vi.fn(),
-    onEnterSolidRender: vi.fn(),
-    onExitSolidRender: vi.fn(),
+    onRenderMode: vi.fn(),
     onAutoOrbitToggle: vi.fn(),
     onAutoOrbitSpeedInput: vi.fn(),
     onFourDSliceToggle: vi.fn(),
@@ -481,7 +478,7 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      flameActive: true,
+      renderMode: "flame" as const,
       flame: { ...initialState(true).flame, paletteId: "legacy" },
     });
     // Legacy flame color is per-producing-transform along the orbit — not a
@@ -496,7 +493,7 @@ describe("Ui color legend (fr-dsz)", () => {
       // uniform would hide the colorMode legend — proving the palette strip
       // doesn't come from colorMode at all.
       colorMode: "uniform",
-      flameActive: true,
+      renderMode: "flame" as const,
       // Not "spectrum": its c coefficients (palette.ts) are all integers, so
       // the cosine ramp is exactly periodic and t=0/t=1 land on the identical
       // color — useless for an endpoint-ordering assertion below. "ember" has
@@ -531,12 +528,11 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      flameActive: true,
+      renderMode: "flame" as const,
     });
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      flameActive: false,
     });
     expect(legend().classList.contains("hidden")).toBe(false);
   });
@@ -546,7 +542,7 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: true,
+      renderMode: "solid" as const,
       solid: { ...initialState(true).solid, paletteId: "aurora" },
     });
 
@@ -565,7 +561,7 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: true,
+      renderMode: "solid" as const,
       solid: { ...initialState(true).solid, paletteId: "legacy" },
     });
     // The "legacy" solid palette follows colorMode/colorGamma exactly, so
@@ -579,7 +575,7 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: true,
+      renderMode: "solid" as const,
       solid: { ...initialState(true).solid, paletteId: "legacy" },
     });
     expect(legend().classList.contains("hidden")).toBe(false);
@@ -590,7 +586,7 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: true,
+      renderMode: "solid" as const,
       solid: { ...initialState(true).solid, paletteId: "spectrum" },
     });
     expect(legend().classList.contains("hidden")).toBe(false);
@@ -603,13 +599,12 @@ describe("Ui color legend (fr-dsz)", () => {
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: true,
+      renderMode: "solid" as const,
       solid: { ...initialState(true).solid, paletteId: "aurora" },
     });
     ui.updateLabels({
       ...initialState(true),
       colorMode: "height",
-      solidActive: false,
       solid: { ...initialState(true).solid, paletteId: "aurora" },
     });
     expect(legend().classList.contains("hidden")).toBe(false);
@@ -1448,71 +1443,108 @@ describe("Ui 4D group", () => {
   });
 });
 
-describe("Ui flame render controls", () => {
-  function renderBtn(): HTMLButtonElement {
-    return document.getElementById("renderBtn") as HTMLButtonElement;
+describe("Ui render mode switch (fr-39y)", () => {
+  function modeBtn(mode: "points" | "flame" | "solid"): HTMLButtonElement {
+    const id = {
+      points: "modePointsBtn",
+      flame: "modeFlameBtn",
+      solid: "modeSolidBtn",
+    }[mode];
+    return document.getElementById(id) as HTMLButtonElement;
   }
-  function exitRenderBtn(): HTMLButtonElement {
-    return document.getElementById("exitRenderBtn") as HTMLButtonElement;
+  function renderModeSwitch(): HTMLElement {
+    return document.getElementById("renderModeSwitch") as HTMLElement;
   }
   function explorerControls(): HTMLElement {
     return document.getElementById("explorerControls") as HTMLElement;
   }
-  function flameEntry(): HTMLElement {
-    return document.getElementById("flameEntry") as HTMLElement;
-  }
   function flameControls(): HTMLElement {
     return document.getElementById("flameControls") as HTMLElement;
   }
+  function solidControls(): HTMLElement {
+    return document.getElementById("solidControls") as HTMLElement;
+  }
 
-  it("shows the explorer panel and the Render button while inactive", () => {
+  it("fires onRenderMode with the flame mode when the flame segment is clicked", () => {
+    const handlers = noopHandlers();
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), flameActive: false });
-
-    expect(explorerControls().classList.contains("hidden")).toBe(false);
-    expect(flameEntry().classList.contains("hidden")).toBe(false);
-    expect(flameControls().classList.contains("hidden")).toBe(true);
+    ui.bind(handlers);
+    modeBtn("flame").click();
+    expect(handlers.onRenderMode).toHaveBeenCalledWith("flame");
   });
 
-  it("swaps to the flame controls and hides the explorer panel while active", () => {
+  it("fires onRenderMode with the solid mode when the solid segment is clicked", () => {
+    const handlers = noopHandlers();
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), flameActive: true });
+    ui.bind(handlers);
+    modeBtn("solid").click();
+    expect(handlers.onRenderMode).toHaveBeenCalledWith("solid");
+  });
+
+  // Fires even for the segment that's already active (index.html boots with
+  // Points pressed) — the click listener carries no active-mode guard.
+  it("fires onRenderMode with the points mode when the points segment is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    modeBtn("points").click();
+    expect(handlers.onRenderMode).toHaveBeenCalledWith("points");
+  });
+
+  it("shows only the flame controls and marks the flame segment active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
     expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(flameEntry().classList.contains("hidden")).toBe(true);
     expect(flameControls().classList.contains("hidden")).toBe(false);
+    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expect(modeBtn("flame").classList.contains("active")).toBe(true);
+    expect(modeBtn("flame").getAttribute("aria-pressed")).toBe("true");
+    expect(modeBtn("points").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("hides the Flame Render heading along with its button while active", () => {
+  it("shows only the solid controls and marks the solid segment active", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), flameActive: true });
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
-    expect(flameEntry().querySelector("h3")?.textContent).toBe("Flame Render");
-    expect(flameEntry().classList.contains("hidden")).toBe(true);
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(solidControls().classList.contains("hidden")).toBe(false);
+    expect(flameControls().classList.contains("hidden")).toBe(true);
+    expect(modeBtn("solid").classList.contains("active")).toBe(true);
+    expect(modeBtn("solid").getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("shows the explorer and marks the points segment active by default", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+
+    expect(explorerControls().classList.contains("hidden")).toBe(false);
+    expect(flameControls().classList.contains("hidden")).toBe(true);
+    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expect(modeBtn("points").classList.contains("active")).toBe(true);
+    expect(modeBtn("points").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // The refactor's whole point (fr-39y): the segmented control itself is
+  // never hidden by updateLabels, so flame<->solid is a direct switch rather
+  // than a round-trip through Points.
+  it("keeps the segmented control usable during a render, for a direct flame<->solid switch", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+
+    expect(renderModeSwitch().classList.contains("hidden")).toBe(false);
+    expect(document.body.contains(modeBtn("solid"))).toBe(true);
+    expect(modeBtn("solid").disabled).toBe(false);
+  });
+});
+
+describe("Ui flame render controls", () => {
   it("names the render mode in the help box while active", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), flameActive: true });
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "Flame Render",
     );
-  });
-
-  it("fires onEnterFlameRender when Render Current View is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    renderBtn().click();
-    expect(handlers.onEnterFlameRender).toHaveBeenCalledOnce();
-  });
-
-  it("fires onExitFlameRender when Back to Explorer is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    exitRenderBtn().click();
-    expect(handlers.onExitFlameRender).toHaveBeenCalledOnce();
   });
 
   it("reflects exposure and iterations into their sliders and labels", () => {
@@ -1918,78 +1950,12 @@ describe("Ui.setFlameBackendNote", () => {
 });
 
 describe("Ui solid render controls", () => {
-  function solidBtn(): HTMLButtonElement {
-    return document.getElementById("solidBtn") as HTMLButtonElement;
-  }
-  function exitSolidBtn(): HTMLButtonElement {
-    return document.getElementById("exitSolidBtn") as HTMLButtonElement;
-  }
-  function explorerControls(): HTMLElement {
-    return document.getElementById("explorerControls") as HTMLElement;
-  }
-  function solidEntry(): HTMLElement {
-    return document.getElementById("solidEntry") as HTMLElement;
-  }
-  function solidControls(): HTMLElement {
-    return document.getElementById("solidControls") as HTMLElement;
-  }
-
-  it("shows the explorer panel and the Render Solid button while inactive", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), solidActive: false });
-
-    expect(explorerControls().classList.contains("hidden")).toBe(false);
-    expect(solidEntry().classList.contains("hidden")).toBe(false);
-    expect(solidControls().classList.contains("hidden")).toBe(true);
-  });
-
-  it("swaps to the solid controls and hides the explorer panel while active", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), solidActive: true });
-
-    expect(explorerControls().classList.contains("hidden")).toBe(true);
-    expect(solidEntry().classList.contains("hidden")).toBe(true);
-    expect(solidControls().classList.contains("hidden")).toBe(false);
-  });
-
-  it("hides the Solid Render heading along with its button while active", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), solidActive: true });
-
-    expect(solidEntry().querySelector("h3")?.textContent).toBe("Solid Render");
-    expect(solidEntry().classList.contains("hidden")).toBe(true);
-  });
-
   it("names the render mode in the help box while active", () => {
     const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), solidActive: true });
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "Solid Render",
     );
-  });
-
-  it("also hides the Flame Render heading and button while the solid render is active", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), solidActive: true });
-    expect(
-      document.getElementById("flameEntry")?.classList.contains("hidden"),
-    ).toBe(true);
-  });
-
-  it("fires onEnterSolidRender when Render Solid View is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    solidBtn().click();
-    expect(handlers.onEnterSolidRender).toHaveBeenCalledOnce();
-  });
-
-  it("fires onExitSolidRender when Back to Explorer is clicked", () => {
-    const handlers = noopHandlers();
-    const ui = new Ui(document);
-    ui.bind(handlers);
-    exitSolidBtn().click();
-    expect(handlers.onExitSolidRender).toHaveBeenCalledOnce();
   });
 
   it("reflects threshold, light angle/height, and ambient into their sliders and labels", () => {
@@ -2216,13 +2182,15 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows the 4D controls and hides symmetry/color/style for a non-flat system — flame/solid entry stays (fr-5b3/fr-4wd)", () => {
+  it("shows the 4D controls and hides symmetry/color/style for a non-flat system — the render mode switch stays (fr-5b3/fr-4wd)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     expect(el("fourDControls").classList.contains("hidden")).toBe(false);
-    expect(el("flameEntry").classList.contains("hidden")).toBe(false);
-    expect(el("solidEntry").classList.contains("hidden")).toBe(false);
+    // All three render modes stay reachable on a non-flat system — the
+    // segmented control is a view-independent switch, unlike the retired
+    // flame/solid entry islands it replaced.
+    expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
@@ -2241,10 +2209,10 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels({ ...flat, transforms: nonFlatTransforms() });
     expect(el("threeDControls").classList.contains("hidden")).toBe(true);
 
-    ui.updateLabels({ ...flat, flameActive: true });
+    ui.updateLabels({ ...flat, renderMode: "flame" as const });
     expect(el("threeDControls").classList.contains("hidden")).toBe(true);
 
-    ui.updateLabels({ ...flat, solidActive: true });
+    ui.updateLabels({ ...flat, renderMode: "solid" as const });
     expect(el("threeDControls").classList.contains("hidden")).toBe(true);
   });
 
@@ -2255,11 +2223,11 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
 
-    ui.updateLabels({ ...nonFlat, flameActive: true });
+    ui.updateLabels({ ...nonFlat, renderMode: "flame" as const });
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
     expect(el("flameControls").classList.contains("hidden")).toBe(false);
 
-    ui.updateLabels({ ...nonFlat, solidActive: true });
+    ui.updateLabels({ ...nonFlat, renderMode: "solid" as const });
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
     expect(el("solidControls").classList.contains("hidden")).toBe(false);
 
@@ -2299,8 +2267,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels(initialState(true));
 
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
-    expect(el("flameEntry").classList.contains("hidden")).toBe(false);
-    expect(el("solidEntry").classList.contains("hidden")).toBe(false);
+    expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(false);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(false);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);

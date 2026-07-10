@@ -628,7 +628,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.solid.resolution),
     apply: (s, raw) => setSolidResolution(s, Number(raw)),
     effect: (s, fx, previous) => {
-      if (s.solidActive && s.solid.resolution !== previous.solid.resolution) {
+      if (
+        s.renderMode === "solid" &&
+        s.solid.resolution !== previous.solid.resolution
+      ) {
         fx.restartSolidRender();
       }
     },

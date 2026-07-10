@@ -179,3 +179,47 @@ describe("CameraTween.cancel", () => {
     expect(orbit.target).toEqual([0, 0, 0]);
   });
 });
+
+describe("CameraTween.finish", () => {
+  it("jumps to the glide's end target/radius and clears it, even mid-flight", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.fitToBounds(SAMPLE_BOUNDS, FRAMING);
+
+    // Advance only partway (t < 1) so the orbit is still mid-glide when
+    // finish() is called.
+    clock = CAMERA_TWEEN_MS / 3;
+    tween.advance();
+    expect(tween.active).toBe(true);
+
+    tween.finish();
+
+    const fit = expectedFit(SAMPLE_BOUNDS);
+    expect(orbit.target[0]).toBeCloseTo(fit.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(fit.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(fit.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(fit.radius);
+    expect(tween.active).toBe(false);
+  });
+
+  it("is a no-op when no glide is in flight", () => {
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const startRadius = orbit.spherical.radius;
+    const tween = new CameraTween(
+      orbit,
+      () => 0,
+      () => false,
+    );
+
+    expect(() => tween.finish()).not.toThrow();
+
+    expect(orbit.spherical.radius).toBe(startRadius);
+    expect(orbit.target).toEqual([0, 0, 0]);
+    expect(tween.active).toBe(false);
+  });
+});

@@ -83,12 +83,13 @@ export interface SceneSnapshot {
   showGuides: boolean;
   /**
    * Flame render-current-view settings (see {@link AppState.flame}). Note
-   * `AppState.flameActive` is intentionally NOT part of this snapshot — the
-   * app always boots into the explorer, never straight into a render.
+   * `AppState.renderMode` is intentionally NOT part of this snapshot — the
+   * app always boots into the point-cloud explorer, never straight into a
+   * flame/solid render.
    */
   flame: FlameParams;
-  /** Solid render settings (see {@link AppState.solid}); like `flame`,
-   * `solidActive` is intentionally NOT part of this snapshot. */
+  /** Solid render settings (see {@link AppState.solid}); like `flame`, the
+   * session-only `renderMode` is intentionally NOT part of this snapshot. */
   solid: SolidParams;
   /**
    * Rotational/mirror symmetry (fr-6im, see {@link AppState.symmetry}).

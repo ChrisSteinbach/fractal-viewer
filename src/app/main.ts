@@ -27,6 +27,7 @@ import type { CloudRequest, CloudResult } from "./cloud-worker-core";
 import { glowExposure } from "./exposure";
 import {
   defaultFinalTransform,
+  PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   presetTransforms,
 } from "../fractal/presets";
@@ -47,16 +48,15 @@ import {
   removeTransform,
   selectTransform,
   setFinalTransform,
-  setFlameActive,
   setPanelOpen,
-  setSolidActive,
+  setRenderMode,
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
   systemIsNonFlat,
   updateTransform,
 } from "./state";
-import type { AppState } from "./state";
+import type { AppState, RenderMode } from "./state";
 import { applyScalarControl } from "./control-spec";
 import type { ControlEffects } from "./control-spec";
 import {
@@ -274,6 +274,17 @@ function main(): void {
   // the camera on it right after regenerate() lands a fresh run (see
   // fitCameraToAttractor). Null whenever the view isn't showing 4D.
   let fourDResult: ChaosGame4Result | null = null;
+
+  // A preset's render-mode hint (fr-39y, PRESET_RENDER_HINTS), waiting for
+  // the freshly loaded system's cloud to land: onPreset arms it, and
+  // applyCloudResult consumes it when the whole-system replacement arrives —
+  // entering the hinted renderer THEN, not at click time, so the flame's
+  // frozen projection can snapshot the camera already fitted to the NEW
+  // attractor (see the consumption site) instead of framing the old one.
+  // Cleared by every other edit path (applyEdit / applyDecodedSnapshot) and
+  // by a manual mode switch, so it can only ever fire for the load that
+  // armed it.
+  let pendingRenderMode: RenderMode | null = null;
   // The session-only 4D VIEW state (fr-woc/fr-6x2/fr-nn6): the accumulated
   // rotor (tumble ticks and Shift-drag/Shift-wheel deltas all compose into it),
   // the tumble pause/speed, and the soft w-slice. Reset to a fresh-visit
@@ -480,6 +491,23 @@ function main(): void {
     // (fr-0b8) — deferred to arrival with everything else, so it frames the
     // cloud actually going on screen.
     if (request.fit) fitCameraToAttractor();
+
+    // A preset that declares a render-mode hint (fr-39y) enters its renderer
+    // HERE, when its whole-system replacement actually lands — not at click
+    // time, when the camera still framed the previous attractor. The flame
+    // render freezes the camera into its projection snapshot at enter, so
+    // complete the just-started fit glide instantly and push it to the scene
+    // camera first; the solid render keeps its camera live, so it can keep
+    // gliding.
+    if (request.replaced && pendingRenderMode !== null) {
+      const target = pendingRenderMode;
+      pendingRenderMode = null;
+      if (target === "flame") {
+        cameraTween.finish();
+        scene.applyCamera(orbit);
+      }
+      switchRenderMode(target);
+    }
   }
 
   // The off-main-thread generation pipeline (fr-5kx): a dedicated Worker runs
@@ -955,12 +983,16 @@ function main(): void {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
     },
     activate: () => {
-      state = setFlameActive(state, true);
+      state = setRenderMode(state, "flame");
       refreshUi();
     },
     deactivate: () => {
       flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
-      state = setFlameActive(state, false);
+      // Reset only the mode this session owns — the exact semantics the old
+      // per-mode boolean had (clearing flameActive could never touch
+      // solidActive), so an idempotent exit() while some OTHER mode is
+      // showing can't yank the app out of it via a blind write.
+      if (state.renderMode === "flame") state = setRenderMode(state, "points");
       refreshUi();
     },
   });
@@ -1071,15 +1103,33 @@ function main(): void {
       // Drop any transform selection: the lens has no guide box in this mode,
       // so a raycast drag should orbit the camera, not grab a hidden box.
       state = selectTransform(state, null);
-      state = setSolidActive(state, true);
+      state = setRenderMode(state, "solid");
       refreshGuides();
       refreshUi();
     },
     deactivate: () => {
-      state = setSolidActive(state, false);
+      // Reset only the mode this session owns — see the flame session's
+      // deactivate for why this is not a blind write.
+      if (state.renderMode === "solid") state = setRenderMode(state, "points");
       refreshUi();
     },
   });
+
+  // The one path between the three render modes (fr-39y): exit whichever
+  // converging render is active, then enter the target's session. Driving
+  // both steps through the sessions' own enter/exit keeps their choreography
+  // (worker teardown, note/progress resets, the active flag + UI refresh)
+  // authoritative, so a direct flame↔solid switch is exactly an exit
+  // followed by an enter — no third path to keep correct. A no-op when the
+  // target is already active (clicking the lit segment must not restart a
+  // converging render).
+  function switchRenderMode(target: RenderMode): void {
+    if (target === state.renderMode) return;
+    if (state.renderMode === "flame") flameSession.exit();
+    else if (state.renderMode === "solid") solidSession.exit();
+    if (target === "flame") flameSession.enter();
+    else if (target === "solid") solidSession.enter();
+  }
 
   // The lens has no guide box, so map its selection (like camera) to "nothing
   // highlighted" — only a numbered transform highlights a box or is draggable.
@@ -1138,8 +1188,10 @@ function main(): void {
    * user edit) checkpoints via `beginEdit("replace")` before calling in.
    */
   function applyDecodedSnapshot(snap: SceneSnapshot, refit: boolean): void {
-    if (state.flameActive) flameSession.exit();
-    if (state.solidActive) solidSession.exit();
+    switchRenderMode("points");
+    // A restored document must not trigger a preset hint armed just before
+    // the time travel / gallery load.
+    pendingRenderMode = null;
     state = fromSnapshot(snap, state);
     if (
       typeof state.selectedTransform === "number" &&
@@ -1253,6 +1305,9 @@ function main(): void {
     applyReducer: () => void,
     effect: "auto" | "always" = "auto",
   ): void {
+    // Any fresh edit supersedes a preset hint still waiting for its cloud
+    // (fr-39y) — onPreset re-arms it right after this returns.
+    pendingRenderMode = null;
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     if (effect === "always" || state.autoUpdate) {
@@ -1315,6 +1370,11 @@ function main(): void {
       // preset (flat or non-flat) clears whatever the previous one left.
       // (The camera auto-fit rides the generation request — see applyEdit.)
       scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
+      // A preset authored for a specific renderer (fr-39y: the Flame optgroup)
+      // arms its render-mode hint AFTER applyEdit (which clears it); the
+      // arriving cloud consumes it — see applyCloudResult — so the showcase
+      // preset actually shows up in the renderer its menu group promises.
+      pendingRenderMode = PRESET_RENDER_HINTS[preset] ?? null;
     },
     onSurprise: () => {
       applyEdit(() => {
@@ -1406,11 +1466,12 @@ function main(): void {
       // raymarch of the live camera (captureSolidFrame) — and hand it to the
       // browser as a timestamped download.
       const link = document.createElement("a");
-      link.href = state.solidActive
-        ? scene.captureSolidFrame()
-        : state.flameActive
-          ? scene.captureFlameFrame()
-          : scene.captureFrame();
+      link.href =
+        state.renderMode === "solid"
+          ? scene.captureSolidFrame()
+          : state.renderMode === "flame"
+            ? scene.captureFlameFrame()
+            : scene.captureFrame();
       link.download = `fractal-${Date.now()}.png`;
       link.click();
     },
@@ -1466,10 +1527,11 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
-    onEnterFlameRender: () => flameSession.enter(),
-    onExitFlameRender: () => flameSession.exit(),
-    onEnterSolidRender: () => solidSession.enter(),
-    onExitSolidRender: () => solidSession.exit(),
+    onRenderMode: (mode) => {
+      // A manual switch outranks a preset hint still waiting for its cloud.
+      pendingRenderMode = null;
+      switchRenderMode(mode);
+    },
     // Slice state is session-only view state (like the tumble clock): it never
     // touches AppState or persistence, so these write straight to fourDView and
     // re-upload the slice trio to the scene (see pushFourDSlice).
@@ -1506,7 +1568,7 @@ function main(): void {
 
   const gestures = attachInteractions(scene, orbit, {
     selectedTransform: selectedBox,
-    frozen: () => state.flameActive,
+    frozen: () => state.renderMode === "flame",
     onTransformChange: (index, geometry) => {
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
@@ -1527,7 +1589,7 @@ function main(): void {
       // surface as a surprise orientation jump on exit. `frozen` already
       // blocks all drags during the flame render; the solid render keeps its
       // camera gestures live, so the w-plane gesture needs this gate.
-      if (state.flameActive || state.solidActive) return;
+      if (state.renderMode !== "points") return;
       fourDView.rotate(xw, yw, zw);
       // animate() pushes fourDView.matrix() next frame; nothing else to do.
     },
@@ -1607,7 +1669,7 @@ function main(): void {
   function animate(): void {
     requestAnimationFrame(animate);
     cameraTween.advance();
-    if (state.solidActive) {
+    if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
       // while accumulation converges.
@@ -1623,11 +1685,11 @@ function main(): void {
       }
       return;
     }
-    if (state.flameActive) {
+    if (state.renderMode === "flame") {
       // Keep drawing the frozen explorer view (already-applied camera, no
-      // further orbit input while flameActive) until the worker's first
-      // image lands, then switch over — avoids a flash of the flame
-      // canvas's stale contents during the worker startup gap.
+      // further orbit input while the flame render is active) until the
+      // worker's first image lands, then switch over — avoids a flash of the
+      // flame canvas's stale contents during the worker startup gap.
       if (flameSession.hasFirstFrame) {
         scene.renderFlame();
       } else {
