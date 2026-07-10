@@ -5,7 +5,7 @@
   "description": "Interactive 3D IFS fractal viewer (chaos game) built with Three.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/collect-third-party-licenses.mjs && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/webgl-smoke.mjs",
     "test": "npm run lint && vitest run",

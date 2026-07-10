@@ -16,3 +16,6 @@ bench-results/
 /result.json
 # fr-7su phone soak monitor output (gpu-flame-soak.mjs).
 soak-log/
+
+# Generated at build time by scripts/collect-third-party-licenses.mjs (fr-a2l).
+src/app/public/THIRD-PARTY-LICENSES.txt

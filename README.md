@@ -100,4 +100,6 @@ tracking — see [AGENTS.md](AGENTS.md). Run `bd ready` to see available work.
 
 ## License
 
-ISC
+[ISC](LICENSE). Production builds bundle third-party packages (Three.js, Workbox)
+whose MIT notices ship alongside the app as `THIRD-PARTY-LICENSES.txt`, generated
+at build time by `scripts/collect-third-party-licenses.mjs`.
