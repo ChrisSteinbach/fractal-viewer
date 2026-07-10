@@ -26,7 +26,25 @@
   box-sizing: border-box;
 }
 
+/* The closed #panel parks at translateX(100%) — a 300px box hanging past the
+   right screen edge — and mobile browsers' fit-content viewport logic
+   EXPANDS the layout viewport to contain such overflow (measured: 393×727 →
+   693×1282 shortly after the panel slides shut), silently sinking every
+   bottom-fixed overlay — replay caption, toast, legend, update banner —
+   below the visible screen (fr-q5c). Root-level `overflow: hidden` is not
+   enough: it only hides the scrollbars, while the overflow region still
+   exists and still feeds that viewport sizing. The fix is geometric: size
+   body to the viewport and make it the panel's containing block (position:
+   relative), so body's own overflow: hidden actually CLIPS the parked panel
+   and the root never overflows at all. */
+html {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
+  position: relative;
+  height: 100%;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
@@ -343,7 +361,15 @@ body {
   backdrop-filter: blur(16px);
   box-shadow: var(--shadow);
   transform: translateX(100%);
-  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* visibility rides the slide (hidden only AFTER the 0.32s slide-out, shown
+     instantly on open) so the parked-offscreen panel drops out of the tab
+     order and accessibility tree instead of hosting focusable controls
+     nobody can see. */
+  visibility: hidden;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s 0.32s;
   overflow-y: auto;
 
   /* Don't chain an overshooting panel scroll to the viewport — on mobile
@@ -354,6 +380,10 @@ body {
 
 #panel.open {
   transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s;
 }
 
 #panel h2 {
