@@ -927,6 +927,24 @@ export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
   twentyFourCell: twentyFourCellWireframe,
 };
 
+/**
+ * The render mode a preset was authored to showcase (fr-39y), for presets
+ * whose payoff lives in a specific renderer rather than the live point
+ * cloud: {@link radiolarian} and {@link swirlFlame} are fractal-FLAME
+ * compositions (see their docs — nonlinear variation blends that read as a
+ * dull smudge of points but bloom in the flame's log-density exposure), so
+ * loading one switches the app into that renderer instead of silently
+ * under-delivering as a point cloud. Absent = the point-cloud explorer, the
+ * ordinary case. Keyed by {@link Preset} exactly like
+ * {@link PRESET_SCAFFOLDS}, and using plain string literals (not the app's
+ * `RenderMode` type) so this module stays dependency-free; `main.ts`'s
+ * preset handler consumes it when the freshly loaded system's cloud lands.
+ */
+export const PRESET_RENDER_HINTS: Partial<Record<Preset, "flame" | "solid">> = {
+  radiolarian: "flame",
+  swirl: "flame",
+};
+
 /** Build the transform set for a named preset. */
 export function presetTransforms(preset: Preset): Transform[] {
   return PRESETS[preset]();

@@ -21,8 +21,9 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { SavedScene } from "./collection";
-import type { AppState } from "./state";
+import type { AppState, RenderMode } from "./state";
 import {
+  RENDER_MODES,
   MAX_W_ANGLE,
   MAX_W_POSITION,
   MAX_W_SCALE,
@@ -105,15 +106,14 @@ export interface UiHandlers {
   onFinalTransformGeometry: (geometry: FinalGeometry) => void;
   onTogglePanel: () => void;
   onClosePanel: () => void;
-  /** "Render Current View" was clicked: freeze the camera and start a flame render. */
-  onEnterFlameRender: () => void;
-  /** "Back to Explorer" was clicked: discard the in-progress render. */
-  onExitFlameRender: () => void;
-  /** "Render Solid View" was clicked: start accumulating the density volume
-   * (the camera stays LIVE, unlike the flame render). */
-  onEnterSolidRender: () => void;
-  /** The solid render's "Back to Explorer" was clicked. */
-  onExitSolidRender: () => void;
+  /**
+   * A render-mode segment was clicked (fr-39y): switch which renderer
+   * displays the attractor — `"points"` returns to the live explorer,
+   * `"flame"` freezes the camera and starts a flame render, `"solid"` starts
+   * accumulating the density volume (camera stays live). Fires for the
+   * already-active segment too; the app treats that as a no-op.
+   */
+  onRenderMode: (mode: RenderMode) => void;
   /** The 3D auto-orbit (fr-1yn) was paused or resumed — the camera-side
    * sibling of {@link onFourDTumbleToggle}. */
   onAutoOrbitToggle: (checked: boolean) => void;
@@ -567,20 +567,18 @@ export class Ui {
   private readonly transformEditor: HTMLElement;
 
   private readonly explorerControls: HTMLElement;
-  private readonly flameEntry: HTMLElement;
-  private readonly renderBtn: HTMLButtonElement;
+  /** The render-mode segmented control's three buttons (fr-39y), keyed by the
+   * mode each one switches to — the single entry/exit surface that replaced
+   * the flame/solid modal islands' four separate buttons. */
+  private readonly modeButtons: Record<RenderMode, HTMLButtonElement>;
   private readonly flameControls: HTMLElement;
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
   private readonly flameProgress: HTMLElement;
-  private readonly exitRenderBtn: HTMLButtonElement;
 
-  private readonly solidEntry: HTMLElement;
-  private readonly solidBtn: HTMLButtonElement;
   private readonly solidControls: HTMLElement;
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
-  private readonly exitSolidBtn: HTMLButtonElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
@@ -692,19 +690,18 @@ export class Ui {
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
-    this.flameEntry = this.byId("flameEntry");
-    this.renderBtn = this.byId("renderBtn");
+    this.modeButtons = {
+      points: this.byId("modePointsBtn"),
+      flame: this.byId("modeFlameBtn"),
+      solid: this.byId("modeSolidBtn"),
+    };
     this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
-    this.exitRenderBtn = this.byId("exitRenderBtn");
-    this.solidEntry = this.byId("solidEntry");
-    this.solidBtn = this.byId("solidBtn");
     this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
-    this.exitSolidBtn = this.byId("exitSolidBtn");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceRow = this.byId("fourDSliceRow");
@@ -808,18 +805,11 @@ export class Ui {
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
-    this.renderBtn.addEventListener("click", () =>
-      handlers.onEnterFlameRender(),
-    );
-    this.exitRenderBtn.addEventListener("click", () =>
-      handlers.onExitFlameRender(),
-    );
-    this.solidBtn.addEventListener("click", () =>
-      handlers.onEnterSolidRender(),
-    );
-    this.exitSolidBtn.addEventListener("click", () =>
-      handlers.onExitSolidRender(),
-    );
+    for (const mode of RENDER_MODES) {
+      this.modeButtons[mode].addEventListener("click", () =>
+        handlers.onRenderMode(mode),
+      );
+    }
     this.autoOrbitToggle.addEventListener("change", () => {
       const on = this.autoOrbitToggle.checked;
       // Same "row hides with its toggle" pattern as the 4D tumble below
@@ -936,30 +926,38 @@ export class Ui {
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
-    // Either render mode takes over the panel — editing controls that can't
-    // affect the in-progress render would just be confusing.
-    const rendering = state.flameActive || state.solidActive;
-    // "4D" is a DERIVED property of the system now (fr-bf6, see affine4.ts's
-    // systemIsFlat via state.ts's systemIsNonFlat) rather than a mode with its
-    // own entry/exit — so this is a VIEW gate, not a separate on/off. Unlike
-    // the OLD 4D mode, the presets block, transform list, and editor all STAY
-    // VISIBLE and live for a non-flat system exactly as for a flat one — only
-    // the controls that are genuinely meaningless while viewing the 4D shader
-    // path (symmetry, color mode/contrast, depth style — none of them reach
-    // the 4D projection or its own w-driven coloring) hide, and the
-    // tumble/slice block takes their place. The flame/solid entries stay
-    // available while non-flat (fr-5b3/fr-4wd): both renders snapshot the
-    // frozen 4D view and run their own 4D accumulators. The tumble/slice
-    // block hides while a render is active for the same reason the editing
-    // controls above do — the view (rotor + slice) is frozen into the
-    // render's worker snapshot, so its controls couldn't affect it.
+    // The render-mode segmented control (fr-39y) is the panel's one fixed
+    // switch between the three sibling renderers; each mode's own params
+    // show beneath it. Reflect the active segment…
+    for (const mode of RENDER_MODES) {
+      const active = state.renderMode === mode;
+      this.modeButtons[mode].classList.toggle("active", active);
+      this.modeButtons[mode].setAttribute("aria-pressed", String(active));
+    }
+    // …and swap in the active mode's controls. A flame/solid render takes
+    // over the panel — editing controls that can't affect the in-progress
+    // render would just be confusing — but the segmented control itself stays,
+    // so flame↔solid is a direct switch, not a round-trip through Points.
+    const rendering = state.renderMode !== "points";
+    // "4D" is a DERIVED property of the system (fr-bf6, see affine4.ts's
+    // systemIsFlat via state.ts's systemIsNonFlat), NOT a fourth render mode —
+    // so this is a VIEW gate, orthogonal to the segmented control above.
+    // The presets block, transform list, and editor all STAY VISIBLE and live
+    // for a non-flat system exactly as for a flat one — only the controls
+    // that are genuinely meaningless while viewing the 4D shader path
+    // (symmetry, color mode/contrast, depth style — none of them reach the 4D
+    // projection or its own w-driven coloring) hide, and the tumble/slice
+    // block takes their place. All three render modes stay available while
+    // non-flat (fr-5b3/fr-4wd): the flame/solid renders snapshot the frozen
+    // 4D view and run their own 4D accumulators. The tumble/slice block hides
+    // while a render is active for the same reason the editing controls do —
+    // the view (rotor + slice) is frozen into the render's worker snapshot,
+    // so its controls couldn't affect it.
     const nonFlat = systemIsNonFlat(state);
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
-    this.flameEntry.classList.toggle("hidden", rendering);
-    this.solidEntry.classList.toggle("hidden", rendering);
-    this.flameControls.classList.toggle("hidden", !state.flameActive);
-    this.solidControls.classList.toggle("hidden", !state.solidActive);
+    this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
+    this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
     this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
     // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
     // the 4D block: exactly one of the two shows outside a render. It hides
@@ -987,10 +985,10 @@ export class Ui {
     );
     this.updateLegend(state, nonFlat);
 
-    if (state.flameActive) {
+    if (state.renderMode === "flame") {
       this.helpTitle.textContent = "Flame Render";
       this.setHelpLines(["Rendering the frozen camera view…"]);
-    } else if (state.solidActive) {
+    } else if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the solid render's volume is
       // world-space: the camera stays fully interactive while it converges.
       this.helpTitle.textContent = "Solid Render";
@@ -1228,17 +1226,18 @@ export class Ui {
       return;
     }
 
-    const render = state.flameActive
-      ? {
-          paletteId: state.flame.paletteId,
-          select: this.scalarSelect("flamePalette"),
-        }
-      : state.solidActive
+    const render =
+      state.renderMode === "flame"
         ? {
-            paletteId: state.solid.paletteId,
-            select: this.scalarSelect("solidPalette"),
+            paletteId: state.flame.paletteId,
+            select: this.scalarSelect("flamePalette"),
           }
-        : null;
+        : state.renderMode === "solid"
+          ? {
+              paletteId: state.solid.paletteId,
+              select: this.scalarSelect("solidPalette"),
+            }
+          : null;
     if (render !== null) {
       // `buildPaletteLUT` returning null IS the "no coordinate gradient"
       // signal for "legacy" (see palette.ts) — the same discriminator the
@@ -1249,7 +1248,7 @@ export class Ui {
         this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");
         return;
       }
-      if (state.flameActive) {
+      if (state.renderMode === "flame") {
         this.legend.classList.add("hidden");
         return;
       }

@@ -430,6 +430,47 @@ body {
   flex: 1;
 }
 
+/* Render-mode segmented control (fr-39y): the one switch between the three
+   sibling renderers (Points / Flame / Solid). A joined button group rather
+   than three stacked buttons, so it reads as one mutually-exclusive choice;
+   the active segment gets the accent treatment `.btn-blue` uses. */
+.segmented {
+  display: flex;
+  overflow: hidden;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.segmented .segment {
+  flex: 1;
+  padding: 9px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.segmented .segment + .segment {
+  border-left: 1px solid var(--border);
+}
+
+.segmented .segment:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.segmented .segment.active {
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: #fff;
+}
+
 /* `.btn` is `display: block; width: 100%` for the panel's stacked buttons —
    inside the flex #updateBanner the Reload button must size to its label
    instead of stretching. */

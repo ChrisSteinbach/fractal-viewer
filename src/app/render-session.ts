@@ -71,16 +71,17 @@ export interface RenderSessionDeps<C> {
    */
   resetProgress: () => void;
   /**
-   * Flip the app's active flag ON, run any enter-only extras, and refresh the
-   * UI. Flame just flips `setFlameActive`; solid additionally drops the
-   * transform selection and refreshes guides before refreshing the UI.
+   * Switch the app's render mode to this session's own (`setRenderMode`),
+   * run any enter-only extras, and refresh the UI. Solid additionally drops
+   * the transform selection and refreshes guides before refreshing the UI.
    */
   activate: () => void;
   /**
-   * Flip the app's active flag OFF, run any exit-only extras, and refresh the
-   * UI. Flame additionally drops its half of the SharedArrayBuffer transport
-   * (with the worker's half gone too, the SABs become collectable); solid just
-   * flips `setSolidActive`.
+   * Return the app's render mode to `"points"` (guarded: only when this
+   * session's own mode is still the active one), run any exit-only extras,
+   * and refresh the UI. Flame additionally drops its half of the
+   * SharedArrayBuffer transport (with the worker's half gone too, the SABs
+   * become collectable).
    */
   deactivate: () => void;
 }

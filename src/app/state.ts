@@ -34,9 +34,28 @@ export const RENDER_STYLES = [
 export type RenderStyle = (typeof RENDER_STYLES)[number];
 
 /**
+ * The unified render-mode axis (fr-39y): WHICH of the three sibling renderers
+ * is displaying the attractor. `"points"` is the live point-cloud explorer —
+ * the always-interactive default; `"flame"` and `"solid"` are the two
+ * converging render overlays that take its place until the user switches
+ * back. One concept, one switch — not two independent booleans — so the UI
+ * can present a single segmented control and flame↔solid is a direct switch
+ * rather than a round-trip through the explorer.
+ *
+ * Distinct from {@link RenderStyle}, which picks a LOOK of the `"points"`
+ * mode (fog, glow, depth of field, …) and persists with the scene. The
+ * render mode is session-only, like the transform selection: never persisted,
+ * so the app always boots into the explorer (see `persist.ts`'s
+ * `SceneSnapshot`, which omits this field).
+ */
+export const RENDER_MODES = ["points", "flame", "solid"] as const;
+
+export type RenderMode = (typeof RENDER_MODES)[number];
+
+/**
  * Render-current-view settings for the flame renderer (`src/fractal/flame.ts`).
  * Persists as a render setting like `colorMode` / `renderStyle`, independent
- * of whether a render is currently active (see {@link AppState.flameActive}).
+ * of which render mode is currently active (see {@link AppState.renderMode}).
  */
 export interface FlameParams {
   /** Brightness multiplier over the log-density tone-map; 1 = neutral. */
@@ -181,27 +200,23 @@ export interface AppState {
   renderStyle: RenderStyle;
   autoUpdate: boolean;
   panelOpen: boolean;
-  /** Render-current-view settings; persists independent of {@link flameActive}. */
+  /** Render-current-view settings; persists independent of {@link renderMode}. */
   flame: FlameParams;
-  /**
-   * Whether the flame render-current-view overlay is showing (in place of the
-   * live point cloud). Session-only, like `selectedTransform` /
-   * `autoUpdate` — never persisted, so the app always boots into the
-   * explorer (see `persist.ts`'s `SceneSnapshot`, which omits this field).
-   */
-  flameActive: boolean;
-  /** Solid render settings; persists independent of {@link solidActive}. */
+  /** Solid render settings; persists independent of {@link renderMode}. */
   solid: SolidParams;
   /**
-   * Whether the solid (lit voxel) render is showing in place of the live
-   * point cloud. Session-only and never persisted, exactly like
-   * {@link flameActive} — the app always boots into the explorer.
+   * Which renderer is displaying the attractor (fr-39y) — see
+   * {@link RENDER_MODES}. Session-only, like `selectedTransform` /
+   * `autoUpdate`: never persisted, so the app always boots into the
+   * `"points"` explorer (see `persist.ts`'s `SceneSnapshot`, which omits
+   * this field). The flame/solid render SETTINGS ({@link flame} /
+   * {@link solid}) persist independently of it.
    */
-  solidActive: boolean;
+  renderMode: RenderMode;
   /**
    * Rotational/mirror symmetry (fr-6im): replicate `transforms` into rotated
    * copies for every render — see `fractal/types.ts`'s `SymmetryParams`.
-   * Unlike {@link flameActive} / {@link solidActive} this is NOT session-only:
+   * Unlike {@link renderMode} this is NOT session-only:
    * it persists like `colorMode` / `renderStyle`, and it shapes the live
    * explorer's point cloud too, not just the flame/solid renders — `main.ts`'s
    * `regenerate()` threads it into `runChaosGame`.
@@ -682,7 +697,6 @@ export function initialState(panelOpen: boolean): AppState {
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
       paletteId: DEFAULT_FLAME_PALETTE,
     },
-    flameActive: false,
     solid: {
       resolution: DEFAULT_SOLID_RESOLUTION,
       iterations: DEFAULT_SOLID_ITERATIONS,
@@ -692,7 +706,7 @@ export function initialState(panelOpen: boolean): AppState {
       ambient: DEFAULT_SOLID_AMBIENT,
       paletteId: DEFAULT_SOLID_PALETTE,
     },
-    solidActive: false,
+    renderMode: "points",
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
@@ -968,12 +982,18 @@ export function setFlamePaletteId(
   return { ...state, flame: { ...state.flame, paletteId } };
 }
 
-/** Enter or exit the flame render-current-view overlay (session-only). */
-export function setFlameActive(
+/**
+ * Switch which renderer displays the attractor (fr-39y) — see
+ * {@link AppState.renderMode}. Session-only, like {@link selectTransform}:
+ * never an undoable/persisted edit. The enter/exit choreography around a
+ * change (spinning render workers up and down) lives in main.ts's
+ * `RenderSession`s; this only records the mode.
+ */
+export function setRenderMode(
   state: AppState,
-  flameActive: boolean,
+  renderMode: RenderMode,
 ): AppState {
-  return { ...state, flameActive };
+  return { ...state, renderMode };
 }
 
 /**
@@ -1081,14 +1101,6 @@ export function setSolidPaletteId(
   paletteId: FlamePaletteId,
 ): AppState {
   return { ...state, solid: { ...state.solid, paletteId } };
-}
-
-/** Enter or exit the solid render (session-only, like {@link setFlameActive}). */
-export function setSolidActive(
-  state: AppState,
-  solidActive: boolean,
-): AppState {
-  return { ...state, solidActive };
 }
 
 /**

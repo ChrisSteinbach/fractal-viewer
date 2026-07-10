@@ -155,4 +155,22 @@ export class CameraTween {
   cancel(): void {
     this.tween = null;
   }
+
+  /**
+   * Complete any in-flight glide instantly: jump the camera to the glide's
+   * end target/radius and clear it. A no-op when idle. Used when a preset's
+   * render-mode hint (fr-39y) enters the flame render right as the fresh
+   * cloud lands — the flame freezes the camera into its projection snapshot
+   * at enter time, so the fit must have LANDED by then, not still be gliding
+   * toward frame.
+   */
+  finish(): void {
+    if (!this.tween) return;
+    const { toRadius, toTarget } = this.tween;
+    this.orbit.spherical.radius = toRadius;
+    this.orbit.target[0] = toTarget[0];
+    this.orbit.target[1] = toTarget[1];
+    this.orbit.target[2] = toTarget[2];
+    this.tween = null;
+  }
 }

@@ -21,6 +21,7 @@ import {
   pentatope,
   pentatopeWireframe,
   PRESET_NAMES,
+  PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   presetTransforms,
   radiolarian,
@@ -718,5 +719,22 @@ describe("PRESET_SCAFFOLDS", () => {
       "tesseract",
       "twentyFourCell",
     ]);
+  });
+});
+
+describe("PRESET_RENDER_HINTS", () => {
+  // radiolarian and swirlFlame are fractal-flame compositions whose payoff
+  // lives in the flame render, not the live point cloud (see their own docs)
+  // — loading either switches the app into that renderer (fr-39y).
+  it("hints radiolarian and swirl as flame showcases", () => {
+    expect(PRESET_RENDER_HINTS.radiolarian).toBe("flame");
+    expect(PRESET_RENDER_HINTS.swirl).toBe("flame");
+  });
+
+  // Guards against a typo'd key silently falling out of the Preset union.
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_RENDER_HINTS)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
   });
 });

@@ -69,7 +69,6 @@ import {
   selectTransform,
   setColorGamma,
   setFinalTransform,
-  setFlameActive,
   setFlameEstimatorCurve,
   setFlameEstimatorMinimumRadius,
   setFlameEstimatorRadius,
@@ -84,8 +83,8 @@ import {
   setGlowBrightness,
   setNumPoints,
   setPointSize,
+  setRenderMode,
   setRenderStyle,
-  setSolidActive,
   setSolidAmbient,
   setSolidIterations,
   setSolidLightAzimuth,
@@ -120,11 +119,14 @@ describe("initialState", () => {
     expect(state.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
   });
 
-  // The app always boots into the live explorer, never straight into a
-  // flame render — see the headline "explorer-first" decision.
-  it("boots with the flame render inactive, at its default settings", () => {
+  // The app always boots into the live explorer, never straight into a flame
+  // or solid render — see the headline "explorer-first" decision.
+  it("boots into the points render mode", () => {
+    expect(initialState(true).renderMode).toBe("points");
+  });
+
+  it("boots with the flame render at its default settings", () => {
     const state = initialState(true);
-    expect(state.flameActive).toBe(false);
     expect(state.flame).toEqual({
       exposure: DEFAULT_FLAME_EXPOSURE,
       iterations: DEFAULT_FLAME_ITERATIONS,
@@ -138,10 +140,8 @@ describe("initialState", () => {
     });
   });
 
-  // Like the flame render, the solid render never starts active — see above.
-  it("boots with the solid render inactive, at its default settings", () => {
+  it("boots with the solid render at its default settings", () => {
     const state = initialState(true);
-    expect(state.solidActive).toBe(false);
     expect(state.solid).toEqual({
       resolution: DEFAULT_SOLID_RESOLUTION,
       iterations: DEFAULT_SOLID_ITERATIONS,
@@ -627,13 +627,33 @@ describe("setFlameEstimatorCurve", () => {
   });
 });
 
-describe("setFlameActive", () => {
-  it("toggles the flame overlay immutably, independent of flame params", () => {
+describe("setRenderMode", () => {
+  it("switches to the flame render immutably", () => {
     const state = initialState(true);
-    const next = setFlameActive(state, true);
-    expect(next.flameActive).toBe(true);
-    expect(state.flameActive).toBe(false);
+    const next = setRenderMode(state, "flame");
+    expect(next.renderMode).toBe("flame");
+    expect(state.renderMode).toBe("points");
+  });
+
+  it("switches to the solid render immutably", () => {
+    const state = initialState(true);
+    const next = setRenderMode(state, "solid");
+    expect(next.renderMode).toBe("solid");
+    expect(state.renderMode).toBe("points");
+  });
+
+  it("switches back to points immutably", () => {
+    const state = setRenderMode(initialState(true), "flame");
+    const next = setRenderMode(state, "points");
+    expect(next.renderMode).toBe("points");
+    expect(state.renderMode).toBe("flame");
+  });
+
+  it("leaves the flame and solid settings untouched", () => {
+    const state = initialState(true);
+    const next = setRenderMode(state, "flame");
     expect(next.flame).toBe(state.flame);
+    expect(next.solid).toBe(state.solid);
   });
 });
 
@@ -783,16 +803,6 @@ describe("setSolidPaletteId", () => {
     expect(next.solid.threshold).toBe(state.solid.threshold);
     expect(next.solid.resolution).toBe(state.solid.resolution);
     expect(next.solid.iterations).toBe(state.solid.iterations);
-  });
-});
-
-describe("setSolidActive", () => {
-  it("toggles the solid overlay immutably, independent of solid params", () => {
-    const state = initialState(true);
-    const next = setSolidActive(state, true);
-    expect(next.solidActive).toBe(true);
-    expect(state.solidActive).toBe(false);
-    expect(next.solid).toBe(state.solid);
   });
 });
 

@@ -317,10 +317,17 @@ Beyond the live point cloud, a converged system can be committed to one of two
 heavier, on-demand renders. Both replay the identical chaos game — same
 transforms, variations, final-transform lens, symmetry — but accumulate its
 plotted points into a different structure and present the result differently.
-Each is session-only state (`flameActive` / `solidActive` in `AppState`, never
-persisted), toggled from the panel, and each runs in its own Web Worker
-(see "Render workers" below) so its hundreds of millions of iterations never
-touch the main thread.
+The three renderers are one **render mode** axis (fr-39y): a session-only
+`renderMode: "points" | "flame" | "solid"` in `AppState` (never persisted —
+the app always boots into the points explorer), switched from a single
+segmented control at the top of the panel, so flame ↔ solid is a direct
+switch rather than a round-trip through the explorer. A preset can declare
+the mode it was authored to showcase (`PRESET_RENDER_HINTS` — the "Flame"
+optgroup's Radiolarian/Swirl), which `main.ts` applies when the freshly
+loaded system's cloud lands, snapping the camera fit first so the flame's
+frozen projection frames the new attractor. Each render runs in its own Web
+Worker (see "Render workers" below) so its hundreds of millions of
+iterations never touch the main thread.
 
 `render-session.ts` factors out what the two modes share: a `RenderSession` owns
 the worker lifecycle (`enter` / `exit` / a defensive `terminate`) and a
