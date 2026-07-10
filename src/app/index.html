@@ -77,7 +77,12 @@
       <button id="panelClose" type="button" aria-label="Close controls">
         ✕
       </button>
-      <h2 id="panelTitle">3D IFS Fractal</h2>
+      <h2 id="panelTitle" title="IFS = iterated function system">
+        3D IFS Fractal
+      </h2>
+      <button id="aboutBtn" type="button" class="about-link">
+        ⓘ What is this?
+      </button>
 
       <div
         id="renderModeSwitch"
@@ -248,6 +253,14 @@
           </label>
           <button class="btn btn-blue" id="regenerateBtn" type="button">
             Regenerate Points
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="watchBuildBtn"
+            type="button"
+            title="Replay how the chaos game draws this cloud, point by point"
+          >
+            ▶ Watch it build
           </button>
 
           <label class="select-label">
@@ -703,6 +716,81 @@
     </div>
 
     <div
+      id="aboutModal"
+      class="gallery-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="What is this?"
+    >
+      <div id="aboutBackdrop" class="gallery-backdrop"></div>
+      <div class="gallery-dialog about-dialog">
+        <div class="gallery-header">
+          <h2 class="gallery-title">What is this?</h2>
+          <button
+            id="aboutCloseBtn"
+            class="notice-dismiss"
+            type="button"
+            aria-label="Close about"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="about-body">
+          <p>
+            Every shape here is the attractor of an
+            <strong>iterated function system (IFS)</strong> — a handful of
+            affine transforms: squashed, rotated, shifted copies of space. Each
+            wireframe guide box outlines where one transform squeezes the whole
+            scene.
+          </p>
+          <p>
+            The dots are drawn with the <strong>chaos game</strong>: drop a
+            point anywhere, then over and over pick one transform at random and
+            jump to where it sends the point, plotting every landing. The first
+            hundred hops are discarded while the point settles onto the
+            attractor (and a hop that flies off to infinity restarts from a
+            fresh random seed). Each hop looks random — yet because every
+            transform contracts space, the trail always condenses onto the same
+            shape.
+          </p>
+          <p>
+            More points just sample that same shape more densely. The Flame and
+            Solid modes run the very same game, accumulating hits into a glowing
+            2D exposure or a lit 3D density volume instead of dots.
+          </p>
+          <button class="btn btn-blue" id="aboutWatchBtn" type="button">
+            ▶ Watch it build
+          </button>
+          <p class="about-links">
+            Learn more:
+            <a
+              href="https://en.wikipedia.org/wiki/Iterated_function_system"
+              target="_blank"
+              rel="noreferrer"
+              >iterated function systems</a
+            >
+            ·
+            <a
+              href="https://en.wikipedia.org/wiki/Chaos_game"
+              target="_blank"
+              rel="noreferrer"
+              >the chaos game</a
+            >
+            ·
+            <a
+              href="https://en.wikipedia.org/wiki/Fractal_flame"
+              target="_blank"
+              rel="noreferrer"
+              >fractal flames</a
+            >
+            — or Barnsley&#8217;s <em>Fractals Everywhere</em> for the full
+            theory.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div
       id="galleryModal"
       class="gallery-modal hidden"
       role="dialog"
@@ -731,6 +819,13 @@
     </div>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <div
+      id="replayCaption"
+      class="replay-caption hidden"
+      role="status"
+      aria-live="polite"
+    ></div>
 
     <script type="module" src="./main.ts"></script>
   </body>

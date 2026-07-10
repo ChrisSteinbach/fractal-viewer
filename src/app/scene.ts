@@ -56,6 +56,11 @@ const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
+// The "Watch it build" replay cursor (fr-1zb): the bright spark pinned to the
+// newest revealed point. Sized well above every per-style point size so the
+// current chaos-game landing reads as THE point even over a dense cloud (or
+// against a translucent guide-box face).
+const REPLAY_CURSOR_SIZE = 0.14;
 // 4D projection: per-point additive contribution and the soft w-slice's
 // Gaussian sigma (in signed normalized-w units; the slice slider spans [-1, 1]).
 // The intensity is pitched like GLOW_BASE_OPACITY but far lower: the projected
@@ -382,6 +387,10 @@ export class FractalScene {
   private readonly axes: THREE.AxesHelper;
   private readonly pointGeometry: THREE.BufferGeometry;
   private readonly pointCloud: THREE.Points;
+  // The "Watch it build" replay cursor (fr-1zb): one bright sprite riding the
+  // newest revealed point (see setReplayCursor). Hidden whenever no replay is
+  // running.
+  private readonly replayCursor: THREE.Points;
   private guideCubes: THREE.Object3D[] = [];
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
@@ -567,6 +576,34 @@ export class FractalScene {
     this.pointCloud = new THREE.Points(this.pointGeometry, this.baseMaterial);
     this.scene.add(this.pointCloud);
 
+    // One vertex at the object's origin; setReplayCursor moves the OBJECT to
+    // the highlighted point. No depth test (a landing inside a dense region
+    // must still read), no fog (stays bright at any camera distance), additive
+    // so it glows over whatever it lands on. frustumCulled off: a 1-point
+    // geometry's bounding sphere has radius 0 and would cull at the edge.
+    const cursorGeometry = new THREE.BufferGeometry();
+    cursorGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(3), 3),
+    );
+    this.replayCursor = new THREE.Points(
+      cursorGeometry,
+      new THREE.PointsMaterial({
+        size: REPLAY_CURSOR_SIZE,
+        map: glowTexture(),
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+        fog: false,
+      }),
+    );
+    this.replayCursor.visible = false;
+    this.replayCursor.frustumCulled = false;
+    this.replayCursor.renderOrder = 1;
+    this.scene.add(this.replayCursor);
+
     // Bloom for the glow style. A half-float buffer lets dense, overlapping
     // additive points exceed 1.0 so only true hot-spots bloom.
     const hdr = new THREE.WebGLRenderTarget(buffer.x, buffer.y, {
@@ -645,6 +682,12 @@ export class FractalScene {
     // Drop any 4D `w` attribute left over from the projection view, so a stale
     // (possibly shorter) w buffer never lingers on the 3D cloud.
     this.pointGeometry.deleteAttribute("w");
+    // A fresh cloud always shows whole: clear any "Watch it build" prefix
+    // limit (fr-1zb) a replay left on the shared geometry. main.ts cancels
+    // the replay on arrival too — this keeps the upload self-consistent even
+    // if a future caller forgets.
+    this.setDrawCount(null);
+    this.setReplayCursor(null);
     this.pointGeometry.computeBoundingSphere();
   }
 
@@ -672,6 +715,9 @@ export class FractalScene {
     );
     this.pointGeometry.setAttribute("w", new THREE.BufferAttribute(w, 1));
     this.pointGeometry.deleteAttribute("color");
+    // Same replay-reset as setPoints (fr-1zb): a fresh upload shows whole.
+    this.setDrawCount(null);
+    this.setReplayCursor(null);
 
     const u = this.fourDMaterial.uniforms;
     (u.uCenter4.value as THREE.Vector4).set(
@@ -710,6 +756,55 @@ export class FractalScene {
       "color",
       new THREE.BufferAttribute(colors, 3),
     );
+  }
+
+  /**
+   * Draw only the first `count` points of the cloud — the "Watch it build"
+   * replay (fr-1zb). The buffers arrive in chaos-game generation order (one
+   * point per orbit step, for the 3D and 4D paths alike), so the growing
+   * prefix IS a faithful replay of how the attractor was drawn. `null`
+   * restores the full cloud. Positions, colors, and the bounding sphere are
+   * untouched: the full-cloud sphere is a superset of every prefix, so
+   * frustum culling stays correct throughout.
+   */
+  setDrawCount(count: number | null): void {
+    this.pointGeometry.setDrawRange(0, count ?? Infinity);
+  }
+
+  /**
+   * Pin the replay cursor — a bright, depth-test-free spark — onto the cloud
+   * point at `index`, or hide it with `null`. In the 4D projection the stored
+   * xyz is the UN-rotated projection, so the cursor applies the same
+   * rotate-about-center the vertex shader does (the CPU twin in
+   * {@link updateFourDScaffoldPositions}); called once per frame during a
+   * replay, it rides the tumble exactly like the points themselves.
+   */
+  setReplayCursor(index: number | null): void {
+    const position = this.pointGeometry.getAttribute("position") as
+      THREE.BufferAttribute | undefined;
+    if (index === null || !position || index < 0 || index >= position.count) {
+      this.replayCursor.visible = false;
+      return;
+    }
+    let x = position.getX(index);
+    let y = position.getY(index);
+    let z = position.getZ(index);
+    if (this.fourDActive) {
+      const wAttr = this.pointGeometry.getAttribute("w") as
+        THREE.BufferAttribute | undefined;
+      const w = wAttr ? wAttr.getX(index) : 0;
+      const m = this.fourDRot;
+      const c = this.fourDMaterial.uniforms.uCenter4.value as THREE.Vector4;
+      const dx = x - c.x;
+      const dy = y - c.y;
+      const dz = z - c.z;
+      const dw = w - c.w;
+      x = m[0] * dx + m[1] * dy + m[2] * dz + m[3] * dw + c.x;
+      y = m[4] * dx + m[5] * dy + m[6] * dz + m[7] * dw + c.y;
+      z = m[8] * dx + m[9] * dy + m[10] * dz + m[11] * dw + c.z;
+    }
+    this.replayCursor.position.set(x, y, z);
+    this.replayCursor.visible = true;
   }
 
   /**

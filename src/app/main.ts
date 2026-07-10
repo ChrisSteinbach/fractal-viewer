@@ -72,6 +72,7 @@ import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
+import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
 import { createFrameCoalescer } from "./regen-scheduler";
 
 function showError(message: string): void {
@@ -310,6 +311,44 @@ function main(): void {
   // early), which the dt clamp in animate() absorbs on exit.
   let lastMotionTickMs = performance.now();
 
+  // The "Watch it build" replay (fr-1zb): reveals the displayed cloud in
+  // chaos-game generation order — the buffers arrive in exactly the order
+  // the orbit plotted them — so the app can SHOW what the About dialog
+  // explains: one point hopping between random transforms, its landings
+  // accreting into the attractor. Session-only view state (never in
+  // AppState/undo, like the tumble); animate()'s explorer branch polls it
+  // once per frame. Deliberately not gated on prefers-reduced-motion: it
+  // only ever plays as the direct result of a "▶ Watch it build" click, and
+  // an explicitly requested animation is exactly the motion that setting
+  // preserves.
+  const buildReplay = new BuildReplay(() => performance.now());
+  // The narration line the replay pill currently shows, so the per-frame
+  // poll touches the DOM only when the phase actually flips — and doubles as
+  // the "display is still dirty" flag after the replay goes idle on its own.
+  let replayCaption: string | null = null;
+
+  // Restore the normal display after a replay: full cloud, no cursor, no
+  // caption, true point count. Reads lastResult/fourDResult for the count —
+  // a replay can only have started over an arrived cloud, so one exists.
+  function endReplayDisplay(): void {
+    scene.setDrawCount(null);
+    scene.setReplayCursor(null);
+    ui.setReplayCaption(null);
+    replayCaption = null;
+    const count = viewIs4D ? fourDResult?.count : lastResult?.count;
+    if (count !== undefined) ui.setPointCount(count);
+  }
+
+  // Stop any replay and clean the display. Safe to call when idle; the
+  // caption check covers the one-frame window where the replay has already
+  // gone idle by itself but animate() hasn't cleaned up yet (e.g. a render-
+  // mode switch landing in that same frame).
+  function cancelReplay(): void {
+    if (!buildReplay.active && replayCaption === null) return;
+    buildReplay.cancel();
+    endReplayDisplay();
+  }
+
   // Push the current soft-slice view state to the scene shader. Shared by
   // resetFourDView() and the three slice handlers, all of which mutate a
   // fourDView slice field and then re-upload the trio.
@@ -416,6 +455,10 @@ function main(): void {
   // state is the point: the stale-color guard and applyFourDColor's mode
   // dispatch, which deliberately let an edit that landed mid-flight win.
   function applyCloudResult(result: CloudResult, request: CloudRequest): void {
+    // A landing generation replaces the buffers a replay was revealing —
+    // stop it and show the fresh cloud whole. (scene.setPoints* also clears
+    // the prefix defensively, but the caption/cursor/count are app state.)
+    cancelReplay();
     const nonFlat = result.fourD;
     const wasNonFlat = viewIs4D;
     viewIs4D = nonFlat;
@@ -1125,6 +1168,10 @@ function main(): void {
   // converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
+    // The replay lives in the points view; leaving it mid-replay must not
+    // strand a partial cloud (or the narration pill) behind the flame/solid
+    // render.
+    if (target !== "points") cancelReplay();
     if (state.renderMode === "flame") flameSession.exit();
     else if (state.renderMode === "solid") solidSession.exit();
     if (target === "flame") flameSession.enter();
@@ -1421,6 +1468,19 @@ function main(): void {
       spec.effect?.(state, controlEffects, previous);
     },
     onRegenerate: () => regenerate(),
+    // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own
+    // generation order — no regeneration, no RNG roll, so the shape the user
+    // has been looking at is exactly the one that re-accretes. Leaves any
+    // flame/solid render (the replay lives in the points view) and closes
+    // the About dialog + panel so the stage is actually watchable.
+    onWatchBuild: () => {
+      switchRenderMode("points");
+      ui.closeAbout();
+      state = setPanelOpen(state, false);
+      ui.updateLabels(state);
+      const count = viewIs4D ? fourDResult?.count : lastResult?.count;
+      buildReplay.start(count ?? 0);
+    },
     onRecordVideoToggle: () => {
       recorder.toggle();
     },
@@ -1744,6 +1804,28 @@ function main(): void {
           scene.renderer.domElement.clientHeight,
         ) * state.glowBrightness,
       );
+    }
+    // The "Watch it build" replay (fr-1zb): while one is active, draw only
+    // the buffer's first `revealed` points (generation order — see
+    // scene.setDrawCount), ride the cursor on the newest landing (re-posed
+    // every frame, so in 4D it follows the tumble), tick the visible point
+    // count, and narrate the current phase. Once the replay's done-linger
+    // expires it goes idle by itself; the still-set caption marks the
+    // display as needing that one final cleanup.
+    const replayFrame = buildReplay.frame();
+    if (replayFrame !== null) {
+      scene.setDrawCount(
+        replayFrame.phase === "done" ? null : replayFrame.revealed,
+      );
+      scene.setReplayCursor(replayFrame.cursor);
+      ui.setPointCount(replayFrame.revealed);
+      const caption = REPLAY_CAPTIONS[replayFrame.phase];
+      if (caption !== replayCaption) {
+        ui.setReplayCaption(caption);
+        replayCaption = caption;
+      }
+    } else if (replayCaption !== null) {
+      endReplayDisplay();
     }
     scene.render();
   }

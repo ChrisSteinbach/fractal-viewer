@@ -119,6 +119,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     auto-frame a freshly generated attractor (preset load / Surprise Me) instead
     of snapping; leaves the orbit angles alone and honors reduced motion (pure,
     tested, injected clock).
+  - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
+    timing/phase state machine that reveals the displayed cloud in generation
+    order (hop → accrete/emerge → done, with narration captions) — the buffer
+    IS chaos-game order, so the growing prefix faithfully replays the drawing.
+    Polled per frame by main.ts's animate loop; `scene.setDrawCount` /
+    `setReplayCursor` do the drawing (pure, tested, injected clock).
   - `exposure.ts` — `glowExposure`: a density-adaptive brightness multiplier for
     the live cloud's `"glow"` render style, derived from screen-space
     points-per-pixel so additive points don't blow out to white (pure, tested).

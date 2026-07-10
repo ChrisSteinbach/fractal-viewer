@@ -52,6 +52,7 @@ function noopHandlers(): UiHandlers {
     onFourDSliceRelColorToggle: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
+    onWatchBuild: vi.fn(),
   };
 }
 
@@ -2941,5 +2942,107 @@ describe("Ui collection gallery", () => {
     expect(
       document.getElementById("galleryModal")?.classList.contains("hidden"),
     ).toBe(true);
+  });
+});
+
+describe("Ui about dialog", () => {
+  function aboutBtn(): HTMLButtonElement {
+    return document.getElementById("aboutBtn") as HTMLButtonElement;
+  }
+  function aboutModal(): HTMLElement {
+    return document.getElementById("aboutModal") as HTMLElement;
+  }
+  function aboutCloseBtn(): HTMLButtonElement {
+    return document.getElementById("aboutCloseBtn") as HTMLButtonElement;
+  }
+  function aboutBackdrop(): HTMLElement {
+    return document.getElementById("aboutBackdrop") as HTMLElement;
+  }
+  function aboutWatchBtn(): HTMLButtonElement {
+    return document.getElementById("aboutWatchBtn") as HTMLButtonElement;
+  }
+  function watchBuildBtn(): HTMLButtonElement {
+    return document.getElementById("watchBuildBtn") as HTMLButtonElement;
+  }
+  function pressEscape(): void {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  }
+
+  it("opens the dialog when the panel's about link is clicked", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    aboutBtn().click();
+    expect(aboutModal().classList.contains("hidden")).toBe(false);
+  });
+
+  it("closes the dialog when its ✕ is clicked", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openAbout();
+    aboutCloseBtn().click();
+    expect(aboutModal().classList.contains("hidden")).toBe(true);
+  });
+
+  it("closes the dialog when the backdrop is clicked", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openAbout();
+    aboutBackdrop().click();
+    expect(aboutModal().classList.contains("hidden")).toBe(true);
+  });
+
+  it("closes the dialog on Escape while it is open", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openAbout();
+    pressEscape();
+    expect(aboutModal().classList.contains("hidden")).toBe(true);
+  });
+
+  it("rebinds Escape on a reopen after a close", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openAbout();
+    ui.closeAbout();
+    ui.openAbout();
+    pressEscape();
+    expect(aboutModal().classList.contains("hidden")).toBe(true);
+  });
+
+  it("does not throw when Escape is pressed before the dialog has ever been opened", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    expect(() => pressEscape()).not.toThrow();
+  });
+
+  it("fires onWatchBuild from both the dialog's button and the panel's button", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    aboutWatchBtn().click();
+    watchBuildBtn().click();
+
+    expect(handlers.onWatchBuild).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Ui replay caption", () => {
+  function replayCaption(): HTMLElement {
+    return document.getElementById("replayCaption") as HTMLElement;
+  }
+
+  it("sets the pill's text and reveals it", () => {
+    const ui = new Ui(document);
+    ui.setReplayCaption("Point 1 of 500");
+    expect(replayCaption().textContent).toBe("Point 1 of 500");
+    expect(replayCaption().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the pill when passed null", () => {
+    const ui = new Ui(document);
+    ui.setReplayCaption("Point 1 of 500");
+    ui.setReplayCaption(null);
+    expect(replayCaption().classList.contains("hidden")).toBe(true);
   });
 });
