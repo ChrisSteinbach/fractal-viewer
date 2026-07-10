@@ -1,5 +1,4 @@
-import { runChaosGame, type ChaosGameResult } from "../fractal/chaos-game";
-import { runChaosGame4 } from "../fractal/chaos-game-4d";
+import type { ChaosGameResult } from "../fractal/chaos-game";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { wSupport } from "./rotor4";
@@ -21,6 +20,10 @@ import type { SharedFrameBuffers } from "./flame-worker-core";
 import type { RenderSessionHandle } from "./render-session";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
+import { CloudGenerator } from "./cloud-generator";
+import type { CloudParams } from "./cloud-generator";
+import { generateCloud } from "./cloud-worker-core";
+import type { CloudRequest, CloudResult } from "./cloud-worker-core";
 import { glowExposure } from "./exposure";
 import {
   defaultFinalTransform,
@@ -249,17 +252,21 @@ function main(): void {
   // localStorage key, so it never disturbs the live scene or its history.
   const collection = new SceneCollection();
 
-  // The most recent chaos-game run, cached so a color-mode change can recolor
-  // the existing cloud (see `recolor`) instead of re-rolling the RNG and drawing
-  // a brand-new random sample of the attractor.
+  // The most recently ARRIVED chaos-game run (cached by applyCloudResult), so
+  // a color-mode change can recolor the existing cloud (see `recolor`) instead
+  // of re-rolling the RNG and drawing a brand-new random sample of the
+  // attractor. While a generation is in flight (fr-5kx) this still holds the
+  // cloud actually on screen — exactly what its readers want.
   let lastResult: ChaosGameResult | null = null;
 
-  // Whether the CURRENT system needs the 4D projection view — a DERIVED
-  // property of state.transforms/finalTransform (fr-bf6; see state.ts's
-  // systemIsNonFlat), not a mode the user enters/exits. Cached here (rather
-  // than recomputed on every animation frame or pointer move) by regenerate(),
-  // its only writer; animate()'s tumble tick, the interactions predicate, and
-  // guide-box suppression all read it.
+  // Whether the DISPLAYED cloud is the 4D projection view — a DERIVED
+  // property of the system that produced it (fr-bf6; see state.ts's
+  // systemIsNonFlat), not a mode the user enters/exits. Written only by
+  // applyCloudResult when a generation lands (fr-5kx), so it always matches
+  // what is on screen — during the brief in-flight window after an edit flips
+  // flatness, the view (material, guides, gestures) deliberately stays with
+  // the old cloud until the new one arrives. animate()'s tumble tick, the
+  // interactions predicate, and guide-box suppression all read it.
   let viewIs4D = false;
 
   // The most recent 4D chaos-game run — mirrors `lastResult` for the 3D path,
@@ -332,43 +339,87 @@ function main(): void {
     ui.resetAutoOrbit(autoOrbitOn);
   }
 
-  // Re-run the chaos game: the only path that touches the RNG and changes point
-  // positions. Use this for geometry edits, add/remove, presets, and explicit
-  // regenerate — never for a mere palette change.
+  // Re-run the chaos game: the only path that changes point positions. Use
+  // this for geometry edits, add/remove, presets, and explicit regenerate —
+  // never for a mere palette change.
+  //
+  // Generation runs OFF the main thread as of fr-5kx: this snapshots the
+  // current state into a request and hands it to cloudGenerator (at most one
+  // in flight, latest wins — see cloud-generator.ts); everything that used to
+  // happen synchronously after the chaos game — the 4D/3D view flip, the
+  // "fresh visit" resets, the scene upload, the camera auto-fit — happens in
+  // applyCloudResult when the result lands. During a drag the UI/camera stay
+  // at full frame rate and the cloud is merely one generation behind, instead
+  // of the whole app stalling for a synchronous O(numPoints) run per frame
+  // (fr-acc's residual problem at high point counts).
   //
   // Routes on the system's FLATNESS (fr-bf6; see affine4.ts's systemIsFlat/
   // isFlatTransform via state.ts's systemIsNonFlat): a flat system — no
   // transform's `w` block in play, final transform included per its own
   // enabled semantics — takes the untouched 3D path, bit-identical to before
   // this system ever had a `w` extension; a non-flat one lifts every
-  // transform (and the final lens, if enabled) through toTransform4 and runs
-  // the 4D chaos game instead. `replaced` marks a WHOLE-SYSTEM replacement
-  // (preset load / Surprise Me, via applyEdit's "always" effect) as opposed
-  // to a mere geometry edit or an explicit Regenerate click, so a freshly
-  // loaded non-flat system always gets resetFourDView()'s "fresh visit"
-  // treatment even when the PREVIOUS system was already non-flat too (e.g.
-  // switching from the double-rotation spiral straight to the pentatope).
-  function regenerate(replaced = false): void {
-    // This synchronous run produces the freshest cloud, so drop any coalesced
-    // run a drag/slider burst left queued for the next frame (fr-acc) — it
-    // would otherwise fire a redundant second generation. Harmlessly a no-op
-    // when nothing is pending, including when this call IS the coalesced run
-    // (the coalescer clears its handle before invoking us).
+  // transform (and the final lens, if enabled) through toTransform4 — worker-
+  // side — and runs the 4D chaos game instead. `replaced` marks a WHOLE-SYSTEM
+  // replacement (preset load / Surprise Me / snapshot restore) as opposed to
+  // a mere geometry edit or an explicit Regenerate click, so a freshly loaded
+  // non-flat system always gets resetFourDView()'s "fresh visit" treatment
+  // even when the PREVIOUS system was already non-flat too (e.g. switching
+  // from the double-rotation spiral straight to the pentatope). `fit` asks
+  // the arrival handler to auto-frame the camera on the fresh result.
+  function regenerate(replaced = false, fit = false): void {
+    // This request supersedes any coalesced run a drag/slider burst left
+    // queued for the next frame (fr-acc) — drop it so it can't fire a
+    // redundant second request; the generator's own latest-wins slot handles
+    // anything already in flight. Harmlessly a no-op when nothing is pending,
+    // including when this call IS the coalesced run (the coalescer clears its
+    // handle before invoking us).
     regenScheduler.cancel();
-    const nonFlat = systemIsNonFlat(state);
+    cloudGenerator.request(cloudParams(replaced, fit));
+  }
+
+  // Snapshot the current document into a generation request (see
+  // cloud-worker-core.ts's CloudRequest). The seed is rolled here — a live
+  // Math.random can't cross postMessage — which as a side effect makes each
+  // generation a reproducible pure function of its request, exactly like the
+  // flame/voxel renders' start commands.
+  function cloudParams(replaced: boolean, fit: boolean): CloudParams {
+    return {
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      numPoints: state.numPoints,
+      seed: Math.floor(Math.random() * 0xffffffff),
+      symmetry: state.symmetry,
+      fourD: systemIsNonFlat(state),
+      colorMode: state.colorMode,
+      colorGamma: state.colorGamma,
+      replaced,
+      fit,
+    };
+  }
+
+  // Land a finished generation on the scene — everything that used to run
+  // synchronously inside regenerate() after the chaos game (fr-5kx). Runs on
+  // the worker's reply, or inline for the boot/fallback synchronous paths, so
+  // every step keys off the RESULT (and the request that produced it), never
+  // off "whatever the document looks like now" — except where reading live
+  // state is the point: the stale-color guard and applyFourDColor's mode
+  // dispatch, which deliberately let an edit that landed mid-flight win.
+  function applyCloudResult(result: CloudResult, request: CloudRequest): void {
+    const nonFlat = result.fourD;
     const wasNonFlat = viewIs4D;
     viewIs4D = nonFlat;
     if (nonFlat !== wasNonFlat) {
       scene.setFourDActive(nonFlat);
-      // Re-gate the panel on the flip. Most regenerate() callers refresh the
-      // UI themselves right after (applyEdit, boot), but the per-slider
-      // geometry path (onTransformGeometry / onFinalTransformGeometry)
-      // deliberately does not — and since the 4D editor group (fr-bf6.3) a
-      // w-slider drag is a geometry edit that CAN flip flatness. Without this,
-      // the cloud switches projection while flame/solid/4D-view sections sit
-      // stale until the next unrelated interaction. Harmlessly idempotent for
-      // the callers that refresh anyway.
+      // Re-gate the panel and the guide boxes on the flip. The edit that
+      // requested this generation refreshed both at REQUEST time — against
+      // the then-displayed (old) dimensionality, correctly matching the old
+      // cloud still on screen — so the arrival that actually swaps the cloud
+      // must refresh them again. Harmlessly idempotent for the paths that
+      // refresh anyway (applyEdit); essential for the per-slider geometry
+      // path (onTransformGeometry / onFinalTransformGeometry), where a
+      // w-slider drag is a geometry edit that CAN flip flatness (fr-bf6.3).
       ui.updateLabels(state);
+      refreshGuides();
     }
 
     // Decide what this flatness/replacement change resets (four-d-view.ts):
@@ -376,7 +427,7 @@ function main(): void {
     // auto-orbit (fr-1yn), and/or clearing a leftover 4D scaffold. The three
     // outcomes are mutually exclusive-ish (resetFourD needs nonFlat, the other
     // two need !nonFlat), so they read as independent guards here.
-    const transition = viewTransition(nonFlat, wasNonFlat, replaced);
+    const transition = viewTransition(nonFlat, wasNonFlat, request.replaced);
     if (transition.resetFourD) resetFourDView();
     if (transition.resetAutoOrbit) resetAutoOrbitView();
     if (transition.clearScaffold) {
@@ -386,27 +437,18 @@ function main(): void {
       scene.setFourDScaffold(null);
     }
 
-    // 4D projection path: run the 4D chaos game and upload the projected xyz +
-    // separate w. Leaves `lastResult` (the 3D cloud) untouched so a later
-    // flat edit restores the 3D path cleanly; color lives in the shader, so
-    // there is no color buffer to build here.
-    if (nonFlat) {
-      const transforms4 = state.transforms.map(toTransform4);
-      const final4 = state.finalTransform
-        ? toTransform4(state.finalTransform)
-        : null;
-      fourDResult = runChaosGame4(
-        transforms4,
-        state.numPoints,
-        Math.random,
-        final4,
-      );
-      const b4 = fourDResult.bounds;
+    if (result.fourD) {
+      // 4D projection path: upload the projected xyz + separate w. Leaves
+      // `lastResult` (the 3D cloud) untouched so a later flat edit restores
+      // the 3D path cleanly; color lives in the shader (or is rebaked just
+      // below), so the result carries no color buffer.
+      fourDResult = result;
+      const b4 = result.bounds;
       scene.setPoints4(
-        fourDResult.positions,
-        fourDResult.w,
-        fourDResult.center,
-        fourDResult.radius,
+        result.positions,
+        result.w,
+        result.center,
+        result.radius,
         [
           (b4.maxX - b4.minX) / 2,
           (b4.maxY - b4.minY) / 2,
@@ -415,36 +457,92 @@ function main(): void {
         ],
       );
       // setPoints4 dropped the previous cloud's color attribute; re-point the
-      // shader at the current mode's source (re-baking for the baked modes).
+      // shader at the CURRENT mode's source (re-baking for the baked modes).
       applyFourDColor();
-      ui.setPointCount(fourDResult.count);
-      return;
+      ui.setPointCount(result.count);
+    } else {
+      lastResult = result;
+      scene.setPoints(result.positions, result.colors);
+      // The colors were baked worker-side at REQUEST-time mode/contrast; if
+      // either changed while this generation was in flight, recolor the
+      // fresh cloud from live state (recolor() reads the just-cached
+      // lastResult) rather than flashing the stale palette.
+      if (
+        request.colorMode !== state.colorMode ||
+        request.colorGamma !== state.colorGamma
+      ) {
+        recolor();
+      }
+      ui.setPointCount(result.count);
     }
-    lastResult = runChaosGame(
-      state.transforms,
-      state.numPoints,
-      Math.random,
-      state.finalTransform ?? null,
-      state.symmetry,
-    );
-    const colors = buildColors(
-      lastResult,
-      state.transforms,
-      state.colorMode,
-      state.colorGamma,
-    );
-    scene.setPoints(lastResult.positions, colors);
-    ui.setPointCount(lastResult.count);
+
+    // Auto-frame the camera on a whole-system load's fresh attractor
+    // (fr-0b8) — deferred to arrival with everything else, so it frames the
+    // cloud actually going on screen.
+    if (request.fit) fitCameraToAttractor();
   }
+
+  // The off-main-thread generation pipeline (fr-5kx): a dedicated Worker runs
+  // the chaos game (cloud-worker.ts around cloud-worker-core.ts's pure
+  // generateCloud) and posts back transferable buffers — zero-copy, no SAB
+  // needed since each result is consumed once (contrast the flame's live
+  // tone-map, which re-reads its shared frames). CloudGenerator holds the
+  // at-most-one-in-flight / latest-wins policy plus a permanent synchronous
+  // fallback through the same generateCloud if the worker can't load (e.g. a
+  // stale-deploy 404) or crashes — unlike the optional flame/solid overlays,
+  // the live cloud IS the app, so it must outlive its worker. Constructed
+  // eagerly so the worker script loads during boot and is warm by the first
+  // drag; boot itself generates synchronously (generateSync below) so the
+  // first paint still includes the cloud.
+  const cloudGenerator = new CloudGenerator({
+    createWorker: (onResult, onError) => {
+      if (typeof Worker === "undefined") return null;
+      const worker = new Worker(new URL("./cloud-worker.ts", import.meta.url), {
+        type: "module",
+      });
+      worker.onmessage = (e: MessageEvent<CloudResult>) => onResult(e.data);
+      worker.onerror = (e) => {
+        console.error(
+          "Point-cloud worker failed; falling back to main-thread generation.",
+          e,
+        );
+        onError();
+      };
+      // A reply that fails to deserialize (shouldn't happen for our own
+      // structured-clonable results) would otherwise strand the in-flight
+      // request forever — treat it like a crash.
+      worker.onmessageerror = () => {
+        console.error(
+          "Point-cloud worker reply failed to deserialize; falling back to main-thread generation.",
+        );
+        onError();
+      };
+      return {
+        post: (request) => worker.postMessage(request),
+        terminate: () => {
+          // Detach the handlers BEFORE terminating so an already-queued
+          // reply can't reach a generator that has moved on (the same
+          // closed gap as the flame worker host's terminate).
+          worker.onmessage = null;
+          worker.onerror = null;
+          worker.onmessageerror = null;
+          worker.terminate();
+        },
+      };
+    },
+    computeSync: generateCloud,
+    onResult: applyCloudResult,
+  });
 
   // Coalesce the high-frequency regenerate() triggers — a guide-box drag's
   // pointermove and a panel slider's input both fire many times per frame — to
-  // at most ONE run per animation frame (fr-acc). regenerate() is O(numPoints)
-  // and stays synchronous (so the preset/Surprise-Me/undo/boot paths that read
-  // the fresh lastResult right after it for camera framing keep working); this
-  // just stops a single drag from running a whole chaos game on every event.
-  // Only the drag/slider sites schedule() through here; every one-shot path
-  // still calls regenerate() directly (and cancels any pending frame).
+  // at most ONE generation request per animation frame (fr-acc). With the
+  // worker pipeline (fr-5kx) this bounds request-building and postMessage
+  // traffic to frame rate — and, in the generator's synchronous fallback
+  // mode, it is again all that stops a single drag from running a whole chaos
+  // game on every input event. Only the drag/slider sites schedule() through
+  // here; every one-shot path still calls regenerate() directly (which
+  // cancels any pending frame it has just superseded).
   const regenScheduler = createFrameCoalescer(
     () => regenerate(),
     (cb) => requestAnimationFrame(cb),
@@ -493,12 +591,13 @@ function main(): void {
   // to luck. theta/phi are left untouched — only the distance and the point
   // being orbited move, so the fractal swaps in place and the camera glides
   // to meet it. Never triggered by Regenerate or a geometry edit (those
-  // would fight the user's own framing) — call sites are onPreset/onSurprise
-  // below, right after `applyEdit`'s synchronous regenerate lands a fresh
-  // `lastResult`/`fourDResult`. The glide itself — interpolation, reduced-
-  // motion snap, and the 4D framing box (fourDFramingBounds) — lives in
-  // camera-tween.ts; this file only decides WHICH bounds to frame and hands
-  // it the live camera fov/aspect.
+  // would fight the user's own framing) — the whole-system-load paths set
+  // the generation request's `fit` flag, and applyCloudResult calls
+  // fitCameraToAttractor when that result lands (fr-5kx), so the glide
+  // frames the cloud actually going on screen. The glide itself —
+  // interpolation, reduced-motion snap, and the 4D framing box
+  // (fourDFramingBounds) — lives in camera-tween.ts; this file only decides
+  // WHICH bounds to frame and hands it the live camera fov/aspect.
   const cameraTween = new CameraTween(
     orbit,
     () => performance.now(),
@@ -1029,7 +1128,9 @@ function main(): void {
    * clamped/cleared exactly like removeTransform does, and the preset scaffold
    * is cleared (preset-load decoration, not document state). `refit` re-frames
    * the camera when the load is a whole-system replacement — symmetric with
-   * how the camera moved when that replacement was first applied.
+   * how the camera moved when that replacement was first applied; it rides
+   * the generation request (fr-5kx) so the fit happens when the restored
+   * cloud actually arrives.
    *
    * Cutting (or not) an undo checkpoint is the CALLER's business, not this
    * function's: {@link restoreSnapshot} (EditSession's `restore`) must not
@@ -1049,7 +1150,7 @@ function main(): void {
     if (state.selectedTransform === "final" && !state.finalTransform) {
       state = selectTransform(state, null);
     }
-    regenerate(true);
+    regenerate(true, refit);
     scene.setFourDScaffold(null);
     scene.setRenderStyle(state.renderStyle);
     // Mirror onRenderStyle: never leave a stale glow exposure on a non-glow style.
@@ -1060,7 +1161,6 @@ function main(): void {
     scene.setSolidParams(state.solid);
     refreshGuides();
     refreshUi();
-    if (refit) fitCameraToAttractor();
   }
 
   /**
@@ -1133,17 +1233,17 @@ function main(): void {
    * "always" also marks the regenerate() call as a whole-system replacement
    * (its `replaced` flag — see regenerate()'s doc), so a freshly loaded
    * non-flat preset always gets resetFourDView()'s "fresh visit" treatment,
-   * even switching directly between two non-flat presets.
+   * even switching directly between two non-flat presets — and asks the
+   * arrival handler to auto-frame the camera on the fresh cloud (fr-0b8),
+   * which is why onPreset/onSurprise no longer call fitCameraToAttractor
+   * themselves.
    *
-   * regenerate() runs BEFORE refreshGuides()/refreshUi() (not after, as the
-   * names might suggest) — deliberately: regenerate() is the only place that
-   * updates `viewIs4D`, and refreshGuides() reads it to decide whether to
-   * show guide boxes at all. Refreshing guides first would read the flatness
-   * of the PREVIOUS system for one tick — invisible for an ordinary 3D edit,
-   * but a freshly-loaded preset that flips flatness (in either direction)
-   * would flash the wrong guide state (or, before fr-bf6, this could never
-   * happen: a preset/Surprise-Me load was guarded out entirely while
-   * `fourDActive`).
+   * regenerate() is asynchronous (fr-5kx): the new cloud — and with it the
+   * `viewIs4D` flip, the fresh-visit resets, and the camera fit — lands in
+   * applyCloudResult when the generation completes. The refreshGuides()/
+   * refreshUi() here therefore render the CURRENT (pre-arrival) view, which
+   * is correct — the old cloud is still on screen — and applyCloudResult
+   * re-refreshes both when an arriving result flips flatness.
    *
    * Before applying the reducer, checkpoints an undo step and, after it, every
    * geometry edit refreshes the guide boxes and the UI, then schedules a
@@ -1156,7 +1256,7 @@ function main(): void {
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     if (effect === "always" || state.autoUpdate) {
-      regenerate(effect === "always");
+      regenerate(effect === "always", effect === "always");
     }
     refreshGuides();
     refreshUi();
@@ -1213,8 +1313,8 @@ function main(): void {
       // The tumbling scaffold (Show guides toggles it with the grid/axes) —
       // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
       // preset (flat or non-flat) clears whatever the previous one left.
+      // (The camera auto-fit rides the generation request — see applyEdit.)
       scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
-      fitCameraToAttractor();
     },
     onSurprise: () => {
       applyEdit(() => {
@@ -1242,9 +1342,9 @@ function main(): void {
       }, "always");
       // A rolled system never carries a preset's tumbling scaffold (only the
       // polytope presets do), but one from an earlier visit could still be
-      // showing — clear it unconditionally.
+      // showing — clear it unconditionally. (The camera auto-fit rides the
+      // generation request — see applyEdit.)
       scene.setFourDScaffold(null);
-      fitCameraToAttractor();
     },
     // The generic scalar pipeline (fr-dig): view guard → undo checkpoint +
     // debounced save for document edits → the spec's own parse + reducer →
@@ -1480,10 +1580,13 @@ function main(): void {
   // this, a scene restored with non-default solid params would render with
   // voxel-material.ts's hardcoded defaults until a solid slider first moved.
   scene.setSolidParams(state.solid);
-  // regenerate() first (see applyEdit's doc comment for why): it decides
-  // `viewIs4D` for a possibly-restored non-flat scene, and refreshGuides()
-  // right after needs that to already be current, not defaulted to `false`.
-  regenerate();
+  // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
+  // regeneration goes through the worker (fr-5kx): the first paint should
+  // include the cloud, not an empty backdrop for a worker round-trip — and
+  // the inline delivery sets `viewIs4D` for a possibly-restored non-flat
+  // scene before the refreshGuides()/resetAutoOrbitView() reads just below,
+  // which need it current, not defaulted to `false`.
+  cloudGenerator.generateSync(cloudParams(false, false));
   // A flat boot never routes through regenerate()'s flip/replacement branches,
   // so seed the auto-orbit baseline (incl. the reduced-motion pause and the
   // checkbox sync) explicitly. A non-flat boot leaves it to the first

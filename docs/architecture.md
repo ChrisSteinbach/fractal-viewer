@@ -149,6 +149,18 @@ point colors can never drift apart.
    (panel + list)      └───────────── user input ──────────────┘
 ```
 
+As of fr-5kx, the boxed `src/fractal` segment above — `runChaosGame` through
+`buildColors` — no longer runs where this diagram might suggest: it executes
+inside `cloud-worker.ts` (`cloud-worker-core.ts`'s `generateCloud`), reached by
+`cloud-generator.ts` posting a request from the main thread. The worker
+transfers `positions`/`colors` (and, on the 4D path, `w`) back as zero-copy
+buffers; it's `main.ts`'s arrival handler, `applyCloudResult`, that actually
+calls `scene.setPoints`, not `regenerate()` itself. The one exception is the
+very first generation at boot, which runs `generateCloud` synchronously
+(`generateSync`) so first paint isn't a worker round-trip behind. See "Render
+workers & cross-origin isolation" below for the cloud worker's transport and
+fallback design.
+
 `main.ts` holds the single `AppState`, mutates it only through the pure reducers
 in `state.ts`, and after each change calls the relevant refreshers
 (`regenerate` → re-run the chaos game; `refreshGuides` → rebuild the wireframe
@@ -202,21 +214,37 @@ property stronger than the rotation embed's: at `w = 0` every lifted function
 reproduces its 3D counterpart bit-for-bit (not just to rounding), so an embedded
 3D system's `w = 0` slice warps exactly like the native 3D path.
 
-`main.ts`'s `regenerate()` is where the two paths fork. It computes
-`systemIsNonFlat(state)` once per generation and caches the result (`viewIs4D`)
-for the hot paths — the animation loop, the interaction callbacks, guide-box
-suppression — that would otherwise re-derive it every frame or pointer move. A
-flat system takes the untouched `runChaosGame` path, byte-identical to before
-this feature existed; a non-flat one lifts every transform (and the enabled final
-transform, if any) through `toTransform4` and calls `runChaosGame4` instead,
-uploading the result with `scene.setPoints4` rather than `scene.setPoints`. Point
-color is a separate concern from generating the cloud — see below. Rotational
-symmetry stays 3D-only by design — a recorded decision (fr-bf6), not an
-oversight, and the 4D chaos game genuinely has no kaleidoscope-symmetry step —
-so its control simply hides whenever the system is non-flat. The flame and solid
-renders were once 3D-only under that same reasoning but have since gained 4D
-variants (fr-5b3/fr-4wd), covered under "The flame still and the solid voxel
-render" below.
+`main.ts`'s `regenerate()` is where the two paths fork — though since fr-5kx it
+only decides which path to REQUEST, not run it. It computes
+`systemIsNonFlat(state)` once per generation and stamps the result onto the
+request's `fourD` field (`cloudParams`), then hands the request to
+`cloudGenerator` (`cloud-generator.ts`) instead of calling the chaos game
+directly. A flat request takes the untouched `runChaosGame` path inside the
+worker (or synchronously on the main thread, in the boot/fallback cases),
+byte-identical to before this feature existed; a non-flat one lifts every
+transform (and the enabled final transform, if any) through `toTransform4` —
+now done worker-side, inside `cloud-worker-core.ts`'s `generateCloud` — and
+runs `runChaosGame4` instead, uploaded with `scene.setPoints4` rather than
+`scene.setPoints` once the result arrives.
+
+`viewIs4D` — the cached flatness flag the hot paths (the animation loop, the
+interaction callbacks, guide-box suppression) read instead of re-deriving
+`systemIsNonFlat` every frame or pointer move — is now written by the arrival
+handler, `applyCloudResult`, rather than by `regenerate()` itself, so it always
+matches the DISPLAYED cloud rather than the most recently requested one: during
+the brief in-flight window after an edit flips flatness, the view deliberately
+stays with the old cloud. The "fresh visit" resets (`resetFourDView` /
+`resetAutoOrbitView`) and the camera auto-fit move with it: `regenerate`'s
+`replaced`/`fit` arguments ride the request (OR-merged across a coalesce, so a
+superseded preset load's intent survives into whichever request actually runs
+— see `cloud-generator.ts`) and fire from `applyCloudResult` once that
+request's result lands. Point color is a separate concern from generating the
+cloud — see below. Rotational symmetry stays 3D-only by design — a recorded
+decision (fr-bf6), not an oversight, and the 4D chaos game genuinely has no
+kaleidoscope-symmetry step — so its control simply hides whenever the system is
+non-flat. The flame and solid renders were once 3D-only under that same
+reasoning but have since gained 4D variants (fr-5b3/fr-4wd), covered under "The
+flame still and the solid voxel render" below.
 
 Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
@@ -388,6 +416,33 @@ hundreds of millions of chaos-game iterations never touch the main thread. The
 workers are thin `postMessage` glue around plain-Vitest-testable session state
 machines (`flame-worker-core.ts` / `voxel-worker-core.ts`).
 
+A third worker, `cloud-worker.ts` (fr-5kx), generates the live point cloud
+itself — the PRIMARY interactive view, not an on-demand still, so it runs from
+boot rather than being entered/exited from the panel. Its shape differs from
+the flame/voxel workers as much as its purpose: no session state machine
+streaming chunked partial results, just a single one-shot request → response
+(`cloud-worker-core.ts`'s `generateCloud`, computed fresh per call), with the
+at-most-one-in-flight / latest-wins pump living on the main thread in
+`cloud-generator.ts` rather than in the worker. fr-acc's rAF coalescer
+(`regen-scheduler.ts`) still fronts it — collapsing a drag/slider burst to one
+request per animation frame — and fr-acc's other surviving piece, the
+allocation-free hand-inlined chaos-game recording loop, now runs inside the
+worker's `generateCloud` instead of synchronously on the main thread; together
+the two bound staleness to about one generation behind the live state, no
+matter how fast the input events arrive.
+
+Transport is postMessage transfer, never SharedArrayBuffer: unlike the flame's
+tone-map, which re-reads its shared histogram buckets every frame, a cloud
+result is consumed exactly once — uploaded to the GPU and discarded — so
+there's nothing repeated for a shared buffer to pay for. And because the live
+cloud IS the app, unlike the optional flame/solid overlays, `cloud-generator.ts`
+carries a permanent synchronous fallback — the very same `generateCloud` run
+inline on the main thread — for when the worker can't be created, fails to
+load, or crashes, so a dead worker degrades to janky-but-correct rather than a
+dead viewer. Boot's first generation deliberately takes that same synchronous
+path too, not as a fallback but by design, so first paint already shows a
+cloud instead of a blank frame behind a worker round-trip.
+
 The flame worker's transport has two flavors:
 
 - **SharedArrayBuffer (fast path)** — when the page is cross-origin isolated,
@@ -422,8 +477,8 @@ whenever the tab becomes visible again) and the app shows the dismissible
 "new version" banner; reloading is the user's choice, applied by posting
 `SKIP_WAITING` and reloading once on the resulting `controllerchange`. An
 ignored banner costs nothing — the old worker keeps serving the old precache,
-so the old build's content-hashed chunk URLs (the flame/voxel workers) can no
-longer 404 mid-session. If another tab accepts instead, the remaining tabs
+so the old build's content-hashed chunk URLs (the flame/voxel/cloud workers)
+can no longer 404 mid-session. If another tab accepts instead, the remaining tabs
 get the same banner via the replaced-controller path (fr-k1z, fr-o13).
 
 ## GPU accumulation backend
