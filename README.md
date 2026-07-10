@@ -13,6 +13,9 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 ## Features
 
 - **Real-time chaos game** rendering of an IFS attractor (up to 500k points).
+- **Built-in explainer** — an in-app "What is this?" dialog covers the IFS /
+  chaos-game basics, and **▶ Watch it build** replays the cloud's own
+  generation point by point, from the first random hops to the full attractor.
 - **Editable transforms** — add/remove maps and drag, rotate, and scale them in
   the 3D view with mouse or touch.
 - **Presets** — a menu of seven systems, from the Sierpinski tetrahedron and

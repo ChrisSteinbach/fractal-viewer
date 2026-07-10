@@ -75,6 +75,11 @@ switching Points ↔ Flame ↔ Solid restores where you were. Scroll swipes that
 happen to land on a slider scroll the panel without editing its value;
 horizontal drags (and taps) still adjust it as usual.
 
+- **ⓘ What is this?** (fr-1zb) — right under the panel title: a short
+  plain-language explanation of what an iterated function system is and how
+  the chaos game draws its attractor (warm-up, escape-reseed and all), with
+  links back to these docs and its own **▶ Watch it build** button (below).
+  Escape, the backdrop, or the header ✕ close it.
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
   degrees), and scale (X/Y/Z) give exact per-axis control on every device. The
@@ -98,6 +103,14 @@ horizontal drags (and taps) still adjust it as usual.
   (debounced) address bar.
 - **Points** — slider for the point count (0–500k); takes effect on **Regenerate
   Points** (or immediately on other edits when auto-update is on).
+- **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
+  that's on screen right now: the same buffer is revealed in generation order
+  (no re-roll), one hop at a time at first — a bright spark riding each
+  landing — then accelerating through an exponential accretion ramp back to
+  the full count, narrated by a caption pill. Ends on its own; any
+  regenerate, edit, or render-mode switch cancels it. Works in the 4D
+  projection too (the spark rides the tumble). Also reachable from the
+  **ⓘ What is this?** dialog.
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.

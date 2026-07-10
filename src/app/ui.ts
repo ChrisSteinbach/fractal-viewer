@@ -133,6 +133,9 @@ export interface UiHandlers {
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
+  /** "▶ Watch it build" was clicked (in the About dialog or the panel):
+   * replay how the chaos game accretes the current cloud, point by point. */
+  onWatchBuild: () => void;
 }
 
 /**
@@ -561,6 +564,21 @@ export class Ui {
   private readonly galleryGrid: HTMLElement;
   private readonly galleryEmpty: HTMLElement;
   private readonly toast: HTMLElement;
+
+  // "What is this?" About dialog (fr-1zb): mirrors the gallery modal's own
+  // shape (open button, backdrop, close button). aboutWatchBtn and
+  // watchBuildBtn are the two "▶ Watch it build" entry points — the About
+  // dialog and the Appearance panel — both firing the same onWatchBuild
+  // handler; replayCaption is the narration pill main.ts drives during the
+  // replay via setReplayCaption.
+  private readonly aboutBtn: HTMLButtonElement;
+  private readonly aboutModal: HTMLElement;
+  private readonly aboutBackdrop: HTMLElement;
+  private readonly aboutCloseBtn: HTMLButtonElement;
+  private readonly aboutWatchBtn: HTMLButtonElement;
+  private readonly watchBuildBtn: HTMLButtonElement;
+  private readonly replayCaption: HTMLElement;
+
   private readonly glowBrightnessRow: HTMLElement;
   private readonly colorGammaRow: HTMLElement;
   private readonly symmetryNote: HTMLElement;
@@ -660,6 +678,12 @@ export class Ui {
     if (e.key === "Escape") this.closeGallery();
   };
 
+  /** Escape-to-close for the About dialog (fr-1zb), the same
+   * attached-only-while-open discipline as {@link onGalleryKeydown}. */
+  private readonly onAboutKeydown = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") this.closeAbout();
+  };
+
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
@@ -700,6 +724,13 @@ export class Ui {
     this.galleryGrid = this.byId("galleryGrid");
     this.galleryEmpty = this.byId("galleryEmpty");
     this.toast = this.byId("toast");
+    this.aboutBtn = this.byId("aboutBtn");
+    this.aboutModal = this.byId("aboutModal");
+    this.aboutBackdrop = this.byId("aboutBackdrop");
+    this.aboutCloseBtn = this.byId("aboutCloseBtn");
+    this.aboutWatchBtn = this.byId("aboutWatchBtn");
+    this.watchBuildBtn = this.byId("watchBuildBtn");
+    this.replayCaption = this.byId("replayCaption");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.colorGammaRow = this.byId("colorGammaRow");
     this.symmetryNote = this.byId("symmetryNote");
@@ -843,6 +874,16 @@ export class Ui {
     // the backdrop, and Escape (bound only while open) all just closeGallery().
     this.galleryCloseBtn.addEventListener("click", () => this.closeGallery());
     this.galleryBackdrop.addEventListener("click", () => this.closeGallery());
+    // The About dialog (fr-1zb) is the same kind of pure view concern:
+    // opening it needs no handler (the dialog is static content), and
+    // closing it mirrors the gallery's ✕/backdrop/Escape trio exactly.
+    this.aboutBtn.addEventListener("click", () => this.openAbout());
+    this.aboutCloseBtn.addEventListener("click", () => this.closeAbout());
+    this.aboutBackdrop.addEventListener("click", () => this.closeAbout());
+    // Two entry points for the same replay — the About dialog's own button
+    // and the Appearance panel's — both fire the one handler.
+    this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
+    this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
     // Every table-driven scalar control (see control-spec.ts) shares one
     // listener shape: read the element's raw value/checked and hand it, with
     // its spec, to the app's single scalar pipeline. Sliders report "input"
@@ -1185,6 +1226,28 @@ export class Ui {
   closeGallery(): void {
     this.galleryModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onGalleryKeydown);
+  }
+
+  /** Open the "What is this?" dialog and arm Escape-to-close. */
+  openAbout(): void {
+    this.aboutModal.classList.remove("hidden");
+    this.doc.addEventListener("keydown", this.onAboutKeydown);
+  }
+
+  /** Hide the "What is this?" dialog and drop its Escape listener. Idempotent. */
+  closeAbout(): void {
+    this.aboutModal.classList.add("hidden");
+    this.doc.removeEventListener("keydown", this.onAboutKeydown);
+  }
+
+  /** Show the "Watch it build" narration pill, or hide it with null. */
+  setReplayCaption(text: string | null): void {
+    if (text === null) {
+      this.replayCaption.classList.add("hidden");
+      return;
+    }
+    this.replayCaption.textContent = text;
+    this.replayCaption.classList.remove("hidden");
   }
 
   /**
