@@ -21,6 +21,7 @@ npm run dev           # Start Vite dev server (HTTPS, binds 0.0.0.0 for phones)
 npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
+npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
@@ -61,11 +62,15 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `flame-gpu.ts` — the WebGPU flame kernel (WGSL) + pure packing/dispatch-
     planning/histogram-conversion layer; Vitest-tested like the rest of this
     directory, pinned against `flame.ts`'s `accumulateFlame` (its CPU oracle)
-    by the agreement harness in `src/app/gpu-bench/`.
+    by the agreement harness in `src/app/gpu-bench/`, which CI runs headless
+    on SwiftShader (`npm run bench:gpu`, the `gpu-agreement` job; fr-jnu) —
+    vitest additionally pins the WGSL variation switch's case numbering to
+    `KERNEL_VARIATION_INDEX` statically.
   - `flame-gpu-4d.ts` — the 4D twin of `flame-gpu.ts`: the 4D WGSL kernel
     (4x4+t affines, `variations4`, the rotor+camera projection, the four
     `FourDRenderColor` modes, fixed-point soft-slice weights), pinned against
-    `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios.
+    `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios
+    (and the same static variation-switch pin in vitest).
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
     256×3 LUT) shared by the flame and solid renders; the `"legacy"` sentinel
     falls back to flat per-transform hue.

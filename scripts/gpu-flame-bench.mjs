@@ -14,7 +14,17 @@
  * Usage:
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
  *     [--url=https://host:port] [--headed] [--chrome=/path/to/chrome]
- *     [--out=bench-results]
+ *     [--swiftshader] [--out=bench-results]
+ *
+ * `--chrome=bundled` launches the Playwright-BUNDLED Chromium (the same
+ * hermetic browser the WebGL smoke test uses) instead of a system Chrome —
+ * the right choice on CI, where /usr/bin/google-chrome may not exist and the
+ * bundled chrome-linux64 is the build known to ship libvk_swiftshader.so.
+ * `--swiftshader` forces the WebGPU adapter onto SwiftShader (Chrome's
+ * bundled software Vulkan), so a GPU-less runner still executes the REAL
+ * WGSL kernels — slowly, but bit-faithfully — instead of skipping the
+ * agreement check. Together they are the CI invocation (see ci.yml's
+ * gpu-agreement job).
  *
  * Without --url, this spawns `npm run dev` itself and tears it down when
  * done (including on error) — the whole point being a one-shot
@@ -52,6 +62,7 @@ function parseArgs(argv) {
     url: undefined,
     headed: false,
     chrome: DEFAULT_CHROME,
+    swiftshader: false,
     out: "bench-results",
   };
   for (const raw of argv) {
@@ -78,6 +89,9 @@ function parseArgs(argv) {
         break;
       case "chrome":
         args.chrome = value;
+        break;
+      case "swiftshader":
+        args.swiftshader = true;
         break;
       case "out":
         args.out = value;
@@ -221,8 +235,13 @@ async function main() {
   let browser = null;
   let exitCode = 0;
   try {
+    // `--chrome=bundled` resolves to the Playwright-bundled Chromium — same
+    // hermetic-browser convention as scripts/webgl-smoke.mjs (see this
+    // script's usage doc for when that matters).
+    const executablePath =
+      args.chrome === "bundled" ? chromium.executablePath() : args.chrome;
     console.error(
-      `[gpu-flame-bench] launching ${args.chrome} (headless=${!args.headed})`,
+      `[gpu-flame-bench] launching ${executablePath} (headless=${!args.headed})`,
     );
     // Playwright's `headless: true` launches Chrome's OLD headless mode,
     // which has no GPU stack at all — navigator.gpu never exists there, so
@@ -236,9 +255,19 @@ async function main() {
       "--enable-features=Vulkan",
       "--ignore-gpu-blocklist",
     ];
+    if (args.swiftshader) {
+      // Force BOTH knobs onto SwiftShader: `--use-webgpu-adapter` pins
+      // Dawn's adapter selection, and `--use-vulkan=swiftshader` points the
+      // Vulkan feature (enabled above) at the bundled software ICD instead
+      // of probing for real hardware a CI box doesn't have.
+      launchFlags.push(
+        "--use-webgpu-adapter=swiftshader",
+        "--use-vulkan=swiftshader",
+      );
+    }
     if (!args.headed) launchFlags.push("--headless=new");
     browser = await chromium.launch({
-      executablePath: args.chrome,
+      executablePath,
       headless: false,
       args: launchFlags,
     });
