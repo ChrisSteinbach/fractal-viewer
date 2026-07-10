@@ -7,8 +7,8 @@ import {
   W_SIDE_PALETTES,
   wRampColor,
 } from "../fractal/color";
-import { buildPaletteLUT } from "../fractal/palette";
-import type { FlamePaletteId } from "../fractal/palette";
+import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
+import type { PaletteSelection } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
   Transform,
@@ -430,11 +430,12 @@ const W_RAMP_GRADIENTS: Record<WDepthColorMode, string> = {
  * palette display names (ui.test.ts pins the option values to
  * `FLAME_PALETTE_IDS`), so the legend reuses them instead of introducing a
  * second copy that could drift. Falls back to the raw id if the option is
- * ever missing.
+ * ever missing — which today also covers the `"custom"` sentinel (fr-55k),
+ * until index.html carries a Custom `<option>` of its own (a later change).
  */
 function paletteDisplayName(
   select: HTMLSelectElement,
-  id: FlamePaletteId,
+  id: PaletteSelection,
 ): string {
   for (const option of Array.from(select.options)) {
     if (option.value === id) return (option.textContent ?? "").trim() || id;
@@ -1393,7 +1394,9 @@ export class Ui {
       // `buildPaletteLUT` returning null IS the "no coordinate gradient"
       // signal for "legacy" (see palette.ts) — the same discriminator the
       // renderers use, not a second string compare that could drift.
-      const lut = buildPaletteLUT(render.paletteId);
+      const lut = buildPaletteLUT(
+        resolvePalette(render.paletteId, state.customPalette),
+      );
       if (lut !== null) {
         const name = paletteDisplayName(render.select, render.paletteId);
         this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");

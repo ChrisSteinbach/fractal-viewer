@@ -68,6 +68,7 @@ import {
   removeTransform,
   selectTransform,
   setColorGamma,
+  setCustomPaletteStops,
   setFinalTransform,
   setFlameEstimatorCurve,
   setFlameEstimatorMinimumRadius,
@@ -103,6 +104,7 @@ import {
   mengerSponge,
   presetTransforms,
 } from "../fractal/presets";
+import { seedCustomStops } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { Transform } from "../fractal/types";
 
@@ -189,6 +191,13 @@ describe("initialState", () => {
   // exactly as before this option existed.
   it("defaults the 4D camera-depth fade to off", () => {
     expect(initialState(true).fourDDepthFade).toBe(false);
+  });
+
+  // fr-55k: absent, not an empty stop list — "never authored" is a distinct
+  // state from "authored an empty gradient" (which isn't even valid, per
+  // MIN_CUSTOM_PALETTE_STOPS).
+  it("boots with no custom palette", () => {
+    expect(initialState(true).customPalette).toBeUndefined();
   });
 });
 
@@ -571,6 +580,35 @@ describe("setFlamePaletteId", () => {
     expect(next.flame.exposure).toBe(state.flame.exposure);
     expect(next.flame.supersample).toBe(state.flame.supersample);
   });
+
+  // fr-55k: the first switch to Custom seeds a tweakable copy of whatever
+  // gradient the user was just looking at — "ember", not the "spectrum"
+  // default, to prove it seeds from the ACTUAL previous id rather than some
+  // hardcoded fallback.
+  it("seeds customPalette from the previous flame palette on first switch to custom", () => {
+    const state = setFlamePaletteId(initialState(true), "ember");
+    const next = setFlamePaletteId(state, "custom");
+    expect(next.flame.paletteId).toBe("custom");
+    expect(next.customPalette).toEqual({ stops: seedCustomStops("ember") });
+  });
+
+  it("keeps the existing custom stops instead of re-seeding when selecting custom again", () => {
+    const seeded = setFlamePaletteId(initialState(true), "custom");
+    const customStops = [
+      [0.1, 0.2, 0.3],
+      [0.9, 0.8, 0.7],
+    ] as const;
+    const withStops = setCustomPaletteStops(seeded, customStops);
+    const next = setFlamePaletteId(withStops, "custom");
+    expect(next.customPalette).toEqual({ stops: customStops });
+  });
+
+  it("keeps customPalette intact when switching back to a preset id", () => {
+    const seeded = setFlamePaletteId(initialState(true), "custom");
+    const next = setFlamePaletteId(seeded, "aurora");
+    expect(next.flame.paletteId).toBe("aurora");
+    expect(next.customPalette).toBe(seeded.customPalette);
+  });
 });
 
 describe("setFlameEstimatorRadius", () => {
@@ -818,6 +856,63 @@ describe("setSolidPaletteId", () => {
     expect(next.solid.threshold).toBe(state.solid.threshold);
     expect(next.solid.resolution).toBe(state.solid.resolution);
     expect(next.solid.iterations).toBe(state.solid.iterations);
+  });
+
+  // fr-55k: the solid twin of setFlamePaletteId's seeding test — "moss", not
+  // the "spectrum" default, to prove it seeds from the ACTUAL previous SOLID
+  // id (independent of the flame palette's own selection).
+  it("seeds customPalette from the previous solid palette on first switch to custom", () => {
+    const state = setSolidPaletteId(initialState(true), "moss");
+    const next = setSolidPaletteId(state, "custom");
+    expect(next.solid.paletteId).toBe("custom");
+    expect(next.customPalette).toEqual({ stops: seedCustomStops("moss") });
+  });
+});
+
+describe("setCustomPaletteStops", () => {
+  it("replaces the stops with clamped fresh values", () => {
+    const state = initialState(true);
+    const next = setCustomPaletteStops(state, [
+      [-1, 0.5, 2],
+      [0.2, -5, 1.5],
+    ]);
+    expect(next.customPalette).toEqual({
+      stops: [
+        [0, 0.5, 1],
+        [0.2, 0, 1],
+      ],
+    });
+  });
+
+  it("returns the state unchanged when given fewer than the minimum stops", () => {
+    const state = initialState(true);
+    const next = setCustomPaletteStops(state, [[0.1, 0.2, 0.3]]);
+    expect(next).toBe(state);
+  });
+
+  it("keeps only the first 8 stops when given more than the maximum", () => {
+    const nineStops: Array<[number, number, number]> = Array.from(
+      { length: 9 },
+      (_, i) => [i / 8, i / 8, i / 8],
+    );
+    const next = setCustomPaletteStops(initialState(true), nineStops);
+    expect(next.customPalette?.stops).toEqual(nineStops.slice(0, 8));
+  });
+
+  it("returns the state unchanged when a channel is NaN or Infinity", () => {
+    const state = initialState(true);
+    expect(
+      setCustomPaletteStops(state, [
+        [0, 0, 0],
+        [NaN, 1, 1],
+      ]),
+    ).toBe(state);
+    expect(
+      setCustomPaletteStops(state, [
+        [0, 0, 0],
+        [Infinity, 1, 1],
+      ]),
+    ).toBe(state);
   });
 });
 

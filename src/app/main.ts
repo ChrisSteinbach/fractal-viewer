@@ -31,6 +31,7 @@ import {
   PRESET_SCAFFOLDS,
   presetTransforms,
 } from "../fractal/presets";
+import { resolvePalette } from "../fractal/palette";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera } from "./orbit";
 import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
@@ -995,7 +996,7 @@ function main(): void {
         estimatorRadius: state.flame.estimatorRadius,
         estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
         estimatorCurve: state.flame.estimatorCurve,
-        palette: state.flame.paletteId,
+        palette: resolvePalette(state.flame.paletteId, state.customPalette),
         order: state.symmetry.order,
         axis: state.symmetry.axis,
         // SAB-backed views structured-clone by SHARING their buffers — the
@@ -1116,7 +1117,7 @@ function main(): void {
         // Snapshotted alongside colorMode (fr-8sk) so the solid render's
         // baked-in LUT/position coloring matches the explorer's contrast.
         colorGamma: state.colorGamma,
-        palette: state.solid.paletteId,
+        palette: resolvePalette(state.solid.paletteId, state.customPalette),
         iterationsBudget: state.solid.iterations,
         // A worker needs an explicit numeric seed — a live Rng (like
         // Math.random) can't cross postMessage — which as a side effect makes
