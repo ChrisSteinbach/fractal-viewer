@@ -1814,10 +1814,12 @@ describe("Ui flame render controls", () => {
     ui.bind(handlers);
 
     const select = document.getElementById("flamePalette") as HTMLSelectElement;
-    select.value = "spectrum";
+    // Not "spectrum": that's the default since fr-9mw, so setting it
+    // wouldn't prove the change handler actually applies a new value.
+    select.value = "sunset";
     select.dispatchEvent(new Event("change"));
 
-    expect(current().flame.paletteId).toBe("spectrum");
+    expect(current().flame.paletteId).toBe("sunset");
   });
 });
 
@@ -2139,10 +2141,12 @@ describe("Ui solid render controls", () => {
     ui.bind(handlers);
 
     const select = document.getElementById("solidPalette") as HTMLSelectElement;
-    select.value = "spectrum";
+    // Not "spectrum": that's the default since fr-9mw, so setting it
+    // wouldn't prove the change handler actually applies a new value.
+    select.value = "sunset";
     select.dispatchEvent(new Event("change"));
 
-    expect(current().solid.paletteId).toBe("spectrum");
+    expect(current().solid.paletteId).toBe("sunset");
   });
 });
 

@@ -153,6 +153,17 @@ describe("initialState", () => {
     });
   });
 
+  // fr-9mw: a fresh session's first flame/solid render should show the
+  // iridescent cosine-gradient look, not "legacy" flat per-transform hue.
+  // Pinned to the literal id (not the DEFAULT_ constants) so reverting the
+  // default back to "legacy" fails here, not just in the field docs. Old
+  // persisted/shared scenes still decode to "legacy" — see persist.test.ts.
+  it("boots with the spectrum gradient palette for both renders", () => {
+    const state = initialState(true);
+    expect(state.flame.paletteId).toBe("spectrum");
+    expect(state.solid.paletteId).toBe("spectrum");
+  });
+
   // The startup fractal must match a menu preset so it can be reselected.
   it("starts with the 'default' preset's system", () => {
     expect(initialState(true).transforms).toEqual(presetTransforms("default"));
@@ -546,8 +557,10 @@ describe("setFlameSupersample", () => {
 describe("setFlamePaletteId", () => {
   it("sets the palette id immutably", () => {
     const state = initialState(true);
-    const next = setFlamePaletteId(state, "spectrum");
-    expect(next.flame.paletteId).toBe("spectrum");
+    // "aurora", not the "spectrum" default — a no-op write couldn't prove
+    // immutability.
+    const next = setFlamePaletteId(state, "aurora");
+    expect(next.flame.paletteId).toBe("aurora");
     expect(state.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
@@ -792,8 +805,10 @@ describe("setSolidAmbient", () => {
 describe("setSolidPaletteId", () => {
   it("sets the palette id immutably", () => {
     const state = initialState(true);
-    const next = setSolidPaletteId(state, "spectrum");
-    expect(next.solid.paletteId).toBe("spectrum");
+    // "aurora", not the "spectrum" default — a no-op write couldn't prove
+    // immutability.
+    const next = setSolidPaletteId(state, "aurora");
+    expect(next.solid.paletteId).toBe("aurora");
     expect(state.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
   });
 

@@ -29,9 +29,7 @@ import type {
   WExtension,
 } from "../fractal/types";
 import {
-  DEFAULT_FLAME_PALETTE,
   DEFAULT_FOUR_D_COLOR,
-  DEFAULT_SOLID_PALETTE,
   DEFAULT_SYMMETRY_AXIS,
   MAX_W_ANGLE,
   MAX_W_POSITION,
@@ -181,6 +179,18 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
  * shared by the flame (`flame.paletteId`) and solid (`solid.paletteId`,
  * fr-1kt) validators. */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
+
+/**
+ * Palette id decoded when a scene's `paletteId` is absent or unknown (shared
+ * by the flame and solid blocks): pinned to `"legacy"` — the pre-palette
+ * behavior — deliberately NOT `DEFAULT_FLAME_PALETTE` /
+ * `DEFAULT_SOLID_PALETTE`, which fr-9mw moved to a cosine gradient for fresh
+ * sessions. A link or autosave written before fr-6us/fr-1kt must keep
+ * rendering exactly as it did when it was written, so this decode fallback
+ * stays the backward-compat sentinel even as the fresh-session default
+ * evolves.
+ */
+const FALLBACK_PALETTE_ID: FlamePaletteId = "legacy";
 
 /** Exact set of valid SymmetryAxis values. */
 const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
@@ -419,7 +429,9 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
  * scene, so a link written by a future build carrying a palette this build
  * doesn't know keeps the rest of its scene instead of being thrown away over
  * one cosmetic field — the enum equivalent of the finite-but-out-of-range
- * clamp the numeric fields already use.
+ * clamp the numeric fields already use. That fallback is `"legacy"`, NOT the
+ * fresh-session `DEFAULT_FLAME_PALETTE` (a gradient since fr-9mw) — see
+ * {@link FALLBACK_PALETTE_ID}.
  */
 function decodeFlameParams(raw: unknown): FlameParams | null {
   if (raw === undefined) {
@@ -432,7 +444,7 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
       estimatorRadius: PARAM.estimatorRadius.default,
       estimatorMinimumRadius: PARAM.estimatorMinimumRadius.default,
       estimatorCurve: PARAM.estimatorCurve.default,
-      paletteId: DEFAULT_FLAME_PALETTE,
+      paletteId: FALLBACK_PALETTE_ID,
     };
   }
   if (typeof raw !== "object" || raw === null) return null;
@@ -483,7 +495,7 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
   const paletteId: FlamePaletteId =
     typeof f.paletteId === "string" && VALID_PALETTE_IDS.has(f.paletteId)
       ? (f.paletteId as FlamePaletteId)
-      : DEFAULT_FLAME_PALETTE;
+      : FALLBACK_PALETTE_ID;
 
   return {
     exposure: clampToSpec(PARAM.flameExposure, exposure),
@@ -512,7 +524,8 @@ function decodeFlameParams(raw: unknown): FlameParams | null {
  *
  * `paletteId` (fr-1kt) is the one exception to the reject-on-malformed rule,
  * mirroring `flame.paletteId`: an unknown or missing id decodes to `"legacy"`
- * rather than rejecting the scene.
+ * ({@link FALLBACK_PALETTE_ID}, not the fresh-session default) rather than
+ * rejecting the scene.
  */
 function decodeSolidParams(raw: unknown): SolidParams | null {
   const defaults: SolidParams = {
@@ -522,7 +535,7 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
     lightAzimuth: PARAM.solidLightAzimuth.default,
     lightElevation: PARAM.solidLightElevation.default,
     ambient: PARAM.solidAmbient.default,
-    paletteId: DEFAULT_SOLID_PALETTE,
+    paletteId: FALLBACK_PALETTE_ID,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
@@ -549,7 +562,7 @@ function decodeSolidParams(raw: unknown): SolidParams | null {
   const paletteId: FlamePaletteId =
     typeof s.paletteId === "string" && VALID_PALETTE_IDS.has(s.paletteId)
       ? (s.paletteId as FlamePaletteId)
-      : DEFAULT_SOLID_PALETTE;
+      : FALLBACK_PALETTE_ID;
 
   return {
     resolution: clampToSpec(PARAM.solidResolution, out.resolution),

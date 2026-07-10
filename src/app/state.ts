@@ -98,11 +98,14 @@ export interface FlameParams {
    * `estimatorRadius`. */
   estimatorCurve: number;
   /**
-   * Structural-coloring palette (fr-6us; see `palette.ts`). `"legacy"` (the
-   * default) keeps the original per-transform-hue coloring, so existing
-   * scenes/renders are unchanged; a cosine-gradient id paints continuous color
-   * along the orbit. Changing it restarts accumulation — the accumulated color
-   * sums bake in the palette, so there is nothing to keep (see `main.ts`).
+   * Structural-coloring palette (fr-6us; see `palette.ts`). A cosine-gradient
+   * id paints continuous color along the orbit; `"legacy"` keeps the original
+   * per-transform-hue coloring. Fresh sessions default to a gradient
+   * ({@link DEFAULT_FLAME_PALETTE}, fr-9mw), while decoded scenes whose link
+   * predates the field fall back to `"legacy"` (see `persist.ts`), so existing
+   * scenes/renders are unchanged. Changing it restarts accumulation — the
+   * accumulated color sums bake in the palette, so there is nothing to keep
+   * (see `main.ts`).
    */
   paletteId: FlamePaletteId;
 }
@@ -137,10 +140,12 @@ export interface SolidParams {
   ambient: number;
   /**
    * Structural-coloring palette (fr-1kt; shares fr-6us's `FlamePaletteId`
-   * enum — see `palette.ts`). `"legacy"` (the default) keeps the existing
-   * colorMode-driven coloring (fr-c1d), so existing scenes/renders are
-   * unchanged; a cosine-gradient id paints continuous color along the orbit
-   * instead, overriding colorMode entirely. Changing it restarts
+   * enum — see `palette.ts`). A cosine-gradient id paints continuous color
+   * along the orbit, overriding colorMode entirely; `"legacy"` keeps the
+   * colorMode-driven coloring (fr-c1d). Fresh sessions default to a gradient
+   * ({@link DEFAULT_SOLID_PALETTE}, fr-9mw), while decoded scenes whose link
+   * predates the field fall back to `"legacy"` (see `persist.ts`), so
+   * existing scenes/renders are unchanged. Changing it restarts
    * accumulation — the accumulated avgRGB bakes in the palette, so there is
    * nothing to keep (see `main.ts`).
    */
@@ -376,11 +381,16 @@ export const DEFAULT_ESTIMATOR_CURVE = 0.4;
 export const MIN_ESTIMATOR_CURVE = 0.1;
 export const MAX_ESTIMATOR_CURVE = 3;
 /**
- * Default flame palette. `"legacy"` is the pre-fr-6us per-transform-hue
- * coloring, so a scene that predates this feature (or a fresh one) renders
- * exactly as before until the user picks a gradient palette.
+ * Default flame palette for a FRESH session (fr-9mw): the classic
+ * full-spectrum cosine gradient, so the first flame a user ever renders shows
+ * the iridescent structural coloring the feature exists for rather than the
+ * flat per-transform hues of `"legacy"`. Deliberately NOT the decode fallback:
+ * a persisted/shared scene whose flame block predates fr-6us (or carries an
+ * unknown id) still falls back to `"legacy"` in `persist.ts`
+ * (`FALLBACK_PALETTE_ID`), so scenes written before palettes existed render
+ * exactly as they did then.
  */
-export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "legacy";
+export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "spectrum";
 /**
  * Solid render (fr-v4f) defaults and ranges. 192^3 is the detail/memory
  * sweet spot (a 256^3 grid is ~2.4x the memory and allocation risk for a
@@ -422,12 +432,14 @@ export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
 /**
- * Default solid-render palette. `"legacy"` is the colorMode-driven coloring
- * that predates this feature (fr-1kt), so a scene that predates it (or a
- * fresh one) renders exactly as before until the user picks a gradient
- * palette.
+ * Default solid-render palette for a FRESH session (fr-9mw): the same
+ * spectrum gradient as {@link DEFAULT_FLAME_PALETTE}, for one coherent
+ * default look across both converging renders. Like the flame default, this
+ * is NOT the decode fallback — a scene that predates fr-1kt falls back to
+ * `"legacy"` (the colorMode-driven coloring) in `persist.ts`, rendering
+ * exactly as it did before palettes existed.
  */
-export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "legacy";
+export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "spectrum";
 /** 1 = off: today's unreplicated system, unchanged until symmetry is turned on. */
 export const DEFAULT_SYMMETRY_ORDER = 1;
 export const MIN_SYMMETRY_ORDER = 1;

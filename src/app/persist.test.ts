@@ -997,7 +997,9 @@ describe("decodeScene flame params", () => {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
-      paletteId: DEFAULT_FLAME_PALETTE,
+      // Deliberately "legacy", NOT DEFAULT_FLAME_PALETTE (a gradient since
+      // fr-9mw): a pre-palette link must render as it did when written.
+      paletteId: "legacy",
     });
   });
 
@@ -1310,7 +1312,9 @@ describe("decodeScene solid params", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
-      paletteId: DEFAULT_SOLID_PALETTE,
+      // Deliberately "legacy", NOT DEFAULT_SOLID_PALETTE (a gradient since
+      // fr-9mw): a pre-palette link must render as it did when written.
+      paletteId: "legacy",
     });
   });
 
