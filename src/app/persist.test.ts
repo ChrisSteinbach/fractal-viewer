@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
-import { decodeScene, encodeScene, loadScene } from "./persist";
+import {
+  decodeScene,
+  encodeScene,
+  fromSnapshot,
+  loadScene,
+  toSnapshot,
+} from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import {
+  MAX_CUSTOM_PALETTE_STOPS,
+  MIN_CUSTOM_PALETTE_STOPS,
+} from "../fractal/palette";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import {
   DEFAULT_COLOR_GAMMA,
@@ -53,7 +63,9 @@ import {
   MIN_SYMMETRY_ORDER,
   MIN_W_POSITION,
   MIN_W_SCALE,
+  initialState,
 } from "./state";
+import type { AppState } from "./state";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,6 +74,17 @@ import {
 /** Encode a string as base64url — lets tests construct raw payloads directly. */
 function b64url(s: string): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+/** Inverse of `b64url` (mirrors persist.ts's own `fromBase64url`), so a test
+ * can inspect the raw encoded payload's keys directly. */
+function decodePayload(encoded: string): Record<string, unknown> {
+  const raw = encoded.replace(/^v1=/, "");
+  const padded = raw + "=".repeat((4 - (raw.length % 4)) % 4);
+  const parsed: unknown = JSON.parse(
+    atob(padded.replace(/-/g, "+").replace(/_/g, "/")),
+  );
+  return parsed as Record<string, unknown>;
 }
 
 /** A minimal valid snapshot used as the starting point in every test. */
@@ -1435,6 +1458,236 @@ describe("decodeScene solid params", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.solid.paletteId).toBe("legacy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Custom palette (fr-55k) — the one user-authored gradient slot. Absent,
+// malformed, or an out-of-range stop count all quietly decode to `undefined`
+// rather than rejecting the scene; flame.paletteId / solid.paletteId accept
+// "custom" only when a valid payload decoded alongside it (see
+// decodeCustomPalette).
+// ---------------------------------------------------------------------------
+
+describe("decodeScene customPalette", () => {
+  it("round-trips custom palette stops and a custom flame paletteId selection", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [0.2, 0.4, 0.6],
+        [0.8, 0.4, 0.2],
+      ],
+    });
+    expect(result!.flame.paletteId).toBe("custom");
+  });
+
+  it("round-trips a custom solid paletteId selection alongside the same payload", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [0.2, 0.4, 0.6],
+        [0.8, 0.4, 0.2],
+      ],
+    });
+    expect(result!.solid.paletteId).toBe("custom");
+  });
+
+  it("omits customPalette from the encoded payload when the snapshot has none", () => {
+    const payload = decodePayload(encodeScene(baseSnapshot()));
+    expect("customPalette" in payload).toBe(false);
+  });
+
+  it("decodes back to an undefined customPalette when the snapshot has none", () => {
+    const result = decodeScene(encodeScene(baseSnapshot()));
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("falls back to legacy for a custom flame paletteId with no customPalette payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("falls back to legacy for a custom solid paletteId with no customPalette payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, paletteId: "custom" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.solid.paletteId).toBe("legacy");
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("drops the payload and demotes a custom paletteId when stops is not an array", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: "not-an-array" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+    expect(result!.flame.paletteId).toBe("legacy");
+    // The rest of the scene survives — this is a quiet fallback, not a
+    // whole-scene rejection.
+    expect(result!.transforms).toHaveLength(1);
+  });
+
+  it("drops the payload and demotes a custom paletteId when there are too few stops", () => {
+    const tooFew = Array.from(
+      { length: MIN_CUSTOM_PALETTE_STOPS - 1 },
+      () => "#ff0000",
+    );
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: tooFew },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+    expect(result!.flame.paletteId).toBe("legacy");
+  });
+
+  it("drops the payload and demotes a custom paletteId when there are too many stops", () => {
+    const tooMany = Array.from(
+      { length: MAX_CUSTOM_PALETTE_STOPS + 1 },
+      () => "#ff0000",
+    );
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: tooMany },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+    expect(result!.flame.paletteId).toBe("legacy");
+  });
+
+  it("drops the payload when a stop entry is a short hex shorthand", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: ["#ff00", "#00ff00"] },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+    expect(result!.flame.paletteId).toBe("legacy");
+  });
+
+  it("drops the payload when a stop entry is not a string", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: [123, "#00ff00"] },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+    expect(result!.flame.paletteId).toBe("legacy");
+  });
+
+  it("drops the payload when it is not a plain object", () => {
+    const raw = { ...baseSnapshot(), customPalette: "gradient" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("drops a null customPalette payload", () => {
+    const raw = { ...baseSnapshot(), customPalette: null };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("accepts uppercase hex digits in stop entries", () => {
+    const raw = {
+      ...baseSnapshot(),
+      flame: { ...baseSnapshot().flame, paletteId: "custom" },
+      customPalette: { stops: ["#FF0000", "#00FF00"] },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+    });
+    expect(result!.flame.paletteId).toBe("custom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toSnapshot / fromSnapshot (fr-55k) — customPalette carry/clear. These two
+// projection functions had no direct tests before this field; the second
+// test pins the spread-overwrite behavior undo (edit-session.ts) relies on.
+// ---------------------------------------------------------------------------
+
+describe("toSnapshot / fromSnapshot customPalette", () => {
+  it("toSnapshot carries the customPalette slot", () => {
+    const state: AppState = {
+      ...initialState(true),
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    expect(toSnapshot(state).customPalette).toEqual({
+      stops: [
+        [0.2, 0.4, 0.6],
+        [0.8, 0.4, 0.2],
+      ],
+    });
+  });
+
+  it("fromSnapshot clears a base state's customPalette when the snapshot carries none", () => {
+    const base: AppState = {
+      ...initialState(true),
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    // toSnapshot always emits the `customPalette` key (possibly undefined) —
+    // unlike an object that never mentions the field at all, this is what
+    // makes the spread in fromSnapshot actually overwrite base's slot rather
+    // than leave it untouched.
+    const snapshot = toSnapshot(initialState(true));
+    expect(fromSnapshot(snapshot, base).customPalette).toBeUndefined();
   });
 });
 
