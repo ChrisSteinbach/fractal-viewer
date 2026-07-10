@@ -511,12 +511,22 @@ a byte-identical one.
 
 That distinction is pinned by a standing statistical-agreement harness: a
 dev-only benchmark/comparison page (`src/app/gpu-bench/`) and its headless
-runner (`scripts/gpu-flame-bench.mjs`) accumulate the same system on both
-backends from the same seed-class and check the CPU/GPU renders agree within
-measured thresholds, exiting non-zero (CI-able) if they don't — the same page
-also doubles as the phone-benchmarking path, since it works interactively
-over the LAN like any other dev page. See `docs/spike-fr-53k-gpu-flame-accum.md`
-for the original spike's go/no-go decision and measured numbers.
+runner (`scripts/gpu-flame-bench.mjs`, `npm run bench:gpu`) accumulate the
+same system on both backends from the same seed-class and check the CPU/GPU
+renders agree within measured thresholds, exiting non-zero if they don't —
+the same page also doubles as the phone-benchmarking path, since it works
+interactively over the LAN like any other dev page. CI runs the whole sweep
+on every push/PR (fr-jnu): the `gpu-agreement` job executes the real WGSL
+kernels on SwiftShader (Chromium's bundled software Vulkan, so no GPU runner
+is needed), with the runner treating a skipped comparison (no WebGPU
+adapter) as a failure rather than a pass. The scenario list includes a
+"variation zoo" (3D and 4D) that enables all twelve variation types across
+three maps plus a final-transform lens, so every hand-written WGSL variation
+formula — not just the handful the showcase presets use — is compared
+against `variations.ts`/`variations4.ts` on every CI run; vitest separately
+pins the WGSL switch's case numbering to `KERNEL_VARIATION_INDEX`
+statically. See `docs/spike-fr-53k-gpu-flame-accum.md` for the original
+spike's go/no-go decision and measured numbers.
 
 Agreement is necessary but not sufficient — a render that matches the CPU
 oracle can still have its tab OOM-killed or thermally throttled under

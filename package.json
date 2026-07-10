@@ -8,6 +8,7 @@
     "build": "node scripts/collect-third-party-licenses.mjs && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/webgl-smoke.mjs",
+    "bench:gpu": "node scripts/gpu-flame-bench.mjs",
     "test": "npm run lint && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

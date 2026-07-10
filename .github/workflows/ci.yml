@@ -110,3 +110,44 @@ jobs:
       # scripts/webgl-smoke.mjs spawns its own `npm run dev` and tears it down.
       - name: WebGL smoke test (SwiftShader software GL)
         run: npm run smoke
+
+  # fr-jnu: the GPU-flame agreement harness (src/app/gpu-bench/) as a CI
+  # gate — the WGSL kernels are the one re-implementation of the fractal
+  # core that vitest cannot execute (WebGPU needs a real browser), so this
+  # job runs the REAL kernels on SwiftShader (Chromium's bundled software
+  # Vulkan; no GPU on the runner needed) and pins them statistically against
+  # their CPU oracles (accumulateFlame / accumulateFlame4). The runner
+  # script exits non-zero on agreement FAILURE and — deliberately — on
+  # "skipped" (no WebGPU adapter), so a runner that silently loses WebGPU
+  # cannot keep passing while verifying nothing.
+  gpu-agreement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Same hermetic browser as the smoke job: only the Playwright-bundled
+      # Chromium is known to ship libvk_swiftshader.so.
+      - name: Install Playwright Chromium + system deps
+        run: npx playwright-core install --with-deps chromium
+
+      # --duration only shrinks the throughput-timing phase; the agreement
+      # verdict comes from the fixed equal-N legs (50.3M iterations per
+      # side per scenario), so a short duration loses no rigor.
+      - name: GPU flame agreement (WebGPU kernels vs CPU oracles)
+        run: npm run bench:gpu -- --chrome=bundled --swiftshader --duration=1 --out=bench-results
+
+      - name: Upload bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-bench
+          path: bench-results/
+          retention-days: 30
