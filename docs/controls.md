@@ -78,8 +78,10 @@ horizontal drags (and taps) still adjust it as usual.
 - **ⓘ What is this?** (fr-1zb) — right under the panel title: a short
   plain-language explanation of what an iterated function system is and how
   the chaos game draws its attractor (warm-up, escape-reseed and all), with
-  links back to these docs and its own **▶ Watch it build** button (below).
-  Escape, the backdrop, or the header ✕ close it.
+  further-reading links (Wikipedia's IFS / chaos game / fractal flame
+  articles, plus Barnsley's _Fractals Everywhere_) and its own
+  **▶ Watch it build** button (below). Escape, the backdrop, or the header ✕
+  close it.
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
   degrees), and scale (X/Y/Z) give exact per-axis control on every device. The
