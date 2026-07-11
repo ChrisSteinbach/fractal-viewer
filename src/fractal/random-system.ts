@@ -1,4 +1,4 @@
-import { systemIsFlat, toTransform4 } from "./affine4";
+import { meanContraction, systemIsFlat, toTransform4 } from "./affine4";
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { Rng } from "./rng";
@@ -18,10 +18,10 @@ import type {
  * lens (see {@link Transform} and `AppState.finalTransform`). Rare spice
  * (fr-bf6.5): roughly one roll in four ({@link FOUR_D_PROBABILITY}) also
  * gives some of the base maps a sparse `w` extension (see
- * {@link Transform.w}), landing a genuinely non-flat system that the app
- * renders through its tumbling 4D projection instead of the flat point
- * cloud. The final transform never carries a `w` block — see
- * {@link randomFinalTransform}.
+ * {@link Transform.w}, occasionally itself w-mirrored — fr-bew), landing a
+ * genuinely non-flat system that the app renders through its tumbling 4D
+ * projection instead of the flat point cloud. The final transform never
+ * carries a `w` block — see {@link randomFinalTransform}.
  *
  * `symmetry` (fr-wti's follow-up, landed via fr-d61) is rolled for FLAT
  * systems only — see {@link randomSymmetry}. `null` means "no kaleidoscope",
@@ -213,6 +213,17 @@ const FOUR_D_ROTATION_RANGE = 0.7;
 /** The three w-mixing rotation planes a hit can pick from (see
  * {@link WExtension}'s `rotation` field). */
 const W_ROTATION_PLANES = ["xw", "yw", "zw"] as const;
+/**
+ * Per-map odds that a landed `w` block ALSO mirrors w (fr-bew): `w.scale` is
+ * materialised as the NEGATED derived mean contraction — the 4D reflection
+ * fr-icy made expressible end-to-end (editor, codec, chaos game, GPU
+ * kernels), which this generator alone never produced. See
+ * {@link randomWExtension} for why the magnitude stays the derived mean.
+ * Matches {@link REFLECTION_PROBABILITY}'s 0.1 — the same rare-spice order
+ * as the 3D mirror, conditioned further on the block having landed content
+ * at all — so roughly one returned 4D system in four carries a w-mirror.
+ */
+const FOUR_D_REFLECTION_PROBABILITY = 0.1;
 /**
  * Fallback range for forcing map 0's `w.position` non-flat (see
  * {@link randomTransforms}), used on the rare roll where every map's
@@ -433,18 +444,28 @@ function randomVariations(rng: Rng): Variation[] | undefined {
  * `weight`/`variations` (fr-d61's weight-skew caution: coupling a 4D roll to
  * either would bias which maps get chosen or how they're already warped).
  *
- * `w.scale` is NEVER rolled: left absent, `toTransform4` derives it as the
- * map's mean spatial contraction, which is already inside this generator's
- * contractive scale bounds — so there is no new escape risk from leaving it
- * derived, and nothing goes stale as the map's own scale is edited later.
- * `w.shear` is NEVER rolled either: it adds little visible variety in the
+ * `w.scale` is MOSTLY left absent: `toTransform4` then derives it as the
+ * map's mean spatial contraction ({@link meanContraction}), which is already
+ * inside this generator's contractive scale bounds — no new escape risk, and
+ * nothing goes stale as the map's own scale is edited later. Occasionally
+ * ({@link FOUR_D_REFLECTION_PROBABILITY}) a block that landed content also
+ * MIRRORS w (fr-bew): `w.scale` is materialised as the NEGATED derived mean —
+ * exactly the value the editor's Mirror W toggle materialises (fr-icy),
+ * since "derived but mirrored" isn't representable in the sparse model. Same
+ * rationale as the 3D mirror ({@link REFLECTION_PROBABILITY}): a reflection
+ * changes handedness, not contraction (the magnitude is untouched), so the
+ * quality gates judge mirrored candidates on the same terms as everything
+ * else. The mirror gate is rolled LAST and only for a block with content, so
+ * a both-miss map still costs exactly two draws and stays keyless — and a
+ * mirror never rides on a map with no 4D dynamics of its own to reflect.
+ * `w.shear` is NEVER rolled: it adds little visible variety in the
  * projection view for the extra sparse-roll complexity it would cost.
  *
  * Returns `undefined` when both sub-rolls miss, so a transform with no
  * genuine 4D degrees of freedom carries no `w` key at all — the same
  * absent-means-flat convention `affine4.ts`'s `isFlatTransform` relies on.
  */
-function randomWExtension(rng: Rng): WExtension | undefined {
+function randomWExtension(rng: Rng, scale: Vec3): WExtension | undefined {
   const w: WExtension = {};
   if (rng() < FOUR_D_POSITION_PROBABILITY) {
     w.position = uniform(rng, -FOUR_D_POSITION_RANGE, FOUR_D_POSITION_RANGE);
@@ -466,7 +487,11 @@ function randomWExtension(rng: Rng): WExtension | undefined {
     }
     w.rotation = rotation;
   }
-  return Object.keys(w).length > 0 ? w : undefined;
+  if (Object.keys(w).length === 0) return undefined;
+  if (rng() < FOUR_D_REFLECTION_PROBABILITY) {
+    w.scale = -meanContraction(scale);
+  }
+  return w;
 }
 
 function randomTransform(
@@ -477,12 +502,17 @@ function randomTransform(
   fourD: boolean,
 ): Transform {
   const variations = randomVariations(rng);
-  const w = fourD ? randomWExtension(rng) : undefined;
+  const position = randomVec3(rng, -POSITION_RANGE, POSITION_RANGE);
+  const rotation = randomVec3(rng, -Math.PI, Math.PI);
+  const scale = randomReflection(rng, randomScale(rng, baseScale, scaleFloor));
+  // Rolled AFTER scale (unlike the pre-fr-bew order) so the w-mirror can
+  // materialise the negated derived mean of THIS map's actual scale.
+  const w = fourD ? randomWExtension(rng, scale) : undefined;
   return {
     id,
-    position: randomVec3(rng, -POSITION_RANGE, POSITION_RANGE),
-    rotation: randomVec3(rng, -Math.PI, Math.PI),
-    scale: randomReflection(rng, randomScale(rng, baseScale, scaleFloor)),
+    position,
+    rotation,
+    scale,
     weight: randomWeight(rng),
     shear: randomShear(rng),
     ...(variations ? { variations } : {}),
@@ -814,9 +844,10 @@ function scoreCandidate(candidate: RandomSystem, rng: Rng): number {
  * final-transform lens — everything the core supports, so "Surprise Me" can
  * reach anywhere the manual editor can — and, occasionally
  * ({@link FOUR_D_PROBABILITY}), a sparse `w` extension on some of the base
- * maps (fr-bf6.5), landing a genuinely 4D system. A flat candidate
- * additionally has a chance ({@link SYMMETRY_PROBABILITY}) of a rolled
- * rotational symmetry ({@link randomSymmetry}).
+ * maps (fr-bf6.5), landing a genuinely 4D system — itself occasionally
+ * w-mirrored ({@link FOUR_D_REFLECTION_PROBABILITY} — fr-bew). A flat
+ * candidate additionally has a chance ({@link SYMMETRY_PROBABILITY}) of a
+ * rolled rotational symmetry ({@link randomSymmetry}).
  *
  * Each candidate is probed ({@link scoreCandidate} — bounds sanity plus
  * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate

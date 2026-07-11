@@ -4,6 +4,7 @@ import {
   composeAffine4,
   embedTransform3,
   isFlatTransform,
+  meanContraction,
   rotationMatrix4,
   systemIsFlat,
   toTransform4,
@@ -248,6 +249,12 @@ describe("applyAffine4", () => {
     };
     // x' = 1·1 + 2·1 + 1 = 4; y' = 1 + 1 = 2; z' = 1 + 1 = 2; w' = 1 + 1 = 2.
     expect(applyAffine4(a, 1, 1, 1, 1)).toEqual([4, 2, 2, 2]);
+  });
+});
+
+describe("meanContraction", () => {
+  it("uses magnitudes, not signed values, for a mixed-sign scale", () => {
+    expect(meanContraction([-0.3, 0.6, 0.9])).toBeCloseTo(0.6, 15);
   });
 });
 
