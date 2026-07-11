@@ -287,6 +287,31 @@
             </label>
           </div>
 
+          <!-- The 4D sibling of #colorModeRow (fr-15g): exactly one of the
+               two selects shows (flat ↔ non-flat), so #rampPaletteRow below
+               always sits directly beneath the select that gates it — the
+               exclusive-open accordion demands gate and gated share a
+               section (fr-6ue), and keeping both color selects here
+               satisfies that statically, with no DOM re-homing. -->
+          <div id="fourDColorRow" class="hidden">
+            <p class="flame-hint">
+              W-depth color = side of our 3-space:
+              <strong>cool −w · warm +w</strong> · dim gray ≈ w 0 (the legend
+              keys the active choice). Layers add up where the projection
+              overlaps itself.
+            </p>
+            <label class="select-label">
+              4D Color
+              <select id="fourDColor">
+                <option value="wBlueOrange">W Depth (blue / orange)</option>
+                <option value="wPurpleGreen">W Depth (purple / green)</option>
+                <option value="wCyanMagenta">W Depth (cyan / magenta)</option>
+                <option value="transform">By Transform</option>
+                <option value="radius">By 4D Radius (warm→cool)</option>
+              </select>
+            </label>
+          </div>
+
           <div id="rampPaletteRow" class="hidden">
             <label class="select-label">
               Ramp Palette
@@ -382,6 +407,17 @@
                 <option value="dof">Depth of Field</option>
                 <option value="edl">Eye-Dome Lighting</option>
               </select>
+            </label>
+          </div>
+
+          <!-- The 4D sibling of #renderStyleRow's depth treatment (its
+               default option IS "Depth Fade"): a persisted look preference
+               like fourDColor's (fr-3e0), so it lives with the other look
+               controls (fr-15g). -->
+          <div id="fourDDepthFadeRow" class="hidden">
+            <label class="checkbox-label">
+              <input type="checkbox" id="fourDDepthFadeToggle" />
+              Depth fade (dim far points)
             </label>
           </div>
 
@@ -778,29 +814,9 @@
       >
         <summary>4D View</summary>
         <p class="flame-hint">
-          W-depth color = side of our 3-space:
-          <strong>cool −w · warm +w</strong> · dim gray ≈ w 0 (the legend keys
-          the active choice). Layers add up where the projection overlaps
-          itself. Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll
-          turns ZW.
+          Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
+          ZW.
         </p>
-        <!-- The wrapping div mirrors #colorModeRow: it is the anchor
-             #rampPaletteRow re-homes after while the system is non-flat
-             (fr-6ue) — the 4D radius mode follows the same ramp-palette
-             selection, and the exclusive-open accordion means the select
-             must live in the section whose control gates it. -->
-        <div id="fourDColorRow">
-          <label class="select-label">
-            4D Color
-            <select id="fourDColor">
-              <option value="wBlueOrange">W Depth (blue / orange)</option>
-              <option value="wPurpleGreen">W Depth (purple / green)</option>
-              <option value="wCyanMagenta">W Depth (cyan / magenta)</option>
-              <option value="transform">By Transform</option>
-              <option value="radius">By 4D Radius (warm→cool)</option>
-            </select>
-          </label>
-        </div>
         <label class="checkbox-label">
           <input type="checkbox" id="fourDTumbleToggle" checked />
           Auto-tumble (XY+ZW)
@@ -843,10 +859,6 @@
             Slice-relative color
           </label>
         </div>
-        <label class="checkbox-label">
-          <input type="checkbox" id="fourDDepthFadeToggle" />
-          Depth fade (dim far points)
-        </label>
       </details>
     </div>
 

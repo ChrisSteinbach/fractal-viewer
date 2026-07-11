@@ -58,8 +58,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     is the ONE ramp definition the explorer, solid render, and legend share.
     The 4D projection's "By 4D Radius" mode follows the same selection
     (fr-6ue): `buildColors4`, the flame/voxel workers' 4D radius LUT, and the
-    4D legend all take the resolved ramp palette, and the panel's one ramp
-    row re-homes into the 4D View section while the system is non-flat.
+    4D legend all take the resolved ramp palette. In the panel the 4D look
+    controls (4D Color, depth fade) live in the Appearance section beside
+    their flat siblings, with the one ramp row statically beneath the
+    color-select pair (fr-15g) — the 4D View section keeps only the spatial
+    tumble/slice controls.
     The position mode's axis colors are user-pickable too (fr-8k7,
     `PositionAxisColors`): `writePositionColor` — a clipped
     coordinate-weighted blend, absent = the legacy XYZ→RGB identity — is the

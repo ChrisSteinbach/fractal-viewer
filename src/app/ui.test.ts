@@ -2780,28 +2780,32 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
   });
 
-  it("re-homes beneath the 4D Color select while non-flat and back beneath Color Mode when flat (fr-6ue)", () => {
+  it("sits statically beneath the flat/4D color-select pair — no re-homing (fr-15g)", () => {
     const ui = new Ui(document);
+    // Flat: Color Mode shows, 4D Color hides; the ramp row sits after the
+    // pair, inside Appearance.
     ui.updateLabels({ ...initialState(true), colorMode: "height" });
     expect(el("rampPaletteRow").previousElementSibling).toBe(
-      el("colorModeRow"),
+      el("fourDColorRow"),
     );
+    expect(el("rampPaletteRow").closest("details")?.id).toBe(
+      "appearanceSection",
+    );
+    expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
 
+    // Non-flat: the visible select flips; the ramp row itself never moves —
+    // the exclusive-open accordion's gate/gated co-location (fr-6ue) holds
+    // statically because exactly one of the pair shows per view.
     ui.updateLabels({
       ...initialState(true),
       transforms: nonFlatTransforms(),
       fourDColor: "radius",
     });
-    // The exclusive-open accordion means the row must live in the section
-    // whose select actually gates it, not just be hidden/shown in place.
     expect(el("rampPaletteRow").previousElementSibling).toBe(
       el("fourDColorRow"),
     );
-
-    ui.updateLabels({ ...initialState(true), colorMode: "height" });
-    expect(el("rampPaletteRow").previousElementSibling).toBe(
-      el("colorModeRow"),
-    );
+    expect(el("fourDColorRow").classList.contains("hidden")).toBe(false);
+    expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
   });
 
   it("shows the ramp custom-palette row once rampPaletteId is custom, with stops reflecting state.customPalette", () => {
@@ -3003,6 +3007,28 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
     expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
+  });
+
+  // The 4D look controls live in Appearance beside their flat siblings
+  // (fr-15g) — color is an Appearance concern in both views; the 4D View
+  // section keeps only the spatial tumble/slice controls.
+  it("shows the 4D Color and depth-fade rows in Appearance only while non-flat (fr-15g)", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels(initialState(true));
+    expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
+    expect(el("fourDDepthFadeRow").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+    expect(el("fourDColorRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDDepthFadeRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDColorRow").closest("details")?.id).toBe(
+      "appearanceSection",
+    );
+    expect(el("fourDDepthFadeRow").closest("details")?.id).toBe(
+      "appearanceSection",
+    );
+    expect(el("fourDControls").contains(el("fourDColorRow"))).toBe(false);
   });
 
   // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of

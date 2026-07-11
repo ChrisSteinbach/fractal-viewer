@@ -696,9 +696,14 @@ export class Ui {
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   private readonly colorModeRow: HTMLElement;
-  /** The 4D Color select's wrapper — the anchor {@link rampPaletteRow}
-   * re-homes after while the system is non-flat (fr-6ue). */
+  /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
+   * in the Appearance section: exactly one of the pair shows, and
+   * `#rampPaletteRow` sits statically beneath them (fr-15g; the fr-6ue
+   * gate/gated co-location with no DOM re-homing). */
   private readonly fourDColorRow: HTMLElement;
+  /** The 4D depth-fade toggle's wrapper — renderStyleRow's non-flat sibling
+   * in the Appearance section (fr-15g). */
+  private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
 
@@ -860,6 +865,7 @@ export class Ui {
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.colorModeRow = this.byId("colorModeRow");
     this.fourDColorRow = this.byId("fourDColorRow");
+    this.fourDDepthFadeRow = this.byId("fourDDepthFadeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
     for (const spec of SCALAR_CONTROLS) {
@@ -1228,8 +1234,10 @@ export class Ui {
     // for a non-flat system exactly as for a flat one — only the controls
     // that are genuinely meaningless while viewing the 4D shader path
     // (symmetry, color mode/contrast, depth style — none of them reach the 4D
-    // projection or its own w-driven coloring) hide, and the tumble/slice
-    // block takes their place. All three render modes stay available while
+    // projection or its own w-driven coloring) hide; their 4D look siblings
+    // (the 4D Color and depth-fade rows) swap into the same Appearance slots
+    // (fr-15g), and the 4D View section's tumble/slice block replaces the 3D
+    // View block. All three render modes stay available while
     // non-flat (fr-5b3/fr-4wd): the flame/solid renders snapshot the frozen
     // 4D view and run their own 4D accumulators. The tumble/slice block hides
     // while a render is active for the same reason the editing controls do —
@@ -1248,6 +1256,12 @@ export class Ui {
     // early return stops the automatic motion, so the controls would be inert).
     this.threeDControls.classList.toggle("hidden", nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
+    // The 4D look rows are the non-flat replacements for the color-mode and
+    // depth-style rows (fr-15g): color is an Appearance concern in both
+    // views, so the pair swaps in place rather than living in the 4D View
+    // section (which keeps only the spatial tumble/slice controls).
+    this.fourDColorRow.classList.toggle("hidden", !nonFlat);
+    this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
     this.symmetrySection.classList.toggle("hidden", nonFlat);
     // The manual brightness override only means anything for the glow render
@@ -1263,16 +1277,11 @@ export class Ui {
     // contrast slider's gating, see color.ts's colorModeUsesRampPalette) and
     // the 4D projection's "By 4D Radius" mode, which follows the same
     // selection (fr-6ue). It is ONE row (select + custom-stop editor) serving
-    // both views, so it re-homes to sit beneath whichever select gates it —
-    // the exclusive-open accordion means a control left in the Appearance
-    // section would be invisible exactly when the 4D View section's color
-    // select makes it relevant. Bound listeners and editor state survive the
-    // move (same node); the placement check keeps the reflow to actual view
-    // changes.
-    const rampAnchor = nonFlat ? this.fourDColorRow : this.colorModeRow;
-    if (this.rampPaletteRow.previousElementSibling !== rampAnchor) {
-      rampAnchor.insertAdjacentElement("afterend", this.rampPaletteRow);
-    }
+    // both views: it sits statically beneath the flat/4D color-select pair,
+    // exactly one of which is visible per view (fr-15g), so it is always
+    // directly under the select that gates it — the exclusive-open accordion
+    // demands gate and gated share a section, and the static Appearance
+    // layout satisfies that without the old DOM re-homing.
     this.rampPaletteRow.classList.toggle(
       "hidden",
       nonFlat
@@ -1418,7 +1427,7 @@ export class Ui {
    * applies to that container (flat: `colorModeUsesRampPalette`; non-flat:
    * `fourDColor === "radius"`, fr-6ue) composes on top of the isCustom
    * gating handled here — both must hold for the ramp editor to actually
-   * show, in whichever section the row is currently homed. All three edit the same shared slot (see
+   * show. All three edit the same shared slot (see
    * `state.ts`'s `AppState.customPalette`), so switching which one is
    * "custom" never loses an in-progress edit. The stop inputs are only
    * rebuilt when their count changes (add/remove, or a fresh seed) — an
