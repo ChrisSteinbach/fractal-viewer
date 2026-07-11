@@ -661,7 +661,14 @@ function main(): void {
     const mode = state.fourDColor;
     if (fourDColorNeedsAttribute(mode)) {
       scene.setFourDColorSource({
-        colors: buildColors4(fourDResult, state.transforms.length, mode),
+        // The radius mode's ramp follows the same rampPaletteId selection as
+        // the 3D height/radius ramps (fr-6ue); the transform mode ignores it.
+        colors: buildColors4(
+          fourDResult,
+          state.transforms.length,
+          mode,
+          resolvePalette(state.rampPaletteId, state.customPalette),
+        ),
       });
     } else {
       scene.setFourDColorSource({ sides: W_SIDE_PALETTES[mode] });
@@ -977,6 +984,10 @@ function main(): void {
       colorMode: state.fourDColor,
       radiusMin,
       radiusMax,
+      // The radius mode's ramp palette (fr-6ue), resolved exactly like the
+      // explorer's own bake (applyFourDColor) so the render's ramp matches
+      // the explorer's colors — snapshotted here like colorMode itself.
+      rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
   }
 
@@ -1550,14 +1561,16 @@ function main(): void {
       if (state.solid.paletteId === CUSTOM_PALETTE_ID)
         solidSession.post({ type: "setPalette", palette });
       // The edited gradient is baked into the live cloud's color buffer
-      // whenever the ramp palette selects it and the active color mode has a
-      // ramp to recolor (colorModeUsesRampPalette) — even while a flame/solid
-      // render is showing, so the explorer never returns stale-colored.
-      if (
-        state.rampPaletteId === CUSTOM_PALETTE_ID &&
-        colorModeUsesRampPalette(state.colorMode)
-      )
-        recolor();
+      // whenever the ramp palette selects it and the active view's ramp mode
+      // shows it — the 3D height/radius modes (colorModeUsesRampPalette) or
+      // the 4D radius mode (fr-6ue) — even while a flame/solid render is
+      // showing, so the explorer never returns stale-colored. recolor and
+      // applyFourDColor each no-op in the other view, so both bakes can be
+      // requested and exactly the displayed cloud's one runs.
+      if (state.rampPaletteId === CUSTOM_PALETTE_ID) {
+        if (colorModeUsesRampPalette(state.colorMode)) recolor();
+        if (state.fourDColor === "radius") applyFourDColor();
+      }
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own

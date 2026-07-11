@@ -202,7 +202,7 @@ describe("effects", () => {
       expect(fx.scene.setGuidesVisible).toHaveBeenCalledWith(false);
     });
 
-    it("rampPalette effect calls fx.recolor()", () => {
+    it("rampPalette effect re-bakes both views' ramp colors (recolor + applyFourDColor)", () => {
       const spec = specById("rampPalette");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "ember");
@@ -210,7 +210,11 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
+      // Each no-ops in the other view (recolor only touches the flat cloud;
+      // applyFourDColor only touches the 4D bake), so calling both
+      // unconditionally re-bakes exactly the displayed cloud (fr-6ue).
       expect(fx.recolor).toHaveBeenCalled();
+      expect(fx.applyFourDColor).toHaveBeenCalled();
     });
   });
 
@@ -528,7 +532,6 @@ describe("table policy", () => {
       [
         "colorGammaSlider",
         "colorMode",
-        "rampPalette",
         "renderStyle",
         "symmetryAxis",
         "symmetryOrderSlider",

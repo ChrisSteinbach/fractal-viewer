@@ -658,6 +658,9 @@ export class Ui {
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   private readonly colorModeRow: HTMLElement;
+  /** The 4D Color select's wrapper — the anchor {@link rampPaletteRow}
+   * re-homes after while the system is non-flat (fr-6ue). */
+  private readonly fourDColorRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
 
@@ -812,6 +815,7 @@ export class Ui {
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
     this.colorModeRow = this.byId("colorModeRow");
+    this.fourDColorRow = this.byId("fourDColorRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
     for (const spec of SCALAR_CONTROLS) {
@@ -1187,13 +1191,26 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The ramp palette only means anything for the color modes that ARE a
-    // 1-D ramp (fr-3b6; height/radius — narrower than the contrast slider's
-    // gating, see color.ts's colorModeUsesRampPalette), and never while
-    // non-flat, where colorMode itself doesn't reach the 4D projection.
+    // The ramp palette only means anything for the modes that ARE a 1-D ramp:
+    // the flat view's height/radius color modes (fr-3b6; narrower than the
+    // contrast slider's gating, see color.ts's colorModeUsesRampPalette) and
+    // the 4D projection's "By 4D Radius" mode, which follows the same
+    // selection (fr-6ue). It is ONE row (select + custom-stop editor) serving
+    // both views, so it re-homes to sit beneath whichever select gates it —
+    // the exclusive-open accordion means a control left in the Appearance
+    // section would be invisible exactly when the 4D View section's color
+    // select makes it relevant. Bound listeners and editor state survive the
+    // move (same node); the placement check keeps the reflow to actual view
+    // changes.
+    const rampAnchor = nonFlat ? this.fourDColorRow : this.colorModeRow;
+    if (this.rampPaletteRow.previousElementSibling !== rampAnchor) {
+      rampAnchor.insertAdjacentElement("afterend", this.rampPaletteRow);
+    }
     this.rampPaletteRow.classList.toggle(
       "hidden",
-      nonFlat || !colorModeUsesRampPalette(state.colorMode),
+      nonFlat
+        ? state.fourDColor !== "radius"
+        : !colorModeUsesRampPalette(state.colorMode),
     );
     // Contrast only means anything for the coordinate-normalized color modes
     // (and never while non-flat, whose color comes straight from the rotated
@@ -1314,10 +1331,11 @@ export class Ui {
    * right after the table-driven scalar sync loop. Three rows now: the
    * flame/solid rows show only while their OWN render's palette select is on
    * {@link CUSTOM_PALETTE_ID}; the ramp row additionally sits INSIDE
-   * `#rampPaletteRow`, so the color-mode/4D gating {@link updateLabels}
-   * applies to that container (via `colorModeUsesRampPalette`) composes on
-   * top of the isCustom gating handled here — both must hold for the ramp
-   * editor to actually show. All three edit the same shared slot (see
+   * `#rampPaletteRow`, so the per-view ramp-mode gating {@link updateLabels}
+   * applies to that container (flat: `colorModeUsesRampPalette`; non-flat:
+   * `fourDColor === "radius"`, fr-6ue) composes on top of the isCustom
+   * gating handled here — both must hold for the ramp editor to actually
+   * show, in whichever section the row is currently homed. All three edit the same shared slot (see
    * `state.ts`'s `AppState.customPalette`), so switching which one is
    * "custom" never loses an in-progress edit. The stop inputs are only
    * rebuilt when their count changes (add/remove, or a fresh seed) — an
@@ -1528,9 +1546,10 @@ export class Ui {
    *   {@link W_RAMP_GRADIENTS}) labeled "−w" / "in our 3-space" / "+w"; the
    *   baked "transform" mode shows the same per-transform swatch strip as the
    *   3D mode of that name (identical palette); "radius" shows the 3D radius
-   *   ramp's bar — gamma-neutral, since the 4D view never applies
-   *   colorGamma — labeled center/edge. `colorMode` (even "uniform") is
-   *   irrelevant here.
+   *   ramp's bar — gamma-neutral, since the 4D view never applies colorGamma,
+   *   but rampPalette-aware since fr-6ue, exactly like the bake it keys
+   *   (`buildColors4`) — labeled center/edge. `colorMode` (even "uniform")
+   *   is irrelevant here.
    * - Palette-driven renders — flame always, solid with a non-"legacy"
    *   palette: the active gradient palette's strip sampled from
    *   {@link buildPaletteLUT} (the very table the render's hot loop indexes),
@@ -1561,11 +1580,20 @@ export class Ui {
       if (mode === "radius") {
         // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
         // cloud's 4D center. Gamma-neutral: the 4D shader never applies
-        // colorGamma, so the legend must not pretend it does. The 4D radius
-        // ramp deliberately does NOT follow rampPaletteId (fr-6ue tracks
-        // whether it should) — it stays the fixed built-in ramp, exactly like
-        // the render workers' own 4D radius LUT.
-        this.showLegendBar(legendGradient("radius", 1), "center", "", "edge");
+        // colorGamma, so the legend must not pretend it does. Since fr-6ue
+        // the ramp follows rampPaletteId exactly like the 3D radius mode's —
+        // the same rampPalette-aware LUT the explorer bake (buildColors4)
+        // and the render workers' own 4D radius LUT sample.
+        this.showLegendBar(
+          legendGradient(
+            "radius",
+            1,
+            resolvePalette(state.rampPaletteId, state.customPalette),
+          ),
+          "center",
+          "",
+          "edge",
+        );
         return;
       }
       this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");

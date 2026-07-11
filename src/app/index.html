@@ -759,16 +759,23 @@
           itself. Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll
           turns ZW.
         </p>
-        <label class="select-label">
-          4D Color
-          <select id="fourDColor">
-            <option value="wBlueOrange">W Depth (blue / orange)</option>
-            <option value="wPurpleGreen">W Depth (purple / green)</option>
-            <option value="wCyanMagenta">W Depth (cyan / magenta)</option>
-            <option value="transform">By Transform</option>
-            <option value="radius">By 4D Radius (warm→cool)</option>
-          </select>
-        </label>
+        <!-- The wrapping div mirrors #colorModeRow: it is the anchor
+             #rampPaletteRow re-homes after while the system is non-flat
+             (fr-6ue) — the 4D radius mode follows the same ramp-palette
+             selection, and the exclusive-open accordion means the select
+             must live in the section whose control gates it. -->
+        <div id="fourDColorRow">
+          <label class="select-label">
+            4D Color
+            <select id="fourDColor">
+              <option value="wBlueOrange">W Depth (blue / orange)</option>
+              <option value="wPurpleGreen">W Depth (purple / green)</option>
+              <option value="wCyanMagenta">W Depth (cyan / magenta)</option>
+              <option value="transform">By Transform</option>
+              <option value="radius">By 4D Radius (warm→cool)</option>
+            </select>
+          </label>
+        </div>
         <label class="checkbox-label">
           <input type="checkbox" id="fourDTumbleToggle" checked />
           Auto-tumble (XY+ZW)

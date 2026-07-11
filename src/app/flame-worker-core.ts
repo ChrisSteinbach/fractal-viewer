@@ -191,6 +191,15 @@ export type FlameWorkerCommand =
          * color mode's normalization range. */
         radiusMin: number;
         radiusMax: number;
+        /**
+         * Gradient palette for the "radius" color mode's ramp (fr-6ue) — the
+         * same `rampPaletteId` selection the explorer's 3D height/radius
+         * ramps follow, resolved by the main thread; `"legacy"` = the
+         * built-in warm→cool ramp. Only the radius mode reads it; snapshotted
+         * at render entry like the rest of this block (the ramp select is
+         * unreachable while a render is active, so there is no live command).
+         */
+        rampPalette: PaletteSpec;
       };
       /**
        * Two SAB-backed display-resolution frame slots (fr-96i), present only
@@ -896,6 +905,7 @@ export class FlameWorkerSession {
   private fourDCenter: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
+  private fourDRampPalette: PaletteSpec = "legacy";
   /** Built once per `startAccumulation` (never per chunk — see
    * `buildFourDColor`) from the current `paletteSpec`/`colorLUT` and the
    * `fourD` block's `colorMode`. `null` for a 3D session. */
@@ -1226,6 +1236,7 @@ export class FlameWorkerSession {
       this.fourDCenter = fourD.center;
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
+      this.fourDRampPalette = fourD.rampPalette;
     } else {
       this.baseTransforms4 = [];
       this.baseFinalTransform4 = null;
@@ -1314,7 +1325,7 @@ export class FlameWorkerSession {
       case "radius":
         return {
           kind: "radius",
-          lut: buildColorModeLUT("radius", 1),
+          lut: buildColorModeLUT("radius", 1, this.fourDRampPalette),
           center: this.fourDCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,

@@ -273,6 +273,11 @@ interface ScenarioDef4D {
   rotation: Rotation4;
   paletteId: FlamePaletteId;
   colorMode: FourDColorMode;
+  /** The "radius" color mode's ramp palette (fr-6ue) — the `fourD` start
+   * block's `rampPalette`, minus the custom-payload arm the bench doesn't
+   * author. Omitted = `"legacy"` (the built-in warm→cool ramp); only the
+   * radius mode reads it. */
+  rampPalette?: FlamePaletteId;
   sliceOn: boolean;
   sliceCenter: number;
   sliceWidth: number;
@@ -512,6 +517,11 @@ const SCENARIOS: ScenarioDef[] = [
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "radius",
+    // Non-legacy (fr-6ue): the app's 4D radius LUT can now be palette-driven,
+    // and the LUT crosses to the kernel as data — so the pinned scenario
+    // rides a gradient-built LUT, proving the packing passes it through
+    // rather than only ever agreeing on the built-in ramp's bytes.
+    rampPalette: "dusk",
     sliceOn: false,
     sliceCenter: 0,
     sliceWidth: 0.35,
@@ -922,7 +932,7 @@ function buildBenchFourDColor(
     case "radius":
       return {
         kind: "radius",
-        lut: buildColorModeLUT("radius", 1),
+        lut: buildColorModeLUT("radius", 1, def.rampPalette ?? "legacy"),
         center: cloudStats.center,
         minD: cloudStats.radiusMin,
         maxD: cloudStats.radiusMax,

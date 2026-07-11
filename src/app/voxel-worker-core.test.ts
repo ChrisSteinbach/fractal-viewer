@@ -78,6 +78,7 @@ function defaultFourD(): NonNullable<
     colorMode: "wBlueOrange",
     radiusMin: 0,
     radiusMax: 1,
+    rampPalette: "legacy",
   };
 }
 
@@ -650,6 +651,58 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(last.boundsMax[0]).toBeGreaterThan(last.boundsMin[0]);
     expect(last.boundsMax[1]).toBeGreaterThan(last.boundsMin[1]);
     expect(last.boundsMax[2]).toBeGreaterThan(last.boundsMin[2]);
+  });
+
+  it("rampPalette recolors the 4D radius mode's voxels without moving density (fr-6ue)", () => {
+    const runOne = harness();
+    runOne.session.handle(
+      startCommand({
+        fourD: { ...defaultFourD(), colorMode: "radius" },
+        iterationsBudget: 2000,
+        seed: 7,
+      }),
+    );
+    runOne.scheduler.drain();
+
+    const runTwo = harness();
+    runTwo.session.handle(
+      startCommand({
+        fourD: {
+          ...defaultFourD(),
+          colorMode: "radius",
+          rampPalette: "ember",
+        },
+        iterationsBudget: 2000,
+        seed: 7,
+      }),
+    );
+    runTwo.scheduler.drain();
+
+    const textureOne = gridEvents(runOne.events).at(-1)!.texture;
+    const textureTwo = gridEvents(runTwo.events).at(-1)!.texture;
+
+    expect(textureTwo.length).toBe(textureOne.length);
+
+    // Alpha (every 4th byte, offset 3) packs log-density (voxel.ts's
+    // voxelTextureData) — recoloring the ramp must not perturb it.
+    for (let i = 3; i < textureOne.length; i += 4) {
+      expect(textureTwo[i]).toBe(textureOne[i]);
+    }
+
+    // At least one RGB byte must differ — the gradient genuinely recolors
+    // the ramp, it isn't a no-op.
+    let rgbDiffers = false;
+    for (let i = 0; i < textureOne.length; i += 4) {
+      if (
+        textureOne[i] !== textureTwo[i] ||
+        textureOne[i + 1] !== textureTwo[i + 1] ||
+        textureOne[i + 2] !== textureTwo[i + 2]
+      ) {
+        rgbDiffers = true;
+        break;
+      }
+    }
+    expect(rgbDiffers).toBe(true);
   });
 });
 

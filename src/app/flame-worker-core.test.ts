@@ -7,7 +7,7 @@ import {
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
 import type { FlameHistogram, Mat4 } from "../fractal/flame";
-import { W_SIDE_PALETTES } from "../fractal/color";
+import { W_SIDE_PALETTES, buildColorModeLUT } from "../fractal/color";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform4 } from "../fractal/types";
 import {
@@ -108,6 +108,7 @@ function defaultFourD(): NonNullable<
     colorMode: "wBlueOrange",
     radiusMin: 0,
     radiusMax: 1,
+    rampPalette: "legacy",
   };
 }
 
@@ -2397,6 +2398,58 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(
       progressEvents(events).at(-1)!.iterationsDone,
     ).toBeGreaterThanOrEqual(500);
+  });
+
+  it("threads the fourD block's rampPalette into the radius mode's color LUT (fr-6ue)", async () => {
+    const fourD: NonNullable<
+      Extract<FlameWorkerCommand, { type: "start" }>["fourD"]
+    > = {
+      ...defaultFourD(),
+      colorMode: "radius",
+      radiusMin: 0.25,
+      radiusMax: 2.5,
+      rampPalette: "ember",
+    };
+    let capturedRequest: GpuBackendRequest4 | undefined;
+    const createGpuBackend4 = async (
+      request: GpuBackendRequest4,
+    ): Promise<FlameAccumBackend> => {
+      capturedRequest = request;
+      return {
+        kind: "gpu",
+        adapterLabel: "Fake 4D Adapter",
+        accumulate: async (n) => n,
+        snapshot: async () =>
+          createFlameHistogram(request.width, request.height),
+        destroy: () => {},
+      };
+    };
+    const { session, scheduler } = harness({ createGpuBackend4 });
+    session.handle(
+      startCommand({
+        fourD,
+        gpuPreference: "auto",
+        // The structural palette must stay "legacy" so the "legacy" 4D color
+        // dispatch (and so this radius branch) is reachable.
+        palette: "legacy",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    const request = capturedRequest!;
+    expect(request.color.kind).toBe("radius");
+    // color.ts's buildColorModeLUT is the ONE rampPalette-aware radius ramp
+    // definition — pinning the GPU request's LUT to it exactly (not just
+    // "is non-null") means the flame render can never drift from the
+    // explorer's own bake.
+    if (request.color.kind === "radius") {
+      expect(request.color.lut).toEqual(
+        buildColorModeLUT("radius", 1, "ember"),
+      );
+      expect(request.color.minD).toBe(0.25);
+      expect(request.color.maxD).toBe(2.5);
+      expect(request.color.center).toEqual(fourD.center);
+    }
   });
 
   it("falls back to Cpu4DFlameBackend and ratchets gpuFailed when the 4D factory rejects", async () => {

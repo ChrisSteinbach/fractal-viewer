@@ -816,6 +816,42 @@ describe("Ui color legend (fr-dsz)", () => {
     // own "keeps the 4D w ramp fixed as color contrast changes" test above.
     expect(legendBar().style.backgroundImage).toBe(neutral);
   });
+
+  it("shows the ramp palette's own colors in the 4D radius legend when rampPaletteId is a gradient (fr-6ue)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...fourDState(),
+      fourDColor: "radius",
+      rampPaletteId: "legacy",
+    });
+    const legacyBackground = legendBar().style.backgroundImage;
+
+    // "ember" again for a genuine endpoint order — same reason as the flat
+    // height legend test above (its non-integer c coefficients on two
+    // channels give distinct low/high colors).
+    ui.updateLabels({
+      ...fourDState(),
+      fourDColor: "radius",
+      rampPaletteId: "ember",
+    });
+
+    expect(legendLabelLow().textContent).toBe("center");
+    expect(legendLabelHigh().textContent).toBe("edge");
+    const background = legendBar().style.backgroundImage;
+    expect(background).not.toBe(legacyBackground);
+
+    // Endpoints derived from the same rampPalette-aware LUT the 4D radius
+    // bake now samples (buildColorModeLUT's third argument), gamma pinned to
+    // 1 — the 4D view never applies colorGamma.
+    const lut = buildColorModeLUT("radius", 1, "ember");
+    const lowRgb = lutRgb(lut, 0);
+    const highRgb = lutRgb(lut, 255);
+    expect(background).toContain(lowRgb);
+    expect(background).toContain(highRgb);
+    expect(background.indexOf(lowRgb)).toBeLessThan(
+      background.indexOf(highRgb),
+    );
+  });
 });
 
 describe("Ui preset menu", () => {
@@ -2447,7 +2483,9 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
   });
 
-  it("is hidden while the system is non-flat, even with colorMode height", () => {
+  // Since fr-6ue, non-flat visibility keys on fourDColor === "radius", not on
+  // colorMode — the default fourDColor ("wBlueOrange") still hides here.
+  it("is hidden while non-flat with a w-depth 4D color mode, even with colorMode height", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -2455,6 +2493,44 @@ describe("Ui ramp palette (fr-3b6)", () => {
       transforms: nonFlatTransforms(),
     });
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("is shown while non-flat once fourDColor is radius, whatever colorMode says (fr-6ue)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "transform",
+      transforms: nonFlatTransforms(),
+      fourDColor: "radius",
+    });
+    // colorMode "transform" would hide the row in flat view (see the
+    // "is hidden while the color mode is transform" test above) — showing
+    // here proves the non-flat gate reads fourDColor instead of colorMode.
+    expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("re-homes beneath the 4D Color select while non-flat and back beneath Color Mode when flat (fr-6ue)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(el("rampPaletteRow").previousElementSibling).toBe(
+      el("colorModeRow"),
+    );
+
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      fourDColor: "radius",
+    });
+    // The exclusive-open accordion means the row must live in the section
+    // whose select actually gates it, not just be hidden/shown in place.
+    expect(el("rampPaletteRow").previousElementSibling).toBe(
+      el("fourDColorRow"),
+    );
+
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(el("rampPaletteRow").previousElementSibling).toBe(
+      el("colorModeRow"),
+    );
   });
 
   it("shows the ramp custom-palette row once rampPaletteId is custom, with stops reflecting state.customPalette", () => {
@@ -2488,6 +2564,24 @@ describe("Ui ramp palette (fr-3b6)", () => {
       rampPaletteId: "spectrum",
     });
     expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the ramp custom-stop editor in the 4D view when fourDColor is radius and rampPaletteId is custom (fr-6ue)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      fourDColor: "radius",
+      rampPaletteId: "custom",
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    });
+
+    expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(false);
   });
 
   it("does not show the flame/solid custom-palette rows just because rampPaletteId is custom", () => {

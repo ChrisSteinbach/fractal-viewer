@@ -604,6 +604,97 @@ describe("buildColors4", () => {
   });
 });
 
+describe("buildColors4 rampPalette (fr-6ue)", () => {
+  it("radius mode samples the gradient palette over 4D distance from the center", () => {
+    // Same 3-point fixture shape as the "radius mode spans the warm→cool
+    // ramp" test above: center [0,0,0,0]; distances 0, 1, 2 → t = 0, 0.5, 1.
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 0]),
+      w: new Float32Array([0, 0, 2]),
+      transformIndices: new Uint8Array([0, 0, 0]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 2,
+    };
+    const colors = buildColors4(result, 1, "radius", "ember");
+    const lut = buildPaletteLUT("ember");
+    if (!lut) throw new Error("ember should have a LUT");
+
+    // t = 0, 0.5, 1 index the LUT at 0, 128*3, 255*3 — the same
+    // Math.min(255, (t * 256) | 0) bucketing writePaletteRampColor uses.
+    expect(colors[0]).toBeCloseTo(lut[0], 5);
+    expect(colors[1]).toBeCloseTo(lut[1], 5);
+    expect(colors[2]).toBeCloseTo(lut[2], 5);
+    expect(colors[3]).toBeCloseTo(lut[128 * 3], 5);
+    expect(colors[4]).toBeCloseTo(lut[128 * 3 + 1], 5);
+    expect(colors[5]).toBeCloseTo(lut[128 * 3 + 2], 5);
+    expect(colors[6]).toBeCloseTo(lut[255 * 3], 5);
+    expect(colors[7]).toBeCloseTo(lut[255 * 3 + 1], 5);
+    expect(colors[8]).toBeCloseTo(lut[255 * 3 + 2], 5);
+  });
+
+  it('treats an explicit "legacy" the same as omitting rampPalette', () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 0]),
+      w: new Float32Array([0, 0, 2]),
+      transformIndices: new Uint8Array([0, 0, 0]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 2,
+    };
+    expect(buildColors4(result, 1, "radius", "legacy")).toEqual(
+      buildColors4(result, 1, "radius"),
+    );
+  });
+
+  it("a custom palette payload drives the ramp, from the first stop at the center to the last stop at the farthest point", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 0]),
+      w: new Float32Array([0, 0, 2]),
+      transformIndices: new Uint8Array([0, 0, 0]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 2,
+    };
+    const redToBlue: CustomPalette = {
+      stops: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    };
+    const colors = buildColors4(result, 1, "radius", redToBlue);
+
+    // Endpoints land exactly on the first/last stop (buildCustomPaletteLUT's
+    // two-product lerp lands entry 0 on t=0 and entry 255 on t=1 exactly),
+    // mirroring how the fr-3b6 buildColors custom-stop test pins its
+    // black-to-white endpoints.
+    expect(colors[0]).toBeCloseTo(1, 5);
+    expect(colors[1]).toBeCloseTo(0, 5);
+    expect(colors[2]).toBeCloseTo(0, 5);
+    expect(colors[6]).toBeCloseTo(0, 5);
+    expect(colors[7]).toBeCloseTo(0, 5);
+    expect(colors[8]).toBeCloseTo(1, 5);
+  });
+
+  it("transform mode ignores rampPalette", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      w: new Float32Array([0, 0, 0]),
+      transformIndices: new Uint8Array([0, 2, 1]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+    };
+    expect(buildColors4(result, 3, "transform", "ember")).toEqual(
+      buildColors4(result, 3, "transform"),
+    );
+  });
+});
+
 describe("wRampColor", () => {
   const { wBlueOrange, wPurpleGreen, wCyanMagenta } = W_SIDE_PALETTES;
 
