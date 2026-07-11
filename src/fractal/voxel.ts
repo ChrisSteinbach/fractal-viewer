@@ -35,7 +35,9 @@ import {
   POSITION_COLOR_SCALE,
   UNIFORM_POINT_COLOR,
   buildColorModeLUT,
+  writePositionColor,
 } from "./color";
+import type { PositionAxisColors } from "./color";
 import type { PaletteSpec } from "./palette";
 import type { Rng } from "./rng";
 import type { Bounds, ColorMode, Vec3 } from "./types";
@@ -358,6 +360,15 @@ function colorModeCode(mode: ColorMode): number {
  * (the default) is the built-in ramps, unchanged. It is unrelated to
  * `colorLUT` (the structural orbit gradient), which overrides `colorMode`
  * entirely and so makes `rampPalette` inert.
+ *
+ * `positionAxisColors` (fr-8k7) swaps the `"position"` mode's hardcoded
+ * axis→channel identity for the coordinate-weighted blend of three
+ * user-picked axis colors, via the shared `writePositionColor` (`color.ts`)
+ * — the ONE custom-position definition `buildColors` also calls, so the
+ * solid render's voxels and the explorer's points can't drift apart. Like
+ * `colorGamma`/`rampPalette` it MUST be the same value the caller's
+ * `buildColors` uses. Absent (the default) is the legacy XYZ→RGB path,
+ * unchanged.
  */
 export function accumulateVoxels(
   prepared: PreparedChaosGame,
@@ -369,6 +380,7 @@ export function accumulateVoxels(
   colorLUT?: Float32Array,
   colorGamma = 1,
   rampPalette: PaletteSpec = "legacy",
+  positionAxisColors?: PositionAxisColors,
 ): VoxelGrid {
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
@@ -388,6 +400,14 @@ export function accumulateVoxels(
           colorGamma,
           rampPalette,
         )
+      : null;
+  // Custom axis colors (fr-8k7): a 3-slot scratch writePositionColor writes
+  // into, allocated once per call and only when the position mode is
+  // actually using them — bundled with `axes` in one object so the loop
+  // below narrows both together from a single null check, no assertions.
+  const axisColors: { axes: PositionAxisColors; scratch: Float32Array } | null =
+    mode === MODE_POSITION && positionAxisColors !== undefined
+      ? { axes: positionAxisColors, scratch: new Float32Array(3) }
       : null;
   const cb = grid.bounds.color;
   const cMinX = cb.minX;
@@ -585,15 +605,26 @@ export function accumulateVoxels(
       const cx = tx <= 0 ? 0 : tx >= 1 ? 1 : tx;
       const cy = ty <= 0 ? 0 : ty >= 1 ? 1 : ty;
       const cz = tz <= 0 ? 0 : tz >= 1 ? 1 : tz;
-      r =
-        (colorGamma === 1 ? cx : cx ** colorGamma) * POSITION_COLOR_SCALE +
-        POSITION_COLOR_OFFSET;
-      g =
-        (colorGamma === 1 ? cy : cy ** colorGamma) * POSITION_COLOR_SCALE +
-        POSITION_COLOR_OFFSET;
-      b =
-        (colorGamma === 1 ? cz : cz ** colorGamma) * POSITION_COLOR_SCALE +
-        POSITION_COLOR_OFFSET;
+      if (axisColors === null) {
+        r =
+          (colorGamma === 1 ? cx : cx ** colorGamma) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
+        g =
+          (colorGamma === 1 ? cy : cy ** colorGamma) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
+        b =
+          (colorGamma === 1 ? cz : cz ** colorGamma) * POSITION_COLOR_SCALE +
+          POSITION_COLOR_OFFSET;
+      } else {
+        const gx = colorGamma === 1 ? cx : cx ** colorGamma;
+        const gy = colorGamma === 1 ? cy : cy ** colorGamma;
+        const gz = colorGamma === 1 ? cz : cz ** colorGamma;
+        const { axes, scratch } = axisColors;
+        writePositionColor(scratch, 0, gx, gy, gz, axes);
+        r = scratch[0];
+        g = scratch[1];
+        b = scratch[2];
+      }
     } else {
       r = uniR;
       g = uniG;

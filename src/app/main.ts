@@ -52,6 +52,7 @@ import {
   setCustomPaletteStops,
   setFinalTransform,
   setPanelOpen,
+  setPositionAxisColors,
   setRenderMode,
   setSymmetryAxis,
   setSymmetryOrder,
@@ -459,6 +460,8 @@ function main(): void {
       // Resolved here (not the bare selection) — the "custom" sentinel has
       // no payload to cross the wire with; see palette.ts's PaletteSpec.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
+      // Absent = legacy identity; a plain data payload, nothing to resolve.
+      positionAxisColors: state.positionAxisColors,
       replaced,
       fit,
     };
@@ -538,15 +541,17 @@ function main(): void {
       // palette; if any changed while this generation was in flight, recolor
       // the fresh cloud from live state (recolor() reads the just-cached
       // lastResult) rather than flashing the stale palette. The rampPalette
-      // compare is by reference for a resolved CustomPalette — faithful,
-      // because state updates are immutable (an edited gradient is always a
-      // fresh object); a same-content re-resolution could only cause a
+      // and positionAxisColors compares are by reference — faithful, because
+      // state updates are immutable (an edited gradient or axis-color triple
+      // is always a fresh object, and legacy is `undefined` on both sides
+      // when unset); a same-content re-resolution could only cause a
       // redundant recolor, never a missed one.
       if (
         request.colorMode !== state.colorMode ||
         request.colorGamma !== state.colorGamma ||
         request.rampPalette !==
-          resolvePalette(state.rampPaletteId, state.customPalette)
+          resolvePalette(state.rampPaletteId, state.customPalette) ||
+        request.positionAxisColors !== state.positionAxisColors
       ) {
         recolor();
       }
@@ -657,6 +662,7 @@ function main(): void {
       state.colorMode,
       state.colorGamma,
       resolvePalette(state.rampPaletteId, state.customPalette),
+      state.positionAxisColors,
     );
     scene.setColors(colors);
   }
@@ -1187,6 +1193,8 @@ function main(): void {
         // ramp select is unreachable while this render is active, so there
         // is no live command for it.
         rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
+        // Snapshotted at entry like colorMode/rampPalette above (fr-8k7).
+        positionAxisColors: state.positionAxisColors,
         iterationsBudget: state.solid.iterations,
         // A worker needs an explicit numeric seed — a live Rng (like
         // Math.random) can't cross postMessage — which as a side effect makes
@@ -1582,6 +1590,17 @@ function main(): void {
         if (colorModeUsesRampPalette(state.colorMode)) recolor();
         if (state.fourDColor === "radius") applyFourDColor();
       }
+    },
+    // The axis-color pickers (fr-8k7) are a bespoke widget like the gradient
+    // editor: undo checkpoint + debounced save, reducer, label sync, then a
+    // recolor over the cached run — never a regenerate. No worker forward:
+    // the flame/solid renders snapshot the colors at entry, and the pickers
+    // are unreachable while a render is active (the explorer block hides).
+    onPositionAxisColors: (colors) => {
+      editSession.beginEdit();
+      state = setPositionAxisColors(state, colors);
+      ui.updateLabels(state);
+      if (state.colorMode === "position") recolor();
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own

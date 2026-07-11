@@ -1697,6 +1697,71 @@ describe("decodeScene customPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Position axis colors (fr-8k7) — the "by position" color mode's three
+// user-picked axis colors. Optional like customPalette, and shares its
+// quiet-fallback decode contract; see color.ts's PositionAxisColors.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene positionAxisColors (fr-8k7)", () => {
+  it("round-trips the three axis colors", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      positionAxisColors: {
+        x: [0.2, 0.4, 0.6],
+        y: [1, 0, 0],
+        z: [0, 0.4, 1],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.positionAxisColors).toEqual({
+      x: [0.2, 0.4, 0.6],
+      y: [1, 0, 0],
+      z: [0, 0.4, 1],
+    });
+  });
+
+  it("omits positionAxisColors from the encoded payload when the snapshot has none", () => {
+    const payload = decodePayload(encodeScene(baseSnapshot()));
+    expect("positionAxisColors" in payload).toBe(false);
+  });
+
+  it("decodes back to undefined when the snapshot has none", () => {
+    const result = decodeScene(encodeScene(baseSnapshot()));
+    expect(result!.positionAxisColors).toBeUndefined();
+  });
+
+  it("quietly drops a malformed positionAxisColors instead of rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      positionAxisColors: { x: "#ff00", y: "#00ff00", z: "#0000ff" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.positionAxisColors).toBeUndefined();
+    // The rest of the scene survives — this is a quiet fallback, not a
+    // whole-scene rejection.
+    expect(result!.transforms).toHaveLength(1);
+  });
+
+  it("quietly drops a positionAxisColors payload missing an axis", () => {
+    const raw = {
+      ...baseSnapshot(),
+      positionAxisColors: { x: "#ff0000", y: "#00ff00" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.positionAxisColors).toBeUndefined();
+  });
+
+  it("quietly drops a non-object positionAxisColors", () => {
+    const raw = { ...baseSnapshot(), positionAxisColors: "red" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.positionAxisColors).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Ramp palette (fr-3b6) — the height/radius color-mode ramps' gradient
 // selection. A top-level sibling of colorGamma, not nested under flame/solid,
 // but sharing their exact quiet-fallback contract and the one customPalette
@@ -1812,6 +1877,64 @@ describe("toSnapshot / fromSnapshot customPalette", () => {
     // than leave it untouched.
     const snapshot = toSnapshot(initialState(true));
     expect(fromSnapshot(snapshot, base).customPalette).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toSnapshot / fromSnapshot (fr-8k7) — positionAxisColors carry/clear, the
+// same pairing as the customPalette block above. Unlike that block's
+// "clears" test, this one builds the incoming snapshot from the bare
+// baseSnapshot() helper rather than routing it through toSnapshot, so it
+// also pins that fromSnapshot clears the field even when the snapshot
+// object never declares the key at all (see fromSnapshot's own doc comment).
+// ---------------------------------------------------------------------------
+
+describe("toSnapshot / fromSnapshot positionAxisColors (fr-8k7)", () => {
+  it("toSnapshot carries the positionAxisColors slot", () => {
+    const state: AppState = {
+      ...initialState(true),
+      positionAxisColors: {
+        x: [0.2, 0.4, 0.6],
+        y: [1, 0, 0],
+        z: [0, 0.4, 1],
+      },
+    };
+    expect(toSnapshot(state).positionAxisColors).toEqual({
+      x: [0.2, 0.4, 0.6],
+      y: [1, 0, 0],
+      z: [0, 0.4, 1],
+    });
+  });
+
+  it("fromSnapshot clears positionAxisColors when the snapshot lacks it", () => {
+    const base: AppState = {
+      ...initialState(true),
+      positionAxisColors: {
+        x: [0.2, 0.4, 0.6],
+        y: [1, 0, 0],
+        z: [0, 0.4, 1],
+      },
+    };
+    expect(
+      fromSnapshot(baseSnapshot(), base).positionAxisColors,
+    ).toBeUndefined();
+  });
+
+  it("fromSnapshot lands positionAxisColors on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      positionAxisColors: {
+        x: [0.2, 0.4, 0.6],
+        y: [1, 0, 0],
+        z: [0, 0.4, 1],
+      },
+    };
+    const next = fromSnapshot(snapshot, initialState(true));
+    expect(next.positionAxisColors).toEqual({
+      x: [0.2, 0.4, 0.6],
+      y: [1, 0, 0],
+      z: [0, 0.4, 1],
+    });
   });
 });
 

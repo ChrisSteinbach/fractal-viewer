@@ -9,6 +9,7 @@ import { runChaosGame } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
+import type { PositionAxisColors } from "../fractal/color";
 import { mulberry32 } from "../fractal/rng";
 import { doubleRotation, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
@@ -111,6 +112,42 @@ describe("generateCloud 3D", () => {
     // parameter silently not reaching buildColors.
     expect(result.colors).not.toEqual(
       buildColors(direct, req.transforms, "radius", 1),
+    );
+  });
+
+  it("bakes the request's custom position axis colors into the colors (fr-8k7, oracle)", () => {
+    const axes: PositionAxisColors = {
+      x: [1, 0.5, 0],
+      y: [0, 0.5, 1],
+      z: [1, 1, 1],
+    };
+    const req = cloudRequest({
+      colorMode: "position",
+      positionAxisColors: axes,
+    });
+    const result = as3D(generateCloud(req));
+
+    const direct = runChaosGame(
+      req.transforms,
+      req.numPoints,
+      mulberry32(req.seed),
+      req.finalTransform,
+      req.symmetry,
+    );
+    const expectedColors = buildColors(
+      direct,
+      req.transforms,
+      "position",
+      1,
+      "legacy",
+      axes,
+    );
+
+    expect(result.colors).toEqual(expectedColors);
+    // And the axis colors genuinely changed the bake — guards against the
+    // parameter silently not reaching buildColors.
+    expect(result.colors).not.toEqual(
+      buildColors(direct, req.transforms, "position"),
     );
   });
 

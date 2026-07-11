@@ -85,6 +85,7 @@ import {
   setGlowBrightness,
   setNumPoints,
   setPointSize,
+  setPositionAxisColors,
   setRampPaletteId,
   setRenderMode,
   setRenderStyle,
@@ -925,6 +926,50 @@ describe("setCustomPaletteStops", () => {
         [Infinity, 1, 1],
       ]),
     ).toBe(state);
+  });
+});
+
+describe("setPositionAxisColors", () => {
+  it("stores custom axis colors", () => {
+    const state = initialState(true);
+    const next = setPositionAxisColors(state, {
+      x: [1, 0.5, 0],
+      y: [0, 0.5, 1],
+      z: [0.2, 0.4, 0.6],
+    });
+    expect(next.positionAxisColors).toEqual({
+      x: [1, 0.5, 0],
+      y: [0, 0.5, 1],
+      z: [0.2, 0.4, 0.6],
+    });
+    expect(state.positionAxisColors).toBeUndefined();
+  });
+
+  it("normalizes the exact legacy identity back to undefined", () => {
+    const custom = setPositionAxisColors(initialState(true), {
+      x: [1, 0.5, 0],
+      y: [0, 0.5, 1],
+      z: [0.2, 0.4, 0.6],
+    });
+    const next = setPositionAxisColors(custom, {
+      x: [1, 0, 0],
+      y: [0, 1, 0],
+      z: [0, 0, 1],
+    });
+    expect(next.positionAxisColors).toBeUndefined();
+  });
+
+  it("keeps a near-identity as custom colors", () => {
+    const next = setPositionAxisColors(initialState(true), {
+      x: [1, 0, 0],
+      y: [0, 1, 0],
+      z: [0, 0.1, 1],
+    });
+    expect(next.positionAxisColors).toEqual({
+      x: [1, 0, 0],
+      y: [0, 1, 0],
+      z: [0, 0.1, 1],
+    });
   });
 });
 

@@ -5,10 +5,12 @@ import {
   colorModeUsesGamma,
   colorModeUsesRampPalette,
   fourDColorNeedsAttribute,
+  LEGACY_POSITION_AXIS_COLORS,
   transformColors,
   W_SIDE_PALETTES,
   wRampColor,
 } from "../fractal/color";
+import type { PositionAxisColors } from "../fractal/color";
 import {
   buildPaletteLUT,
   CUSTOM_PALETTE_ID,
@@ -155,6 +157,10 @@ export interface UiHandlers {
    * a recolor, an added stop, or a removed stop; `stops` is the editor's
    * whole new list, parsed and ready for `setCustomPaletteStops`. */
   onCustomPaletteStops: (stops: RgbStop[]) => void;
+  /** The position mode's axis-color pickers changed (fr-8k7) — `colors` is
+   * the full x/y/z triple as parsed from the three inputs; the Reset button
+   * sends the exact legacy identity (the reducer normalizes it to absent). */
+  onPositionAxisColors: (colors: PositionAxisColors) => void;
 }
 
 /**
@@ -587,7 +593,6 @@ export class Ui {
   private readonly legendLabelMid: HTMLElement;
   private readonly legendLabelHigh: HTMLElement;
   private readonly legendSwatches: HTMLElement;
-  private readonly legendText: HTMLElement;
   private readonly menuToggle: HTMLElement;
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
@@ -634,6 +639,13 @@ export class Ui {
   private readonly glowBrightnessRow: HTMLElement;
   private readonly colorGammaRow: HTMLElement;
   private readonly rampPaletteRow: HTMLElement;
+  private readonly positionColorsRow: HTMLElement;
+  private readonly positionAxisInputs: {
+    x: HTMLInputElement;
+    y: HTMLInputElement;
+    z: HTMLInputElement;
+  };
+  private readonly positionColorsResetBtn: HTMLElement;
   private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
@@ -771,7 +783,6 @@ export class Ui {
     this.legendLabelMid = this.byId("legendLabelMid");
     this.legendLabelHigh = this.byId("legendLabelHigh");
     this.legendSwatches = this.byId("legendSwatches");
-    this.legendText = this.byId("legendText");
     this.menuToggle = this.byId("menuToggle");
     this.backdrop = this.byId("backdrop");
     this.panel = this.byId("panel");
@@ -808,6 +819,13 @@ export class Ui {
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.colorGammaRow = this.byId("colorGammaRow");
     this.rampPaletteRow = this.byId("rampPaletteRow");
+    this.positionColorsRow = this.byId("positionColorsRow");
+    this.positionAxisInputs = {
+      x: this.byId("positionAxisX"),
+      y: this.byId("positionAxisY"),
+      z: this.byId("positionAxisZ"),
+    };
+    this.positionColorsResetBtn = this.byId("positionColorsReset");
     this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
@@ -963,6 +981,17 @@ export class Ui {
     return stops;
   }
 
+  /** Read the three axis-color pickers as a PositionAxisColors, or null if any
+   * fails to parse (can't happen for a real <input type="color"> — same
+   * defensive contract as readCustomPaletteStops). */
+  private readPositionAxisColors(): PositionAxisColors | null {
+    const x = hexToRgb(this.positionAxisInputs.x.value);
+    const y = hexToRgb(this.positionAxisInputs.y.value);
+    const z = hexToRgb(this.positionAxisInputs.z.value);
+    if (!x || !y || !z) return null;
+    return { x, y, z };
+  }
+
   bind(handlers: UiHandlers): void {
     this.handlers = handlers;
     this.menuToggle.addEventListener("click", () => handlers.onTogglePanel());
@@ -1093,6 +1122,16 @@ export class Ui {
         handlers.onCustomPaletteStops(stops.slice(0, -1));
       });
     }
+    // Position axis colors (fr-8k7): three pickers report as one triple —
+    // the app state is the triple, so a drag in any one picker re-reads all
+    // three, exactly like the gradient editor reads its whole stop list.
+    this.positionColorsRow.addEventListener("input", () => {
+      const colors = this.readPositionAxisColors();
+      if (colors) handlers.onPositionAxisColors(colors);
+    });
+    this.positionColorsResetBtn.addEventListener("click", () =>
+      handlers.onPositionAxisColors(LEGACY_POSITION_AXIS_COLORS),
+    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -1247,6 +1286,22 @@ export class Ui {
       "hidden",
       nonFlat || !colorModeUsesGamma(state.colorMode),
     );
+    // The axis pickers only mean anything for the position mode (and never
+    // while non-flat, where colorMode itself is inert) — same gating family
+    // as the contrast slider, narrower condition.
+    this.positionColorsRow.classList.toggle(
+      "hidden",
+      nonFlat || state.colorMode !== "position",
+    );
+    // Sync the pickers to state — only write on change, like
+    // syncCustomPaletteEditors' recolor path, so a mid-drag picker isn't
+    // clobbered by its own input event's resulting state update.
+    const axes = state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS;
+    for (const axis of ["x", "y", "z"] as const) {
+      const hex = rgbToHex(axes[axis]);
+      const input = this.positionAxisInputs[axis];
+      if (input.value !== hex) input.value = hex;
+    }
     // Accordion restore (fr-99o): entering a render mode re-opens the section
     // the user last had open there (defaults: Presets / Tone / Surface — see
     // openSectionByMode). Setting .open trips the details name-group
@@ -1590,9 +1645,9 @@ export class Ui {
    *   the rendered ramp, or from the current color-contrast setting) with
    *   low/high or center/edge labels — since fr-3b6 sampling the
    *   rampPalette-aware LUT, so a gradient-driven ramp shows its own colors
-   *   with the same labels; position gets a short axis-mapping note (xyz→rgb
-   *   is not a single ramp); transform gets one swatch per transform;
-   *   uniform hides the legend (nothing to key).
+   *   with the same labels; position shows its three axis colors as
+   *   X/Y/Z-labeled swatches (fr-8k7); transform gets one swatch per
+   *   transform; uniform hides the legend (nothing to key).
    *
    * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
    * than recomputing `systemIsNonFlat` here, so the two never risk reading a
@@ -1680,17 +1735,14 @@ export class Ui {
       this.showLegendSwatchStrip(state.transforms.length);
       return;
     }
-    // position: no gradient bar, a short axis-mapping note.
-    this.legend.classList.remove("hidden");
-    this.legendBar.classList.add("hidden");
-    this.legendLabels.classList.add("hidden");
-    this.legendSwatches.classList.add("hidden");
-    this.legendText.classList.remove("hidden");
-    this.legendText.textContent = "X→R Y→G Z→B";
+    // position: the three axis colors, labeled — not a 1-D ramp.
+    this.showLegendAxisSwatches(
+      state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS,
+    );
   }
 
-  /** Show the legend as the per-transform swatch strip, hiding the bar/text
-   * variants — shared by the 3D "By Transform" color mode and the 4D
+  /** Show the legend as the per-transform swatch strip, hiding the bar
+   * variant — shared by the 3D "By Transform" color mode and the 4D
    * projection's baked transform mode (fr-d47), which use the identical
    * {@link transformColors} palette. */
   private showLegendSwatchStrip(count: number): void {
@@ -1698,13 +1750,12 @@ export class Ui {
     this.legendBar.classList.add("hidden");
     this.legendLabels.classList.add("hidden");
     this.legendSwatches.classList.remove("hidden");
-    this.legendText.classList.add("hidden");
     this.renderLegendSwatches(count);
   }
 
   /** Show the legend as a gradient bar with low/mid/high labels (empty
-   * strings render as blank), hiding the swatch/text variants — the shared
-   * shape of the colorMode ramps, the palette strips, and the 4D w ramp. */
+   * strings render as blank), hiding the swatch variant — the shared shape
+   * of the colorMode ramps, the palette strips, and the 4D w ramp. */
   private showLegendBar(
     gradient: string,
     low: string,
@@ -1715,11 +1766,33 @@ export class Ui {
     this.legendBar.classList.remove("hidden");
     this.legendLabels.classList.remove("hidden");
     this.legendSwatches.classList.add("hidden");
-    this.legendText.classList.add("hidden");
     this.legendBar.style.backgroundImage = gradient;
     this.legendLabelLow.textContent = low;
     this.legendLabelMid.textContent = mid;
     this.legendLabelHigh.textContent = high;
+  }
+
+  /** Show the legend as the position mode's three axis colors, each tagged
+   * with its axis letter (fr-8k7) — the live pickers' colors, so the legend
+   * can never drift from the rendered mapping (the default identity reads
+   * X:red Y:green Z:blue, the old "X→R Y→G Z→B" note as colors). */
+  private showLegendAxisSwatches(axes: PositionAxisColors): void {
+    this.legend.classList.remove("hidden");
+    this.legendBar.classList.add("hidden");
+    this.legendLabels.classList.add("hidden");
+    this.legendSwatches.classList.remove("hidden");
+    this.legendSwatches.replaceChildren();
+    for (const axis of ["x", "y", "z"] as const) {
+      const letter = this.doc.createElement("span");
+      letter.className = "legend-more";
+      letter.textContent = axis.toUpperCase();
+      this.legendSwatches.appendChild(letter);
+      const [r, g, b] = axes[axis];
+      const swatch = this.doc.createElement("span");
+      swatch.className = "legend-swatch";
+      swatch.style.backgroundColor = cssRgb(r, g, b);
+      this.legendSwatches.appendChild(swatch);
+    }
   }
 
   /** Rebuild the "by transform" swatch strip from the current palette,

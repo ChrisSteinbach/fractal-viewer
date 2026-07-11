@@ -65,7 +65,6 @@
         <span id="legendLabelHigh"></span>
       </div>
       <div id="legendSwatches"></div>
-      <div id="legendText"></div>
     </div>
 
     <button id="menuToggle" type="button" aria-label="Toggle controls">
@@ -330,6 +329,32 @@
                   + Stop
                 </button>
               </div>
+            </div>
+          </div>
+
+          <div id="positionColorsRow" class="position-axis-row hidden">
+            <span class="position-axis-title">Axis Colors</span>
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                >X
+                <input type="color" id="positionAxisX" value="#ff0000" />
+              </label>
+              <label class="position-axis-label"
+                >Y
+                <input type="color" id="positionAxisY" value="#00ff00" />
+              </label>
+              <label class="position-axis-label"
+                >Z
+                <input type="color" id="positionAxisZ" value="#0000ff" />
+              </label>
+              <button
+                class="btn btn-ghost"
+                id="positionColorsReset"
+                type="button"
+                title="Reset to the classic X→red, Y→green, Z→blue mapping"
+              >
+                Reset
+              </button>
             </div>
           </div>
 

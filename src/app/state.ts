@@ -1,5 +1,7 @@
 import { isFlatTransform, systemIsFlat } from "../fractal/affine4";
 import { appendTransform, defaultTransforms } from "../fractal/presets";
+import { isLegacyPositionAxisColors } from "../fractal/color";
+import type { PositionAxisColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
   MAX_CUSTOM_PALETTE_STOPS,
@@ -275,6 +277,16 @@ export interface AppState {
    * unselected, so switching away and back never loses an authored gradient.
    */
   customPalette?: CustomPalette;
+  /**
+   * The position color mode's three user-picked axis colors (fr-8k7, see
+   * `color.ts`'s `writePositionColor`). Absent = the legacy XYZ→RGB identity
+   * mapping — kept absent rather than storing the identity explicitly, so
+   * "absent = legacy" stays the one discriminator and default scenes keep
+   * their short URLs (the reducer normalizes an exact identity back to
+   * absent). Persists like `customPalette` — optional, written only when
+   * present.
+   */
+  positionAxisColors?: PositionAxisColors;
 }
 
 /** An IFS needs at least one map. */
@@ -916,6 +928,26 @@ export function setRampPaletteId(
     ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
       ? { customPalette: { stops: seedCustomStops(state.rampPaletteId) } }
       : {}),
+  };
+}
+
+/**
+ * Set the position color mode's axis colors (fr-8k7). Setting the exact
+ * legacy identity (see `color.ts`'s `LEGACY_POSITION_AXIS_COLORS`)
+ * normalizes back to `undefined` — "absent = legacy" stays the one
+ * discriminator, the encoded scene keeps its short URL, and the legacy
+ * render path stays byte-identical (the custom blend at the identity is
+ * numerically identical anyway). Like `setColorMode`, never clamped:
+ * the UI's `<input type="color">` can only produce valid channels, and
+ * persistence validates untrusted input in `decodeScene`.
+ */
+export function setPositionAxisColors(
+  state: AppState,
+  colors: PositionAxisColors,
+): AppState {
+  return {
+    ...state,
+    positionAxisColors: isLegacyPositionAxisColors(colors) ? undefined : colors,
   };
 }
 

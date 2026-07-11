@@ -905,6 +905,46 @@ summary.editor-group-title {
   flex: 1;
 }
 
+/* Position mode axis-color pickers (fr-8k7): three swatches under Color Mode
+   once it's set to Position, plus a Reset to the classic XYZ→RGB mapping. */
+.position-axis-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Same specificity trap as `.custom-palette-row.hidden` above: this row sets
+   `display: flex` after the generic `.hidden` utility, so restate the hide at
+   two-class specificity. */
+.position-axis-row.hidden {
+  display: none;
+}
+
+.position-axis-inputs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.position-axis-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.position-axis-inputs input[type="color"] {
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;
