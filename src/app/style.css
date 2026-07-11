@@ -829,6 +829,17 @@ summary.editor-group-title {
   font-size: 13px;
 }
 
+/* `.custom-palette-row` sets `display: flex` and is declared after the
+   generic `.hidden` utility, so at equal specificity the flex won and the
+   editors never actually hid (stray −/+ Stop buttons under every palette
+   select, and a stale stop strip lingering after switching Custom → a
+   preset). Restate the hide at two-class specificity so it wins — the same
+   trap the `.gallery-modal.hidden` / `#updateBanner.hidden` notices
+   document (found while browser-verifying fr-6ue). */
+.custom-palette-row.hidden {
+  display: none;
+}
+
 .custom-palette-strip {
   width: 100%;
   height: 14px;
