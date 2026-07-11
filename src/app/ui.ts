@@ -596,7 +596,6 @@ export class Ui {
   private readonly menuToggle: HTMLElement;
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
-  private readonly panelClose: HTMLElement;
   private readonly transformCount: HTMLElement;
   private readonly transformList: HTMLElement;
   private readonly addBtn: HTMLButtonElement;
@@ -791,7 +790,6 @@ export class Ui {
     this.menuToggle = this.byId("menuToggle");
     this.backdrop = this.byId("backdrop");
     this.panel = this.byId("panel");
-    this.panelClose = this.byId("panelClose");
     this.transformCount = this.byId("transformCount");
     this.transformList = this.byId("transformList");
     this.addBtn = this.byId("addBtn");
@@ -1001,7 +999,6 @@ export class Ui {
   bind(handlers: UiHandlers): void {
     this.handlers = handlers;
     this.menuToggle.addEventListener("click", () => handlers.onTogglePanel());
-    this.panelClose.addEventListener("click", () => handlers.onClosePanel());
     this.backdrop.addEventListener("click", () => handlers.onClosePanel());
     this.addBtn.addEventListener("click", () => handlers.onAdd());
     this.removeBtn.addEventListener("click", () => handlers.onRemove());
@@ -1415,6 +1412,10 @@ export class Ui {
       state.panelOpen && window.innerWidth <= MOBILE_BREAKPOINT,
     );
     this.menuToggle.textContent = state.panelOpen ? "✕" : "☰";
+    this.menuToggle.setAttribute(
+      "aria-label",
+      state.panelOpen ? "Close controls" : "Open controls",
+    );
   }
 
   /**

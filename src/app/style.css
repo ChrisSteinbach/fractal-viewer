@@ -981,31 +981,6 @@ summary.editor-group-title {
   }
 }
 
-#panelClose {
-  display: flex;
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  font-size: 15px;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-#panelClose:hover {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
 /* ── Collection gallery (fr-cai) ──────────────────────────────────────────────
    A full-screen modal over the whole app (above the #panel at z-index 99) that
    lays the saved scenes out as a thumbnail grid. Its own scrim/backdrop, so it
