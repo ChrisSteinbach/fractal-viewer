@@ -24,6 +24,7 @@ import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
+import type { PositionAxisColors } from "../fractal/color";
 import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import type { ColorMode, SymmetryParams, Transform } from "../fractal/types";
@@ -65,6 +66,11 @@ export interface CloudRequest {
    * on the 4D path like the rest of the color-bake inputs.
    */
   rampPalette: PaletteSpec;
+  /** The position mode's custom axis colors (fr-8k7) — `buildColors`'
+   * parameter of the same name; absent = the legacy XYZ→RGB mapping. Inert
+   * for every other `colorMode`, and on the 4D path like the rest of the
+   * color-bake inputs. */
+  positionAxisColors?: PositionAxisColors;
   /**
    * Delivery metadata for the main thread's arrival handler — the worker
    * ignores both. `replaced` marks a whole-system replacement (preset load /
@@ -129,6 +135,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
     request.colorMode,
     request.colorGamma,
     request.rampPalette,
+    request.positionAxisColors,
   );
   return { id: request.id, fourD: false, ...result, colors };
 }

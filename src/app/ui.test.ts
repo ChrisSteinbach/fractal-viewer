@@ -21,7 +21,10 @@ import {
   buildPaletteLUT,
 } from "../fractal/palette";
 import type { RgbStop } from "../fractal/palette";
-import { buildColorModeLUT } from "../fractal/color";
+import {
+  buildColorModeLUT,
+  LEGACY_POSITION_AXIS_COLORS,
+} from "../fractal/color";
 import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
@@ -63,6 +66,7 @@ function noopHandlers(): UiHandlers {
     onFourDTumbleSpeedInput: vi.fn(),
     onWatchBuild: vi.fn(),
     onCustomPaletteStops: vi.fn(),
+    onPositionAxisColors: vi.fn(),
   };
 }
 
@@ -375,9 +379,6 @@ describe("Ui color legend (fr-dsz)", () => {
   function legendSwatches(): HTMLElement {
     return document.getElementById("legendSwatches") as HTMLElement;
   }
-  function legendText(): HTMLElement {
-    return document.getElementById("legendText") as HTMLElement;
-  }
   /** The CSS `rgb()` string for LUT entry `index` (0-255) — the same
    * byte-conversion the legend itself uses (color management is disabled,
    * so these bytes match the rendered cloud exactly). */
@@ -393,7 +394,6 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
     expect(legendBar().classList.contains("hidden")).toBe(false);
     expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendText().classList.contains("hidden")).toBe(true);
     expect(legendLabelLow().textContent).toBe("low");
     expect(legendLabelHigh().textContent).toBe("high");
 
@@ -459,14 +459,47 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(gammaBackground).toContain(lutRgb(lut, 255));
   });
 
-  it("shows text instead of a bar for position mode", () => {
+  it("shows X/Y/Z-labeled axis swatches for position mode", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), colorMode: "position" });
 
+    expect(legend().classList.contains("hidden")).toBe(false);
     expect(legendBar().classList.contains("hidden")).toBe(true);
-    expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendText().classList.contains("hidden")).toBe(false);
-    expect(legendText().textContent).toBe("X→R Y→G Z→B");
+    expect(legendSwatches().classList.contains("hidden")).toBe(false);
+    const letters = Array.from(
+      legendSwatches().querySelectorAll(".legend-more"),
+    ).map((el) => el.textContent);
+    expect(letters).toEqual(["X", "Y", "Z"]);
+    const swatches = Array.from(
+      legendSwatches().querySelectorAll<HTMLElement>(".legend-swatch"),
+    ).map((el) => el.style.backgroundColor);
+    expect(swatches).toEqual([
+      "rgb(255, 0, 0)",
+      "rgb(0, 255, 0)",
+      "rgb(0, 0, 255)",
+    ]);
+  });
+
+  it("the axis swatches follow custom axis colors", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "position",
+      positionAxisColors: {
+        x: [1, 0.5, 0],
+        y: [0, 0.5, 1],
+        z: [0.2, 0.4, 0.6],
+      },
+    });
+
+    const swatches = Array.from(
+      legendSwatches().querySelectorAll<HTMLElement>(".legend-swatch"),
+    ).map((el) => el.style.backgroundColor);
+    expect(swatches).toEqual([
+      "rgb(255, 128, 0)",
+      "rgb(0, 128, 255)",
+      "rgb(51, 102, 153)",
+    ]);
   });
 
   it("shows one swatch per transform, tracking transforms.length after add/remove", () => {
@@ -550,7 +583,6 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
     expect(legendBar().classList.contains("hidden")).toBe(false);
     expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendText().classList.contains("hidden")).toBe(true);
     expect(legendLabelLow().textContent).toBe("");
     expect(legendLabelMid().textContent).toBe("Ember palette");
     expect(legendLabelHigh().textContent).toBe("");
@@ -711,7 +743,6 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
     expect(legendBar().classList.contains("hidden")).toBe(false);
     expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendText().classList.contains("hidden")).toBe(true);
     expect(legendLabelLow().textContent).toBe("−w");
     expect(legendLabelMid().textContent).toBe("in our 3-space");
     expect(legendLabelHigh().textContent).toBe("+w");
@@ -2840,6 +2871,87 @@ describe("Ui ramp palette (fr-3b6)", () => {
 
     expect(el("flameCustomPaletteRow").classList.contains("hidden")).toBe(true);
     expect(el("solidCustomPaletteRow").classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("position axis colors row (fr-8k7)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("shows the row only for the position color mode", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...initialState(true), colorMode: "position" });
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the row while the system is non-flat", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "position",
+      transforms: nonFlatTransforms(),
+    });
+    expect(el("positionColorsRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("reflects the state's axis colors into the pickers", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "position",
+      positionAxisColors: {
+        x: [1, 0.5, 0],
+        y: [0, 0.5, 1],
+        z: [0.2, 0.4, 0.6],
+      },
+    });
+
+    expect((el("positionAxisX") as HTMLInputElement).value).toBe("#ff8000");
+    expect((el("positionAxisY") as HTMLInputElement).value).toBe("#0080ff");
+    expect((el("positionAxisZ") as HTMLInputElement).value).toBe("#336699");
+  });
+
+  it("reports an axis-picker edit as the full parsed triple", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({ ...initialState(true), colorMode: "position" });
+
+    const y = el("positionAxisY") as HTMLInputElement;
+    y.value = "#123456";
+    // The listener is delegated on the row, so the event must bubble.
+    y.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onPositionAxisColors).toHaveBeenCalledWith({
+      x: [1, 0, 0],
+      y: [0x12 / 255, 0x34 / 255, 0x56 / 255],
+      z: [0, 0, 1],
+    });
+  });
+
+  it("reset reports the exact legacy identity", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({
+      ...initialState(true),
+      colorMode: "position",
+      positionAxisColors: {
+        x: [1, 0.5, 0],
+        y: [0, 0.5, 1],
+        z: [0.2, 0.4, 0.6],
+      },
+    });
+
+    el("positionColorsReset").click();
+
+    expect(handlers.onPositionAxisColors).toHaveBeenCalledWith(
+      LEGACY_POSITION_AXIS_COLORS,
+    );
   });
 });
 

@@ -9,6 +9,7 @@
  * module stays fully testable without a real DOM.
  */
 import { isFlatTransform } from "../fractal/affine4";
+import type { PositionAxisColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
@@ -153,6 +154,13 @@ export interface SceneSnapshot {
    */
   customPalette?: CustomPalette;
   /**
+   * The position mode's custom axis colors (fr-8k7, see
+   * {@link AppState.positionAxisColors}). Optional like `customPalette` —
+   * absent = the legacy XYZ→RGB mapping — and like it never worth rejecting
+   * a scene over; see {@link decodePositionAxisColors}.
+   */
+  positionAxisColors?: PositionAxisColors;
+  /**
    * Optional orbit-camera pose (fr-1k4): the view a saved/shared/collection
    * scene was framed with (see {@link CameraPose}). Absent in every
    * pre-fr-1k4 save or link, the same way `customPalette` was absent before
@@ -200,6 +208,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     symmetry: state.symmetry,
     glowBrightness: state.glowBrightness,
     customPalette: state.customPalette,
+    positionAxisColors: state.positionAxisColors,
   };
 }
 
@@ -212,14 +221,22 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * document-only field with no `AppState` counterpart (it's applied instead
  * by `main.ts`'s boot/load call sites), so it is explicitly destructured out
  * and never spread. The rest stays the exact inverse of `toSnapshot`, with
- * nothing else to hand-sync.
+ * nothing else to hand-sync. `positionAxisColors` (fr-8k7) is read explicitly
+ * off `snapshot` rather than relying on the `rest` spread, so its absence
+ * always clears `base`'s value even when the incoming snapshot object never
+ * declares the key at all — unlike `customPalette`, which only clears
+ * because `toSnapshot`/`decodeScene` happen to always emit that key.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
   base: AppState,
 ): AppState {
   const { camera: _camera, ...rest } = snapshot;
-  return { ...base, ...rest };
+  return {
+    ...base,
+    ...rest,
+    positionAxisColors: snapshot.positionAxisColors,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -556,6 +573,33 @@ function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
     stops.push(stop);
   }
   return { stops };
+}
+
+/**
+ * Validate the untrusted `positionAxisColors` scene field (fr-8k7): the
+ * position color mode's three axis colors (see `state.ts`'s
+ * {@link AppState.positionAxisColors}). QUIET fallback semantics exactly
+ * like {@link decodeCustomPalette} — absent, malformed, or any
+ * unparseable axis hex collapses the whole field to `undefined` (the
+ * legacy XYZ→RGB mapping) rather than rejecting the scene: axis colors
+ * are cosmetic, never worth losing an otherwise-valid shared link over.
+ */
+function decodePositionAxisColors(
+  raw: unknown,
+): PositionAxisColors | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const p = raw as Record<string, unknown>;
+  if (
+    typeof p.x !== "string" ||
+    typeof p.y !== "string" ||
+    typeof p.z !== "string"
+  )
+    return undefined;
+  const x = hexToRgb(p.x);
+  const y = hexToRgb(p.y);
+  const z = hexToRgb(p.z);
+  if (x === null || y === null || z === null) return undefined;
+  return { x, y, z };
 }
 
 /**
@@ -940,6 +984,7 @@ export function encodeScene(s: SceneSnapshot): string {
     symmetry: SymmetryParams;
     glowBrightness: number;
     customPalette?: { stops: string[] };
+    positionAxisColors?: { x: string; y: string; z: string };
     camera?: {
       target: number[];
       radius: number;
@@ -1005,6 +1050,16 @@ export function encodeScene(s: SceneSnapshot): string {
   // Encoded as hex strings (fr-55k) for URL compactness — see rgbToHex.
   if (s.customPalette)
     payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
+  // Written only when present, like customPalette above — the legacy
+  // identity is expressed by absence (see AppState.positionAxisColors),
+  // so old links and never-customized scenes stay byte-identical.
+  if (s.positionAxisColors) {
+    payload.positionAxisColors = {
+      x: rgbToHex(s.positionAxisColors.x),
+      y: rgbToHex(s.positionAxisColors.y),
+      z: rgbToHex(s.positionAxisColors.z),
+    };
+  }
   // Written only when present, like finalTransform/customPalette above — an
   // undo-history snapshot (which never carries a camera — see
   // SceneSnapshot.camera's doc) and every pre-fr-1k4 link stay byte-identical.
@@ -1068,6 +1123,10 @@ export function encodeScene(s: SceneSnapshot): string {
  * valid customPalette payload actually decoded alongside it; a `"custom"`
  * selection with nothing to back it falls back to `"legacy"` exactly like any
  * other unrecognized id (see {@link decodeFlameParams}).
+ *
+ * positionAxisColors (fr-8k7) follows the identical quiet-fallback contract:
+ * absent or malformed decodes to `undefined` — the legacy axis mapping —
+ * never a rejection.
  *
  * camera (fr-1k4) is the optional orbit-camera pose (see {@link CameraPose}).
  * Its policy is stricter than customPalette's in one way (no `Number(x)`
@@ -1137,6 +1196,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // logic can tell whether a "custom" selection actually has a payload to
     // back it. Never rejects the scene — see decodeCustomPalette.
     const customPalette = decodeCustomPalette(o.customPalette);
+
+    // positionAxisColors (fr-8k7): the position color mode's custom axis
+    // colors. Never rejects the scene — see decodePositionAxisColors.
+    const positionAxisColors = decodePositionAxisColors(o.positionAxisColors);
 
     // flame/solid: absent (an old link) defaults quietly; present-but-
     // malformed rejects the whole scene. See decodeFlameParams /
@@ -1217,6 +1280,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       symmetry,
       glowBrightness,
       customPalette,
+      positionAxisColors,
       camera,
     };
   } catch {

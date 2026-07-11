@@ -117,7 +117,7 @@ and seed-determinism with a stochastic lens.
 | `transform` | one hue per map (evenly spaced)                     |
 | `height`    | y normalized → blue → green → red                   |
 | `radius`    | distance from origin → warm (inner) to cool (outer) |
-| `position`  | normalized xyz → rgb                                |
+| `position`  | normalized xyz → rgb (axis colors pickable, fr-8k7) |
 | `uniform`   | constant cyan `(0.4, 0.8, 1.0)`                     |
 
 `hslToRgb` matches `THREE.Color.setHSL`'s algorithm. The renderer runs with
@@ -141,8 +141,23 @@ gradient at the same gamma-mapped coordinate instead of the built-in HSL
 formulas. One definition again: `writePaletteRampColor` in `color.ts` is
 shared by `buildColors`' branches and `buildColorModeLUT`, so the explorer's
 points, the solid render's colorMode-driven voxels, and the panel legend all
-recolor together. The 4D projection's radius mode deliberately stays on the
-fixed built-in ramp (fr-6ue tracks whether it should follow).
+recolor together. Since fr-6ue the 4D projection's "By 4D Radius" mode follows
+the same selection.
+
+The `position` mode is not a 1-D ramp (a 256×3 LUT indexes one coordinate;
+position has three), so instead of the ramp palette it takes three
+user-pickable **axis colors** (fr-8k7, `AppState.positionAxisColors`): each
+channel becomes `min(1, 0.2 + 0.8 · (tx·A + ty·B + tz·C))` over the
+gamma-mapped normalized coordinates — a dark-gray base plus the
+coordinate-weighted blend, so no corner of the bounds fades to black. The
+default (field absent) is the legacy identity `A,B,C = red, green, blue`,
+which reduces the blend to the original `t·0.8 + 0.2` per channel exactly.
+Axis colors that share channels can clip toward their sum near the far corner
+of the bounds — deliberate: a directional normalization was rejected because
+it collapses the diagonal brightness dimension (see fr-8k7's notes). One
+definition again: `writePositionColor` in `color.ts` is shared by
+`buildColors`' position branch and the solid render's `accumulateVoxels`, and
+the panel legend shows the live axis colors as X/Y/Z swatches.
 
 ## Data flow
 

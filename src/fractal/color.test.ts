@@ -1,4 +1,5 @@
 import {
+  LEGACY_POSITION_AXIS_COLORS,
   W_SIDE_PALETTES,
   buildColorModeLUT,
   buildColors,
@@ -6,9 +7,11 @@ import {
   colorModeUsesGamma,
   colorModeUsesRampPalette,
   hslToRgb,
+  isLegacyPositionAxisColors,
   transformColors,
   wRampColor,
 } from "./color";
+import type { PositionAxisColors } from "./color";
 import { buildPaletteLUT } from "./palette";
 import type { CustomPalette } from "./palette";
 import { runChaosGame } from "./chaos-game";
@@ -225,6 +228,119 @@ describe("buildColors color contrast (fr-8sk)", () => {
       1,
     );
     expect(contrasty).toEqual(linear);
+  });
+});
+
+describe("buildColors position axis colors (fr-8k7)", () => {
+  // A single point at tx=0.5, ty=1, tz=0.25 within a unit cube — distinct
+  // normalized coordinates on every axis, so a wrong axis→channel wiring
+  // (unlike a degenerate tx=ty=tz fixture) would show up as a wrong value.
+  function singlePointCloud(): ChaosGameResult {
+    return {
+      positions: new Float32Array([0.5, 1, 0.25]),
+      transformIndices: new Uint8Array(1),
+      count: 1,
+      bounds: {
+        minX: 0,
+        maxX: 1,
+        minY: 0,
+        maxY: 1,
+        minZ: 0,
+        maxZ: 1,
+        minR: 0,
+        maxR: 1,
+      },
+    };
+  }
+
+  it("blends the three axis colors by normalized coordinate and clips at 1", () => {
+    const cloud = singlePointCloud();
+    const axes: PositionAxisColors = {
+      x: [1, 0.5, 0],
+      y: [0, 0.5, 1],
+      z: [1, 1, 1],
+    };
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "position",
+      1,
+      "legacy",
+      axes,
+    );
+    // tx=0.5, ty=1, tz=0.25.
+    // r = 0.2 + 0.8*(0.5*1   + 1*0   + 0.25*1) = 0.8
+    // g = 0.2 + 0.8*(0.5*0.5 + 1*0.5 + 0.25*1) = 1.0
+    // b = min(1, 0.2 + 0.8*(0.5*0 + 1*1 + 0.25*1)) = min(1, 1.2) = 1
+    expect(colors[0]).toBeCloseTo(0.8, 6);
+    expect(colors[1]).toBeCloseTo(1.0, 6);
+    expect(colors[2]).toBeCloseTo(1, 6);
+  });
+
+  it("reproduces the default position mapping exactly with explicit legacy axis colors", () => {
+    const result = runChaosGame(defaultTransforms(), 300, mulberry32(5));
+    const explicit = buildColors(
+      result,
+      defaultTransforms(),
+      "position",
+      1,
+      "legacy",
+      LEGACY_POSITION_AXIS_COLORS,
+    );
+    const legacy = buildColors(result, defaultTransforms(), "position");
+    expect(explicit).toEqual(legacy);
+  });
+
+  // Pins the exact mapping AND its direction, mirroring the height ramp's
+  // "not an inverted exponent" test above: gamma is applied to tx/ty/tz
+  // BEFORE the axis-color blend, not after.
+  it("applies gamma to the normalized coordinate before the axis-color blend", () => {
+    const cloud = singlePointCloud();
+    // A channel permutation (x -> b, y -> r, z -> g), so a mixed-up gamma
+    // order would land on the wrong channel entirely rather than just a
+    // slightly-off value.
+    const axes: PositionAxisColors = {
+      x: [0, 0, 1],
+      y: [1, 0, 0],
+      z: [0, 1, 0],
+    };
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "position",
+      2,
+      "legacy",
+      axes,
+    );
+    // tx=0.5 -> 0.25, ty=1 -> 1, tz=0.25 -> 0.0625 (each squared by gamma 2).
+    // r = 0.2 + 0.8*(ty') = 0.2 + 0.8*1      = 1.0
+    // g = 0.2 + 0.8*(tz') = 0.2 + 0.8*0.0625 = 0.25
+    // b = 0.2 + 0.8*(tx') = 0.2 + 0.8*0.25   = 0.4
+    expect(colors[0]).toBeCloseTo(1.0, 6);
+    expect(colors[1]).toBeCloseTo(0.25, 6);
+    expect(colors[2]).toBeCloseTo(0.4, 6);
+  });
+});
+
+describe("isLegacyPositionAxisColors", () => {
+  it("is true for the exact legacy identity mapping", () => {
+    expect(
+      isLegacyPositionAxisColors({
+        x: [1, 0, 0],
+        y: [0, 1, 0],
+        z: [0, 0, 1],
+      }),
+    ).toBe(true);
+  });
+
+  it("is false when any single channel deviates from the identity", () => {
+    expect(
+      isLegacyPositionAxisColors({
+        x: [1, 0.1, 0],
+        y: [0, 1, 0],
+        z: [0, 0, 1],
+      }),
+    ).toBe(false);
   });
 });
 

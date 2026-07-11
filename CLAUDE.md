@@ -60,6 +60,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     (fr-6ue): `buildColors4`, the flame/voxel workers' 4D radius LUT, and the
     4D legend all take the resolved ramp palette, and the panel's one ramp
     row re-homes into the 4D View section while the system is non-flat.
+    The position mode's axis colors are user-pickable too (fr-8k7,
+    `PositionAxisColors`): `writePositionColor` — a clipped
+    coordinate-weighted blend, absent = the legacy XYZ→RGB identity — is the
+    ONE custom-position definition `buildColors` and `accumulateVoxels`
+    share; the legend shows the live colors as X/Y/Z swatches.
   - `flame.ts` — the CPU fractal-flame still: accumulate the chaos game into a
     2-D hit/color histogram (`accumulateFlame`) and tone-map it (`tonemapFlame`:
     exposure/gamma/vibrancy over a log-density curve). CPU oracle for

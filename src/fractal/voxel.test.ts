@@ -13,6 +13,7 @@ import {
   buildColorModeLUT,
   transformColors,
 } from "./color";
+import type { PositionAxisColors } from "./color";
 import { buildPaletteLUT } from "./palette";
 import type { CustomPalette } from "./palette";
 import { mulberry32 } from "./rng";
@@ -256,6 +257,46 @@ describe("accumulateVoxels color modes (fr-c1d)", () => {
     expect(grid.avgRGB[o]).toBeCloseTo(UNIFORM_POINT_COLOR[0], 6);
     expect(grid.avgRGB[o + 1]).toBeCloseTo(UNIFORM_POINT_COLOR[1], 6);
     expect(grid.avgRGB[o + 2]).toBeCloseTo(UNIFORM_POINT_COLOR[2], 6);
+  });
+
+  it("colors voxels through the shared writePositionColor blend for custom axis colors (fr-8k7)", () => {
+    // A fixed point with a DISTINCT normalized coordinate per axis
+    // (tx=0.6, ty=0.3, tz=0.8), so swapping any two axis colors — or wiring
+    // an axis to the wrong channel — lands on a visibly different value;
+    // the axis colors are chosen so no channel clips, pinning the blend
+    // arithmetic itself (the clip is pinned by color.test.ts).
+    const prepared = prepareChaosGame(fixedPointSystem([0.2, -0.4, 0.6]));
+    const grid = createVoxelGrid(4, unitishBounds(1));
+    const axes: PositionAxisColors = {
+      x: [0.5, 0, 0.25],
+      y: [0, 0.5, 0.25],
+      z: [0.5, 0.5, 0.5],
+    };
+
+    accumulateVoxels(
+      prepared,
+      grid,
+      10,
+      mulberry32(1),
+      transformColors(1),
+      "position",
+      undefined,
+      1,
+      "legacy",
+      axes,
+    );
+
+    // r = 0.2 + 0.8*(0.6*0.5  + 0.3*0    + 0.8*0.5) = 0.76
+    // g = 0.2 + 0.8*(0.6*0    + 0.3*0.5  + 0.8*0.5) = 0.64
+    // b = 0.2 + 0.8*(0.6*0.25 + 0.3*0.25 + 0.8*0.5) = 0.70
+    // (legacy identity at the same point would be 0.68 / 0.44 / 0.84).
+    // Voxel for [0.2, -0.4, 0.6] in the size-4 grid over [-1, 1]:
+    // vx = floor((0.2+1)*2) = 2, vy = floor((-0.4+1)*2) = 1,
+    // vz = floor((0.6+1)*2) = 3.
+    const o = (3 * 16 + 1 * 4 + 2) * 3;
+    expect(grid.avgRGB[o]).toBeCloseTo(0.76, 6);
+    expect(grid.avgRGB[o + 1]).toBeCloseTo(0.64, 6);
+    expect(grid.avgRGB[o + 2]).toBeCloseTo(0.7, 6);
   });
 
   it("leaves the orbit (and thus density) byte-identical across color modes", () => {

@@ -1,7 +1,7 @@
 import type { ChaosGameResult } from "./chaos-game";
 import type { ChaosGame4Result } from "./chaos-game-4d";
 import { buildPaletteLUT } from "./palette";
-import type { PaletteSpec } from "./palette";
+import type { PaletteSpec, RgbStop } from "./palette";
 import type {
   ColorMode,
   FourDAttributeColorMode,
@@ -133,6 +133,105 @@ export const POSITION_COLOR_SCALE = 0.8;
 export const POSITION_COLOR_OFFSET = 0.2;
 
 /**
+ * The "by position" mode's three user-pickable axis colors (fr-8k7): the
+ * point's gamma-mapped normalized coordinates weight a blend of one sRGB
+ * color per axis (see {@link writePositionColor}) instead of the hardcoded
+ * axis→channel identity. Absent everywhere it is optional
+ * (`buildColors` / `accumulateVoxels` / `AppState.positionAxisColors`) means
+ * the legacy XYZ→RGB mapping, whose colors are exactly
+ * {@link LEGACY_POSITION_AXIS_COLORS}.
+ */
+export interface PositionAxisColors {
+  readonly x: RgbStop;
+  readonly y: RgbStop;
+  readonly z: RgbStop;
+}
+
+/**
+ * The axis colors that reproduce the legacy XYZ→RGB position mapping (each
+ * axis feeds exactly its own channel): {@link writePositionColor} over these
+ * is numerically identical to the hardcoded legacy loop. The UI's axis
+ * pickers default to these, and `state.ts`'s reducer normalizes an
+ * exact match back to `undefined` so "absent = legacy" stays the one
+ * discriminator (and default scenes keep their short URLs).
+ */
+export const LEGACY_POSITION_AXIS_COLORS: PositionAxisColors = {
+  x: [1, 0, 0],
+  y: [0, 1, 0],
+  z: [0, 0, 1],
+};
+
+/** True when `colors` is exactly the legacy identity mapping (see
+ * {@link LEGACY_POSITION_AXIS_COLORS}) — the reducer's normalize check. */
+export function isLegacyPositionAxisColors(
+  colors: PositionAxisColors,
+): boolean {
+  const { x, y, z } = LEGACY_POSITION_AXIS_COLORS;
+  return (
+    colors.x[0] === x[0] &&
+    colors.x[1] === x[1] &&
+    colors.x[2] === x[2] &&
+    colors.y[0] === y[0] &&
+    colors.y[1] === y[1] &&
+    colors.y[2] === y[2] &&
+    colors.z[0] === z[0] &&
+    colors.z[1] === z[1] &&
+    colors.z[2] === z[2]
+  );
+}
+
+/**
+ * The custom-axis-color counterpart of the legacy XYZ→RGB position mapping
+ * (fr-8k7), written into `out` at offset `o`. Per channel:
+ *
+ *   channel = min(1, OFFSET + SCALE * (tx*Ax + ty*Bx + tz*Cx))
+ *
+ * — a dark-gray base ({@link POSITION_COLOR_OFFSET}, so no corner of the
+ * bounds fades to black, generalizing the legacy compression's intent) plus
+ * the coordinate-weighted blend of the three axis colors, scaled by
+ * {@link POSITION_COLOR_SCALE}. With {@link LEGACY_POSITION_AXIS_COLORS} each
+ * axis feeds exactly its own channel and this reduces to the legacy
+ * `t * SCALE + OFFSET` per channel.
+ *
+ * `tx`/`ty`/`tz` are the caller's normalized (and already gamma-mapped)
+ * coordinates, exactly like the ramp writers take a post-gamma `t`. Axis
+ * colors that share channels can push the blend past 1 where the attractor
+ * nears the far corner of its bounds — the min() clip keeps the color valid
+ * (three saturated colors wash toward their sum there, the user's own palette
+ * choice; a directional normalization was rejected because it collapses the
+ * diagonal brightness dimension entirely — see fr-8k7). The clip is REQUIRED
+ * on the solid path: `voxelTextureData` packs mean colors straight into a
+ * wrapping `Uint8Array`.
+ *
+ * The ONE custom-position definition: `buildColors`' position branch and the
+ * solid render's `accumulateVoxels` (`voxel.ts`) both call this, exactly as
+ * the ramps share `writeHeightColor`/`writeRadiusColor`, so the explorer's
+ * points and the solid render's voxels can never drift apart.
+ */
+export function writePositionColor(
+  out: Float32Array,
+  o: number,
+  tx: number,
+  ty: number,
+  tz: number,
+  axes: PositionAxisColors,
+): void {
+  const { x, y, z } = axes;
+  const r =
+    POSITION_COLOR_OFFSET +
+    POSITION_COLOR_SCALE * (tx * x[0] + ty * y[0] + tz * z[0]);
+  const g =
+    POSITION_COLOR_OFFSET +
+    POSITION_COLOR_SCALE * (tx * x[1] + ty * y[1] + tz * z[1]);
+  const b =
+    POSITION_COLOR_OFFSET +
+    POSITION_COLOR_SCALE * (tx * x[2] + ty * y[2] + tz * z[2]);
+  out[o] = r > 1 ? 1 : r;
+  out[o + 1] = g > 1 ? 1 : g;
+  out[o + 2] = b > 1 ? 1 : b;
+}
+
+/**
  * Apply the color-contrast exponent (fr-8sk) to a normalized coordinate `t`
  * that is expected to sit in `[0, 1]`: `t' = t ** colorGamma`. `colorGamma <
  * 1` spreads out the low end of the distribution (more contrast among
@@ -211,6 +310,12 @@ export function buildColorModeLUT(
  * the built-in ramp with the gradient palette sampled at the same
  * gamma-mapped coordinate; `"legacy"` (the default) is bit-identical to
  * before the parameter existed.
+ *
+ * `positionAxisColors` (fr-8k7) applies ONLY to the `"position"` mode,
+ * replacing the hardcoded axis→channel identity with the coordinate-weighted
+ * blend of three user-picked axis colors (see {@link writePositionColor});
+ * absent (the default) keeps the legacy XYZ→RGB loop bit-identically, the
+ * same two-loop-variant convention as `rampPalette`.
  */
 export function buildColors(
   result: ChaosGameResult,
@@ -218,6 +323,7 @@ export function buildColors(
   mode: ColorMode,
   colorGamma = 1,
   rampPalette: PaletteSpec = "legacy",
+  positionAxisColors?: PositionAxisColors,
 ): Float32Array {
   const { positions, transformIndices, count, bounds } = result;
   const colors = new Float32Array(count * 3);
@@ -297,20 +403,40 @@ export function buildColors(
     case "position": {
       // XYZ → RGB. Gamma is applied to each normalized coordinate BEFORE the
       // compressed-range scale/offset, exactly like the height/radius ramps.
-      for (let i = 0; i < count; i++) {
-        const o = i * 3;
-        const tx = applyColorGamma((positions[o] - bounds.minX) / rangeX, g);
-        const ty = applyColorGamma(
-          (positions[o + 1] - bounds.minY) / rangeY,
-          g,
-        );
-        const tz = applyColorGamma(
-          (positions[o + 2] - bounds.minZ) / rangeZ,
-          g,
-        );
-        colors[o] = tx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
-        colors[o + 1] = ty * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
-        colors[o + 2] = tz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+      // Two loop variants hoisted like the height/radius cases above: the
+      // `positionAxisColors === undefined` (legacy) loop is byte-identical to
+      // the pre-fr-8k7 code; custom axis colors take the shared
+      // writePositionColor blend instead.
+      if (positionAxisColors === undefined) {
+        for (let i = 0; i < count; i++) {
+          const o = i * 3;
+          const tx = applyColorGamma((positions[o] - bounds.minX) / rangeX, g);
+          const ty = applyColorGamma(
+            (positions[o + 1] - bounds.minY) / rangeY,
+            g,
+          );
+          const tz = applyColorGamma(
+            (positions[o + 2] - bounds.minZ) / rangeZ,
+            g,
+          );
+          colors[o] = tx * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          colors[o + 1] = ty * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+          colors[o + 2] = tz * POSITION_COLOR_SCALE + POSITION_COLOR_OFFSET;
+        }
+      } else {
+        for (let i = 0; i < count; i++) {
+          const o = i * 3;
+          const tx = applyColorGamma((positions[o] - bounds.minX) / rangeX, g);
+          const ty = applyColorGamma(
+            (positions[o + 1] - bounds.minY) / rangeY,
+            g,
+          );
+          const tz = applyColorGamma(
+            (positions[o + 2] - bounds.minZ) / rangeZ,
+            g,
+          );
+          writePositionColor(colors, o, tx, ty, tz, positionAxisColors);
+        }
       }
       break;
     }

@@ -37,7 +37,7 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import type { FourDRenderColor } from "../fractal/color";
+import type { FourDRenderColor, PositionAxisColors } from "../fractal/color";
 import { composeRotorProjection4 } from "../fractal/project4";
 import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
@@ -91,6 +91,16 @@ export type VoxelWorkerCommand =
        * `setPalette`). `"legacy"` = the built-in ramps.
        */
       rampPalette: PaletteSpec;
+      /**
+       * The position mode's custom axis colors (fr-8k7) — snapshotted at
+       * render entry exactly like `colorMode`/`colorGamma`; the position
+       * axis pickers are only reachable in the points view, so there is no
+       * live command for it (mirrors `rampPalette`'s doc). Only matters
+       * while `palette` is `"legacy"` (the colorMode-driven path) AND
+       * `colorMode` is `"position"`; unused on the 4D path. Absent = the
+       * legacy XYZ→RGB mapping.
+       */
+      positionAxisColors?: PositionAxisColors;
       iterationsBudget: number;
       /** Explicit numeric seed (not a live `Rng`, which can't cross
        * postMessage) — also makes a render a reproducible pure function of
@@ -372,6 +382,9 @@ export class VoxelWorkerSession {
   private palette: ReturnType<typeof transformColors> = [];
   private rng: Rng = Math.random;
   private colorMode: ColorMode = "transform";
+  /** The position mode's custom axis colors (fr-8k7) — see `voxel.ts`'s
+   * `accumulateVoxels`. */
+  private positionAxisColors: PositionAxisColors | undefined;
   /** Contrast exponent for the coordinate-normalized color modes (fr-8sk) —
    * see `voxel.ts`'s `accumulateVoxels`. */
   private colorGamma = 1;
@@ -510,6 +523,7 @@ export class VoxelWorkerSession {
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
+    this.positionAxisColors = cmd.positionAxisColors;
     this.colorGamma = cmd.colorGamma;
     this.rampPalette = cmd.rampPalette;
     // null for "legacy" — accumulateVoxels/buildFourDColor then falls back
@@ -755,6 +769,7 @@ export class VoxelWorkerSession {
         this.colorLUT ?? undefined,
         this.colorGamma,
         this.rampPalette,
+        this.positionAxisColors,
       );
     }
     const t1 = this.now();
