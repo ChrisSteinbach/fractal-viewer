@@ -1649,6 +1649,96 @@ describe("Ui 4D group", () => {
     expect(geometry.w).toStrictEqual({ scale: 0.9 });
   });
 
+  it("renders a mirrored (negative) Scale W as a magnitude slider with the Mirror W toggle pressed", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+
+    expect(editorSlider("Scale W").value).toBe("0.5");
+    expect(editorReadout("Scale W").textContent).toBe("-0.50");
+    expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("preserves the 4D mirror when dragging the Scale W slider", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+
+    const scaleW = editorSlider("Scale W");
+    scaleW.value = "0.9";
+    scaleW.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ scale: -0.9 });
+    expect(editorReadout("Scale W").textContent).toBe("-0.90");
+  });
+
+  it("flips Scale W's sign without touching its magnitude when Mirror W is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, w: { scale: 0.9 } }, 0);
+
+    mirrorButton("Mirror Scale W").click();
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ scale: -0.9 });
+    expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(editorReadout("Scale W").textContent).toBe("-0.90");
+    expect(editorSlider("Scale W").value).toBe("0.9");
+  });
+
+  it("materializes the negated derived mean as an explicit Scale W when Mirror W is clicked while auto", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    // (0.2 + 0.5 + 0.8) / 3 = 0.5, shown as "0.50 (auto)" until touched.
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+
+    mirrorButton("Mirror Scale W").click();
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ scale: -0.5 });
+    expect(editorReadout("Scale W").textContent).toBe("-0.50");
+    expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("clears the 4D mirror when the pressed Mirror W toggle is clicked again", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+
+    mirrorButton("Mirror Scale W").click();
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.w).toStrictEqual({ scale: 0.5 });
+    expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("re-syncs the Mirror W toggle when the selection's w.scale changes externally", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...flat, w: { scale: 0.5 } }, 0);
+    // Same index → no rebuild, just a re-sync (undo / external edit path).
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+
+    expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(editorSlider("Scale W").value).toBe("0.5");
+    expect(editorReadout("Scale W").textContent).toBe("-0.50");
+  });
+
   it("emits no w key at all for an ordinary position edit on a w-less transform", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
