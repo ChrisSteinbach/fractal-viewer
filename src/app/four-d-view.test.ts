@@ -74,6 +74,85 @@ describe("FourDView", () => {
     });
   });
 
+  describe("setTumbleUserChoice", () => {
+    it("turns the tumble off immediately, without needing a reset", () => {
+      const view = new FourDView();
+
+      view.setTumbleUserChoice(false);
+
+      expect(view.tumbleOn).toBe(false);
+    });
+
+    it("keeps the tumble off across a fresh-visit reset once the user has turned it off", () => {
+      const view = new FourDView();
+      view.reset(false);
+
+      view.setTumbleUserChoice(false);
+      view.reset(false);
+
+      expect(view.tumbleOn).toBe(false);
+    });
+
+    it("still pre-seeds a non-identity rotor when a sticky off choice leaves the tumble paused after reset", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.setTumbleUserChoice(false);
+
+      view.reset(false);
+
+      // A paused projection sitting exactly on the identity view would look
+      // indistinguishable from the flat 3D embed, whether the pause comes
+      // from reduced motion or, as here, a sticky user choice.
+      expect(maxDeviationFromIdentity(view.matrix())).toBeGreaterThan(0.1);
+    });
+
+    it("honors a sticky opt-in and keeps tumbling on the next reset even under reduced motion", () => {
+      const view = new FourDView();
+      view.reset(true); // tumble starts paused under reduced motion
+
+      view.setTumbleUserChoice(true);
+      view.reset(true);
+
+      expect(view.tumbleOn).toBe(true);
+    });
+
+    it("uses the most recent setTumbleUserChoice call as the sticky choice", () => {
+      const view = new FourDView();
+
+      view.setTumbleUserChoice(false);
+      view.setTumbleUserChoice(true);
+      view.reset(false);
+
+      expect(view.tumbleOn).toBe(true);
+    });
+
+    it("still resets speed and slice fields to baseline when the sticky choice keeps the tumble off", () => {
+      const view = new FourDView();
+      view.setTumbleUserChoice(false);
+      view.tumbleSpeed = 3;
+      view.sliceOn = true;
+
+      view.reset(false);
+
+      expect(view.tumbleOn).toBe(false);
+      expect(view.tumbleSpeed).toBe(1);
+      expect(view.sliceOn).toBe(false);
+    });
+
+    it("does not treat a direct tumbleOn field write as a sticky choice, unlike setTumbleUserChoice", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.tumbleOn = false; // bare field write, not through the setter
+
+      view.reset(false);
+
+      // Only setTumbleUserChoice earns stickiness; a programmatic write to
+      // the field (as here) must not survive the next fresh-visit reset the
+      // way a real user toggle would (contrast the sticky-off case above).
+      expect(view.tumbleOn).toBe(true);
+    });
+  });
+
   describe("tick", () => {
     it("advances the rotor away from identity while the tumble is running", () => {
       const view = new FourDView();

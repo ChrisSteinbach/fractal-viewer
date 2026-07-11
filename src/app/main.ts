@@ -306,6 +306,14 @@ function main(): void {
   // additionally pauses it while interactions reports a gesture in progress.
   let autoOrbitOn = true;
   let autoOrbitSpeed = 1;
+  // The user's explicit auto-orbit on/off choice, once they have ever touched
+  // the toggle (fr-g98). null = untouched, so fresh-visit resets follow the
+  // reduced-motion default; after a manual toggle they follow this instead —
+  // a preset load / Surprise Me / 4D→3D flip must not re-enable an orbit the
+  // user turned off (nor re-pause a reduced-motion user's explicit opt-in).
+  // Session-only like the orbit itself; the tumble's twin lives inside
+  // FourDView (setTumbleUserChoice).
+  let autoOrbitUserChoice: boolean | null = null;
 
   // Shared frame clock for the explorer path's automatic motion (the 4D
   // tumble and the 3D auto-orbit). Advances every explorer frame — paused,
@@ -364,9 +372,10 @@ function main(): void {
   }
 
   // Reset the 4D VIEW state to a "fresh visit" baseline (rotor to identity,
-  // tumble running at default speed, slice off — the baseline itself, plus the
-  // reduced-motion seeding, lives in FourDView.reset) and push it to the scene
-  // + UI. Now that "4D" is a property of the system rather than a mode, this
+  // tumble at default speed — running unless reduced motion or the user's
+  // sticky toggle choice (fr-g98) says paused — slice off; the baseline
+  // itself, plus the paused-view rotor seeding, lives in FourDView.reset) and
+  // push it to the scene + UI. Now that "4D" is a property of the system rather than a mode, this
   // fires from regenerate() on (a) a flat→non-flat transition and (b) a
   // whole-system replacement (preset load / Surprise Me) that lands on a
   // non-flat system — never on a subsequent edit to an already-4D system, so
@@ -380,14 +389,16 @@ function main(): void {
 
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
   // visit" baseline — running (paused under reduced motion, still an explicit
-  // opt-in there) at default speed. Fires from regenerate() on the mirrored
+  // opt-in there) at default speed, except that a manual toggle is sticky
+  // (fr-g98): once the user has chosen, fresh visits keep their choice and
+  // only re-center the speed. Fires from regenerate() on the mirrored
   // triggers — (a) a non-flat→flat transition and (b) a whole-system
   // replacement that lands on a flat system — plus once at boot, so a paused
   // or re-sped orbit survives ordinary edits exactly like the tumble does.
   // No orientation to reset: theta IS the live camera, and yanking it would
   // discard the user's framing.
   function resetAutoOrbitView(): void {
-    autoOrbitOn = !prefersReducedMotion();
+    autoOrbitOn = autoOrbitUserChoice ?? !prefersReducedMotion();
     autoOrbitSpeed = 1;
     ui.resetAutoOrbit(autoOrbitOn);
   }
@@ -1717,17 +1728,21 @@ function main(): void {
     },
     // Tumble pause/resume + speed (fr-woc): also session-only view state, no
     // save — animate() reads these fields off fourDView directly every frame,
-    // so there is nothing else to push here.
+    // so there is nothing else to push here. The toggle goes through
+    // setTumbleUserChoice (not a bare tumbleOn write) so the choice is sticky
+    // across fresh-visit resets (fr-g98).
     onFourDTumbleToggle: (checked) => {
-      fourDView.tumbleOn = checked;
+      fourDView.setTumbleUserChoice(checked);
     },
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
     },
     // Auto-orbit pause/resume + speed (fr-1yn): the 3D siblings of the tumble
-    // handlers above, same session-only pattern.
+    // handlers above, same session-only pattern — the toggle also records the
+    // sticky user choice resetAutoOrbitView() honors (fr-g98).
     onAutoOrbitToggle: (checked) => {
       autoOrbitOn = checked;
+      autoOrbitUserChoice = checked;
     },
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
