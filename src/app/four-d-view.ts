@@ -20,7 +20,10 @@ import type { RotorPair } from "./rotor4";
  * via `matrix()`, `reset()`, `tick()`, and `rotate()` — unlike `tumbleOn`/
  * `tumbleSpeed`/`sliceOn`/`sliceCenter`/`sliceRelColor`, which are plain
  * session data with no invariant to protect, so the animate loop and UI
- * handlers read and write them directly.
+ * handlers read and write them directly. One exception since fr-g98: the UI's
+ * tumble CHECKBOX flows through `setTumbleUserChoice`, not a bare `tumbleOn`
+ * write, because a manual toggle must also be remembered as the sticky choice
+ * that future `reset()`s respect.
  *
  * `viewTransition` is a free function, not a method, because it never touches
  * the rotor or the slice at all — it is main.ts's `regenerate()` deciding
@@ -81,6 +84,14 @@ export function viewTransition(
 export class FourDView {
   private pair: RotorPair = identityRotorPair();
 
+  /** The user's explicit tumble on/off choice, once they have ever touched
+   * the checkbox (fr-g98). `null` = untouched, so reset() follows the
+   * reduced-motion default; after a manual toggle reset() follows this
+   * instead — a fresh visit must not re-enable a tumble the user turned off
+   * (nor re-pause a reduced-motion user's explicit opt-in). Session-only,
+   * like everything else here. */
+  private tumbleUserChoice: boolean | null = null;
+
   /** Tumble running? Paused (false) under reduced motion after reset(). */
   tumbleOn: boolean = true;
   /** Tumble speed multiplier (user slider); 1 = base rate. */
@@ -92,15 +103,18 @@ export class FourDView {
   /** Recolor the w-ramp modes relative to the slice window? */
   sliceRelColor: boolean = false;
 
-  /** Reset to the "fresh visit" baseline: rotor to identity, tumble running at
-   * default speed, slice off/centered. Under reduced motion, the tumble is
-   * paused but the rotor is pre-seeded on one generic orientation so the
-   * projection still reads as 4D at a glance. */
+  /** Reset to the "fresh visit" baseline: rotor to identity, tumble running
+   * at default speed, slice off/centered. The tumble's on/off honors the
+   * user's sticky choice when they have made one (see setTumbleUserChoice),
+   * else the reduced-motion default. Whenever the reset leaves the tumble
+   * paused — reduced motion or sticky off — the rotor is pre-seeded on one
+   * generic orientation, because a paused projection sitting exactly on the
+   * identity view would look indistinguishable from the flat 3D embed. */
   reset(reducedMotion: boolean): void {
     this.pair = identityRotorPair();
-    this.tumbleOn = !reducedMotion;
+    this.tumbleOn = this.tumbleUserChoice ?? !reducedMotion;
     this.tumbleSpeed = 1;
-    if (reducedMotion) {
+    if (!this.tumbleOn) {
       // pre-seed one generic orientation so a paused projection still reads as 4D
       this.pair = rotateInPlane(this.pair, "xy", 0.6);
       this.pair = rotateInPlane(this.pair, "zw", 0.9);
@@ -108,6 +122,15 @@ export class FourDView {
     this.sliceOn = false;
     this.sliceCenter = 0;
     this.sliceRelColor = false;
+  }
+
+  /** The user flipped the tumble checkbox: apply it AND remember it as the
+   * sticky session choice that future reset()s preserve (fr-g98). Programmatic
+   * writes (reset itself, the animate loop) must NOT come through here — only
+   * a real user toggle earns stickiness. */
+  setTumbleUserChoice(on: boolean): void {
+    this.tumbleOn = on;
+    this.tumbleUserChoice = on;
   }
 
   /** Advance the tumble by dt seconds (no-op when paused): compose the XY- and

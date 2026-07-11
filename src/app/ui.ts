@@ -1082,8 +1082,9 @@ export class Ui {
   }
 
   /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`
-   * is false under prefers-reduced-motion, where the orbit starts paused but
-   * stays available as an explicit opt-in (mirrors {@link resetFourDTumble}). */
+   * is false under prefers-reduced-motion (where the orbit starts paused but
+   * stays available as an explicit opt-in) or when the user's sticky toggle
+   * choice says so (fr-g98; mirrors {@link resetFourDTumble}). */
   resetAutoOrbit(on: boolean): void {
     this.autoOrbitToggle.checked = on;
     this.autoOrbitRow.classList.toggle("hidden", !on);
@@ -1092,8 +1093,9 @@ export class Ui {
   }
 
   /** Reset the 4D tumble controls on every 4D entry — `on` is false under
-   * prefers-reduced-motion, where the tumble starts paused but stays available
-   * as an explicit opt-in. */
+   * prefers-reduced-motion (where the tumble starts paused but stays available
+   * as an explicit opt-in) or when the user's sticky toggle choice says so
+   * (fr-g98). */
   resetFourDTumble(on: boolean): void {
     this.fourDTumbleToggle.checked = on;
     this.fourDTumbleRow.classList.toggle("hidden", !on);
