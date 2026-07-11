@@ -220,13 +220,14 @@ export interface AppState {
    * (fr-3b6) — everywhere the ONE ramp definition flows: the explorer's
    * point colors (`buildColors`), the solid render's `"legacy"`-palette
    * colorMode path (`accumulateVoxels`), and the panel legend, all via
-   * `color.ts`'s `buildColorModeLUT`. `"legacy"` keeps the built-in ramps;
-   * `"custom"` selects the user-authored gradient in
-   * {@link AppState.customPalette}, exactly like the flame/solid
-   * `paletteId`s. Inert for the other color modes (transform/position/
-   * uniform have no 1-D ramp) and for the 4D projection (whose own radius
-   * mode deliberately stays on the fixed built-in ramp). Persists like
-   * `colorMode` / `colorGamma`.
+   * `color.ts`'s `buildColorModeLUT`. Since fr-6ue the 4D projection's
+   * "By 4D Radius" mode follows the same selection — the explorer bake
+   * (`buildColors4`), the flame/voxel workers' 4D radius LUT, and the 4D
+   * legend. `"legacy"` keeps the built-in ramps; `"custom"` selects the
+   * user-authored gradient in {@link AppState.customPalette}, exactly like
+   * the flame/solid `paletteId`s. Inert for the modes with no 1-D ramp
+   * (transform/position/uniform, and the 4D w-depth/transform modes).
+   * Persists like `colorMode` / `colorGamma`.
    */
   rampPaletteId: PaletteSelection;
   renderStyle: RenderStyle;

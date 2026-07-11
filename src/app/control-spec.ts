@@ -321,17 +321,23 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     // The ramp-palette select (fr-3b6): swaps the height/radius color-mode
     // ramps' built-in colors for a gradient palette (see color.ts's
-    // buildColorModeLUT). Recolors the live cloud over the cached run — like
-    // colorMode/colorGamma, never a regenerate. No worker forward: the solid
-    // render snapshots it at entry (main.ts) and this row is unreachable
-    // while a render is active. Only shown while the active color mode has a
-    // ramp to recolor (see ui.ts's rampPaletteRow gating).
+    // buildColorModeLUT). Live in BOTH views (no `view` guard, fr-6ue): the
+    // 4D projection's "By 4D Radius" mode follows the same selection, so the
+    // one row re-homes into the 4D View block while non-flat (see ui.ts's
+    // rampPaletteRow gating). Recolors the live cloud over the cached run —
+    // like colorMode/colorGamma, never a regenerate; recolor/applyFourDColor
+    // each no-op in the other view, so exactly the displayed cloud re-bakes.
+    // No worker forward: the flame/solid renders snapshot it at entry
+    // (main.ts's fourDRenderSnapshot / the voxel start's rampPalette) and
+    // this row is unreachable while a render is active.
     kind: "select",
     id: "rampPalette",
-    view: "flat",
     read: (s) => s.rampPaletteId,
     apply: (s, raw) => setRampPaletteId(s, raw as PaletteSelection),
-    effect: (s, fx) => fx.recolor(),
+    effect: (s, fx) => {
+      fx.recolor();
+      fx.applyFourDColor();
+    },
   },
   {
     // The color-contrast slider (fr-8sk) — `apply` converts the slider's

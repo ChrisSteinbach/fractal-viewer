@@ -434,14 +434,14 @@ export function fourDColorNeedsAttribute(
  * - `"transform"`: the same evenly-spaced-hue palette as the 3D "By
  *   Transform" mode ({@link transformColors}), keyed by the transform that
  *   produced each point. Rotation-invariant by construction.
- * - `"radius"`: the same warm→cool ramp as the 3D "By Radius" mode (the ONE
- *   ramp definition, via {@link buildColorModeLUT}'s radius writer), over
- *   each point's 4D Euclidean distance from the cloud's 4D `center`,
- *   normalized against the actual min→max distance range the way
- *   `buildColors`' radius branch normalizes — so the full ramp is always in
- *   play (the fr-9bk spirit). A 4D view rotation about `center` preserves
- *   every such distance, so the baked colors stay honest at every tumble
- *   angle.
+ * - `"radius"`: the same ramp as the 3D "By Radius" mode (the ONE ramp
+ *   definition — `writeRadiusColor`, or {@link writePaletteRampColor} under a
+ *   non-`"legacy"` `rampPalette`), over each point's 4D Euclidean distance
+ *   from the cloud's 4D `center`, normalized against the actual min→max
+ *   distance range the way `buildColors`' radius branch normalizes — so the
+ *   full ramp is always in play (the fr-9bk spirit). A 4D view rotation about
+ *   `center` preserves every such distance, so the baked colors stay honest
+ *   at every tumble angle.
  *
  * The shader treats the baked color exactly like a w-depth side color — it
  * still mixes toward the dim gray notch as |rotated w| → 0 (scene.ts's
@@ -450,6 +450,13 @@ export function fourDColorNeedsAttribute(
  * this; their color is a pure function of the rotated w and lives entirely in
  * the shader (see {@link W_SIDE_PALETTES}).
  *
+ * `rampPalette` (fr-6ue) is the radius mode's counterpart of `buildColors`'
+ * parameter of the same name: the same `rampPaletteId` selection recolors the
+ * 3D height/radius ramps and this 4D one, so a system going 4D never drops
+ * the user's chosen gradient. `"legacy"` (the default) is bit-identical to
+ * before the parameter existed, and the `"transform"` mode ignores it — it
+ * has no ramp.
+ *
  * `colorGamma` deliberately does not apply: the 4D view hides the contrast
  * control and never applied gamma to color (see ui.ts's legend contract).
  */
@@ -457,6 +464,7 @@ export function buildColors4(
   result: ChaosGame4Result,
   transformCount: number,
   mode: FourDAttributeColorMode,
+  rampPalette: PaletteSpec = "legacy",
 ): Float32Array {
   const { positions, w, transformIndices, count, center } = result;
   const colors = new Float32Array(count * 3);
@@ -474,7 +482,9 @@ export function buildColors4(
   }
 
   // radius: two passes — distances (tracking min/max) first, then colors —
-  // with the same degenerate-range `|| 1` guard as buildColors.
+  // with the same degenerate-range `|| 1` guard as buildColors, and the same
+  // hoisted-LUT two-loop-variant shape as its radius branch (the
+  // `paletteLUT === null` loop is byte-identical to the pre-fr-6ue code).
   const dist = new Float32Array(count);
   let minD = Infinity;
   let maxD = -Infinity;
@@ -489,8 +499,20 @@ export function buildColors4(
     if (d > maxD) maxD = d;
   }
   const range = maxD - minD || 1;
-  for (let i = 0; i < count; i++) {
-    writeRadiusColor(colors, i * 3, (dist[i] - minD) / range);
+  const paletteLUT = buildPaletteLUT(rampPalette);
+  if (paletteLUT === null) {
+    for (let i = 0; i < count; i++) {
+      writeRadiusColor(colors, i * 3, (dist[i] - minD) / range);
+    }
+  } else {
+    for (let i = 0; i < count; i++) {
+      writePaletteRampColor(
+        colors,
+        i * 3,
+        (dist[i] - minD) / range,
+        paletteLUT,
+      );
+    }
   }
   return colors;
 }
@@ -517,10 +539,11 @@ export function buildColors4(
  *   Transform" 4D color mode ({@link buildColors4}'s `"transform"` branch),
  *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
  *   mirrors `buildColors4`).
- * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}), indexed
- *   by the plotted point's 4D Euclidean distance from `center`, normalized
- *   over `[minD, maxD]` — the "legacy" dispatch for the explorer's "By 4D
- *   Radius" mode ({@link buildColors4}'s `"radius"` branch). `minD`/`maxD`
+ * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}, built at
+ *   the explorer's own `rampPalette` since fr-6ue, exactly like
+ *   {@link buildColors4}'s `"radius"` branch), indexed by the plotted point's
+ *   4D Euclidean distance from `center`, normalized over `[minD, maxD]` — the
+ *   "legacy" dispatch for the explorer's "By 4D Radius" mode. `minD`/`maxD`
  *   are the explorer's own cloud's min/max 4D distance from its center
  *   (`ChaosGame4Result`), computed by the main thread — NOT recomputed from
  *   the accumulator's own (much larger, and differently distributed)

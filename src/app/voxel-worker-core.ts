@@ -112,11 +112,14 @@ export type VoxelWorkerCommand =
        * entered. When present, the session drives `chaos-game-4d.ts`'s 4D
        * chaos game and `voxel-4d.ts`'s `computeVoxelBounds4`/
        * `accumulateVoxels4` instead of the 3D path. `transforms`/
-       * `finalTransform`/`colorMode`/`colorGamma` above still arrive either
-       * way (the main thread always sends both), but are simply unused when
-       * this is present — the 4D view hides the contrast control and never
-       * applied gamma to color (see `color.ts`'s `buildColors4` doc), and
-       * the radius LUT below uses gamma 1. Unlike the flame session, there
+       * `finalTransform`/`colorMode`/`colorGamma`/`rampPalette` above still
+       * arrive either way (the main thread always sends both), but are
+       * simply unused when this is present — the 4D view hides the contrast
+       * control and never applied gamma to color (see `color.ts`'s
+       * `buildColors4` doc), the radius LUT below uses gamma 1, and this
+       * block carries its own `rampPalette` (fr-6ue), keeping it
+       * structurally identical to the flame `start`'s so main.ts's one
+       * `fourDRenderSnapshot` feeds both. Unlike the flame session, there
        * is no GPU backend to opt out of here: the voxel session is CPU-only
        * regardless of dimension.
        */
@@ -154,6 +157,14 @@ export type VoxelWorkerCommand =
          * color mode's normalization range. */
         radiusMin: number;
         radiusMax: number;
+        /**
+         * Gradient palette for the "radius" color mode's ramp (fr-6ue) — the
+         * same `rampPaletteId` selection the explorer's 3D height/radius
+         * ramps follow, resolved by the main thread; `"legacy"` = the
+         * built-in warm→cool ramp. Only the radius mode reads it;
+         * snapshotted at render entry like the rest of this block.
+         */
+        rampPalette: PaletteSpec;
       };
     }
   | { type: "setIterationsBudget"; iterations: number }
@@ -391,6 +402,7 @@ export class VoxelWorkerSession {
   private fourDCenter: Vec4 = [0, 0, 0, 0];
   private fourDRadiusMin = 0;
   private fourDRadiusMax = 1;
+  private fourDRampPalette: PaletteSpec = "legacy";
   /** Built once per `startAccumulation` (never per chunk — see
    * `buildFourDColor`) from the current `colorLUT` and the `fourD` block's
    * `colorMode`. `null` for a 3D session. */
@@ -530,6 +542,7 @@ export class VoxelWorkerSession {
       this.fourDCenter = fourD.center;
       this.fourDRadiusMin = fourD.radiusMin;
       this.fourDRadiusMax = fourD.radiusMax;
+      this.fourDRampPalette = fourD.rampPalette;
     } else {
       this.prepared4 = null;
       this.rotorProj4 = null;
@@ -592,7 +605,7 @@ export class VoxelWorkerSession {
       case "radius":
         return {
           kind: "radius",
-          lut: buildColorModeLUT("radius", 1),
+          lut: buildColorModeLUT("radius", 1, this.fourDRampPalette),
           center: this.fourDCenter,
           minD: this.fourDRadiusMin,
           maxD: this.fourDRadiusMax,
