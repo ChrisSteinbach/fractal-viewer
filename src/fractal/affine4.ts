@@ -1,4 +1,11 @@
-import type { Rotation4, Shear4, Transform, Transform4, Vec4 } from "./types";
+import type {
+  Rotation4,
+  Shear4,
+  Transform,
+  Transform4,
+  Vec3,
+  Vec4,
+} from "./types";
 
 /**
  * A composed 4D affine map (fr-cbg spike), stored as a row-major 4x4 linear part
@@ -203,6 +210,19 @@ export function applyAffine4(
 }
 
 /**
+ * A 3D scale's mean contraction magnitude `(|sx| + |sy| + |sz|) / 3` — the
+ * derived `scale_w` a lifted map gets while `w.scale` is unset (see
+ * {@link embedTransform3}'s JSDoc for why the mean contraction, not `1`).
+ * Exported so every place that previews or materialises that derived value —
+ * the editor's Scale W "(auto)" readout and Mirror W toggle (fr-icy), the
+ * random generator's w-mirror roll (fr-bew) — shares this one formula and
+ * can never drift from what the lift actually derives.
+ */
+export function meanContraction(scale: Vec3): number {
+  return (Math.abs(scale[0]) + Math.abs(scale[1]) + Math.abs(scale[2])) / 3;
+}
+
+/**
  * # The 3D → 4D bridge
  *
  * Embed a 3D {@link Transform} as a {@link Transform4} living in the `w = 0`
@@ -256,10 +276,9 @@ export function embedTransform3(t: Transform): Transform4 {
   const [rx, ry, rz] = t.rotation;
   const [px, py, pz] = t.position;
   const [sx, sy, sz] = t.scale;
-  const meanContraction = (Math.abs(sx) + Math.abs(sy) + Math.abs(sz)) / 3;
   const embedded: Transform4 = {
     position: [px, py, pz, 0],
-    scale: [sx, sy, sz, meanContraction],
+    scale: [sx, sy, sz, meanContraction(t.scale)],
     // yz = rx, xz = −ry (the RY sign flip above), xy = rz.
     rotation: { yz: rx, xz: -ry, xy: rz },
   };

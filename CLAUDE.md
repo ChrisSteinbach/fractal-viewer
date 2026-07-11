@@ -97,7 +97,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `random-system.ts` — the "Surprise Me" generator (`randomSystem`): rolls a
     complete random IFS (2–4 maps, occasional single-axis mirrored scale,
     optional final-transform lens, optional kaleidoscope, 25% chance of a 4D
-    `w` extension) and quality-gates each candidate with short chaos-game
+    `w` extension — itself occasionally w-mirrored via a negative `w.scale`,
+    fr-bew) and quality-gates each candidate with short chaos-game
     probes (bounds sanity + grid occupancy), rerolling up to 40× and keeping
     the best rather than ever failing. Takes an injected `Rng`, so rolls are
     reproducible in tests.

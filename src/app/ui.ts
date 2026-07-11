@@ -1,3 +1,4 @@
+import { meanContraction } from "../fractal/affine4";
 import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
   buildColorModeLUT,
@@ -287,19 +288,6 @@ function cloneW(w: WExtension | undefined): WExtension | undefined {
   if (w.rotation) clone.rotation = { ...w.rotation };
   if (w.shear) clone.shear = { ...w.shear };
   return clone;
-}
-
-/**
- * The Scale W value implied while `w.scale` is UNSET: the mean spatial
- * contraction `(|sx|+|sy|+|sz|)/3` — the exact formula `affine4.ts`'s
- * `embedTransform3` uses for the lift (see its JSDoc for why the MEAN
- * contraction, not `1`, is what keeps a later 4D edit contractive).
- * Duplicated here rather than imported: this is a UI-only PREVIEW of that
- * value for the editor's "(auto)" label, not the lift itself, which always
- * recomputes it fresh from whatever the transform's scale is at lift time.
- */
-function derivedScaleW(scale: Vec3): number {
-  return (Math.abs(scale[0]) + Math.abs(scale[1]) + Math.abs(scale[2])) / 3;
 }
 
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
@@ -2395,7 +2383,7 @@ export class Ui {
 
     const scaleGroup = this.appendFourDSubGroup(details, "Scale W");
     const scaleWAuto = w?.scale === undefined;
-    const scaleWInitial = w?.scale ?? derivedScaleW(transform.scale);
+    const scaleWInitial = w?.scale ?? meanContraction(transform.scale);
     const scaleW = this.buildFourDRow(
       scaleGroup,
       "W",
@@ -2526,7 +2514,7 @@ export class Ui {
   private refreshScaleWIfAuto(): void {
     const editor = this.editor;
     if (!editor || editor.geometry.w?.scale !== undefined) return;
-    const derived = derivedScaleW(editor.geometry.scale);
+    const derived = meanContraction(editor.geometry.scale);
     editor.fourD.scaleW.slider.value = String(derived);
     editor.fourD.scaleW.readout.textContent = `${derived.toFixed(2)} (auto)`;
   }
@@ -2546,7 +2534,7 @@ export class Ui {
     fourD.positionW.readout.textContent = posV.toFixed(2);
 
     const scaleAuto = w?.scale === undefined;
-    const scaleV = w?.scale ?? derivedScaleW(editor.geometry.scale);
+    const scaleV = w?.scale ?? meanContraction(editor.geometry.scale);
     fourD.scaleW.slider.value = String(Math.abs(scaleV));
     fourD.scaleW.readout.textContent = scaleAuto
       ? `${scaleV.toFixed(2)} (auto)`
@@ -2648,7 +2636,7 @@ export class Ui {
     const editor = this.editor;
     if (!editor) return;
     const current =
-      editor.geometry.w?.scale ?? derivedScaleW(editor.geometry.scale);
+      editor.geometry.w?.scale ?? meanContraction(editor.geometry.scale);
     const model = -current;
     this.mutateW((block) => {
       block.scale = model;

@@ -216,15 +216,30 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
     expect(finalTransformsSeen).toBeGreaterThan(0);
   });
 
-  it("keeps every rolled w block sparse: no scale, no shear, position and rotation within their documented ranges", () => {
+  it("keeps every rolled w block sparse: no shear, position and rotation in range, scale only ever the fr-bew mirror", () => {
     let wBlocksSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = randomSystem(mulberry32(seed));
       for (const t of transforms) {
         if (!t.w) continue;
         wBlocksSeen++;
-        expect(t.w.scale).toBeUndefined();
         expect(t.w.shear).toBeUndefined();
+        if (t.w.scale !== undefined) {
+          // Only the fr-bew mirror ever sets w.scale: the NEGATED derived
+          // mean contraction of the map's own scale (the exact value the
+          // editor's Mirror W toggle would materialise), never a free-rolled
+          // magnitude — and never on a block with no other w content.
+          expect(t.w.scale).toBeLessThan(0);
+          const mean =
+            (Math.abs(t.scale[0]) +
+              Math.abs(t.scale[1]) +
+              Math.abs(t.scale[2])) /
+            3;
+          expect(t.w.scale).toBeCloseTo(-mean, 12);
+          expect(t.w.position !== undefined || t.w.rotation !== undefined).toBe(
+            true,
+          );
+        }
         if (t.w.position !== undefined) {
           expect(t.w.position).toBeGreaterThanOrEqual(-0.5);
           expect(t.w.position).toBeLessThanOrEqual(0.5);
@@ -241,6 +256,24 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
       }
     }
     expect(wBlocksSeen).toBeGreaterThan(0);
+  });
+
+  it("occasionally mirrors a landed w block — negative w.scale at the documented rare rate (fr-bew)", () => {
+    let wBlocksSeen = 0;
+    let mirrorsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      for (const t of transforms) {
+        if (!t.w) continue;
+        wBlocksSeen++;
+        if (t.w.scale !== undefined) mirrorsSeen++;
+      }
+    }
+    // Generous band around the per-block 0.1 design rate (FOUR_D_
+    // REFLECTION_PROBABILITY): loose enough to never flake on the fixed
+    // seed batch, tight enough to catch a broken or always-on roll.
+    expect(mirrorsSeen).toBeGreaterThan(0);
+    expect(mirrorsSeen / wBlocksSeen).toBeLessThanOrEqual(0.3);
   });
 
   it("re-probing a batch's non-flat systems confirms the 4D gate's own promises: bounded radius and genuine w-extent", () => {
