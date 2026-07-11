@@ -116,8 +116,14 @@ body {
 /* ── Help box (top-left) ──────────────────────────────────────────────────── */
 #help {
   position: absolute;
-  top: 16px;
-  left: 16px;
+
+  /* safe-area terms (here, on #menuToggle, and #renderError's top): keep the
+     top-corner chrome out from under the status bar / Dynamic Island (top) and
+     a landscape notch (left/right) when the installed PWA draws edge-to-edge
+     (viewport-fit=cover); 0 in a plain browser tab and on desktop — the
+     top-band mirror of the bottom band's fr-q5c terms (fr-nde). */
+  top: calc(16px + env(safe-area-inset-top));
+  left: calc(16px + env(safe-area-inset-left));
   max-width: 220px;
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -292,7 +298,7 @@ body {
 
 #renderError {
   display: flex;
-  top: 16px;
+  top: calc(16px + env(safe-area-inset-top));
 }
 
 /* Each notice sets its own `display` for layout, which (being an ID selector)
@@ -321,8 +327,8 @@ body {
 #menuToggle {
   display: flex;
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: calc(16px + env(safe-area-inset-top));
+  right: calc(16px + env(safe-area-inset-right));
   align-items: center;
   justify-content: center;
   width: 46px;
