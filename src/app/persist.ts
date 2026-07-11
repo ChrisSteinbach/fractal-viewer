@@ -368,6 +368,24 @@ function decodeWField(raw: unknown, min: number, max: number): number | null {
 }
 
 /**
+ * Decode the one SIGNED `w` leaf: `w.scale`, whose sign is a 4D reflection
+ * (fr-icy — the editor expresses it as a magnitude slider plus a Mirror W
+ * toggle, the 4D counterpart of the 3D scale channel's fr-lca treatment).
+ * Same coerce/reject contract as {@link decodeWField}, but the
+ * [`MIN_W_SCALE`, `MAX_W_SCALE`] clamp applies to the MAGNITUDE with the
+ * sign preserved, so a hand-authored negative w.scale survives decode
+ * instead of being crushed up to +MIN_W_SCALE. An explicit 0 still clamps
+ * up to +MIN_W_SCALE, exactly as before.
+ */
+function decodeWScale(raw: unknown): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const magnitude = clamp(Math.abs(n), MIN_W_SCALE, MAX_W_SCALE);
+  return n < 0 ? -magnitude : magnitude;
+}
+
+/**
  * Decode one optional w-plane sub-object — `w.rotation` or `w.shear`, which
  * share the exact `{ xw?, yw?, zw? }` shape (see {@link WExtension}). Must be
  * a non-null object; each of `xw`/`yw`/`zw` is decoded independently via
@@ -473,9 +491,11 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     }
     // scale: absent means DERIVED (see WExtension.scale's doc), so this only
     // fires when the field actually arrived — an explicit value (even one
-    // that happens to equal what would have been derived) is preserved.
+    // that happens to equal what would have been derived) is preserved. This
+    // field is signed (a negative scale is a 4D reflection) and clamped by
+    // magnitude, not by range — see decodeWScale.
     if (rawW.scale !== undefined) {
-      const scale = decodeWField(rawW.scale, MIN_W_SCALE, MAX_W_SCALE);
+      const scale = decodeWScale(rawW.scale);
       if (scale === null) return null;
       wExt.scale = scale;
     }

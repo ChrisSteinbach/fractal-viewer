@@ -546,6 +546,10 @@ export const DEFAULT_FOUR_D_COLOR: FourDColorMode = "wBlueOrange";
  * how every other angle in this codebase is represented once off a slider.
  * `MIN`/`MAX_W_SHEAR` has no retired slider to inherit from, so it instead
  * matches the 3D shear channel's own range (`ui.ts`'s `CHANNELS.shear`, ±2).
+ * Since fr-icy, `w.scale`'s bounds apply to its MAGNITUDE only: the sign is
+ * a 4D reflection, expressed in the editor as a magnitude slider plus a
+ * Mirror W toggle (fr-lca's scale-channel pattern one dimension up) and
+ * preserved by `persist.ts`'s sign-preserving clamp (`decodeWScale`).
  */
 export const MIN_W_POSITION = -1.5;
 export const MAX_W_POSITION = 1.5;

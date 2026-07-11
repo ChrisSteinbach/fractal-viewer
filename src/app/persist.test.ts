@@ -912,6 +912,52 @@ describe("decodeScene transform w (4D extension)", () => {
     expect(result!.transforms[0].w).toStrictEqual({ scale: MIN_W_SCALE });
   });
 
+  it("round-trips a negative w.scale (a 4D reflection) through encode/decode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          ...baseSnapshot().transforms[0],
+          w: { scale: -0.5 },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].w).toStrictEqual({ scale: -0.5 });
+  });
+
+  it("clamps an oversized negative w.scale to the max magnitude, preserving the sign", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: -9 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({ scale: -MAX_W_SCALE });
+  });
+
+  it("clamps a tiny negative w.scale up to the min magnitude, preserving the sign", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: -0.001 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].w).toStrictEqual({ scale: -MIN_W_SCALE });
+  });
+
   it("clamps an out-of-range w.rotation.zw down to the max angle", () => {
     const raw = {
       ...baseSnapshot(),

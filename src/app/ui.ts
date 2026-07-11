@@ -502,8 +502,23 @@ interface AxisControl {
 interface FourDControls {
   positionW: AxisControl;
   scaleW: AxisControl;
+  /** The Scale W group's mirror toggle (fr-icy): pressed ⇔ the explicit
+   * `w.scale` is negative. Never pressed while auto — the derived mean is
+   * always positive. */
+  mirrorW: HTMLButtonElement;
   rotationW: AxisControl[];
   shearW: AxisControl[];
+}
+
+/** One toggle in a {@link Ui.buildMirrorRow} "Mirror" row. */
+interface MirrorToggleSpec {
+  /** Button text, e.g. "X" or "W". */
+  label: string;
+  /** Accessible name, e.g. "Mirror Scale X" / "Mirror Scale W". */
+  ariaLabel: string;
+  /** Initial pressed state: whether the component is currently negative. */
+  pressed: boolean;
+  onToggle: () => void;
 }
 
 /** Live handles into a built editor so external edits can re-sync the sliders. */
@@ -2025,7 +2040,15 @@ export class Ui {
       });
 
       if (channel === "scale") {
-        mirror = this.buildMirrorRow(group, geometry.scale);
+        mirror = this.buildMirrorRow(
+          group,
+          AXES.map((axisLabel, axis) => ({
+            label: axisLabel,
+            ariaLabel: `Mirror Scale ${axisLabel}`,
+            pressed: geometry.scale[axis] < 0,
+            onToggle: () => this.onMirrorToggle(axis),
+          })),
+        );
       }
 
       this.transformEditor.appendChild(group);
@@ -2058,11 +2081,16 @@ export class Ui {
     this.refreshAddOptions();
   }
 
-  /** Build the Scale group's "Mirror" row (fr-lca): three aria-pressed
-   * toggle buttons, one per axis — pressed means that axis's scale is
-   * negative (a reflection). The sliders above carry pure magnitude, so
-   * these toggles are the editor's only way to create or clear a mirror. */
-  private buildMirrorRow(group: HTMLElement, scale: Vec3): HTMLButtonElement[] {
+  /** Build a Scale group's "Mirror" row of aria-pressed toggle buttons —
+   * pressed means the corresponding scale component is negative (a
+   * reflection). Shared by the 3D Scale group's X/Y/Z toggles (fr-lca) and
+   * the 4D group's single Scale W toggle (fr-icy). The scale sliders carry
+   * pure magnitude, so these toggles are the editor's only way to create or
+   * clear a mirror. */
+  private buildMirrorRow(
+    group: HTMLElement,
+    toggles: MirrorToggleSpec[],
+  ): HTMLButtonElement[] {
     const row = this.doc.createElement("div");
     row.className = "editor-row mirror-row";
 
@@ -2070,15 +2098,15 @@ export class Ui {
     name.className = "axis";
     name.textContent = "Mirror";
 
-    const buttons = AXES.map((axisLabel, axis) => {
+    const buttons = toggles.map((spec) => {
       const button = this.doc.createElement("button");
       button.type = "button";
       button.className = "mirror-btn";
-      button.textContent = axisLabel;
-      button.setAttribute("aria-label", `Mirror Scale ${axisLabel}`);
+      button.textContent = spec.label;
+      button.setAttribute("aria-label", spec.ariaLabel);
       button.title = "Reflect this axis (negative scale)";
-      button.setAttribute("aria-pressed", String(scale[axis] < 0));
-      button.addEventListener("click", () => this.onMirrorToggle(axis));
+      button.setAttribute("aria-pressed", String(spec.pressed));
+      button.addEventListener("click", spec.onToggle);
       return button;
     });
 
@@ -2376,8 +2404,13 @@ export class Ui {
       MAX_W_SCALE,
       0.01,
       scaleWInitial,
-      (v) => v,
-      (v) => v,
+      (v) => Math.abs(v),
+      // Magnitude-only slider (fr-icy — fr-lca's scale-channel treatment one
+      // dimension up): re-apply the sign of the CURRENT model value, read at
+      // input time. buildFourDRow's input listener calls fromSlider BEFORE
+      // onModelChange writes the new value, so this sees the pre-drag sign;
+      // unset (auto) means the derived mean, which is always positive.
+      (v) => ((this.editor?.geometry.w?.scale ?? 1) < 0 ? -v : v),
       (v) => v.toFixed(2),
       (model) => {
         this.mutateW((block) => {
@@ -2395,6 +2428,18 @@ export class Ui {
     if (scaleWAuto) {
       scaleW.readout.textContent = `${scaleWInitial.toFixed(2)} (auto)`;
     }
+
+    // The Scale W slider above is magnitude-only (fr-icy), so this single
+    // toggle is the editor's only way to create or clear a 4D reflection —
+    // the exact counterpart of the 3D Scale group's Mirror row (fr-lca).
+    const [mirrorW] = this.buildMirrorRow(scaleGroup, [
+      {
+        label: "W",
+        ariaLabel: "Mirror Scale W",
+        pressed: scaleWInitial < 0,
+        onToggle: () => this.onMirrorWToggle(),
+      },
+    ]);
 
     // Rotation/Shear W share the same three plane keys (see W_PLANES) and the
     // same MIN_W_ANGLE/MAX_W_ANGLE range persist.ts clamps against on decode
@@ -2453,7 +2498,7 @@ export class Ui {
     );
 
     this.transformEditor.appendChild(details);
-    return { positionW, scaleW, rotationW, shearW };
+    return { positionW, scaleW, mirrorW, rotationW, shearW };
   }
 
   /**
@@ -2502,10 +2547,11 @@ export class Ui {
 
     const scaleAuto = w?.scale === undefined;
     const scaleV = w?.scale ?? derivedScaleW(editor.geometry.scale);
-    fourD.scaleW.slider.value = String(scaleV);
+    fourD.scaleW.slider.value = String(Math.abs(scaleV));
     fourD.scaleW.readout.textContent = scaleAuto
       ? `${scaleV.toFixed(2)} (auto)`
       : scaleV.toFixed(2);
+    fourD.mirrorW.setAttribute("aria-pressed", String(scaleV < 0));
 
     W_PLANES.forEach((plane, i) => {
       const rad = w?.rotation?.[plane] ?? 0;
@@ -2589,6 +2635,27 @@ export class Ui {
     editor.controls.scale[axis].readout.textContent =
       CHANNELS.scale.format(model);
     editor.mirror[axis].setAttribute("aria-pressed", String(model < 0));
+    this.emitGeometry();
+  }
+
+  /** Flip Scale W's sign (fr-icy) — the 4D group's counterpart to
+   * {@link onMirrorToggle}. While `w.scale` is unset (auto), this negates the
+   * DERIVED mean and materializes it as the explicit value, exactly like a
+   * slider nudge would: "derived but mirrored" isn't representable in the
+   * sparse model, whose absent-scale state always means the positive mean
+   * (see `WExtension.scale`). */
+  private onMirrorWToggle(): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const current =
+      editor.geometry.w?.scale ?? derivedScaleW(editor.geometry.scale);
+    const model = -current;
+    this.mutateW((block) => {
+      block.scale = model;
+    });
+    editor.fourD.scaleW.slider.value = String(Math.abs(model));
+    editor.fourD.scaleW.readout.textContent = model.toFixed(2);
+    editor.fourD.mirrorW.setAttribute("aria-pressed", String(model < 0));
     this.emitGeometry();
   }
 
