@@ -323,8 +323,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     // ramps' built-in colors for a gradient palette (see color.ts's
     // buildColorModeLUT). Live in BOTH views (no `view` guard, fr-6ue): the
     // 4D projection's "By 4D Radius" mode follows the same selection, so the
-    // one row re-homes into the 4D View block while non-flat (see ui.ts's
-    // rampPaletteRow gating). Recolors the live cloud over the cached run —
+    // one row sits statically beneath the flat/4D color-select pair in the
+    // Appearance section (fr-15g; see ui.ts's rampPaletteRow gating).
+    // Recolors the live cloud over the cached run —
     // like colorMode/colorGamma, never a regenerate; recolor/applyFourDColor
     // each no-op in the other view, so exactly the displayed cloud re-bakes.
     // No worker forward: the flame/solid renders snapshot it at entry
@@ -404,7 +405,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setSymmetryAxis(s, raw as SymmetryAxis),
     effect: symmetryEffect,
   },
-  // ——— 4D view (non-flat systems only) ———
+  // ——— 4D look (non-flat systems only; the rows live in the Appearance
+  // section beside their flat siblings, fr-15g) ———
   {
     // The 4D color select (fr-d47) — re-points the 4D shader's color source
     // (and re-bakes the attribute for the baked modes) without re-running
