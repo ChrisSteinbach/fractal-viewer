@@ -136,5 +136,6 @@ with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
 - Playwright's element `target` accepts plain CSS selectors (`#updateBanner`)
   — no snapshot ref needed.
 - At mobile widths the open panel (z-index 99) covers bottom overlays like
-  the update banner (z-index 20) by design; `#menuToggle` overlays
-  `#panelClose`, so close the panel by clicking `#menuToggle`.
+  the update banner (z-index 20) by design. Close the panel by clicking
+  `#menuToggle` (the top-right ☰/✕ button) — it is the one open/close
+  toggle; fr-ig0 removed the redundant, fully-covered `#panelClose`.
