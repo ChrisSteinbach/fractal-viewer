@@ -762,6 +762,39 @@ summary.editor-group-title {
   background: rgb(255 107 107 / 12%);
 }
 
+/* The Scale group's per-axis mirror toggles (fr-lca): pressed = that axis
+   is reflected (negative scale). Pressed state borrows the segmented
+   control's active gradient so "on" reads the same everywhere. */
+.mirror-row .axis {
+  width: auto;
+}
+
+.mirror-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.mirror-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.mirror-btn[aria-pressed="true"] {
+  border-color: var(--accent-strong);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: #fff;
+}
+
 /* Generic display-toggle, used to swap the explorer panel for the flame
    render controls (and back) without removing either from the DOM. */
 .hidden {
