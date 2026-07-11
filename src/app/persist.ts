@@ -57,36 +57,13 @@ import {
   clampToSpec,
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
-import { clampPhi, clampRadius } from "./orbit";
+import { clampPhi, clampRadius, type CameraPose } from "./orbit";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/**
- * Orbit-camera pose (fr-1k4): the target point and Three.js-convention
- * spherical offset needed to restore the exact framing a scene was viewed
- * with (see `orbit.ts`'s `OrbitCamera`/`Spherical`, which this mirrors field
- * for field). Lives on `SceneSnapshot` as the optional
- * {@link SceneSnapshot.camera} field — see its doc for who attaches/omits it.
- */
-export interface CameraPose {
-  target: Vec3;
-  /**
-   * Orbit distance from `target`; clamped to `orbit.ts`'s
-   * [{@link MIN_RADIUS}, {@link MAX_RADIUS}] on decode.
-   */
-  radius: number;
-  /** Azimuth, in radians; unbounded — never clamped, matching `OrbitCamera`. */
-  theta: number;
-  /**
-   * Polar angle, in radians; clamped to `orbit.ts`'s [{@link MIN_PHI},
-   * {@link MAX_PHI}] on decode.
-   */
-  phi: number;
-}
 
 /** The persistent subset of AppState — everything needed to recreate the scene. */
 export interface SceneSnapshot {
@@ -164,12 +141,15 @@ export interface SceneSnapshot {
    * Optional orbit-camera pose (fr-1k4): the view a saved/shared/collection
    * scene was framed with (see {@link CameraPose}). Absent in every
    * pre-fr-1k4 save or link, the same way `customPalette` was absent before
-   * fr-55k — and DELIBERATELY absent from undo-history snapshots:
-   * `history.ts` dedupes checkpoints by comparing `encodeScene` output with
-   * `===`, and even tiny camera drift between two otherwise-identical states
-   * would defeat that dedup. `main.ts` (not this module) attaches `camera`
-   * only when writing a persisted / shared / collection document, never to
-   * an in-session undo checkpoint.
+   * fr-55k — and DELIBERATELY absent from the ENCODED undo-history snapshot
+   * STRING: `history.ts` dedupes checkpoints by comparing `encodeScene` output
+   * with `===`, and even tiny camera drift between two otherwise-identical
+   * states would defeat that dedup. `main.ts` (not this module) attaches
+   * `camera` only when writing a persisted / shared / collection document,
+   * never to an in-session undo checkpoint. (Undo/redo across a whole-system
+   * replace DOES restore the pre-replace framing — fr-uf3 — but carries that
+   * pose OUT OF BAND on `history.ts`'s `HistoryEntry.pose`, never in this
+   * encoded string, precisely so the dedup keeps comparing camera-less bytes.)
    */
   camera?: CameraPose;
 }

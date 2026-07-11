@@ -14,7 +14,10 @@
  * A whole-system replacement (preset load / Surprise Me) is the one
  * exception: it must cut its own fresh checkpoint even in the middle of an
  * open burst, and tag that history transition as `replaced` so undo/redo can
- * re-frame the camera when crossing it (see `HistoryEntry.replaced`).
+ * re-frame the camera when crossing it (see `HistoryEntry.replaced`). Since
+ * fr-uf3 that re-framing restores the EXACT pre-replace pose, captured out of
+ * band at each checkpoint/undo/redo push via `EditSessionDeps.pose` and parked
+ * on `HistoryEntry.pose`, rather than a fresh auto-fit of the restored system.
  *
  * Undo/redo settle an in-progress burst first — flushing it so the
  * half-finished edit becomes its own undo step instead of being silently
@@ -32,6 +35,7 @@
  * browser — like the rest of `src/app/history.ts` and `src/fractal/`.
  */
 import { SceneHistory } from "./history";
+import type { CameraPose } from "./orbit";
 
 /** The debounce window: the delay after the last edit before the scene is
  * persisted, which also defines "one edit burst" for undo coalescing. */
@@ -51,10 +55,20 @@ export interface EditSessionDeps {
   persist: () => void;
   /** Apply a history snapshot back to the app: decode it, swap it into state,
    * and refresh scene + ui. MUST NOT cut a checkpoint (EditSession guarantees
-   * restore never opens a burst — it handles the resulting bare save itself). */
-  restore: (snapshot: string, replaced: boolean) => void;
+   * restore never opens a burst — it handles the resulting bare save itself).
+   * `pose` (fr-uf3) is the framing captured with the restored entry: the app
+   * restores it across a `replaced` step (instead of auto-fitting) and ignores
+   * it for a tweak step (which leaves the camera alone). */
+  restore: (snapshot: string, replaced: boolean, pose?: CameraPose) => void;
   /** Reflect undo/redo availability in the UI (ui.setUndoRedo in the app). */
   syncUi: (canUndo: boolean, canRedo: boolean) => void;
+  /** Read the CURRENT live orbit-camera pose (cameraPose() in the app),
+   * captured out of band onto each history entry (fr-uf3) at every checkpoint
+   * and at each undo/redo's park of the state being left — so undo/redo across
+   * a whole-system replace restores the exact framing instead of refitting.
+   * Never encoded into the snapshot string (that would defeat history.ts's
+   * `===` dedup); see `HistoryEntry.pose`. */
+  pose: () => CameraPose;
   /** Arm the debounced save: run `fn` after SAVE_DEBOUNCE_MS, returning a
    * canceler that unschedules it if called before it fires. In the app:
    * `const id = setTimeout(fn, SAVE_DEBOUNCE_MS); return () => clearTimeout(id);`
@@ -93,7 +107,11 @@ export class EditSession {
    */
   beginEdit(kind: "tweak" | "replace" = "tweak"): void {
     if (!this.burstOpen || kind === "replace") {
-      this.history.checkpoint(this.deps.snapshot(), kind === "replace");
+      this.history.checkpoint(
+        this.deps.snapshot(),
+        kind === "replace",
+        this.deps.pose(),
+      );
       this.burstOpen = true;
       this.syncUi();
     }
@@ -115,9 +133,9 @@ export class EditSession {
    * bare debounced save of the restored document is armed. */
   undo(): void {
     if (this.burstOpen) this.flush();
-    const entry = this.history.undo(this.deps.snapshot());
+    const entry = this.history.undo(this.deps.snapshot(), this.deps.pose());
     if (entry) {
-      this.deps.restore(entry.snapshot, entry.replaced);
+      this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
       this.scheduleSave();
     }
     this.syncUi();
@@ -126,9 +144,9 @@ export class EditSession {
   /** Step forward one redo step — the mirror of undo(). */
   redo(): void {
     if (this.burstOpen) this.flush();
-    const entry = this.history.redo(this.deps.snapshot());
+    const entry = this.history.redo(this.deps.snapshot(), this.deps.pose());
     if (entry) {
-      this.deps.restore(entry.snapshot, entry.replaced);
+      this.deps.restore(entry.snapshot, entry.replaced, entry.pose);
       this.scheduleSave();
     }
     this.syncUi();

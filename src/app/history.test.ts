@@ -1,4 +1,5 @@
 import { SceneHistory } from "./history";
+import type { CameraPose } from "./orbit";
 
 describe("SceneHistory undo", () => {
   it("returns null when nothing has been checkpointed", () => {
@@ -130,5 +131,65 @@ describe("SceneHistory canUndo / canRedo", () => {
     history.redo("a");
     expect(history.canUndo).toBe(true);
     expect(history.canRedo).toBe(false);
+  });
+});
+
+describe("SceneHistory camera pose (fr-uf3)", () => {
+  const poseA: CameraPose = {
+    target: [1, 0, 0],
+    radius: 10,
+    theta: 0,
+    phi: 1,
+  };
+  const poseB: CameraPose = {
+    target: [2, 0, 0],
+    radius: 20,
+    theta: 0.5,
+    phi: 1,
+  };
+  const poseC: CameraPose = {
+    target: [3, 0, 0],
+    radius: 30,
+    theta: 1,
+    phi: 1,
+  };
+
+  it("a checkpoint's pose travels back through undo", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", true, poseA);
+    // The popped entry carries the framing "a" was checkpointed with.
+    expect(history.undo("b", poseB)?.pose).toBe(poseA);
+  });
+
+  it("undo parks the current pose so a later redo can restore it", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", true, poseA);
+    history.undo("b", poseB); // parks "b" with poseB on the redo stack
+    const redone = history.redo("a", poseA);
+    expect(redone?.snapshot).toBe("b");
+    expect(redone?.pose).toBe(poseB);
+  });
+
+  it("a pose survives a full undo -> redo -> undo cycle", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", true, poseA);
+    history.undo("b", poseB);
+    history.redo("a", poseA);
+    expect(history.undo("b", poseB)?.pose).toBe(poseA);
+  });
+
+  it("a deduped checkpoint refreshes the top entry's pose as well as its flag", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", false, poseA);
+    history.checkpoint("a", true, poseB); // same snapshot -> refresh in place
+    const entry = history.undo("b", poseC);
+    expect(entry?.replaced).toBe(true);
+    expect(entry?.pose).toBe(poseB);
+  });
+
+  it("a pose-less checkpoint leaves the entry's pose undefined", () => {
+    const history = new SceneHistory();
+    history.checkpoint("a", true);
+    expect(history.undo("b")?.pose).toBeUndefined();
   });
 });
