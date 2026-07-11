@@ -120,6 +120,15 @@ function editorReadout(label: string): HTMLElement {
   return readout;
 }
 
+/** Grab one Scale mirror toggle by its aria-label, e.g. "Mirror Scale Y". */
+function mirrorButton(label: string): HTMLButtonElement {
+  const button = document.querySelector<HTMLButtonElement>(
+    `#transformEditor button[aria-label="${label}"]`,
+  );
+  if (!button) throw new Error(`No mirror toggle labelled "${label}"`);
+  return button;
+}
+
 function editorGroupTitles(): string[] {
   return Array.from(
     document.querySelectorAll("#transformEditor .editor-group-title"),
@@ -190,6 +199,32 @@ describe("Ui.renderTransformList", () => {
     expect(handlers.onSelect).toHaveBeenCalledWith(0);
     transformButtons()[0].click();
     expect(handlers.onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it("shows the full scale triple once any axis differs", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        // chiralLace's actual (mirrored, anisotropic) scale (presets.ts).
+        scale: [0.54, -0.5, 0.46],
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    ui.renderTransformList(transforms, null, null);
+
+    // Index 0 after the camera row is the first transform, index 1 the second.
+    const buttons = transformButtons();
+    expect(buttons[1].textContent).toContain("Scale: [0.54, -0.50, 0.46]");
+    expect(buttons[2].textContent).toContain("Scale: 0.50");
   });
 });
 
@@ -1069,6 +1104,121 @@ describe("Ui.renderTransformEditor", () => {
 
     const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
     expect(geometry.scale).toEqual([1.2, 0.5, 0.5]);
+  });
+
+  it("renders a mirrored (negative) scale as a magnitude slider with its mirror toggle pressed", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        // chiralLace's actual scale (presets.ts): a mirrored Y with unequal
+        // magnitudes on the other two axes.
+        scale: [0.54, -0.5, 0.46],
+      },
+      0,
+    );
+
+    expect(editorSlider("Scale Y").value).toBe("0.5");
+    expect(editorReadout("Scale Y").textContent).toBe("-0.50");
+    expect(mirrorButton("Mirror Scale Y").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(mirrorButton("Mirror Scale X").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("preserves the mirror when dragging a mirrored axis's scale slider", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.54, -0.5, 0.46],
+      },
+      0,
+    );
+
+    const scaleY = editorSlider("Scale Y");
+    scaleY.value = "0.6";
+    scaleY.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.scale).toEqual([0.54, -0.6, 0.46]);
+  });
+
+  it("flips one axis's scale sign when its mirror toggle is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    mirrorButton("Mirror Scale X").click();
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.scale).toEqual([-0.5, 0.5, 0.5]);
+    expect(mirrorButton("Mirror Scale X").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(editorReadout("Scale X").textContent).toBe("-0.50");
+    expect(editorSlider("Scale X").value).toBe("0.5");
+  });
+
+  it("clears the mirror when a pressed toggle is clicked again", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [-0.5, 0.5, 0.5],
+      },
+      0,
+    );
+
+    mirrorButton("Mirror Scale X").click();
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.scale).toEqual([0.5, 0.5, 0.5]);
+    expect(mirrorButton("Mirror Scale X").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("re-syncs the mirror toggles when the selection's scale sign changes externally", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const base: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    };
+    ui.renderTransformEditor(base, 0);
+    // Same index → no rebuild, just a re-sync (guide-box drag / undo path).
+    ui.renderTransformEditor({ ...base, scale: [0.5, -0.5, 0.5] }, 0);
+
+    expect(mirrorButton("Mirror Scale Y").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(editorSlider("Scale Y").value).toBe("0.5");
+    expect(editorReadout("Scale Y").textContent).toBe("-0.50");
   });
 
   it("labels shear rows XY/XZ/YZ and reports an edit back, preserving the rest", () => {

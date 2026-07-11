@@ -44,6 +44,35 @@ const FOUR_D_WHEEL_MAX = 0.15;
 
 type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
 
+/**
+ * One component of a guide-box resize: multiply the magnitude by `factor` and
+ * clamp it to the guide range, preserving the component's sign — a mirrored
+ * (negative-scale) axis stays mirrored through a pinch or wheel resize
+ * (fr-lca). A zero component grows to the positive floor, matching the old
+ * clamp-up behavior. Exported for tests.
+ */
+export function resizeGuideComponent(value: number, factor: number): number {
+  const sign = value < 0 ? -1 : 1;
+  return (
+    sign * clamp(Math.abs(value) * factor, MIN_GUIDE_SCALE, MAX_GUIDE_SCALE)
+  );
+}
+
+/**
+ * Resize a guide box per-axis by one shared `factor` — sign-preserving and
+ * anisotropy-preserving, unlike the `setScalar` this replaced (fr-lca), which
+ * flattened all three axes to a clamped copy of `scale.x` on every pinch or
+ * wheel step (destroying any mirror along the way, since the clamp floor is
+ * positive).
+ */
+function resizeGuideBox(cube: THREE.Object3D, factor: number): void {
+  cube.scale.set(
+    resizeGuideComponent(cube.scale.x, factor),
+    resizeGuideComponent(cube.scale.y, factor),
+    resizeGuideComponent(cube.scale.z, factor),
+  );
+}
+
 function touchOf(event: Event): TouchEvent | null {
   return "touches" in event ? (event as TouchEvent) : null;
 }
@@ -251,9 +280,7 @@ export function attachInteractions(
     if (touch && touch.touches.length === 2) {
       const span = pinchSpan(touch);
       const factor = pinchDist === 0 ? 1 : span.dist / pinchDist;
-      cube.scale.setScalar(
-        clamp(cube.scale.x * factor, MIN_GUIDE_SCALE, MAX_GUIDE_SCALE),
-      );
+      resizeGuideBox(cube, factor);
       cube.rotation.y += span.angle - pinchAngle;
       pinchDist = span.dist;
       pinchAngle = span.angle;
@@ -329,9 +356,7 @@ export function attachInteractions(
     const cube = scene.guideCube(selected);
     if (!cube) return;
     const factor = event.deltaY > 0 ? 0.95 : 1.05;
-    cube.scale.setScalar(
-      clamp(cube.scale.x * factor, MIN_GUIDE_SCALE, MAX_GUIDE_SCALE),
-    );
+    resizeGuideBox(cube, factor);
     commit(selected, cube);
   }
 

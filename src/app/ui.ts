@@ -194,7 +194,17 @@ interface ChannelSpec {
   max: number;
   step: number;
   toSlider: (model: number) => number;
-  fromSlider: (slider: number) => number;
+  /**
+   * Convert a slider reading back to a model value. `current` is the axis's
+   * model value before this drag: the scale channel needs it to re-apply the
+   * model's existing sign to the slider's magnitude-only reading (fr-lca —
+   * see the Scale entry in {@link CHANNELS}), since otherwise every drag
+   * would silently clear a mirror. Every other channel's slider already
+   * carries the signed (or angular) model value directly, so their
+   * `fromSlider` ignores the second parameter — fewer parameters than the
+   * type declares is valid TypeScript.
+   */
+  fromSlider: (slider: number, current: number) => number;
   format: (model: number) => string;
   /** Row labels; defaults to the X/Y/Z axes when omitted (shear uses XY/XZ/YZ). */
   axisLabels?: readonly [string, string, string];
@@ -218,6 +228,7 @@ function displayDegrees(rad: number): number {
 }
 
 // Scale bounds share the guide-box clamp (MIN/MAX_GUIDE_SCALE) used in interactions.ts.
+// The scale sliders are magnitude-only; the sign lives on the Mirror toggles (fr-lca).
 const CHANNELS: Record<Channel, ChannelSpec> = {
   position: {
     title: "Position",
@@ -242,8 +253,8 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
     min: MIN_GUIDE_SCALE,
     max: MAX_GUIDE_SCALE,
     step: 0.01,
-    toSlider: (v) => v,
-    fromSlider: (v) => v,
+    toSlider: (v) => Math.abs(v),
+    fromSlider: (v, current) => (current < 0 ? -v : v),
     format: (v) => v.toFixed(2),
   },
   shear: {
@@ -339,6 +350,15 @@ function variationSummary(t: Transform): string[] {
   const active = (t.variations ?? []).filter((v) => v.weight !== 0);
   if (active.length === 0) return [];
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
+}
+
+/** The list row's scale line: one number while uniform, the full triple
+ * once any axis differs — an anisotropic or mirrored scale (fr-lca) would
+ * otherwise masquerade as a plain uniform contraction. */
+function scaleSummary(scale: Vec3): string {
+  const [x, y, z] = scale;
+  if (x === y && y === z) return x.toFixed(2);
+  return `[${scale.map((v) => v.toFixed(2)).join(", ")}]`;
 }
 
 /**
@@ -502,6 +522,9 @@ interface EditorState {
     w: WExtension | undefined;
   };
   controls: Record<Channel, AxisControl[]>;
+  /** The Scale group's per-axis mirror toggles (fr-lca): pressed ⇔ that
+   * axis's scale is negative (a reflection). */
+  mirror: HTMLButtonElement[];
   /** The selection-weight control, or `null` for the final transform (no weight). */
   weightControl: AxisControl | null;
   /** Working copy of the transform's variation blend, edited in place. */
@@ -1866,7 +1889,7 @@ export class Ui {
           title: `Transform ${i + 1}`,
           lines: [
             `Pos: [${t.position.map((v) => v.toFixed(2)).join(", ")}]`,
-            `Scale: ${t.scale[0].toFixed(2)}`,
+            `Scale: ${scaleSummary(t.scale)}`,
             ...(t.weight !== undefined && t.weight !== 1
               ? [`Weight: ${t.weight.toFixed(2)}`]
               : []),
@@ -1957,6 +1980,7 @@ export class Ui {
       scale: [],
       shear: [],
     };
+    let mirror: HTMLButtonElement[] = [];
 
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
@@ -2000,6 +2024,10 @@ export class Ui {
         controls[channel].push({ slider, readout });
       });
 
+      if (channel === "scale") {
+        mirror = this.buildMirrorRow(group, geometry.scale);
+      }
+
       this.transformEditor.appendChild(group);
     }
 
@@ -2019,6 +2047,7 @@ export class Ui {
       target,
       geometry,
       controls,
+      mirror,
       weightControl,
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
@@ -2027,6 +2056,35 @@ export class Ui {
     };
     this.renderVariationRows();
     this.refreshAddOptions();
+  }
+
+  /** Build the Scale group's "Mirror" row (fr-lca): three aria-pressed
+   * toggle buttons, one per axis — pressed means that axis's scale is
+   * negative (a reflection). The sliders above carry pure magnitude, so
+   * these toggles are the editor's only way to create or clear a mirror. */
+  private buildMirrorRow(group: HTMLElement, scale: Vec3): HTMLButtonElement[] {
+    const row = this.doc.createElement("div");
+    row.className = "editor-row mirror-row";
+
+    const name = this.doc.createElement("span");
+    name.className = "axis";
+    name.textContent = "Mirror";
+
+    const buttons = AXES.map((axisLabel, axis) => {
+      const button = this.doc.createElement("button");
+      button.type = "button";
+      button.className = "mirror-btn";
+      button.textContent = axisLabel;
+      button.setAttribute("aria-label", `Mirror Scale ${axisLabel}`);
+      button.title = "Reflect this axis (negative scale)";
+      button.setAttribute("aria-pressed", String(scale[axis] < 0));
+      button.addEventListener("click", () => this.onMirrorToggle(axis));
+      return button;
+    });
+
+    row.append(name, ...buttons);
+    group.appendChild(row);
+    return buttons;
   }
 
   /** Build the single-value weight control in its own group below the axes. */
@@ -2480,6 +2538,12 @@ export class Ui {
         control.readout.textContent = spec.format(model);
       });
     }
+    editor.mirror.forEach((button, axis) => {
+      button.setAttribute(
+        "aria-pressed",
+        String(editor.geometry.scale[axis] < 0),
+      );
+    });
     if (editor.weightControl) {
       const { weight } = editor.geometry;
       editor.weightControl.slider.value = String(weightToSlider(weight));
@@ -2505,12 +2569,26 @@ export class Ui {
     const editor = this.editor;
     if (!editor) return;
     const spec = CHANNELS[channel];
-    const model = spec.fromSlider(sliderValue);
+    const model = spec.fromSlider(sliderValue, editor.geometry[channel][axis]);
     editor.geometry[channel][axis] = model;
     editor.controls[channel][axis].readout.textContent = spec.format(model);
     // Scale W tracks the live mean 3D contraction while unset (see
     // WExtension.scale's doc) — keep it in sync with every 3D scale edit.
     if (channel === "scale") this.refreshScaleWIfAuto();
+    this.emitGeometry();
+  }
+
+  /** Flip one axis's scale sign (fr-lca). No refreshScaleWIfAuto here: the
+   * derived Scale W is the MEAN of the |components|, unchanged by a sign
+   * flip. */
+  private onMirrorToggle(axis: number): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const model = -editor.geometry.scale[axis];
+    editor.geometry.scale[axis] = model;
+    editor.controls.scale[axis].readout.textContent =
+      CHANNELS.scale.format(model);
+    editor.mirror[axis].setAttribute("aria-pressed", String(model < 0));
     this.emitGeometry();
   }
 
