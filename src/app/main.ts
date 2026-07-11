@@ -72,6 +72,7 @@ import {
   toSnapshot,
 } from "./persist";
 import type { CameraPose, SceneSnapshot } from "./persist";
+import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import type { Vec4 } from "../fractal/types";
@@ -315,6 +316,23 @@ function main(): void {
   // Session-only like the orbit itself; the tumble's twin lives inside
   // FourDView (setTumbleUserChoice).
   let autoOrbitUserChoice: boolean | null = null;
+
+  // Restore the COMBINED auto-motion preference (fr-0ya): a viewer who turned
+  // auto-orbit or 4D-tumble off keeps it off across RELOADS, not merely within
+  // the session (fr-g98's stickiness). The one shared choice seeds BOTH the 3D
+  // orbit and the 4D tumble here — before the boot cloud generation
+  // (generateSync) and the boot resetAutoOrbitView() below both read these
+  // choices. Stored SEPARATELY from the scene (viewer-prefs.ts, its own
+  // localStorage key), never in the share URL — a shared link must not carry
+  // the author's motion preference. Absent = never chosen = follow the
+  // reduced-motion default, exactly like the session-only null / FourDView's
+  // `tumbleUserChoice = null` do. Session independence is unchanged: this only
+  // seeds the two sticky choices; it does not couple the live toggles.
+  const viewerPrefs = loadViewerPrefs();
+  if (viewerPrefs.autoMotion !== undefined) {
+    autoOrbitUserChoice = viewerPrefs.autoMotion;
+    fourDView.seedTumbleUserChoice(viewerPrefs.autoMotion);
+  }
 
   // Shared frame clock for the explorer path's automatic motion (the 4D
   // tumble and the 3D auto-orbit). Advances every explorer frame — paused,
@@ -1752,6 +1770,11 @@ function main(): void {
     // across fresh-visit resets (fr-g98).
     onFourDTumbleToggle: (checked) => {
       fourDView.setTumbleUserChoice(checked);
+      // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
+      // the user flips — tumble or orbit — becomes the one shared choice both
+      // seed from on the next reload. Separate viewer-prefs key, never the
+      // scene / share-URL document.
+      saveViewerPrefs({ autoMotion: checked });
     },
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
@@ -1762,6 +1785,9 @@ function main(): void {
     onAutoOrbitToggle: (checked) => {
       autoOrbitOn = checked;
       autoOrbitUserChoice = checked;
+      // Persist the COMBINED auto-motion pref (fr-0ya) — the orbit sibling of
+      // onFourDTumbleToggle above; both write the one shared choice.
+      saveViewerPrefs({ autoMotion: checked });
     },
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;

@@ -153,6 +153,37 @@ describe("FourDView", () => {
     });
   });
 
+  describe("seedTumbleUserChoice", () => {
+    it("makes the next reset honor a remembered off choice without a prior in-session toggle", () => {
+      const view = new FourDView();
+
+      view.seedTumbleUserChoice(false);
+      view.reset(false); // not reduced motion, so the bare default would be ON
+
+      expect(view.tumbleOn).toBe(false);
+    });
+
+    it("makes the next reset keep tumbling for a remembered opt-in even under reduced motion", () => {
+      const view = new FourDView();
+
+      view.seedTumbleUserChoice(true);
+      view.reset(true); // reduced motion, so the bare default would be paused
+
+      expect(view.tumbleOn).toBe(true);
+    });
+
+    it("does not touch the live tumbleOn until a reset applies the seeded choice", () => {
+      const view = new FourDView();
+      expect(view.tumbleOn).toBe(true); // constructor default
+
+      view.seedTumbleUserChoice(false);
+
+      // Unlike setTumbleUserChoice, seeding only records the choice for the
+      // imminent boot reset to apply — it must not flip live state itself.
+      expect(view.tumbleOn).toBe(true);
+    });
+  });
+
   describe("tick", () => {
     it("advances the rotor away from identity while the tumble is running", () => {
       const view = new FourDView();

@@ -133,6 +133,18 @@ export class FourDView {
     this.tumbleUserChoice = on;
   }
 
+  /** Seed the sticky tumble choice at boot from a REMEMBERED viewer preference
+   * (fr-0ya) — the combined auto-motion pref that persist.ts deliberately keeps
+   * out of the scene document / share URL (see viewer-prefs.ts). Sets ONLY the
+   * remembered choice, not the live `tumbleOn`: the boot-time reset() that
+   * follows on the first 4D entry reads it as `tumbleUserChoice ?? !reducedMotion`
+   * and sets `tumbleOn` itself, so seeding never touches live state before the
+   * reset owns it. Distinct from {@link setTumbleUserChoice}, which is an
+   * in-session user toggle that must also apply immediately. */
+  seedTumbleUserChoice(on: boolean): void {
+    this.tumbleUserChoice = on;
+  }
+
   /** Advance the tumble by dt seconds (no-op when paused): compose the XY- and
    * ZW-plane base rates * tumbleSpeed into the rotor. */
   tick(dt: number): void {
