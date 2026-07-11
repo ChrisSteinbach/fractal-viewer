@@ -6,7 +6,10 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#1a1a2e" />
+    <!-- Mirrors the WebGL backdrop's top stop (DARK_BACKDROP.top in
+         src/app/constants.ts) so the mobile/PWA chrome tint meets the page
+         top seamlessly. Keep in sync with vite.config.ts's manifest. -->
+    <meta name="theme-color" content="#0d0d18" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <title>Fractal Viewer</title>
     <meta
