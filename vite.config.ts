@@ -50,8 +50,12 @@ export default defineConfig({
         name: APP_NAME,
         short_name: APP_NAME,
         description: "Interactive 3D/4D IFS fractal viewer built with Three.js",
-        theme_color: "#1a1a2e",
-        background_color: "#1a1a2e",
+        // Both mirror the WebGL backdrop's top stop (DARK_BACKDROP.top in
+        // src/app/constants.ts) so the installed-PWA chrome tint and launch
+        // splash match the page top. Keep in sync with index.html's
+        // <meta name="theme-color">.
+        theme_color: "#0d0d18",
+        background_color: "#0d0d18",
         display: "standalone",
         icons: [
           {
