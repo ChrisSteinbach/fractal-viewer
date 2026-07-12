@@ -24,6 +24,26 @@ export interface Spherical {
   phi: number;
 }
 
+/**
+ * A complete orbit-camera pose: the target point plus the flattened
+ * {@link Spherical} offset of the camera from it — everything needed to restore
+ * an exact framing (see {@link OrbitCamera}). Lives here, with the camera math,
+ * rather than in `persist.ts`: it is a plain-data view of {@link OrbitCamera}'s
+ * own fields, and both `persist.ts` (the save/share/collection codec's `camera`
+ * document field, fr-1k4) and `history.ts` (the out-of-band undo/redo pose,
+ * fr-uf3) carry it without either depending on the other.
+ *
+ * `radius`/`phi` are clamped to [{@link MIN_RADIUS}, {@link MAX_RADIUS}] /
+ * [{@link MIN_PHI}, {@link MAX_PHI}] wherever a pose is applied or decoded;
+ * `theta` (azimuth) is unbounded, matching {@link Spherical}.
+ */
+export interface CameraPose {
+  target: Vec3;
+  radius: number;
+  theta: number;
+  phi: number;
+}
+
 export function clampPhi(phi: number): number {
   return Math.max(MIN_PHI, Math.min(MAX_PHI, phi));
 }

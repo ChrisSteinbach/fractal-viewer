@@ -34,7 +34,7 @@ import {
 } from "../fractal/presets";
 import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
 import { randomSystem } from "../fractal/random-system";
-import { BOOT_CAMERA_POSITION, OrbitCamera } from "./orbit";
+import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
 import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
@@ -71,7 +71,7 @@ import {
   saveScene,
   toSnapshot,
 } from "./persist";
-import type { CameraPose, SceneSnapshot } from "./persist";
+import type { SceneSnapshot } from "./persist";
 import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
@@ -1363,13 +1363,30 @@ function main(): void {
    * the entry and hands it to {@link applyDecodedSnapshot}. It must NOT cut an
    * undo checkpoint (an undo/redo is not itself an edit) — the session arms the
    * restored document's checkpoint-free debounced save on its own once this
-   * returns (see edit-session.ts). `refit` re-frames only when the step crosses
-   * a whole-system replacement; ordinary parameter edits leave framing alone.
+   * returns (see edit-session.ts).
+   *
+   * Camera handling matches how the framing moved when the step's edit was
+   * first applied: an ordinary parameter edit (`replaced` false) leaves it
+   * alone, while a step that crosses a whole-system replacement restores the
+   * exact pre-replace `pose` the checkpoint captured out of band (fr-uf3) —
+   * the same applyDecodedSnapshot-then-applyCameraPose shape as
+   * {@link loadEncodedScene}. A `replaced` step with no captured pose
+   * (defensive — the app always supplies one via the EditSession `pose` dep)
+   * falls back to auto-fitting the restored attractor, the pre-fr-uf3 behavior.
    */
-  function restoreSnapshot(snapshot: string, refit: boolean): void {
+  function restoreSnapshot(
+    snapshot: string,
+    replaced: boolean,
+    pose?: CameraPose,
+  ): void {
     const snap = decodeScene(snapshot);
     if (!snap) return; // can't happen: entries are encodeScene output
-    applyDecodedSnapshot(snap, refit);
+    if (replaced && pose) {
+      applyDecodedSnapshot(snap, false);
+      applyCameraPose(pose);
+    } else {
+      applyDecodedSnapshot(snap, replaced);
+    }
   }
 
   /**
@@ -1386,7 +1403,8 @@ function main(): void {
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
   // over it (see edit-session.ts). The injected deps are the app's real
   // capabilities: encode and persist the live scene document, apply a restored
-  // snapshot (restoreSnapshot above — which must not checkpoint), reflect
+  // snapshot (restoreSnapshot above — which must not checkpoint), read the live
+  // camera pose (captured out of band per history entry, fr-uf3), reflect
   // undo/redo availability in the UI, and the debounced save-timer itself. Edit
   // handlers call editSession.beginEdit() BEFORE mutating the document; Ctrl+Z/
   // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
@@ -1394,6 +1412,10 @@ function main(): void {
     snapshot: () => encodeScene(toSnapshot(state)),
     persist: () => saveScene(currentDocument()),
     restore: restoreSnapshot,
+    // The live orbit pose, captured out of band onto each history entry
+    // (fr-uf3) so undo/redo across a replace restores the exact framing —
+    // never into the snapshot string, which stays camera-less for the dedup.
+    pose: cameraPose,
     syncUi: (canUndo, canRedo) => ui.setUndoRedo(canUndo, canRedo),
     schedule: (fn) => {
       const id = setTimeout(fn, SAVE_DEBOUNCE_MS);
