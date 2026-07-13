@@ -108,6 +108,28 @@ describe("MorphTween.sample", () => {
     expect(tween.sample(MORPH_TWEEN_MS / 2)!.seed).toBe(42);
     expect(tween.sample(MORPH_TWEEN_MS)!.seed).toBe(42);
   });
+
+  it("a custom start() duration governs when the morph completes", () => {
+    const tween = new MorphTween();
+    const a = system({ transforms: [transform({ position: [0, 0, 0] })] });
+    const b = system({ transforms: [transform({ position: [1, 0, 0] })] });
+    tween.start(a, b, 7, 0, 5000);
+
+    // Past the default MORPH_TWEEN_MS duration, but well inside the custom
+    // 5000ms one: must still be mid-flight, not final.
+    const midDefault = tween.sample(MORPH_TWEEN_MS);
+    expect(midDefault!.final).toBe(false);
+    expect(tween.active).toBe(true);
+
+    const half = tween.sample(2500);
+    expect(half!.system.transforms[0].position[0]).toBe(0.5);
+    expect(half!.final).toBe(false);
+
+    const result = tween.sample(5000);
+    expect(result!.system).toBe(b);
+    expect(result!.final).toBe(true);
+    expect(tween.active).toBe(false);
+  });
 });
 
 describe("MorphTween.start", () => {
@@ -177,6 +199,27 @@ describe("MorphTween.start", () => {
     const result = tween.sample(chainNow);
     expect(result!.system).toBe(b);
     expect(result!.seed).toBe(7);
+  });
+
+  it("a chained start takes the NEW call's duration, not the in-flight morph's", () => {
+    const tween = new MorphTween();
+    const a = system({ transforms: [transform({ position: [0, 0, 0] })] });
+    const b = system({ transforms: [transform({ position: [1, 0, 0] })] });
+    const c = system({ transforms: [transform({ position: [5, 0, 0] })] });
+    tween.start(a, b, 7, 0);
+
+    const chainNow = MORPH_TWEEN_MS / 2;
+    tween.start(a, c, 99, chainNow, 5000);
+
+    // The old default duration (MORPH_TWEEN_MS) must not apply to the
+    // chained leg — it should still be mid-flight at that elapsed time.
+    const stillGoing = tween.sample(chainNow + MORPH_TWEEN_MS);
+    expect(stillGoing!.final).toBe(false);
+    expect(tween.active).toBe(true);
+
+    const result = tween.sample(chainNow + 5000);
+    expect(result!.system).toBe(c);
+    expect(result!.final).toBe(true);
   });
 });
 

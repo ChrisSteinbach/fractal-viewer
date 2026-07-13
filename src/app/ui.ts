@@ -90,6 +90,9 @@ export interface UiHandlers {
   onPreset: (preset: Preset) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
+  /** "▶ Drift" was clicked: toggle the ambient drift show (fr-wavo) —
+   * session-only, like the auto-orbit/tumble motion; main.ts owns the policy. */
+  onDriftToggle: () => void;
   /**
    * A table-driven scalar control changed (see control-spec.ts's
    * SCALAR_CONTROLS): `raw` is the element's `value` string (range/select)
@@ -604,6 +607,8 @@ export class Ui {
   private readonly redoBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
   private readonly surpriseBtn: HTMLButtonElement;
+  private readonly driftBtn: HTMLButtonElement;
+  private readonly driftTitle: string;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   private readonly recordVideoBtn: HTMLButtonElement;
@@ -798,6 +803,8 @@ export class Ui {
     this.redoBtn = this.byId("redoBtn");
     this.presetSelect = this.byId("presetSelect");
     this.surpriseBtn = this.byId("surpriseBtn");
+    this.driftBtn = this.byId("driftBtn");
+    this.driftTitle = this.driftBtn.title;
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
     this.recordVideoBtn = this.byId("recordVideoBtn");
@@ -1012,6 +1019,7 @@ export class Ui {
       if (preset) handlers.onPreset(preset as Preset);
     });
     this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
+    this.driftBtn.addEventListener("click", () => handlers.onDriftToggle());
     this.regenerateBtn.addEventListener("click", () => handlers.onRegenerate());
     this.savePngBtn.addEventListener("click", () => handlers.onSavePng());
     this.recordVideoBtn.addEventListener("click", () =>
@@ -1509,6 +1517,25 @@ export class Ui {
       : "● Record video";
     this.recordVideoBtn.classList.toggle("btn-ghost", !recording);
     this.recordVideoBtn.classList.toggle("btn-red", recording);
+  }
+
+  /** Reflect whether the ambient drift show is running on the Drift toggle
+   * (fr-wavo): lit + "stop" affordance while active, ghost otherwise. */
+  setDriftActive(on: boolean): void {
+    this.driftBtn.textContent = on ? "■ Stop drifting" : "▶ Drift";
+    this.driftBtn.setAttribute("aria-pressed", String(on));
+    this.driftBtn.classList.toggle("btn-ghost", !on);
+    this.driftBtn.classList.toggle("btn-blue", on);
+  }
+
+  /** Enable/disable the Drift toggle for the OS reduced-motion preference
+   * (fr-wavo): no motion means no drift, so the button explains itself
+   * instead of silently doing nothing. */
+  setDriftAvailable(available: boolean): void {
+    this.driftBtn.disabled = !available;
+    this.driftBtn.title = available
+      ? this.driftTitle
+      : "Unavailable: your system asks for reduced motion";
   }
 
   /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai). */
