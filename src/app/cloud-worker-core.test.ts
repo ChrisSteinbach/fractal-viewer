@@ -208,6 +208,77 @@ describe("generateCloud 3D", () => {
     expect(result.transformIndices).toHaveLength(0);
     expect(result.colors).toHaveLength(0);
   });
+
+  it("isolates iteration-local randomness from the pick stream, keeping ε-different same-seed requests correspondent (fr-2wfw)", () => {
+    // The morph streams per-frame requests that differ only by a tiny
+    // parameter step, under ONE pinned seed (morph-tween.ts). This system
+    // exercises every desynchronization source: a non-1 weight (weighted
+    // pick path, so an ε weight change flips occasional picks), a `julia`
+    // map (stochastic per-application draws), and a `spherical` map that
+    // diverges near the origin (occasional escape reseeds). On a shared RNG
+    // stream, one differing draw would shift every later transform pick and
+    // re-roll the whole remaining cloud (~90% of points displaced on this
+    // fixture; ~2% with iteration-local draws).
+    const gauntletSystem = (weight0: number, aPosX: number): Transform[] => [
+      {
+        id: 0,
+        position: [aPosX, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: weight0,
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+    const numPoints = 20_000;
+    const a = as3D(
+      generateCloud(
+        cloudRequest({ transforms: gauntletSystem(2, 0.5), numPoints }),
+      ),
+    );
+    const b = as3D(
+      generateCloud(
+        cloudRequest({ transforms: gauntletSystem(2.01, 0.502), numPoints }),
+      ),
+    );
+
+    let jumped = 0;
+    for (let i = 0; i < numPoints; i++) {
+      const dx = a.positions[i * 3] - b.positions[i * 3];
+      const dy = a.positions[i * 3 + 1] - b.positions[i * 3 + 1];
+      const dz = a.positions[i * 3 + 2] - b.positions[i * 3 + 2];
+      if (Math.hypot(dx, dy, dz) > 0.3) jumped++;
+    }
+    expect(jumped / numPoints).toBeLessThan(0.15);
+
+    // And the isolation genuinely engaged: a run whose local draws share
+    // the pick stream diverges from generateCloud's output — which also
+    // guards this fixture against silently going tame (the two would then
+    // be identical).
+    const sharedStream = runChaosGame(
+      gauntletSystem(2, 0.5),
+      numPoints,
+      mulberry32(cloudRequest({}).seed),
+      null,
+      cloudRequest({}).symmetry,
+    );
+    expect(a.positions).not.toEqual(sharedStream.positions);
+  });
 });
 
 describe("generateCloud 4D", () => {
