@@ -210,12 +210,77 @@ describe("lerpSystem finalTransform", () => {
 });
 
 describe("lerpSystem symmetry", () => {
-  it("snaps from a's symmetry to b's at the morph midpoint", () => {
-    const a = system({ symmetry: { order: 1, axis: "x" } });
-    const b = system({ symmetry: { order: 6, axis: "z" } });
-    expect(lerpSystem(a, b, 0.4).symmetry).toBe(a.symmetry);
+  it("keeps a matching kaleidoscope untouched (by reference) across the whole morph", () => {
+    const a = system({ symmetry: { order: 4, axis: "y" } });
+    const b = system({ symmetry: { order: 4, axis: "y" } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toBe(a.symmetry);
+    expect(lerpSystem(a, b, 0.75).symmetry).toBe(b.symmetry);
+  });
+
+  it("fades a departing kaleidoscope out over the first half when the target has none", () => {
+    const a = system({ symmetry: { order: 6, axis: "z" } });
+    const b = system({ symmetry: { order: 1, axis: "x" } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toEqual({
+      order: 6,
+      axis: "z",
+      blend: 0.5,
+    });
+    // From the midpoint on, the order-1 target rides by reference — nothing
+    // left to fade.
     expect(lerpSystem(a, b, 0.5).symmetry).toBe(b.symmetry);
-    expect(lerpSystem(a, b, 0.6).symmetry).toBe(b.symmetry);
+    expect(lerpSystem(a, b, 0.75).symmetry).toBe(b.symmetry);
+  });
+
+  it("fades an arriving kaleidoscope in over the second half when the source has none", () => {
+    const a = system({ symmetry: { order: 1, axis: "x" } });
+    const b = system({ symmetry: { order: 5, axis: "y" } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toBe(a.symmetry);
+    expect(lerpSystem(a, b, 0.75).symmetry).toEqual({
+      order: 5,
+      axis: "y",
+      blend: 0.5,
+    });
+    // The blend closes to the full kaleidoscope as t -> 1 (t = 1 itself
+    // returns `b` by reference via lerpSystem's endpoint rule).
+    expect(lerpSystem(a, b, 0.9).symmetry).toEqual({
+      order: 5,
+      axis: "y",
+      blend: expect.closeTo(0.8),
+    });
+  });
+
+  it("crossfades two differing kaleidoscopes through blend 0 at the midpoint", () => {
+    const a = system({ symmetry: { order: 2, axis: "x" } });
+    const b = system({ symmetry: { order: 6, axis: "z" } });
+    expect(lerpSystem(a, b, 0.3).symmetry).toEqual({
+      order: 2,
+      axis: "x",
+      blend: expect.closeTo(0.4),
+    });
+    // Continuous at the midpoint: both sides sit at blend 0, which
+    // prepareChaosGame renders bit-identically to order 1.
+    expect(lerpSystem(a, b, 0.5).symmetry).toEqual({
+      order: 6,
+      axis: "z",
+      blend: 0,
+    });
+    expect(lerpSystem(a, b, 0.7).symmetry).toEqual({
+      order: 6,
+      axis: "z",
+      blend: expect.closeTo(0.4),
+    });
+  });
+
+  it("departs from a mid-fade sample's own strength on a chained morph, never popping back to full", () => {
+    // A chained restart's `from` is the in-flight morph's live sample
+    // (morph-tween.ts), whose kaleidoscope may already be half-faded.
+    const a = system({ symmetry: { order: 4, axis: "y", blend: 0.6 } });
+    const b = system({ symmetry: { order: 1, axis: "x" } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toEqual({
+      order: 4,
+      axis: "y",
+      blend: expect.closeTo(0.3),
+    });
   });
 });
 

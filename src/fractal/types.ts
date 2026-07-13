@@ -182,6 +182,17 @@ export interface SymmetryParams {
   order: number;
   /** Axis the copies are rotated about. */
   axis: SymmetryAxis;
+  /**
+   * Strength of the rotated copies, `0..1` (fr-eykn): a weight multiplier on
+   * every copy-`k>0` slot's selection probability (`prepareChaosGame`), so
+   * `1` — and absent, the default — is the full kaleidoscope, `0` renders
+   * bit-identically to `order: 1`, and values between thin the copies out.
+   * Exists so a system morph can CROSSFADE a kaleidoscope instead of
+   * snapping the discrete order (`morph.ts`'s symmetry rules): only ever set
+   * on a morph's intermediate samples — the document, the UI, and
+   * `persist.ts` never carry it.
+   */
+  blend?: number;
 }
 
 /**
