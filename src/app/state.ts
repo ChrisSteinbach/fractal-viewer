@@ -1299,18 +1299,36 @@ export function setCustomPaletteStops(
  * otherwise-flat system non-flat, but an enabled one is checked exactly like
  * any numbered transform.
  *
- * `main.ts`'s `regenerate()` calls this once per generation and caches the
- * result (its `viewIs4D`) rather than re-deriving it in every per-frame or
+ * `main.ts`'s `cloudParams` stamps this decision onto each generation
+ * request (through {@link systemPartsAreNonFlat}, so a morph sample can
+ * route on its own flatness) and caches the arrived result's flag (its
+ * `viewIs4D`) rather than re-deriving it in every per-frame or
  * per-pointer-move read; `ui.ts`'s `updateLabels` calls it directly instead
  * (it runs far less often), then passes the one result on to `updateLegend`.
  * Either way there is exactly one formula, so the routing decision, the
  * panel's gating, and the legend can never drift apart.
  */
 export function systemIsNonFlat(state: AppState): boolean {
+  return systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null);
+}
+
+/**
+ * {@link systemIsNonFlat}'s underlying formula over bare system parts, for a
+ * caller holding a system that is not the live document: a replace-load
+ * morph's per-frame samples (fr-a04l) route their generation requests on the
+ * SAMPLED system's own flatness, so a flat↔4D morph flips to the 4D path
+ * exactly when the interpolated maps first carry live `w` blocks — not when
+ * the document does. `null` means "no final transform", matching
+ * `MorphSystem`/`CloudRequest`'s vocabulary; the live document's optional
+ * field maps through `?? null` above, so there is still exactly one formula.
+ */
+export function systemPartsAreNonFlat(
+  transforms: readonly Transform[],
+  finalTransform: Transform | null,
+): boolean {
   return (
-    !systemIsFlat(state.transforms) ||
-    (state.finalTransform !== undefined &&
-      !isFlatTransform(state.finalTransform))
+    !systemIsFlat(transforms) ||
+    (finalTransform !== null && !isFlatTransform(finalTransform))
   );
 }
 

@@ -7,6 +7,15 @@
 /** Below this viewport width the panel starts closed and floats over a scrim. */
 export const MOBILE_BREAKPOINT = 640;
 
+/**
+ * Point-count cap for a replace-load morph's INTERMEDIATE generation requests
+ * (fr-a04l): each frame of the ~1.4 s tween re-runs the chaos game, so a
+ * 5M-point scene would otherwise animate at one-generation-per-several-frames
+ * instead of flowing. The morph's terminal sample — the real replaced request
+ * — uses the full `numPoints`, so the settled cloud is never degraded.
+ */
+export const MORPH_MAX_POINTS = 400_000;
+
 /** Minimum guide-box scale when dragging or scaling via the panel editor. */
 export const MIN_GUIDE_SCALE = 0.05;
 

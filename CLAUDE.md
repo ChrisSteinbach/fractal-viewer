@@ -150,6 +150,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     auto-frame a freshly generated attractor (preset load / Surprise Me) instead
     of snapping; leaves the orbit angles alone and honors reduced motion (pure,
     tested, injected clock).
+  - `morph-tween.ts` — the replace-load system morph driver (fr-jx9o):
+    per-frame sampler over `../fractal/morph`'s `lerpSystem` with a pinned seed
+    so consecutive frames' clouds stay point-for-point correspondent, chained
+    restarts resuming from the live sample; polled by main.ts's animate loop,
+    which streams each sample as a capped-point-count intermediate generation
+    request and sends the real replaced/fit request on the terminal sample
+    (fr-a04l) — reduced motion skips straight to that terminal request.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → done, with narration captions) — the buffer

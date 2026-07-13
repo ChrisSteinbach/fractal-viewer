@@ -100,6 +100,7 @@ import {
   setSymmetryOrder,
   setTransforms,
   systemIsNonFlat,
+  systemPartsAreNonFlat,
   updateTransform,
 } from "./state";
 import {
@@ -1031,6 +1032,28 @@ describe("systemIsNonFlat", () => {
     expect(
       systemIsNonFlat({ ...state, finalTransform: defaultFinalTransform() }),
     ).toBe(false);
+  });
+});
+
+describe("systemPartsAreNonFlat", () => {
+  it("is false for flat transforms with no final transform", () => {
+    expect(systemPartsAreNonFlat(initialState(true).transforms, null)).toBe(
+      false,
+    );
+  });
+
+  it("is true when any transform carries a non-trivial w block", () => {
+    const { transforms } = initialState(true);
+    const nonFlat: Transform = { ...transforms[0], w: { position: 0.5 } };
+    expect(systemPartsAreNonFlat([nonFlat, ...transforms.slice(1)], null)).toBe(
+      true,
+    );
+  });
+
+  it("is true when the final transform carries a non-trivial w block", () => {
+    const { transforms } = initialState(true);
+    const lens = { ...defaultFinalTransform(), w: { position: 0.5 } };
+    expect(systemPartsAreNonFlat(transforms, lens)).toBe(true);
   });
 });
 
