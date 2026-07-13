@@ -75,7 +75,9 @@
 import { lerpSystem, type MorphSystem } from "../fractal/morph";
 import { smoothstep } from "./orbit";
 
-/** Duration of a system morph, in milliseconds. */
+/** Default duration of a system morph, in milliseconds — used when {@link
+ * MorphTween.start} isn't given its own `durationMs` (the replace-load
+ * morph runs at this default; Drift legs pass a longer one of their own). */
 export const MORPH_TWEEN_MS = 1400;
 
 /** One instant of an in-flight (or just-completed) morph: the system to
@@ -88,12 +90,16 @@ export interface MorphSample {
 }
 
 /** In-flight morph: the two endpoints, the seed pinned for the whole morph
- * (see the module header), and the clock reading it started at. */
+ * (see the module header), the clock reading it started at, and the
+ * duration (in ms) this particular morph runs over — each morph times
+ * itself, so a chained start's new duration never retroactively changes an
+ * already-elapsed leg. */
 interface Morph {
   from: MorphSystem;
   to: MorphSystem;
   seed: number;
   startMs: number;
+  durationMs: number;
 }
 
 /**
@@ -112,32 +118,50 @@ export class MorphTween {
   }
 
   /**
-   * Begin a morph from `from` to `to`, timed from `now`, holding `seed` for
-   * every sample of this morph (see the module header for why the seed is
-   * pinned rather than rolled per frame).
+   * Begin a morph from `from` to `to`, timed from `now` and running over
+   * `durationMs` (default {@link MORPH_TWEEN_MS}), holding `seed` for every
+   * sample of this morph (see the module header for why the seed is pinned
+   * rather than rolled per frame).
    *
    * If a morph is already in flight (a CHAINED start — see the module
    * header), the caller-supplied `from` and `seed` are both ignored: the new
    * morph instead resumes from the in-flight morph's own live sample at
    * `now` and keeps the in-flight morph's pinned seed, so what's on screen
-   * never jumps and the point correspondence never breaks. Sampling the old
-   * morph to chain from also transitions it to idle first (see {@link
-   * sample}), which is immediately superseded by the new record this method
-   * installs — harmless, and it means a chain still resumes correctly even
-   * from an in-flight morph that ran past its own duration without ever
-   * being polled (it resumes from that morph's `to`, which is exactly what
-   * was left on screen).
+   * never jumps and the point correspondence never breaks. `durationMs` is
+   * the one exception to that inheritance: it is always taken from THIS
+   * call, never the in-flight morph's — each morph times itself, so a
+   * chained start's new duration governs even though `from`/`seed` come from
+   * the morph it's chaining off of. Sampling the old morph to chain from
+   * also transitions it to idle first (see {@link sample}), which is
+   * immediately superseded by the new record this method installs —
+   * harmless, and it means a chain still resumes correctly even from an
+   * in-flight morph that ran past its own duration without ever being
+   * polled (it resumes from that morph's `to`, which is exactly what was
+   * left on screen).
    */
-  start(from: MorphSystem, to: MorphSystem, seed: number, now: number): void {
+  start(
+    from: MorphSystem,
+    to: MorphSystem,
+    seed: number,
+    now: number,
+    durationMs: number = MORPH_TWEEN_MS,
+  ): void {
     const inFlight = this.sample(now);
     this.morph = inFlight
-      ? { from: inFlight.system, to, seed: inFlight.seed, startMs: now }
-      : { from, to, seed, startMs: now };
+      ? {
+          from: inFlight.system,
+          to,
+          seed: inFlight.seed,
+          startMs: now,
+          durationMs,
+        }
+      : { from, to, seed, startMs: now, durationMs };
   }
 
   /**
    * The morph's system/seed at `now`, or null when no morph is in flight.
-   * `t = (now - startMs) / MORPH_TWEEN_MS`:
+   * `t = (now - startMs) / durationMs`, using the duration {@link start}
+   * recorded for this particular morph:
    *
    * - `t >= 1`: deactivates the tween and returns the `to` endpoint BY
    *   REFERENCE with `final: true` — the terminal sample (see the module
@@ -152,8 +176,8 @@ export class MorphTween {
    */
   sample(now: number): MorphSample | null {
     if (!this.morph) return null;
-    const { from, to, seed, startMs } = this.morph;
-    const t = (now - startMs) / MORPH_TWEEN_MS;
+    const { from, to, seed, startMs, durationMs } = this.morph;
+    const t = (now - startMs) / durationMs;
     if (t >= 1) {
       this.morph = null;
       return { system: to, seed, final: true };

@@ -157,6 +157,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     which streams each sample as a capped-point-count intermediate generation
     request and sends the real replaced/fit request on the terminal sample
     (fr-a04l) — reduced motion skips straight to that terminal request.
+    Since fr-wavo the morph's duration is a `start()` parameter (default
+    `MORPH_TWEEN_MS`), so a drift leg can glide slower than a click.
+  - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
+    dwell/advance state machine (injected clock, like `build-replay.ts`)
+    polled by main.ts's animate loop; when a dwell elapses it fires one leg —
+    a Surprise-Me roll morphing in over `DRIFT_MORPH_MS` with a normal
+    "replace" undo checkpoint, then a fresh dwell. main.ts owns the policy:
+    session-only, STOPS (never pauses) on any undoable edit / undo / manual
+    replace-load / render-mode switch, unavailable under reduced motion;
+    between legs the poll is one comparison, so a dwelling show does no
+    per-frame work.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → done, with narration captions) — the buffer

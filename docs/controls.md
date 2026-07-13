@@ -96,6 +96,23 @@ of snapping (see **Presets** below).
   Loading one — like Surprise Me and a gallery load — morphs the attractor
   smoothly from the current shape into the new one instead of snapping; the
   OS's reduced-motion preference opts out to the instant snap (fr-a04l).
+- **▶ Drift** (fr-wavo) — next to **Surprise Me**: an ambient, ever-evolving
+  show for leaving the viewer running (a TV via the PWA, a second screen).
+  While drifting, the viewer dwells on the current attractor for about five
+  seconds, then glides over about five more into a fresh quality-gated
+  Surprise-Me roll, dwells on that, and repeats; the panel closes when the
+  show starts so the stage is clear. Every landing is a normal, undoable
+  replace-load — the same "replace" checkpoint and camera auto-fit as
+  pressing Surprise Me, so undo walks back through the show. It STOPS (never
+  pauses) the moment you reach in: any edit to the system or its settings,
+  undo/redo, a manual preset / Surprise Me / gallery load, switching to a
+  Flame/Solid render, or starting **▶ Watch it build** — while camera drags
+  and the auto-orbit / auto-tumble / W-slice view controls leave it running
+  (the camera stays independent, as ever). Session-only like auto-orbit and
+  auto-tumble — never persisted or shared — and unavailable while the OS
+  asks for reduced motion (the disabled button says why): no motion means no
+  drift. Between legs the show is fully idle, so it sips battery while
+  dwelling; recording a video of a drifting session works as usual.
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Explorer-only — it hides during a

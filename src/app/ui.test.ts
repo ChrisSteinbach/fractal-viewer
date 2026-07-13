@@ -41,6 +41,7 @@ function noopHandlers(): UiHandlers {
     onRedo: vi.fn(),
     onPreset: vi.fn(),
     onSurprise: vi.fn(),
+    onDriftToggle: vi.fn(),
     onScalarControl: vi.fn(),
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
@@ -959,6 +960,51 @@ describe("Ui surprise button", () => {
     ui.bind(handlers);
     surpriseBtn().click();
     expect(handlers.onSurprise).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Ui drift button", () => {
+  function driftBtn(): HTMLButtonElement {
+    return document.getElementById("driftBtn") as HTMLButtonElement;
+  }
+
+  it("fires onDriftToggle when Drift is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    driftBtn().click();
+    expect(handlers.onDriftToggle).toHaveBeenCalledOnce();
+  });
+
+  it("swaps the drift button between idle and stop states", () => {
+    const ui = new Ui(document);
+
+    ui.setDriftActive(true);
+    expect(driftBtn().textContent).toBe("■ Stop drifting");
+    expect(driftBtn().getAttribute("aria-pressed")).toBe("true");
+    expect(driftBtn().classList.contains("btn-blue")).toBe(true);
+    expect(driftBtn().classList.contains("btn-ghost")).toBe(false);
+
+    ui.setDriftActive(false);
+    expect(driftBtn().textContent).toBe("▶ Drift");
+    expect(driftBtn().getAttribute("aria-pressed")).toBe("false");
+    expect(driftBtn().classList.contains("btn-ghost")).toBe(true);
+    expect(driftBtn().classList.contains("btn-blue")).toBe(false);
+  });
+
+  it("disables the drift button with an explanation under reduced motion, and restores the authored title when available", () => {
+    const ui = new Ui(document);
+    const authoredTitle = driftBtn().title;
+
+    ui.setDriftAvailable(false);
+    expect(driftBtn().disabled).toBe(true);
+    expect(driftBtn().title).toBe(
+      "Unavailable: your system asks for reduced motion",
+    );
+
+    ui.setDriftAvailable(true);
+    expect(driftBtn().disabled).toBe(false);
+    expect(driftBtn().title).toBe(authoredTitle);
   });
 });
 

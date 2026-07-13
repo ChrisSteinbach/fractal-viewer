@@ -78,7 +78,8 @@ import { MOBILE_BREAKPOINT, MORPH_MAX_POINTS } from "./constants";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
-import { MorphTween, type MorphSample } from "./morph-tween";
+import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
+import { DriftShow, DRIFT_MORPH_MS } from "./drift";
 import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
@@ -396,6 +397,52 @@ function main(): void {
   // the flag describes the CURRENT target's landing.
   let morphFinalFit = false;
 
+  // The ambient drift show (fr-wavo): dwell on the current attractor, glide
+  // to a fresh Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
+  // Electric-Sheep-on-a-TV use case. Session-only motion like the auto-orbit
+  // and tumble, never persisted. drift.ts owns the timing loop; this file
+  // owns the policy: what a leg does (advanceDrift), what ends the show
+  // (stopDrift), and the reduced-motion gate (syncDriftAvailability).
+  const driftShow = new DriftShow(() => performance.now());
+  // True only while a drift leg's own applyEdit runs, so stopDrift's
+  // chokepoints can tell the show's own roll from a genuine user edit.
+  let driftAdvancing = false;
+
+  // End the drift show — a STOP, not a pause (restarting is a fresh toggle,
+  // per fr-wavo). Called from every "the user reached in" moment: applyEdit
+  // and the bespoke beginEdit handlers (any undoable edit), time travel and
+  // gallery loads (applyDecodedSnapshot), leaving the points view
+  // (switchRenderMode), starting a build replay, and the toggle itself.
+  // Camera input deliberately never calls this — the camera is independent
+  // of the show, exactly like the auto-orbit's pause-while-dragging policy.
+  // No-op while the show's own leg applies itself (driftAdvancing).
+  function stopDrift(): void {
+    if (driftAdvancing || !driftShow.active) return;
+    driftShow.stop();
+    ui.setDriftActive(false);
+  }
+
+  // One drift leg (fr-wavo): press Surprise Me on the show's behalf — the
+  // same roll, the same "replace" undo checkpoint (undo walks back through
+  // the show; history.ts's cap bounds it), the same camera auto-fit — but
+  // glide the display morph over DRIFT_MORPH_MS instead of the snappier
+  // click-feedback default. The flag exempts this one applyEdit from the
+  // stop-on-edit rule above. A reduced-motion preference that appeared
+  // mid-show ends it at the leg boundary instead — no motion means no drift
+  // (regenerateReplaced would snap every leg, a slideshow, not a show).
+  function advanceDrift(): void {
+    if (prefersReducedMotion()) {
+      stopDrift();
+      return;
+    }
+    driftAdvancing = true;
+    try {
+      rollSurpriseSystem(DRIFT_MORPH_MS);
+    } finally {
+      driftAdvancing = false;
+    }
+  }
+
   // Push the current soft-slice view state to the scene shader. Shared by
   // resetFourDView() and the three slice handlers, all of which mutate a
   // fourDView slice field and then re-upload the trio.
@@ -491,12 +538,18 @@ function main(): void {
    * MorphTween.start) a morph from the pre-load system toward the document's
    * new one, and let animate()'s per-frame poll stream the interpolated
    * generation requests. `from` must be captured BEFORE the load mutated the
-   * document; `state` already IS the target here. Reduced motion opts out
-   * entirely: the current snap behavior IS the reduced-motion path (the
-   * `finish()` discard covers a morph left in flight when the OS preference
-   * flipped mid-tween — the plain replaced request supersedes it whole).
+   * document; `state` already IS the target here. `durationMs` is the
+   * morph's length — the click-feedback default unless a drift leg asks for
+   * its slower glide (fr-wavo). Reduced motion opts out entirely: the
+   * current snap behavior IS the reduced-motion path (the `finish()`
+   * discard covers a morph left in flight when the OS preference flipped
+   * mid-tween — the plain replaced request supersedes it whole).
    */
-  function regenerateReplaced(from: MorphSystem, fit: boolean): void {
+  function regenerateReplaced(
+    from: MorphSystem,
+    fit: boolean,
+    durationMs = MORPH_TWEEN_MS,
+  ): void {
     if (prefersReducedMotion()) {
       morphTween.finish();
       regenerate(true, fit);
@@ -505,7 +558,13 @@ function main(): void {
     // Supersede any coalesced pending run, exactly like regenerate() does —
     // the morph's own per-frame requests take over from here.
     regenScheduler.cancel();
-    morphTween.start(from, currentMorphSystem(), rollSeed(), performance.now());
+    morphTween.start(
+      from,
+      currentMorphSystem(),
+      rollSeed(),
+      performance.now(),
+      durationMs,
+    );
     morphFinalFit = fit;
   }
 
@@ -1382,6 +1441,10 @@ function main(): void {
     // render.
     if (target !== "points") {
       cancelReplay();
+      // So does the drift show (fr-wavo): a flame/solid render is a still,
+      // and animate() stops polling the show during one anyway — stop it
+      // cleanly (a STOP, not a pause) rather than leaving it armed.
+      stopDrift();
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
       // the DOCUMENT's system, so snap the display to it — and animate()
       // stops polling the tween during a render, so an unsnapped morph would
@@ -1464,6 +1527,9 @@ function main(): void {
     refit: boolean,
     morph: boolean,
   ): void {
+    // Undo/redo and a gallery load are the user reaching in: both end the
+    // drift show (fr-wavo) — this is the one chokepoint on their shared path.
+    stopDrift();
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load.
@@ -1629,11 +1695,17 @@ function main(): void {
    * Before applying the reducer, checkpoints an undo step and, after it, every
    * geometry edit refreshes the guide boxes and the UI, then schedules a
    * debounced save (see `editSession.beginEdit`).
+   *
+   * Every edit through here also ends the ambient drift show (fr-wavo) —
+   * except the show's own leg, which is this exact path with `morphMs` set
+   * to its slower glide (see advanceDrift and its reentrancy flag).
    */
   function applyEdit(
     applyReducer: () => void,
     effect: "auto" | "always" = "auto",
+    morphMs?: number,
   ): void {
+    stopDrift();
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns.
     pendingRenderMode = null;
@@ -1642,12 +1714,55 @@ function main(): void {
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
     if (effect === "always") {
-      regenerateReplaced(morphFrom, true);
+      regenerateReplaced(morphFrom, true, morphMs);
     } else if (state.autoUpdate) {
       regenerate();
     }
     refreshGuides();
     refreshUi();
+  }
+
+  /**
+   * Roll a fresh random system into the document — the shared body of the
+   * Surprise Me button and a drift leg (fr-wavo): the same
+   * quality-gated roll (random-system.ts), the same "replace" undo
+   * checkpoint and camera auto-fit (via applyEdit "always"), differing only
+   * in `morphMs` — a drift leg glides at DRIFT_MORPH_MS where a button
+   * press keeps the snappier click-feedback default.
+   */
+  function rollSurpriseSystem(morphMs?: number): void {
+    applyEdit(
+      () => {
+        const sys = randomSystem(Math.random);
+        state = setTransforms(state, sys.transforms);
+        // sys.finalTransform is Transform | null; setFinalTransform treats
+        // null as "clear" (stores undefined), so a previous session's lens
+        // never survives a roll that landed on no final transform.
+        state = setFinalTransform(state, sys.finalTransform);
+        // sys.symmetry is SymmetryParams | null (fr-d61; rolled for flat
+        // systems only) — same discipline as the lens above: a null roll
+        // RESETS the order, so a kaleidoscope left over from earlier play
+        // never multiplies a fresh surprise in a way its quality gate never
+        // probed. regenerate() (via applyEdit "always") reads state.symmetry
+        // for both the point cloud and the flame worker's restart payload,
+        // and refreshUi() syncs the slider/axis controls.
+        state = setSymmetryOrder(
+          state,
+          sys.symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
+        );
+        state = setSymmetryAxis(
+          state,
+          sys.symmetry?.axis ?? DEFAULT_SYMMETRY_AXIS,
+        );
+      },
+      "always",
+      morphMs,
+    );
+    // A rolled system never carries a preset's tumbling scaffold (only the
+    // polytope presets do), but one from an earlier visit could still be
+    // showing — clear it unconditionally. (The camera auto-fit rides the
+    // generation request — see applyEdit.)
+    scene.setFourDScaffold(null);
   }
 
   // The one place control-spec.ts's declared effects meet the app's real
@@ -1709,35 +1824,28 @@ function main(): void {
       // preset actually shows up in the renderer its menu group promises.
       pendingRenderMode = PRESET_RENDER_HINTS[preset] ?? null;
     },
-    onSurprise: () => {
-      applyEdit(() => {
-        const sys = randomSystem(Math.random);
-        state = setTransforms(state, sys.transforms);
-        // sys.finalTransform is Transform | null; setFinalTransform treats
-        // null as "clear" (stores undefined), so a previous session's lens
-        // never survives a roll that landed on no final transform.
-        state = setFinalTransform(state, sys.finalTransform);
-        // sys.symmetry is SymmetryParams | null (fr-d61; rolled for flat
-        // systems only) — same discipline as the lens above: a null roll
-        // RESETS the order, so a kaleidoscope left over from earlier play
-        // never multiplies a fresh surprise in a way its quality gate never
-        // probed. regenerate() (via applyEdit "always") reads state.symmetry
-        // for both the point cloud and the flame worker's restart payload,
-        // and refreshUi() syncs the slider/axis controls.
-        state = setSymmetryOrder(
-          state,
-          sys.symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
-        );
-        state = setSymmetryAxis(
-          state,
-          sys.symmetry?.axis ?? DEFAULT_SYMMETRY_AXIS,
-        );
-      }, "always");
-      // A rolled system never carries a preset's tumbling scaffold (only the
-      // polytope presets do), but one from an earlier visit could still be
-      // showing — clear it unconditionally. (The camera auto-fit rides the
-      // generation request — see applyEdit.)
-      scene.setFourDScaffold(null);
+    // A manual press is a manual replace-load, so applyEdit (inside) also
+    // ends a running drift show — the show's own legs take the same path
+    // with a longer morph (see advanceDrift).
+    onSurprise: () => rollSurpriseSystem(),
+    // The ambient drift show's toggle (fr-wavo). Session-only, never
+    // persisted; the button is disabled under reduced motion
+    // (syncDriftAvailability), and the guard here covers a preference flip
+    // that raced the disable. Starting the show closes the panel like
+    // "Watch it build" does — it's a lean-back display; the current
+    // attractor gets a full dwell before the first departure (drift.ts).
+    // Stopping keeps the display exactly where it is: a mid-glide morph
+    // finishes on its own (MorphTween has no cancel, by design).
+    onDriftToggle: () => {
+      if (driftShow.active) {
+        stopDrift();
+        return;
+      }
+      if (prefersReducedMotion()) return;
+      driftShow.start();
+      ui.setDriftActive(true);
+      state = setPanelOpen(state, false);
+      ui.updateLabels(state);
     },
     // The generic scalar pipeline (fr-dig): view guard → undo checkpoint +
     // debounced save for document edits → the spec's own parse + reducer →
@@ -1748,7 +1856,13 @@ function main(): void {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
       const previous = state;
-      if (spec.persisted !== false) editSession.beginEdit();
+      // Undoable document edits end the drift show (fr-wavo); the
+      // session-only specs (persisted: false — e.g. autoUpdate) are view
+      // preferences and leave it running, like camera input.
+      if (spec.persisted !== false) {
+        stopDrift();
+        editSession.beginEdit();
+      }
       state = applyScalarControl(state, spec, raw);
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
@@ -1765,6 +1879,7 @@ function main(): void {
     // point cloud's height/radius ramps can select the custom gradient too
     // (fr-3b6) — a recolor over the cached run, never a regenerate.
     onCustomPaletteStops: (stops) => {
+      stopDrift();
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
       ui.updateLabels(state);
@@ -1791,6 +1906,7 @@ function main(): void {
     // the flame/solid renders snapshot the colors at entry, and the pickers
     // are unreachable while a render is active (the explorer block hides).
     onPositionAxisColors: (colors) => {
+      stopDrift();
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
@@ -1804,6 +1920,9 @@ function main(): void {
     // the About dialog + panel so the stage is actually watchable.
     onWatchBuild: () => {
       switchRenderMode("points");
+      // A replay and the drift show can't share the stage: a drift leg's
+      // regeneration would kill the replay a few seconds in (fr-wavo).
+      stopDrift();
       // Snap any in-flight morph before replaying (fr-a04l): the replay
       // reveals the displayed buffer, which should be the settled target,
       // not a mid-morph intermediate. (Morph landings cancel a replay
@@ -1879,6 +1998,7 @@ function main(): void {
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
+      stopDrift();
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
@@ -1908,6 +2028,7 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
+      stopDrift();
       editSession.beginEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
@@ -1980,6 +2101,9 @@ function main(): void {
     selectedTransform: selectedBox,
     frozen: () => state.renderMode === "flame",
     onTransformChange: (index, geometry) => {
+      // A guide-box drag is a system edit (unlike a camera drag): it ends
+      // the drift show like every other undoable edit (fr-wavo).
+      stopDrift();
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
@@ -2084,6 +2208,22 @@ function main(): void {
   editSession.syncUi();
   ui.setCollectionCount(collection.size);
 
+  // Drift is unavailable under reduced motion — no motion means no drift
+  // (fr-wavo): the toggle disables itself with an explanation rather than
+  // silently doing nothing. Tracked live, so flipping the OS preference
+  // mid-session both disables the toggle and ends a running show
+  // immediately (advanceDrift's leg-boundary check is the belt-and-braces
+  // for engines that never fire the change event).
+  const reducedMotionQuery = window.matchMedia?.(
+    "(prefers-reduced-motion: reduce)",
+  );
+  function syncDriftAvailability(): void {
+    ui.setDriftAvailable(!prefersReducedMotion());
+    if (prefersReducedMotion()) stopDrift();
+  }
+  syncDriftAvailability();
+  reducedMotionQuery?.addEventListener("change", syncDriftAvailability);
+
   // While a flame render is active, accumulation/downsample/tone-map all
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"
   // events (handleFlameEvent) — this loop just keeps redrawing whatever
@@ -2139,6 +2279,17 @@ function main(): void {
     // can never sit here stale.
     const morphSample = morphTween.sample(now);
     if (morphSample) requestMorphSample(morphSample);
+    // The ambient drift show (fr-wavo): when a dwell elapses, launch the
+    // next leg — a Surprise-Me roll gliding over DRIFT_MORPH_MS (see
+    // advanceDrift). Polled AFTER the morph sample above on purpose: on a
+    // backgrounded tab's catch-up frame both come due at once, and the
+    // in-flight leg must land first (its terminal replaced/fit request just
+    // went out) — firing the new leg first would chain off the stale tween
+    // and swallow that landing. Between legs this is a single comparison
+    // (drift.ts), so a dwelling show costs no per-frame work. The render
+    // modes' early returns above stop the poll, but switchRenderMode
+    // already ended the show on the way out (a stop, not a pause).
+    if (driftShow.frame()) advanceDrift();
     if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
       // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
       // before applyCamera so it lands on this frame. Pure camera motion —
