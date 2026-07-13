@@ -151,8 +151,9 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `scene.ts` — the main Three.js wrapper (scene, camera, renderer, point
     cloud, guide boxes, fog). Three.js is confined to this file,
     `interactions.ts`, and `voxel-material.ts`; everything else works with plain
-    numbers. `captureThumbnail` renders one frame down to a small JPEG data URL
-    for the collection gallery (fr-cai).
+    numbers. `captureThumbnail` reads the display down to a small JPEG data URL
+    for the collection gallery (fr-cai); mode-aware since fr-75sq — a save made
+    from a flame/solid render thumbnails the rendered frame, not the cloud.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `camera-tween.ts` — the orbit camera's two fit motions (pure, tested,
     injected clock), both leaving the orbit angles alone and honoring
@@ -188,10 +189,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     replace-load, unavailable under reduced motion; a render-mode switch
     stops a random show but only holds a collection one — the gallery
     slideshow (`onDriftCollection`) walks `SceneCollection.after`'s loop,
-    re-enters the departed flame/solid mode per leg via `pendingRenderMode`,
-    and departs a still one `DRIFT_RENDER_LINGER_MS` after its render meets
-    the iteration budget (the flame/solid progress events). Between legs the
-    poll is one comparison, so a dwelling show does no per-frame work.
+    plays each entry in the mode it was SAVED from (fr-75sq, via
+    `pendingRenderMode`; untagged = points), and departs a still one
+    `DRIFT_RENDER_LINGER_MS` after its render meets the iteration budget
+    (the flame/solid progress events). Between legs the poll is one
+    comparison, so a dwelling show does no per-frame work.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → done, with narration captions) — the buffer
@@ -223,7 +225,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     single-scene autosave (`persist.ts`) and undo history (`history.ts`).
     `after(id)` (fr-w2ve) is the drift slideshow's loop cursor: the entry
     following an id in gallery order, wrapping, front on a vanished id.
-    Pure, injected storage/clock, tested.
+    An entry saved from a flame/solid render carries that mode
+    (`SavedSceneMode`, fr-75sq) — on the ENTRY, never inside `encoded`, so
+    the document/share-link stays render-mode-less per fr-39y; a garbage
+    mode from storage drops to undefined without losing the entry. Pure,
+    injected storage/clock, tested.
   - `ui.ts` — control panel + transform list, built with `createElement`. The
     panel's categories are an exclusive-open accordion of native
     `<details name="panel-section">` sections (fr-zoi) — the browser owns

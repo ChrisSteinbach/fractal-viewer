@@ -205,3 +205,51 @@ describe("SceneCollection after (the drift show's loop cursor)", () => {
     expect(collection.after(only.id)?.id).toBe(only.id);
   });
 });
+
+describe("SceneCollection saved-from mode (fr-75sq)", () => {
+  it("round-trips a flame/solid mode tag through storage", () => {
+    const storage = fakeStorage();
+    new SceneCollection({ storage }).add("v1=a", "", "flame");
+
+    const reloaded = new SceneCollection({ storage });
+
+    expect(reloaded.all()[0].mode).toBe("flame");
+  });
+
+  it("a points save carries no mode, and stores none", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=a", "");
+
+    expect(collection.all()[0].mode).toBeUndefined();
+    expect(storage.store[COLLECTION_STORAGE_KEY]).not.toContain("mode");
+  });
+
+  it("a re-save from a different renderer re-tags the bumped entry", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    collection.add("v1=dup", "", "solid");
+
+    collection.add("v1=dup", "");
+
+    expect(collection.size).toBe(1);
+    expect(collection.all()[0].mode).toBeUndefined();
+  });
+
+  it("a garbage mode from storage drops to undefined without losing the entry", () => {
+    const entry = {
+      id: "1-0",
+      encoded: "v1=a",
+      thumbnail: "",
+      createdAt: 1,
+      mode: "hologram",
+    };
+    const storage = fakeStorage({
+      [COLLECTION_STORAGE_KEY]: JSON.stringify([entry]),
+    });
+
+    const collection = new SceneCollection({ storage });
+
+    expect(collection.size).toBe(1);
+    expect(collection.all()[0].mode).toBeUndefined();
+  });
+});

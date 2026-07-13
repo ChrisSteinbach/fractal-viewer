@@ -18,6 +18,16 @@
  */
 
 /**
+ * The render mode a scene was SAVED from, when it wasn't the points explorer
+ * (fr-75sq). Absent means points — which also keeps every pre-fr-75sq entry
+ * valid as-is. Deliberately a field on the collection ENTRY, never inside
+ * `encoded`: the document (and with it share links, the autosave, and undo
+ * history) stays render-mode-less per fr-39y; only the user's own gallery
+ * remembers how a keeper was meant to be displayed.
+ */
+export type SavedSceneMode = "flame" | "solid";
+
+/**
  * One saved scene in the collection. `encoded` is a `persist.ts`
  * `encodeScene` wire string (an opaque, immutable, comparable "v1=..."
  * string to this module — it never decodes it, just like `history.ts` never
@@ -30,6 +40,9 @@ export interface SavedScene {
   thumbnail: string;
   /** ms epoch, from the injected clock (see `CollectionDeps.now`). */
   createdAt: number;
+  /** Display mode the scene was saved from; absent = the points explorer
+   * (see {@link SavedSceneMode}). */
+  mode?: SavedSceneMode;
 }
 
 /** localStorage key the collection is persisted under; distinct from
@@ -52,7 +65,10 @@ export interface CollectionDeps {
  * corrupt write, a manual edit, or a future/older build's shape could put
  * anything there — so entries are checked individually and dropped rather
  * than rejecting the whole load, matching this module's never-throw
- * contract on untrusted input.
+ * contract on untrusted input. The optional `mode` is NOT checked here —
+ * a garbage value shouldn't cost the whole entry; `sanitizedMode` drops the
+ * field alone instead, the same lenience `persist.ts` shows a malformed
+ * camera pose.
  */
 function isSavedScene(v: unknown): v is SavedScene {
   if (typeof v !== "object" || v === null) return false;
@@ -63,6 +79,12 @@ function isSavedScene(v: unknown): v is SavedScene {
     typeof o.thumbnail === "string" &&
     Number.isFinite(o.createdAt)
   );
+}
+
+/** The entry's `mode` if it is a known {@link SavedSceneMode}, else
+ * undefined (= points) — see `isSavedScene` on why this never rejects. */
+function sanitizedMode(v: unknown): SavedSceneMode | undefined {
+  return v === "flame" || v === "solid" ? v : undefined;
 }
 
 /**
@@ -82,7 +104,16 @@ function loadScenes(
     if (raw === null) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isSavedScene).slice(0, COLLECTION_CAP);
+    return parsed
+      .filter(isSavedScene)
+      .slice(0, COLLECTION_CAP)
+      .map((s) => ({
+        id: s.id,
+        encoded: s.encoded,
+        thumbnail: s.thumbnail,
+        createdAt: s.createdAt,
+        mode: sanitizedMode(s.mode),
+      }));
   } catch {
     return [];
   }
@@ -120,11 +151,14 @@ export class SceneCollection {
   /**
    * Save a scene. If an entry with the identical `encoded` already exists it
    * is removed first — a save "bumps" a duplicate to the front with a fresh
-   * id, thumbnail, and timestamp rather than piling up copies. The new entry
-   * is unshifted to the front (newest-first); if the collection now exceeds
-   * `COLLECTION_CAP`, the oldest (last) entries are evicted. Persists.
+   * id, thumbnail, timestamp, and `mode` (a re-save from a different
+   * renderer re-tags the keeper wholesale) rather than piling up copies. The
+   * new entry is unshifted to the front (newest-first); if the collection
+   * now exceeds `COLLECTION_CAP`, the oldest (last) entries are evicted.
+   * Persists. `mode` is the renderer the save came from; omit for the
+   * points explorer (see {@link SavedSceneMode}).
    */
-  add(encoded: string, thumbnail: string): SavedScene {
+  add(encoded: string, thumbnail: string, mode?: SavedSceneMode): SavedScene {
     this.scenes = this.scenes.filter((s) => s.encoded !== encoded);
     const createdAt = this.now();
     const scene: SavedScene = {
@@ -132,6 +166,7 @@ export class SceneCollection {
       encoded,
       thumbnail,
       createdAt,
+      mode,
     };
     this.scenes.unshift(scene);
     while (this.scenes.length > COLLECTION_CAP) this.scenes.pop();

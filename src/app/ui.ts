@@ -1633,13 +1633,22 @@ export class Ui {
 
   private galleryCard(scene: SavedScene): HTMLElement {
     const label = galleryTimestamp(scene.createdAt);
+    // A saved-from-a-renderer entry (fr-75sq) wears its mode on the caption
+    // with the segmented control's own glyphs, so a mixed gallery reads at a
+    // glance which cards are flame/solid stills. Points entries stay bare.
+    const modeCaption =
+      scene.mode === "flame" ? "✺ " : scene.mode === "solid" ? "◆ " : "";
+    const modeAria = scene.mode === undefined ? "" : ` (${scene.mode} render)`;
     const card = this.doc.createElement("div");
     card.className = "gallery-card";
 
     const load = this.doc.createElement("button");
     load.type = "button";
     load.className = "gallery-card-load";
-    load.setAttribute("aria-label", `Load saved system from ${label}`);
+    load.setAttribute(
+      "aria-label",
+      `Load saved system from ${label}${modeAria}`,
+    );
     load.addEventListener("click", () =>
       this.handlers?.onLoadFromCollection(scene.id),
     );
@@ -1661,7 +1670,7 @@ export class Ui {
 
     const caption = this.doc.createElement("div");
     caption.className = "gallery-card-caption";
-    caption.textContent = label;
+    caption.textContent = `${modeCaption}${label}`;
     load.appendChild(caption);
     card.appendChild(load);
 

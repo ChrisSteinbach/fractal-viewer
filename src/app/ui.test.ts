@@ -3781,6 +3781,22 @@ describe("Ui collection gallery", () => {
     expect(second.querySelector(".gallery-card-noimg")).not.toBeNull();
   });
 
+  it("captions a saved-from-a-renderer entry with its mode glyph (fr-75sq)", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([
+      { ...saved("flameScene"), mode: "flame" as const },
+      { ...saved("solidScene"), mode: "solid" as const },
+      saved("pointsScene"),
+    ]);
+    const captions = Array.from(
+      document.querySelectorAll("#galleryGrid .gallery-card-caption"),
+    ).map((el) => el.textContent ?? "");
+    expect(captions[0]).toMatch(/^✺ /);
+    expect(captions[1]).toMatch(/^◆ /);
+    expect(captions[2]).not.toMatch(/^[✺◆]/);
+  });
+
   it("fires onLoadFromCollection with the scene id when a card is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

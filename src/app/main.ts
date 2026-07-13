@@ -73,7 +73,7 @@ import {
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
-import { SceneCollection } from "./collection";
+import { SceneCollection, type SavedSceneMode } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec4 } from "../fractal/types";
@@ -477,13 +477,17 @@ function main(): void {
    * past a corrupt save, not die on it. At most `size` hops, so a
    * fully-corrupt collection terminates as null (like an empty one).
    */
-  function nextCollectionScene(): { id: string; snap: SceneSnapshot } | null {
+  function nextCollectionScene(): {
+    id: string;
+    snap: SceneSnapshot;
+    mode?: SavedSceneMode;
+  } | null {
     let cursor = driftLastPlayedId;
     for (let hops = 0; hops < collection.size; hops++) {
       const entry = collection.after(cursor);
       if (!entry) return null;
       const snap = decodeScene(entry.encoded);
-      if (snap) return { id: entry.id, snap };
+      if (snap) return { id: entry.id, snap, mode: entry.mode };
       cursor = entry.id;
     }
     return null;
@@ -491,39 +495,59 @@ function main(): void {
 
   // One COLLECTION-sourced drift leg (fr-w2ve): a gallery load on the show's
   // behalf — the same "replace" checkpoint + morphing applyDecodedSnapshot
-  // as loadEncodedScene, stretched over the drift glide. Two deliberate
-  // differences from a manual load: the camera always auto-fits and CHASES
+  // as loadEncodedScene, stretched over the drift glide. One deliberate
+  // difference from a manual load: the camera always auto-fits and CHASES
   // the morph (fr-cfoc) rather than snapping to the entry's saved pose — a
-  // hard pose cut every leg would break the ambience the show exists for —
-  // and, when the show is displaying as a flame/solid slideshow, the leg
-  // re-arms pendingRenderMode with the mode it departed from, so the
-  // TERMINAL cloud re-enters that renderer over the freshly loaded scene
-  // (the exact preset-hint path, applyCloudResult) with the scene's own
-  // saved flame/solid settings. An emptied-out (or fully corrupt)
-  // collection ends the show at the leg boundary, like reduced motion does.
+  // hard pose cut every leg would break the ambience the show exists for.
+  // An emptied-out (or fully corrupt) collection ends the show at the leg
+  // boundary, like reduced motion does.
+  //
+  // Every entry plays in the mode it was SAVED from (fr-75sq): a tagged
+  // entry re-enters its renderer when the terminal cloud lands (the
+  // preset-hint path, applyCloudResult) with the scene's own saved
+  // flame/solid settings; an untagged entry is a points save and plays as
+  // the classic morphing cloud — applyDecodedSnapshot already dropped the
+  // view to points, and no hint is armed. A manual mode switch mid-show is
+  // a look-around: it survives (switchRenderMode holds the show for the
+  // entering render), but the next leg reasserts its own entry's mode.
   function advanceCollectionLeg(): void {
     const next = nextCollectionScene();
     if (!next) {
       stopDrift();
       return;
     }
-    const returnMode = state.renderMode;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
     // Re-arm AFTER applyDecodedSnapshot, which clears pendingRenderMode on
     // every load (a restored document must not trigger a stale preset hint —
-    // this is not that: it's the show putting its own display mode back).
-    if (returnMode !== "points") pendingRenderMode = returnMode;
+    // this is not that: it's the show arming the entry's own display mode).
+    if (next.mode) pendingRenderMode = next.mode;
     driftLastPlayedId = next.id;
   }
 
-  // A converging flame/solid render reported progress. When the collection
-  // show is HOLDING for that render (switchRenderMode held it on the way
-  // in), a met iteration budget re-arms the next departure a beat out —
-  // "wait for the render to complete, then a second longer" (fr-w2ve).
-  // resumeAfter acts only while holding, so ordinary renders, a stopped
-  // show, and an already-resumed one are all untouched by stray progress.
-  function noteDriftRenderProgress(done: number, budget: number): void {
+  // Whether each renderer's CURRENT session has met its iteration budget —
+  // maintained by noteRenderProgress below and reset by the sessions' own
+  // resetProgress deps (which run on every enter), so it can never describe
+  // a previous session. Read by onDriftCollection: a show started from
+  // INSIDE a converging render (the Collection section is reachable there
+  // since fr-75sq) must hold for that render's completion rather than
+  // dwell-and-yank it.
+  const renderComplete = { flame: false, solid: false };
+
+  // A converging flame/solid render reported progress: record whether its
+  // budget is met (a budget raised on a finished render genuinely
+  // un-completes it — the worker resumes accumulating), and, when the
+  // collection show is HOLDING for this render (switchRenderMode held it on
+  // the way in), re-arm the next departure a beat out — "wait for the
+  // render to complete, then a second longer" (fr-w2ve). resumeAfter acts
+  // only while holding, so ordinary renders, a stopped show, and an
+  // already-resumed one are all untouched by stray progress.
+  function noteRenderProgress(
+    mode: "flame" | "solid",
+    done: number,
+    budget: number,
+  ): void {
+    renderComplete[mode] = done >= budget;
     if (done >= budget) driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
   }
 
@@ -1183,7 +1207,11 @@ function main(): void {
       case "progress":
         scene.setFlameImage(event.image, event.width, event.height);
         ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
-        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
+        noteRenderProgress(
+          "flame",
+          event.iterationsDone,
+          event.iterationsBudget,
+        );
         flameSession.markFirstFrame();
         break;
       case "sharedFrame":
@@ -1195,7 +1223,11 @@ function main(): void {
           flameShared.last = { slot: event.slot, maxHits: event.maxHits };
           presentSharedFrame();
           ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
-          noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
+          noteRenderProgress(
+            "flame",
+            event.iterationsDone,
+            event.iterationsBudget,
+          );
           flameSession.markFirstFrame();
         }
         break;
@@ -1414,6 +1446,7 @@ function main(): void {
     },
     resetProgress: () => {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
+      renderComplete.flame = false; // ...and the completion flag with it (fr-75sq): this fresh session hasn't met any budget yet.
     },
     activate: () => {
       state = setRenderMode(state, "flame");
@@ -1444,14 +1477,22 @@ function main(): void {
           event.boundsMax,
         );
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
-        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
+        noteRenderProgress(
+          "solid",
+          event.iterationsDone,
+          event.iterationsBudget,
+        );
         solidSession.markFirstFrame();
         break;
       case "progress":
         // Counters-only label refresh (the displayed texture is already
         // final) — e.g. the budget slider moved on a finished render.
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
-        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
+        noteRenderProgress(
+          "solid",
+          event.iterationsDone,
+          event.iterationsBudget,
+        );
         break;
       case "resolutionNote":
         ui.setSolidResolutionNote(event.effective, event.requested);
@@ -1541,6 +1582,7 @@ function main(): void {
     },
     resetProgress: () => {
       ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
+      renderComplete.solid = false; // ...and the completion flag with it (fr-75sq), like the flame session's resetProgress.
     },
     activate: () => {
       // Drop any transform selection: the lens has no guide box in this mode,
@@ -1579,7 +1621,7 @@ function main(): void {
       // slideshow (fr-w2ve) — the render mode is how the show displays, not
       // a reach into it — but HELD: the clock deadline is void while the
       // entering render converges; the render's own completed-progress
-      // signal re-arms the departure (noteDriftRenderProgress), so a leg can
+      // signal re-arms the departure (noteRenderProgress), so a leg can
       // never yank a still that is mid-convergence. This runs for a manual
       // switch AND for the show's own per-leg re-entry (the pendingRenderMode
       // consumption in applyCloudResult) — both want exactly this hold.
@@ -1797,14 +1839,17 @@ function main(): void {
    * an auto-fit for pose-less pre-fr-1k4 entries. A corrupt entry (decode
    * returns null — can't happen for our own encodeScene output, but the
    * collection is untrusted localStorage) is ignored rather than blanking
-   * the current scene.
+   * the current scene; the boolean return says whether the load actually
+   * applied, so onLoadFromCollection never arms a render-mode hint
+   * (fr-75sq) for a load that never happened.
    */
-  function loadEncodedScene(encoded: string): void {
+  function loadEncodedScene(encoded: string): boolean {
     const snap = decodeScene(encoded);
-    if (!snap) return;
+    if (!snap) return false;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
+    return true;
   }
 
   /**
@@ -2088,11 +2133,26 @@ function main(): void {
     // Saved-scene collection (fr-cai). Save/copy act on the CURRENT document
     // (the same encodeScene(currentDocument()) the autosave uses — camera
     // pose included, fr-1k4, so a loaded entry restores its framing); the
-    // thumbnail is a downsampled snapshot of the live cloud. These are reachable
-    // only from the explorer (their section hides during a render), so the
-    // thumbnail is always the point cloud, never a frozen flame/solid frame.
+    // thumbnail is a downsampled snapshot of what is actually showing —
+    // reachable in every render mode since fr-75sq, so a save made from a
+    // flame/solid render captures the rendered frame and tags the entry
+    // with the mode it came from (loading it re-enters that renderer, and a
+    // drift-collection leg plays it there). During a render's first-frame
+    // gap the screen still shows the explorer (the sessions' first-frame
+    // gate), so the thumbnail honestly captures that instead — the tag
+    // stays the render's, which is what the save meant.
     onSaveToCollection: () => {
-      collection.add(encodeScene(currentDocument()), scene.captureThumbnail());
+      const thumbnailMode =
+        state.renderMode === "flame" && flameSession.hasFirstFrame
+          ? "flame"
+          : state.renderMode === "solid" && solidSession.hasFirstFrame
+            ? "solid"
+            : "points";
+      collection.add(
+        encodeScene(currentDocument()),
+        scene.captureThumbnail(thumbnailMode),
+        state.renderMode === "points" ? undefined : state.renderMode,
+      );
       ui.setCollectionCount(collection.size);
       ui.flashToast("Saved to collection");
     },
@@ -2112,6 +2172,14 @@ function main(): void {
       driftSource = "collection";
       driftLastPlayedId = null;
       driftShow.start();
+      // Started from inside a CONVERGING flame/solid render (the gallery is
+      // reachable there since fr-75sq): hold the first departure for that
+      // render's completion — start()'s plain dwell would yank a still
+      // mid-convergence. A render that already met its budget sends no
+      // further progress, so it keeps the dwell instead (renderComplete).
+      if (state.renderMode !== "points" && !renderComplete[state.renderMode]) {
+        driftShow.hold();
+      }
       ui.setDriftActive(true);
       ui.closeGallery();
       state = setPanelOpen(state, false);
@@ -2121,7 +2189,13 @@ function main(): void {
       const entry = collection.all().find((s) => s.id === id);
       if (!entry) return; // deleted between render and click — nothing to load.
       ui.closeGallery();
-      loadEncodedScene(entry.encoded);
+      // A tagged entry re-enters the renderer it was saved from when its
+      // restored cloud lands (fr-75sq) — the preset-hint path. Armed only
+      // when the load actually applied (a corrupt entry must not leave a
+      // stale hint), and AFTER it: applyDecodedSnapshot clears the hint.
+      if (loadEncodedScene(entry.encoded) && entry.mode) {
+        pendingRenderMode = entry.mode;
+      }
     },
     onDeleteFromCollection: (id) => {
       collection.remove(id);

@@ -126,6 +126,27 @@
         </button>
       </details>
 
+      <!-- Outside #explorerControls on purpose (fr-75sq), like Export: saving
+           a keeper / opening the gallery works while a flame/solid render is
+           showing — the save then captures the rendered frame and tags the
+           entry with the mode it came from. -->
+      <details
+        class="panel-section"
+        id="collectionSection"
+        name="panel-section"
+      >
+        <summary>Collection</summary>
+        <button class="btn btn-green" id="saveCollectionBtn" type="button">
+          ★ Save to collection
+        </button>
+        <button class="btn btn-ghost" id="galleryBtn" type="button">
+          ▦ Gallery (<span id="collectionCount">0</span>)
+        </button>
+        <button class="btn btn-ghost" id="copyLinkBtn" type="button">
+          🔗 Copy link
+        </button>
+      </details>
+
       <div id="explorerControls">
         <div class="btn-row">
           <button
@@ -220,23 +241,6 @@
             title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
           >
             ▶ Drift
-          </button>
-        </details>
-
-        <details
-          class="panel-section"
-          id="collectionSection"
-          name="panel-section"
-        >
-          <summary>Collection</summary>
-          <button class="btn btn-green" id="saveCollectionBtn" type="button">
-            ★ Save to collection
-          </button>
-          <button class="btn btn-ghost" id="galleryBtn" type="button">
-            ▦ Gallery (<span id="collectionCount">0</span>)
-          </button>
-          <button class="btn btn-ghost" id="copyLinkBtn" type="button">
-            🔗 Copy link
           </button>
         </details>
 
