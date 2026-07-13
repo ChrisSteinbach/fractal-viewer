@@ -76,7 +76,7 @@ import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection } from "./collection";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
-import type { Vec4 } from "../fractal/types";
+import type { Bounds, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -758,8 +758,27 @@ function main(): void {
 
     // Auto-frame the camera on a whole-system load's fresh attractor
     // (fr-0b8) — deferred to arrival with everything else, so it frames the
-    // cloud actually going on screen.
-    if (request.fit) fitCameraToAttractor();
+    // cloud actually going on screen. While a fit-intent morph is still in
+    // flight (fr-cfoc), its intermediates instead TRACK the camera onto the
+    // morphing attractor's live bounds — the terminal sample's fit then
+    // settles from an already-following pose instead of yanking across
+    // however far the shape wandered during the tween. Deliberately reads
+    // live state (morphTween/morphFinalFit/gestures): tracking is a
+    // display-follow concern — "is a fit-morph showing RIGHT NOW, and is the
+    // user's hand off the camera" — not a property of the request. The
+    // gesture guard keeps an arrival from re-arming the chase the user's
+    // grab just cancelled (cancelTween); once the hand lifts, the next
+    // arrival resumes the follow, which is the same fit intent the terminal
+    // sample lands anyway.
+    if (request.fit) {
+      fitCameraToAttractor();
+    } else if (
+      morphTween.active &&
+      morphFinalFit &&
+      !gestures.gestureActive()
+    ) {
+      trackCameraToAttractor();
+    }
 
     // A preset that declares a render-mode hint (fr-39y) enters its renderer
     // HERE, when its whole-system replacement actually lands — not at click
@@ -916,24 +935,42 @@ function main(): void {
     prefersReducedMotion,
   );
 
-  // Choose the bounds for the current view and glide the camera to frame them:
-  // the 4D branch synthesizes a rotation-invariant box (fourDFramingBounds);
-  // the 3D branch frames the latest run's bounds. A no-op until a run exists.
-  function fitCameraToAttractor(): void {
-    const framing = { fov: scene.camera.fov, aspect: scene.camera.aspect };
+  // The bounds a camera fit of the current view should frame: the 4D branch
+  // synthesizes a rotation-invariant box (fourDFramingBounds — radius is
+  // rotation-invariant, so one framing holds at every tumble angle); the 3D
+  // branch is the latest run's own bounds. Null until a run exists.
+  function attractorFramingBounds(): Bounds | null {
     if (viewIs4D) {
-      // radius is rotation-invariant, so framing the synthesized box once
-      // holds at every tumble angle (see fourDFramingBounds).
-      if (fourDResult) {
-        cameraTween.fitToBounds(
-          fourDFramingBounds(fourDResult.center, fourDResult.radius),
-          framing,
-        );
-      }
-      return;
+      return fourDResult
+        ? fourDFramingBounds(fourDResult.center, fourDResult.radius)
+        : null;
     }
-    if (!lastResult) return;
-    cameraTween.fitToBounds(lastResult.bounds, framing);
+    return lastResult ? lastResult.bounds : null;
+  }
+
+  // Glide the camera to frame the current view's bounds. A no-op until a run
+  // exists.
+  function fitCameraToAttractor(): void {
+    const bounds = attractorFramingBounds();
+    if (!bounds) return;
+    cameraTween.fitToBounds(bounds, {
+      fov: scene.camera.fov,
+      aspect: scene.camera.aspect,
+    });
+  }
+
+  // The fit's morph-time sibling (fr-cfoc): retarget the tracking chase at
+  // the current view's bounds, so the camera follows the morphing attractor
+  // frame by frame instead of letting it wander off-screen until the
+  // terminal fit yanks it back. Called per intermediate arrival — see
+  // applyCloudResult.
+  function trackCameraToAttractor(): void {
+    const bounds = attractorFramingBounds();
+    if (!bounds) return;
+    cameraTween.track(bounds, {
+      fov: scene.camera.fov,
+      aspect: scene.camera.aspect,
+    });
   }
 
   /**

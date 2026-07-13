@@ -3,6 +3,9 @@
  * camera's target + radius that frames a freshly-generated attractor, extracted
  * from main.ts's closure so the pure interpolation is unit-tested without a
  * browser — the same way `orbit.ts` is for the rest of the camera math.
+ * Since fr-cfoc it also owns the morph-tracking CHASE, the glide's sibling
+ * that follows a MOVING fit — see {@link CameraTween}'s doc for how the two
+ * motions relate.
  *
  * A whole-system replacement (preset load / Surprise Me) can leave the previous
  * camera pointed at empty space or buried inside the new cloud, so instead of
@@ -25,6 +28,16 @@ import { boundsCenter, fitRadius, smoothstep, type OrbitCamera } from "./orbit";
 
 /** Duration of the auto-fit glide, in milliseconds. */
 export const CAMERA_TWEEN_MS = 600;
+
+/**
+ * Time constant of the tracking chase (fr-cfoc), in milliseconds: each
+ * {@link CameraTween.advance} closes `1 - exp(-dt/τ)` of the remaining
+ * distance to the tracked fit, so the camera follows a morphing attractor
+ * with ~this much lag — fast enough to keep it framed across a multi-second
+ * morph, slow enough to low-pass the frame-to-frame bounds noise of a
+ * re-sampled point cloud (a single stray point can kick a raw min/max box).
+ */
+export const CAMERA_TRACK_TAU_MS = 350;
 
 /**
  * The perspective parameters the fit distance is solved against: a Three.js
@@ -73,15 +86,42 @@ interface Tween {
   toTarget: Vec3;
 }
 
+/** In-flight tracking chase (fr-cfoc): the fit currently being chased + the
+ * clock reading of the last advance (for the dt-aware step). Retargeted in
+ * place by every {@link CameraTween.track} call; never self-terminating —
+ * a fit glide, a cancel, or a finish ends it. */
+interface Chase {
+  toRadius: number;
+  toTarget: Vec3;
+  lastMs: number;
+}
+
 /**
  * The auto-fit camera glide state machine over an {@link OrbitCamera}. main.ts
  * calls {@link fitToBounds} to start a glide (from `fitCameraToAttractor`),
  * {@link advance} once per frame from the animate loop before `applyCamera`,
  * and {@link cancel} on the next user gesture so grabbing the camera mid-glide
  * feels like a normal orbit rather than a fight with the animation.
+ *
+ * Two mutually exclusive motions (fr-cfoc):
+ *
+ * - The **glide** ({@link fitToBounds}): a one-shot {@link CAMERA_TWEEN_MS}
+ *   smoothstep to a fixed fit — a whole-system load's landing.
+ * - The **chase** ({@link track}): a dt-aware exponential approach toward a
+ *   fit that is retargeted every time a morph intermediate lands, so the
+ *   camera FOLLOWS the morphing attractor instead of letting it wander
+ *   off-frame for the whole tween and then yanking into place at the end —
+ *   the "abrupt recentering" a drift leg used to finish with. The morph's
+ *   terminal sample still carries the real `fit`, whose glide takes over
+ *   from the chase for the settle: from an already-tracking pose that final
+ *   glide is a short touch-down rather than a leap.
+ *
+ * Starting either motion clears the other — whichever was requested last is
+ * the live intent.
  */
 export class CameraTween {
   private tween: Tween | null = null;
+  private chase: Chase | null = null;
 
   /**
    * @param orbit The camera this glide mutates in place (target + radius).
@@ -96,31 +136,51 @@ export class CameraTween {
     private readonly reducedMotion: () => boolean,
   ) {}
 
-  /** Whether a glide is currently in flight. */
+  /** Whether a glide or a tracking chase is currently in flight. */
   get active(): boolean {
-    return this.tween !== null;
+    return this.tween !== null || this.chase !== null;
+  }
+
+  /** The fit for `bounds` under `framing` — the shared target both motions
+   * steer toward. */
+  private fitFor(
+    bounds: Bounds,
+    framing: CameraFraming,
+  ): { toTarget: Vec3; toRadius: number } {
+    return {
+      toTarget: boundsCenter(bounds),
+      toRadius: fitRadius(
+        bounds,
+        (framing.fov * Math.PI) / 180,
+        framing.aspect,
+      ),
+    };
+  }
+
+  /** Jump the camera straight to a fit — the reduced-motion path of both
+   * motions, clearing whichever was in flight. */
+  private snapTo(toTarget: Vec3, toRadius: number): void {
+    this.orbit.target[0] = toTarget[0];
+    this.orbit.target[1] = toTarget[1];
+    this.orbit.target[2] = toTarget[2];
+    this.orbit.spherical.radius = toRadius;
+    this.tween = null;
+    this.chase = null;
   }
 
   /**
    * Frame `bounds` by gliding the orbit target to its center and the radius to
    * the fit distance for `framing`. Under reduced motion, snaps there instantly
-   * (and clears any in-flight glide) instead of tweening.
+   * (and clears any in-flight motion) instead of tweening. Replaces a running
+   * {@link track} chase: the glide is the landing's settle.
    */
   fitToBounds(bounds: Bounds, framing: CameraFraming): void {
-    const toTarget = boundsCenter(bounds);
-    const toRadius = fitRadius(
-      bounds,
-      (framing.fov * Math.PI) / 180,
-      framing.aspect,
-    );
+    const { toTarget, toRadius } = this.fitFor(bounds, framing);
     if (this.reducedMotion()) {
-      this.orbit.target[0] = toTarget[0];
-      this.orbit.target[1] = toTarget[1];
-      this.orbit.target[2] = toTarget[2];
-      this.orbit.spherical.radius = toRadius;
-      this.tween = null;
+      this.snapTo(toTarget, toRadius);
       return;
     }
+    this.chase = null;
     this.tween = {
       startMs: this.now(),
       fromRadius: this.orbit.spherical.radius,
@@ -135,42 +195,81 @@ export class CameraTween {
   }
 
   /**
-   * Advance the in-flight glide (a no-op when idle): interpolate the orbit
-   * target + radius by the smoothstep of elapsed/{@link CAMERA_TWEEN_MS} and
-   * clear the glide once it reaches the target (t ≥ 1). Called from animate()
-   * before `applyCamera` so the frame it takes effect on is the one drawn.
+   * Chase the fit for `bounds` (fr-cfoc): start — or retarget in place — the
+   * exponential follow {@link advance} steps toward every frame. Call once
+   * per morph-intermediate arrival with that result's live bounds; the chase
+   * keeps its own pace ({@link CAMERA_TRACK_TAU_MS}), so however irregular
+   * the arrivals, the camera's motion stays smooth. Replaces an in-flight
+   * glide (the chase is the fresher intent). Under reduced motion, snaps to
+   * the fit instantly — morphs don't run there, so this is belt-and-braces.
    */
-  advance(): void {
-    if (!this.tween) return;
-    const { startMs, fromRadius, toRadius, fromTarget, toTarget } = this.tween;
-    const t = smoothstep((this.now() - startMs) / CAMERA_TWEEN_MS);
-    this.orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
-    this.orbit.target[0] = fromTarget[0] + (toTarget[0] - fromTarget[0]) * t;
-    this.orbit.target[1] = fromTarget[1] + (toTarget[1] - fromTarget[1]) * t;
-    this.orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
-    if (t >= 1) this.tween = null;
-  }
-
-  /** Cancel any in-flight glide outright — the next user gesture calls this. */
-  cancel(): void {
+  track(bounds: Bounds, framing: CameraFraming): void {
+    const { toTarget, toRadius } = this.fitFor(bounds, framing);
+    if (this.reducedMotion()) {
+      this.snapTo(toTarget, toRadius);
+      return;
+    }
     this.tween = null;
+    if (this.chase) {
+      // Retarget without touching lastMs — the next advance() still
+      // measures its dt from the last step, not from this arrival.
+      this.chase.toTarget = toTarget;
+      this.chase.toRadius = toRadius;
+      return;
+    }
+    this.chase = { toTarget, toRadius, lastMs: this.now() };
   }
 
   /**
-   * Complete any in-flight glide instantly: jump the camera to the glide's
-   * end target/radius and clear it. A no-op when idle. Used when a preset's
+   * Advance the in-flight motion (a no-op when idle). A glide interpolates
+   * the orbit target + radius by the smoothstep of elapsed/{@link
+   * CAMERA_TWEEN_MS} and clears itself once it reaches the target (t ≥ 1); a
+   * chase closes `1 - exp(-dt/τ)` of its remaining distance and never
+   * self-terminates (see {@link track}). Called from animate() before
+   * `applyCamera` so the frame it takes effect on is the one drawn.
+   */
+  advance(): void {
+    if (this.tween) {
+      const { startMs, fromRadius, toRadius, fromTarget, toTarget } =
+        this.tween;
+      const t = smoothstep((this.now() - startMs) / CAMERA_TWEEN_MS);
+      this.orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
+      this.orbit.target[0] = fromTarget[0] + (toTarget[0] - fromTarget[0]) * t;
+      this.orbit.target[1] = fromTarget[1] + (toTarget[1] - fromTarget[1]) * t;
+      this.orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
+      if (t >= 1) this.tween = null;
+      return;
+    }
+    if (!this.chase) return;
+    const now = this.now();
+    const dt = Math.max(0, now - this.chase.lastMs);
+    this.chase.lastMs = now;
+    const alpha = 1 - Math.exp(-dt / CAMERA_TRACK_TAU_MS);
+    const { toTarget, toRadius } = this.chase;
+    this.orbit.spherical.radius +=
+      (toRadius - this.orbit.spherical.radius) * alpha;
+    this.orbit.target[0] += (toTarget[0] - this.orbit.target[0]) * alpha;
+    this.orbit.target[1] += (toTarget[1] - this.orbit.target[1]) * alpha;
+    this.orbit.target[2] += (toTarget[2] - this.orbit.target[2]) * alpha;
+  }
+
+  /** Cancel any in-flight motion outright — the next user gesture calls this. */
+  cancel(): void {
+    this.tween = null;
+    this.chase = null;
+  }
+
+  /**
+   * Complete any in-flight motion instantly: jump the camera to its end
+   * target/radius and clear it. A no-op when idle. Used when a preset's
    * render-mode hint (fr-39y) enters the flame render right as the fresh
    * cloud lands — the flame freezes the camera into its projection snapshot
    * at enter time, so the fit must have LANDED by then, not still be gliding
    * toward frame.
    */
   finish(): void {
-    if (!this.tween) return;
-    const { toRadius, toTarget } = this.tween;
-    this.orbit.spherical.radius = toRadius;
-    this.orbit.target[0] = toTarget[0];
-    this.orbit.target[1] = toTarget[1];
-    this.orbit.target[2] = toTarget[2];
-    this.tween = null;
+    const end = this.tween ?? this.chase;
+    if (!end) return;
+    this.snapTo(end.toTarget, end.toRadius);
   }
 }
