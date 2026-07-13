@@ -87,6 +87,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     `FourDRenderColor` modes, fixed-point soft-slice weights), pinned against
     `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios
     (and the same static variation-switch pin in vitest).
+  - `morph.ts` — pure interpolation between two attractor-shaping systems
+    (`lerpSystem`, fr-idze) for replace-load tweening instead of a snap:
+    endpoint-exact at t=0/1 (the same object reference), rotation lerped
+    through the nearest turn, a transform-count mismatch fading surplus
+    maps in/out by weight with their geometry pinned bit-exact, flat↔4D
+    pairs kept continuous via the derived w-scale, and kaleidoscope
+    symmetry snapping at the t=0.5 midpoint.
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
     256×3 LUT) shared by the flame and solid renders and (fr-3b6) the
     explorer's height/radius ramp recolor; the `"legacy"` sentinel
