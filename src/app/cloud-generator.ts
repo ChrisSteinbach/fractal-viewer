@@ -61,13 +61,24 @@ export interface CloudGeneratorDeps {
    * synchronous fallback, and {@link CloudGenerator.generateSync}'s path. */
   computeSync: (request: CloudRequest) => CloudResult;
   /** Deliver a finished result together with the request that produced it
-   * (whose `replaced`/`fit` flags the arrival handler acts on). Never called
-   * for a result a newer `generateSync` has already superseded. */
-  onResult: (result: CloudResult, request: CloudRequest) => void;
+   * (whose `replaced`/`fit` flags the arrival handler acts on) and the
+   * generation's measured latency in ms — post→reply on the worker path,
+   * around the compute on the synchronous paths — which feeds the morph's
+   * adaptive point budget (`morph-budget.ts`, fr-a5gu). Never called for a
+   * result a newer `generateSync` has already superseded. */
+  onResult: (
+    result: CloudResult,
+    request: CloudRequest,
+    elapsedMs: number,
+  ) => void;
+  /** Monotonic clock in ms backing that measurement. Defaults to
+   * `performance.now()`; injected by tests. */
+  now?: () => number;
 }
 
 export class CloudGenerator {
   private readonly deps: CloudGeneratorDeps;
+  private readonly now: () => number;
   private worker: CloudWorkerHandle | null = null;
   /** True once the generator has given up on the worker — permanent
    * synchronous mode. Never reset: a worker that failed once (missing chunk,
@@ -76,6 +87,9 @@ export class CloudGenerator {
   private nextId = 1;
   /** The request the worker is computing right now, or null when idle. */
   private inFlight: CloudRequest | null = null;
+  /** Clock reading when {@link inFlight} was posted — the start of the
+   * latency measurement `onResult` reports. */
+  private sentAtMs = 0;
   /** The single latest-wins slot for a request made while one is in flight. */
   private pending: CloudRequest | null = null;
   /** Results with `id` below this were superseded by a `generateSync` and
@@ -84,6 +98,7 @@ export class CloudGenerator {
 
   constructor(deps: CloudGeneratorDeps) {
     this.deps = deps;
+    this.now = deps.now ?? ((): number => performance.now());
     try {
       this.worker = deps.createWorker(
         (result) => this.handleResult(result),
@@ -99,7 +114,7 @@ export class CloudGenerator {
   request(params: CloudParams): void {
     const request: CloudRequest = { ...params, id: this.nextId++ };
     if (this.broken) {
-      this.deps.onResult(this.deps.computeSync(request), request);
+      this.computeAndDeliver(request);
       return;
     }
     if (this.inFlight !== null) {
@@ -129,11 +144,20 @@ export class CloudGenerator {
     const request: CloudRequest = { ...params, id: this.nextId++ };
     this.staleBelowId = request.id;
     this.pending = null;
-    this.deps.onResult(this.deps.computeSync(request), request);
+    this.computeAndDeliver(request);
+  }
+
+  /** Run `request` through the synchronous compute and deliver it, timing
+   * the compute for `onResult`'s latency report. */
+  private computeAndDeliver(request: CloudRequest): void {
+    const startedAtMs = this.now();
+    const result = this.deps.computeSync(request);
+    this.deps.onResult(result, request, this.now() - startedAtMs);
   }
 
   private send(request: CloudRequest): void {
     this.inFlight = request;
+    this.sentAtMs = this.now();
     this.worker?.post(request);
   }
 
@@ -143,13 +167,18 @@ export class CloudGenerator {
     // stray from a torn-down state and is dropped (belt-and-braces — the
     // at-most-one-in-flight policy means it shouldn't occur).
     if (request === null || result.id !== request.id) return;
+    // Read the latency before posting the successor — send() restamps the
+    // measurement start for the next request.
+    const elapsedMs = this.now() - this.sentAtMs;
     this.inFlight = null;
     const next = this.pending;
     this.pending = null;
     // Post the successor BEFORE delivering: the worker starts on the newer
     // request while the main thread uploads this result.
     if (next !== null) this.send(next);
-    if (result.id >= this.staleBelowId) this.deps.onResult(result, request);
+    if (result.id >= this.staleBelowId) {
+      this.deps.onResult(result, request, elapsedMs);
+    }
   }
 
   private handleError(): void {
@@ -164,7 +193,7 @@ export class CloudGenerator {
     this.inFlight = null;
     this.pending = null;
     if (latest !== null) {
-      this.deps.onResult(this.deps.computeSync(latest), latest);
+      this.computeAndDeliver(latest);
     }
   }
 }

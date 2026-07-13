@@ -62,17 +62,28 @@ function fakeResult(id: number): CloudResult3D {
  * `createWorker` fail the way a missing worker script or a construction-time
  * throw would, for the permanent-sync-mode tests.
  */
-function harness(brokenWorker?: "returns-null" | "throws"): {
+function harness(
+  brokenWorker?: "returns-null" | "throws",
+  now?: () => number,
+): {
   generator: CloudGenerator;
   posted: CloudRequest[];
-  delivered: { result: CloudResult; request: CloudRequest }[];
+  delivered: {
+    result: CloudResult;
+    request: CloudRequest;
+    elapsedMs: number;
+  }[];
   computeSyncCalls: CloudRequest[];
   terminatedCount: () => number;
   deliverResult: (result: CloudResult) => void;
   triggerError: () => void;
 } {
   const posted: CloudRequest[] = [];
-  const delivered: { result: CloudResult; request: CloudRequest }[] = [];
+  const delivered: {
+    result: CloudResult;
+    request: CloudRequest;
+    elapsedMs: number;
+  }[] = [];
   const computeSyncCalls: CloudRequest[] = [];
   let terminated = 0;
   let deliver: ((result: CloudResult) => void) | null = null;
@@ -97,9 +108,10 @@ function harness(brokenWorker?: "returns-null" | "throws"): {
       computeSyncCalls.push(request);
       return fakeResult(request.id);
     },
-    onResult: (result, request) => {
-      delivered.push({ result, request });
+    onResult: (result, request, elapsedMs) => {
+      delivered.push({ result, request, elapsedMs });
     },
+    now,
   });
 
   return {
@@ -320,5 +332,55 @@ describe("CloudGenerator generateSync", () => {
     h.generator.request(params({ seed: 3 }));
     expect(h.posted).toHaveLength(2);
     expect(h.posted[1].seed).toBe(3);
+  });
+});
+
+describe("CloudGenerator latency reporting (fr-a5gu)", () => {
+  it("reports the post-to-reply latency of a worker generation to onResult", () => {
+    let clock = 1000;
+    const h = harness(undefined, () => clock);
+
+    h.generator.request(params());
+    clock += 42;
+    h.deliverResult(fakeResult(1));
+
+    expect(h.delivered).toHaveLength(1);
+    expect(h.delivered[0].elapsedMs).toBe(42);
+  });
+
+  it("times each request from its own post, not the burst's first", () => {
+    let clock = 0;
+    const h = harness(undefined, () => clock);
+
+    h.generator.request(params()); // id 1 posted at t=0
+    clock = 10;
+    h.generator.request(params()); // id 2 parked
+    clock = 30;
+    h.deliverResult(fakeResult(1)); // id 1 done (30ms); id 2 posted at t=30
+    clock = 45;
+    h.deliverResult(fakeResult(2)); // id 2 done (15ms)
+
+    expect(h.delivered.map((d) => d.elapsedMs)).toEqual([30, 15]);
+  });
+
+  it("times the synchronous paths around the compute itself", () => {
+    let clock = 0;
+    const delivered: number[] = [];
+    const generator = new CloudGenerator({
+      createWorker: () => null, // permanent synchronous mode
+      computeSync: (request) => {
+        clock += 7; // the compute is what advances the clock
+        return fakeResult(request.id);
+      },
+      onResult: (_result, _request, elapsedMs) => {
+        delivered.push(elapsedMs);
+      },
+      now: () => clock,
+    });
+
+    generator.request(params());
+    generator.generateSync(params());
+
+    expect(delivered).toEqual([7, 7]);
   });
 });

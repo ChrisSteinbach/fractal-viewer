@@ -74,7 +74,8 @@ import {
 import type { SceneSnapshot } from "./persist";
 import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection } from "./collection";
-import { MOBILE_BREAKPOINT, MORPH_MAX_POINTS } from "./constants";
+import { MOBILE_BREAKPOINT } from "./constants";
+import { MorphBudget } from "./morph-budget";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
@@ -396,6 +397,12 @@ function main(): void {
   // real replaced one). Overwritten — not OR-merged — by a chained restart:
   // the flag describes the CURRENT target's landing.
   let morphFinalFit = false;
+  // The morph's adaptive intermediate point budget (fr-a5gu): every
+  // delivered generation's measured latency feeds it (see the cloudGenerator
+  // wiring), and cloudParams sizes morph intermediates from it, so the morph
+  // updates at ~frame rate on whatever device this is instead of stuttering
+  // behind a fixed cap.
+  const morphBudget = new MorphBudget();
 
   // The ambient drift show (fr-wavo): dwell on the current attractor, glide
   // to a fresh Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
@@ -635,12 +642,13 @@ function main(): void {
     return {
       transforms,
       finalTransform,
-      // Intermediates cap the per-frame cost so a huge scene still animates
-      // (MORPH_MAX_POINTS); the terminal sample and every non-morph request
-      // use the full count.
+      // Intermediates run at the adaptive budget — sized from measured
+      // generation latency so each frame's request fits in roughly one
+      // animation frame on this device (morph-budget.ts, fr-a5gu); the
+      // terminal sample and every non-morph request use the full count.
       numPoints:
         morph && !morph.final
-          ? Math.min(state.numPoints, MORPH_MAX_POINTS)
+          ? morphBudget.budget(state.numPoints)
           : state.numPoints,
       seed: morph?.seed ?? rollSeed(),
       symmetry,
@@ -820,7 +828,13 @@ function main(): void {
       };
     },
     computeSync: generateCloud,
-    onResult: applyCloudResult,
+    onResult: (result, request, elapsedMs) => {
+      // Every generation calibrates the morph budget's per-point cost —
+      // ordinary edits and boot included, so the FIRST morph intermediate
+      // is already sized for this device (morph-budget.ts, fr-a5gu).
+      morphBudget.note(elapsedMs, request.numPoints);
+      applyCloudResult(result, request);
+    },
   });
 
   // Coalesce the high-frequency regenerate() triggers — a guide-box drag's

@@ -8,11 +8,14 @@
 export const MOBILE_BREAKPOINT = 640;
 
 /**
- * Point-count cap for a replace-load morph's INTERMEDIATE generation requests
- * (fr-a04l): each frame of the ~1.4 s tween re-runs the chaos game, so a
- * 5M-point scene would otherwise animate at one-generation-per-several-frames
- * instead of flowing. The morph's terminal sample — the real replaced request
- * — uses the full `numPoints`, so the settled cloud is never degraded.
+ * Ceiling on a replace-load morph's INTERMEDIATE generation requests
+ * (fr-a04l): each frame of the tween re-runs the chaos game, so a 5M-point
+ * scene must never try to animate at full count. Since fr-a5gu the actual
+ * per-frame count adapts to measured generation latency (`morph-budget.ts`)
+ * and this is only its upper clamp — a device fast enough to generate more
+ * than this per frame gains nothing visible from denser intermediates. The
+ * morph's terminal sample — the real replaced request — uses the full
+ * `numPoints`, so the settled cloud is never degraded.
  */
 export const MORPH_MAX_POINTS = 400_000;
 
