@@ -111,6 +111,10 @@ export interface UiHandlers {
   /** "▦ Gallery" was clicked: open the saved-scene gallery modal. The app
    * hands the current collection back via {@link Ui.openGallery}. */
   onOpenGallery: () => void;
+  /** The gallery modal's "▶ Drift collection" was clicked: start the drift
+   * show over the saved collection instead of random rolls (fr-w2ve) —
+   * main.ts owns the playlist policy, like onDriftToggle. */
+  onDriftCollection: () => void;
   /** A gallery thumbnail was clicked: load that saved scene by its id
    * (whole-system replacement, like a preset load). */
   onLoadFromCollection: (id: string) => void;
@@ -622,8 +626,15 @@ export class Ui {
   private readonly galleryModal: HTMLElement;
   private readonly galleryBackdrop: HTMLElement;
   private readonly galleryCloseBtn: HTMLButtonElement;
+  private readonly galleryDriftBtn: HTMLButtonElement;
+  private readonly galleryDriftTitle: string;
   private readonly galleryGrid: HTMLElement;
   private readonly galleryEmpty: HTMLElement;
+  /** Inputs to the "▶ Drift collection" disabled state, remembered so either
+   * one changing (reduced motion via {@link setDriftAvailable}, emptiness via
+   * {@link renderGallery}) can re-derive it — see syncGalleryDriftBtn. */
+  private driftAvailable = true;
+  private gallerySceneCount = 0;
   private readonly toast: HTMLElement;
 
   // "What is this?" About dialog (fr-1zb): mirrors the gallery modal's own
@@ -816,6 +827,8 @@ export class Ui {
     this.galleryModal = this.byId("galleryModal");
     this.galleryBackdrop = this.byId("galleryBackdrop");
     this.galleryCloseBtn = this.byId("galleryCloseBtn");
+    this.galleryDriftBtn = this.byId("galleryDriftBtn");
+    this.galleryDriftTitle = this.galleryDriftBtn.title;
     this.galleryGrid = this.byId("galleryGrid");
     this.galleryEmpty = this.byId("galleryEmpty");
     this.toast = this.byId("toast");
@@ -1029,6 +1042,9 @@ export class Ui {
       handlers.onSaveToCollection(),
     );
     this.galleryBtn.addEventListener("click", () => handlers.onOpenGallery());
+    this.galleryDriftBtn.addEventListener("click", () =>
+      handlers.onDriftCollection(),
+    );
     this.copyLinkBtn.addEventListener("click", () => handlers.onCopyLink());
     // Closing the gallery is a pure view concern (no app state to update), so
     // the Ui owns it directly rather than routing through a handler — the ✕,
@@ -1532,6 +1548,8 @@ export class Ui {
    * (fr-wavo): no motion means no drift, so the button explains itself
    * instead of silently doing nothing. */
   setDriftAvailable(available: boolean): void {
+    this.driftAvailable = available;
+    this.syncGalleryDriftBtn();
     this.driftBtn.disabled = !available;
     this.driftBtn.title = available
       ? this.driftTitle
@@ -1587,11 +1605,30 @@ export class Ui {
    * markup (they set `img.src` / drive `textContent` only).
    */
   renderGallery(scenes: SavedScene[]): void {
+    this.gallerySceneCount = scenes.length;
+    this.syncGalleryDriftBtn();
     this.galleryGrid.replaceChildren();
     this.galleryEmpty.classList.toggle("hidden", scenes.length > 0);
     for (const scene of scenes) {
       this.galleryGrid.appendChild(this.galleryCard(scene));
     }
+  }
+
+  /**
+   * Derive the "▶ Drift collection" button's disabled state from its two
+   * remembered inputs (fr-w2ve): the drift show's reduced-motion
+   * availability (shared with the panel's Drift toggle) and whether there is
+   * anything saved to loop over — with a title that says which one is the
+   * reason, mirroring how the Drift toggle explains itself.
+   */
+  private syncGalleryDriftBtn(): void {
+    const empty = this.gallerySceneCount === 0;
+    this.galleryDriftBtn.disabled = !this.driftAvailable || empty;
+    this.galleryDriftBtn.title = !this.driftAvailable
+      ? "Unavailable: your system asks for reduced motion"
+      : empty
+        ? "Save a system or two first — the show loops through this collection"
+        : this.galleryDriftTitle;
   }
 
   private galleryCard(scene: SavedScene): HTMLElement {

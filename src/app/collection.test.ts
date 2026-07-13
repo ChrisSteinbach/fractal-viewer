@@ -153,3 +153,55 @@ describe("SceneCollection persistence", () => {
     expect(collection.size).toBe(1);
   });
 });
+
+describe("SceneCollection after (the drift show's loop cursor)", () => {
+  it("returns null on an empty collection", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    expect(collection.after(null)).toBeNull();
+    expect(collection.after("anything")).toBeNull();
+  });
+
+  it("null id yields the front (newest) entry — a fresh show's first departure", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    collection.add("v1=older", "");
+    const newest = collection.add("v1=newest", "");
+
+    expect(collection.after(null)?.id).toBe(newest.id);
+  });
+
+  it("steps through gallery order, newest to oldest", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    const oldest = collection.add("v1=a", "");
+    const middle = collection.add("v1=b", "");
+    const newest = collection.add("v1=c", "");
+
+    expect(collection.after(newest.id)?.id).toBe(middle.id);
+    expect(collection.after(middle.id)?.id).toBe(oldest.id);
+  });
+
+  it("wraps past the oldest entry back to the front", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    const oldest = collection.add("v1=a", "");
+    const newest = collection.add("v1=b", "");
+
+    expect(collection.after(oldest.id)?.id).toBe(newest.id);
+  });
+
+  it("an id deleted mid-show restarts the loop from the front", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    collection.add("v1=a", "");
+    const playing = collection.add("v1=b", "");
+    const newest = collection.add("v1=c", "");
+
+    collection.remove(playing.id);
+
+    expect(collection.after(playing.id)?.id).toBe(newest.id);
+  });
+
+  it("a single-entry collection loops onto itself", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    const only = collection.add("v1=solo", "");
+
+    expect(collection.after(only.id)?.id).toBe(only.id);
+  });
+});

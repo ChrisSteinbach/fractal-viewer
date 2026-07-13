@@ -48,6 +48,7 @@ function noopHandlers(): UiHandlers {
     onRecordVideoToggle: vi.fn(),
     onSaveToCollection: vi.fn(),
     onOpenGallery: vi.fn(),
+    onDriftCollection: vi.fn(),
     onLoadFromCollection: vi.fn(),
     onDeleteFromCollection: vi.fn(),
     onCopyLink: vi.fn(),
