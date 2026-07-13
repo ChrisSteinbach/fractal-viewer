@@ -57,7 +57,7 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
-  systemIsNonFlat,
+  systemPartsAreNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
@@ -74,10 +74,12 @@ import {
 import type { SceneSnapshot } from "./persist";
 import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection } from "./collection";
-import { MOBILE_BREAKPOINT } from "./constants";
+import { MOBILE_BREAKPOINT, MORPH_MAX_POINTS } from "./constants";
 import type { Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
+import { MorphTween, type MorphSample } from "./morph-tween";
+import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
 function showError(message: string): void {
@@ -379,6 +381,21 @@ function main(): void {
     endReplayDisplay();
   }
 
+  // The replace-load system morph (fr-a04l): when a preset load / Surprise Me
+  // / gallery load replaces the system, the attractor tweens from the old
+  // shape to the new one instead of snapping — see regenerateReplaced. The
+  // morph is DISPLAY-ONLY session view state like the replay above: the
+  // document becomes the target immediately (one "replace" undo checkpoint,
+  // debounced save, URL hash all see only the target); only the stream of
+  // generation requests is interpolated, sampled once per frame by animate()
+  // (morph-tween.ts holds the timing/chaining; morph.ts the interpolation).
+  const morphTween = new MorphTween();
+  // The camera-fit flag the suppressed replace-load regenerate would have
+  // carried, remembered for the morph's terminal sample (whose request is the
+  // real replaced one). Overwritten — not OR-merged — by a chained restart:
+  // the flag describes the CURRENT target's landing.
+  let morphFinalFit = false;
+
   // Push the current soft-slice view state to the scene shader. Shared by
   // resetFourDView() and the three slice handlers, all of which mutate a
   // fourDView slice field and then re-upload the trio.
@@ -450,6 +467,13 @@ function main(): void {
   // from the double-rotation spiral straight to the pentatope). `fit` asks
   // the arrival handler to auto-frame the camera on the fresh result.
   function regenerate(replaced = false, fit = false): void {
+    // A document-true generation declares any in-flight morph over (fr-a04l):
+    // snap it — its terminal request goes out first, then this request
+    // supersedes it (parking in the generator's latest-wins slot, whose
+    // OR-merge keeps the terminal request's replaced/fit if they collapse).
+    // Covers the explicit Regenerate click, a slider/drag's coalesced run,
+    // and every other edit path that regenerates. No-op when no morph runs.
+    snapMorph();
     // This request supersedes any coalesced run a drag/slider burst left
     // queued for the next frame (fr-acc) — drop it so it can't fire a
     // redundant second request; the generator's own latest-wins slot handles
@@ -460,19 +484,108 @@ function main(): void {
     cloudGenerator.request(cloudParams(replaced, fit));
   }
 
+  /**
+   * The whole-system-replacement regeneration (fr-a04l): where a plain
+   * `regenerate(true, fit)` would snap the display to the freshly loaded
+   * system, this tweens it there — start (or chain-restart, see
+   * MorphTween.start) a morph from the pre-load system toward the document's
+   * new one, and let animate()'s per-frame poll stream the interpolated
+   * generation requests. `from` must be captured BEFORE the load mutated the
+   * document; `state` already IS the target here. Reduced motion opts out
+   * entirely: the current snap behavior IS the reduced-motion path (the
+   * `finish()` discard covers a morph left in flight when the OS preference
+   * flipped mid-tween — the plain replaced request supersedes it whole).
+   */
+  function regenerateReplaced(from: MorphSystem, fit: boolean): void {
+    if (prefersReducedMotion()) {
+      morphTween.finish();
+      regenerate(true, fit);
+      return;
+    }
+    // Supersede any coalesced pending run, exactly like regenerate() does —
+    // the morph's own per-frame requests take over from here.
+    regenScheduler.cancel();
+    morphTween.start(from, currentMorphSystem(), rollSeed(), performance.now());
+    morphFinalFit = fit;
+  }
+
+  /** The attractor-shaping subset of the live document (morph.ts's
+   * MorphSystem) — a morph endpoint, and equally the system fields a plain
+   * generation request snapshots. */
+  function currentMorphSystem(): MorphSystem {
+    return {
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      symmetry: state.symmetry,
+    };
+  }
+
+  /** Roll a fresh 32-bit generation seed — a live Math.random can't cross
+   * postMessage, so every request carries an explicit one (see cloudParams). */
+  function rollSeed(): number {
+    return Math.floor(Math.random() * 0xffffffff);
+  }
+
+  // Send one morph sample as a generation request (fr-a04l). Intermediates go
+  // out replaced:false / fit:false at a capped point count, so the fresh-visit
+  // view resets, the camera fit, and a preset's render-mode hint all fire
+  // exactly once — on the terminal sample's request, which is the REAL
+  // replaced request the suppressed load regenerate would have sent: full
+  // point count, `fit` as remembered from the load, and the SAME pinned seed
+  // as every intermediate, so the settled cloud is the flow's own endpoint
+  // rather than a fresh re-roll.
+  function requestMorphSample(sample: MorphSample): void {
+    cloudGenerator.request(
+      cloudParams(sample.final, sample.final && morphFinalFit, sample),
+    );
+  }
+
+  // Snap any in-flight morph straight to its target by sending its terminal
+  // request immediately — the ONLY cancellation shape MorphTween supports
+  // (see morph-tween.ts's "No cancel()"). No-op when idle. Call sites mirror
+  // cancelReplay's checklist: ordinary edits (applyEdit / regenerate),
+  // entering a flame/solid render, and starting a build replay — while a NEW
+  // replace-load deliberately does NOT snap (regenerateReplaced chain-restarts
+  // the tween instead) and undo/redo discards rather than snaps (see
+  // applyDecodedSnapshot).
+  function snapMorph(): void {
+    const sample = morphTween.finish();
+    if (sample) requestMorphSample(sample);
+  }
+
   // Snapshot the current document into a generation request (see
   // cloud-worker-core.ts's CloudRequest). The seed is rolled here — a live
   // Math.random can't cross postMessage — which as a side effect makes each
   // generation a reproducible pure function of its request, exactly like the
   // flame/voxel renders' start commands.
-  function cloudParams(replaced: boolean, fit: boolean): CloudParams {
+  //
+  // A morph sample (fr-a04l) overrides only the attractor-shaping fields and
+  // pins the seed; everything else — point count, color-bake inputs — derives
+  // from live state as usual. The 4D routing flag follows the SAMPLED
+  // system's own flatness, not the document's: mid-morph a flat↔4D pair
+  // takes the 4D path exactly while the interpolated maps carry live w
+  // blocks (systemPartsAreNonFlat is systemIsNonFlat's formula over bare
+  // parts, so plain requests route identically to before).
+  function cloudParams(
+    replaced: boolean,
+    fit: boolean,
+    morph?: MorphSample,
+  ): CloudParams {
+    const { transforms, finalTransform, symmetry } =
+      morph?.system ?? currentMorphSystem();
     return {
-      transforms: state.transforms,
-      finalTransform: state.finalTransform ?? null,
-      numPoints: state.numPoints,
-      seed: Math.floor(Math.random() * 0xffffffff),
-      symmetry: state.symmetry,
-      fourD: systemIsNonFlat(state),
+      transforms,
+      finalTransform,
+      // Intermediates cap the per-frame cost so a huge scene still animates
+      // (MORPH_MAX_POINTS); the terminal sample and every non-morph request
+      // use the full count.
+      numPoints:
+        morph && !morph.final
+          ? Math.min(state.numPoints, MORPH_MAX_POINTS)
+          : state.numPoints,
+      seed: morph?.seed ?? rollSeed(),
+      symmetry,
+      fourD: systemPartsAreNonFlat(transforms, finalTransform),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
       // Resolved here (not the bare selection) — the "custom" sentinel has
@@ -1267,7 +1380,14 @@ function main(): void {
     // The replay lives in the points view; leaving it mid-replay must not
     // strand a partial cloud (or the narration pill) behind the flame/solid
     // render.
-    if (target !== "points") cancelReplay();
+    if (target !== "points") {
+      cancelReplay();
+      // So does the morph (fr-a04l): the flame/solid start commands snapshot
+      // the DOCUMENT's system, so snap the display to it — and animate()
+      // stops polling the tween during a render, so an unsnapped morph would
+      // otherwise resume, stale, on exit.
+      snapMorph();
+    }
     if (state.renderMode === "flame") flameSession.exit();
     else if (state.renderMode === "solid") solidSession.exit();
     if (target === "flame") flameSession.enter();
@@ -1329,12 +1449,29 @@ function main(): void {
    * function's: {@link restoreSnapshot} (EditSession's `restore`) must not
    * checkpoint, while {@link loadEncodedScene} (a gallery load, a genuine
    * user edit) checkpoints via `beginEdit("replace")` before calling in.
+   *
+   * So is morphing (fr-a04l), via `morph`: a gallery load tweens the display
+   * to the restored system like a preset load does (regenerateReplaced),
+   * while time travel deliberately snaps — undo/redo should feel mechanical,
+   * and it avoids edit-session re-entrancy. The snap DISCARDS any in-flight
+   * morph rather than sending its terminal request: the replaced request
+   * below already covers the display with the restored document, and the
+   * terminal request's remembered `fit` could otherwise glide the camera
+   * away from a pose the caller is about to restore (fr-uf3).
    */
-  function applyDecodedSnapshot(snap: SceneSnapshot, refit: boolean): void {
+  function applyDecodedSnapshot(
+    snap: SceneSnapshot,
+    refit: boolean,
+    morph: boolean,
+  ): void {
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load.
     pendingRenderMode = null;
+    // The pre-load display target — the morph's `from` endpoint (a chained
+    // restart ignores it and resumes from the live sample; see
+    // MorphTween.start). Captured before fromSnapshot replaces the document.
+    const morphFrom = currentMorphSystem();
     state = fromSnapshot(snap, state);
     if (
       typeof state.selectedTransform === "number" &&
@@ -1345,7 +1482,12 @@ function main(): void {
     if (state.selectedTransform === "final" && !state.finalTransform) {
       state = selectTransform(state, null);
     }
-    regenerate(true, refit);
+    if (morph) {
+      regenerateReplaced(morphFrom, refit);
+    } else {
+      morphTween.finish();
+      regenerate(true, refit);
+    }
     scene.setFourDScaffold(null);
     scene.setRenderStyle(state.renderStyle);
     // Mirror onRenderStyle: never leave a stale glow exposure on a non-glow style.
@@ -1382,10 +1524,10 @@ function main(): void {
     const snap = decodeScene(snapshot);
     if (!snap) return; // can't happen: entries are encodeScene output
     if (replaced && pose) {
-      applyDecodedSnapshot(snap, false);
+      applyDecodedSnapshot(snap, false, false);
       applyCameraPose(pose);
     } else {
-      applyDecodedSnapshot(snap, replaced);
+      applyDecodedSnapshot(snap, replaced, false);
     }
   }
 
@@ -1449,7 +1591,7 @@ function main(): void {
     const snap = decodeScene(encoded);
     if (!snap) return;
     editSession.beginEdit("replace");
-    applyDecodedSnapshot(snap, snap.camera === undefined);
+    applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
   }
 
@@ -1476,6 +1618,14 @@ function main(): void {
    * is correct — the old cloud is still on screen — and applyCloudResult
    * re-refreshes both when an arriving result flips flatness.
    *
+   * "always" is also the system-morph trigger (fr-a04l): instead of the plain
+   * `regenerate(true, true)` snap, the display tweens from the pre-load
+   * system (captured before the reducer runs) to the freshly loaded one —
+   * see regenerateReplaced. An ordinary ("auto") edit instead snaps any
+   * in-flight morph to its target first: the document the edit applies to IS
+   * that target, so the display must stop tweening somewhere the edit never
+   * happened.
+   *
    * Before applying the reducer, checkpoints an undo step and, after it, every
    * geometry edit refreshes the guide boxes and the UI, then schedules a
    * debounced save (see `editSession.beginEdit`).
@@ -1487,10 +1637,14 @@ function main(): void {
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns.
     pendingRenderMode = null;
+    if (effect === "auto") snapMorph();
+    const morphFrom = currentMorphSystem();
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
     applyReducer();
-    if (effect === "always" || state.autoUpdate) {
-      regenerate(effect === "always", effect === "always");
+    if (effect === "always") {
+      regenerateReplaced(morphFrom, true);
+    } else if (state.autoUpdate) {
+      regenerate();
     }
     refreshGuides();
     refreshUi();
@@ -1650,6 +1804,12 @@ function main(): void {
     // the About dialog + panel so the stage is actually watchable.
     onWatchBuild: () => {
       switchRenderMode("points");
+      // Snap any in-flight morph before replaying (fr-a04l): the replay
+      // reveals the displayed buffer, which should be the settled target,
+      // not a mid-morph intermediate. (Morph landings cancel a replay
+      // naturally via applyCloudResult, so an unsnapped morph would kill the
+      // replay a frame in anyway.)
+      snapMorph();
       ui.closeAbout();
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
@@ -1967,6 +2127,18 @@ function main(): void {
     const now = performance.now();
     const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
     lastMotionTickMs = now;
+    // The replace-load morph (fr-a04l): while one is in flight, send this
+    // frame's interpolated system as a generation request — the same
+    // once-per-frame poll pattern as cameraTween/buildReplay. Deliberately
+    // NOT routed through regenScheduler (this loop is already once per
+    // frame); cloudGenerator's at-most-one-in-flight latest-wins slot
+    // absorbs frames that outrun the worker. The terminal sample sends the
+    // real replaced/fit request and deactivates the tween (see
+    // requestMorphSample). A render mode's early return above pauses the
+    // poll, but switchRenderMode snaps the morph on the way out, so a tween
+    // can never sit here stale.
+    const morphSample = morphTween.sample(now);
+    if (morphSample) requestMorphSample(morphSample);
     if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
       // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
       // before applyCamera so it lands on this frame. Pure camera motion —

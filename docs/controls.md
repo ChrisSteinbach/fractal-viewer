@@ -73,7 +73,9 @@ scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
 sections — and the panel remembers which section was open in each mode, so
 switching Points ↔ Flame ↔ Solid restores where you were. Scroll swipes that
 happen to land on a slider scroll the panel without editing its value;
-horizontal drags (and taps) still adjust it as usual.
+horizontal drags (and taps) still adjust it as usual. Loading a whole new
+system — a preset, Surprise Me, or a gallery load — morphs into place instead
+of snapping (see **Presets** below).
 
 - **ⓘ What is this?** (fr-1zb) — right under the panel title: a short
   plain-language explanation of what an iterated function system is and how
@@ -91,6 +93,9 @@ horizontal drags (and taps) still adjust it as usual.
 - **Presets** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
   and 20-map dodecahedron flakes, plus dedicated **Flame** and **4D** groups.
+  Loading one — like Surprise Me and a gallery load — morphs the attractor
+  smoothly from the current shape into the new one instead of snapping; the
+  OS's reduced-motion preference opts out to the instant snap (fr-a04l).
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Explorer-only — it hides during a
@@ -99,8 +104,9 @@ horizontal drags (and taps) still adjust it as usual.
   tracks the live count) opens a modal grid of saved thumbnails; clicking one
   loads it as a whole-system replacement (the same undoable treatment as a
   preset load or Surprise Me) — so you can save a keeper, keep tweaking, and
-  still load it back exactly as saved. Each card has a ✕ to delete it; Escape,
-  the backdrop, or the header ✕ close the modal. **🔗 Copy link** copies a
+  still load it back exactly as saved. Like a preset load, it morphs smoothly
+  into the new shape rather than snapping. Each card has a ✕ to delete it;
+  Escape, the backdrop, or the header ✕ close the modal. **🔗 Copy link** copies a
   shareable `#v1=…` link built fresh from the current state, not the
   (debounced) address bar.
 - **Points** — slider for the point count (0–500k); takes effect on **Regenerate
