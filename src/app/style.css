@@ -503,6 +503,14 @@ body {
   background: linear-gradient(180deg, #6aa8ff, #4789f7);
 }
 
+.btn-blue:disabled {
+  border-color: var(--border);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
 .btn-ghost {
   border-color: var(--border);
   background: var(--surface-2);
@@ -1037,16 +1045,29 @@ summary.editor-group-title {
 
 .gallery-header {
   display: flex;
+  gap: 10px;
   align-items: center;
-  justify-content: space-between;
   margin-bottom: 14px;
 }
 
 .gallery-title {
+  flex: 1;
   color: var(--text);
   font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+
+/* The header's "▶ Drift collection" (fr-w2ve): .btn is built for the panel's
+   stacked column (block, full-width), so size it down to an inline header
+   action beside the ✕. */
+.gallery-drift-btn {
+  display: inline-block;
+  width: auto;
+  margin-bottom: 0;
+  padding: 6px 10px;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 .gallery-empty {

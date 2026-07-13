@@ -80,7 +80,12 @@ import type { Bounds, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
-import { DriftShow, DRIFT_MORPH_MS } from "./drift";
+import {
+  DriftShow,
+  DRIFT_DWELL_MS,
+  DRIFT_MORPH_MS,
+  DRIFT_RENDER_LINGER_MS,
+} from "./drift";
 import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
@@ -411,6 +416,15 @@ function main(): void {
   // owns the policy: what a leg does (advanceDrift), what ends the show
   // (stopDrift), and the reduced-motion gate (syncDriftAvailability).
   const driftShow = new DriftShow(() => performance.now());
+  // What a leg departs TOWARD (fr-w2ve): a fresh Surprise-Me roll ("random",
+  // the original show), or the next saved scene in the gallery's own order,
+  // looping ("collection" — see advanceCollectionLeg). Set by whichever
+  // affordance starts the show; meaningless (and untouched) while idle.
+  let driftSource: "random" | "collection" = "random";
+  // The id of the collection entry the show most recently departed toward —
+  // SceneCollection.after's loop cursor. Null'd when a collection show
+  // starts, so every show plays from the gallery's front.
+  let driftLastPlayedId: string | null = null;
   // True only while a drift leg's own applyEdit runs, so stopDrift's
   // chokepoints can tell the show's own roll from a genuine user edit.
   let driftAdvancing = false;
@@ -418,25 +432,29 @@ function main(): void {
   // End the drift show — a STOP, not a pause (restarting is a fresh toggle,
   // per fr-wavo). Called from every "the user reached in" moment: applyEdit
   // and the bespoke beginEdit handlers (any undoable edit), time travel and
-  // gallery loads (applyDecodedSnapshot), leaving the points view
-  // (switchRenderMode), starting a build replay, and the toggle itself.
-  // Camera input deliberately never calls this — the camera is independent
-  // of the show, exactly like the auto-orbit's pause-while-dragging policy.
-  // No-op while the show's own leg applies itself (driftAdvancing).
+  // MANUAL gallery loads (applyDecodedSnapshot), starting a build replay,
+  // and the toggle itself. Leaving the points view (switchRenderMode) stops
+  // a RANDOM show too, while a collection show survives it as a held
+  // slideshow (fr-w2ve — see switchRenderMode). Camera input deliberately
+  // never calls this — the camera is independent of the show, exactly like
+  // the auto-orbit's pause-while-dragging policy. No-op while the show's
+  // own leg applies itself (driftAdvancing).
   function stopDrift(): void {
     if (driftAdvancing || !driftShow.active) return;
     driftShow.stop();
     ui.setDriftActive(false);
   }
 
-  // One drift leg (fr-wavo): press Surprise Me on the show's behalf — the
-  // same roll, the same "replace" undo checkpoint (undo walks back through
-  // the show; history.ts's cap bounds it), the same camera auto-fit — but
-  // glide the display morph over DRIFT_MORPH_MS instead of the snappier
-  // click-feedback default. The flag exempts this one applyEdit from the
-  // stop-on-edit rule above. A reduced-motion preference that appeared
-  // mid-show ends it at the leg boundary instead — no motion means no drift
-  // (regenerateReplaced would snap every leg, a slideshow, not a show).
+  // One drift leg (fr-wavo): press Surprise Me — or, for a collection show
+  // (fr-w2ve), load the next saved scene — on the show's behalf: the same
+  // "replace" undo checkpoint a manual press/load cuts (undo walks back
+  // through the show; history.ts's cap bounds it), the same camera auto-fit,
+  // but gliding the display morph over DRIFT_MORPH_MS instead of the
+  // snappier click-feedback default. The flag exempts the leg's own edit
+  // from the stop-on-edit rule above. A reduced-motion preference that
+  // appeared mid-show ends it at the leg boundary instead — no motion means
+  // no drift (regenerateReplaced would snap every leg, a slideshow, not a
+  // show).
   function advanceDrift(): void {
     if (prefersReducedMotion()) {
       stopDrift();
@@ -444,10 +462,69 @@ function main(): void {
     }
     driftAdvancing = true;
     try {
-      rollSurpriseSystem(DRIFT_MORPH_MS);
+      if (driftSource === "collection") advanceCollectionLeg();
+      else rollSurpriseSystem(DRIFT_MORPH_MS);
     } finally {
       driftAdvancing = false;
     }
+  }
+
+  /**
+   * The next playable stop on the collection show's loop (fr-w2ve): walk
+   * `SceneCollection.after` from the last-departed id through gallery order
+   * (newest-first, wrapping), skipping entries that fail to decode — the
+   * collection is untrusted localStorage, and an ambient show should step
+   * past a corrupt save, not die on it. At most `size` hops, so a
+   * fully-corrupt collection terminates as null (like an empty one).
+   */
+  function nextCollectionScene(): { id: string; snap: SceneSnapshot } | null {
+    let cursor = driftLastPlayedId;
+    for (let hops = 0; hops < collection.size; hops++) {
+      const entry = collection.after(cursor);
+      if (!entry) return null;
+      const snap = decodeScene(entry.encoded);
+      if (snap) return { id: entry.id, snap };
+      cursor = entry.id;
+    }
+    return null;
+  }
+
+  // One COLLECTION-sourced drift leg (fr-w2ve): a gallery load on the show's
+  // behalf — the same "replace" checkpoint + morphing applyDecodedSnapshot
+  // as loadEncodedScene, stretched over the drift glide. Two deliberate
+  // differences from a manual load: the camera always auto-fits and CHASES
+  // the morph (fr-cfoc) rather than snapping to the entry's saved pose — a
+  // hard pose cut every leg would break the ambience the show exists for —
+  // and, when the show is displaying as a flame/solid slideshow, the leg
+  // re-arms pendingRenderMode with the mode it departed from, so the
+  // TERMINAL cloud re-enters that renderer over the freshly loaded scene
+  // (the exact preset-hint path, applyCloudResult) with the scene's own
+  // saved flame/solid settings. An emptied-out (or fully corrupt)
+  // collection ends the show at the leg boundary, like reduced motion does.
+  function advanceCollectionLeg(): void {
+    const next = nextCollectionScene();
+    if (!next) {
+      stopDrift();
+      return;
+    }
+    const returnMode = state.renderMode;
+    editSession.beginEdit("replace");
+    applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
+    // Re-arm AFTER applyDecodedSnapshot, which clears pendingRenderMode on
+    // every load (a restored document must not trigger a stale preset hint —
+    // this is not that: it's the show putting its own display mode back).
+    if (returnMode !== "points") pendingRenderMode = returnMode;
+    driftLastPlayedId = next.id;
+  }
+
+  // A converging flame/solid render reported progress. When the collection
+  // show is HOLDING for that render (switchRenderMode held it on the way
+  // in), a met iteration budget re-arms the next departure a beat out —
+  // "wait for the render to complete, then a second longer" (fr-w2ve).
+  // resumeAfter acts only while holding, so ordinary renders, a stopped
+  // show, and an already-resumed one are all untouched by stray progress.
+  function noteDriftRenderProgress(done: number, budget: number): void {
+    if (done >= budget) driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
   }
 
   // Push the current soft-slice view state to the scene shader. Shared by
@@ -1106,6 +1183,7 @@ function main(): void {
       case "progress":
         scene.setFlameImage(event.image, event.width, event.height);
         ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
+        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
         flameSession.markFirstFrame();
         break;
       case "sharedFrame":
@@ -1117,6 +1195,7 @@ function main(): void {
           flameShared.last = { slot: event.slot, maxHits: event.maxHits };
           presentSharedFrame();
           ui.setFlameProgress(event.iterationsDone, event.iterationsBudget);
+          noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
           flameSession.markFirstFrame();
         }
         break;
@@ -1365,12 +1444,14 @@ function main(): void {
           event.boundsMax,
         );
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
         solidSession.markFirstFrame();
         break;
       case "progress":
         // Counters-only label refresh (the displayed texture is already
         // final) — e.g. the budget slider moved on a finished render.
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
+        noteDriftRenderProgress(event.iterationsDone, event.iterationsBudget);
         break;
       case "resolutionNote":
         ui.setSolidResolutionNote(event.effective, event.requested);
@@ -1492,10 +1573,21 @@ function main(): void {
     // render.
     if (target !== "points") {
       cancelReplay();
-      // So does the drift show (fr-wavo): a flame/solid render is a still,
-      // and animate() stops polling the show during one anyway — stop it
-      // cleanly (a STOP, not a pause) rather than leaving it armed.
-      stopDrift();
+      // The RANDOM drift show still ends here (fr-wavo): its legs are rolled
+      // for the live explorer, so a flame/solid render stops it cleanly (a
+      // STOP, not a pause). A COLLECTION show instead survives as a
+      // slideshow (fr-w2ve) — the render mode is how the show displays, not
+      // a reach into it — but HELD: the clock deadline is void while the
+      // entering render converges; the render's own completed-progress
+      // signal re-arms the departure (noteDriftRenderProgress), so a leg can
+      // never yank a still that is mid-convergence. This runs for a manual
+      // switch AND for the show's own per-leg re-entry (the pendingRenderMode
+      // consumption in applyCloudResult) — both want exactly this hold.
+      if (driftShow.active && driftSource === "collection") {
+        driftShow.hold();
+      } else {
+        stopDrift();
+      }
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
       // the DOCUMENT's system, so snap the display to it — and animate()
       // stops polling the tween during a render, so an unsnapped morph would
@@ -1571,12 +1663,15 @@ function main(): void {
    * morph rather than sending its terminal request: the replaced request
    * below already covers the display with the restored document, and the
    * terminal request's remembered `fit` could otherwise glide the camera
-   * away from a pose the caller is about to restore (fr-uf3).
+   * away from a pose the caller is about to restore (fr-uf3). `morphMs`
+   * stretches that tween for a collection drift leg (fr-w2ve), exactly like
+   * applyEdit's own `morphMs`; omitted, the click-feedback default governs.
    */
   function applyDecodedSnapshot(
     snap: SceneSnapshot,
     refit: boolean,
     morph: boolean,
+    morphMs?: number,
   ): void {
     // Undo/redo and a gallery load are the user reaching in: both end the
     // drift show (fr-wavo) — this is the one chokepoint on their shared path.
@@ -1600,7 +1695,7 @@ function main(): void {
       state = selectTransform(state, null);
     }
     if (morph) {
-      regenerateReplaced(morphFrom, refit);
+      regenerateReplaced(morphFrom, refit, morphMs);
     } else {
       morphTween.finish();
       regenerate(true, refit);
@@ -1893,6 +1988,7 @@ function main(): void {
         return;
       }
       if (prefersReducedMotion()) return;
+      driftSource = "random";
       driftShow.start();
       ui.setDriftActive(true);
       state = setPanelOpen(state, false);
@@ -2002,6 +2098,24 @@ function main(): void {
     },
     onOpenGallery: () => {
       ui.openGallery(collection.all());
+    },
+    // The gallery modal's "▶ Drift collection" (fr-w2ve): the same ambient
+    // show as onDriftToggle — same lean-back panel close, same full dwell on
+    // the current attractor before the first departure, same Stop-drifting
+    // toggle to end it — but its legs walk the saved collection in gallery
+    // order, looping (advanceCollectionLeg), instead of rolling surprises.
+    // Restarted shows play from the front again (the cursor resets). The
+    // button is disabled while the collection is empty or motion is reduced;
+    // the guard covers a click racing either change.
+    onDriftCollection: () => {
+      if (prefersReducedMotion() || collection.size === 0) return;
+      driftSource = "collection";
+      driftLastPlayedId = null;
+      driftShow.start();
+      ui.setDriftActive(true);
+      ui.closeGallery();
+      state = setPanelOpen(state, false);
+      ui.updateLabels(state);
     },
     onLoadFromCollection: (id) => {
       const entry = collection.all().find((s) => s.id === id);
@@ -2282,6 +2396,32 @@ function main(): void {
   function animate(): void {
     requestAnimationFrame(animate);
     cameraTween.advance();
+    const now = performance.now();
+    // The replace-load morph (fr-a04l): while one is in flight, send this
+    // frame's interpolated system as a generation request — the same
+    // once-per-frame poll pattern as cameraTween/buildReplay. Deliberately
+    // NOT routed through regenScheduler (this loop is already once per
+    // frame); cloudGenerator's at-most-one-in-flight latest-wins slot
+    // absorbs frames that outrun the worker. The terminal sample sends the
+    // real replaced/fit request and deactivates the tween (see
+    // requestMorphSample). Polled ABOVE the render modes' early returns —
+    // harmlessly: switchRenderMode snaps the tween on the way INTO a
+    // flame/solid render, so it is always idle there.
+    const morphSample = morphTween.sample(now);
+    if (morphSample) requestMorphSample(morphSample);
+    // The ambient drift show: when a departure comes due, launch the next
+    // leg — a Surprise-Me roll or the next saved scene (advanceDrift).
+    // Polled AFTER the morph sample above on purpose: on a backgrounded
+    // tab's catch-up frame both come due at once, and the in-flight leg
+    // must land first (its terminal replaced/fit request just went out) —
+    // firing the new leg first would chain off the stale tween and swallow
+    // that landing. Between legs this is a single comparison (drift.ts), so
+    // a dwelling show costs no per-frame work. Polled above the render
+    // modes' early returns (fr-w2ve): a collection show runs THROUGH a
+    // flame/solid still — held while it converges, due again a beat after
+    // it completes — while a random show is stopped by switchRenderMode
+    // before those modes can even show (fr-wavo).
+    if (driftShow.frame()) advanceDrift();
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
@@ -2310,37 +2450,22 @@ function main(): void {
       }
       return;
     }
+    // A collection show left HOLDING in the points view means the render it
+    // was waiting on went away without completing — the user pressed Back,
+    // or the render errored out (both land here via the sessions' exits,
+    // whichever path they took). Resume it as the points show it now is,
+    // with a fresh dwell on whatever is on screen (fr-w2ve). One comparison
+    // per frame, and unreachable while the show is genuinely waiting — a
+    // hold is only ever taken together with a flame/solid mode, whose early
+    // returns sit above.
+    if (driftShow.holding) driftShow.resumeAfter(DRIFT_DWELL_MS);
     // One clamped dt for both kinds of automatic motion (4D tumble / 3D
     // auto-orbit — mutually exclusive by viewIs4D). Clamp it: a backgrounded
     // tab suspends RAF (and a render's early returns skip this path
     // entirely), and an unclamped catch-up delta would violently snap the
     // orientation on refocus/exit.
-    const now = performance.now();
     const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
     lastMotionTickMs = now;
-    // The replace-load morph (fr-a04l): while one is in flight, send this
-    // frame's interpolated system as a generation request — the same
-    // once-per-frame poll pattern as cameraTween/buildReplay. Deliberately
-    // NOT routed through regenScheduler (this loop is already once per
-    // frame); cloudGenerator's at-most-one-in-flight latest-wins slot
-    // absorbs frames that outrun the worker. The terminal sample sends the
-    // real replaced/fit request and deactivates the tween (see
-    // requestMorphSample). A render mode's early return above pauses the
-    // poll, but switchRenderMode snaps the morph on the way out, so a tween
-    // can never sit here stale.
-    const morphSample = morphTween.sample(now);
-    if (morphSample) requestMorphSample(morphSample);
-    // The ambient drift show (fr-wavo): when a dwell elapses, launch the
-    // next leg — a Surprise-Me roll gliding over DRIFT_MORPH_MS (see
-    // advanceDrift). Polled AFTER the morph sample above on purpose: on a
-    // backgrounded tab's catch-up frame both come due at once, and the
-    // in-flight leg must land first (its terminal replaced/fit request just
-    // went out) — firing the new leg first would chain off the stale tween
-    // and swallow that landing. Between legs this is a single comparison
-    // (drift.ts), so a dwelling show costs no per-frame work. The render
-    // modes' early returns above stop the poll, but switchRenderMode
-    // already ended the show on the way out (a stop, not a pause).
-    if (driftShow.frame()) advanceDrift();
     if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
       // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
       // before applyCamera so it lands on this frame. Pure camera motion —

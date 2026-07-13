@@ -179,12 +179,19 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
     dwell/advance state machine (injected clock, like `build-replay.ts`)
     polled by main.ts's animate loop; when a dwell elapses it fires one leg —
-    a Surprise-Me roll morphing in over `DRIFT_MORPH_MS` with a normal
-    "replace" undo checkpoint, then a fresh dwell. main.ts owns the policy:
+    a Surprise-Me roll (or, fr-w2ve, the next saved scene) morphing in over
+    `DRIFT_MORPH_MS` with a normal "replace" undo checkpoint, then a fresh
+    dwell. Since fr-w2ve the deadline can also be HELD (`hold` /
+    `resumeAfter(DRIFT_RENDER_LINGER_MS)` / `holding`): active but awaiting
+    an external signal instead of the clock. main.ts owns the policy:
     session-only, STOPS (never pauses) on any undoable edit / undo / manual
-    replace-load / render-mode switch, unavailable under reduced motion;
-    between legs the poll is one comparison, so a dwelling show does no
-    per-frame work.
+    replace-load, unavailable under reduced motion; a render-mode switch
+    stops a random show but only holds a collection one — the gallery
+    slideshow (`onDriftCollection`) walks `SceneCollection.after`'s loop,
+    re-enters the departed flame/solid mode per leg via `pendingRenderMode`,
+    and departs a still one `DRIFT_RENDER_LINGER_MS` after its render meets
+    the iteration budget (the flame/solid progress events). Between legs the
+    poll is one comparison, so a dwelling show does no per-frame work.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → done, with narration captions) — the buffer
@@ -214,6 +221,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     multi-slot library of encoded scenes + thumbnails under its own
     localStorage key, layered over the same `encodeScene` codec as the
     single-scene autosave (`persist.ts`) and undo history (`history.ts`).
+    `after(id)` (fr-w2ve) is the drift slideshow's loop cursor: the entry
+    following an id in gallery order, wrapping, front on a vanished id.
     Pure, injected storage/clock, tested.
   - `ui.ts` — control panel + transform list, built with `createElement`. The
     panel's categories are an exclusive-open accordion of native

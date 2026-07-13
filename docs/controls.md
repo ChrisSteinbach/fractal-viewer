@@ -113,6 +113,24 @@ of snapping (see **Presets** below).
   asks for reduced motion (the disabled button says why): no motion means no
   drift. Between legs the show is fully idle, so it sips battery while
   dwelling; recording a video of a drifting session works as usual.
+- **▶ Drift collection** (fr-w2ve) — in the gallery modal's header: the same
+  ambient show, but its legs walk YOUR saved collection in gallery order
+  (newest first), morphing from one saved system to the next and looping
+  back to the first — a slideshow of keepers instead of random rolls. Legs
+  are the same undoable replace-loads as clicking a gallery card, except the
+  camera auto-fits and follows the morph rather than snapping to each
+  entry's saved pose (a manual card click still restores the pose exactly).
+  Unlike the random show, switching to a **Flame** or **Solid** render
+  doesn't stop it: the show keeps looping as a slideshow of stills — each
+  leg glides through the point-cloud morph, re-renders the freshly loaded
+  scene in your chosen mode with that scene's own saved render settings,
+  waits for the render to complete, lingers a second on the finished image,
+  and moves on. Pressing Back mid-render resumes it as a points show after
+  a fresh dwell; deleting entries mid-show is honored on the next leg (an
+  emptied collection ends the show). Everything else matches **▶ Drift**:
+  the same stop-on-edit rules, the same **■ Stop drifting** toggle, the same
+  reduced-motion unavailability (the button also disables while the
+  collection is empty), and it is never persisted.
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Explorer-only — it hides during a
@@ -123,7 +141,8 @@ of snapping (see **Presets** below).
   preset load or Surprise Me) — so you can save a keeper, keep tweaking, and
   still load it back exactly as saved. Like a preset load, it morphs smoothly
   into the new shape rather than snapping. Each card has a ✕ to delete it;
-  Escape, the backdrop, or the header ✕ close the modal. **🔗 Copy link** copies a
+  Escape, the backdrop, or the header ✕ close the modal, and the header's
+  **▶ Drift collection** starts the looping slideshow described above. **🔗 Copy link** copies a
   shareable `#v1=…` link built fresh from the current state, not the
   (debounced) address bar.
 - **Points** — slider for the point count (0–500k); takes effect on **Regenerate

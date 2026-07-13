@@ -146,6 +146,23 @@ export class SceneCollection {
   }
 
   /**
+   * The entry FOLLOWING the one with this id in gallery order (newest-first,
+   * the order `all` returns and the gallery grid displays), wrapping past
+   * the oldest back to the front — the collection-sourced drift show's loop
+   * cursor (fr-w2ve). `null` for `id` asks for the front entry (a fresh
+   * show's first departure); an id no longer present (deleted mid-show)
+   * also yields the front entry, restarting the loop from the top rather
+   * than guessing where the vanished entry used to sit. Returns `null` only
+   * when the collection is empty.
+   */
+  after(id: string | null): SavedScene | null {
+    if (this.scenes.length === 0) return null;
+    if (id === null) return this.scenes[0];
+    const at = this.scenes.findIndex((s) => s.id === id);
+    return this.scenes[(at + 1) % this.scenes.length];
+  }
+
+  /**
    * Write the current list to storage. On a thrown error (e.g. a
    * `QuotaExceededError` from a full disk), evicts the oldest entry
    * (`this.scenes.pop()`) and retries, continuing to evict-and-retry while
