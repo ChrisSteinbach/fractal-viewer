@@ -47,10 +47,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     (lift a 3D `Transform` to 4D), and the `systemIsFlat` predicate that decides
     whether a system is 4D at all — derived from the transforms, never stored.
   - `chaos-game.ts` — the IFS iterator: warm-up, escape-reset, bounds tracking.
-    Takes an injected RNG so runs are reproducible in tests.
+    Takes an injected RNG so runs are reproducible in tests; an optional
+    `IterationRng` (fr-2wfw) moves every iteration-local draw (stochastic
+    variations, escape reseeds) onto a per-iteration stream so ε-different
+    same-seed runs stay point-for-point correspondent — what keeps a morph
+    flowing instead of boiling. `SymmetryParams.blend` (fr-eykn) fades the
+    kaleidoscope copies' pick weights continuously (0 ≡ order 1, bit-exact).
   - `chaos-game-4d.ts` — the 4D twin of `chaos-game.ts` (`runChaosGame4`): the
-    same warm-up/escape/reseed/bounds loop unrolled to four coordinates. 4D has
-    no kaleidoscope symmetry by design.
+    same warm-up/escape/reseed/bounds loop unrolled to four coordinates
+    (including the `IterationRng` parameter). 4D has no kaleidoscope symmetry
+    by design.
   - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the five color-mode
     palettes; since fr-3b6 the height/radius ramps can sample a gradient
     palette instead of the built-in HSL formulas (`rampPaletteId`,
@@ -92,8 +98,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     endpoint-exact at t=0/1 (the same object reference), rotation lerped
     through the nearest turn, a transform-count mismatch fading surplus
     maps in/out by weight with their geometry pinned bit-exact, flat↔4D
-    pairs kept continuous via the derived w-scale, and kaleidoscope
-    symmetry snapping at the t=0.5 midpoint.
+    pairs kept continuous via the derived w-scale, and differing
+    kaleidoscopes crossfaded through `SymmetryParams.blend` (fr-eykn) —
+    the departing one out over the first half, the arriving one in over
+    the second, continuous at the midpoint.
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
     256×3 LUT) shared by the flame and solid renders and (fr-3b6) the
     explorer's height/radius ramp recolor; the `"legacy"` sentinel
@@ -146,19 +154,28 @@ and UI**, so the interesting math is unit-tested without a browser:
     numbers. `captureThumbnail` renders one frame down to a small JPEG data URL
     for the collection gallery (fr-cai).
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
-  - `camera-tween.ts` — smoothstep glide of the orbit camera's target + radius to
-    auto-frame a freshly generated attractor (preset load / Surprise Me) instead
-    of snapping; leaves the orbit angles alone and honors reduced motion (pure,
-    tested, injected clock).
+  - `camera-tween.ts` — the orbit camera's two fit motions (pure, tested,
+    injected clock), both leaving the orbit angles alone and honoring
+    reduced motion: the smoothstep GLIDE that auto-frames a freshly
+    generated attractor (preset load / Surprise Me) instead of snapping,
+    and (fr-cfoc) the dt-aware exponential CHASE that follows a morphing
+    attractor's live bounds — retargeted per intermediate arrival, replaced
+    by the terminal fit's glide for the settle.
   - `morph-tween.ts` — the replace-load system morph driver (fr-jx9o):
     per-frame sampler over `../fractal/morph`'s `lerpSystem` with a pinned seed
     so consecutive frames' clouds stay point-for-point correspondent, chained
     restarts resuming from the live sample; polled by main.ts's animate loop,
-    which streams each sample as a capped-point-count intermediate generation
-    request and sends the real replaced/fit request on the terminal sample
-    (fr-a04l) — reduced motion skips straight to that terminal request.
-    Since fr-wavo the morph's duration is a `start()` parameter (default
-    `MORPH_TWEEN_MS`), so a drift leg can glide slower than a click.
+    which streams each sample as an intermediate generation request — sized
+    by `morph-budget.ts` — and sends the real replaced/fit request on the
+    terminal sample (fr-a04l) — reduced motion skips straight to that
+    terminal request. Since fr-wavo the morph's duration is a `start()`
+    parameter (default `MORPH_TWEEN_MS`), so a drift leg can glide slower
+    than a click.
+  - `morph-budget.ts` — the morph's adaptive intermediate point budget
+    (fr-a5gu): an EMA of per-point generation cost — fed by every delivered
+    generation's latency (measured by `cloud-generator.ts`) — sizes each
+    intermediate request to ~one frame's worth of chaos game on this device,
+    clamped to `[MORPH_MIN_POINTS, MORPH_MAX_POINTS]`. Pure, tested.
   - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
     dwell/advance state machine (injected clock, like `build-replay.ts`)
     polled by main.ts's animate loop; when a dwell elapses it fires one leg —
@@ -238,11 +255,12 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `cloud-generator.ts` — the main-thread client for the cloud worker
     (fr-5kx): at most one request in flight, latest wins, OR-merging a
     coalesced request's `replaced`/`fit` flags so a superseded preset load's
-    fresh-visit reset and camera fit still land. Falls back to running the
-    same `generateCloud` synchronously if the worker never loads or crashes —
-    the live cloud IS the app, unlike the optional flame/solid overlays — and
-    `generateSync` takes that path deliberately at boot. Pure, injected deps,
-    tested.
+    fresh-visit reset and camera fit still land. Times every generation and
+    reports the latency to `onResult` (fr-a5gu — `morph-budget.ts`'s feed).
+    Falls back to running the same `generateCloud` synchronously if the
+    worker never loads or crashes — the live cloud IS the app, unlike the
+    optional flame/solid overlays — and `generateSync` takes that path
+    deliberately at boot. Pure, injected deps, tested.
   - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
     kernels from inside the flame worker (one shared driver, two packing
     factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
