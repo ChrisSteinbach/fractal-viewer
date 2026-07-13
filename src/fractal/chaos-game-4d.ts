@@ -3,7 +3,7 @@ import type { Affine4 } from "./affine4";
 import { ESCAPE_LIMIT, MAX_TRANSFORMS, WARMUP_ITERATIONS } from "./chaos-game";
 import { composeVariations4 } from "./variations4";
 import type { VariationBlend4 } from "./variations4";
-import type { Rng } from "./rng";
+import type { IterationRng, Rng } from "./rng";
 import type { Bounds4, Transform4, Vec4 } from "./types";
 
 /**
@@ -256,10 +256,17 @@ export interface OrbitStep4 {
  *
  * Mirrors `chaos-game.ts`'s `stepOrbit` one dimension up: same pick, same
  * affine-then-variation order, same escape check (now over all four
- * coordinates), same reseed-all-coordinates-from-`rng` recovery. There is no
+ * coordinates), same reseed-all-coordinates recovery. There is no
  * symmetry/postRotation step (4D has none — see {@link PreparedChaosGame4}),
  * and `index` is always the raw picked index (no base-map modulo, since there
  * are no expanded kaleidoscope copies to recover from).
+ *
+ * `auxRng` (fr-2wfw) mirrors `stepOrbit`'s parameter of the same name — the
+ * stream every iteration-local draw (a stochastic variation's coin flips,
+ * the escape-reseed coordinates) comes from, defaulting to `rng` itself (the
+ * original single-stream behavior, byte-identical for every existing
+ * caller). See that doc for why a separate stream keeps morph samples
+ * point-for-point correspondent.
  */
 export function stepOrbit4(
   prepared: PreparedChaosGame4,
@@ -268,6 +275,7 @@ export function stepOrbit4(
   z: number,
   w: number,
   rng: Rng,
+  auxRng: Rng = rng,
 ): OrbitStep4 {
   const idx = pickIndex4(prepared, rng);
   const p = applyAffine4(prepared.affines[idx], x, y, z, w);
@@ -285,7 +293,7 @@ export function stepOrbit4(
     // Nonlinear maps can send a point to infinity — or, at a singularity, to
     // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
     // stopping a bad landing from poisoning the rest of the orbit.
-    const q = warp(p[0], p[1], p[2], p[3], rng);
+    const q = warp(p[0], p[1], p[2], p[3], auxRng);
     nx = q[0];
     ny = q[1];
     nz = q[2];
@@ -301,10 +309,10 @@ export function stepOrbit4(
     Math.abs(nz) > ESCAPE_LIMIT ||
     Math.abs(nw) > ESCAPE_LIMIT
   ) {
-    nx = rng() - 0.5;
-    ny = rng() - 0.5;
-    nz = rng() - 0.5;
-    nw = rng() - 0.5;
+    nx = auxRng() - 0.5;
+    ny = auxRng() - 0.5;
+    nz = auxRng() - 0.5;
+    nw = auxRng() - 0.5;
   }
   return { x: nx, y: ny, z: nz, w: nw, index: idx };
 }
@@ -318,6 +326,10 @@ export function stepOrbit4(
  * at a singularity, so the bent point is only adopted while every one of the
  * four coordinates stays finite, otherwise this returns the orbit point
  * unchanged so a bad landing never produces NaN/Inf.
+ *
+ * `auxRng` (fr-2wfw) mirrors `plotPoint`'s parameter of the same name: the
+ * stream a stochastic lens's own draws come from, defaulting to `rng` — the
+ * original single-stream behavior.
  */
 export function plotPoint4(
   prepared: PreparedChaosGame4,
@@ -326,6 +338,7 @@ export function plotPoint4(
   z: number,
   w: number,
   rng: Rng,
+  auxRng: Rng = rng,
 ): Vec4 {
   const { finalAffine, finalWarp } = prepared;
   if (finalAffine === null) return [x, y, z, w];
@@ -335,7 +348,7 @@ export function plotPoint4(
   let fz = p[2];
   let fw = p[3];
   if (finalWarp !== null) {
-    const q = finalWarp(fx, fy, fz, fw, rng);
+    const q = finalWarp(fx, fy, fz, fw, auxRng);
     fx = q[0];
     fy = q[1];
     fz = q[2];
@@ -375,6 +388,13 @@ export function plotPoint4(
  * past {@link MAX_TRANSFORMS} (the Uint8 transform-index cap) via
  * {@link prepareChaosGame4}.
  *
+ * An optional `iterationRng` (fr-2wfw) moves every iteration-local draw — a
+ * stochastic variation's coin flips, the escape-reseed coordinates — onto a
+ * per-iteration stream, mirroring `runChaosGame`'s parameter of the same
+ * name; see that doc (and `rng.ts`'s `IterationRng`) for the
+ * morph-correspondence rationale. Omitted, every draw shares `rng` — the
+ * original behavior, byte-identical for every existing caller.
+ *
  * The per-run setup ({@link prepareChaosGame4}) and per-iteration stepping
  * ({@link stepOrbit4}, {@link plotPoint4}) this function drives are exported so
  * another consumer — e.g. a future 4D histogram accumulator that needs the
@@ -386,6 +406,7 @@ export function runChaosGame4(
   numPoints: number,
   rng: Rng = Math.random,
   finalTransform: Transform4 | null = null,
+  iterationRng?: IterationRng,
 ): ChaosGame4Result {
   if (transforms.length === 0 || numPoints <= 0) {
     return emptyResult();
@@ -402,9 +423,16 @@ export function runChaosGame4(
   let z = rng() - 0.5;
   let w = rng() - 0.5;
 
+  // The iteration-local stream (see the doc above): `aux` is `rng` itself in
+  // the default single-stream mode, so every draw below stays byte-identical
+  // to the original code; with an `iterationRng`, each iteration — warmup
+  // and recording alike, numbered consecutively — rewinds it first.
+  const aux = iterationRng ? iterationRng.draw : rng;
+
   // Warm up so the orbit settles onto the attractor before we start recording.
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-    const s = stepOrbit4(prepared, x, y, z, w, rng);
+    if (iterationRng) iterationRng.begin(i);
+    const s = stepOrbit4(prepared, x, y, z, w, rng, aux);
     x = s.x;
     y = s.y;
     z = s.z;
@@ -430,7 +458,8 @@ export function runChaosGame4(
   const { affines, variations, finalAffine, finalWarp } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
-    // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ----------------------
+    // --- inlined stepOrbit4(prepared, x, y, z, w, rng, aux) -----------------
+    if (iterationRng) iterationRng.begin(WARMUP_ITERATIONS + i);
     const idx = pickIndex4(prepared, rng);
     const aff = affines[idx];
     const m = aff.m;
@@ -454,7 +483,7 @@ export function runChaosGame4(
       // Nonlinear maps can send a point to infinity — or, at a singularity,
       // to NaN. The reseed guard below catches both (NaN fails
       // Number.isFinite), stopping a bad landing from poisoning the orbit.
-      const q = warp(ax, ay, az, aw, rng);
+      const q = warp(ax, ay, az, aw, aux);
       nx = q[0];
       ny = q[1];
       nz = q[2];
@@ -471,17 +500,17 @@ export function runChaosGame4(
       Math.abs(nz) > ESCAPE_LIMIT ||
       Math.abs(nw) > ESCAPE_LIMIT
     ) {
-      nx = rng() - 0.5;
-      ny = rng() - 0.5;
-      nz = rng() - 0.5;
-      nw = rng() - 0.5;
+      nx = aux() - 0.5;
+      ny = aux() - 0.5;
+      nz = aux() - 0.5;
+      nw = aux() - 0.5;
     }
     x = nx;
     y = ny;
     z = nz;
     w = nw;
 
-    // --- inlined plotPoint4(prepared, x, y, z, w, rng) ----------------------
+    // --- inlined plotPoint4(prepared, x, y, z, w, rng, aux) -----------------
     // The plotted point is the orbit point, optionally bent through the lens
     // (final transform's affine + warp). The orbit state x/y/z/w is left
     // untouched, so the lens never feeds back into the iteration.
@@ -497,7 +526,7 @@ export function runChaosGame4(
       let fz = fm[8] * x + fm[9] * y + fm[10] * z + fm[11] * w + ft[2];
       let fw = fm[12] * x + fm[13] * y + fm[14] * z + fm[15] * w + ft[3];
       if (finalWarp !== null) {
-        const q = finalWarp(fx, fy, fz, fw, rng);
+        const q = finalWarp(fx, fy, fz, fw, aux);
         fx = q[0];
         fy = q[1];
         fz = q[2];

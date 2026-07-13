@@ -26,7 +26,7 @@ import { toTransform4 } from "../fractal/affine4";
 import { buildColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import type { PaletteSpec } from "../fractal/palette";
-import { mulberry32 } from "../fractal/rng";
+import { iterationRng, mulberry32 } from "../fractal/rng";
 import type { ColorMode, SymmetryParams, Transform } from "../fractal/types";
 
 /**
@@ -107,19 +107,47 @@ export interface CloudResult4D extends ChaosGame4Result {
 export type CloudResult = CloudResult3D | CloudResult4D;
 
 /**
+ * XOR'd into `request.seed` to derive the iteration-local stream's own seed
+ * (fr-2wfw; the golden-ratio constant, but any fixed value works —
+ * `mulberry32`'s mixing decorrelates any two distinct seeds). One derivation
+ * for the 3D and 4D paths, so a flat↔4D morph's alternating requests keep
+ * one discipline.
+ */
+const ITERATION_SEED_XOR = 0x9e3779b9;
+
+/**
  * Run one point-cloud generation — the pure request → result function both
  * the real worker (`cloud-worker.ts`) and the main-thread synchronous
  * fallback (`cloud-generator.ts`) execute. Seeded via `mulberry32`, so a
  * given request reproduces exactly, wherever it runs.
+ *
+ * Iteration-local randomness — a stochastic variation's coin flips, the
+ * escape-reseed coordinates — draws from a per-iteration stream derived from
+ * the same request seed ({@link ITERATION_SEED_XOR}; see `rng.ts`'s
+ * `iterationRng`). Still a pure function of the request, but the primary
+ * pick stream's consumption becomes rigid (one draw per pick), and each
+ * iteration's dice are its own. That keeps the morph's pinned-seed point
+ * correspondence intact across ε-different samples (fr-2wfw): on one shared
+ * stream, a single differing escape — or a weight-boundary pick flip landing
+ * on a `julia`-carrying map in one sample only — shifted every subsequent
+ * transform pick and re-rolled the entire remaining cloud; the morph
+ * visibly boiled.
  */
 export function generateCloud(request: CloudRequest): CloudResult {
   const rng = mulberry32(request.seed);
+  const iterRng = iterationRng(request.seed ^ ITERATION_SEED_XOR);
   if (request.fourD) {
     const transforms4 = request.transforms.map(toTransform4);
     const final4 = request.finalTransform
       ? toTransform4(request.finalTransform)
       : null;
-    const result = runChaosGame4(transforms4, request.numPoints, rng, final4);
+    const result = runChaosGame4(
+      transforms4,
+      request.numPoints,
+      rng,
+      final4,
+      iterRng,
+    );
     return { id: request.id, fourD: true, ...result };
   }
   const result = runChaosGame(
@@ -128,6 +156,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
     rng,
     request.finalTransform,
     request.symmetry,
+    iterRng,
   );
   const colors = buildColors(
     result,

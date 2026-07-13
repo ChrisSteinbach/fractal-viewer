@@ -10,8 +10,8 @@ import {
 import type { PreparedChaosGame } from "./chaos-game";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { composeVariations } from "./variations";
-import { mulberry32 } from "./rng";
-import type { Rng } from "./rng";
+import { iterationRng, mulberry32 } from "./rng";
+import type { IterationRng, Rng } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Bounds, Transform } from "./types";
 
@@ -880,5 +880,145 @@ describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => 
       Array.from(reference.transformIndices),
     );
     expect(actual.bounds).toEqual(reference.bounds);
+  });
+});
+
+describe("iteration-local randomness isolation (fr-2wfw)", () => {
+  // A fixture exercising every way ε-different runs can desynchronize a
+  // SHARED stream: map 0's non-1 weight forces the weighted pick path (an
+  // ε weight change flips occasional picks across cumulative boundaries),
+  // map 1's `julia` draws a coin per application (a flipped pick lands on a
+  // differently-drawing map), and map 2's `spherical` diverges near the
+  // origin (the escape-reseed safety net fires occasionally). The system
+  // stays contractive on average, so two orbits driven by the same pick
+  // sequence re-converge geometrically — which is what makes per-point
+  // correspondence possible at all.
+  function gauntletSystem(weight0 = 2, aPosX = 0.5): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [aPosX, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: weight0,
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+  }
+
+  it("shares one stream when iterationRng is omitted — the original behavior", () => {
+    // Without an iterationRng, julia's coin flips and the escape reseeds
+    // draw from the primary stream: its consumption exceeds the rigid
+    // one-draw-per-pick floor. (The floor itself: 3 seed draws + one pick
+    // per warmup and recorded iteration.)
+    const numPoints = 4000;
+    let draws = 0;
+    const inner = mulberry32(5);
+    const primary: Rng = () => {
+      draws++;
+      return inner();
+    };
+
+    runChaosGame(gauntletSystem(), numPoints, primary);
+
+    expect(draws).toBeGreaterThan(3 + WARMUP_ITERATIONS + numPoints);
+  });
+
+  it("keeps the primary stream rigid — one draw per pick — when an iterationRng is provided", () => {
+    const numPoints = 4000;
+    let primaryDraws = 0;
+    const inner = mulberry32(5);
+    const primary: Rng = () => {
+      primaryDraws++;
+      return inner();
+    };
+    let auxDraws = 0;
+    const iter = iterationRng(1234);
+    const countingIter: IterationRng = {
+      begin: (i) => iter.begin(i),
+      draw: () => {
+        auxDraws++;
+        return iter.draw();
+      },
+    };
+
+    runChaosGame(
+      gauntletSystem(),
+      numPoints,
+      primary,
+      null,
+      undefined,
+      countingIter,
+    );
+
+    // 3 draws seed the initial point, then exactly one pick per warmup and
+    // recorded iteration — no matter how often julia flipped its coin or the
+    // orbit escaped: those land on the iteration stream instead.
+    expect(primaryDraws).toBe(3 + WARMUP_ITERATIONS + numPoints);
+    expect(auxDraws).toBeGreaterThan(0);
+  });
+
+  it("keeps ε-different runs point-for-point correspondent (the morph-flow guarantee)", () => {
+    // Two samples one morph frame apart differ by a tiny weight + position
+    // step. With iteration-local randomness, the pick streams stay aligned
+    // and every iteration rolls its own dice, so a differing escape or a
+    // weight-boundary pick flip perturbs only its short contraction wake.
+    // On the shared stream the first differing draw shifts every later pick
+    // and re-rolls the whole remaining cloud. Measured on this fixture:
+    // ~2% displaced when isolated vs ~90% shared.
+    const numPoints = 20_000;
+    const jumpedFraction = (a: Float32Array, b: Float32Array): number => {
+      let jumped = 0;
+      for (let i = 0; i < numPoints; i++) {
+        const dx = a[i * 3] - b[i * 3];
+        const dy = a[i * 3 + 1] - b[i * 3 + 1];
+        const dz = a[i * 3 + 2] - b[i * 3 + 2];
+        if (Math.hypot(dx, dy, dz) > 0.3) jumped++;
+      }
+      return jumped / numPoints;
+    };
+
+    const isolated = jumpedFraction(
+      runChaosGame(
+        gauntletSystem(2, 0.5),
+        numPoints,
+        mulberry32(5),
+        null,
+        undefined,
+        iterationRng(1234),
+      ).positions,
+      runChaosGame(
+        gauntletSystem(2.01, 0.502),
+        numPoints,
+        mulberry32(5),
+        null,
+        undefined,
+        iterationRng(1234),
+      ).positions,
+    );
+    const shared = jumpedFraction(
+      runChaosGame(gauntletSystem(2, 0.5), numPoints, mulberry32(5)).positions,
+      runChaosGame(gauntletSystem(2.01, 0.502), numPoints, mulberry32(5))
+        .positions,
+    );
+
+    expect(isolated).toBeLessThan(0.15);
+    expect(shared).toBeGreaterThan(0.5);
   });
 });

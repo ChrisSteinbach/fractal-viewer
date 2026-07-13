@@ -2,7 +2,7 @@ import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import type { Affine } from "./affine";
 import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
-import type { Rng } from "./rng";
+import type { IterationRng, Rng } from "./rng";
 import type { Bounds, SymmetryParams, Transform, Vec3 } from "./types";
 
 /** Result of running the chaos game: a flat point cloud plus metadata. */
@@ -311,6 +311,22 @@ export interface OrbitStep {
  * index (`idx % prepared.baseTransformCount`), never the expanded slot, so
  * per-transform coloring and the editor's selection keep meaning "logical
  * map" regardless of which kaleidoscope copy actually fired.
+ *
+ * `auxRng` (fr-2wfw) is the stream every ITERATION-LOCAL draw comes from —
+ * a stochastic variation's coin flips (`julia`) and the escape-reseed
+ * coordinates; the transform pick alone stays on `rng`. It defaults to `rng`
+ * itself: the original single-stream behavior, byte-identical for every
+ * existing caller. Passing a separate stream makes the primary stream's
+ * consumption rigid (exactly one draw per step), so two runs of ε-different
+ * systems under the same primary seed keep their pick sequences aligned even
+ * when one escapes — or flips a weight-boundary pick onto a
+ * differently-drawing map — where the other doesn't, and corresponding
+ * points stay corresponding outside a short contraction wake. That
+ * correspondence is what the replace-load/drift morph's pinned seed exists
+ * to provide (morph-tween.ts); on one shared stream, a single differing draw
+ * re-rolls the entire remaining cloud — the morph visibly "boils". See
+ * {@link runChaosGame}'s `iterationRng` for the per-iteration discipline the
+ * cloud generation layers on top.
  */
 export function stepOrbit(
   prepared: PreparedChaosGame,
@@ -318,6 +334,7 @@ export function stepOrbit(
   y: number,
   z: number,
   rng: Rng,
+  auxRng: Rng = rng,
 ): OrbitStep {
   const idx = pickIndex(prepared, rng);
   const p = applyAffine(prepared.affines[idx], x, y, z);
@@ -333,7 +350,7 @@ export function stepOrbit(
     // Nonlinear maps can send a point to infinity — or, at a singularity, to
     // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
     // stopping a bad landing from poisoning the rest of the orbit.
-    const q = warp(p[0], p[1], p[2], rng);
+    const q = warp(p[0], p[1], p[2], auxRng);
     nx = q[0];
     ny = q[1];
     nz = q[2];
@@ -355,9 +372,9 @@ export function stepOrbit(
     Math.abs(ny) > ESCAPE_LIMIT ||
     Math.abs(nz) > ESCAPE_LIMIT
   ) {
-    nx = rng() - 0.5;
-    ny = rng() - 0.5;
-    nz = rng() - 0.5;
+    nx = auxRng() - 0.5;
+    ny = auxRng() - 0.5;
+    nz = auxRng() - 0.5;
   }
   return { x: nx, y: ny, z: nz, index: idx % prepared.baseTransformCount };
 }
@@ -370,6 +387,10 @@ export function stepOrbit(
  * lens can diverge at a singularity; the bent point is only adopted while
  * every coordinate stays finite, otherwise this returns the orbit point
  * unchanged so a bad landing never produces NaN/Inf.
+ *
+ * `auxRng` (fr-2wfw) mirrors {@link stepOrbit}'s parameter of the same name:
+ * the stream a stochastic lens's own draws come from, defaulting to `rng` —
+ * the original single-stream behavior.
  */
 export function plotPoint(
   prepared: PreparedChaosGame,
@@ -377,6 +398,7 @@ export function plotPoint(
   y: number,
   z: number,
   rng: Rng,
+  auxRng: Rng = rng,
 ): Vec3 {
   const { finalAffine, finalWarp } = prepared;
   if (finalAffine === null) return [x, y, z];
@@ -385,7 +407,7 @@ export function plotPoint(
   let fy = p[1];
   let fz = p[2];
   if (finalWarp !== null) {
-    const q = finalWarp(fx, fy, fz, rng);
+    const q = finalWarp(fx, fy, fz, auxRng);
     fx = q[0];
     fy = q[1];
     fz = q[2];
@@ -416,6 +438,17 @@ export function plotPoint(
  * {@link prepareChaosGame}. `transformIndices` still records the BASE map
  * index regardless, so per-transform coloring is unaffected.
  *
+ * An optional `iterationRng` (fr-2wfw) moves every ITERATION-LOCAL draw — a
+ * stochastic variation's coin flips, the escape-reseed coordinates — onto a
+ * per-iteration stream rewound to `begin(i)` at each iteration, leaving
+ * `rng` to serve exactly one draw per transform pick (plus the three seeding
+ * the initial point). That rigidity is what keeps two ε-different runs under
+ * the same seed point-for-point correspondent — see {@link stepOrbit}'s
+ * `auxRng` doc for the failure mode, and `rng.ts`'s {@link IterationRng} for
+ * why the local draws key on the iteration NUMBER (a differing escape then
+ * cannot offset any other iteration's dice). Omitted, every draw shares
+ * `rng` — the original behavior, byte-identical for every existing caller.
+ *
  * The per-run setup ({@link prepareChaosGame}) and per-iteration stepping
  * ({@link stepOrbit}, {@link plotPoint}) this function drives are exported so
  * another consumer — e.g. a histogram accumulator that needs the same
@@ -427,6 +460,7 @@ export function runChaosGame(
   rng: Rng = Math.random,
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY,
+  iterationRng?: IterationRng,
 ): ChaosGameResult {
   if (transforms.length === 0 || numPoints <= 0) {
     return {
@@ -446,8 +480,15 @@ export function runChaosGame(
   let y = rng() - 0.5;
   let z = rng() - 0.5;
 
+  // The iteration-local stream (see the doc above): `aux` is `rng` itself in
+  // the default single-stream mode, so every draw below stays byte-identical
+  // to the original code; with an `iterationRng`, each iteration — warmup
+  // and recording alike, numbered consecutively — rewinds it first.
+  const aux = iterationRng ? iterationRng.draw : rng;
+
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-    const s = stepOrbit(prepared, x, y, z, rng);
+    if (iterationRng) iterationRng.begin(i);
+    const s = stepOrbit(prepared, x, y, z, rng, aux);
     x = s.x;
     y = s.y;
     z = s.z;
@@ -474,7 +515,8 @@ export function runChaosGame(
   const { baseTransformCount } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
-    // --- inlined stepOrbit(prepared, x, y, z, rng) --------------------------
+    // --- inlined stepOrbit(prepared, x, y, z, rng, aux) ---------------------
+    if (iterationRng) iterationRng.begin(WARMUP_ITERATIONS + i);
     const idx = pickIndex(prepared, rng);
     const aff = affines[idx];
     const m = aff.m;
@@ -495,7 +537,7 @@ export function runChaosGame(
       // Nonlinear maps can send a point to infinity — or, at a singularity,
       // to NaN. The reseed guard below catches both (NaN fails
       // Number.isFinite), stopping a bad landing from poisoning the orbit.
-      const q = warp(ax, ay, az, rng);
+      const q = warp(ax, ay, az, aux);
       nx = q[0];
       ny = q[1];
       nz = q[2];
@@ -524,15 +566,15 @@ export function runChaosGame(
       Math.abs(ny) > ESCAPE_LIMIT ||
       Math.abs(nz) > ESCAPE_LIMIT
     ) {
-      nx = rng() - 0.5;
-      ny = rng() - 0.5;
-      nz = rng() - 0.5;
+      nx = aux() - 0.5;
+      ny = aux() - 0.5;
+      nz = aux() - 0.5;
     }
     x = nx;
     y = ny;
     z = nz;
 
-    // --- inlined plotPoint(prepared, x, y, z, rng) ---------------------------
+    // --- inlined plotPoint(prepared, x, y, z, rng, aux) ----------------------
     // The plotted point is the orbit point, optionally bent by the final
     // transform. The orbit state x/y/z is left untouched, so the lens never
     // feeds back into the iteration.
@@ -546,7 +588,7 @@ export function runChaosGame(
       let fy = fm[3] * x + fm[4] * y + fm[5] * z + ft[1];
       let fz = fm[6] * x + fm[7] * y + fm[8] * z + ft[2];
       if (finalWarp !== null) {
-        const q = finalWarp(fx, fy, fz, rng);
+        const q = finalWarp(fx, fy, fz, aux);
         fx = q[0];
         fy = q[1];
         fz = q[2];

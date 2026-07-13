@@ -19,8 +19,8 @@ import {
 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { pentatope, sierpinskiTetrahedron } from "./presets";
-import { mulberry32 } from "./rng";
-import type { Rng } from "./rng";
+import { iterationRng, mulberry32 } from "./rng";
+import type { IterationRng, Rng } from "./rng";
 import { composeVariations4 } from "./variations4";
 import type { Bounds4, Transform, Transform4, Vec4 } from "./types";
 
@@ -750,5 +750,87 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+  });
+});
+
+describe("iteration-local randomness isolation (fr-2wfw, 4D twin)", () => {
+  // The 3D gauntlet fixture from chaos-game.test.ts lifted through
+  // toTransform4 — a weighted map (weighted pick path), a `julia`-carrying
+  // map (stochastic draws), and a `spherical`-carrying map that diverges
+  // near the origin (occasional escape reseeds) — so the run exercises
+  // every iteration-local draw without being net-expansive.
+  function gauntletSystem4(): Transform4[] {
+    const flat: Transform[] = [
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 2,
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+    return flat.map(toTransform4);
+  }
+
+  it("shares one stream when iterationRng is omitted — the original behavior", () => {
+    // Without an iterationRng, julia's coin flips and the escape reseeds
+    // draw from the primary stream: its consumption exceeds the rigid
+    // one-draw-per-pick floor (4 seed draws + one pick per warmup and
+    // recorded iteration).
+    const numPoints = 4000;
+    let draws = 0;
+    const inner = mulberry32(5);
+    const primary: Rng = () => {
+      draws++;
+      return inner();
+    };
+
+    runChaosGame4(gauntletSystem4(), numPoints, primary);
+
+    expect(draws).toBeGreaterThan(4 + WARMUP_ITERATIONS + numPoints);
+  });
+
+  it("keeps the primary stream rigid — one draw per pick — when an iterationRng is provided", () => {
+    const numPoints = 4000;
+    let primaryDraws = 0;
+    const inner = mulberry32(5);
+    const primary: Rng = () => {
+      primaryDraws++;
+      return inner();
+    };
+    let auxDraws = 0;
+    const iter = iterationRng(1234);
+    const countingIter: IterationRng = {
+      begin: (i) => iter.begin(i),
+      draw: () => {
+        auxDraws++;
+        return iter.draw();
+      },
+    };
+
+    runChaosGame4(gauntletSystem4(), numPoints, primary, null, countingIter);
+
+    // 4 draws seed the initial point, then exactly one pick per warmup and
+    // recorded iteration — no matter how often julia flipped its coin or
+    // the orbit escaped: those land on the iteration stream instead.
+    expect(primaryDraws).toBe(4 + WARMUP_ITERATIONS + numPoints);
+    expect(auxDraws).toBeGreaterThan(0);
   });
 });
