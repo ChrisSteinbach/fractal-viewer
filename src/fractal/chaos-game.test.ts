@@ -1022,3 +1022,93 @@ describe("iteration-local randomness isolation (fr-2wfw)", () => {
     expect(shared).toBeGreaterThan(0.5);
   });
 });
+
+describe("symmetry blend (fr-eykn)", () => {
+  // An attractor pinned strictly to +x, so an order-2 y-axis kaleidoscope's
+  // rotated copy lands strictly in -x: the share of points at x < 0 reads
+  // the copies' selection share directly.
+  function offAxisSystem(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [1, 0.2, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+      },
+      {
+        id: 1,
+        position: [1, -0.2, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+      },
+    ];
+  }
+
+  function negativeXShare(order: number, blend?: number): number {
+    const result = runChaosGame(offAxisSystem(), 6000, mulberry32(11), null, {
+      order,
+      axis: "y",
+      ...(blend === undefined ? {} : { blend }),
+    });
+    let negative = 0;
+    for (let i = 0; i < result.count; i++) {
+      if (result.positions[i * 3] < 0) negative++;
+    }
+    return negative / result.count;
+  }
+
+  it("renders blend 0 bit-identically to order 1", () => {
+    const faded = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
+      order: 5,
+      axis: "y",
+      blend: 0,
+    });
+    const orderOne = runChaosGame(offAxisSystem(), 3000, mulberry32(3));
+    expect(faded.positions).toEqual(orderOne.positions);
+    expect(faded.transformIndices).toEqual(orderOne.transformIndices);
+    expect(faded.bounds).toEqual(orderOne.bounds);
+  });
+
+  it("renders blend 1 identically to an absent blend — the full kaleidoscope", () => {
+    const explicit = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
+      order: 5,
+      axis: "y",
+      blend: 1,
+    });
+    const absent = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
+      order: 5,
+      axis: "y",
+    });
+    expect(explicit.positions).toEqual(absent.positions);
+    expect(explicit.transformIndices).toEqual(absent.transformIndices);
+  });
+
+  it("thins the rotated copies' point share continuously between those ends", () => {
+    // Order 2: the copy's share of points is blend / (1 + blend) — 1/2 at
+    // full strength, 1/3 at half, 0 when faded out.
+    expect(negativeXShare(2, undefined)).toBeCloseTo(0.5, 1);
+    expect(negativeXShare(2, 0.5)).toBeCloseTo(1 / 3, 1);
+    expect(negativeXShare(2, 0)).toBe(0);
+  });
+
+  it("clamps blend outside 0..1 instead of corrupting the weight table", () => {
+    const over = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
+      order: 3,
+      axis: "y",
+      blend: 7,
+    });
+    const full = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
+      order: 3,
+      axis: "y",
+    });
+    expect(over.positions).toEqual(full.positions);
+
+    const under = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
+      order: 3,
+      axis: "y",
+      blend: -2,
+    });
+    const off = runChaosGame(offAxisSystem(), 2000, mulberry32(7));
+    expect(under.positions).toEqual(off.positions);
+  });
+});

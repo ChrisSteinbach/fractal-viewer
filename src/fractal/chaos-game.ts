@@ -157,6 +157,9 @@ export interface PreparedChaosGame {
  * (any axis) this expansion is a no-op: exactly one (unrotated) copy of each
  * base map, so every existing caller that omits `symmetry` gets a
  * byte-identical `PreparedChaosGame` to before this parameter existed.
+ * `symmetry.blend` (fr-eykn; default 1) scales the rotated copies' selection
+ * weights, continuously fading the kaleidoscope between full strength (1)
+ * and bit-identical-to-order-1 (0) — see the weight-table comment below.
  *
  * Throws `RangeError` if `transforms.length` exceeds {@link MAX_TRANSFORMS}
  * (the Uint8 transform-index cap) — independent of `symmetry`, which instead
@@ -211,16 +214,27 @@ export function prepareChaosGame(
   }
   const transformCount = affines.length;
 
-  // Selection weights: each slot inherits its BASE map's weight unchanged, so
+  // Selection weights: each slot inherits its BASE map's weight, so
   // pickIndex's draw over the full expanded list gives every copy an equal
   // share of its base map's total probability mass. When every weight is 1
   // (the common case) we keep the original `Math.floor(rng() * n)` draw, so
   // uniform systems consume the RNG identically and render exactly as before.
   // Only a genuinely weighted system pays for the cumulative-weight table +
   // binary search.
+  //
+  // `symmetry.blend` (fr-eykn) additionally scales every ROTATED copy's slot
+  // (never copy 0), continuously thinning the kaleidoscope: at its default 1
+  // the weights — and thus the `weighted` flag and the whole draw — are
+  // untouched, and at 0 the copies' zero-width cumulative segments can never
+  // win a draw, rendering bit-identically to order 1 (the lower-bound search
+  // over uniform base weights lands exactly where the uniform draw does).
+  // That continuity is what lets a morph crossfade a kaleidoscope instead of
+  // snapping its discrete order (morph.ts).
+  const copyBlend = Math.min(1, Math.max(0, symmetry.blend ?? 1));
   const weights = new Array<number>(transformCount);
   for (let s = 0; s < transformCount; s++) {
-    weights[s] = transforms[s % baseTransformCount].weight ?? 1;
+    const base = transforms[s % baseTransformCount].weight ?? 1;
+    weights[s] = s < baseTransformCount ? base : base * copyBlend;
   }
   let totalWeight = 0;
   const cumulative = new Float64Array(transformCount);

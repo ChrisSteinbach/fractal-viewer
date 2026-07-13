@@ -34,8 +34,13 @@
  *   never flips `systemIsFlat` mid-morph for no visual gain.
  * - Negative scale lerps straight through zero on purpose: the momentary
  *   planar collapse is the correct mirror fold-through, not a case to dodge.
- * - `symmetry` cannot interpolate (kaleidoscope order/axis are discrete), so
- *   it snaps from `a`'s to `b`'s at the morph's midpoint.
+ * - `symmetry`'s order/axis are discrete and cannot interpolate, but its
+ *   VISUAL WEIGHT can (fr-eykn): when the two sides' kaleidoscopes differ,
+ *   `a`'s fades out over the first half (`blend` 1 -> 0, see
+ *   `SymmetryParams.blend`) and `b`'s fades in over the second — continuous
+ *   at the midpoint, where both ends sit at blend 0 (bit-identical to order
+ *   1, per `prepareChaosGame`). A matching pair stays untouched, and an
+ *   order-1 side needs no fade (it has no copies), so it rides by reference.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import type {
@@ -282,6 +287,39 @@ function identityTransform(id: number): Transform {
 }
 
 /**
+ * `symmetry` for a morph (fr-eykn): a matching pair (same order and axis —
+ * `blend` deliberately ignored, it's a morph artifact, not an identity)
+ * rides through untouched; a differing pair CROSSFADES — the departing
+ * kaleidoscope's rotated copies thin to nothing over the first half
+ * (`blend`: own strength -> 0), the arriving one's grow from nothing over
+ * the second (0 -> own strength) — so the midpoint is continuous: both ends
+ * sit at blend 0, which `prepareChaosGame` renders bit-identically to order
+ * 1. An order-1 side has no copies to fade, so it rides by reference; each
+ * side's own strength resolves through `blend ?? 1`, which is what lets a
+ * CHAINED morph (morph-tween.ts) depart from a mid-fade sample without its
+ * kaleidoscope popping back to full first.
+ */
+function lerpSymmetry(
+  a: SymmetryParams,
+  b: SymmetryParams,
+  t: number,
+): SymmetryParams {
+  if (a.order === b.order && a.axis === b.axis) {
+    return t < 0.5 ? a : b;
+  }
+  if (t < 0.5) {
+    if (a.order === 1) return a;
+    return {
+      order: a.order,
+      axis: a.axis,
+      blend: (a.blend ?? 1) * (1 - 2 * t),
+    };
+  }
+  if (b.order === 1) return b;
+  return { order: b.order, axis: b.axis, blend: (b.blend ?? 1) * (2 * t - 1) };
+}
+
+/**
  * `finalTransform` for a morph: both null stays null; when only one side has
  * a lens, the other's endpoint is the identity map (carrying the present
  * side's id) so the lens fades in/out through {@link lerpTransformPair}'s
@@ -310,7 +348,7 @@ function lerpFinalTransform(
  * that exactness matters). Every intermediate is a freshly built system —
  * `a`/`b` are never mutated. See the module header for the field-by-field
  * rules: nearest-angle rotation, surplus-map padding, flat/4D continuity,
- * negative-scale fold-through, and the symmetry snap.
+ * negative-scale fold-through, and the symmetry crossfade.
  */
 export function lerpSystem(
   a: MorphSystem,
@@ -322,6 +360,6 @@ export function lerpSystem(
   return {
     transforms: lerpTransforms(a.transforms, b.transforms, t),
     finalTransform: lerpFinalTransform(a.finalTransform, b.finalTransform, t),
-    symmetry: t < 0.5 ? a.symmetry : b.symmetry,
+    symmetry: lerpSymmetry(a.symmetry, b.symmetry, t),
   };
 }
