@@ -120,29 +120,37 @@ of snapping (see **Presets** below).
   are the same undoable replace-loads as clicking a gallery card, except the
   camera auto-fits and follows the morph rather than snapping to each
   entry's saved pose (a manual card click still restores the pose exactly).
-  Unlike the random show, switching to a **Flame** or **Solid** render
-  doesn't stop it: the show keeps looping as a slideshow of stills — each
-  leg glides through the point-cloud morph, re-renders the freshly loaded
-  scene in your chosen mode with that scene's own saved render settings,
-  waits for the render to complete, lingers a second on the finished image,
-  and moves on. Pressing Back mid-render resumes it as a points show after
-  a fresh dwell; deleting entries mid-show is honored on the next leg (an
-  emptied collection ends the show). Everything else matches **▶ Drift**:
-  the same stop-on-edit rules, the same **■ Stop drifting** toggle, the same
-  reduced-motion unavailability (the button also disables while the
-  collection is empty), and it is never persisted.
+  Every entry plays in the mode it was **saved from** (fr-75sq): a
+  ✺ flame / ◆ solid entry glides through the point-cloud morph, re-renders
+  in its own mode with its own saved render settings, waits for the render
+  to complete, lingers a second on the finished image, and moves on — while
+  plain (points) entries dwell as the classic morphing cloud, so a mixed
+  collection plays as a mixed show. Switching renderers mid-show is a
+  look-around, not a stop: the show holds until the entering render
+  completes, and the next leg reasserts its own entry's mode; pressing Back
+  mid-render resumes after a fresh dwell. Deleting entries mid-show is
+  honored on the next leg (an emptied collection ends the show). Everything
+  else matches **▶ Drift**: the same stop-on-edit rules, the same **■ Stop
+  drifting** toggle, the same reduced-motion unavailability (the button also
+  disables while the collection is empty), and it is never persisted.
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
-  (see **Sharing & persistence** below). Explorer-only — it hides during a
-  flame/solid render. **★ Save to collection** saves the current system with a
-  thumbnail of the live cloud and confirms with a toast. **▦ Gallery (N)** (N
-  tracks the live count) opens a modal grid of saved thumbnails; clicking one
-  loads it as a whole-system replacement (the same undoable treatment as a
-  preset load or Surprise Me) — so you can save a keeper, keep tweaking, and
-  still load it back exactly as saved. Like a preset load, it morphs smoothly
-  into the new shape rather than snapping. Each card has a ✕ to delete it;
-  Escape, the backdrop, or the header ✕ close the modal, and the header's
-  **▶ Drift collection** starts the looping slideshow described above. **🔗 Copy link** copies a
+  (see **Sharing & persistence** below). Available in every render mode
+  (fr-75sq), like Export. **★ Save to collection** saves the current system
+  with a thumbnail of what's actually showing — the live cloud, or the
+  flame/solid frame while one of those renders is up — and confirms with a
+  toast. A save made from a Flame/Solid render also **tags the entry with
+  that mode** (shown as a ✺/◆ glyph on its card): loading it re-enters that
+  renderer once the restored cloud lands, and the drift slideshow plays it
+  there. The tag lives only in your local collection — share links and the
+  autosave stay mode-less (fr-39y). **▦ Gallery (N)** (N tracks the live
+  count) opens a modal grid of saved thumbnails; clicking one loads it as a
+  whole-system replacement (the same undoable treatment as a preset load or
+  Surprise Me) — so you can save a keeper, keep tweaking, and still load it
+  back exactly as saved. Like a preset load, it morphs smoothly into the new
+  shape rather than snapping. Each card has a ✕ to delete it; Escape, the
+  backdrop, or the header ✕ close the modal, and the header's **▶ Drift
+  collection** starts the looping slideshow described above. **🔗 Copy link** copies a
   shareable `#v1=…` link built fresh from the current state, not the
   (debounced) address bar.
 - **Points** — slider for the point count (0–500k); takes effect on **Regenerate

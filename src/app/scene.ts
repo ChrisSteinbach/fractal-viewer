@@ -1296,29 +1296,36 @@ export class FractalScene {
   }
 
   /**
-   * Render one frame and read it back as a small JPEG data URL — the thumbnail
-   * source for the saved-scene collection (fr-cai). Uses the same
-   * synchronous-render-then-read trick as {@link captureFrame} (the renderer
-   * runs without `preserveDrawingBuffer`), but downsamples to at most `maxDim`
-   * px on the long side and JPEG-compresses, so a whole collection of
-   * thumbnails stays well within the localStorage budget. Returns `""` when a
-   * 2D context is unavailable — the collection treats an empty thumbnail as
-   * "no image" and renders a placeholder card.
+   * Read the current display back as a small JPEG data URL — the thumbnail
+   * source for the saved-scene collection (fr-cai). `mode` picks the source
+   * the way the Save-PNG export does (fr-75sq): `"points"` renders the live
+   * explorer scene, `"solid"` re-marches the voxel volume, both with the
+   * same synchronous-render-then-read trick as {@link captureFrame} (the
+   * renderer runs without `preserveDrawingBuffer`); `"flame"` reads the
+   * flame canvas, whose zero-hit pixels are transparent — the unconditional
+   * black underlay in the downscale is what {@link captureFlameFrame}'s
+   * composite does, a no-op for the opaque WebGL canvas. Downsamples to at
+   * most `maxDim` px on the long side and JPEG-compresses, so a whole
+   * collection of thumbnails stays well within the localStorage budget.
+   * Returns `""` when a 2D context is unavailable — the collection treats an
+   * empty thumbnail as "no image" and renders a placeholder card.
    */
-  captureThumbnail(maxDim = 160): string {
-    this.render();
-    const src = this.renderer.domElement;
-    const longSide = Math.max(src.width, src.height);
-    const scale = longSide > maxDim ? maxDim / longSide : 1;
-    const w = Math.max(1, Math.round(src.width * scale));
-    const h = Math.max(1, Math.round(src.height * scale));
-    const out = document.createElement("canvas");
-    out.width = w;
-    out.height = h;
-    const ctx = out.getContext("2d");
-    if (!ctx) return "";
-    ctx.drawImage(src, 0, 0, w, h);
-    return out.toDataURL("image/jpeg", 0.72);
+  captureThumbnail(
+    mode: "points" | "flame" | "solid" = "points",
+    maxDim = 160,
+  ): string {
+    if (mode === "flame") {
+      // A flame canvas that never received an image is 0×0, and drawImage
+      // would throw on it; "" is the collection's own "no image" value.
+      // (main.ts prefers the explorer capture during the first-frame gap,
+      // so this is belt-and-braces.)
+      return this.flameCanvas.width > 0
+        ? thumbnailFrom(this.flameCanvas, maxDim)
+        : "";
+    }
+    if (mode === "solid") this.renderSolid();
+    else this.render();
+    return thumbnailFrom(this.renderer.domElement, maxDim);
   }
 
   /**
@@ -1544,6 +1551,30 @@ function shearMatrix4(shear: Vec3): THREE.Matrix4 {
     u[6], u[7], u[8], 0,
     0,    0,    0,    1,
   );
+}
+
+/**
+ * Downscale a source canvas to at most `maxDim` px on the long side and
+ * JPEG-encode it over an opaque black underlay — the shared tail of every
+ * `captureThumbnail` mode (fr-75sq). The black fill is what makes the flame
+ * canvas's transparent zero-hit pixels match their on-screen appearance
+ * (see `captureFlameFrame`); for the already-opaque WebGL canvas it changes
+ * nothing. Returns `""` when a 2D context is unavailable.
+ */
+function thumbnailFrom(src: HTMLCanvasElement, maxDim: number): string {
+  const longSide = Math.max(src.width, src.height);
+  const scale = longSide > maxDim ? maxDim / longSide : 1;
+  const w = Math.max(1, Math.round(src.width * scale));
+  const h = Math.max(1, Math.round(src.height * scale));
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d");
+  if (!ctx) return "";
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(src, 0, 0, w, h);
+  return out.toDataURL("image/jpeg", 0.72);
 }
 
 function disableFog(material: THREE.Material | THREE.Material[]): void {
