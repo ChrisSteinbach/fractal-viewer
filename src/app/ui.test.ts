@@ -2339,6 +2339,21 @@ describe("Ui.setFlameProgress", () => {
     );
     expect(progress?.textContent).toBe("20.0M / 20.0M iterations (100%)");
   });
+
+  it("writes the percentage to the --progress custom property (fr-dshq)", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(12_345_000, 20_000_000);
+    const progress = document.getElementById("flameProgress");
+    expect(progress?.style.getPropertyValue("--progress")).toBe("61%");
+  });
+
+  it("resets --progress to 0% when called with no iterations done (fr-dshq)", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(20_000_000, 20_000_000);
+    ui.setFlameProgress(0, 20_000_000);
+    const progress = document.getElementById("flameProgress");
+    expect(progress?.style.getPropertyValue("--progress")).toBe("0%");
+  });
 });
 
 describe("Ui.setFlameEstimating", () => {
@@ -3536,6 +3551,21 @@ describe("Ui.setSolidProgress", () => {
     expect(document.getElementById("solidProgress")?.textContent).toContain(
       "(100%)",
     );
+  });
+
+  it("writes the percentage to the --progress custom property (fr-dshq)", () => {
+    const ui = new Ui(document);
+    ui.setSolidProgress(12_345_000, 20_000_000);
+    const progress = document.getElementById("solidProgress");
+    expect(progress?.style.getPropertyValue("--progress")).toBe("61%");
+  });
+
+  it("resets --progress to 0% when called with no iterations done (fr-dshq)", () => {
+    const ui = new Ui(document);
+    ui.setSolidProgress(20_000_000, 20_000_000);
+    ui.setSolidProgress(0, 20_000_000);
+    const progress = document.getElementById("solidProgress");
+    expect(progress?.style.getPropertyValue("--progress")).toBe("0%");
   });
 });
 

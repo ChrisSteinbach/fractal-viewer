@@ -1946,6 +1946,7 @@ export class Ui {
     const budget = formatIterationCount(iterationsBudget);
     this.flameProgress.classList.remove("flame-progress-estimating");
     this.flameProgress.textContent = `${done} / ${budget} iterations (${pct}%)`;
+    this.flameProgress.style.setProperty("--progress", `${pct}%`);
   }
 
   /**
@@ -2024,6 +2025,7 @@ export class Ui {
     const done = (iterationsDone / 1_000_000).toFixed(1);
     const budget = (iterationsBudget / 1_000_000).toFixed(1);
     this.solidProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
+    this.solidProgress.style.setProperty("--progress", `${pct}%`);
   }
 
   /**
