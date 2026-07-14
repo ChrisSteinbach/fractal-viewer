@@ -49,6 +49,16 @@ function fakeResult(id: number): CloudResult3D {
       minR: 0,
       maxR: 0,
     },
+    frameBounds: {
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      minZ: 0,
+      maxZ: 0,
+      minR: 0,
+      maxR: 0,
+    },
   };
 }
 

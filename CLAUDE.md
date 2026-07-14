@@ -168,6 +168,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     and (fr-cfoc) the dt-aware exponential CHASE that follows a morphing
     attractor's live bounds — retargeted per intermediate arrival, replaced
     by the terminal fit's glide for the settle.
+  - `framing-bounds.ts` — what those fit motions FRAME (fr-3xfk): per-axis
+    trimmed-quantile bounds of the delivered cloud (and the 4D twin, a
+    distance-from-center quantile that stays tumble-invariant), computed
+    worker-side onto every `CloudResult` (`frameBounds`/`frameRadius`) so a
+    nonlinear variation's sparse flung points can't inflate the fit the way
+    they do the raw min/max `bounds` — which everything else (color
+    normalization, glow exposure, culling spheres) still reads. Same trim
+    rationale as `voxel.ts`'s `BOUNDS_QUANTILE`, deliberately its own
+    constant. Pure, tested.
   - `morph-tween.ts` — the replace-load system morph driver (fr-jx9o):
     per-frame sampler over `../fractal/morph`'s `lerpSystem` with a pinned seed
     so consecutive frames' clouds stay point-for-point correspondent, chained

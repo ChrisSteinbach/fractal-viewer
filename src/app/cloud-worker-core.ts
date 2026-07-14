@@ -27,7 +27,13 @@ import { buildColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import type { PaletteSpec } from "../fractal/palette";
 import { iterationRng, mulberry32 } from "../fractal/rng";
-import type { ColorMode, SymmetryParams, Transform } from "../fractal/types";
+import type {
+  Bounds,
+  ColorMode,
+  SymmetryParams,
+  Transform,
+} from "../fractal/types";
+import { framingBounds, framingRadius4 } from "./framing-bounds";
 
 /**
  * Main thread → worker: one point-cloud generation request. Everything the
@@ -92,6 +98,14 @@ export interface CloudResult3D extends ChaosGameResult {
    * shader-ready; main.ts recolors on arrival only if the mode changed while
    * this generation was in flight. */
   colors: Float32Array;
+  /**
+   * Outlier-robust box for the camera fit (fr-3xfk): per-axis trimmed
+   * quantiles of the delivered cloud (`framing-bounds.ts`), baked worker-side
+   * like `colors`. The camera fit/chase frames THIS; `bounds` stays the true
+   * min/max extent, which color normalization and the glow-exposure estimate
+   * still read.
+   */
+  frameBounds: Bounds;
 }
 
 /** The 4D result: the 4D chaos-game output as-is. No baked colors — the 4D
@@ -101,6 +115,14 @@ export interface CloudResult3D extends ChaosGameResult {
 export interface CloudResult4D extends ChaosGame4Result {
   id: number;
   fourD: true;
+  /**
+   * Outlier-robust framing radius for the camera fit (fr-3xfk): a trimmed
+   * quantile of the 4D distance-from-`center` (`framing-bounds.ts`), still
+   * rotation-invariant because the tumble rotates about `center` itself.
+   * The fit frames this ball; the EXACT `radius` keeps feeding the frustum
+   * culling sphere and w-color normalization, which must cover every point.
+   */
+  frameRadius: number;
 }
 
 /** Worker → main thread: the generated cloud, tagged with the request's id. */
@@ -148,7 +170,13 @@ export function generateCloud(request: CloudRequest): CloudResult {
       final4,
       iterRng,
     );
-    return { id: request.id, fourD: true, ...result };
+    const frameRadius = framingRadius4(
+      result.positions,
+      result.w,
+      result.count,
+      result.center,
+    );
+    return { id: request.id, fourD: true, ...result, frameRadius };
   }
   const result = runChaosGame(
     request.transforms,
@@ -166,7 +194,8 @@ export function generateCloud(request: CloudRequest): CloudResult {
     request.rampPalette,
     request.positionAxisColors,
   );
-  return { id: request.id, fourD: false, ...result, colors };
+  const frameBounds = framingBounds(result.positions, result.count);
+  return { id: request.id, fourD: false, ...result, colors, frameBounds };
 }
 
 /**
