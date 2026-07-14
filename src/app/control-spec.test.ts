@@ -500,12 +500,12 @@ describe("effects", () => {
 });
 
 describe("table policy", () => {
-  it("autoUpdate is the only entry marked persisted: false", () => {
+  it("morphDetail and autoUpdate are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
 
-    expect(neverPersisted).toEqual(["autoUpdate"]);
+    expect(neverPersisted).toEqual(["morphDetail", "autoUpdate"]);
   });
 
   it("autoUpdate apply flips state.autoUpdate", () => {

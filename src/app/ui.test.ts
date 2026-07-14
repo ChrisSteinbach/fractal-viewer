@@ -5,6 +5,7 @@ import {
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
+  MORPH_DETAILS,
   PARAM,
   setFlamePaletteId,
   setSolidPaletteId,
@@ -284,6 +285,29 @@ describe("Ui point size slider", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(current().pointSize).toBe(1.75);
+  });
+});
+
+describe("Ui morph detail select (fr-jonj)", () => {
+  // Guards against the dropdown and MORPH_DETAILS drifting apart — the
+  // options must match exactly, in order (the fourDColor discipline).
+  it("offers exactly MORPH_DETAILS, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#morphDetail option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...MORPH_DETAILS]);
+  });
+
+  it("applies a selection to state through the scalar-control table", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("morphDetail") as HTMLSelectElement;
+    select.value = "full";
+    select.dispatchEvent(new Event("change"));
+
+    expect(current().morphDetail).toBe("full");
   });
 });
 

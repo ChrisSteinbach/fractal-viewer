@@ -66,6 +66,34 @@ export const RENDER_MODES = ["points", "flame", "solid"] as const;
 export type RenderMode = (typeof RENDER_MODES)[number];
 
 /**
+ * The user's morph-detail preference (fr-jonj): how a system morph's
+ * INTERMEDIATE point clouds trade density against shape-update rate. The
+ * adaptive budget (`morph-budget.ts`, which implements these semantics)
+ * reads fine live, but on a video recording a sparse intermediate cloud
+ * encodes to near-black — the glow auto-exposure clamps long before it can
+ * compensate a 10×+ density drop, and the solid point style compensates not
+ * at all — so the density is user-selectable:
+ *
+ * - `"adaptive"` — the default: one frame's worth of points per update, the
+ *   smoothest motion.
+ * - `"dense"` — several frames' worth per update (`MORPH_DENSE_FACTOR`):
+ *   markedly brighter, still fluid across a multi-second Drift leg.
+ * - `"full"` — every intermediate runs the scene's own point count; the
+ *   update rate is whatever full generations cost on this device. What a
+ *   recording wants.
+ *
+ * This array is the single source of truth for the {@link MorphDetail} type,
+ * and ui.test.ts pins the panel select's options against it — the same
+ * discipline as {@link RENDER_STYLES}. The preference is session-only, like
+ * `autoUpdate` / {@link AppState.renderMode}: a viewing preference for THIS
+ * device/sitting, not scene content, so `persist.ts`'s `SceneSnapshot`
+ * omits it and the app always boots back to `"adaptive"`.
+ */
+export const MORPH_DETAILS = ["adaptive", "dense", "full"] as const;
+
+export type MorphDetail = (typeof MORPH_DETAILS)[number];
+
+/**
  * Render-current-view settings for the flame renderer (`src/fractal/flame.ts`).
  * Persists as a render setting like `colorMode` / `renderStyle`, independent
  * of which render mode is currently active (see {@link AppState.renderMode}).
@@ -234,6 +262,12 @@ export interface AppState {
   rampPaletteId: PaletteSelection;
   renderStyle: RenderStyle;
   autoUpdate: boolean;
+  /**
+   * Point density for a system morph's intermediate clouds — see
+   * {@link MORPH_DETAILS} for the vocabulary and why it exists.
+   * Session-only, like {@link autoUpdate}: never persisted.
+   */
+  morphDetail: MorphDetail;
   panelOpen: boolean;
   /** Render-current-view settings; persists independent of {@link renderMode}. */
   flame: FlameParams;
@@ -764,6 +798,7 @@ export function initialState(panelOpen: boolean): AppState {
     fourDDepthFade: false,
     renderStyle: "depthFade",
     autoUpdate: true,
+    morphDetail: "adaptive",
     panelOpen,
     flame: {
       exposure: DEFAULT_FLAME_EXPOSURE,
@@ -964,6 +999,13 @@ export function setShowGuides(state: AppState, showGuides: boolean): AppState {
 
 export function setAutoUpdate(state: AppState, autoUpdate: boolean): AppState {
   return { ...state, autoUpdate };
+}
+
+export function setMorphDetail(
+  state: AppState,
+  morphDetail: MorphDetail,
+): AppState {
+  return { ...state, morphDetail };
 }
 
 export function setPanelOpen(state: AppState, panelOpen: boolean): AppState {
