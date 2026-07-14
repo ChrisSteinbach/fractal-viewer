@@ -1916,6 +1916,10 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(handlers.onRenderMode).toHaveBeenCalledWith("points");
   });
 
+  function byId(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
   it("shows only the flame controls and marks the flame segment active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
@@ -1923,6 +1927,9 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(explorerControls().classList.contains("hidden")).toBe(true);
     expect(flameControls().classList.contains("hidden")).toBe(false);
     expect(solidControls().classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("flameStatus").classList.contains("hidden")).toBe(false);
+    expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("flame").classList.contains("active")).toBe(true);
     expect(modeBtn("flame").getAttribute("aria-pressed")).toBe("true");
     expect(modeBtn("points").getAttribute("aria-pressed")).toBe("false");
@@ -1935,6 +1942,9 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(explorerControls().classList.contains("hidden")).toBe(true);
     expect(solidControls().classList.contains("hidden")).toBe(false);
     expect(flameControls().classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("solidStatus").classList.contains("hidden")).toBe(false);
+    expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("solid").classList.contains("active")).toBe(true);
     expect(modeBtn("solid").getAttribute("aria-pressed")).toBe("true");
   });
@@ -1946,8 +1956,43 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(explorerControls().classList.contains("hidden")).toBe(false);
     expect(flameControls().classList.contains("hidden")).toBe(true);
     expect(solidControls().classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(false);
+    expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
+    expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("points").classList.contains("active")).toBe(true);
     expect(modeBtn("points").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // The accordion reads correctly only if nothing floats between section
+  // headers (fr-374p): content wedged between two collapsed <summary> rows
+  // looks like the open content of the section above it. So the mode
+  // containers hold accordion sections and nothing else — each mode's
+  // non-section content (Undo/Redo, the flame/solid status text) lives above
+  // the first section, right after the render-mode switch.
+  it("keeps every non-section block above the first accordion section", () => {
+    for (const containerId of [
+      "explorerControls",
+      "flameControls",
+      "solidControls",
+    ]) {
+      const children = Array.from(byId(containerId).children);
+      expect(children.length).toBeGreaterThan(0);
+      for (const child of children) {
+        expect(
+          child.matches("details.panel-section"),
+          `#${containerId} > ${child.tagName.toLowerCase()} floats between accordion sections`,
+        ).toBe(true);
+      }
+    }
+
+    const firstSection = document.querySelector("#panel details.panel-section");
+    for (const floatingId of ["undoRedoRow", "flameStatus", "solidStatus"]) {
+      const position = byId(floatingId).compareDocumentPosition(firstSection!);
+      expect(
+        position & Node.DOCUMENT_POSITION_FOLLOWING,
+        `#${floatingId} must precede the accordion`,
+      ).toBeTruthy();
+    }
   });
 
   // The refactor's whole point (fr-39y): the segmented control itself is

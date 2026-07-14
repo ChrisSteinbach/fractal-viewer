@@ -243,7 +243,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     scrollIntoView toward it pans a phone's viewport clean off the app) —
     and remembers the open section per render mode (fr-99o: Points ↔ Flame
     ↔ Solid each restore their own on switch; session-only, like
-    `renderMode` itself).
+    `renderMode` itself). Mode content that is NOT a section — Points'
+    Undo/Redo row, the flame/solid hint + progress blocks — sits above the
+    whole accordion, right under the mode switch (fr-374p): wedged between
+    two collapsed headers it would read as the upper section's open content.
   - `control-spec.ts` — declarative spec table for the panel's simple scalar
     controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
     listeners, and label sync from it; `main.ts` derives the one generic

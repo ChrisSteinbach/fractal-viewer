@@ -116,6 +116,54 @@
         </button>
       </div>
 
+      <!-- Mode-scoped content that is NOT part of any accordion section lives
+           here, above ALL the sections (fr-374p): floating content wedged
+           between two collapsed section headers reads as the open content of
+           the header above it. The three blocks are mutually exclusive —
+           each shows only in its own render mode, gated by updateLabels
+           exactly like the section containers further down. -->
+      <div class="btn-row" id="undoRedoRow">
+        <button
+          class="btn btn-ghost"
+          id="undoBtn"
+          type="button"
+          title="Undo (Ctrl+Z)"
+          disabled
+        >
+          ↩ Undo
+        </button>
+        <button
+          class="btn btn-ghost"
+          id="redoBtn"
+          type="button"
+          title="Redo (Ctrl+Shift+Z)"
+          disabled
+        >
+          ↪ Redo
+        </button>
+      </div>
+
+      <div id="flameStatus" class="hidden">
+        <p class="flame-hint">
+          The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D
+          image that converges through the frozen camera. For crisp lit
+          surfaces, switch to Solid. The live view is paused while Flame is
+          active — switch back to Points to keep exploring.
+        </p>
+        <div id="flameProgress" class="flame-progress">0%</div>
+        <p id="flameBackendNote" class="flame-note hidden"></p>
+      </div>
+
+      <div id="solidStatus" class="hidden">
+        <p class="flame-hint">
+          Builds a lit, shadowed solid from the attractor&#8217;s density,
+          colored by the explorer&#8217;s Color Mode or a smooth gradient
+          palette. Keep orbiting while it converges — the light and surface
+          react live.
+        </p>
+        <div id="solidProgress" class="flame-progress">0%</div>
+      </div>
+
       <details class="panel-section" id="exportSection" name="panel-section">
         <summary>Export</summary>
         <button class="btn btn-ghost" id="savePngBtn" type="button">
@@ -148,26 +196,6 @@
       </details>
 
       <div id="explorerControls">
-        <div class="btn-row">
-          <button
-            class="btn btn-ghost"
-            id="undoBtn"
-            type="button"
-            title="Undo (Ctrl+Z)"
-            disabled
-          >
-            ↩ Undo
-          </button>
-          <button
-            class="btn btn-ghost"
-            id="redoBtn"
-            type="button"
-            title="Redo (Ctrl+Shift+Z)"
-            disabled
-          >
-            ↪ Redo
-          </button>
-        </div>
         <details
           class="panel-section"
           id="transformsSection"
@@ -494,15 +522,6 @@
       </div>
 
       <div id="flameControls" class="hidden">
-        <p class="flame-hint">
-          The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D
-          image that converges through the frozen camera. For crisp lit
-          surfaces, switch to Solid. The live view is paused while Flame is
-          active — switch back to Points to keep exploring.
-        </p>
-        <div id="flameProgress" class="flame-progress">0%</div>
-        <p id="flameBackendNote" class="flame-note hidden"></p>
-
         <details
           class="panel-section"
           id="flameToneSection"
@@ -662,14 +681,6 @@
       </div>
 
       <div id="solidControls" class="hidden">
-        <p class="flame-hint">
-          Builds a lit, shadowed solid from the attractor&#8217;s density,
-          colored by the explorer&#8217;s Color Mode or a smooth gradient
-          palette. Keep orbiting while it converges — the light and surface
-          react live.
-        </p>
-        <div id="solidProgress" class="flame-progress">0%</div>
-
         <details
           class="panel-section"
           id="solidSurfaceSection"
