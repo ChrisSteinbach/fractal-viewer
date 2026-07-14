@@ -1775,16 +1775,26 @@ function main(): void {
       : null;
   }
 
+  // The guides' DISPLAYED visibility: the document's showGuides, or forced on
+  // while the replay showcase is armed (fr-hpci) — display-only, so the
+  // document's showGuides (and its checkbox) stays the user's own. The ONE
+  // formula refreshGuides pushes to every guide visual.
+  function guidesShown(): boolean {
+    return state.showGuides || replayShowcase !== null;
+  }
+
   function refreshGuides(): void {
+    const visible = guidesShown();
     // No guide boxes in the 4D projection (an empty list; scene handles it).
     scene.updateGuides(
       viewIs4D ? [] : state.transforms,
       selectedBox(),
-      // The replay showcase (fr-hpci) forces the guides visible so the replay
-      // shows the boxes the point hops between — display-only, so the
-      // document's showGuides (and its checkbox) stays the user's own.
-      state.showGuides || replayShowcase !== null,
+      visible,
     );
+    // The grid, axes, and 4D scaffold follow the same derivation — pushed
+    // here rather than per call site, so "Show guides" (and the showcase's
+    // override of it) can never govern the boxes and the grid separately.
+    scene.setGuidesVisible(visible);
   }
 
   function refreshUi(): void {
@@ -1877,8 +1887,9 @@ function main(): void {
     if (state.renderStyle !== "glow") scene.setGlowExposure(1);
     scene.setPointSize(state.pointSize);
     scene.setFourDDepthFade(state.fourDDepthFade);
-    scene.setGuidesVisible(state.showGuides);
     scene.setSolidParams(state.solid);
+    // Covers the grid/axes/scaffold too — refreshGuides pushes the whole
+    // guide-visibility derivation, not just the boxes.
     refreshGuides();
     refreshUi();
   }
@@ -2683,9 +2694,6 @@ function main(): void {
   // non-flat→flat transition, exactly like the tumble in the other direction.
   if (!viewIs4D) resetAutoOrbitView();
   refreshGuides();
-  // Match grid/axes to the initial (possibly restored) guide visibility, since
-  // refreshGuides only governs the per-transform boxes.
-  scene.setGuidesVisible(state.showGuides);
   refreshUi();
   editSession.syncUi();
   ui.setCollectionCount(collection.size);

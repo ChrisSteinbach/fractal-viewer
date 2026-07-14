@@ -236,8 +236,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     `setReplayCursor` do the drawing (pure, tested, injected clock).
     Since fr-hpci, main.ts overlays a temporary showcase while it plays: color
     switches to By Transform (`colorMode`/`fourDColor`, skipped if already that
-    mode), guide boxes are forced visible, and auto-orbit/auto-tumble run — not
-    forced under reduced motion. Display-layer only: AppState and the persisted
+    mode), the guides are forced visible (boxes, grid, axes, 4D scaffold —
+    `refreshGuides` pushes the whole `guidesShown()` derivation, not just the
+    boxes), and auto-orbit/auto-tumble run — not forced under reduced motion. Display-layer only: AppState and the persisted
     document never see it — main.ts's `recolor()` / `applyFourDColor()` /
     `refreshGuides()` and the `ui.ts` legend fold a session-only `replayShowcase`
     flag instead — and `endReplayDisplay` restores it all on every exit,
