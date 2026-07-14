@@ -948,6 +948,18 @@ export class Ui {
         // correctness, so skip it quietly where it's unavailable.
         if (typeof summary?.scrollIntoView !== "function") return;
         this.doc.defaultView?.requestAnimationFrame?.(() => {
+          // Re-anchor only while the panel is actually on screen (fr-dd4b).
+          // This toggle also fires for PROGRAMMATIC opens — updateLabels'
+          // per-mode accordion restore — which the drift show triggers on
+          // every flame/solid leg with the panel closed, i.e. parked
+          // off-screen at translateX(100%). scrollIntoView would then ask
+          // the browser to reveal an off-screen-right element, and phone
+          // browsers oblige by panning the viewport toward it (~86vw, the
+          // panel's mobile width) — shoving the whole app off-screen until
+          // a reload. A tap on a summary, the case this anchor exists for,
+          // can only ever happen with the panel open. Checked at rAF time,
+          // not toggle time: the panel could close in between.
+          if (!this.panel.classList.contains("open")) return;
           summary.scrollIntoView({ block: "nearest" });
         });
       });

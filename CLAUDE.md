@@ -234,9 +234,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     panel's categories are an exclusive-open accordion of native
     `<details name="panel-section">` sections (fr-zoi) — the browser owns
     which one is open; `Ui` re-anchors the tapped summary after the
-    exclusivity reflow and remembers the open section per render mode
-    (fr-99o: Points ↔ Flame ↔ Solid each restore their own on switch;
-    session-only, like `renderMode` itself).
+    exclusivity reflow — only while the panel is on screen (fr-dd4b: the
+    restore below also opens sections with the panel parked off-screen, and
+    scrollIntoView toward it pans a phone's viewport clean off the app) —
+    and remembers the open section per render mode (fr-99o: Points ↔ Flame
+    ↔ Solid each restore their own on switch; session-only, like
+    `renderMode` itself).
   - `control-spec.ts` — declarative spec table for the panel's simple scalar
     controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
     listeners, and label sync from it; `main.ts` derives the one generic

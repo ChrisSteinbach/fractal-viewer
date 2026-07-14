@@ -3737,6 +3737,48 @@ describe("panel accordion sections (fr-zoi)", () => {
   });
 });
 
+describe("Ui panel accordion re-anchor (fr-dd4b)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Programmatically open a closed section and fire its toggle — the same
+   * event chain updateLabels' per-mode accordion restore produces — with the
+   * panel's open class set or not. jsdom implements neither
+   * requestAnimationFrame nor scrollIntoView, so both are stubbed (the rAF
+   * synchronously, so the re-anchor callback has run by the return).
+   */
+  function toggleSectionWithPanel(
+    panelOpen: boolean,
+  ): ReturnType<typeof vi.fn> {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    document.getElementById("panel")?.classList.toggle("open", panelOpen);
+    const section = document.getElementById(
+      "collectionSection",
+    ) as HTMLDetailsElement;
+    const summary = section.querySelector("summary") as HTMLElement;
+    const scrolled = vi.fn();
+    (summary as { scrollIntoView?: unknown }).scrollIntoView = scrolled;
+    section.open = true;
+    section.dispatchEvent(new Event("toggle"));
+    return scrolled;
+  }
+
+  it("re-anchors the opened section's summary while the panel is open", () => {
+    expect(toggleSectionWithPanel(true)).toHaveBeenCalledTimes(1);
+  });
+
+  it("never scrolls while the panel is closed — a phone would pan the page toward the off-screen panel", () => {
+    expect(toggleSectionWithPanel(false)).not.toHaveBeenCalled();
+  });
+});
+
 describe("Ui collection gallery", () => {
   const saved = (
     id: string,
