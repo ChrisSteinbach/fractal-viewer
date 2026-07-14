@@ -93,6 +93,79 @@ describe("SceneCollection remove", () => {
   });
 });
 
+describe("SceneCollection restore (fr-ifts)", () => {
+  it("puts a removed entry back into its newest-first position by createdAt", () => {
+    const storage = fakeStorage();
+    let t = 0;
+    const collection = new SceneCollection({ storage, now: () => t++ });
+    collection.add("v1=a", ""); // createdAt 0, oldest
+    const middle = collection.add("v1=b", ""); // createdAt 1
+    collection.add("v1=c", ""); // createdAt 2, newest
+
+    collection.remove(middle.id);
+    expect(collection.all().map((s) => s.encoded)).toEqual(["v1=c", "v1=a"]);
+
+    collection.restore(middle);
+
+    expect(collection.all().map((s) => s.encoded)).toEqual([
+      "v1=c",
+      "v1=b",
+      "v1=a",
+    ]);
+  });
+
+  it("persists the restored entry: a second collection over the same storage sees it too", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    const scene = collection.add("v1=a", "");
+    collection.remove(scene.id);
+
+    collection.restore(scene);
+
+    const reloaded = new SceneCollection({ storage });
+    expect(reloaded.all().map((s) => s.encoded)).toEqual(["v1=a"]);
+  });
+
+  it("is a no-op when an entry with the same id is already present", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    const scene = collection.add("v1=a", "");
+
+    collection.restore(scene);
+
+    expect(collection.size).toBe(1);
+    expect(collection.all()).toEqual([scene]);
+  });
+
+  it("evicts the current oldest entry once a restore pushes the collection past COLLECTION_CAP", () => {
+    const storage = fakeStorage();
+    let t = 0;
+    const collection = new SceneCollection({ storage, now: () => t++ });
+    const scenes = Array.from({ length: COLLECTION_CAP }, (_, i) =>
+      collection.add(`v1=scene-${i}`, ""),
+    );
+    // The newest of the fill — removing and restoring THIS one (rather than
+    // the oldest) proves the eviction drops the collection's current
+    // oldest entry, not just the one that was restored.
+    const removed = scenes[COLLECTION_CAP - 1];
+
+    collection.remove(removed.id);
+    collection.add("v1=extra", ""); // backfills the gap while it was gone
+    expect(collection.size).toBe(COLLECTION_CAP);
+
+    collection.restore(removed);
+
+    expect(collection.size).toBe(COLLECTION_CAP);
+    expect(
+      collection
+        .all()
+        .some((s) => s.encoded === `v1=scene-${COLLECTION_CAP - 1}`),
+    ).toBe(true);
+    expect(collection.all().some((s) => s.encoded === "v1=scene-0")).toBe(
+      false,
+    );
+  });
+});
+
 describe("SceneCollection persistence", () => {
   it("round-trips through storage: a second collection over the same storage loads the saved scenes newest-first", () => {
     const storage = fakeStorage();

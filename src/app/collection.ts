@@ -181,6 +181,32 @@ export class SceneCollection {
   }
 
   /**
+   * Re-insert a previously removed entry — the undo side of {@link remove}
+   * (fr-ifts): a delete-confirmation toast's "Undo" action calls this with
+   * the exact `SavedScene` `remove` took out, rather than re-deriving one —
+   * there is nothing to re-derive `id`/`createdAt`/`mode` from once an entry
+   * is gone. Reinserted at the position its OWN `createdAt` sorts to
+   * (newest-first, matching every other read of this list), not unshifted
+   * to the front, so an undo doesn't masquerade as a fresh save. A no-op if
+   * an entry with this id is already present (a double-restore, or a fresh
+   * save that raced the undo) rather than piling up a duplicate — the
+   * dedupe key is `id` here, unlike `add`'s `encoded`, because this is
+   * reinstating one specific known entry, not deciding whether a new save
+   * collides with an old one. Subject to the same COLLECTION_CAP eviction
+   * as `add`: restoring into an already-full collection can evict whatever
+   * now sorts oldest, possibly the just-restored entry itself if nothing
+   * present is older. Persists.
+   */
+  restore(entry: SavedScene): void {
+    if (this.scenes.some((s) => s.id === entry.id)) return;
+    const at = this.scenes.findIndex((s) => s.createdAt < entry.createdAt);
+    if (at === -1) this.scenes.push(entry);
+    else this.scenes.splice(at, 0, entry);
+    while (this.scenes.length > COLLECTION_CAP) this.scenes.pop();
+    this.persist();
+  }
+
+  /**
    * The entry FOLLOWING the one with this id in gallery order (newest-first,
    * the order `all` returns and the gallery grid displays), wrapping past
    * the oldest back to the front — the collection-sourced drift show's loop

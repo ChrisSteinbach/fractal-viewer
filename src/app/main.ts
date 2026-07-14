@@ -381,6 +381,13 @@ function main(): void {
   // poll touches the DOM only when the phase actually flips — and doubles as
   // the "display is still dirty" flag after the replay goes idle on its own.
   let replayCaption: string | null = null;
+  // Whether the panel was open the moment "Watch it build" closed it
+  // (fr-vpka), so endReplayDisplay can restore it once the replay ends —
+  // null while no replay's close is pending restoration. Set once, in
+  // onWatchBuild, right before the panel is forced shut; consumed (and
+  // reset to null) the first time endReplayDisplay runs afterward, whichever
+  // of natural completion or cancellation gets there first.
+  let panelOpenBeforeReplay: boolean | null = null;
 
   // Restore the normal display after a replay: full cloud, no cursor, no
   // caption, true point count. Reads lastResult/fourDResult for the count —
@@ -392,6 +399,21 @@ function main(): void {
     replayCaption = null;
     const count = viewIs4D ? fourDResult?.count : lastResult?.count;
     if (count !== undefined) ui.setPointCount(count);
+    // Reopen the panel "Watch it build" closed to clear the stage (fr-vpka)
+    // — but only above the mobile breakpoint, where the panel is the
+    // primary always-open surface; a phone genuinely wants it gone over the
+    // small canvas, so it stays closed there even once the replay ends.
+    // Covers BOTH exits: natural completion (this runs from animate()'s own
+    // idle transition) and cancellation (a regeneration landing, or a
+    // render-mode switch, both via cancelReplay) — endReplayDisplay is the
+    // one chokepoint all three already share.
+    if (panelOpenBeforeReplay !== null) {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        state = setPanelOpen(state, panelOpenBeforeReplay);
+        ui.updateLabels(state);
+      }
+      panelOpenBeforeReplay = null;
+    }
   }
 
   // Stop any replay and clean the display. Safe to call when idle; the
@@ -455,10 +477,22 @@ function main(): void {
   // never calls this — the camera is independent of the show, exactly like
   // the auto-orbit's pause-while-dragging policy. No-op while the show's
   // own leg applies itself (driftAdvancing).
-  function stopDrift(): void {
+  //
+  // `opts.notify` (fr-ygr1) flashes "Drift stopped" for an IMPLICIT stop —
+  // one caused by something else entirely (an edit, undo/redo, a manual
+  // gallery load, starting a build replay) where the drift toggle is
+  // usually buried inside a collapsed accordion section, so the show would
+  // otherwise die silently. Left off at the explicit drift-button toggle
+  // (the user is looking right at it), the reduced-motion sync, and a
+  // render-mode switch — see each call site for its own reasoning. Only
+  // ever fires when the show was actually running: the early return above
+  // (including the driftAdvancing guard) already covers every no-op case,
+  // so notify can never fire for a stop that didn't happen.
+  function stopDrift(opts?: { notify?: boolean }): void {
     if (driftAdvancing || !driftShow.active) return;
     driftShow.stop();
     ui.setDriftActive(false);
+    if (opts?.notify) ui.flashToast("Drift stopped");
   }
 
   // One drift leg (fr-wavo): press Surprise Me — or, for a collection show
@@ -473,6 +507,8 @@ function main(): void {
   // show).
   function advanceDrift(): void {
     if (prefersReducedMotion()) {
+      // Silent (fr-ygr1): a reduced-motion sync, not something the user did
+      // elsewhere — see stopDrift's own notify doc.
       stopDrift();
       return;
     }
@@ -529,6 +565,13 @@ function main(): void {
   function advanceCollectionLeg(): void {
     const next = nextCollectionScene();
     if (!next) {
+      // Silent (fr-ygr1), like the reduced-motion stop above — an emptied
+      // collection ending its own show, not a user edit elsewhere.
+      // (Pre-existing: this call actually runs with driftAdvancing still
+      // true — set by advanceDrift just before calling in — so stopDrift's
+      // own guard no-ops it here; harmless for the notify question below
+      // either way, since a no-op stop can never toast, but worth knowing
+      // this is not the call that actually ends a dried-up show.)
       stopDrift();
       return;
     }
@@ -1660,6 +1703,9 @@ function main(): void {
       if (driftShow.active && driftSource === "collection") {
         driftShow.hold();
       } else {
+        // Silent (fr-ygr1): an explicit render-mode switch, not an edit
+        // reaching in from elsewhere — the user is looking right at the
+        // segmented control they just clicked.
         stopDrift();
       }
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
@@ -1749,7 +1795,11 @@ function main(): void {
   ): void {
     // Undo/redo and a gallery load are the user reaching in: both end the
     // drift show (fr-wavo) — this is the one chokepoint on their shared path.
-    stopDrift();
+    // Notify (fr-ygr1): the show's own collection legs also pass through
+    // here, but driftAdvancing is true for those, so stopDrift's guard
+    // no-ops before ever reaching the toast — only a genuine undo/redo or
+    // manual load actually stops (and announces) anything.
+    stopDrift({ notify: true });
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load.
@@ -1928,7 +1978,13 @@ function main(): void {
     effect: "auto" | "always" = "auto",
     morphMs?: number,
   ): void {
-    stopDrift();
+    // Notify (fr-ygr1): every ordinary document edit (add/remove transform,
+    // preset load, Surprise Me, toggles) flows through here. The show's own
+    // roll (advanceDrift → rollSurpriseSystem) takes this exact path too,
+    // but with driftAdvancing true, so stopDrift's guard no-ops before the
+    // toast — only a genuine user edit actually stops (and announces)
+    // anything.
+    stopDrift({ notify: true });
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns.
     pendingRenderMode = null;
@@ -2061,6 +2117,8 @@ function main(): void {
     // finishes on its own (MorphTween has no cancel, by design).
     onDriftToggle: () => {
       if (driftShow.active) {
+        // Silent (fr-ygr1): the explicit drift-button toggle itself — the
+        // user is looking right at the button reverting, so no toast needed.
         stopDrift();
         return;
       }
@@ -2076,15 +2134,29 @@ function main(): void {
     // label sync → the spec's declared side effects. Per-control semantics
     // (worker forwards, restarts, live tone-maps) live on the SCALAR_CONTROLS
     // entries in control-spec.ts, next to the control they belong to.
-    onScalarControl: (spec, raw) => {
+    onScalarControl: (spec, raw, phase = "input") => {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
+      // Commit-on-release (fr-2c27): the drag's own "input" events already
+      // ran the branch below for every intermediate value — each its own
+      // undo-coalesced edit — so by the time the trailing "change" reports
+      // this commit, the settled value is already live. Route it straight to
+      // the spec's `commit` effect and stop: re-applying the reducer here
+      // would be a no-op on the same value, and re-running beginEdit would
+      // risk cutting a second undo checkpoint for an edit that already
+      // happened.
+      if (phase === "commit") {
+        if (spec.kind === "range") spec.commit?.(state, controlEffects, state);
+        return;
+      }
       const previous = state;
       // Undoable document edits end the drift show (fr-wavo); the
       // session-only specs (persisted: false — e.g. autoUpdate) are view
-      // preferences and leave it running, like camera input.
+      // preferences and leave it running, like camera input. Notify
+      // (fr-ygr1): a slider/select/checkbox edit is exactly the "the user
+      // was doing something else" case.
       if (spec.persisted !== false) {
-        stopDrift();
+        stopDrift({ notify: true });
         editSession.beginEdit();
       }
       state = applyScalarControl(state, spec, raw);
@@ -2103,7 +2175,9 @@ function main(): void {
     // point cloud's height/radius ramps can select the custom gradient too
     // (fr-3b6) — a recolor over the cached run, never a regenerate.
     onCustomPaletteStops: (stops) => {
-      stopDrift();
+      // Notify (fr-ygr1): a gradient-editor edit, same bucket as any other
+      // document edit.
+      stopDrift({ notify: true });
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
       ui.updateLabels(state);
@@ -2130,7 +2204,9 @@ function main(): void {
     // the flame/solid renders snapshot the colors at entry, and the pickers
     // are unreachable while a render is active (the explorer block hides).
     onPositionAxisColors: (colors) => {
-      stopDrift();
+      // Notify (fr-ygr1): an axis-color-picker edit, same bucket as any
+      // other document edit.
+      stopDrift({ notify: true });
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
@@ -2146,7 +2222,12 @@ function main(): void {
       switchRenderMode("points");
       // A replay and the drift show can't share the stage: a drift leg's
       // regeneration would kill the replay a few seconds in (fr-wavo).
-      stopDrift();
+      // Notify (fr-ygr1): "Watch it build" is its own action, not the drift
+      // control — the drift show ending is a side effect the user didn't
+      // ask for, same bucket as an edit reaching in from elsewhere (see
+      // stopDrift's own doc, which groups "starting a build replay" with
+      // applyEdit/time-travel/gallery-loads as "the user reached in").
+      stopDrift({ notify: true });
       // Snap any in-flight morph before replaying (fr-a04l): the replay
       // reveals the displayed buffer, which should be the settled target,
       // not a mid-morph intermediate. (Morph landings cancel a replay
@@ -2154,6 +2235,10 @@ function main(): void {
       // replay a frame in anyway.)
       snapMorph();
       ui.closeAbout();
+      // Remember whether the panel was open so endReplayDisplay can restore
+      // it once the replay ends (fr-vpka) — closed here unconditionally so
+      // the stage is watchable, same as ever.
+      panelOpenBeforeReplay = state.panelOpen;
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
       const count = viewIs4D ? fourDResult?.count : lastResult?.count;
@@ -2230,9 +2315,28 @@ function main(): void {
       }
     },
     onDeleteFromCollection: (id) => {
+      // Snapshot the entry before removing it (fr-ifts): the Undo toast's
+      // collection.restore(entry) needs the exact object back — id, encoded,
+      // thumbnail, createdAt, mode — and once it's gone from the collection
+      // there's nothing left to re-derive that from. A stale id (already
+      // gone — a double click, or a raced second delete) finds nothing and
+      // skips the whole thing; remove() would no-op too, but there's no
+      // point flashing an Undo for a delete that didn't actually happen.
+      const entry = collection.all().find((s) => s.id === id);
+      if (!entry) return;
       collection.remove(id);
       ui.setCollectionCount(collection.size);
       ui.renderGallery(collection.all()); // refresh the still-open modal in place.
+      ui.flashToast("Deleted from collection", {
+        label: "Undo",
+        onAction: () => {
+          collection.restore(entry);
+          ui.setCollectionCount(collection.size);
+          // Same refresh as the delete above — consistent whether the
+          // gallery modal is currently open or closed.
+          ui.renderGallery(collection.all());
+        },
+      });
     },
     onCopyLink: () => {
       // Build the link from CURRENT state rather than reading location.hash,
@@ -2269,7 +2373,9 @@ function main(): void {
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
-      stopDrift();
+      // Notify (fr-ygr1): a panel-slider transform edit, same bucket as any
+      // other document edit.
+      stopDrift({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
@@ -2299,7 +2405,9 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
-      stopDrift();
+      // Notify (fr-ygr1): a panel-slider final-transform edit, same bucket
+      // as any other document edit.
+      stopDrift({ notify: true });
       editSession.beginEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
@@ -2373,8 +2481,9 @@ function main(): void {
     frozen: () => state.renderMode === "flame",
     onTransformChange: (index, geometry) => {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
-      // the drift show like every other undoable edit (fr-wavo).
-      stopDrift();
+      // the drift show like every other undoable edit (fr-wavo). Notify
+      // (fr-ygr1): same bucket as any other document edit.
+      stopDrift({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
@@ -2490,6 +2599,7 @@ function main(): void {
   );
   function syncDriftAvailability(): void {
     ui.setDriftAvailable(!prefersReducedMotion());
+    // Silent (fr-ygr1): the reduced-motion availability sync itself.
     if (prefersReducedMotion()) stopDrift();
   }
   syncDriftAvailability();

@@ -100,8 +100,19 @@ export interface UiHandlers {
    * Per-control semantics — which edits restart accumulation, which are
    * live-reactive, which forward to a render worker — are documented on the
    * spec entries themselves.
+   *
+   * `phase` (fr-2c27) distinguishes the live "input" stream (fired on every
+   * tick while a range drags, or once for a select/checkbox's own change)
+   * from a range spec's trailing "commit" — fired once on release for specs
+   * that declare `ValueControlSpec.commit`, alongside (not instead of) the
+   * ordinary input events the drag already sent. Defaults to "input" so
+   * every other call site is unaffected.
    */
-  onScalarControl: (spec: ScalarControlSpec, raw: string | boolean) => void;
+  onScalarControl: (
+    spec: ScalarControlSpec,
+    raw: string | boolean,
+    phase?: "input" | "commit",
+  ) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
@@ -554,8 +565,22 @@ interface EditorState {
   fourD: FourDControls;
 }
 
-/** How long a {@link Ui.flashToast} confirmation stays on screen. */
+/** How long a plain {@link Ui.flashToast} confirmation stays on screen. */
 const TOAST_DURATION_MS = 1800;
+
+/** How long a {@link Ui.flashToast} carrying an {@link ToastAction} stays on
+ * screen (fr-ifts) — longer than a plain confirmation's {@link
+ * TOAST_DURATION_MS} so there's time to notice the action and react, not
+ * just read the message. */
+const TOAST_ACTION_DURATION_MS = 6000;
+
+/** An optional call-to-action rendered inside a {@link Ui.flashToast} — e.g.
+ * "Undo" after a destructive delete (fr-ifts). Clicking it runs `onAction`
+ * and hides the toast immediately, without waiting for the auto-hide timer. */
+interface ToastAction {
+  label: string;
+  onAction: () => void;
+}
 
 /**
  * Compact "Jul 9, 14:32" label for a saved scene's `createdAt`, used as the
@@ -1099,6 +1124,16 @@ export class Ui {
             : input.value,
         ),
       );
+      // Commit-on-release (fr-2c27): a range spec that declares `commit`
+      // ALSO gets the trailing "change" event a range input fires once the
+      // drag ends — reported as the "commit" phase, on top of (not instead
+      // of) the "input" listener above, which already covered every tick
+      // during the drag itself.
+      if (spec.kind === "range" && spec.commit) {
+        input.addEventListener("change", () =>
+          handlers.onScalarControl(spec, input.value, "commit"),
+        );
+      }
     }
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
@@ -1720,17 +1755,49 @@ export class Ui {
     return card;
   }
 
-  /** Flash a brief bottom-center confirmation ("Saved to collection", "Link
-   * copied"), auto-hiding after {@link TOAST_DURATION_MS}. Re-arming cancels
-   * the previous hide so rapid actions don't leave it stuck or flickering. */
-  flashToast(message: string): void {
-    this.toast.textContent = message;
+  /**
+   * Flash a brief bottom-center confirmation ("Saved to collection", "Link
+   * copied"), auto-hiding after {@link TOAST_DURATION_MS} — or, given an
+   * `action` (e.g. "Undo" after a destructive delete, fr-ifts), after the
+   * longer {@link TOAST_ACTION_DURATION_MS} instead. Re-arming (any fresh
+   * call, action or not) cancels the previous hide and rebuilds the toast's
+   * content from scratch, so rapid actions don't leave it stuck or
+   * flickering and a stale action button from a PRIOR toast can never
+   * linger into a plain one. Clicking the action runs `onAction` and hides
+   * the toast immediately, ahead of its own timer.
+   */
+  flashToast(message: string, action?: ToastAction): void {
+    this.toast.replaceChildren(this.doc.createTextNode(message));
+    if (action) this.toast.appendChild(this.buildToastActionButton(action));
     this.toast.classList.remove("hidden");
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => {
-      this.toast.classList.add("hidden");
-      this.toastTimer = null;
-    }, TOAST_DURATION_MS);
+    this.toastTimer = setTimeout(
+      () => this.hideToast(),
+      action ? TOAST_ACTION_DURATION_MS : TOAST_DURATION_MS,
+    );
+  }
+
+  /** The `<button>` inside an action toast (see {@link flashToast}) — a
+   * plain `.toast-action` element styled in style.css, built fresh per
+   * flashToast call so it never outlives the toast that created it. */
+  private buildToastActionButton(action: ToastAction): HTMLButtonElement {
+    const button = this.doc.createElement("button");
+    button.type = "button";
+    button.className = "toast-action";
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      this.hideToast();
+      action.onAction();
+    });
+    return button;
+  }
+
+  /** Hide the toast now and cancel any pending auto-hide — shared by the
+   * timer's own trailing edge and the action button's immediate dismiss. */
+  private hideToast(): void {
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toast.classList.add("hidden");
+    this.toastTimer = null;
   }
 
   /**
