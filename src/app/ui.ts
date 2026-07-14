@@ -2152,6 +2152,7 @@ export class Ui {
     this.transformEditor.replaceChildren();
 
     const heading = this.doc.createElement("h3");
+    heading.className = "editor-title";
     heading.textContent =
       target === "final" ? "Final Transform" : `Edit Transform ${target + 1}`;
     this.transformEditor.appendChild(heading);
