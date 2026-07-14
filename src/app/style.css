@@ -628,6 +628,14 @@ input[type="range"] {
   font-size: 13px;
 }
 
+/* The one BARE select in the panel (every other select sits inside a
+   .select-label, whose margin-bottom provides the spacing below it):
+   without its own bottom margin it sat flush against the Surprise Me
+   button while the buttons below keep .btn's 8px rhythm. */
+#presetSelect {
+  margin-bottom: 8px;
+}
+
 /* Every select inside the panel gets the dark theme — including the
    dynamically created .variation-add (fr-9obp), which lives in #panel too,
    so a single tag-scoped rule covers it without a separate class entry. */
