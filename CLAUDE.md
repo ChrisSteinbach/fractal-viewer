@@ -154,6 +154,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     numbers. `captureThumbnail` reads the display down to a small JPEG data URL
     for the collection gallery (fr-cai); mode-aware since fr-75sq — a save made
     from a flame/solid render thumbnails the rendered frame, not the cloud.
+    `setRightInset` (fr-936q) aims the projection at the region the desktop
+    panel overlay leaves uncovered — the camera's `aspect` describes that
+    visible region (so every fit frames clear of the panel) while a
+    `setViewOffset` extension still renders the full canvas; main.ts eases the
+    inset per frame (panel toggle glides, reduced motion snaps, frozen flame
+    views excluded), and captures/thumbnails lift it so exports stay centered.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `camera-tween.ts` — the orbit camera's two fit motions (pure, tested,
     injected clock), both leaving the orbit angles alone and honoring
