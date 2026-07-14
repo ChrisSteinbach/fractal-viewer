@@ -258,6 +258,12 @@ function gpuUnavailableEvents(
   return events.filter((e) => e.type === "gpuUnavailable");
 }
 
+function restartedEvents(
+  events: FlameWorkerEvent[],
+): Extract<FlameWorkerEvent, { type: "restarted" }>[] {
+  return events.filter((e) => e.type === "restarted");
+}
+
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -807,6 +813,67 @@ describe("FlameWorkerSession setSymmetry", () => {
       session.handle({ type: "setSymmetry", order: 3, axis: "y" }),
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restart notification: the "restarted" event (fr-h6sn)
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession restarted event", () => {
+  it("setPalette posts restarted, carrying the iteration budget, before the next progress event", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40, palette: "legacy" }));
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+    const framesBeforeRestart = progressEvents(events).length;
+
+    session.handle({ type: "setPalette", palette: "spectrum" });
+    // Posted synchronously by the restart itself, before the restarted
+    // render's first chunk (still just sitting in the scheduler queue) has
+    // had any chance to run — proves it lands before whatever progress
+    // event eventually reports the reset.
+    expect(restartedEvents(events).at(-1)).toEqual({
+      type: "restarted",
+      iterationsBudget: 40,
+    });
+    expect(progressEvents(events)).toHaveLength(framesBeforeRestart);
+
+    scheduler.drain();
+    expect(progressEvents(events).length).toBeGreaterThan(framesBeforeRestart);
+  });
+
+  it("setSupersample posts restarted, carrying the iteration budget, before the next progress event", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({ requestedSupersample: 1, iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+    const framesBeforeRestart = progressEvents(events).length;
+
+    session.handle({ type: "setSupersample", supersample: 2 });
+    expect(restartedEvents(events).at(-1)).toEqual({
+      type: "restarted",
+      iterationsBudget: 40,
+    });
+    expect(progressEvents(events)).toHaveLength(framesBeforeRestart);
+
+    scheduler.drain();
+    expect(progressEvents(events).length).toBeGreaterThan(framesBeforeRestart);
+  });
+
+  it("is also posted by the initial start, harmlessly, before its first progress event", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 40 }));
+    // The very first event of the session — nothing stale exists yet, but
+    // startAccumulation emits unconditionally (see its doc).
+    expect(events[0]).toEqual({ type: "restarted", iterationsBudget: 40 });
+    expect(restartedEvents(events)).toHaveLength(1);
+
+    scheduler.drain();
+    expect(restartedEvents(events)).toHaveLength(1); // no extra restarts along the way.
+    expect(progressEvents(events).length).toBeGreaterThan(0);
   });
 });
 

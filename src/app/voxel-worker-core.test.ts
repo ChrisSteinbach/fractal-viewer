@@ -176,6 +176,12 @@ function noteEvents(
   return events.filter((e) => e.type === "resolutionNote");
 }
 
+function restartedEvents(
+  events: VoxelWorkerEvent[],
+): Extract<VoxelWorkerEvent, { type: "restarted" }>[] {
+  return events.filter((e) => e.type === "restarted");
+}
+
 // ---------------------------------------------------------------------------
 // Basic session lifecycle
 // ---------------------------------------------------------------------------
@@ -464,6 +470,47 @@ describe("VoxelWorkerSession setSymmetry", () => {
       session.handle({ type: "setSymmetry", order: 3, axis: "y" }),
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restart notification: the "restarted" event (fr-h6sn)
+// ---------------------------------------------------------------------------
+
+describe("VoxelWorkerSession restarted event", () => {
+  it("setPalette posts restarted, carrying the iteration budget, before the next grid event", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 100 });
+    session.handle(startCommand({ iterationsBudget: 200, palette: "legacy" }));
+    scheduler.drain();
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const gridsBeforeRestart = gridEvents(events).length;
+
+    session.handle({ type: "setPalette", palette: "spectrum" });
+    // Posted synchronously by the restart itself, before the restarted
+    // render's first chunk (still just sitting in the scheduler queue) has
+    // had any chance to run — proves it lands before whatever grid event
+    // eventually reports the reset.
+    expect(restartedEvents(events).at(-1)).toEqual({
+      type: "restarted",
+      iterationsBudget: 200,
+    });
+    expect(gridEvents(events)).toHaveLength(gridsBeforeRestart);
+
+    scheduler.drain();
+    expect(gridEvents(events).length).toBeGreaterThan(gridsBeforeRestart);
+  });
+
+  it("is also posted by the initial start, harmlessly, before its first grid event", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 100 });
+    session.handle(startCommand({ iterationsBudget: 200 }));
+    // The very first event of the session — nothing stale exists yet, but
+    // startAccumulation emits unconditionally (see its doc).
+    expect(events[0]).toEqual({ type: "restarted", iterationsBudget: 200 });
+    expect(restartedEvents(events)).toHaveLength(1);
+
+    scheduler.drain();
+    expect(restartedEvents(events)).toHaveLength(1); // no extra restarts along the way.
+    expect(gridEvents(events).length).toBeGreaterThan(0);
   });
 });
 
