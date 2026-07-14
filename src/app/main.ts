@@ -86,6 +86,7 @@ import {
   DRIFT_MORPH_MS,
   DRIFT_RENDER_LINGER_MS,
 } from "./drift";
+import { DriftPolicy } from "./drift-policy";
 import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
@@ -450,9 +451,10 @@ function main(): void {
   // The ambient drift show (fr-wavo): dwell on the current attractor, glide
   // to a fresh Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
   // Electric-Sheep-on-a-TV use case. Session-only motion like the auto-orbit
-  // and tumble, never persisted. drift.ts owns the timing loop; this file
-  // owns the policy: what a leg does (advanceDrift), what ends the show
-  // (stopDrift), and the reduced-motion gate (syncDriftAvailability).
+  // and tumble, never persisted. drift.ts owns the timing loop;
+  // drift-policy.ts the stop/advance conduct (driftPolicy below); this file
+  // the wiring: what a leg does (launchLeg), the hold/resume choreography
+  // around renders, and the reduced-motion gate (syncDriftAvailability).
   const driftShow = new DriftShow(() => performance.now());
   // What a leg departs TOWARD (fr-w2ve): a fresh Surprise-Me roll ("random",
   // the original show), or the next saved scene in the gallery's own order,
@@ -463,63 +465,48 @@ function main(): void {
   // SceneCollection.after's loop cursor. Null'd when a collection show
   // starts, so every show plays from the gallery's front.
   let driftLastPlayedId: string | null = null;
-  // True only while a drift leg's own applyEdit runs, so stopDrift's
-  // chokepoints can tell the show's own roll from a genuine user edit.
-  let driftAdvancing = false;
-
-  // End the drift show — a STOP, not a pause (restarting is a fresh toggle,
-  // per fr-wavo). Called from every "the user reached in" moment: applyEdit
-  // and the bespoke beginEdit handlers (any undoable edit), time travel and
-  // MANUAL gallery loads (applyDecodedSnapshot), starting a build replay,
-  // and the toggle itself. Leaving the points view (switchRenderMode) stops
-  // a RANDOM show too, while a collection show survives it as a held
-  // slideshow (fr-w2ve — see switchRenderMode). Camera input deliberately
-  // never calls this — the camera is independent of the show, exactly like
-  // the auto-orbit's pause-while-dragging policy. No-op while the show's
-  // own leg applies itself (driftAdvancing).
+  // The show's stop/advance conductor (drift-policy.ts, fr-4otp): the
+  // own-leg guard that exempts a leg's own replace-load from the
+  // stop-on-edit rule, and the leg-boundary exits (reduced motion, a
+  // dried-up collection). driftPolicy.stop is called from every "the user
+  // reached in" moment: applyEdit and the bespoke beginEdit handlers (any
+  // undoable edit), time travel and MANUAL gallery loads
+  // (applyDecodedSnapshot), starting a build replay, and the toggle itself.
+  // Leaving the points view (switchRenderMode) stops a RANDOM show too,
+  // while a collection show survives it as a held slideshow (fr-w2ve — see
+  // switchRenderMode). Camera input deliberately never calls it — the
+  // camera is independent of the show, exactly like the auto-orbit's
+  // pause-while-dragging policy.
   //
-  // `opts.notify` (fr-ygr1) flashes "Drift stopped" for an IMPLICIT stop —
-  // one caused by something else entirely (an edit, undo/redo, a manual
+  // `notify` (fr-ygr1) flashes "Drift stopped" for an IMPLICIT stop — one
+  // caused by something else entirely (an edit, undo/redo, a manual
   // gallery load, starting a build replay) where the drift toggle is
   // usually buried inside a collapsed accordion section, so the show would
   // otherwise die silently. Left off at the explicit drift-button toggle
   // (the user is looking right at it), the reduced-motion sync, and a
-  // render-mode switch — see each call site for its own reasoning. Only
-  // ever fires when the show was actually running: the early return above
-  // (including the driftAdvancing guard) already covers every no-op case,
-  // so notify can never fire for a stop that didn't happen.
-  function stopDrift(opts?: { notify?: boolean }): void {
-    if (driftAdvancing || !driftShow.active) return;
-    driftShow.stop();
-    ui.setDriftActive(false);
-    if (opts?.notify) ui.flashToast("Drift stopped");
-  }
-
-  // One drift leg (fr-wavo): press Surprise Me — or, for a collection show
-  // (fr-w2ve), load the next saved scene — on the show's behalf: the same
-  // "replace" undo checkpoint a manual press/load cuts (undo walks back
-  // through the show; history.ts's cap bounds it), the same camera auto-fit,
-  // but gliding the display morph over DRIFT_MORPH_MS instead of the
-  // snappier click-feedback default. The flag exempts the leg's own edit
-  // from the stop-on-edit rule above. A reduced-motion preference that
-  // appeared mid-show ends it at the leg boundary instead — no motion means
-  // no drift (regenerateReplaced would snap every leg, a slideshow, not a
-  // show).
-  function advanceDrift(): void {
-    if (prefersReducedMotion()) {
-      // Silent (fr-ygr1): a reduced-motion sync, not something the user did
-      // elsewhere — see stopDrift's own notify doc.
-      stopDrift();
-      return;
-    }
-    driftAdvancing = true;
-    try {
-      if (driftSource === "collection") advanceCollectionLeg();
-      else rollSurpriseSystem(DRIFT_MORPH_MS);
-    } finally {
-      driftAdvancing = false;
-    }
-  }
+  // render-mode switch — see each call site for its own reasoning. The
+  // policy's guards mean it can never fire for a stop that didn't happen.
+  const driftPolicy = new DriftPolicy({
+    show: driftShow,
+    reducedMotion: prefersReducedMotion,
+    // One drift leg (fr-wavo): press Surprise Me — or, for a collection
+    // show (fr-w2ve), load the next saved scene — on the show's behalf:
+    // the same "replace" undo checkpoint a manual press/load cuts (undo
+    // walks back through the show; history.ts's cap bounds it), the same
+    // camera auto-fit, but gliding the display morph over DRIFT_MORPH_MS
+    // instead of the snappier click-feedback default. A surprise roll
+    // always launches; a collection leg reports whether anything was left
+    // to play — false ends the show once the leg unwinds (fr-4otp).
+    launchLeg: () => {
+      if (driftSource === "collection") return advanceCollectionLeg();
+      rollSurpriseSystem(DRIFT_MORPH_MS);
+      return true;
+    },
+    onStopped: (notify) => {
+      ui.setDriftActive(false);
+      if (notify) ui.flashToast("Drift stopped");
+    },
+  });
 
   /**
    * The next playable stop on the collection show's loop (fr-w2ve): walk
@@ -551,8 +538,9 @@ function main(): void {
   // difference from a manual load: the camera always auto-fits and CHASES
   // the morph (fr-cfoc) rather than snapping to the entry's saved pose — a
   // hard pose cut every leg would break the ambience the show exists for.
-  // An emptied-out (or fully corrupt) collection ends the show at the leg
-  // boundary, like reduced motion does.
+  // Returns whether a leg actually launched: an emptied-out (or fully
+  // corrupt) collection reports false, and DriftPolicy.advance ends the
+  // show at the leg boundary — like reduced motion does (fr-4otp).
   //
   // Every entry plays in the mode it was SAVED from (fr-75sq): a tagged
   // entry re-enters its renderer when the terminal cloud lands (the
@@ -562,19 +550,14 @@ function main(): void {
   // view to points, and no hint is armed. A manual mode switch mid-show is
   // a look-around: it survives (switchRenderMode holds the show for the
   // entering render), but the next leg reasserts its own entry's mode.
-  function advanceCollectionLeg(): void {
+  function advanceCollectionLeg(): boolean {
     const next = nextCollectionScene();
-    if (!next) {
-      // Silent (fr-ygr1), like the reduced-motion stop above — an emptied
-      // collection ending its own show, not a user edit elsewhere.
-      // (Pre-existing: this call actually runs with driftAdvancing still
-      // true — set by advanceDrift just before calling in — so stopDrift's
-      // own guard no-ops it here; harmless for the notify question below
-      // either way, since a no-op stop can never toast, but worth knowing
-      // this is not the call that actually ends a dried-up show.)
-      stopDrift();
-      return;
-    }
+    // Nothing left to play: just report it. The stop belongs to
+    // DriftPolicy.advance, AFTER this leg unwinds — issued from in here it
+    // would be swallowed by the policy's own-leg guard, which is exactly
+    // how an emptied collection's show used to keep running forever
+    // (fr-4otp).
+    if (!next) return false;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
     // Re-arm AFTER applyDecodedSnapshot, which clears pendingRenderMode on
@@ -582,6 +565,7 @@ function main(): void {
     // this is not that: it's the show arming the entry's own display mode).
     if (next.mode) pendingRenderMode = next.mode;
     driftLastPlayedId = next.id;
+    return true;
   }
 
   // Whether each renderer's CURRENT session has met its iteration budget —
@@ -1706,7 +1690,7 @@ function main(): void {
         // Silent (fr-ygr1): an explicit render-mode switch, not an edit
         // reaching in from elsewhere — the user is looking right at the
         // segmented control they just clicked.
-        stopDrift();
+        driftPolicy.stop();
       }
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
       // the DOCUMENT's system, so snap the display to it — and animate()
@@ -1796,10 +1780,10 @@ function main(): void {
     // Undo/redo and a gallery load are the user reaching in: both end the
     // drift show (fr-wavo) — this is the one chokepoint on their shared path.
     // Notify (fr-ygr1): the show's own collection legs also pass through
-    // here, but driftAdvancing is true for those, so stopDrift's guard
-    // no-ops before ever reaching the toast — only a genuine undo/redo or
-    // manual load actually stops (and announces) anything.
-    stopDrift({ notify: true });
+    // here, but under the policy's own-leg guard the stop no-ops before
+    // ever reaching the toast — only a genuine undo/redo or manual load
+    // actually stops (and announces) anything.
+    driftPolicy.stop({ notify: true });
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load.
@@ -1971,7 +1955,8 @@ function main(): void {
    *
    * Every edit through here also ends the ambient drift show (fr-wavo) —
    * except the show's own leg, which is this exact path with `morphMs` set
-   * to its slower glide (see advanceDrift and its reentrancy flag).
+   * to its slower glide (see driftPolicy's launchLeg and the own-leg guard
+   * in drift-policy.ts).
    */
   function applyEdit(
     applyReducer: () => void,
@@ -1980,11 +1965,11 @@ function main(): void {
   ): void {
     // Notify (fr-ygr1): every ordinary document edit (add/remove transform,
     // preset load, Surprise Me, toggles) flows through here. The show's own
-    // roll (advanceDrift → rollSurpriseSystem) takes this exact path too,
-    // but with driftAdvancing true, so stopDrift's guard no-ops before the
+    // roll (driftPolicy.advance → rollSurpriseSystem) takes this exact path
+    // too, but under the policy's own-leg guard the stop no-ops before the
     // toast — only a genuine user edit actually stops (and announces)
     // anything.
-    stopDrift({ notify: true });
+    driftPolicy.stop({ notify: true });
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns.
     pendingRenderMode = null;
@@ -2105,7 +2090,7 @@ function main(): void {
     },
     // A manual press is a manual replace-load, so applyEdit (inside) also
     // ends a running drift show — the show's own legs take the same path
-    // with a longer morph (see advanceDrift).
+    // with a longer morph (see driftPolicy's launchLeg).
     onSurprise: () => rollSurpriseSystem(),
     // The ambient drift show's toggle (fr-wavo). Session-only, never
     // persisted; the button is disabled under reduced motion
@@ -2119,7 +2104,7 @@ function main(): void {
       if (driftShow.active) {
         // Silent (fr-ygr1): the explicit drift-button toggle itself — the
         // user is looking right at the button reverting, so no toast needed.
-        stopDrift();
+        driftPolicy.stop();
         return;
       }
       if (prefersReducedMotion()) return;
@@ -2156,7 +2141,7 @@ function main(): void {
       // (fr-ygr1): a slider/select/checkbox edit is exactly the "the user
       // was doing something else" case.
       if (spec.persisted !== false) {
-        stopDrift({ notify: true });
+        driftPolicy.stop({ notify: true });
         editSession.beginEdit();
       }
       state = applyScalarControl(state, spec, raw);
@@ -2177,7 +2162,7 @@ function main(): void {
     onCustomPaletteStops: (stops) => {
       // Notify (fr-ygr1): a gradient-editor edit, same bucket as any other
       // document edit.
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
       ui.updateLabels(state);
@@ -2206,7 +2191,7 @@ function main(): void {
     onPositionAxisColors: (colors) => {
       // Notify (fr-ygr1): an axis-color-picker edit, same bucket as any
       // other document edit.
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
@@ -2225,9 +2210,9 @@ function main(): void {
       // Notify (fr-ygr1): "Watch it build" is its own action, not the drift
       // control — the drift show ending is a side effect the user didn't
       // ask for, same bucket as an edit reaching in from elsewhere (see
-      // stopDrift's own doc, which groups "starting a build replay" with
+      // the driftPolicy wiring's doc, which groups "starting a build replay" with
       // applyEdit/time-travel/gallery-loads as "the user reached in").
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       // Snap any in-flight morph before replaying (fr-a04l): the replay
       // reveals the displayed buffer, which should be the settled target,
       // not a mid-morph intermediate. (Morph landings cancel a replay
@@ -2375,7 +2360,7 @@ function main(): void {
     onTransformGeometry: (index, geometry) => {
       // Notify (fr-ygr1): a panel-slider transform edit, same bucket as any
       // other document edit.
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
@@ -2407,7 +2392,7 @@ function main(): void {
     onFinalTransformGeometry: (geometry) => {
       // Notify (fr-ygr1): a panel-slider final-transform edit, same bucket
       // as any other document edit.
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       editSession.beginEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
@@ -2483,7 +2468,7 @@ function main(): void {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
       // the drift show like every other undoable edit (fr-wavo). Notify
       // (fr-ygr1): same bucket as any other document edit.
-      stopDrift({ notify: true });
+      driftPolicy.stop({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
@@ -2592,7 +2577,7 @@ function main(): void {
   // (fr-wavo): the toggle disables itself with an explanation rather than
   // silently doing nothing. Tracked live, so flipping the OS preference
   // mid-session both disables the toggle and ends a running show
-  // immediately (advanceDrift's leg-boundary check is the belt-and-braces
+  // immediately (DriftPolicy.advance's leg-boundary check is the belt-and-braces
   // for engines that never fire the change event).
   const reducedMotionQuery = window.matchMedia?.(
     "(prefers-reduced-motion: reduce)",
@@ -2600,7 +2585,7 @@ function main(): void {
   function syncDriftAvailability(): void {
     ui.setDriftAvailable(!prefersReducedMotion());
     // Silent (fr-ygr1): the reduced-motion availability sync itself.
-    if (prefersReducedMotion()) stopDrift();
+    if (prefersReducedMotion()) driftPolicy.stop();
   }
   syncDriftAvailability();
   reducedMotionQuery?.addEventListener("change", syncDriftAvailability);
@@ -2642,7 +2627,7 @@ function main(): void {
     const morphSample = morphTween.sample(now);
     if (morphSample) requestMorphSample(morphSample);
     // The ambient drift show: when a departure comes due, launch the next
-    // leg — a Surprise-Me roll or the next saved scene (advanceDrift).
+    // leg — a Surprise-Me roll or the next saved scene (driftPolicy.advance).
     // Polled AFTER the morph sample above on purpose: on a backgrounded
     // tab's catch-up frame both come due at once, and the in-flight leg
     // must land first (its terminal replaced/fit request just went out) —
@@ -2653,7 +2638,7 @@ function main(): void {
     // flame/solid still — held while it converges, due again a beat after
     // it completes — while a random show is stopped by switchRenderMode
     // before those modes can even show (fr-wavo).
-    if (driftShow.frame()) advanceDrift();
+    if (driftShow.frame()) driftPolicy.advance();
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around

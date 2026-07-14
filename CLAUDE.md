@@ -194,16 +194,29 @@ and UI**, so the interesting math is unit-tested without a browser:
     `DRIFT_MORPH_MS` with a normal "replace" undo checkpoint, then a fresh
     dwell. Since fr-w2ve the deadline can also be HELD (`hold` /
     `resumeAfter(DRIFT_RENDER_LINGER_MS)` / `holding`): active but awaiting
-    an external signal instead of the clock. main.ts owns the policy:
-    session-only, STOPS (never pauses) on any undoable edit / undo / manual
-    replace-load, unavailable under reduced motion; a render-mode switch
-    stops a random show but only holds a collection one — the gallery
-    slideshow (`onDriftCollection`) walks `SceneCollection.after`'s loop,
-    plays each entry in the mode it was SAVED from (fr-75sq, via
-    `pendingRenderMode`; untagged = points), and departs a still one
-    `DRIFT_RENDER_LINGER_MS` after its render meets the iteration budget
-    (the flame/solid progress events). Between legs the poll is one
-    comparison, so a dwelling show does no per-frame work.
+    an external signal instead of the clock. main.ts + `drift-policy.ts`
+    own the policy: session-only, STOPS (never pauses) on any undoable
+    edit / undo / manual replace-load, unavailable under reduced motion; a
+    render-mode switch stops a random show but only holds a collection one
+    — the gallery slideshow (`onDriftCollection`) walks
+    `SceneCollection.after`'s loop, plays each entry in the mode it was
+    SAVED from (fr-75sq, via `pendingRenderMode`; untagged = points), and
+    departs a still one `DRIFT_RENDER_LINGER_MS` after its render meets
+    the iteration budget (the flame/solid progress events). Between legs
+    the poll is one comparison, so a dwelling show does no per-frame work.
+  - `drift-policy.ts` — the drift show's stop/advance conductor (fr-4otp):
+    the ONE guarded `stop()` every "user reached in" chokepoint calls —
+    no-op'd while the show's own leg applies itself (the own-leg guard,
+    which is how a leg's replace-load survives the stop-on-edit rule) and
+    while idle, so the injected `onStopped` UI sync (and fr-ygr1's "Drift
+    stopped" toast) can never fire for a stop that didn't happen — and
+    `advance()`, which runs one leg under that guard and itself ends the
+    show at a leg boundary under reduced motion or a dry leg source
+    (`launchLeg` returning false: an emptied/fully-corrupt collection),
+    the dry stop deferred until the guard unwinds — deferring it is the
+    fr-4otp fix; issued from inside the leg it was swallowed and the show
+    polled forever. main.ts's wiring decides what a leg does and which
+    stops toast. Pure, injected effects, tested.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → done, with narration captions) — the buffer
