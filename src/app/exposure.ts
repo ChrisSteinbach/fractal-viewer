@@ -20,7 +20,10 @@ export const CALIBRATION_DENSITY = 0.5;
  * Compute a per-frame brightness multiplier for the glow material.
  *
  * @param numPoints       Rendered point count (`lastResult.count`).
- * @param boundsRadiusWorld  Half the bounding-box diagonal (world units).
+ * @param boundsRadiusWorld  Half the bounding-box diagonal (world units) —
+ *   since fr-2b82 the caller derives it from the outlier-trimmed
+ *   `frameBounds`, so the density estimate models where the mass actually is
+ *   rather than a raw box one flung straggler can inflate.
  * @param cameraDistance   Distance from camera to the cloud centre.
  * @param fovYRadians      Vertical field-of-view in radians.
  * @param viewportHeightPx Canvas height in CSS pixels.

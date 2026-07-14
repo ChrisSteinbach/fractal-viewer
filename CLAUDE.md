@@ -173,10 +173,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     distance-from-center quantile that stays tumble-invariant), computed
     worker-side onto every `CloudResult` (`frameBounds`/`frameRadius`) so a
     nonlinear variation's sparse flung points can't inflate the fit the way
-    they do the raw min/max `bounds` — which everything else (color
-    normalization, glow exposure, culling spheres) still reads. Same trim
-    rationale as `voxel.ts`'s `BOUNDS_QUANTILE`, deliberately its own
-    constant. Pure, tested.
+    they do the raw min/max `bounds` — which everything that must cover every
+    point (color normalization, culling spheres) still reads. The glow-exposure
+    density estimate reads `frameBounds` too (fr-2b82): it wants where the
+    mass is, and the raw box's outlier inflation over-brightened the glow.
+    Same trim rationale as `voxel.ts`'s `BOUNDS_QUANTILE`, deliberately its
+    own constant. Pure, tested.
   - `morph-tween.ts` — the replace-load system morph driver (fr-jx9o):
     per-frame sampler over `../fractal/morph`'s `lerpSystem` with a pinned seed
     so consecutive frames' clouds stay point-for-point correspondent, chained

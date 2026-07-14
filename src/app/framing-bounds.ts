@@ -3,11 +3,13 @@
  * trimmed quantiles of the delivered point cloud, baked worker-side onto
  * every `CloudResult` (`cloud-worker-core.ts`'s `generateCloud` attaches
  * `frameBounds`/`frameRadius`) and read by main.ts's `attractorFramingBounds`,
- * which `camera-tween.ts`'s glide/chase actually frame. The true min/max
+ * which `camera-tween.ts`'s glide/chase actually frame — and, since fr-2b82,
+ * by main.ts's glow-exposure block, whose points-per-pixel estimate likewise
+ * wants the box where the mass actually is (the raw box's outlier inflation
+ * under-estimated density and over-brightened the glow). The true min/max
  * `bounds` on the same result stays untouched and keeps driving everything
  * that must cover every point instead of merely look good on screen: color
- * normalization, the glow-exposure estimate, and the 4D frustum-culling
- * sphere.
+ * normalization and the 4D frustum-culling sphere.
  *
  * The problem this fixes: a nonlinear variation can fling an isolated point
  * far off the attractor's actual shape before `stepOrbit`'s escape guard
