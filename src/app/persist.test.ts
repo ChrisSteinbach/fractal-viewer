@@ -363,8 +363,8 @@ describe("decodeScene transform weight", () => {
     expect(result!.transforms[0].weight).toBeCloseTo(0.85, 4);
   });
 
-  it("leaves weight undefined for an old link that never carried the field", () => {
-    // baseSnapshot() has no weight — exactly an old v1 payload.
+  it("leaves weight undefined when the payload never carried the field", () => {
+    // baseSnapshot() has no weight.
     const result = decodeScene(encodeScene(baseSnapshot()));
     expect(result!.transforms[0].weight).toBeUndefined();
   });
@@ -456,7 +456,7 @@ describe("decodeScene transform shear", () => {
     expect(decodeScene(encodeScene(s))!.transforms[0].shear).toBeUndefined();
   });
 
-  it("leaves shear undefined for an old link that never carried the field", () => {
+  it("leaves shear undefined when the payload never carried the field", () => {
     expect(
       decodeScene(encodeScene(baseSnapshot()))!.transforms[0].shear,
     ).toBeUndefined();
@@ -545,7 +545,7 @@ describe("decodeScene transform variations", () => {
     ).toBeUndefined();
   });
 
-  it("leaves variations undefined for an old link that never carried the field", () => {
+  it("leaves variations undefined when the payload never carried the field", () => {
     expect(
       decodeScene(encodeScene(baseSnapshot()))!.transforms[0].variations,
     ).toBeUndefined();
@@ -675,7 +675,7 @@ describe("decodeScene final transform", () => {
     });
   });
 
-  it("leaves finalTransform undefined for a link that never carried one", () => {
+  it("leaves finalTransform undefined when the payload never carried one", () => {
     expect(
       decodeScene(encodeScene(baseSnapshot()))!.finalTransform,
     ).toBeUndefined();
@@ -1028,8 +1028,8 @@ describe("decodeScene transform w (4D extension)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Flame render params (added after v1 shipped — same "absent defaults
-// quietly, malformed rejects" contract as finalTransform/weight/shear)
+// Flame render params — same "absent defaults quietly, malformed rejects"
+// contract as finalTransform/weight/shear
 // ---------------------------------------------------------------------------
 
 describe("decodeScene flame params", () => {
@@ -1047,9 +1047,8 @@ describe("decodeScene flame params", () => {
     expect(result!.flame.iterations).toBe(42_000_000);
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `flame` key at all — exactly what every
-    // v1 link looked like before this field was added.
+  it("defaults quietly when the flame block is absent entirely", () => {
+    // A hand-built payload with no `flame` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -1069,9 +1068,7 @@ describe("decodeScene flame params", () => {
       estimatorRadius: DEFAULT_ESTIMATOR_RADIUS,
       estimatorMinimumRadius: DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
       estimatorCurve: DEFAULT_ESTIMATOR_CURVE,
-      // Deliberately "legacy", NOT DEFAULT_FLAME_PALETTE (a gradient since
-      // fr-9mw): a pre-palette link must render as it did when written.
-      paletteId: "legacy",
+      paletteId: DEFAULT_FLAME_PALETTE,
     });
   });
 
@@ -1147,8 +1144,8 @@ describe("decodeScene flame params", () => {
     expect(result!.flame.supersample).toBe(3);
   });
 
-  it("defaults gamma/vibrancy/supersample quietly for a link encoded before fr-ucs existed", () => {
-    // A hand-built flame block carrying only the fr-o7s-era fields.
+  it("defaults gamma/vibrancy/supersample when the flame block omits them", () => {
+    // A hand-built flame block carrying only exposure/iterations.
     const raw = {
       ...baseSnapshot(),
       flame: { exposure: 1.5, iterations: 30_000_000 },
@@ -1230,8 +1227,9 @@ describe("decodeScene flame params", () => {
     expect(result!.flame.estimatorCurve).toBeCloseTo(1.2, 4);
   });
 
-  it("defaults estimator params quietly for a link encoded before fr-17t existed", () => {
-    // A hand-built flame block carrying only pre-fr-17t fields.
+  it("defaults estimator params when the flame block omits them", () => {
+    // A hand-built flame block carrying only exposure/iterations/gamma/
+    // vibrancy/supersample.
     const raw = {
       ...baseSnapshot(),
       flame: {
@@ -1301,20 +1299,20 @@ describe("decodeScene flame params", () => {
     expect(decodeScene(encodeScene(s))!.flame.paletteId).toBe("spectrum");
   });
 
-  it("falls back to legacy for an unknown paletteId instead of rejecting the scene", () => {
+  it("falls back to the default for an unknown paletteId instead of rejecting the scene", () => {
     // Unlike every other flame field, an unknown palette does NOT nuke the
-    // whole scene — a link from a future build carrying a palette this build
-    // doesn't know still restores, just with the default coloring.
+    // whole scene — a link carrying a palette this build doesn't know still
+    // restores, just with the default coloring.
     const raw = {
       ...baseSnapshot(),
       flame: { ...baseSnapshot().flame, paletteId: "chartreuse" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
-  it("defaults paletteId to legacy for a link encoded before fr-6us existed", () => {
+  it("defaults paletteId when the flame block omits it", () => {
     // A flame block carrying every field except paletteId.
     const raw = {
       ...baseSnapshot(),
@@ -1328,7 +1326,7 @@ describe("decodeScene flame params", () => {
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 });
 
@@ -1363,9 +1361,8 @@ describe("decodeScene solid params", () => {
     });
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `solid` key at all — exactly what every
-    // link looked like before fr-v4f.
+  it("defaults quietly when the solid block is absent entirely", () => {
+    // A hand-built payload with no `solid` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -1384,9 +1381,7 @@ describe("decodeScene solid params", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
-      // Deliberately "legacy", NOT DEFAULT_SOLID_PALETTE (a gradient since
-      // fr-9mw): a pre-palette link must render as it did when written.
-      paletteId: "legacy",
+      paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
 
@@ -1451,9 +1446,8 @@ describe("decodeScene solid params", () => {
     ).toBe(MAX_SOLID_RESOLUTION);
   });
 
-  it("round-trips the raised 512 resolution ceiling (fr-8x7)", () => {
-    // Before fr-8x7 raised MAX_SOLID_RESOLUTION from 256 to 512, this value
-    // would have been clamped down to 256 on decode.
+  it("round-trips the full 512 resolution ceiling (fr-8x7)", () => {
+    // 512 is within MAX_SOLID_RESOLUTION, so it survives decode unclamped.
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       solid: { ...baseSnapshot().solid, resolution: 512 },
@@ -1479,19 +1473,19 @@ describe("decodeScene solid params", () => {
     expect(decodeScene(encodeScene(s))!.solid.paletteId).toBe("spectrum");
   });
 
-  it("falls back to legacy for an unknown paletteId instead of rejecting the scene", () => {
+  it("falls back to the default for an unknown paletteId instead of rejecting the scene", () => {
     // Unlike every other solid field, an unknown palette does NOT nuke the
-    // whole scene — mirrors flame.paletteId's fallback-to-legacy behavior.
+    // whole scene — mirrors flame.paletteId's fallback behavior.
     const raw = {
       ...baseSnapshot(),
       solid: { ...baseSnapshot().solid, paletteId: "chartreuse" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.solid.paletteId).toBe("legacy");
+    expect(result!.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
   });
 
-  it("defaults paletteId to legacy for a link encoded before fr-1kt existed", () => {
+  it("defaults paletteId when the solid block omits it", () => {
     // A solid block carrying every field except paletteId.
     const raw = {
       ...baseSnapshot(),
@@ -1506,7 +1500,7 @@ describe("decodeScene solid params", () => {
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.solid.paletteId).toBe("legacy");
+    expect(result!.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
   });
 });
 
@@ -1571,25 +1565,25 @@ describe("decodeScene customPalette", () => {
     expect(result!.customPalette).toBeUndefined();
   });
 
-  it("falls back to legacy for a custom flame paletteId with no customPalette payload", () => {
+  it("falls back to the default for a custom flame paletteId with no customPalette payload", () => {
     const raw = {
       ...baseSnapshot(),
       flame: { ...baseSnapshot().flame, paletteId: "custom" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
     expect(result!.customPalette).toBeUndefined();
   });
 
-  it("falls back to legacy for a custom solid paletteId with no customPalette payload", () => {
+  it("falls back to the default for a custom solid paletteId with no customPalette payload", () => {
     const raw = {
       ...baseSnapshot(),
       solid: { ...baseSnapshot().solid, paletteId: "custom" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.solid.paletteId).toBe("legacy");
+    expect(result!.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
     expect(result!.customPalette).toBeUndefined();
   });
 
@@ -1602,7 +1596,7 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.customPalette).toBeUndefined();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
     // The rest of the scene survives — this is a quiet fallback, not a
     // whole-scene rejection.
     expect(result!.transforms).toHaveLength(1);
@@ -1621,7 +1615,7 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.customPalette).toBeUndefined();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
   it("drops the payload and demotes a custom paletteId when there are too many stops", () => {
@@ -1637,7 +1631,7 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.customPalette).toBeUndefined();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
   it("drops the payload when a stop entry is a short hex shorthand", () => {
@@ -1649,7 +1643,7 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.customPalette).toBeUndefined();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
   it("drops the payload when a stop entry is not a string", () => {
@@ -1661,7 +1655,7 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.customPalette).toBeUndefined();
-    expect(result!.flame.paletteId).toBe("legacy");
+    expect(result!.flame.paletteId).toBe(DEFAULT_FLAME_PALETTE);
   });
 
   it("drops the payload when it is not a plain object", () => {
@@ -1774,9 +1768,8 @@ describe("decodeScene rampPaletteId", () => {
     expect(decodeScene(encodeScene(s))!.rampPaletteId).toBe("ember");
   });
 
-  it("defaults quietly to legacy for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `rampPaletteId` key at all — exactly what
-    // every link looked like before fr-3b6.
+  it("defaults quietly to legacy when rampPaletteId is absent", () => {
+    // A hand-built payload with no `rampPaletteId` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -1953,9 +1946,8 @@ describe("decodeScene symmetry", () => {
     expect(result!.symmetry).toEqual({ order: 6, axis: "z" });
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `symmetry` key at all — exactly what
-    // every link looked like before fr-6im.
+  it("defaults quietly when the symmetry block is absent entirely", () => {
+    // A hand-built payload with no `symmetry` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -2006,7 +1998,7 @@ describe("decodeScene symmetry", () => {
 
   it("falls back to y for an unrecognized axis instead of rejecting the scene", () => {
     // Unlike every other block, an unknown axis does NOT nuke the whole
-    // scene — mirrors flame.paletteId's fallback-to-legacy behavior.
+    // scene — mirrors flame.paletteId's fallback behavior.
     const raw = { ...baseSnapshot(), symmetry: { order: 3, axis: "w" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
@@ -2028,9 +2020,8 @@ describe("decodeScene glow brightness", () => {
     expect(result!.glowBrightness).toBeCloseTo(2.25, 4);
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `glowBrightness` key at all — exactly
-    // what every link looked like before fr-8b1.
+  it("defaults quietly when glowBrightness is absent", () => {
+    // A hand-built payload with no `glowBrightness` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -2084,9 +2075,8 @@ describe("decodeScene color contrast", () => {
     expect(result!.colorGamma).toBeCloseTo(2.5, 4);
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `colorGamma` key at all — exactly what
-    // every link looked like before fr-8sk.
+  it("defaults quietly when colorGamma is absent", () => {
+    // A hand-built payload with no `colorGamma` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -2135,9 +2125,8 @@ describe("decodeScene fourDColor", () => {
     expect(result!.fourDColor).toBe("wCyanMagenta");
   });
 
-  it("defaults quietly for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `fourDColor` key at all — exactly what
-    // every link looked like before fr-d47.
+  it("defaults quietly when fourDColor is absent", () => {
+    // A hand-built payload with no `fourDColor` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -2175,10 +2164,10 @@ describe("decodeScene fourDDepthFade", () => {
     expect(result!.fourDDepthFade).toBe(true);
   });
 
-  it("defaults to off for a link encoded before this feature existed", () => {
-    // A hand-built payload with no `fourDDepthFade` key at all — exactly what
-    // every link looked like before fr-3e0. Boolean coercion (showGuides's
-    // contract) turns the absent key into the off default, never a rejection.
+  it("defaults to off when fourDDepthFade is absent", () => {
+    // A hand-built payload with no `fourDDepthFade` key at all. Boolean
+    // coercion (showGuides's contract) turns the absent key into the off
+    // default, never a rejection.
     const raw: Partial<SceneSnapshot> = { ...baseSnapshot() };
     delete raw.fourDDepthFade;
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
@@ -2229,9 +2218,9 @@ describe("decodeScene clamping", () => {
     expect(result!.pointSize).toBe(0.25);
   });
 
-  // The decode boundary is deliberately WIDER than the UI slider: a crafted or
-  // legacy link may carry a count below MIN_NUM_POINTS (the slider's floor),
-  // and it must survive decode unchanged rather than being snapped up — the
+  // The decode boundary is deliberately WIDER than the UI slider: a crafted
+  // payload may carry a count below MIN_NUM_POINTS (the slider's floor), and
+  // it must survive decode unchanged rather than being snapped up — the
   // same way an off-detent flame iteration count survives. Only < 0 clamps (to
   // 0) and > 5M clamps (to 5M), pinned by the two tests above.
   it("keeps a numPoints below the UI slider floor unchanged", () => {
@@ -2339,8 +2328,7 @@ describe("decodeScene camera", () => {
   });
 
   it("keeps decoding a scene with no camera field at all as a valid, non-null scene", () => {
-    // A hand-built payload with no `camera` key at all — exactly what every
-    // link looked like before fr-1k4.
+    // A hand-built payload with no `camera` key at all.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
