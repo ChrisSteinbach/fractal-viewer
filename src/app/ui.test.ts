@@ -3949,6 +3949,63 @@ describe("Ui collection gallery", () => {
   });
 });
 
+describe("Ui toast (fr-ifts)", () => {
+  function toastEl(): HTMLElement {
+    return document.getElementById("toast") as HTMLElement;
+  }
+
+  it("shows a plain message with no action button", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.flashToast("Saved to collection");
+
+    expect(toastEl().classList.contains("hidden")).toBe(false);
+    expect(toastEl().textContent).toBe("Saved to collection");
+    expect(toastEl().querySelector(".toast-action")).toBeNull();
+  });
+
+  it("renders an action button labeled from the action, alongside the message", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.flashToast("Deleted from collection", {
+      label: "Undo",
+      onAction: vi.fn(),
+    });
+
+    expect(toastEl().firstChild?.textContent).toBe("Deleted from collection");
+    const button = toastEl().querySelector<HTMLButtonElement>(".toast-action");
+    expect(button?.textContent).toBe("Undo");
+  });
+
+  it("clicking the action button fires onAction and hides the toast immediately", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const onAction = vi.fn();
+    ui.flashToast("Deleted from collection", { label: "Undo", onAction });
+
+    toastEl().querySelector<HTMLButtonElement>(".toast-action")?.click();
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(toastEl().classList.contains("hidden")).toBe(true);
+  });
+
+  it("a later plain toast leaves no stale action button behind from a prior action toast", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.flashToast("Deleted from collection", {
+      label: "Undo",
+      onAction: vi.fn(),
+    });
+
+    ui.flashToast("Saved to collection");
+
+    expect(toastEl().querySelector(".toast-action")).toBeNull();
+    expect(toastEl().textContent).toBe("Saved to collection");
+  });
+});
+
 describe("Ui about dialog", () => {
   function aboutBtn(): HTMLButtonElement {
     return document.getElementById("aboutBtn") as HTMLButtonElement;

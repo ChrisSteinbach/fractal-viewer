@@ -2199,9 +2199,28 @@ function main(): void {
       }
     },
     onDeleteFromCollection: (id) => {
+      // Snapshot the entry before removing it (fr-ifts): the Undo toast's
+      // collection.restore(entry) needs the exact object back — id, encoded,
+      // thumbnail, createdAt, mode — and once it's gone from the collection
+      // there's nothing left to re-derive that from. A stale id (already
+      // gone — a double click, or a raced second delete) finds nothing and
+      // skips the whole thing; remove() would no-op too, but there's no
+      // point flashing an Undo for a delete that didn't actually happen.
+      const entry = collection.all().find((s) => s.id === id);
+      if (!entry) return;
       collection.remove(id);
       ui.setCollectionCount(collection.size);
       ui.renderGallery(collection.all()); // refresh the still-open modal in place.
+      ui.flashToast("Deleted from collection", {
+        label: "Undo",
+        onAction: () => {
+          collection.restore(entry);
+          ui.setCollectionCount(collection.size);
+          // Same refresh as the delete above — consistent whether the
+          // gallery modal is currently open or closed.
+          ui.renderGallery(collection.all());
+        },
+      });
     },
     onCopyLink: () => {
       // Build the link from CURRENT state rather than reading location.hash,
