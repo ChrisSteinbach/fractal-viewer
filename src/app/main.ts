@@ -1248,6 +1248,15 @@ function main(): void {
           flameSession.markFirstFrame();
         }
         break;
+      case "restarted":
+        // The worker just discarded its accumulation (a live palette/
+        // supersample/symmetry restart, or the OOM fallback) — zero the
+        // readout NOW instead of showing the stale pre-restart count until
+        // the first post-restart chunk reports, seconds away on CPU
+        // (fr-h6sn). No markFirstFrame: there is no frame yet.
+        ui.setFlameProgress(0, event.iterationsBudget);
+        noteRenderProgress("flame", 0, event.iterationsBudget);
+        break;
       case "supersampleNote":
         ui.setFlameSupersampleNote(event.effective, event.requested);
         break;
@@ -1510,6 +1519,12 @@ function main(): void {
           event.iterationsDone,
           event.iterationsBudget,
         );
+        break;
+      case "restarted":
+        // Same contract as the flame's "restarted" case: zero the readout
+        // the moment the worker discards its accumulation (fr-h6sn).
+        ui.setSolidProgress(0, event.iterationsBudget);
+        noteRenderProgress("solid", 0, event.iterationsBudget);
         break;
       case "resolutionNote":
         ui.setSolidResolutionNote(event.effective, event.requested);
