@@ -284,6 +284,25 @@ export type FlameWorkerEvent =
     }
   | {
       /**
+       * Emitted synchronously, right where {@link FlameWorkerSession}'s
+       * `startAccumulation` discards the in-flight accumulation (fr-h6sn) —
+       * a live `setSupersample`/`setPalette`/`setSymmetry` restart, the
+       * allocation-failure fallback, or the initial `start` (harmless there:
+       * nothing stale is on screen yet to correct). The next `progress`/
+       * `sharedFrame` report — the only other thing that carries
+       * `iterationsDone`/`iterationsBudget` — can be seconds away on CPU at
+       * a high supersample, so without this the main thread keeps showing
+       * the PRE-restart count (e.g. "6.7M / 20.0M (33%)") until that first
+       * post-restart chunk lands. Carries `iterationsBudget` (the new
+       * accumulation's target — unchanged by most restarts, but a live
+       * `setIterationsBudget` could have landed just before) so a listener
+       * can zero its displayed count without waiting on anything else.
+       */
+      type: "restarted";
+      iterationsBudget: number;
+    }
+  | {
+      /**
        * Which {@link FlameAccumBackend} is driving the CURRENT accumulation
        * (fr-npb) — emitted once per backend creation, i.e. on the first
        * chunk of every `start`/restart (a live `setSupersample`/`setPalette`/
@@ -1370,9 +1389,12 @@ export class FlameWorkerSession {
   /**
    * (Re)size the accumulator for `requested` (clamped to what fits the
    * memory budget) and discard any progress: shared by `start`, a live
-   * `setSupersample` command, and the allocation-failure fallback in
-   * `runChunk` — all three need a from-scratch histogram at a (possibly new)
-   * size. Assumes width/height (the display size) are already set.
+   * `setSupersample`/`setPalette`/`setSymmetry` command, and the
+   * allocation-failure fallback in `runChunk` — all need a from-scratch
+   * histogram at a (possibly new) size, and this is the ONE place that
+   * actually discards one, which is also where the `restarted` event
+   * (fr-h6sn) is emitted. Assumes width/height (the display size) are
+   * already set.
    */
   private startAccumulation(requested: number): void {
     const effective = this.computeEffectiveSupersample(requested);
@@ -1392,6 +1414,11 @@ export class FlameWorkerSession {
     this.histogram = null;
     this.displayHistogram = null;
     this.iterationsDone = 0;
+    // Tell the main thread right now, not on the next chunk (see the
+    // `restarted` event's doc) — emitted unconditionally, including from
+    // `start`'s own call into this method, which keeps this the one place
+    // that announces a discard rather than special-casing the first one.
+    this.emit({ type: "restarted", iterationsBudget: this.iterationsBudget });
     this.lastDownsampleAt = undefined;
     this.finalFrameDisplayed = false;
     // Reset to the CPU initial unconditionally: a backend doesn't exist yet

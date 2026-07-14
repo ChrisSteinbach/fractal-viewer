@@ -202,6 +202,23 @@ export type VoxelWorkerEvent =
       requested?: number;
     }
   | {
+      /**
+       * Emitted synchronously, right where {@link VoxelWorkerSession}'s
+       * `startAccumulation` discards the in-flight accumulation (fr-h6sn,
+       * mirroring the flame session's own `restarted` event) — a live
+       * `setPalette`/`setSymmetry` restart, the allocation-failure fallback,
+       * or the initial `start` (harmless there: nothing stale is on screen
+       * yet to correct). The next `grid` report — the only other thing that
+       * carries `iterationsDone`/`iterationsBudget` — can be seconds away on
+       * a big grid, so without this the main thread keeps showing the
+       * PRE-restart count until that first post-restart pack lands. Carries
+       * `iterationsBudget` (the new accumulation's target) so a listener can
+       * zero its displayed count without waiting on anything else.
+       */
+      type: "restarted";
+      iterationsBudget: number;
+    }
+  | {
       /** Counters-only label refresh for when the budget changes but the
        * displayed texture is already final (see `setIterationsBudget` in
        * {@link VoxelWorkerSession.handle}) — re-packing and re-transferring
@@ -680,7 +697,12 @@ export class VoxelWorkerSession {
    * than failing every attempt forever — the reactive guard backing up the
    * proactive `clampVoxelResolution` estimate, mirroring the flame session's
    * supersample fallback. Dimension-agnostic: the grid itself (and this OOM
-   * guard) doesn't care whether it's being filled by the 3D or 4D path.
+   * guard) doesn't care whether it's being filled by the 3D or 4D path. The
+   * ONE place that actually discards a prior accumulation (shared by
+   * `start`, a live `setPalette`/`setSymmetry`, and the OOM retry above), so
+   * it's also where the `restarted` event (fr-h6sn) is emitted — but only
+   * once the grid is actually (re)allocated, i.e. never for a failed attempt
+   * that's about to retry smaller.
    */
   private startAccumulation(): void {
     if (!this.bounds) return;
@@ -703,6 +725,11 @@ export class VoxelWorkerSession {
     }
     this.effectiveResolution = effective;
     this.iterationsDone = 0;
+    // Tell the main thread right now, not on the next grid pack (see the
+    // `restarted` event's doc) — emitted unconditionally, including from
+    // `start`'s own call into this method, which keeps this the one place
+    // that announces a discard rather than special-casing the first one.
+    this.emit({ type: "restarted", iterationsBudget: this.iterationsBudget });
     this.lastTextureAt = undefined;
     this.lastPackMs = 0;
     this.chunkSize = this.initialChunkSize;
