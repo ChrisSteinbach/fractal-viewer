@@ -697,6 +697,13 @@ input[type="range"] {
   border-top: 1px solid var(--border);
 }
 
+.editor-title {
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .editor-group {
   margin-bottom: 10px;
 }
