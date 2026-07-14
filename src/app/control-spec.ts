@@ -216,6 +216,21 @@ export interface ValueControlSpec extends ScalarControlBase {
   read(state: AppState): string;
   /** Parse the element's raw `value` and apply the edit through a reducer. */
   apply(state: AppState, raw: string): AppState;
+  /**
+   * Commit-on-release effect (fr-2c27): fired once when a range's drag ENDS
+   * — the input's `change` event — unlike `effect`, which fires on every
+   * `input` event during the drag itself. For a control whose live `effect`
+   * is deliberately absent (or deliberately cheap) because its true cost
+   * belongs at the end of the gesture, not on every intermediate tick — e.g.
+   * numPointsSlider deferring the actual regenerate to release. Only
+   * meaningful for `kind: "range"`: a `select`/checkbox already reports a
+   * single settled `change` with nothing to distinguish it from, so they
+   * have no equivalent. main.ts's onScalarControl runs `commit` INSTEAD of
+   * `apply`/`effect` on the commit phase — the drag's own `input` events
+   * already applied the settled value, so commit never re-applies state or
+   * cuts a second undo checkpoint.
+   */
+  commit?: ControlEffect;
 }
 
 /** A checkbox: the element's `checked` flag carries the edit. */
@@ -283,8 +298,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     label: { id: "numPointsLabel", text: (s) => s.numPoints.toLocaleString() },
     read: (s) => String(numPointsToSlider(s.numPoints)),
     apply: (s, raw) => setNumPoints(s, sliderToNumPoints(Number(raw))),
-    // No effect: the new count only lands on the next regenerate (the
-    // Regenerate button or any geometry edit under auto-update).
+    // No live effect: regenerating on every "input" tick during the drag
+    // would run a full chaos game per tick. Deferred to release instead
+    // (fr-2c27) — see `commit`.
+    commit: (s, fx) => fx.regenerateIfAutoUpdate(),
   },
   {
     // Morph detail (fr-jonj): point density for a system morph's

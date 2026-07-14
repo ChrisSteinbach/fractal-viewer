@@ -288,6 +288,50 @@ describe("Ui point size slider", () => {
   });
 });
 
+describe("Ui scalar control commit phase (fr-2c27)", () => {
+  it("a range with a declared commit reports the commit phase on change, on top of input", () => {
+    const onScalarControl = vi.fn();
+    const ui = new Ui(document);
+    ui.bind({ ...noopHandlers(), onScalarControl });
+    const slider = document.getElementById(
+      "numPointsSlider",
+    ) as HTMLInputElement;
+
+    slider.value = "500";
+    slider.dispatchEvent(new Event("input"));
+    slider.dispatchEvent(new Event("change"));
+
+    expect(onScalarControl).toHaveBeenCalledTimes(2);
+    expect(onScalarControl).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "numPointsSlider" }),
+      "500",
+    );
+    expect(onScalarControl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "numPointsSlider" }),
+      "500",
+      "commit",
+    );
+  });
+
+  it("a range with no declared commit reports nothing extra on change", () => {
+    const onScalarControl = vi.fn();
+    const ui = new Ui(document);
+    ui.bind({ ...noopHandlers(), onScalarControl });
+    const slider = document.getElementById(
+      "pointSizeSlider",
+    ) as HTMLInputElement;
+    slider.value = "1.5";
+    slider.dispatchEvent(new Event("input"));
+    onScalarControl.mockClear();
+
+    slider.dispatchEvent(new Event("change"));
+
+    expect(onScalarControl).not.toHaveBeenCalled();
+  });
+});
+
 describe("Ui morph detail select (fr-jonj)", () => {
   // Guards against the dropdown and MORPH_DETAILS drifting apart — the
   // options must match exactly, in order (the fourDColor discipline).

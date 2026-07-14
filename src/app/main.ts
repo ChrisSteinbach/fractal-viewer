@@ -2076,9 +2076,21 @@ function main(): void {
     // label sync → the spec's declared side effects. Per-control semantics
     // (worker forwards, restarts, live tone-maps) live on the SCALAR_CONTROLS
     // entries in control-spec.ts, next to the control they belong to.
-    onScalarControl: (spec, raw) => {
+    onScalarControl: (spec, raw, phase = "input") => {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
+      // Commit-on-release (fr-2c27): the drag's own "input" events already
+      // ran the branch below for every intermediate value — each its own
+      // undo-coalesced edit — so by the time the trailing "change" reports
+      // this commit, the settled value is already live. Route it straight to
+      // the spec's `commit` effect and stop: re-applying the reducer here
+      // would be a no-op on the same value, and re-running beginEdit would
+      // risk cutting a second undo checkpoint for an edit that already
+      // happened.
+      if (phase === "commit") {
+        if (spec.kind === "range") spec.commit?.(state, controlEffects, state);
+        return;
+      }
       const previous = state;
       // Undoable document edits end the drift show (fr-wavo); the
       // session-only specs (persisted: false — e.g. autoUpdate) are view
