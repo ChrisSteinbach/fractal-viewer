@@ -381,6 +381,13 @@ function main(): void {
   // poll touches the DOM only when the phase actually flips — and doubles as
   // the "display is still dirty" flag after the replay goes idle on its own.
   let replayCaption: string | null = null;
+  // Whether the panel was open the moment "Watch it build" closed it
+  // (fr-vpka), so endReplayDisplay can restore it once the replay ends —
+  // null while no replay's close is pending restoration. Set once, in
+  // onWatchBuild, right before the panel is forced shut; consumed (and
+  // reset to null) the first time endReplayDisplay runs afterward, whichever
+  // of natural completion or cancellation gets there first.
+  let panelOpenBeforeReplay: boolean | null = null;
 
   // Restore the normal display after a replay: full cloud, no cursor, no
   // caption, true point count. Reads lastResult/fourDResult for the count —
@@ -392,6 +399,21 @@ function main(): void {
     replayCaption = null;
     const count = viewIs4D ? fourDResult?.count : lastResult?.count;
     if (count !== undefined) ui.setPointCount(count);
+    // Reopen the panel "Watch it build" closed to clear the stage (fr-vpka)
+    // — but only above the mobile breakpoint, where the panel is the
+    // primary always-open surface; a phone genuinely wants it gone over the
+    // small canvas, so it stays closed there even once the replay ends.
+    // Covers BOTH exits: natural completion (this runs from animate()'s own
+    // idle transition) and cancellation (a regeneration landing, or a
+    // render-mode switch, both via cancelReplay) — endReplayDisplay is the
+    // one chokepoint all three already share.
+    if (panelOpenBeforeReplay !== null) {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        state = setPanelOpen(state, panelOpenBeforeReplay);
+        ui.updateLabels(state);
+      }
+      panelOpenBeforeReplay = null;
+    }
   }
 
   // Stop any replay and clean the display. Safe to call when idle; the
@@ -2213,6 +2235,10 @@ function main(): void {
       // replay a frame in anyway.)
       snapMorph();
       ui.closeAbout();
+      // Remember whether the panel was open so endReplayDisplay can restore
+      // it once the replay ends (fr-vpka) — closed here unconditionally so
+      // the stage is watchable, same as ever.
+      panelOpenBeforeReplay = state.panelOpen;
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
       const count = viewIs4D ? fourDResult?.count : lastResult?.count;
