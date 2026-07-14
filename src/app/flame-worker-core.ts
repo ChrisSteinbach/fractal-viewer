@@ -1,10 +1,9 @@
 /**
- * The flame render's Web Worker session state machine (fr-73y): everything
- * `main.ts`'s old `stepFlame` used to do synchronously on the main thread —
- * supersampled accumulation, the proactive + reactive OOM guard, throttled
- * downsample, a finished-frame adaptive density-estimation blur (fr-17t),
- * and live tone-map/estimate re-application — now runs here, off the main
- * thread. `flame-worker.ts` is the thin `self.onmessage`/`postMessage` glue
+ * The flame render's Web Worker session state machine (fr-73y): supersampled
+ * accumulation, the proactive + reactive OOM guard, throttled downsample, a
+ * finished-frame adaptive density-estimation blur (fr-17t), and live
+ * tone-map/estimate re-application all run here, off the main thread.
+ * `flame-worker.ts` is the thin `self.onmessage`/`postMessage` glue
  * that wires a {@link FlameWorkerSession} to the real worker globals; this
  * module touches none of them directly (no `self`, `postMessage`,
  * `performance`, `setTimeout`), which is what makes it plain-Vitest testable
@@ -218,8 +217,8 @@ export type FlameWorkerCommand =
        * first and falls back to CPU (once per session) on any failure;
        * `"off"` — and, deliberately, absent — never attempts it. Absent
        * defaults to `"off"` rather than `"auto"` because a session with no
-       * `createGpuBackend` factory at all (every pre-fr-npb caller) must
-       * behave exactly as before: this field existing is not itself a
+       * `createGpuBackend` factory at all must run CPU-only regardless:
+       * this field's mere presence is not itself a
        * signal that GPU is available.
        */
       gpuPreference?: "auto" | "off";
@@ -382,8 +381,7 @@ export interface FlameWorkerDeps {
   initialChunkSize?: number;
   /**
    * Async factory for the WebGPU accumulation backend (fr-npb), tried when
-   * a `start`/restart's `gpuPreference` is `"auto"`. Absent — every
-   * pre-fr-npb caller, and the real worker until GPU wiring lands there —
+   * a `start`/restart's `gpuPreference` is `"auto"`. Absent
    * means CPU-only, unconditionally, regardless of `gpuPreference`: this
    * factory's presence, not the preference field, is what actually gates
    * the attempt. Rejection is non-fatal: {@link handleGpuFailure} decides
@@ -408,10 +406,9 @@ export interface FlameWorkerDeps {
 }
 
 // ---------------------------------------------------------------------------
-// Tuning constants — ported unchanged from `main.ts`'s pre-fr-73y `stepFlame`;
-// see that history for the reasoning behind each value. Relocated, not
-// retuned: nothing about moving this loop off the main thread changes what a
-// good chunk size or redisplay cadence is.
+// Tuning constants for the accumulation loop's chunk size and redisplay
+// cadence: unaffected by which thread runs the loop, since neither depends
+// on that.
 // ---------------------------------------------------------------------------
 
 /** Iterations per accumulation chunk; self-tunes toward FLAME_FRAME_BUDGET_MS. */
@@ -1002,7 +999,7 @@ export class FlameWorkerSession {
   private hadHardwareGpu = false;
   /** From the `start` command (see its doc); `"off"` unless the main thread
    * explicitly opts in. Read fresh on every backend creation, so a `start`
-   * with no `createGpuBackend` factory wired up (every pre-fr-npb caller)
+   * with no `createGpuBackend` factory wired up
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
   /** fr-ul2 throughput instrumentation, all inert unless the `start` command
@@ -1910,9 +1907,9 @@ export class FlameWorkerSession {
    * accumulate/snapshot/creation calls can be awaited — but every `await`
    * below is guarded by `isPromiseLike` (see its doc), so a CPU-only
    * accumulation never actually suspends: it runs exactly as synchronously
-   * as it did before this backend seam existed, which is what lets
+   * as a CPU-only accumulation always has, which is what lets
    * flame-worker-core.test.ts's synchronous `scheduler.drain()` keep
-   * driving every pre-fr-npb test to completion unmodified — an
+   * driving every CPU-only test to completion unmodified — an
    * unconditional `await` here would instead make even a CPU chunk yield to
    * the microtask queue, and a plain synchronous `while` loop can never
    * catch that continuation (see `isPromiseLike`'s doc).
@@ -2080,18 +2077,17 @@ export class FlameWorkerSession {
     // unconditionally "due" (`lastDownsampleAt` is freshly `undefined` — see
     // the `due` computation below), so `this.histogram` is always populated
     // from that very chunk's snapshot before `runChunk` can be called
-    // again — this session-level flag has tracked "fresh start" correctly
-    // since before the backend seam existed, and still does. (fr-ee9: a
-    // snapshotDisplay-capable GPU backend's progressive due ticks now leave
-    // `this.histogram` unpopulated instead — see that method's doc — so the
-    // "first due chunk populates this.histogram" invariant above no longer
-    // holds universally. It still holds everywhere `wasFreshStart` is
-    // actually READ, though: this flag is only ever consulted below, in the
-    // CPU-only OOM-ratchet catch, which a GPU backend's `accumulate` failure
-    // never reaches — it takes the unconditional `backend.kind === "gpu"`
-    // branch first, several lines down. CPU backends never have
-    // `snapshotDisplay`, so wherever this flag is read, its computation
-    // above is unchanged from before fr-ee9.)
+    // again — this session-level flag correctly tracks "fresh start" across
+    // every backend. (fr-ee9: a snapshotDisplay-capable GPU backend's
+    // progressive due ticks leave `this.histogram` unpopulated — see that
+    // method's doc — so the "first due chunk populates this.histogram"
+    // invariant above doesn't hold universally. It still holds everywhere
+    // `wasFreshStart` is actually READ, though: this flag is only ever
+    // consulted below, in the CPU-only OOM-ratchet catch, which a GPU
+    // backend's `accumulate` failure never reaches — it takes the
+    // unconditional `backend.kind === "gpu"` branch first, several lines
+    // down. CPU backends never have `snapshotDisplay`, so wherever this
+    // flag is read, its computation above holds correctly.)
     const wasFreshStart = this.histogram === null;
     const t0 = this.now();
     let actual: number;

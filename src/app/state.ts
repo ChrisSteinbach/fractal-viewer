@@ -142,10 +142,9 @@ export interface FlameParams {
    * Structural-coloring palette (fr-6us; see `palette.ts`). A cosine-gradient
    * id paints continuous color along the orbit; `"legacy"` keeps the original
    * per-transform-hue coloring; `"custom"` (fr-55k) selects the user-authored
-   * gradient in {@link AppState.customPalette}. Fresh sessions default to a
-   * gradient ({@link DEFAULT_FLAME_PALETTE}, fr-9mw), while decoded scenes
-   * whose link predates the field fall back to `"legacy"` (see `persist.ts`),
-   * so existing scenes/renders are unchanged. Changing it restarts
+   * gradient in {@link AppState.customPalette}. Defaults to a gradient
+   * ({@link DEFAULT_FLAME_PALETTE}) — an absent or unrecognized decoded value
+   * falls back to the same default (see `persist.ts`). Changing it restarts
    * accumulation — the accumulated color sums bake in the palette, so there
    * is nothing to keep (see `main.ts`).
    */
@@ -185,12 +184,11 @@ export interface SolidParams {
    * union — see `palette.ts`). A cosine-gradient id paints continuous color
    * along the orbit, overriding colorMode entirely; `"legacy"` keeps the
    * colorMode-driven coloring (fr-c1d); `"custom"` (fr-55k) selects the
-   * user-authored gradient in {@link AppState.customPalette}. Fresh sessions
-   * default to a gradient ({@link DEFAULT_SOLID_PALETTE}, fr-9mw), while
-   * decoded scenes whose link predates the field fall back to `"legacy"` (see
-   * `persist.ts`), so existing scenes/renders are unchanged. Changing it
-   * restarts accumulation — the accumulated avgRGB bakes in the palette, so
-   * there is nothing to keep (see `main.ts`).
+   * user-authored gradient in {@link AppState.customPalette}. Defaults to a
+   * gradient ({@link DEFAULT_SOLID_PALETTE}) — an absent or unrecognized
+   * decoded value falls back to the same default (see `persist.ts`).
+   * Changing it restarts accumulation — the accumulated avgRGB bakes in the
+   * palette, so there is nothing to keep (see `main.ts`).
    */
   paletteId: PaletteSelection;
 }
@@ -352,12 +350,11 @@ export const MIN_FLAME_EXPOSURE = 0.2;
 export const MAX_FLAME_EXPOSURE = 4;
 export const MIN_FLAME_ITERATIONS = 1_000_000;
 /**
- * GPU accumulation (fr-npb) measured ~10G iterations/sec on discrete GPUs
- * (fr-53k addendum), so billion-iteration budgets are now interactive rather
- * than the multi-minute CPU wait they used to imply — this ceiling was raised
- * from the CPU-era 100M accordingly (fr-79p). 2B stays under 2^31, so the
- * value is int32-safe everywhere (worker messages, GPU dispatch counts, etc.)
- * without needing a separate "GPU mode" ceiling.
+ * GPU accumulation (fr-npb) measures ~10G iterations/sec on discrete GPUs
+ * (fr-53k addendum), so billion-iteration budgets stay interactive (fr-79p).
+ * 2B stays under 2^31, so the value is int32-safe everywhere (worker
+ * messages, GPU dispatch counts, etc.) without needing a separate "GPU mode"
+ * ceiling.
  */
 export const MAX_FLAME_ITERATIONS = 2_000_000_000;
 /**
@@ -466,14 +463,11 @@ export const DEFAULT_ESTIMATOR_CURVE = 0.4;
 export const MIN_ESTIMATOR_CURVE = 0.1;
 export const MAX_ESTIMATOR_CURVE = 3;
 /**
- * Default flame palette for a FRESH session (fr-9mw): the classic
- * full-spectrum cosine gradient, so the first flame a user ever renders shows
- * the iridescent structural coloring the feature exists for rather than the
- * flat per-transform hues of `"legacy"`. Deliberately NOT the decode fallback:
- * a persisted/shared scene whose flame block predates fr-6us (or carries an
- * unknown id) still falls back to `"legacy"` in `persist.ts`
- * (`FALLBACK_PALETTE_ID`), so scenes written before palettes existed render
- * exactly as they did then.
+ * Default flame palette (fr-6us): the classic full-spectrum cosine gradient,
+ * so the first flame a user ever renders shows the iridescent structural
+ * coloring the feature exists for rather than the flat per-transform hues of
+ * `"legacy"`. Both the fresh-session default AND `persist.ts`'s decode
+ * fallback for an absent or unrecognized `paletteId`.
  */
 export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "spectrum";
 /**
@@ -517,23 +511,21 @@ export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
 /**
- * Default solid-render palette for a FRESH session (fr-9mw): the same
- * spectrum gradient as {@link DEFAULT_FLAME_PALETTE}, for one coherent
- * default look across both converging renders. Like the flame default, this
- * is NOT the decode fallback — a scene that predates fr-1kt falls back to
- * `"legacy"` (the colorMode-driven coloring) in `persist.ts`, rendering
- * exactly as it did before palettes existed.
+ * Default solid-render palette (fr-1kt): the same spectrum gradient as
+ * {@link DEFAULT_FLAME_PALETTE}, for one coherent default look across both
+ * converging renders. Like the flame default, this is both the
+ * fresh-session default AND `persist.ts`'s decode fallback for an absent or
+ * unrecognized `paletteId`.
  */
 export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "spectrum";
 /**
  * Default ramp palette for the explorer's height/radius color modes (fr-3b6)
  * — `"legacy"`, the built-in blue→green→red / warm→cool ramps. Deliberately
  * NOT a gradient, unlike {@link DEFAULT_FLAME_PALETTE} /
- * {@link DEFAULT_SOLID_PALETTE} (which fr-9mw moved to `"spectrum"` for
- * fresh sessions): the built-in coordinate ramps are a designed default look
- * in their own right, so the gradient override stays opt-in, and fresh
- * sessions and pre-fr-3b6 links render identically (here the fresh-session
- * default and `persist.ts`'s decode fallback coincide).
+ * {@link DEFAULT_SOLID_PALETTE}: the built-in coordinate ramps are a
+ * designed default look in their own right, so the gradient override stays
+ * opt-in. Both the fresh-session default AND `persist.ts`'s decode fallback
+ * for an absent or unrecognized `rampPaletteId`.
  */
 export const DEFAULT_RAMP_PALETTE: FlamePaletteId = "legacy";
 /** 1 = off: today's unreplicated system, unchanged until symmetry is turned on. */
@@ -619,8 +611,8 @@ export const MAX_W_SHEAR = 2;
  * importable home for each literal value (and every existing call site and
  * test keeps using them); {@link PARAM} merely gathers them into the
  * `{ min, max, default, round?, snap? }` shape `clampToSpec` needs, adding the
- * per-field `round`/`snap` behavior that used to live implicitly in each
- * setter. No range literal is written twice.
+ * per-field `round`/`snap` behavior that the spec centralizes instead of each
+ * setter hard-coding it. No range literal is written twice.
  */
 export interface ParamSpec {
   readonly min: number;

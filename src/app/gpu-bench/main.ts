@@ -309,7 +309,7 @@ const BENCH_TUMBLE: Rotation4 = { xy: 0.35, xw: 0.65, yw: 0.4, zw: 0.55 };
  * (spherical, spiral) sit on one map, blended with bounded ones, so the
  * occasional origin-adjacent point escapes and reseeds (identically on both
  * sides) instead of the whole system blowing up. Non-1 weights exercise the
- * weighted binary-search pick (the 3D kernel's was previously unpinned).
+ * weighted binary-search pick, including the 3D kernel's.
  */
 function variationZoo(): Transform[] {
   return [

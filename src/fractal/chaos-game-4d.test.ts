@@ -547,11 +547,12 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
   // symmetry (see PreparedChaosGame4's doc), so unlike the 3D oracle in
   // chaos-game.test.ts there is no postRotations scenario here.
   //
-  // referenceChaosGame4 is the oracle computation itself (the exact loop
-  // shape runChaosGame4 used to run before it was inlined: seed x/y/z/w,
-  // warm up through the real stepOrbit4, then per point stepOrbit4 +
-  // plotPoint4, bounds tracked with the same if-comparisons runChaosGame4
-  // uses, then a second pass for the exact center/radius) — identical by
+  // referenceChaosGame4 is the oracle computation itself (the same loop
+  // shape as the real stepOrbit4/plotPoint4 building blocks, not
+  // runChaosGame4's hand-inlined version: seed x/y/z/w, warm up through the
+  // real stepOrbit4, then per point stepOrbit4 + plotPoint4, bounds tracked
+  // with the same if-comparisons runChaosGame4 uses, then a second pass for
+  // the exact center/radius) — identical by
   // construction for every scenario, so it is shared rather than re-typed
   // four times; each scenario below still states its own
   // system/seed/point-count inline so it reads standalone.

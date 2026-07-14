@@ -1908,7 +1908,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     // accumulate ever failing. Unlike the accumulate rejection above, this
     // failure has to be reached via a DUE tick whose accumulate already
     // succeeded, so it exercises a different escape hatch (the due-branch
-    // snapshot await used to sit outside runChunk's try/catch entirely).
+    // snapshot await, which runChunk's try/catch also covers).
     let snapshotCalls = 0;
     const backend: FlameAccumBackend = {
       kind: "gpu",

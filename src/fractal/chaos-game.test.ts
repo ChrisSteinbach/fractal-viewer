@@ -650,11 +650,12 @@ describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => 
   // byte-for-byte equivalent to — if the inlined copy ever drifts from the
   // real thing, one of the scenarios below catches it.
   //
-  // referenceChaosGame is the oracle computation itself (the exact loop
-  // shape runChaosGame used to run before it was inlined: seed x/y/z, warm
-  // up through the real stepOrbit, then per point stepOrbit + plotPoint,
-  // bounds tracked with the same Math.min/Math.max calls runChaosGame
-  // uses) — identical by construction for every scenario, so it is shared
+  // referenceChaosGame is the oracle computation itself (the same loop shape
+  // as the real stepOrbit/plotPoint building blocks, not runChaosGame's
+  // hand-inlined version: seed x/y/z, warm up through the real stepOrbit,
+  // then per point stepOrbit + plotPoint, bounds tracked with the same
+  // Math.min/Math.max calls runChaosGame uses) — identical by construction
+  // for every scenario, so it is shared
   // rather than re-typed five times; each scenario below still states its
   // own system/seed/point-count inline so it reads standalone.
   function referenceChaosGame(

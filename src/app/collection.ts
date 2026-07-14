@@ -19,8 +19,8 @@
 
 /**
  * The render mode a scene was SAVED from, when it wasn't the points explorer
- * (fr-75sq). Absent means points — which also keeps every pre-fr-75sq entry
- * valid as-is. Deliberately a field on the collection ENTRY, never inside
+ * (fr-75sq). Absent means points — which also keeps every entry saved before
+ * this field existed valid as-is. Deliberately a field on the collection ENTRY, never inside
  * `encoded`: the document (and with it share links, the autosave, and undo
  * history) stays render-mode-less per fr-39y; only the user's own gallery
  * remembers how a keeper was meant to be displayed.

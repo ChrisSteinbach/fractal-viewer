@@ -400,7 +400,7 @@ describe("Ui color contrast slider", () => {
   // these pin the two ends of that contract: full right is MAX_COLOR_GAMMA,
   // dead center is exactly neutral 1 (no float fuzz — 5 ** 0 === 1), so the
   // default slider state can never drift the persisted gamma off its
-  // backwards-compatible linear value.
+  // neutral value.
   it("state.colorGamma reaches MAX_COLOR_GAMMA at the far right", () => {
     const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);

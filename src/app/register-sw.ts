@@ -40,10 +40,7 @@
  * separate, individually-guarded dances that cannot loop or double-fire
  * each other: the isolation one is guarded by the sessionStorage marker and
  * only ever arms from a non-isolated page; the update one is armed only on
- * an explicit accept, and only once. (Migration note: the currently
- * deployed worker still `skipWaiting()`s unconditionally, but that decision
- * always belongs to the NEW, incoming worker — so the very first deploy
- * carrying this change already behaves as wait-and-ask.)
+ * an explicit accept, and only once.
  */
 
 /** sessionStorage key marking "the load after our own isolation reload". */

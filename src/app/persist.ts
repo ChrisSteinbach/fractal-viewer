@@ -20,7 +20,6 @@ import {
 } from "../fractal/palette";
 import type {
   CustomPalette,
-  FlamePaletteId,
   PaletteSelection,
   RgbStop,
 } from "../fractal/palette";
@@ -42,7 +41,10 @@ import type {
   WExtension,
 } from "../fractal/types";
 import {
+  DEFAULT_FLAME_PALETTE,
   DEFAULT_FOUR_D_COLOR,
+  DEFAULT_RAMP_PALETTE,
+  DEFAULT_SOLID_PALETTE,
   DEFAULT_SYMMETRY_AXIS,
   MAX_W_ANGLE,
   MAX_W_POSITION,
@@ -139,17 +141,17 @@ export interface SceneSnapshot {
   positionAxisColors?: PositionAxisColors;
   /**
    * Optional orbit-camera pose (fr-1k4): the view a saved/shared/collection
-   * scene was framed with (see {@link CameraPose}). Absent in every
-   * pre-fr-1k4 save or link, the same way `customPalette` was absent before
-   * fr-55k — and DELIBERATELY absent from the ENCODED undo-history snapshot
-   * STRING: `history.ts` dedupes checkpoints by comparing `encodeScene` output
-   * with `===`, and even tiny camera drift between two otherwise-identical
-   * states would defeat that dedup. `main.ts` (not this module) attaches
-   * `camera` only when writing a persisted / shared / collection document,
-   * never to an in-session undo checkpoint. (Undo/redo across a whole-system
-   * replace DOES restore the pre-replace framing — fr-uf3 — but carries that
-   * pose OUT OF BAND on `history.ts`'s `HistoryEntry.pose`, never in this
-   * encoded string, precisely so the dedup keeps comparing camera-less bytes.)
+   * scene was framed with (see {@link CameraPose}). Optional like
+   * `customPalette` — and DELIBERATELY absent from the ENCODED undo-history
+   * snapshot STRING: `history.ts` dedupes checkpoints by comparing
+   * `encodeScene` output with `===`, and even tiny camera drift between two
+   * otherwise-identical states would defeat that dedup. `main.ts` (not this
+   * module) attaches `camera` only when writing a persisted / shared /
+   * collection document, never to an in-session undo checkpoint. (Undo/redo
+   * across a whole-system replace DOES restore the pre-replace framing —
+   * fr-uf3 — but carries that pose OUT OF BAND on `history.ts`'s
+   * `HistoryEntry.pose`, never in this encoded string, precisely so the
+   * dedup keeps comparing camera-less bytes.)
    */
   camera?: CameraPose;
 }
@@ -195,9 +197,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
 /**
  * Merge a restored snapshot over a base AppState (typically `initialState`),
  * overwriting exactly the persisted fields while leaving session-only state
- * (selection, autoUpdate, panel) from `base` intact. `SceneSnapshot` USED TO
- * be a pure structural subset of `AppState`, so the spread needed no field
- * list of its own; since fr-1k4 that's no longer quite true — `camera` is a
+ * (selection, autoUpdate, panel) from `base` intact. `camera` is a
  * document-only field with no `AppState` counterpart (it's applied instead
  * by `main.ts`'s boot/load call sites), so it is explicitly destructured out
  * and never spread. The rest stays the exact inverse of `toSnapshot`, with
@@ -252,18 +252,6 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
  * separately via their `hasCustomPalette` parameter.
  */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
-
-/**
- * Palette id decoded when a scene's `paletteId` is absent or unknown (shared
- * by the flame and solid blocks): pinned to `"legacy"` — the pre-palette
- * behavior — deliberately NOT `DEFAULT_FLAME_PALETTE` /
- * `DEFAULT_SOLID_PALETTE`, which fr-9mw moved to a cosine gradient for fresh
- * sessions. A link or autosave written before fr-6us/fr-1kt must keep
- * rendering exactly as it did when it was written, so this decode fallback
- * stays the backward-compat sentinel even as the fresh-session default
- * evolves.
- */
-const FALLBACK_PALETTE_ID: FlamePaletteId = "legacy";
 
 /** Exact set of valid SymmetryAxis values. */
 const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
@@ -583,27 +571,21 @@ function decodePositionAxisColors(
 }
 
 /**
- * Validate the untrusted `flame` render-settings block. `flame` predates
- * this feature's rollout (and `gamma`/`vibrancy`/`supersample` predate
- * fr-ucs's rollout within it, and `estimatorRadius`/`estimatorMinimumRadius`/
- * `estimatorCurve` predate fr-17t's within it) in exactly zero existing
- * links, so — like `finalTransform` — an absent block, or an absent field
- * within a present block, decodes quietly to its default rather than
- * rejecting the scene; but once a field IS present, a malformed value
- * rejects the whole scene, matching `weight`/`shear`/`variations`. Finite
- * values are clamped into range rather than rejected, matching `weight`.
- * `supersample` is additionally rounded to an integer, matching
- * `setFlameSupersample`; the estimator radii/curve are NOT (continuous like
- * gamma/vibrancy, matching their own setters).
+ * Validate the untrusted `flame` render-settings block: like `finalTransform`,
+ * an absent block, or an absent field within a present block, decodes
+ * quietly to its default rather than rejecting the scene; but once a field
+ * IS present, a malformed value rejects the whole scene, matching
+ * `weight`/`shear`/`variations`. Finite values are clamped into range rather
+ * than rejected, matching `weight`. `supersample` is additionally rounded to
+ * an integer, matching `setFlameSupersample`; the estimator radii/curve are
+ * NOT (continuous like gamma/vibrancy, matching their own setters).
  *
  * `paletteId` (fr-6us) is the one exception to the reject-on-malformed rule:
- * an unknown OR missing id decodes to `"legacy"` rather than rejecting the
- * scene, so a link written by a future build carrying a palette this build
- * doesn't know keeps the rest of its scene instead of being thrown away over
- * one cosmetic field — the enum equivalent of the finite-but-out-of-range
- * clamp the numeric fields already use. That fallback is `"legacy"`, NOT the
- * fresh-session `DEFAULT_FLAME_PALETTE` (a gradient since fr-9mw) — see
- * {@link FALLBACK_PALETTE_ID}.
+ * an unknown OR missing id decodes to {@link DEFAULT_FLAME_PALETTE} rather
+ * than rejecting the scene, so a link carrying a palette this build doesn't
+ * know keeps the rest of its scene instead of being thrown away over one
+ * cosmetic field — the enum equivalent of the finite-but-out-of-range clamp
+ * the numeric fields already use.
  *
  * `hasCustomPalette` (fr-55k) is the caller's answer to "did a valid
  * `customPalette` payload actually decode alongside this block" (see
@@ -612,8 +594,8 @@ function decodePositionAxisColors(
  * (see its own doc), so a `"custom"` id is accepted ONLY when
  * `hasCustomPalette` is true; a `"custom"` selection with no stop data to
  * back it can't be honored, so it takes the exact same quiet
- * `FALLBACK_PALETTE_ID` fallback an unrecognized id takes, rather than
- * rejecting the scene.
+ * {@link DEFAULT_FLAME_PALETTE} fallback an unrecognized id takes, rather
+ * than rejecting the scene.
  */
 function decodeFlameParams(
   raw: unknown,
@@ -629,7 +611,7 @@ function decodeFlameParams(
       estimatorRadius: PARAM.estimatorRadius.default,
       estimatorMinimumRadius: PARAM.estimatorMinimumRadius.default,
       estimatorCurve: PARAM.estimatorCurve.default,
-      paletteId: FALLBACK_PALETTE_ID,
+      paletteId: DEFAULT_FLAME_PALETTE,
     };
   }
   if (typeof raw !== "object" || raw === null) return null;
@@ -640,11 +622,10 @@ function decodeFlameParams(
   if (!Number.isFinite(exposure) || !Number.isFinite(iterations)) return null;
 
   // gamma/vibrancy/supersample/estimatorRadius/estimatorMinimumRadius/
-  // estimatorCurve: each optional independently (an fr-o7s-era link carries
-  // none of them), so an absent field defaults quietly while a
-  // present-but-malformed one rejects the whole scene, same as exposure just
-  // above — the three feature rollouts share one block but not one presence
-  // rule per field.
+  // estimatorCurve: each optional independently, so an absent field defaults
+  // quietly while a present-but-malformed one rejects the whole scene, same
+  // as exposure just above — the fields share one block but not one
+  // presence rule.
   let gamma = PARAM.flameGamma.default;
   if (f.gamma !== undefined) {
     gamma = Number(f.gamma);
@@ -675,7 +656,7 @@ function decodeFlameParams(
     estimatorCurve = Number(f.estimatorCurve);
     if (!Number.isFinite(estimatorCurve)) return null;
   }
-  // paletteId: unknown or missing quietly becomes "legacy" (see the doc
+  // paletteId: unknown or missing quietly becomes the default (see the doc
   // above) rather than rejecting the scene. "custom" (fr-55k) is accepted
   // only alongside a valid decoded customPalette payload.
   const paletteId: PaletteSelection =
@@ -683,7 +664,7 @@ function decodeFlameParams(
     (VALID_PALETTE_IDS.has(f.paletteId) ||
       (f.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
       ? (f.paletteId as PaletteSelection)
-      : FALLBACK_PALETTE_ID;
+      : DEFAULT_FLAME_PALETTE;
 
   return {
     exposure: clampToSpec(PARAM.flameExposure, exposure),
@@ -703,21 +684,21 @@ function decodeFlameParams(
 
 /**
  * Validate the untrusted `solid` render-settings block (fr-v4f), following
- * `decodeFlameParams`' presence rules exactly: the block predates its own
- * rollout in every existing link, so an absent block — or an absent field
- * within a present block — decodes quietly to its default, while a
- * present-but-malformed (non-finite) value rejects the whole scene. Finite
- * values are clamped into range; `resolution` is additionally snapped to the
- * voxel step and `iterations` rounded, matching their setters.
+ * `decodeFlameParams`' presence rules exactly: an absent block — or an
+ * absent field within a present block — decodes quietly to its default,
+ * while a present-but-malformed (non-finite) value rejects the whole scene.
+ * Finite values are clamped into range; `resolution` is additionally
+ * snapped to the voxel step and `iterations` rounded, matching their
+ * setters.
  *
  * `paletteId` (fr-1kt) is the one exception to the reject-on-malformed rule,
- * mirroring `flame.paletteId`: an unknown or missing id decodes to `"legacy"`
- * ({@link FALLBACK_PALETTE_ID}, not the fresh-session default) rather than
- * rejecting the scene. `hasCustomPalette` (fr-55k) extends that mirror
- * exactly like `decodeFlameParams`'s own parameter: a `"custom"` id is
- * accepted only when a valid `customPalette` payload actually decoded
- * alongside it (see {@link decodeCustomPalette}), otherwise it takes the
- * same quiet fallback an unrecognized id takes.
+ * mirroring `flame.paletteId`: an unknown or missing id decodes to
+ * {@link DEFAULT_SOLID_PALETTE} rather than rejecting the scene.
+ * `hasCustomPalette` (fr-55k) extends that mirror exactly like
+ * `decodeFlameParams`'s own parameter: a `"custom"` id is accepted only when
+ * a valid `customPalette` payload actually decoded alongside it (see
+ * {@link decodeCustomPalette}), otherwise it takes the same quiet fallback
+ * an unrecognized id takes.
  */
 function decodeSolidParams(
   raw: unknown,
@@ -730,7 +711,7 @@ function decodeSolidParams(
     lightAzimuth: PARAM.solidLightAzimuth.default,
     lightElevation: PARAM.solidLightElevation.default,
     ambient: PARAM.solidAmbient.default,
-    paletteId: FALLBACK_PALETTE_ID,
+    paletteId: DEFAULT_SOLID_PALETTE,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
@@ -752,8 +733,8 @@ function decodeSolidParams(
     out[key] = value;
   }
 
-  // paletteId (fr-1kt): unknown or missing quietly becomes "legacy" — same
-  // quiet-fallback contract as flame.paletteId (see decodeFlameParams).
+  // paletteId (fr-1kt): unknown or missing quietly becomes the default —
+  // same quiet-fallback contract as flame.paletteId (see decodeFlameParams).
   // "custom" (fr-55k) is accepted only alongside a valid decoded
   // customPalette payload.
   const paletteId: PaletteSelection =
@@ -761,7 +742,7 @@ function decodeSolidParams(
     (VALID_PALETTE_IDS.has(s.paletteId) ||
       (s.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
       ? (s.paletteId as PaletteSelection)
-      : FALLBACK_PALETTE_ID;
+      : DEFAULT_SOLID_PALETTE;
 
   return {
     resolution: clampToSpec(PARAM.solidResolution, out.resolution),
@@ -783,9 +764,8 @@ function decodeSolidParams(
  * uses for an unknown enum, generalized to this field too) — a kaleidoscope
  * order/axis is cosmetic geometry, not a value worth losing an otherwise-
  * valid shared link over. An absent block, or a block missing a field,
- * defaults quietly to `{ order: 1, axis: "y" }`; order 1 is today's
- * unreplicated system, so an old link (which never carried this field
- * either) renders identically either way.
+ * defaults quietly to `{ order: 1, axis: "y" }`; order 1 is the
+ * unreplicated system.
  */
 function decodeSymmetry(raw: unknown): SymmetryParams {
   if (typeof raw !== "object" || raw === null) {
@@ -815,11 +795,10 @@ function decodeSymmetry(raw: unknown): SymmetryParams {
  * the core fields above (`transforms`/`colorMode`/`renderStyle`/...): those
  * reject the WHOLE scene on anything malformed, but a camera pose is a view,
  * not structural data — an optional field must never cost the user their
- * scene, and an old link (or any foreign hash from a build that never wrote
- * this field, or an undo-history snapshot, which never carries one at all —
- * see {@link SceneSnapshot.camera}'s doc) has to keep decoding. So this
- * returns `undefined` (drop only the camera) rather than `null` (reject the
- * scene) for anything malformed:
+ * scene, and a hash lacking this field (or an undo-history snapshot, which
+ * never carries one at all — see {@link SceneSnapshot.camera}'s doc) has to
+ * keep decoding. So this returns `undefined` (drop only the camera) rather
+ * than `null` (reject the scene) for anything malformed:
  *
  * - not a non-null object;
  * - `target` not exactly 3 finite numbers (via {@link isVec3}), or any
@@ -877,9 +856,9 @@ interface EncodedTransform {
 
 /**
  * Encode one transform's persistent fields, dropping inert data so URLs stay
- * short and old links decode unchanged: `id` (reassigned on decode), a weight
- * of 1, an all-zero shear, and zero-weight variations are all omitted. Shared
- * by the transform list and the final transform so their wire forms can't drift.
+ * short: `id` (reassigned on decode), a weight of 1, an all-zero shear, and
+ * zero-weight variations are all omitted. Shared by the transform list and
+ * the final transform so their wire forms can't drift.
  *
  * `w` (the optional 4D extension — see {@link WExtension}) follows the same
  * "drop the identity" spirit, but keyed on ONE shared predicate rather than a
@@ -1021,18 +1000,17 @@ export function encodeScene(s: SceneSnapshot): string {
     // per-transform optional feature like finalTransform/weight/shear.
     glowBrightness: round4(s.glowBrightness),
   };
-  // Written only when present, so old links stay byte-identical (they never
-  // carried the field) and lens-free systems keep their short URLs.
+  // Written only when present, so lens-free systems keep their short URLs.
   if (s.finalTransform)
     payload.finalTransform = encodeTransform(s.finalTransform);
-  // Written only when present, like finalTransform above — so old links (and
-  // never-authored scenes) stay byte-identical and keep their short URLs.
-  // Encoded as hex strings (fr-55k) for URL compactness — see rgbToHex.
+  // Written only when present, like finalTransform above — never-authored
+  // scenes keep their short URLs. Encoded as hex strings (fr-55k) for URL
+  // compactness — see rgbToHex.
   if (s.customPalette)
     payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
   // Written only when present, like customPalette above — the legacy
   // identity is expressed by absence (see AppState.positionAxisColors),
-  // so old links and never-customized scenes stay byte-identical.
+  // so never-customized scenes stay byte-identical.
   if (s.positionAxisColors) {
     payload.positionAxisColors = {
       x: rgbToHex(s.positionAxisColors.x),
@@ -1042,7 +1020,7 @@ export function encodeScene(s: SceneSnapshot): string {
   }
   // Written only when present, like finalTransform/customPalette above — an
   // undo-history snapshot (which never carries a camera — see
-  // SceneSnapshot.camera's doc) and every pre-fr-1k4 link stay byte-identical.
+  // SceneSnapshot.camera's doc) stays byte-identical.
   if (s.camera) {
     payload.camera = {
       target: s.camera.target.map(round4),
@@ -1076,8 +1054,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * [{@link MIN_ESTIMATOR_MINIMUM_RADIUS}, {@link MAX_ESTIMATOR_MINIMUM_RADIUS}],
  * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
  * {@link MAX_ESTIMATOR_CURVE}]. An unknown/missing flame.paletteId falls back
- * to `"legacy"` (see {@link decodeFlameParams}); rampPaletteId (fr-3b6)
- * follows the identical quiet-fallback contract at the top level. Likewise,
+ * to {@link DEFAULT_FLAME_PALETTE} (see {@link decodeFlameParams});
+ * rampPaletteId (fr-3b6) follows the identical quiet-fallback shape at the
+ * top level, falling back to {@link DEFAULT_RAMP_PALETTE} instead. Likewise,
  * symmetry.order clamps to [{@link MIN_SYMMETRY_ORDER},
  * {@link MAX_SYMMETRY_ORDER}] and an
  * unrecognized/missing symmetry.axis falls back to `"y"` — neither ever
@@ -1089,10 +1068,10 @@ export function encodeScene(s: SceneSnapshot): string {
  * clamps to [{@link MIN_COLOR_GAMMA}, {@link MAX_COLOR_GAMMA}], falling back
  * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
  * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.axis
- * and shares its quiet fallback: absent (any pre-fr-d47 link) or unrecognized
- * values become {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade
- * (fr-3e0) follows showGuides's boolean-coercion contract: any truthy value is
- * on, and absent (any pre-fr-3e0 link) coerces to off — the default.
+ * and shares its quiet fallback: absent or unrecognized values become
+ * {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade (fr-3e0)
+ * follows showGuides's boolean-coercion contract: any truthy value is on,
+ * and absent coerces to off — the default.
  *
  * customPalette (fr-55k) is the one user-authored gradient slot: optional
  * like finalTransform rather than always-present like flame/solid/symmetry,
@@ -1101,8 +1080,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * the same cosmetic-field spirit as glowBrightness/colorGamma. Consequently,
  * flame.paletteId / solid.paletteId accept the `"custom"` id only when a
  * valid customPalette payload actually decoded alongside it; a `"custom"`
- * selection with nothing to back it falls back to `"legacy"` exactly like any
- * other unrecognized id (see {@link decodeFlameParams}).
+ * selection with nothing to back it falls back to that block's default
+ * paletteId exactly like any other unrecognized id (see
+ * {@link decodeFlameParams}).
  *
  * positionAxisColors (fr-8k7) follows the identical quiet-fallback contract:
  * absent or malformed decodes to `undefined` — the legacy axis mapping —
@@ -1181,10 +1161,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // colors. Never rejects the scene — see decodePositionAxisColors.
     const positionAxisColors = decodePositionAxisColors(o.positionAxisColors);
 
-    // flame/solid: absent (an old link) defaults quietly; present-but-
-    // malformed rejects the whole scene. See decodeFlameParams /
-    // decodeSolidParams. A "custom" paletteId is honored only when
-    // customPalette (above) actually decoded.
+    // flame/solid: an absent block defaults quietly; present-but-malformed
+    // rejects the whole scene. See decodeFlameParams / decodeSolidParams. A
+    // "custom" paletteId is honored only when customPalette (above) actually
+    // decoded.
     const flame = decodeFlameParams(o.flame, customPalette !== undefined);
     if (flame === null) return null;
     const solid = decodeSolidParams(o.solid, customPalette !== undefined);
@@ -1217,9 +1197,9 @@ export function decodeScene(raw: string): SceneSnapshot | null {
 
     // fourDColor (fr-d47): how the 4D projection colors points. Same quiet-
     // fallback contract as symmetry.axis / flame.paletteId, NOT colorMode's
-    // strict reject: an absent (every pre-fr-d47 link) or unrecognized value
-    // falls back to the default blue/orange ramp — a 4D palette choice is
-    // cosmetic, not worth losing an otherwise-valid shared link over.
+    // strict reject: an absent or unrecognized value falls back to the
+    // default blue/orange ramp — a 4D palette choice is cosmetic, not worth
+    // losing an otherwise-valid shared link over.
     const fourDColor: FourDColorMode =
       typeof o.fourDColor === "string" &&
       VALID_FOUR_D_COLOR_MODES.has(o.fourDColor)
@@ -1227,16 +1207,16 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         : DEFAULT_FOUR_D_COLOR;
 
     // rampPaletteId (fr-3b6): the height/radius ramps' gradient palette. The
-    // same quiet-fallback contract as flame.paletteId / solid.paletteId (see
-    // decodeFlameParams): absent (every pre-fr-3b6 link) or unknown falls back
-    // to "legacy" — the built-in ramps — and "custom" is honored only alongside
-    // the valid decoded customPalette payload above.
+    // same quiet-fallback shape as flame.paletteId / solid.paletteId (see
+    // decodeFlameParams): absent or unknown falls back to "legacy" — the
+    // built-in ramps — and "custom" is honored only alongside the valid
+    // decoded customPalette payload above.
     const rampPaletteId: PaletteSelection =
       typeof o.rampPaletteId === "string" &&
       (VALID_PALETTE_IDS.has(o.rampPaletteId) ||
         (o.rampPaletteId === CUSTOM_PALETTE_ID && customPalette !== undefined))
         ? (o.rampPaletteId as PaletteSelection)
-        : FALLBACK_PALETTE_ID;
+        : DEFAULT_RAMP_PALETTE;
 
     // camera (fr-1k4): the optional orbit-camera pose. Never rejects the
     // scene — a malformed or absent value quietly decodes to undefined,

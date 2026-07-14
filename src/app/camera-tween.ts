@@ -111,7 +111,7 @@ interface Chase {
  *   fit that is retargeted every time a morph intermediate lands, so the
  *   camera FOLLOWS the morphing attractor instead of letting it wander
  *   off-frame for the whole tween and then yanking into place at the end —
- *   the "abrupt recentering" a drift leg used to finish with. The morph's
+ *   the abrupt recentering a drift leg would otherwise finish with. The morph's
  *   terminal sample still carries the real `fit`, whose glide takes over
  *   from the chase for the settle: from an already-tracking pose that final
  *   glide is a short touch-down rather than a leap.

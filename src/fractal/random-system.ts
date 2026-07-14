@@ -247,8 +247,8 @@ const FOUR_D_FORCE_POSITION_MAX = 0.5;
  * there was nothing 4D-specific to justify a separate budget here. */
 const PROBE_POINTS = 4000;
 /** Total candidates tried before giving up and returning the best-scoring
- * one seen (see {@link scoreCandidate}; fr-b5x — formerly the arbitrary
- * LAST one rolled). Measured over 20000 seeded rolls — with the
+ * one seen (see {@link scoreCandidate}; fr-b5x), rather than an arbitrary
+ * last-rolled one. Measured over 20000 seeded rolls — with the
  * {@link STABILITY_PROBES} gate in place — not one burned through all 40,
  * so the exhaustion fallback is a backstop for pathological rng streams,
  * not a hot path; that is also why no test pins a specific exhausting seed
@@ -505,8 +505,8 @@ function randomTransform(
   const position = randomVec3(rng, -POSITION_RANGE, POSITION_RANGE);
   const rotation = randomVec3(rng, -Math.PI, Math.PI);
   const scale = randomReflection(rng, randomScale(rng, baseScale, scaleFloor));
-  // Rolled AFTER scale (unlike the pre-fr-bew order) so the w-mirror can
-  // materialise the negated derived mean of THIS map's actual scale.
+  // Rolled AFTER scale so the w-mirror can materialise the negated derived
+  // mean of THIS map's actual scale.
   const w = fourD ? randomWExtension(rng, scale) : undefined;
   return {
     id,
