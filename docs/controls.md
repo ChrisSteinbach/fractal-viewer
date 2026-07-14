@@ -153,8 +153,8 @@ of snapping (see **Presets** below).
   collection** starts the looping slideshow described above. **🔗 Copy link** copies a
   shareable `#v1=…` link built fresh from the current state, not the
   (debounced) address bar.
-- **Points** — slider for the point count (0–500k); takes effect on **Regenerate
-  Points** (or immediately on other edits when auto-update is on).
+- **Points** — log-scaled slider for the point count (1k–5M); takes effect on
+  **Regenerate Points** (or immediately on other edits when auto-update is on).
 - **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
   that's on screen right now: the same buffer is revealed in generation order
   (no re-roll), one hop at a time at first — a bright spark riding each
@@ -163,6 +163,17 @@ of snapping (see **Presets** below).
   regenerate, edit, or render-mode switch cancels it. Works in the 4D
   projection too (the spark rides the tumble). Also reachable from the
   **ⓘ What is this?** dialog.
+- **Morph Detail** (fr-jonj) — how many points the cloud keeps while a system
+  morph is in flight (a preset load, Surprise Me, a gallery load, or a Drift
+  leg). **Adaptive** (default) sizes each in-between cloud to what this device
+  can regenerate in one animation frame — the smoothest motion, but on a big
+  scene the morph runs at a small fraction of the settled count, which a
+  video recording can crush to near-black. **Dense** asks for several frames'
+  worth per update (~8× the light, shape updates ~9×/s), and **Full** runs
+  every in-between cloud at the scene's own point count, updating as fast as
+  full generations complete — the one to pick when recording a clip of a
+  morphing or drifting session. The settled attractor is always full-count
+  regardless. Session-only, like auto-update — never persisted.
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.

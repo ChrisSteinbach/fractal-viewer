@@ -24,6 +24,7 @@ import {
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
+  setMorphDetail,
   setNumPoints,
   setPointSize,
   setRampPaletteId,
@@ -39,7 +40,7 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
 } from "./state";
-import type { AppState, RenderStyle, SolidParams } from "./state";
+import type { AppState, MorphDetail, RenderStyle, SolidParams } from "./state";
 
 /**
  * Declarative specs for the panel's SIMPLE SCALAR controls (fr-dig): every
@@ -284,6 +285,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setNumPoints(s, sliderToNumPoints(Number(raw))),
     // No effect: the new count only lands on the next regenerate (the
     // Regenerate button or any geometry edit under auto-update).
+  },
+  {
+    // Morph detail (fr-jonj): point density for a system morph's
+    // intermediate clouds — see state.ts's MORPH_DETAILS for the vocabulary
+    // and morph-budget.ts for the semantics. Session preference like
+    // autoUpdate (never enters the scene document). No effect: the next
+    // morph intermediate's request reads the settled state (main.ts's
+    // cloudParams).
+    kind: "select",
+    id: "morphDetail",
+    persisted: false,
+    read: (s) => s.morphDetail,
+    apply: (s, raw) => setMorphDetail(s, raw as MorphDetail),
   },
   {
     kind: "range",

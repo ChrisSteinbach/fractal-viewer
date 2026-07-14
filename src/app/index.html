@@ -274,6 +274,18 @@
           </button>
 
           <label class="select-label">
+            Morph Detail
+            <select
+              id="morphDetail"
+              title="Point density while morphing between systems: more detail updates the shape less often but keeps it bright — use Full when recording video"
+            >
+              <option value="adaptive">Adaptive (smoothest)</option>
+              <option value="dense">Dense</option>
+              <option value="full">Full (all points)</option>
+            </select>
+          </label>
+
+          <label class="select-label">
             Point Size: <span id="pointSizeLabel">1.00×</span>
             <input
               type="range"

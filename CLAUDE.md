@@ -176,7 +176,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     (fr-a5gu): an EMA of per-point generation cost — fed by every delivered
     generation's latency (measured by `cloud-generator.ts`) — sizes each
     intermediate request to ~one frame's worth of chaos game on this device,
-    clamped to `[MORPH_MIN_POINTS, MORPH_MAX_POINTS]`. Pure, tested.
+    clamped to `[MORPH_MIN_POINTS, MORPH_MAX_POINTS]`. The session-only
+    Morph Detail select (fr-jonj, `MORPH_DETAILS` in state.ts) trades that
+    smoothness back for density — a sparse intermediate cloud video-encodes
+    to near-black: `"dense"` scales budget and ceiling ×8, `"full"` runs
+    intermediates at the scene's own count. Pure, tested.
   - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
     dwell/advance state machine (injected clock, like `build-replay.ts`)
     polled by main.ts's animate loop; when a dwell elapses it fires one leg —

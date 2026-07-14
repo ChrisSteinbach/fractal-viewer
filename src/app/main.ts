@@ -745,11 +745,12 @@ function main(): void {
       finalTransform,
       // Intermediates run at the adaptive budget — sized from measured
       // generation latency so each frame's request fits in roughly one
-      // animation frame on this device (morph-budget.ts, fr-a5gu); the
-      // terminal sample and every non-morph request use the full count.
+      // animation frame on this device (morph-budget.ts, fr-a5gu), scaled by
+      // the user's Morph Detail preference (fr-jonj); the terminal sample
+      // and every non-morph request use the full count.
       numPoints:
         morph && !morph.final
-          ? morphBudget.budget(state.numPoints)
+          ? morphBudget.budget(state.numPoints, state.morphDetail)
           : state.numPoints,
       seed: morph?.seed ?? rollSeed(),
       symmetry,

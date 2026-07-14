@@ -83,6 +83,7 @@ import {
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
+  setMorphDetail,
   setNumPoints,
   setPointSize,
   setPositionAxisColors,
@@ -285,6 +286,15 @@ describe("setRenderStyle", () => {
     const next = setRenderStyle(state, "glow");
     expect(next.renderStyle).toBe("glow");
     expect(state.renderStyle).toBe("depthFade");
+  });
+});
+
+describe("setMorphDetail", () => {
+  it("switches the morph detail immutably, defaulting to adaptive", () => {
+    const state = initialState(true);
+    const next = setMorphDetail(state, "full");
+    expect(next.morphDetail).toBe("full");
+    expect(state.morphDetail).toBe("adaptive");
   });
 });
 

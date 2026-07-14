@@ -29,6 +29,16 @@
  * it directly — the same discipline as `exposure.ts` and `flame-perf.ts`.
  */
 import { MORPH_MAX_POINTS } from "./constants";
+import type { MorphDetail } from "./state";
+
+/**
+ * How many frames' worth of points a `"dense"` intermediate asks for (and
+ * the multiplier on its ceiling): 8 ≈ 9 Hz shape updates against a 60 Hz
+ * render loop — chunky enough to buy +3 stops of light, fine enough that a
+ * multi-second morph still reads as motion. See state.ts's `MORPH_DETAILS`
+ * for the full preference vocabulary this factor implements.
+ */
+export const MORPH_DENSE_FACTOR = 8;
 
 /**
  * Target per-generation latency for a morph intermediate, in ms: just under
@@ -85,19 +95,28 @@ export class MorphBudget {
 
   /**
    * Points to request for the next morph intermediate: the measured
-   * {@link MORPH_FRAME_BUDGET_MS} worth of generation, clamped to
-   * [{@link MORPH_MIN_POINTS}, `MORPH_MAX_POINTS`] — and never more than
-   * `fullCount`, the scene's own point count (a small scene stays exact).
+   * {@link MORPH_FRAME_BUDGET_MS} worth of generation (×{@link
+   * MORPH_DENSE_FACTOR} on budget and ceiling for `"dense"`), clamped to
+   * [{@link MORPH_MIN_POINTS}, `MORPH_MAX_POINTS` × factor] — and never more
+   * than `fullCount`, the scene's own point count (a small scene stays
+   * exact). `"full"` skips the estimate entirely and returns `fullCount`.
+   * The uncalibrated fallback is NOT scaled for `"dense"`: it exists to
+   * avoid hitching an unmeasured device on frame one, and boot calibrates
+   * the EMA before a morph can start anyway.
    */
-  budget(fullCount: number): number {
+  budget(fullCount: number, detail: MorphDetail): number {
+    if (detail === "full") return fullCount;
+    const factor = detail === "dense" ? MORPH_DENSE_FACTOR : 1;
     const target =
       this.costPerPointMs === null
         ? MORPH_UNCALIBRATED_POINTS
         : Math.min(
-            MORPH_MAX_POINTS,
+            MORPH_MAX_POINTS * factor,
             Math.max(
               MORPH_MIN_POINTS,
-              Math.round(MORPH_FRAME_BUDGET_MS / this.costPerPointMs),
+              Math.round(
+                (MORPH_FRAME_BUDGET_MS * factor) / this.costPerPointMs,
+              ),
             ),
           );
     return Math.min(fullCount, target);
