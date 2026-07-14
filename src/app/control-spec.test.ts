@@ -499,6 +499,27 @@ describe("effects", () => {
   });
 });
 
+describe("commit (fr-2c27)", () => {
+  it("numPointsSlider commit calls regenerateIfAutoUpdate", () => {
+    const spec = specById("numPointsSlider");
+    if (spec.kind !== "range") throw new Error("expected a range spec");
+    const state = applyScalarControl(initialState(true), spec, "500");
+    const fx = mockEffects();
+
+    spec.commit?.(state, fx, state);
+
+    expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("numPointsSlider is the only entry that declares a commit effect", () => {
+    const withCommit = SCALAR_CONTROLS.filter(
+      (s) => s.kind === "range" && s.commit !== undefined,
+    ).map((s) => s.id);
+
+    expect(withCommit).toEqual(["numPointsSlider"]);
+  });
+});
+
 describe("table policy", () => {
   it("morphDetail and autoUpdate are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(

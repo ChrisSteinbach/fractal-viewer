@@ -100,8 +100,19 @@ export interface UiHandlers {
    * Per-control semantics — which edits restart accumulation, which are
    * live-reactive, which forward to a render worker — are documented on the
    * spec entries themselves.
+   *
+   * `phase` (fr-2c27) distinguishes the live "input" stream (fired on every
+   * tick while a range drags, or once for a select/checkbox's own change)
+   * from a range spec's trailing "commit" — fired once on release for specs
+   * that declare `ValueControlSpec.commit`, alongside (not instead of) the
+   * ordinary input events the drag already sent. Defaults to "input" so
+   * every other call site is unaffected.
    */
-  onScalarControl: (spec: ScalarControlSpec, raw: string | boolean) => void;
+  onScalarControl: (
+    spec: ScalarControlSpec,
+    raw: string | boolean,
+    phase?: "input" | "commit",
+  ) => void;
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
@@ -1113,6 +1124,16 @@ export class Ui {
             : input.value,
         ),
       );
+      // Commit-on-release (fr-2c27): a range spec that declares `commit`
+      // ALSO gets the trailing "change" event a range input fires once the
+      // drag ends — reported as the "commit" phase, on top of (not instead
+      // of) the "input" listener above, which already covered every tick
+      // during the drag itself.
+      if (spec.kind === "range" && spec.commit) {
+        input.addEventListener("change", () =>
+          handlers.onScalarControl(spec, input.value, "commit"),
+        );
+      }
     }
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
