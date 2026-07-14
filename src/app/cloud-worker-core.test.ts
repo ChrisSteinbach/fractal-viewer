@@ -13,6 +13,7 @@ import type { PositionAxisColors } from "../fractal/color";
 import { mulberry32 } from "../fractal/rng";
 import { doubleRotation, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
+import { framingBounds, framingRadius4 } from "./framing-bounds";
 
 /**
  * A minimal, fully-specified 3D `CloudRequest`, overridable per test so each
@@ -70,6 +71,22 @@ describe("generateCloud 3D", () => {
     expect(result.bounds).toEqual(direct.bounds);
     expect(result.fourD).toBe(false);
     expect(result.id).toBe(7);
+  });
+
+  it("bakes outlier-robust framing bounds from the delivered cloud (oracle)", () => {
+    const req = cloudRequest({ id: 9 });
+    const result = as3D(generateCloud(req));
+
+    const direct = runChaosGame(
+      req.transforms,
+      req.numPoints,
+      mulberry32(req.seed),
+      req.finalTransform,
+      req.symmetry,
+    );
+    const expectedFrameBounds = framingBounds(direct.positions, direct.count);
+
+    expect(result.frameBounds).toEqual(expectedFrameBounds);
   });
 
   it("bakes colors matching buildColors for the request's mode and gamma (oracle)", () => {
@@ -207,6 +224,16 @@ describe("generateCloud 3D", () => {
     expect(result.positions).toHaveLength(0);
     expect(result.transformIndices).toHaveLength(0);
     expect(result.colors).toHaveLength(0);
+    expect(result.frameBounds).toEqual({
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      minZ: 0,
+      maxZ: 0,
+      minR: 0,
+      maxR: 0,
+    });
   });
 
   it("isolates iteration-local randomness from the pick stream, keeping ε-different same-seed requests correspondent (fr-2wfw)", () => {
@@ -306,6 +333,28 @@ describe("generateCloud 4D", () => {
     expect(result.id).toBe(12);
   });
 
+  it("bakes an outlier-robust framing radius from the delivered cloud (oracle)", () => {
+    const transforms = doubleRotation(); // both maps carry a `w` extension
+    const req = cloudRequest({ id: 14, fourD: true, transforms });
+    const result = as4D(generateCloud(req));
+
+    const final4 = req.finalTransform ? toTransform4(req.finalTransform) : null;
+    const direct = runChaosGame4(
+      transforms.map(toTransform4),
+      req.numPoints,
+      mulberry32(req.seed),
+      final4,
+    );
+    const expectedFrameRadius = framingRadius4(
+      direct.positions,
+      direct.w,
+      direct.count,
+      direct.center,
+    );
+
+    expect(result.frameRadius).toBe(expectedFrameRadius);
+  });
+
   it("returns an empty result with no transforms", () => {
     const req = cloudRequest({ fourD: true, transforms: [] });
     const result = as4D(generateCloud(req));
@@ -314,6 +363,7 @@ describe("generateCloud 4D", () => {
     expect(result.positions).toHaveLength(0);
     expect(result.w).toHaveLength(0);
     expect(result.transformIndices).toHaveLength(0);
+    expect(result.frameRadius).toBe(0);
   });
 });
 

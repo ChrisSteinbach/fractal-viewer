@@ -1,5 +1,3 @@
-import type { ChaosGameResult } from "../fractal/chaos-game";
-import type { ChaosGame4Result } from "../fractal/chaos-game-4d";
 import { toTransform4 } from "../fractal/affine4";
 import { wSupport } from "./rotor4";
 import { FourDView, viewTransition } from "./four-d-view";
@@ -24,7 +22,12 @@ import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
 import type { CloudParams } from "./cloud-generator";
 import { generateCloud } from "./cloud-worker-core";
-import type { CloudRequest, CloudResult } from "./cloud-worker-core";
+import type {
+  CloudRequest,
+  CloudResult,
+  CloudResult3D,
+  CloudResult4D,
+} from "./cloud-worker-core";
 import { glowExposure } from "./exposure";
 import {
   defaultFinalTransform,
@@ -268,12 +271,14 @@ function main(): void {
   // localStorage key, so it never disturbs the live scene or its history.
   const collection = new SceneCollection();
 
-  // The most recently ARRIVED chaos-game run (cached by applyCloudResult), so
+  // The most recently ARRIVED generation (cached by applyCloudResult), so
   // a color-mode change can recolor the existing cloud (see `recolor`) instead
   // of re-rolling the RNG and drawing a brand-new random sample of the
   // attractor. While a generation is in flight (fr-5kx) this still holds the
-  // cloud actually on screen — exactly what its readers want.
-  let lastResult: ChaosGameResult | null = null;
+  // cloud actually on screen — exactly what its readers want. Typed as the
+  // WORKER result (not the bare chaos-game run) because the camera fit reads
+  // the worker-baked `frameBounds` off it (fr-3xfk).
+  let lastResult: CloudResult3D | null = null;
 
   // Whether the DISPLAYED cloud is the 4D projection view — a DERIVED
   // property of the system that produced it (fr-bf6; see state.ts's
@@ -285,11 +290,12 @@ function main(): void {
   // interactions predicate, and guide-box suppression all read it.
   let viewIs4D = false;
 
-  // The most recent 4D chaos-game run — mirrors `lastResult` for the 3D path,
+  // The most recent 4D generation — mirrors `lastResult` for the 3D path,
   // so a whole-system replacement (preset load / Surprise Me) can auto-frame
   // the camera on it right after regenerate() lands a fresh run (see
-  // fitCameraToAttractor). Null whenever the view isn't showing 4D.
-  let fourDResult: ChaosGame4Result | null = null;
+  // fitCameraToAttractor; the fit reads the worker-baked `frameRadius`,
+  // fr-3xfk). Null whenever the view isn't showing 4D.
+  let fourDResult: CloudResult4D | null = null;
 
   // A preset's render-mode hint (fr-39y, PRESET_RENDER_HINTS), waiting for
   // the freshly loaded system's cloud to land: onPreset arms it, and
@@ -1081,16 +1087,20 @@ function main(): void {
   );
 
   // The bounds a camera fit of the current view should frame: the 4D branch
-  // synthesizes a rotation-invariant box (fourDFramingBounds — radius is
-  // rotation-invariant, so one framing holds at every tumble angle); the 3D
-  // branch is the latest run's own bounds. Null until a run exists.
+  // synthesizes a rotation-invariant box (fourDFramingBounds — the framing
+  // radius is a distance-from-center quantile, so one framing holds at every
+  // tumble angle); the 3D branch is the latest run's trimmed-quantile box.
+  // Both are the result's outlier-robust frame fields (fr-3xfk), NOT the raw
+  // min/max bounds — a nonlinear variation's sparse flung points used to
+  // inflate those until the attractor fit several times too small. Null
+  // until a run exists.
   function attractorFramingBounds(): Bounds | null {
     if (viewIs4D) {
       return fourDResult
-        ? fourDFramingBounds(fourDResult.center, fourDResult.radius)
+        ? fourDFramingBounds(fourDResult.center, fourDResult.frameRadius)
         : null;
     }
-    return lastResult ? lastResult.bounds : null;
+    return lastResult ? lastResult.frameBounds : null;
   }
 
   // Glide the camera to frame the current view's bounds. A no-op until a run
@@ -2551,12 +2561,15 @@ function main(): void {
   // Restore the framing the restored scene was last seen with (fr-1k4): a
   // reopened PWA / reloaded tab used to silently reset to the default boot
   // camera, leaving the cloud off-centre and the orbit pivoting around empty
-  // space. A pose-less save (pre-fr-1k4) auto-frames the attractor instead —
-  // instantly, not the preset-load glide: a boot is a cut, not a transition.
-  // A genuinely fresh visit keeps the tuned default boot camera.
+  // space. Any pose-less boot — a pre-fr-1k4 save or a genuinely fresh visit
+  // — auto-frames the attractor instead, instantly, not the preset-load
+  // glide: a boot is a cut, not a transition. The fresh visit used to keep
+  // the default boot camera (fr-3xfk), whose radius shows the boot system at
+  // roughly a quarter of the viewport height — the fit keeps that camera's
+  // viewing ANGLE (theta/phi) and only dollies in to frame.
   if (saved?.camera) {
     applyCameraPose(saved.camera);
-  } else if (saved) {
+  } else {
     fitCameraToAttractor();
     cameraTween.finish();
   }
