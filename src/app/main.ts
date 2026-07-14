@@ -395,6 +395,34 @@ function main(): void {
   // reset to null) the first time endReplayDisplay runs afterward, whichever
   // of natural completion or cancellation gets there first.
   let panelOpenBeforeReplay: boolean | null = null;
+  // The replay's showcase overrides (fr-hpci): while a replay plays, the
+  // display presents its most didactic view regardless of the user's current
+  // settings — by-transform coloring (each landing's parent map is legible),
+  // guide boxes visible (the point visibly hops BETWEEN the transforms), and
+  // the view's automatic motion running (auto-orbit in 3D, tumble in 4D; not
+  // forced under reduced motion — unlike the replay itself, ambient spin is
+  // not what the click asked for). Armed by onWatchBuild, disarmed exactly
+  // once in endReplayDisplay, panelOpenBeforeReplay's lifecycle exactly.
+  //
+  // DISPLAY-LAYER ONLY, like the replay: AppState.colorMode/fourDColor/
+  // showGuides are never touched — recolor()/applyFourDColor()/
+  // refreshGuides() fold this flag into what they derive instead — so undo
+  // snapshots, the debounced save, share links, and the pagehide flush can
+  // never capture the temporary values, by construction. The motion flags
+  // (autoOrbitOn / fourDView.tumbleOn) ARE session state, so their priors
+  // are remembered here; the sticky user choice (fr-g98) stays untouched —
+  // a showcase is a programmatic write, not a user toggle.
+  let replayShowcase: {
+    /** Bake by-transform colors while set (skipped — and no re-bake owed —
+     * when the user's own mode already was "transform"). */
+    color: boolean;
+    /** Prior motion flag to restore: autoOrbitOn (3D) or fourDView.tumbleOn
+     * (4D); null = motion left untouched (reduced motion). */
+    motionWasOn: boolean | null;
+    /** Which view armed the showcase. Frozen: a flatness flip only ever
+     * arrives with a landing generation, which cancels the replay first. */
+    fourD: boolean;
+  } | null = null;
 
   // Restore the normal display after a replay: full cloud, no cursor, no
   // caption, true point count. Reads lastResult/fourDResult for the count —
@@ -406,6 +434,24 @@ function main(): void {
     replayCaption = null;
     const count = viewIs4D ? fourDResult?.count : lastResult?.count;
     if (count !== undefined) ui.setPointCount(count);
+    // Disarm the showcase overrides (fr-hpci): put the motion flag back and
+    // re-derive guides/colors from the (never-touched) document. Cleared
+    // BEFORE the refreshers run so they fold the user's own settings again.
+    if (replayShowcase !== null) {
+      const showcase = replayShowcase;
+      replayShowcase = null;
+      if (showcase.motionWasOn !== null) {
+        if (showcase.fourD) fourDView.tumbleOn = showcase.motionWasOn;
+        else autoOrbitOn = showcase.motionWasOn;
+      }
+      refreshGuides();
+      if (showcase.color) {
+        if (showcase.fourD) applyFourDColor();
+        else recolor();
+      }
+      ui.setReplayShowcaseLegend(false);
+      ui.updateLabels(state);
+    }
     // Reopen the panel "Watch it build" closed to clear the stage (fr-vpka)
     // — but only above the mobile breakpoint, where the panel is the
     // primary always-open surface; a phone genuinely wants it gone over the
@@ -1032,7 +1078,10 @@ function main(): void {
     const colors = buildColors(
       lastResult,
       state.transforms,
-      state.colorMode,
+      // The replay showcase (fr-hpci) presents by-transform coloring without
+      // ever writing the document — folded here, the one place the displayed
+      // 3D mode is derived.
+      replayShowcase?.color ? "transform" : state.colorMode,
       state.colorGamma,
       resolvePalette(state.rampPaletteId, state.customPalette),
       state.positionAxisColors,
@@ -1048,7 +1097,9 @@ function main(): void {
   // first 4D generation.
   function applyFourDColor(): void {
     if (!viewIs4D || !fourDResult) return;
-    const mode = state.fourDColor;
+    // The replay showcase's by-transform override (fr-hpci) — the 4D sibling
+    // of recolor()'s fold, same display-only rationale.
+    const mode = replayShowcase?.color ? "transform" : state.fourDColor;
     if (fourDColorNeedsAttribute(mode)) {
       scene.setFourDColorSource({
         // The radius mode's ramp follows the same rampPaletteId selection as
@@ -1724,13 +1775,26 @@ function main(): void {
       : null;
   }
 
+  // The guides' DISPLAYED visibility: the document's showGuides, or forced on
+  // while the replay showcase is armed (fr-hpci) — display-only, so the
+  // document's showGuides (and its checkbox) stays the user's own. The ONE
+  // formula refreshGuides pushes to every guide visual.
+  function guidesShown(): boolean {
+    return state.showGuides || replayShowcase !== null;
+  }
+
   function refreshGuides(): void {
+    const visible = guidesShown();
     // No guide boxes in the 4D projection (an empty list; scene handles it).
     scene.updateGuides(
       viewIs4D ? [] : state.transforms,
       selectedBox(),
-      state.showGuides,
+      visible,
     );
+    // The grid, axes, and 4D scaffold follow the same derivation — pushed
+    // here rather than per call site, so "Show guides" (and the showcase's
+    // override of it) can never govern the boxes and the grid separately.
+    scene.setGuidesVisible(visible);
   }
 
   function refreshUi(): void {
@@ -1823,8 +1887,9 @@ function main(): void {
     if (state.renderStyle !== "glow") scene.setGlowExposure(1);
     scene.setPointSize(state.pointSize);
     scene.setFourDDepthFade(state.fourDDepthFade);
-    scene.setGuidesVisible(state.showGuides);
     scene.setSolidParams(state.solid);
+    // Covers the grid/axes/scaffold too — refreshGuides pushes the whole
+    // guide-visibility derivation, not just the boxes.
     refreshGuides();
     refreshUi();
   }
@@ -2231,12 +2296,53 @@ function main(): void {
       ui.closeAbout();
       // Remember whether the panel was open so endReplayDisplay can restore
       // it once the replay ends (fr-vpka) — closed here unconditionally so
-      // the stage is watchable, same as ever.
-      panelOpenBeforeReplay = state.panelOpen;
+      // the stage is watchable, same as ever. ??= so a restart mid-replay
+      // (the About dialog's button is still reachable) keeps the FIRST
+      // start's memory instead of overwriting it with the forced-closed
+      // state (fr-hpci; the showcase guard below is its twin).
+      panelOpenBeforeReplay ??= state.panelOpen;
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
       const count = viewIs4D ? fourDResult?.count : lastResult?.count;
       buildReplay.start(count ?? 0);
+      // Arm the showcase overrides (fr-hpci; see replayShowcase's doc): by-
+      // transform colors, guides on, and the view's auto-motion running for
+      // the duration of the replay, restored by endReplayDisplay. Only when
+      // the replay actually started (a 0-point cloud leaves it idle, and an
+      // armed showcase would then never be disarmed), and only when not
+      // already armed (a restart must keep the FIRST start's priors — the
+      // current motion flag is the showcase's own forced value by then).
+      if (buildReplay.active && replayShowcase === null) {
+        const fourD = viewIs4D;
+        const color =
+          (fourD ? state.fourDColor : state.colorMode) !== "transform";
+        // Motion is a showcase EXTRA, not what the click asked for, so unlike
+        // the replay itself it stays off under reduced motion. The sticky
+        // auto-motion choice (fr-g98) is deliberately not consulted or
+        // written: this is a programmatic write, not a user toggle, and the
+        // prior flag comes back verbatim on disarm.
+        let motionWasOn: boolean | null = null;
+        if (!prefersReducedMotion()) {
+          if (fourD) {
+            motionWasOn = fourDView.tumbleOn;
+            fourDView.tumbleOn = true;
+          } else {
+            motionWasOn = autoOrbitOn;
+            autoOrbitOn = true;
+          }
+        }
+        replayShowcase = { color, motionWasOn, fourD };
+        refreshGuides();
+        if (color) {
+          if (fourD) applyFourDColor();
+          else recolor();
+        }
+        // The legend must narrate the showcase's by-transform colors, not
+        // the document's mode (ui.ts folds the flag into updateLegend); the
+        // extra sync repaints it now.
+        ui.setReplayShowcaseLegend(true);
+        ui.updateLabels(state);
+      }
     },
     onRecordVideoToggle: () => {
       recorder.toggle();
@@ -2412,6 +2518,17 @@ function main(): void {
       if (state.autoUpdate) regenScheduler.schedule();
     },
     onTogglePanel: () => {
+      // Opening the panel mid-replay is reaching back in (fr-hpci): end the
+      // replay first — same philosophy as the drift show's stop-on-edit —
+      // so the controls the panel reveals always show settings that are
+      // actually in effect (the showcase overrides disarm with the replay).
+      // The replay's own panel memory is consumed un-applied: the user just
+      // took manual control of the panel, so their toggle wins over both
+      // the fr-vpka restore and this handler's flip-from-closed below.
+      if (!state.panelOpen && (buildReplay.active || replayCaption !== null)) {
+        panelOpenBeforeReplay = null;
+        cancelReplay();
+      }
       state = setPanelOpen(state, !state.panelOpen);
       ui.updateLabels(state);
     },
@@ -2577,9 +2694,6 @@ function main(): void {
   // non-flat→flat transition, exactly like the tumble in the other direction.
   if (!viewIs4D) resetAutoOrbitView();
   refreshGuides();
-  // Match grid/axes to the initial (possibly restored) guide visibility, since
-  // refreshGuides only governs the per-transform boxes.
-  scene.setGuidesVisible(state.showGuides);
   refreshUi();
   editSession.syncUi();
   ui.setCollectionCount(collection.size);

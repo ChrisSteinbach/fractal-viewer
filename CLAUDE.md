@@ -234,6 +234,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     IS chaos-game order, so the growing prefix faithfully replays the drawing.
     Polled per frame by main.ts's animate loop; `scene.setDrawCount` /
     `setReplayCursor` do the drawing (pure, tested, injected clock).
+    Since fr-hpci, main.ts overlays a temporary showcase while it plays: color
+    switches to By Transform (`colorMode`/`fourDColor`, skipped if already that
+    mode), the guides are forced visible (boxes, grid, axes, 4D scaffold —
+    `refreshGuides` pushes the whole `guidesShown()` derivation, not just the
+    boxes), and auto-orbit/auto-tumble run — not forced under reduced motion. Display-layer only: AppState and the persisted
+    document never see it — main.ts's `recolor()` / `applyFourDColor()` /
+    `refreshGuides()` and the `ui.ts` legend fold a session-only `replayShowcase`
+    flag instead — and `endReplayDisplay` restores it all on every exit,
+    including a panel now opened mid-replay, which cancels the replay too.
   - `exposure.ts` — `glowExposure`: a density-adaptive brightness multiplier for
     the live cloud's `"glow"` render style, derived from screen-space
     points-per-pixel so additive points don't blow out to white (pure, tested).
