@@ -2721,7 +2721,12 @@ function main(): void {
       // override on top — auto-exposure only sees the *average* screen
       // density, so local density swings still need a hand-tuned correction.
       // Skipped in 4D: it would touch glowMaterial, which isn't rendering there.
-      const b = lastResult.bounds;
+      // The density estimate reads the outlier-trimmed frameBounds (fr-2b82),
+      // not the raw min/max bounds: it wants the box where the mass actually
+      // is, and on an outlier-heavy system the raw box's flung stragglers
+      // inflate the projected area, under-estimating density and blowing the
+      // glow out toward white.
+      const b = lastResult.frameBounds;
       const dx = b.maxX - b.minX;
       const dy = b.maxY - b.minY;
       const dz = b.maxZ - b.minZ;
