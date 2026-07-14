@@ -26,6 +26,21 @@
   box-sizing: border-box;
 }
 
+/* ── Keyboard focus (fr-gw1f) ─────────────────────────────────────────────
+   ONE accent-colored focus ring for every interactive control — buttons,
+   segments, sliders, checkboxes, selects, summaries, links — instead of a
+   grab-bag of UA defaults. :focus-visible matches keyboard-driven focus
+   only, so pointer/touch interaction shows nothing new. Deliberate
+   overrides exist below: controls whose ring an overflow-clipped ancestor
+   would swallow restate it inset (.segmented .segment, .transform-btn),
+   the active segment flips the ring white (its fill IS the accent), and
+   the gallery cards replace it with their own accent-border/red-fill
+   focus states. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* The closed #panel parks at translateX(100%) — a 300px box hanging past the
    right screen edge — and mobile browsers' fit-content viewport logic
    EXPANDS the layout viewport to contain such overflow (measured: 393×727 →
@@ -580,6 +595,20 @@ body {
   color: #fff;
 }
 
+/* The joined group's `overflow: hidden` (for the corner radius) would clip
+   the global focus ring, which sits OUTSIDE the segment's box — restate it
+   inset so the whole ring survives. */
+.segmented .segment:focus-visible {
+  outline-offset: -2px;
+}
+
+/* The ACTIVE segment's fill is the same accent the ring uses, so the inset
+   ring vanished into it (accent-on-accent) exactly where keyboard focus
+   lands first — go white there, like the segment's own text. */
+.segmented .segment.active:focus-visible {
+  outline-color: #fff;
+}
+
 /* `.btn` is `display: block; width: 100%` for the panel's stacked buttons —
    inside the flex #updateBanner the Reload button must size to its label
    instead of stretching. */
@@ -651,11 +680,6 @@ input[type="range"] {
   cursor: pointer;
 }
 
-#panel select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 .transform-list {
   display: flex;
   flex-direction: column;
@@ -688,6 +712,13 @@ input[type="range"] {
 
 .transform-btn:hover {
   background: var(--surface-3);
+}
+
+/* .transform-list is a scroll container (overflow-y: auto forces overflow-x
+   to clip too) and these buttons span its full content width, so the global
+   focus ring's outside edges would be cut off — restate it inset. */
+.transform-btn:focus-visible {
+  outline-offset: -2px;
 }
 
 .transform-btn.selected {
