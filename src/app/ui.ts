@@ -625,6 +625,11 @@ export class Ui {
   private readonly legendLabelMid: HTMLElement;
   private readonly legendLabelHigh: HTMLElement;
   private readonly legendSwatches: HTMLElement;
+  /** While true, {@link updateLegend} shows the by-transform swatch strip
+   * regardless of the state's color mode — the "Watch it build" showcase's
+   * display-only recolor (fr-hpci). Set/cleared by main.ts as the showcase
+   * arms/disarms, each followed by an updateLabels sync. */
+  private replayShowcaseLegend = false;
   private readonly menuToggle: HTMLElement;
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
@@ -1835,6 +1840,16 @@ export class Ui {
    * different answer within the same refresh.
    */
   private updateLegend(state: AppState, nonFlat: boolean): void {
+    // The "Watch it build" showcase (fr-hpci) recolors the DISPLAY by
+    // transform without touching the document, so while it is armed the
+    // legend must narrate the screen, not the state: the same swatch strip
+    // both views' own by-transform modes use. Folded here (not pushed from
+    // main.ts once at arm time) so any updateLabels sync that runs
+    // mid-replay repaints the showcase legend rather than clobbering it.
+    if (this.replayShowcaseLegend) {
+      this.showLegendSwatchStrip(state.transforms.length);
+      return;
+    }
     if (nonFlat) {
       const mode = state.fourDColor;
       if (mode === "transform") {
@@ -1920,6 +1935,13 @@ export class Ui {
     this.showLegendAxisSwatches(
       state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS,
     );
+  }
+
+  /** Arm/disarm the replay showcase's legend presentation (fr-hpci) — see
+   * {@link replayShowcaseLegend}. Recorded only; the caller's updateLabels
+   * sync repaints. */
+  setReplayShowcaseLegend(on: boolean): void {
+    this.replayShowcaseLegend = on;
   }
 
   /** Show the legend as the per-transform swatch strip, hiding the bar

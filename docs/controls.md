@@ -162,7 +162,13 @@ of snapping (see **Presets** below).
   the full count, narrated by a caption pill. Ends on its own; any
   regenerate, edit, or render-mode switch cancels it. Works in the 4D
   projection too (the spark rides the tumble). Also reachable from the
-  **ⓘ What is this?** dialog.
+  **ⓘ What is this?** dialog. While it plays, the view temporarily switches
+  to **By Transform** coloring, shows the guide boxes, and runs the
+  auto-orbit (or, in the 4D projection, the auto-tumble) so the drawing is
+  easy to follow — your actual settings are untouched underneath and come
+  back exactly as they were when the replay ends or is cancelled (fr-hpci).
+  Reduced motion keeps that extra spin off. Opening the control panel
+  mid-replay cancels the replay too, restoring everything immediately.
 - **Morph Detail** (fr-jonj) — how many points the cloud keeps while a system
   morph is in flight (a preset load, Surprise Me, a gallery load, or a Drift
   leg). **Adaptive** (default) sizes each in-between cloud to what this device
