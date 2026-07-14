@@ -670,6 +670,15 @@ export class Ui {
    * mode each one switches to — the single entry/exit surface that replaced
    * the flame/solid modal islands' four separate buttons. */
   private readonly modeButtons: Record<RenderMode, HTMLButtonElement>;
+  // The mode-scoped blocks that are NOT part of any accordion section
+  // (fr-374p): Points' Undo/Redo row and the flame/solid hint + progress
+  // status blocks. They sit above ALL the sections in index.html — floating
+  // content wedged between two collapsed section headers reads as the open
+  // content of the header above it — and each shows/hides with its render
+  // mode exactly like the section containers below.
+  private readonly undoRedoRow: HTMLElement;
+  private readonly flameStatus: HTMLElement;
+  private readonly solidStatus: HTMLElement;
   private readonly flameControls: HTMLElement;
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
@@ -858,6 +867,9 @@ export class Ui {
       flame: this.byId("modeFlameBtn"),
       solid: this.byId("modeSolidBtn"),
     };
+    this.undoRedoRow = this.byId("undoRedoRow");
+    this.flameStatus = this.byId("flameStatus");
+    this.solidStatus = this.byId("solidStatus");
     this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
@@ -1281,6 +1293,13 @@ export class Ui {
     this.explorerControls.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
+    // …including each mode's non-section block above the accordion (fr-374p):
+    // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
+    // affect the frozen render, same reason the editing controls hide), and
+    // the flame/solid status blocks belong to their renders.
+    this.undoRedoRow.classList.toggle("hidden", rendering);
+    this.flameStatus.classList.toggle("hidden", state.renderMode !== "flame");
+    this.solidStatus.classList.toggle("hidden", state.renderMode !== "solid");
     this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
     // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
     // the 4D block: exactly one of the two shows outside a render. It hides
