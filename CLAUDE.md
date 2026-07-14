@@ -333,8 +333,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     the GPU at a smaller supersample, one fresh-device retry (refusing a
     software adapter after real hardware), and only then the permanent CPU
     fallback — whose `gpuUnavailable` reason annotates the UI's CPU backend
-    note (fr-27h removed the former worker→main-host escalation: CPU is the
-    one fallback, on every browser).
+    note (CPU is the one fallback, on every browser).
   - `flame-perf.ts` — `FlamePerfMeter`, opt-in flame-throughput diagnostics
     (behind the `?flameperf` URL param): windows the worker's per-chunk timing
     samples into a throughput summary. Pure, tested; deliberately changes no

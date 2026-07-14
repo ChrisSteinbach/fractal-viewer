@@ -489,12 +489,12 @@ export interface TonemapParams {
  * gamma-only one (see {@link TonemapParams}). Buckets with no hits are fully
  * transparent black, so the image composites cleanly over any backdrop.
  *
- * At `gamma: 1, vibrancy: 1` this is byte-for-byte the fr-o7s tone-map (see
- * "collapses to the pre-fr-ucs tonemap" in flame.test.ts) — every term the
- * new controls introduce provably reduces to a no-op at that point (`x ** 1
- * === x`, `0 * anything-finite === 0`, `1 * x === x`), so existing renders
- * and every fr-o7s-era test stay pixel-identical without needing a
- * gamma/vibrancy-aware special case.
+ * At `gamma: 1, vibrancy: 1` every term those controls introduce provably
+ * reduces to a no-op (`x ** 1 === x`, `0 * anything-finite === 0`,
+ * `1 * x === x`), collapsing the formula to the plain log-density tone-map —
+ * pinned byte-for-byte against an independent oracle in flame.test.ts
+ * ("collapses to the neutral tonemap") with no gamma/vibrancy-aware special
+ * case.
  *
  * Pure, and does one pass over `width * height` (independent of how many
  * iterations are behind the histogram) — safe to call every frame while a
@@ -538,11 +538,11 @@ export function tonemapFlame(
       density >= gammaThreshold
         ? density ** invGamma
         : density * thresholdSlope;
-    // glow bundles exposure into the density term the same way the pre-fr-ucs
-    // formula's `brightness` did (`density * exposure`) — precomputing it
-    // this way, rather than multiplying exposure in afterward, is what makes
-    // the vivid branch below reduce to the exact pre-fr-ucs expression at
-    // gamma = 1 (see the doc comment above), not just a numerically close one.
+    // glow bundles exposure into the density term (`density * exposure`) —
+    // precomputing it this way, rather than multiplying exposure in
+    // afterward, is what makes the vivid branch below reduce to the exact
+    // neutral closed form at gamma = 1 (see the doc comment above), not just
+    // a numerically close one.
     const glow = alpha * exposure;
     const invHits = 1 / h;
     const o = i * 3;
@@ -850,11 +850,11 @@ const MIN_ADAPTIVE_FILTER_SIGMA = 0.3;
  *    error falls as `1 / sqrt(count)`): a few hundred hits is a clean signal
  *    worth keeping sharp no matter how much hotter the image's hottest
  *    bucket happens to be. Normalizing against the histogram's peak instead
- *    (as this function originally did — fr-rq6) puts nearly every cell of a
- *    log-distributed histogram far below the max, so the whole image—
- *    converged structure included — got near-`estimatorRadius` blur, turning
- *    the finished frame into a featureless smear (and, since wide kernels
- *    ran everywhere, taking minutes to do it).
+ *    puts nearly every cell of a log-distributed histogram far below the
+ *    max, so the whole image — converged structure included — gets
+ *    near-`estimatorRadius` blur, turning the finished frame into a
+ *    featureless smear (and, since wide kernels run everywhere, taking
+ *    minutes to do it).
  * 3. Gather a Gaussian kernel of THAT radius. Building one with `Math.exp`
  *    fresh for every one of `width * height` cells would dominate the cost,
  *    so radii are quantized to the nearest {@link RADIUS_QUANTUM} output

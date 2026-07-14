@@ -575,8 +575,8 @@ describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
 });
 
 /**
- * `TonemapParams` at the fr-ucs collapse point (gamma: 1, vibrancy: 1) — see
- * "collapses to the pre-fr-ucs tonemap" below. `gammaThreshold` is
+ * `TonemapParams` at the neutral collapse point (gamma: 1, vibrancy: 1) — see
+ * "collapses to the neutral tonemap" below. `gammaThreshold` is
  * deliberately a real, non-degenerate value (not e.g. 0) so these tests
  * exercise the same code path a real render does, not a threshold-disabled
  * shortcut.
@@ -590,9 +590,9 @@ function neutral(exposure: number): TonemapParams {
   };
 }
 
-/** Pre-fr-ucs tonemapFlame, verbatim — the oracle "collapses to the
- * pre-fr-ucs tonemap" pins the new formula against. */
-function tonemapFlamePreFrUcs(
+/** The plain log-density tone-map, written out independently — the oracle
+ * "collapses to the neutral tonemap" pins tonemapFlame against. */
+function tonemapFlameNeutralOracle(
   histogram: FlameHistogram,
   exposure: number,
 ): Uint8ClampedArray {
@@ -915,10 +915,10 @@ describe("tonemapFlame", () => {
   });
 });
 
-describe("tonemapFlame collapses to the pre-fr-ucs tonemap at gamma: 1, vibrancy: 1", () => {
-  // The regression guard fr-ucs's design explicitly calls for: every render
-  // (and every fr-o7s-era test) that never touches gamma/vibrancy must see
-  // byte-for-byte the same image as before those controls existed.
+describe("tonemapFlame collapses to the neutral tonemap at gamma: 1, vibrancy: 1", () => {
+  // A render that never touches gamma/vibrancy must see byte-for-byte the
+  // plain log-density tone-map: the controls' terms must be exact no-ops at
+  // their neutral values, not merely close.
   function histogramWith(
     entries: { bucket: number; hits: number; color: Vec3 }[],
     width: number,
@@ -938,7 +938,7 @@ describe("tonemapFlame collapses to the pre-fr-ucs tonemap at gamma: 1, vibrancy
     return hist;
   }
 
-  it("matches the pre-fr-ucs formula exactly across a spread of hit counts, colors, and exposures", () => {
+  it("matches the neutral oracle exactly across a spread of hit counts, colors, and exposures", () => {
     const hist = histogramWith(
       [
         { bucket: 0, hits: 1, color: [1, 0.4, 0.1] },
@@ -951,7 +951,7 @@ describe("tonemapFlame collapses to the pre-fr-ucs tonemap at gamma: 1, vibrancy
     );
     for (const exposure of [0.2, 0.5, 1, 2, 4]) {
       const actual = tonemapFlame(hist, neutral(exposure));
-      const expected = tonemapFlamePreFrUcs(hist, exposure);
+      const expected = tonemapFlameNeutralOracle(hist, exposure);
       expect(Array.from(actual)).toEqual(Array.from(expected));
     }
   });
@@ -968,7 +968,7 @@ describe("tonemapFlame collapses to the pre-fr-ucs tonemap at gamma: 1, vibrancy
       transformColors(4),
     );
     const actual = tonemapFlame(hist, neutral(1.3));
-    const expected = tonemapFlamePreFrUcs(hist, 1.3);
+    const expected = tonemapFlameNeutralOracle(hist, 1.3);
     expect(Array.from(actual)).toEqual(Array.from(expected));
   });
 });

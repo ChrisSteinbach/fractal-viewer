@@ -67,9 +67,9 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        // webmanifest is listed explicitly: generateSW used to precache it
-        // automatically, injectManifest only knows what the glob names.
-        // txt covers THIRD-PARTY-LICENSES.txt (fr-a2l) so the offline copy
+        // webmanifest is listed explicitly: injectManifest only precaches
+        // what the glob names, so the manifest must be named here to be
+        // cached. txt covers THIRD-PARTY-LICENSES.txt (fr-a2l) so the offline copy
         // of the bundles keeps its third-party license notices.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest,txt}"],
         // The bundled Three.js runtime exceeds Workbox's 2 MiB default

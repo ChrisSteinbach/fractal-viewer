@@ -83,11 +83,11 @@ function withIsolationHeaders(response: Response): Response {
 }
 
 /**
- * The single fetch pipeline: navigations serve the precached app shell
- * (the SPA `navigateFallback` the generated worker used to configure —
- * query strings and all, since the shell is one page); everything else is
- * precache-first with a network fallback for the stray non-precached
- * request. Whatever the source, the response leaves with isolation headers.
+ * The single fetch pipeline: navigations serve the precached app shell (the
+ * SPA navigate fallback — query strings and all, since the shell is one
+ * page); everything else is precache-first with a network fallback for the
+ * stray non-precached request. Whatever the source, the response leaves with
+ * isolation headers.
  */
 async function respond(request: Request): Promise<Response> {
   const url = request.mode === "navigate" ? "index.html" : request.url;

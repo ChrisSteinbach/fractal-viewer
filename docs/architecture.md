@@ -175,10 +175,10 @@ the panel legend shows the live axis colors as X/Y/Z swatches.
    (panel + list)      └───────────── user input ──────────────┘
 ```
 
-As of fr-5kx, the boxed `src/fractal` segment above — `runChaosGame` through
-`buildColors` — no longer runs where this diagram might suggest: it executes
-inside `cloud-worker.ts` (`cloud-worker-core.ts`'s `generateCloud`), reached by
-`cloud-generator.ts` posting a request from the main thread. The worker
+The boxed `src/fractal` segment above — `runChaosGame` through
+`buildColors` — executes inside `cloud-worker.ts` (`cloud-worker-core.ts`'s
+`generateCloud`), reached by `cloud-generator.ts` posting a request from the
+main thread, not inline where this diagram might suggest. The worker
 transfers `positions`/`colors` (and, on the 4D path, `w`) back as zero-copy
 buffers; it's `main.ts`'s arrival handler, `applyCloudResult`, that actually
 calls `scene.setPoints`, not `regenerate()` itself. The one exception is the

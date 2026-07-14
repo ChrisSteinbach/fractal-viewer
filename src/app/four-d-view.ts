@@ -5,10 +5,9 @@ import type { RotorPair } from "./rotor4";
  * Session-only 4D projection VIEW state — the accumulated rotor (tumble ticks
  * and Shift-drag/Shift-wheel gestures all compose into it, see rotor4.ts), the
  * tumble pause/speed, and the soft w-slice — plus the pure decision table for
- * when a regenerate() must reset it (`viewTransition`). Extracted from
- * main.ts's closure, where all of this used to live as loose `let` variables
- * inside `main()`, so the state machine is unit-tested without a browser, the
- * same way `orbit.ts` is for the 3D camera.
+ * when a regenerate() must reset it (`viewTransition`). Kept separate from
+ * main.ts's closure so the state machine is unit-tested without a browser,
+ * the same way `orbit.ts` is for the 3D camera.
  *
  * `FourDView` never touches Three.js, the DOM, or the chaos game: it only
  * accumulates the view rotation and the slice window that `main.ts` pushes to

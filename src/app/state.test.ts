@@ -196,14 +196,16 @@ describe("initialState", () => {
     });
   });
 
-  // The original diverging blue/orange w ramp, so a pre-fr-d47 scene (or a
-  // fresh one) renders exactly as before this option existed.
+  // wBlueOrange is the default 4D color mode, so a scene with no stored
+  // fourDColor field (or a fresh one) renders the diverging blue/orange ramp
+  // either way.
   it("defaults to the wBlueOrange 4D color mode", () => {
     expect(initialState(true).fourDColor).toBe(DEFAULT_FOUR_D_COLOR);
   });
 
-  // Off, so a pre-fr-3e0 scene (or a fresh one) renders the 4D projection
-  // exactly as before this option existed.
+  // Off is the default 4D depth-fade, so a scene with no stored
+  // fourDDepthFade field (or a fresh one) renders the 4D projection without
+  // it either way.
   it("defaults the 4D camera-depth fade to off", () => {
     expect(initialState(true).fourDDepthFade).toBe(false);
   });

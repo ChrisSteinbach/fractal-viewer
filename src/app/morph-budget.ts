@@ -3,12 +3,12 @@
  * system morph's INTERMEDIATE generation requests should ask for, sized so
  * one generation fits in roughly one animation frame on THIS device.
  *
- * The problem being solved: a morph intermediate used to run at a fixed
- * `min(numPoints, MORPH_MAX_POINTS)` cap, but a 400k-point generation costs
- * ~35–190 ms depending on the system (measured mid-morph across random
- * pairs, desktop) — so the cloud updated at 5–15 Hz against a 60 Hz render
- * loop, and the morph visibly stuttered; weaker devices were worse at any
- * fixed cap. The generator's latest-wins slot already keeps the morph
+ * The problem being solved: a fixed `min(numPoints, MORPH_MAX_POINTS)` cap on
+ * every morph intermediate doesn't fit every device — a 400k-point
+ * generation costs ~35–190 ms depending on the system (measured mid-morph
+ * across random pairs, desktop), so a fixed cap would update the cloud at
+ * 5–15 Hz against a 60 Hz render loop and stutter visibly, worse on weaker
+ * devices. The generator's latest-wins slot already keeps the morph
  * CORRECT when generation outruns the frame rate — this module is what makes
  * it SMOOTH, by asking for however many points this device can actually
  * deliver per frame.

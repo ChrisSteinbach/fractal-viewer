@@ -560,9 +560,8 @@ function main(): void {
     const next = nextCollectionScene();
     // Nothing left to play: just report it. The stop belongs to
     // DriftPolicy.advance, AFTER this leg unwinds — issued from in here it
-    // would be swallowed by the policy's own-leg guard, which is exactly
-    // how an emptied collection's show used to keep running forever
-    // (fr-4otp).
+    // would be swallowed by the policy's own-leg guard, letting an emptied
+    // collection's show keep running forever (fr-4otp).
     if (!next) return false;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
@@ -816,8 +815,8 @@ function main(): void {
     };
   }
 
-  // Land a finished generation on the scene — everything that used to run
-  // synchronously inside regenerate() after the chaos game (fr-5kx). Runs on
+  // Land a finished generation on the scene — everything that happens once
+  // the chaos game result is in hand (fr-5kx). Runs on
   // the worker's reply, or inline for the boot/fallback synchronous paths, so
   // every step keys off the RESULT (and the request that produced it), never
   // off "whatever the document looks like now" — except where reading live
@@ -1844,7 +1843,7 @@ function main(): void {
    * the same applyDecodedSnapshot-then-applyCameraPose shape as
    * {@link loadEncodedScene}. A `replaced` step with no captured pose
    * (defensive — the app always supplies one via the EditSession `pose` dep)
-   * falls back to auto-fitting the restored attractor, the pre-fr-uf3 behavior.
+   * falls back to auto-fitting the restored attractor.
    */
   function restoreSnapshot(
     snapshot: string,
@@ -1912,7 +1911,7 @@ function main(): void {
    * "replace" undo checkpoint (making the load undoable and arming the
    * debounced save) via `beginEdit("replace")` before applying, and restores
    * the framing: the pose saved with the scene when there is one (fr-1k4),
-   * an auto-fit for pose-less pre-fr-1k4 entries. A corrupt entry (decode
+   * an auto-fit for entries with no stored pose. A corrupt entry (decode
    * returns null — can't happen for our own encodeScene output, but the
    * collection is untrusted localStorage) is ignored rather than blanking
    * the current scene; the boolean return says whether the load actually
@@ -2559,14 +2558,13 @@ function main(): void {
   // which need it current, not defaulted to `false`.
   cloudGenerator.generateSync(cloudParams(false, false));
   // Restore the framing the restored scene was last seen with (fr-1k4): a
-  // reopened PWA / reloaded tab used to silently reset to the default boot
-  // camera, leaving the cloud off-centre and the orbit pivoting around empty
-  // space. Any pose-less boot — a pre-fr-1k4 save or a genuinely fresh visit
-  // — auto-frames the attractor instead, instantly, not the preset-load
-  // glide: a boot is a cut, not a transition. The fresh visit used to keep
-  // the default boot camera (fr-3xfk), whose radius shows the boot system at
-  // roughly a quarter of the viewport height — the fit keeps that camera's
-  // viewing ANGLE (theta/phi) and only dollies in to frame.
+  // reopened PWA / reloaded tab with a saved camera pose reapplies it
+  // instead, so the cloud stays centred and the orbit pivots around it. Any
+  // pose-less boot — an older save with no stored pose, or a genuinely fresh
+  // visit — auto-frames the attractor instead, instantly, not the
+  // preset-load glide: a boot is a cut, not a transition. The fit keeps the
+  // default boot camera's viewing ANGLE (theta/phi) and only dollies in to
+  // frame (fr-3xfk).
   if (saved?.camera) {
     applyCameraPose(saved.camera);
   } else {

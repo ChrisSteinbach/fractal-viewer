@@ -6,12 +6,11 @@
  * regenerates once, reflecting the latest state, and every intermediate
  * request within that frame is dropped.
  *
- * Originally this was the only thing standing between a drag and a whole
- * synchronous O(numPoints) chaos game per input event. Generation now runs
- * in a Web Worker (fr-5kx; see `cloud-generator.ts`), so per-frame this
- * bounds request-building and postMessage traffic — and in the generator's
- * synchronous fallback mode (worker failed to load or crashed) it is once
- * again all that stops a drag from running a full generation per event.
+ * Generation runs in a Web Worker (fr-5kx; see `cloud-generator.ts`), so
+ * per-frame this bounds request-building and postMessage traffic — and in
+ * the generator's synchronous fallback mode (worker failed to load or
+ * crashed) it is all that stops a drag from running a full, synchronous
+ * O(numPoints) chaos game per input event.
  *
  * Deliberately tiny and dependency-injected (`raf`/`caf`) so the coalescing
  * policy is unit-tested without a browser — the same injected-scheduler

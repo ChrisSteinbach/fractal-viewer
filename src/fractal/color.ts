@@ -351,7 +351,7 @@ export function buildColors(
       // per call (not per point) and the null-check hoisted out of the loop
       // — two branch-free loop variants, mirroring how the function already
       // keeps every other mode's loop branch-free. The `paletteLUT === null`
-      // ("legacy") loop is byte-identical to the pre-fr-3b6 code.
+      // ("legacy") loop is the built-in ramp.
       const paletteLUT = buildPaletteLUT(rampPalette);
       if (paletteLUT === null) {
         for (let i = 0; i < count; i++) {
@@ -404,8 +404,8 @@ export function buildColors(
       // XYZ → RGB. Gamma is applied to each normalized coordinate BEFORE the
       // compressed-range scale/offset, exactly like the height/radius ramps.
       // Two loop variants hoisted like the height/radius cases above: the
-      // `positionAxisColors === undefined` (legacy) loop is byte-identical to
-      // the pre-fr-8k7 code; custom axis colors take the shared
+      // `positionAxisColors === undefined` (legacy) loop is the identity
+      // XYZ→RGB mapping; custom axis colors take the shared
       // writePositionColor blend instead.
       if (positionAxisColors === undefined) {
         for (let i = 0; i < count; i++) {
@@ -610,7 +610,7 @@ export function buildColors4(
   // radius: two passes — distances (tracking min/max) first, then colors —
   // with the same degenerate-range `|| 1` guard as buildColors, and the same
   // hoisted-LUT two-loop-variant shape as its radius branch (the
-  // `paletteLUT === null` loop is byte-identical to the pre-fr-6ue code).
+  // `paletteLUT === null` loop is the built-in ramp).
   const dist = new Float32Array(count);
   let minD = Infinity;
   let maxD = -Infinity;

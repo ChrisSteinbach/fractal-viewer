@@ -47,8 +47,8 @@ export interface HistoryEntry {
    * encoded string stays camera-less so `checkpoint`'s `===` dedup survives
    * camera drift (see `persist.ts`'s `SceneSnapshot.camera` doc). Optional
    * because a caller may push a step with no pose (tests, or a future
-   * non-camera caller); a `replaced` step with no pose falls back to the
-   * pre-fr-uf3 auto-fit. Ignored entirely for non-`replaced` (tweak) steps,
+   * non-camera caller); a `replaced` step with no pose falls back to
+   * auto-fitting the restored attractor. Ignored entirely for non-`replaced` (tweak) steps,
    * which leave the live camera alone. */
   pose?: CameraPose;
 }
