@@ -451,9 +451,27 @@ export class FractalScene {
   private readonly voxelMaterial: THREE.ShaderMaterial;
   private readonly voxelQuad: FullScreenQuad;
 
+  /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
+  private viewportWidth: number;
+  private viewportHeight: number;
+
+  /**
+   * Horizontal strip (CSS px) on the right edge covered by the control-panel
+   * overlay (fr-936q). While non-zero, {@link syncProjection} designs the
+   * projection for the UNCOVERED region — the camera's `aspect` (which the
+   * fit math in orbit.ts/camera-tween.ts reads) describes that visible
+   * region, and a `setViewOffset` extension keeps rendering the full canvas
+   * so the strip under the panel still shows scene rather than a void. World
+   * center then projects to the visible region's center, and every auto-fit
+   * frames the attractor clear of the panel.
+   */
+  private rightInsetPx = 0;
+
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
+    this.viewportWidth = width;
+    this.viewportHeight = height;
 
     this.scene = new THREE.Scene();
     this.darkBackground = gradientBackground(
@@ -1243,9 +1261,42 @@ export class FractalScene {
     u.uFadeFar.value = far;
   }
 
-  resize(width: number, height: number): void {
-    this.camera.aspect = width / height;
+  /**
+   * Reserve `px` of the right edge for the panel overlay (fr-936q) — see
+   * {@link rightInsetPx}. Values are clamped so at least half the viewport
+   * stays visible; 0 restores the plain full-canvas projection.
+   */
+  setRightInset(px: number): void {
+    const clamped = Math.max(0, Math.min(px, this.viewportWidth * 0.5));
+    if (clamped === this.rightInsetPx) return;
+    this.rightInsetPx = clamped;
+    this.syncProjection();
+  }
+
+  /**
+   * Point the projection at the visible (non-panel) region: `aspect` is the
+   * visible region's, and the view offset extends the render across the full
+   * canvas (a sub-view wider than the "full" image is exactly how Three.js
+   * expresses that). With no inset this is the ordinary full-canvas
+   * projection.
+   */
+  private syncProjection(): void {
+    const width = this.viewportWidth;
+    const height = this.viewportHeight;
+    const visible = width - this.rightInsetPx;
+    this.camera.aspect = visible / height;
+    if (this.rightInsetPx > 0) {
+      this.camera.setViewOffset(visible, height, 0, 0, width, height);
+    } else {
+      this.camera.clearViewOffset();
+    }
     this.camera.updateProjectionMatrix();
+  }
+
+  resize(width: number, height: number): void {
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+    this.syncProjection();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -1291,8 +1342,30 @@ export class FractalScene {
    * already be gone). Works for every render style since each paints the canvas.
    */
   captureFrame(): string {
-    this.render();
-    return this.renderer.domElement.toDataURL("image/png");
+    return this.withCenteredProjection(() => {
+      this.render();
+      return this.renderer.domElement.toDataURL("image/png");
+    });
+  }
+
+  /**
+   * Run a synchronous render-and-read with the panel inset lifted (fr-936q):
+   * exports and thumbnails should compose the fractal centered in the full
+   * frame, not shifted for an overlay the image doesn't contain. Restores
+   * the inset projection afterwards; the next live frame re-renders with it,
+   * so nothing off-center ever reaches the screen.
+   */
+  private withCenteredProjection<T>(readback: () => T): T {
+    const inset = this.rightInsetPx;
+    if (inset === 0) return readback();
+    this.rightInsetPx = 0;
+    this.syncProjection();
+    try {
+      return readback();
+    } finally {
+      this.rightInsetPx = inset;
+      this.syncProjection();
+    }
   }
 
   /**
@@ -1323,9 +1396,11 @@ export class FractalScene {
         ? thumbnailFrom(this.flameCanvas, maxDim)
         : "";
     }
-    if (mode === "solid") this.renderSolid();
-    else this.render();
-    return thumbnailFrom(this.renderer.domElement, maxDim);
+    return this.withCenteredProjection(() => {
+      if (mode === "solid") this.renderSolid();
+      else this.render();
+      return thumbnailFrom(this.renderer.domElement, maxDim);
+    });
   }
 
   /**
@@ -1486,8 +1561,10 @@ export class FractalScene {
    * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`).
    */
   captureSolidFrame(): string {
-    this.renderSolid();
-    return this.renderer.domElement.toDataURL("image/png");
+    return this.withCenteredProjection(() => {
+      this.renderSolid();
+      return this.renderer.domElement.toDataURL("image/png");
+    });
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */

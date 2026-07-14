@@ -350,6 +350,22 @@ function main(): void {
   // early), which the dt clamp in animate() absorbs on exit.
   let lastMotionTickMs = performance.now();
 
+  // fr-936q: on desktop the 300px control panel overlays the canvas's right
+  // edge, so the projection is aimed at the UNCOVERED region instead
+  // (scene.setRightInset) — every auto-fit (preset glide, Surprise Me, morph
+  // chase) then frames the attractor clear of the panel rather than half
+  // under it. The target is re-derived each frame in animate() (panel state,
+  // breakpoint, and resizes all fold into one comparison) and eased so a
+  // panel toggle glides rather than snaps; reduced motion snaps. Measured
+  // once: the panel's width is fixed CSS; remeasuring per frame would force
+  // layout.
+  const panelWidthPx = document.getElementById("panel")?.offsetWidth ?? 300;
+  const panelInsetTarget = (): number =>
+    state.panelOpen && window.innerWidth > MOBILE_BREAKPOINT ? panelWidthPx : 0;
+  let sceneRightInset = panelInsetTarget();
+  let lastInsetTickMs = performance.now();
+  scene.setRightInset(sceneRightInset);
+
   // The "Watch it build" replay (fr-1zb): reveals the displayed cloud in
   // chaos-game generation order — the buffers arrive in exactly the order
   // the orbit plotted them — so the app can SHOW what the About dialog
@@ -2472,6 +2488,22 @@ function main(): void {
     requestAnimationFrame(animate);
     cameraTween.advance();
     const now = performance.now();
+    // Ease the projection toward the panel-aware inset (fr-936q). Skipped
+    // while a flame render is showing — its view is frozen by contract, and
+    // the projection must not drift under the baked image; the ease resumes
+    // (and catches up) on the way back to points/solid. dt-aware like the
+    // motion tick below, so a background-tab catch-up frame can't snap it.
+    const insetTarget = panelInsetTarget();
+    if (sceneRightInset !== insetTarget && state.renderMode !== "flame") {
+      const dtInset = Math.min((now - lastInsetTickMs) / 1000, 0.1);
+      sceneRightInset =
+        prefersReducedMotion() || Math.abs(insetTarget - sceneRightInset) < 0.5
+          ? insetTarget
+          : sceneRightInset +
+            (insetTarget - sceneRightInset) * (1 - Math.exp(-10 * dtInset));
+      scene.setRightInset(sceneRightInset);
+    }
+    lastInsetTickMs = now;
     // The replace-load morph (fr-a04l): while one is in flight, send this
     // frame's interpolated system as a generation request — the same
     // once-per-frame poll pattern as cameraTween/buildReplay. Deliberately
