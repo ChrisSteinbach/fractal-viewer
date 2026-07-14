@@ -1261,7 +1261,12 @@ summary.editor-group-title {
 
 /* ── Toast (fr-cai) ───────────────────────────────────────────────────────────
    Transient bottom-center confirmation for "Saved" / "Link copied". Sits above
-   everything, briefly, then hides. */
+   everything, briefly, then hides. Deliberately NOT `display: flex` (fr-ifts):
+   `.hidden`'s `display: none` (above) and this rule have equal selector
+   specificity, so with both classes on the element the one declared LATER in
+   this file wins — `.toast` must never set `display` itself, or it would
+   permanently out-rank `.hidden` and the toast could never actually hide. The
+   optional action button below is laid out with plain inline flow instead. */
 .toast {
   position: fixed;
   bottom: calc(26px + env(safe-area-inset-bottom));
@@ -1281,6 +1286,37 @@ summary.editor-group-title {
   pointer-events: none;
   z-index: 300;
   animation: toast-in 0.18s ease;
+}
+
+/* The optional call-to-action inside a toast (e.g. "Undo" after a delete,
+   fr-ifts): an inline-block sibling of the message text, so it sits on the
+   same line without the parent needing `display: flex` (see the note above).
+   The toast itself stays click-through (`pointer-events: none`); this button
+   opts back in — it's the only interactive part of a toast. */
+.toast-action {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 10px;
+  vertical-align: middle;
+  border: 1px solid rgb(91 157 255 / 40%);
+  border-radius: 999px;
+  background: rgb(91 157 255 / 16%);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease;
+}
+
+.toast-action:hover,
+.toast-action:focus-visible {
+  background: rgb(91 157 255 / 28%);
+}
+
+.toast-action:active {
+  transform: translateY(1px);
 }
 
 @keyframes toast-in {
