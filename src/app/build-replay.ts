@@ -15,7 +15,7 @@
  * points of the buffer to draw and which caption to show, and call {@link
  * BuildReplay.cancel} if the user backs out early.
  *
- * The reveal runs through three timed phases before settling into a fourth:
+ * The reveal runs through four timed phases before settling into a fifth:
  *
  *  1. `"hop"` — the first {@link HOP_POINTS} points are revealed one at a
  *     time (one every `HOP_MS / HOP_POINTS` ms) so a single point visibly
@@ -34,7 +34,24 @@
  *     bounded, fixed duration. The phase is reported as `"emerge"` once the
  *     reveal passes {@link EMERGE_FRACTION} of the total (roughly the point
  *     the attractor's shape becomes recognizable), `"accrete"` before that.
- *  3. `"done"` — the full cloud is revealed; the caption lingers for {@link
+ *  3. `"spotlight"` — the first two phases teach the IFS's first insight:
+ *     random hops converge on one deterministic shape. With the full cloud
+ *     now revealed, this phase teaches the second: the attractor is a union
+ *     of shrunken copies of itself, one per base map (A = ⋃ fᵢ(A)). The
+ *     reveal walks the system's base maps one at a time via the frame's
+ *     `spotlight` index, spending {@link SPOTLIGHT_TOUR_MS} / mapCount ms
+ *     per step, clamped to [{@link SPOTLIGHT_STEP_MIN_MS}, {@link
+ *     SPOTLIGHT_STEP_MAX_MS}] — small systems hit the ceiling and come in
+ *     under the tour budget; big ones hold the floor per step (running a
+ *     little over budget) rather than strobing. The wiring in main.ts (not
+ *     this module — this module owns timing/phase only, no drawing) dims
+ *     every other map's points (by {@link SPOTLIGHT_DIM}) and emphasizes
+ *     the spotlighted map's guide box, so each map's landings are seen to
+ *     trace a miniature of the whole. Skipped entirely for single-map
+ *     systems, where "copy 1 of 1" teaches nothing, and for systems above
+ *     {@link SPOTLIGHT_MAX_MAPS} maps, where each copy is too small to
+ *     read and the phase would teach nothing either.
+ *  4. `"done"` — the full cloud is revealed; the caption lingers for {@link
  *     DONE_LINGER_MS} ms so the viewer has a moment to read it before the
  *     replay auto-completes.
  *
@@ -45,7 +62,7 @@
 import { clamp } from "../fractal/vec";
 
 /** Which stage of the replay's story is currently playing. */
-export type ReplayPhase = "hop" | "accrete" | "emerge" | "done";
+export type ReplayPhase = "hop" | "accrete" | "emerge" | "spotlight" | "done";
 
 /** What to draw and say for the current instant of an active replay. */
 export interface ReplayFrame {
@@ -55,6 +72,14 @@ export interface ReplayFrame {
    * cursor, or null once the reveal completes. */
   cursor: number | null;
   phase: ReplayPhase;
+  /** Base-map index currently in the spotlight, or null in every other
+   * phase. */
+  spotlight: number | null;
+  /** Narration line for this instant: {@link REPLAY_CAPTIONS}[phase] for the
+   * four static phases; composed per step during `"spotlight"`, whose line
+   * names the map and the map count, so a static per-phase table no longer
+   * covers the whole story. */
+  caption: string;
 }
 
 /** Points revealed one at a time during the opening "hop" phase. */
@@ -67,10 +92,33 @@ export const ACCRETE_MS = 9000;
 export const DONE_LINGER_MS = 2500;
 /** Fraction of the total count at which the caption flips to "emerge". */
 export const EMERGE_FRACTION = 0.02;
+/** Target duration of the whole spotlight tour, ms. The per-step time is
+ * this budget divided by the map count, clamped to
+ * [{@link SPOTLIGHT_STEP_MIN_MS}, {@link SPOTLIGHT_STEP_MAX_MS}]. */
+export const SPOTLIGHT_TOUR_MS = 13000;
+/** Per-step ceiling, ms: a small system's 2–4 steps use this ceiling and
+ * come in UNDER the tour budget rather than stretching to fill it. */
+export const SPOTLIGHT_STEP_MAX_MS = 2600;
+/** Per-step floor, ms: a big tour stays legible per step rather than
+ * strobing through maps to stay on budget. */
+export const SPOTLIGHT_STEP_MIN_MS = 900;
+/** Map count above which the tour is skipped entirely: each map's copy is
+ * visually illegible at that granularity, so the phase would teach nothing —
+ * the same rationale as the single-map skip. */
+export const SPOTLIGHT_MAX_MAPS = 24;
+/** Factor the wiring dims every OTHER map's point color by while one map
+ * holds the spotlight. Lives here, not main.ts, because it's part of the
+ * replay showcase's vocabulary, like the captions. */
+export const SPOTLIGHT_DIM = 0.12;
 
-/** Narration shown while each phase plays (main.ts pushes these to the
- * caption overlay). */
-export const REPLAY_CAPTIONS: Record<ReplayPhase, string> = {
+/** Narration shown while each of the four static phases plays (main.ts
+ * used to push these straight to the caption overlay; since the spotlight
+ * phase's line is per-map, callers now read {@link ReplayFrame.caption}
+ * instead, which falls back to this table for every other phase). */
+export const REPLAY_CAPTIONS: Record<
+  Exclude<ReplayPhase, "spotlight">,
+  string
+> = {
   hop: "One point hops between randomly chosen transforms…",
   accrete: "…every landing becomes a dot…",
   emerge: "…and the hops converge onto the attractor",
@@ -78,8 +126,8 @@ export const REPLAY_CAPTIONS: Record<ReplayPhase, string> = {
 };
 
 /** An in-flight replay: the clock reading it started at, plus the timing
- * breakdown derived once from `total` at start() time so frame() is a pure
- * read. */
+ * breakdown derived once from `total`/`mapCount` at start() time so frame()
+ * is a pure read. */
 interface Replay {
   startMs: number;
   total: number;
@@ -87,6 +135,9 @@ interface Replay {
   hopMs: number;
   accreteMs: number;
   emergeAt: number;
+  spotlightSteps: number;
+  spotlightStepMs: number;
+  spotlightMs: number;
 }
 
 /**
@@ -112,10 +163,13 @@ export class BuildReplay {
   /**
    * Begin a replay over a cloud of `total` points, timed from `now()` at the
    * moment of this call. `total < 1` or non-finite leaves the replay idle
-   * (there is nothing to reveal). Restarts from the beginning if a replay is
-   * already active.
+   * (there is nothing to reveal). `mapCount` is the number of base maps in
+   * the displayed system; a degenerate/unknown count (non-finite or < 2) or
+   * an illegibly large one (> {@link SPOTLIGHT_MAX_MAPS}) simply skips the
+   * spotlight phase, mirroring how `total < 1` skips the whole replay.
+   * Restarts from the beginning if a replay is already active.
    */
-  start(total: number): void {
+  start(total: number, mapCount: number): void {
     if (!Number.isFinite(total) || total < 1) {
       this.replay = null;
       return;
@@ -125,6 +179,24 @@ export class BuildReplay {
     // No accretion ramp when the hop phase alone already revealed everything.
     const accreteMs = total > hopCount ? ACCRETE_MS : 0;
     const emergeAt = Math.max(hopCount + 1, Math.ceil(total * EMERGE_FRACTION));
+    const spotlightSteps =
+      Number.isFinite(mapCount) &&
+      mapCount >= 2 &&
+      mapCount <= SPOTLIGHT_MAX_MAPS
+        ? Math.floor(mapCount)
+        : 0;
+    // Budgeted per-step time: the whole tour targets SPOTLIGHT_TOUR_MS, but
+    // each step is clamped so small systems don't stretch and big ones
+    // don't strobe (see the module doc).
+    const spotlightStepMs =
+      spotlightSteps > 0
+        ? clamp(
+            SPOTLIGHT_TOUR_MS / spotlightSteps,
+            SPOTLIGHT_STEP_MIN_MS,
+            SPOTLIGHT_STEP_MAX_MS,
+          )
+        : 0;
+    const spotlightMs = spotlightSteps * spotlightStepMs;
     this.replay = {
       startMs: this.now(),
       total,
@@ -132,6 +204,9 @@ export class BuildReplay {
       hopMs,
       accreteMs,
       emergeAt,
+      spotlightSteps,
+      spotlightStepMs,
+      spotlightMs,
     };
   }
 
@@ -146,8 +221,17 @@ export class BuildReplay {
    */
   frame(): ReplayFrame | null {
     if (!this.replay) return null;
-    const { startMs, total, hopCount, hopMs, accreteMs, emergeAt } =
-      this.replay;
+    const {
+      startMs,
+      total,
+      hopCount,
+      hopMs,
+      accreteMs,
+      emergeAt,
+      spotlightSteps,
+      spotlightStepMs,
+      spotlightMs,
+    } = this.replay;
     const elapsed = this.now() - startMs;
 
     if (elapsed < hopMs) {
@@ -157,7 +241,13 @@ export class BuildReplay {
         hopCount,
         1 + Math.floor(elapsed / (HOP_MS / HOP_POINTS)),
       );
-      return { revealed, cursor: revealed - 1, phase: "hop" };
+      return {
+        revealed,
+        cursor: revealed - 1,
+        phase: "hop",
+        spotlight: null,
+        caption: REPLAY_CAPTIONS.hop,
+      };
     }
 
     if (elapsed < hopMs + accreteMs) {
@@ -175,12 +265,42 @@ export class BuildReplay {
         hopCount,
         total,
       );
-      const phase: ReplayPhase = revealed >= emergeAt ? "emerge" : "accrete";
-      return { revealed, cursor: revealed - 1, phase };
+      const phase: "accrete" | "emerge" =
+        revealed >= emergeAt ? "emerge" : "accrete";
+      return {
+        revealed,
+        cursor: revealed - 1,
+        phase,
+        spotlight: null,
+        caption: REPLAY_CAPTIONS[phase],
+      };
     }
 
-    if (elapsed < hopMs + accreteMs + DONE_LINGER_MS) {
-      return { revealed: total, cursor: null, phase: "done" };
+    if (elapsed < hopMs + accreteMs + spotlightMs) {
+      // One base map at a time gets the spotlight (see the module doc for
+      // the rationale). The whole cloud stays revealed underneath — main.ts
+      // dims the OTHER maps' colors rather than hiding points.
+      const step = Math.min(
+        spotlightSteps - 1,
+        Math.floor((elapsed - hopMs - accreteMs) / spotlightStepMs),
+      );
+      return {
+        revealed: total,
+        cursor: null,
+        phase: "spotlight",
+        spotlight: step,
+        caption: `Map ${step + 1} of ${spotlightSteps}: its landings alone — a shrunken copy of the whole`,
+      };
+    }
+
+    if (elapsed < hopMs + accreteMs + spotlightMs + DONE_LINGER_MS) {
+      return {
+        revealed: total,
+        cursor: null,
+        phase: "done",
+        spotlight: null,
+        caption: REPLAY_CAPTIONS.done,
+      };
     }
 
     this.replay = null;

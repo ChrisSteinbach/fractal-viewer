@@ -644,6 +644,48 @@ export function buildColors4(
 }
 
 /**
+ * The "Watch it build" replay's spotlight-phase dimmer (fr-01kf): given the
+ * fully revealed cloud's by-transform colors ({@link buildColors}'s
+ * `"transform"` mode or {@link buildColors4}'s), dim every point EXCEPT those
+ * produced by transform `keep`, isolating that one map's landings. What that
+ * spotlight traces out is a shrunken copy of the whole attractor — the
+ * self-similarity identity A = ⋃ fᵢ(A) that the chaos game is built on — so
+ * cycling `keep` through each transform is a visual proof of the identity,
+ * one map at a time.
+ *
+ * Works over either {@link buildColors}'s or {@link buildColors4}'s output —
+ * both are a flat `count * 3` RGB buffer keyed by the same per-point `transformIndices`
+ * the chaos-game results carry, so this one function serves both the 3D and
+ * 4D transform-mode replay. Pure: returns a new buffer, never mutates
+ * `colors` or `transformIndices`. A `keep` value absent from
+ * `transformIndices` (e.g. a stale index after an edit) simply dims every
+ * point — there's no special-case fallback because there's no "wrong" input
+ * to fall back from.
+ */
+export function dimColorsExcept(
+  colors: Float32Array,
+  transformIndices: Uint8Array,
+  count: number,
+  keep: number,
+  dim: number,
+): Float32Array {
+  const out = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const o = i * 3;
+    if (transformIndices[i] === keep) {
+      out[o] = colors[o];
+      out[o + 1] = colors[o + 1];
+      out[o + 2] = colors[o + 2];
+    } else {
+      out[o] = colors[o] * dim;
+      out[o + 1] = colors[o + 1] * dim;
+      out[o + 2] = colors[o + 2] * dim;
+    }
+  }
+  return out;
+}
+
+/**
  * How the 4D flame and solid renders color each plotted point/voxel (fr-5b3,
  * fr-4wd — moved here from `flame-4d.ts` so both accumulators, and neither's
  * name, own it):

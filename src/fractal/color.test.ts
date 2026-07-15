@@ -6,6 +6,7 @@ import {
   buildColors4,
   colorModeUsesGamma,
   colorModeUsesRampPalette,
+  dimColorsExcept,
   hslToRgb,
   isLegacyPositionAxisColors,
   transformColors,
@@ -856,5 +857,68 @@ describe("wRampColor", () => {
       expect(mag).toBeGreaterThan(prev);
       prev = mag;
     }
+  });
+});
+
+describe("dimColorsExcept", () => {
+  // Colors below are all dyadic (power-of-two) fractions, and `dim` is 0.25 —
+  // multiplying a dyadic float32 by a power of two is exact, so `toBe` can
+  // assert bit-exact equality without float32 rounding noise.
+  it("passes the kept transform's channels through bit-exact", () => {
+    const colors = new Float32Array([
+      0.5, 1.0, 0.25, 0.125, 0.25, 0.375, 0.75, 0.625, 0.375, 0.5, 0.5, 0.5,
+    ]);
+    const transformIndices = new Uint8Array([0, 1, 0, 2]);
+    const out = dimColorsExcept(colors, transformIndices, 4, 0, 0.25);
+    expect(out[0]).toBe(0.5);
+    expect(out[1]).toBe(1.0);
+    expect(out[2]).toBe(0.25);
+    expect(out[6]).toBe(0.75);
+    expect(out[7]).toBe(0.625);
+    expect(out[8]).toBe(0.375);
+  });
+
+  it("scales every other point's channels by exactly dim", () => {
+    const colors = new Float32Array([
+      0.5, 1.0, 0.25, 0.125, 0.25, 0.375, 0.75, 0.625, 0.375, 0.5, 0.5, 0.5,
+    ]);
+    const transformIndices = new Uint8Array([0, 1, 0, 2]);
+    const out = dimColorsExcept(colors, transformIndices, 4, 0, 0.25);
+    expect(out[3]).toBe(0.03125);
+    expect(out[4]).toBe(0.0625);
+    expect(out[5]).toBe(0.09375);
+    expect(out[9]).toBe(0.125);
+    expect(out[10]).toBe(0.125);
+    expect(out[11]).toBe(0.125);
+  });
+
+  it("does not mutate either input array", () => {
+    const colors = new Float32Array([0.5, 1.0, 0.25, 0.1, 0.2, 0.3]);
+    const colorsCopy = colors.slice();
+    const transformIndices = new Uint8Array([0, 1]);
+    const indicesCopy = transformIndices.slice();
+    dimColorsExcept(colors, transformIndices, 2, 0, 0.25);
+    expect(colors).toEqual(colorsCopy);
+    expect(transformIndices).toEqual(indicesCopy);
+  });
+
+  it("returns a new allocation of length count * 3", () => {
+    const colors = new Float32Array([0.5, 1.0, 0.25, 0.1, 0.2, 0.3]);
+    const transformIndices = new Uint8Array([0, 1]);
+    const out = dimColorsExcept(colors, transformIndices, 2, 0, 0.25);
+    expect(out).not.toBe(colors);
+    expect(out).toHaveLength(6);
+  });
+
+  it("dims every point when keep matches no transform index", () => {
+    const colors = new Float32Array([0.5, 1.0, 0.25, 0.125, 0.25, 0.375]);
+    const transformIndices = new Uint8Array([0, 1]);
+    const out = dimColorsExcept(colors, transformIndices, 2, 7, 0.25);
+    expect(out[0]).toBe(0.125);
+    expect(out[1]).toBe(0.25);
+    expect(out[2]).toBe(0.0625);
+    expect(out[3]).toBe(0.03125);
+    expect(out[4]).toBe(0.0625);
+    expect(out[5]).toBe(0.09375);
   });
 });
