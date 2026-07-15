@@ -9,6 +9,7 @@ import {
   MAX_NUM_POINTS,
   MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
+  setAdaptiveResolution,
   setAutoUpdate,
   setColorGamma,
   setColorMode,
@@ -413,6 +414,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     persisted: false,
     read: (s) => s.autoUpdate,
     apply: (s, checked) => setAutoUpdate(s, checked),
+  },
+  {
+    // The adaptive-resolution governor's opt-out (fr-4lyt): like autoUpdate,
+    // a session-only preference describing THIS device's headroom, not the
+    // scene, so it never enters the encoded document. No effect: main.ts's
+    // animate loop reads state.adaptiveResolution directly every frame
+    // (governResolution) — there is nothing to forward or re-render here.
+    kind: "checkbox",
+    id: "adaptiveResolutionCheckbox",
+    persisted: false,
+    read: (s) => s.adaptiveResolution,
+    apply: (s, checked) => setAdaptiveResolution(s, checked),
   },
   // ——— Symmetry (flat systems only: the 4D chaos game has no symmetry
   // parameter at all, and the section hides while non-flat) ———

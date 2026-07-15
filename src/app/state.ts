@@ -266,6 +266,14 @@ export interface AppState {
    * Session-only, like {@link autoUpdate}: never persisted.
    */
   morphDetail: MorphDetail;
+  /**
+   * Whether the adaptive-resolution governor (fr-4lyt) may trade render
+   * resolution for frame rate under sustained slow frames. Session-only,
+   * like {@link autoUpdate}: never persisted — it describes THIS device's
+   * headroom, not the scene, and a shared link must not carry one machine's
+   * compromise to another.
+   */
+  adaptiveResolution: boolean;
   panelOpen: boolean;
   /** Render-current-view settings; persists independent of {@link renderMode}. */
   flame: FlameParams;
@@ -791,6 +799,7 @@ export function initialState(panelOpen: boolean): AppState {
     renderStyle: "depthFade",
     autoUpdate: true,
     morphDetail: "adaptive",
+    adaptiveResolution: true,
     panelOpen,
     flame: {
       exposure: DEFAULT_FLAME_EXPOSURE,
@@ -998,6 +1007,13 @@ export function setMorphDetail(
   morphDetail: MorphDetail,
 ): AppState {
   return { ...state, morphDetail };
+}
+
+export function setAdaptiveResolution(
+  state: AppState,
+  adaptiveResolution: boolean,
+): AppState {
+  return { ...state, adaptiveResolution };
 }
 
 export function setPanelOpen(state: AppState, panelOpen: boolean): AppState {
