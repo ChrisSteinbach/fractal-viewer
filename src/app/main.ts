@@ -223,6 +223,19 @@ function flamePerfEnabled(): boolean {
  */
 const AUTO_ORBIT_RATE = 0.12;
 
+/**
+ * Ceiling for the SYNCHRONOUS boot generation (fr-t3gl). Boot generates
+ * inline so the first paint includes the cloud — but a persisted or shared
+ * scene can carry up to MAX_NUM_POINTS (5M), which would block first paint
+ * for seconds on weak hardware. Boot therefore runs at most this many points
+ * synchronously and immediately requests the full count through the worker;
+ * with the SAME seed, the chaos game makes the boot cloud a bit-exact prefix
+ * of the upgrade, so the extra points pour in without a reshuffle. 30K is
+ * plenty for the boot camera fit: the trimmed-quantile frameBounds
+ * (framing-bounds.ts) are statistically stable well below that.
+ */
+const BOOT_SYNC_MAX_POINTS = 30_000;
+
 function main(): void {
   const container = document.getElementById("container");
   if (!container) {
@@ -2690,7 +2703,12 @@ function main(): void {
   // the inline delivery sets `viewIs4D` for a possibly-restored non-flat
   // scene before the refreshGuides()/resetAutoOrbitView() reads just below,
   // which need it current, not defaulted to `false`.
-  cloudGenerator.generateSync(cloudParams(false, false));
+  // Capped (fr-t3gl): the sync path exists for first paint, not for the
+  // full density — see BOOT_SYNC_MAX_POINTS. bootParams is built ONCE so the
+  // async upgrade below reuses the same rolled seed.
+  const bootParams = cloudParams(false, false);
+  const bootCount = Math.min(bootParams.numPoints, BOOT_SYNC_MAX_POINTS);
+  cloudGenerator.generateSync({ ...bootParams, numPoints: bootCount });
   // Restore the framing the restored scene was last seen with (fr-1k4): a
   // reopened PWA / reloaded tab with a saved camera pose reapplies it
   // instead, so the cloud stays centred and the orbit pivots around it. Any
@@ -2714,6 +2732,16 @@ function main(): void {
   refreshUi();
   editSession.syncUi();
   ui.setCollectionCount(collection.size);
+  // The async upgrade to the document's real density (fr-t3gl): same request
+  // (same seed) at the full count, through the worker, now that the capped
+  // boot cloud has painted and the camera is framed. The boot cloud is this
+  // request's exact prefix, so the arrival only adds points; fit stays
+  // false — the framing above already stands. Superseded harmlessly by any
+  // immediate user edit (latest-wins), whose own request carries the full
+  // count anyway.
+  if (bootCount < bootParams.numPoints) {
+    cloudGenerator.request(bootParams);
+  }
 
   // Drift is unavailable under reduced motion — no motion means no drift
   // (fr-wavo): the toggle disables itself with an explanation rather than
