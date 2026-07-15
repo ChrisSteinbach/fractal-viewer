@@ -72,7 +72,7 @@ const BG_B = 14;
  * Render `system` to an opaque square RGBA thumbnail, `size`×`size` pixels —
  * a small scatter plot of its chaos game viewed from the fixed oblique angle
  * (see the module doc). Branches on the system's flatness exactly like
- * `random-system.ts`'s `scoreCandidate`: a flat system (`systemIsFlat` over
+ * `random-system.ts`'s `scoreSystem`: a flat system (`systemIsFlat` over
  * `system.transforms` — the final-transform lens's own flatness is not
  * consulted, mirroring that same branch) runs the 3D chaos game directly;
  * otherwise every map (and the lens, if any) is lifted through
