@@ -237,10 +237,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     stops toast. Pure, injected effects, tested.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
-    order (hop → accrete/emerge → done, with narration captions) — the buffer
-    IS chaos-game order, so the growing prefix faithfully replays the drawing.
-    Polled per frame by main.ts's animate loop; `scene.setDrawCount` /
-    `setReplayCursor` do the drawing (pure, tested, injected clock).
+    order (hop → accrete/emerge → spotlight → done, with narration captions)
+    — the buffer IS chaos-game order, so the growing prefix faithfully
+    replays the drawing. The spotlight tour (fr-01kf) walks the base maps
+    one at a time over the finished cloud — main.ts dims every other map's
+    points (`color.ts`'s `dimColorsExcept` over the result's
+    `transformIndices`, both 3D and 4D) and pins the guide-box emphasis
+    (`scene.setGuideHighlight`, which the hop phase also flashes per
+    landing) — so each map's landings read as a shrunken copy of the whole
+    (A = ⋃ fᵢ(A)); skipped for single-map systems. Polled per frame by
+    main.ts's animate loop; `scene.setDrawCount` / `setReplayCursor` do the
+    drawing (pure, tested, injected clock).
     Since fr-hpci, main.ts overlays a temporary showcase while it plays: color
     switches to By Transform (`colorMode`/`fourDColor`, skipped if already that
     mode), the guides are forced visible (boxes, grid, axes, 4D scaffold —

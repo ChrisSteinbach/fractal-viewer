@@ -5,6 +5,7 @@ import {
   buildColors,
   buildColors4,
   colorModeUsesRampPalette,
+  dimColorsExcept,
   fourDColorNeedsAttribute,
   W_SIDE_PALETTES,
 } from "../fractal/color";
@@ -82,7 +83,7 @@ import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
-import { BuildReplay, REPLAY_CAPTIONS } from "./build-replay";
+import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
 import {
   DriftShow,
@@ -418,6 +419,13 @@ function main(): void {
   // poll touches the DOM only when the phase actually flips — and doubles as
   // the "display is still dirty" flag after the replay goes idle on its own.
   let replayCaption: string | null = null;
+  // The map index whose spotlight colors are currently painted over the
+  // point buffer (fr-01kf), or null while the cloud wears its ordinary
+  // colors. Compared against the frame's `spotlight` each poll so the color
+  // re-bake runs once per step, not once per frame; endReplayDisplay reads
+  // it to know a repaint is owed even when the showcase's own color
+  // override never armed (the user's mode already was "transform").
+  let replaySpotlight: number | null = null;
   // Whether the panel was open the moment "Watch it build" closed it
   // (fr-vpka), so endReplayDisplay can restore it once the replay ends —
   // null while no replay's close is pending restoration. Set once, in
@@ -460,8 +468,15 @@ function main(): void {
   function endReplayDisplay(): void {
     scene.setDrawCount(null);
     scene.setReplayCursor(null);
+    scene.setGuideHighlight(null);
     ui.setReplayCaption(null);
     replayCaption = null;
+    // The spotlight phase paints dimmed colors straight over the point
+    // buffer (fr-01kf); if one was showing, a repaint is owed below even
+    // when the showcase's color override never armed (the user's own mode
+    // already was "transform", so `showcase.color` alone wouldn't re-bake).
+    const spotlightWasShowing = replaySpotlight !== null;
+    replaySpotlight = null;
     const count = viewIs4D ? fourDResult?.count : lastResult?.count;
     if (count !== undefined) ui.setPointCount(count);
     // Disarm the showcase overrides (fr-hpci): put the motion flag back and
@@ -475,7 +490,7 @@ function main(): void {
         else autoOrbitOn = showcase.motionWasOn;
       }
       refreshGuides();
-      if (showcase.color) {
+      if (showcase.color || spotlightWasShowing) {
         if (showcase.fourD) applyFourDColor();
         else recolor();
       }
@@ -1144,6 +1159,75 @@ function main(): void {
     } else {
       scene.setFourDColorSource({ sides: W_SIDE_PALETTES[mode] });
     }
+  }
+
+  // Paint the replay's spotlight step (fr-01kf): by-transform colors with
+  // every map EXCEPT `spotlight` dimmed to a ghost, so that one map's
+  // landings — a shrunken copy of the whole attractor — read alone. Bakes
+  // "transform" mode explicitly rather than through recolor()'s showcase
+  // fold: the fold is a no-op override when the user's own mode already is
+  // "transform", but the spotlight's dim must apply either way. `null`
+  // restores the showcase's ordinary colors (the fr-hpci refreshers, which
+  // are what the natural spotlight→done transition wears into the finale).
+  // Display-layer only, like everything else the replay touches: the baked
+  // buffer goes straight to the scene, never through AppState.
+  function applyReplaySpotlight(spotlight: number | null): void {
+    replaySpotlight = spotlight;
+    if (spotlight === null) {
+      if (viewIs4D) applyFourDColor();
+      else recolor();
+      return;
+    }
+    if (viewIs4D) {
+      if (!fourDResult) return;
+      scene.setFourDColorSource({
+        colors: dimColorsExcept(
+          buildColors4(
+            fourDResult,
+            state.transforms.length,
+            "transform",
+            resolvePalette(state.rampPaletteId, state.customPalette),
+          ),
+          fourDResult.transformIndices,
+          fourDResult.count,
+          spotlight,
+          SPOTLIGHT_DIM,
+        ),
+      });
+    } else {
+      if (!lastResult) return;
+      scene.setColors(
+        dimColorsExcept(
+          buildColors(
+            lastResult,
+            state.transforms,
+            "transform",
+            state.colorGamma,
+            resolvePalette(state.rampPaletteId, state.customPalette),
+            state.positionAxisColors,
+          ),
+          lastResult.transformIndices,
+          lastResult.count,
+          spotlight,
+          SPOTLIGHT_DIM,
+        ),
+      );
+    }
+  }
+
+  // The base map whose landing the replay's hop cursor is sitting on
+  // (fr-01kf), read off the displayed result's per-point transformIndices —
+  // base-map indexed on both paths (3D folds kaleidoscope copies back to
+  // their base map; 4D has no symmetry), exactly like by-transform coloring,
+  // so the index lines up with the guide boxes. Null when the buffer isn't
+  // there to ask (a replay can only have started over an arrived cloud, but
+  // the poll shares frames with landings — stay defensive, not clever).
+  function replayLandingMap(cursor: number | null): number | null {
+    if (cursor === null) return null;
+    const indices = viewIs4D
+      ? fourDResult?.transformIndices
+      : lastResult?.transformIndices;
+    return indices?.[cursor] ?? null;
   }
 
   // Auto-fit the camera to a freshly-generated attractor (fr-0b8): a
@@ -2334,7 +2418,9 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
       const count = viewIs4D ? fourDResult?.count : lastResult?.count;
-      buildReplay.start(count ?? 0);
+      // The map count sizes the spotlight tour (fr-01kf): one step per base
+      // transform, skipped entirely by BuildReplay for single-map systems.
+      buildReplay.start(count ?? 0, state.transforms.length);
       // Arm the showcase overrides (fr-hpci; see replayShowcase's doc): by-
       // transform colors, guides on, and the view's auto-motion running for
       // the duration of the replay, restored by endReplayDisplay. Only when
@@ -2957,10 +3043,24 @@ function main(): void {
       );
       scene.setReplayCursor(replayFrame.cursor);
       ui.setPointCount(replayFrame.revealed);
-      const caption = REPLAY_CAPTIONS[replayFrame.phase];
-      if (caption !== replayCaption) {
-        ui.setReplayCaption(caption);
-        replayCaption = caption;
+      // The spotlight tour (fr-01kf): re-bake the dimmed colors only when
+      // the spotlighted map changes (once per step, and once more for the
+      // null that restores the finale's full colors — never per frame).
+      if (replayFrame.spotlight !== replaySpotlight) {
+        applyReplaySpotlight(replayFrame.spotlight);
+      }
+      // Guide-box emphasis rides the story (fr-01kf): the hop phase flashes
+      // the box of the map the cursor point just landed in, the spotlight
+      // phase pins it on the spotlighted map; every other phase clears it.
+      // setGuideHighlight compares first, so the per-frame repeats are free.
+      scene.setGuideHighlight(
+        replayFrame.phase === "hop"
+          ? replayLandingMap(replayFrame.cursor)
+          : replayFrame.spotlight,
+      );
+      if (replayFrame.caption !== replayCaption) {
+        ui.setReplayCaption(replayFrame.caption);
+        replayCaption = replayFrame.caption;
       }
     } else if (replayCaption !== null) {
       endReplayDisplay();

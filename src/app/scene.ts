@@ -61,6 +61,17 @@ const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 // current chaos-game landing reads as THE point even over a dense cloud (or
 // against a translucent guide-box face).
 const REPLAY_CURSOR_SIZE = 0.14;
+// Guide-box wireframe/face opacity a box is built with (updateGuides'
+// unselected branch) and the "Watch it build" replay's spotlight/hop
+// emphasis on top of it (fr-01kf, see setGuideHighlight): HIGHLIGHT marks the
+// map currently landing points, DIMMED recedes every other map so the
+// highlighted one reads clearly.
+const GUIDE_LINE_OPACITY = 0.9;
+const GUIDE_FACE_OPACITY = 0.15;
+const GUIDE_HIGHLIGHT_LINE_OPACITY = 1.0;
+const GUIDE_HIGHLIGHT_FACE_OPACITY = 0.3;
+const GUIDE_DIMMED_LINE_OPACITY = 0.25;
+const GUIDE_DIMMED_FACE_OPACITY = 0.04;
 // 4D projection: per-point additive contribution and the soft w-slice's
 // Gaussian sigma (in signed normalized-w units; the slice slider spans [-1, 1]).
 // The intensity is pitched like GLOW_BASE_OPACITY but far lower: the projected
@@ -396,6 +407,9 @@ export class FractalScene {
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
   // actually changed (position/rotation/scale ride the Object3D's TRS instead).
   private guideShears: Vec3[] = [];
+  // The index setGuideHighlight last spotlighted, or null; compared against
+  // on every call so a replay's per-frame repeats stay free (fr-py7z).
+  private guideHighlight: number | null = null;
 
   private renderStyle: RenderStyle = "depthFade";
 
@@ -928,6 +942,10 @@ export class FractalScene {
     showGuides: boolean,
   ): void {
     this.renderNeeded = true;
+    // A rebuild disposes the cubes and constructs fresh ones at default
+    // opacity (fr-01kf): the stored index must not go on claiming a
+    // highlight is showing once the boxes it pointed at are gone.
+    this.guideHighlight = null;
     for (const cube of this.guideCubes) {
       this.scene.remove(cube);
       disposeTree(cube);
@@ -948,7 +966,7 @@ export class FractalScene {
         new THREE.LineBasicMaterial({
           color: tint,
           transparent: true,
-          opacity: selectedHere ? 1.0 : 0.9,
+          opacity: selectedHere ? 1.0 : GUIDE_LINE_OPACITY,
           fog: false,
         }),
       );
@@ -963,7 +981,7 @@ export class FractalScene {
           new THREE.MeshBasicMaterial({
             color: tint,
             transparent: true,
-            opacity: selectedHere ? 0.25 : 0.15,
+            opacity: selectedHere ? 0.25 : GUIDE_FACE_OPACITY,
             side: THREE.DoubleSide,
             fog: false,
           }),
@@ -984,6 +1002,41 @@ export class FractalScene {
       cube.visible = showGuides;
     }
     if (this.fourDScaffold) this.fourDScaffold.visible = showGuides;
+  }
+
+  /**
+   * Spotlight/dim the guide boxes for the "Watch it build" replay's
+   * spotlight/hop guide-box emphasis (fr-01kf): the hop phase flashes the
+   * box of the map the point just landed in, the spotlight phase pins it on
+   * the map whose landings are lit. `null` restores every box to its built
+   * default. Deliberate simplification: restoring ignores updateGuides's
+   * drag-selection tint, because no selection can coexist with a replay —
+   * the panel is closed while one plays, and any edit rebuilds the guides,
+   * which also cancels the replay upstream.
+   */
+  setGuideHighlight(index: number | null): void {
+    // Per-frame caller (the hop phase repeats the same index): skip the
+    // dirty mark when nothing changed (fr-py7z).
+    if (index === this.guideHighlight) return;
+    this.guideHighlight = index;
+    this.renderNeeded = true;
+    for (let i = 0; i < this.guideCubes.length; i++) {
+      const cube = this.guideCubes[i];
+      const line = (cube as THREE.LineSegments)
+        .material as THREE.LineBasicMaterial;
+      const face = (cube.children[0] as THREE.Mesh)
+        .material as THREE.MeshBasicMaterial;
+      if (index === null) {
+        line.opacity = GUIDE_LINE_OPACITY;
+        face.opacity = GUIDE_FACE_OPACITY;
+      } else if (i === index) {
+        line.opacity = GUIDE_HIGHLIGHT_LINE_OPACITY;
+        face.opacity = GUIDE_HIGHLIGHT_FACE_OPACITY;
+      } else {
+        line.opacity = GUIDE_DIMMED_LINE_OPACITY;
+        face.opacity = GUIDE_DIMMED_FACE_OPACITY;
+      }
+    }
   }
 
   /** The live guide box for a transform, so drags can move it directly. */
