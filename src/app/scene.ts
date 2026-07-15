@@ -484,6 +484,15 @@ export class FractalScene {
   private lastCameraPose:
     [number, number, number, number, number, number] | null = null;
 
+  /**
+   * Adaptive-resolution scale (fr-4lyt) multiplied into the base pixel ratio:
+   * 1 = native (capped) resolution, lower = fewer pixels for slow hardware.
+   * Driven by main.ts's resolution governor via {@link setResolutionScale};
+   * exports and the flame render target deliberately ignore it (see
+   * {@link withFullResolution} / {@link flameRenderSize}).
+   */
+  private resolutionScale = 1;
+
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -509,7 +518,7 @@ export class FractalScene {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.basePixelRatio());
     // Colors are authored as verbatim sRGB (ColorManagement is off), so the
     // output must pass through unconverted. Without this the post-processing
     // (glow) path re-applies an sRGB encode and lifts the blacks to grey.
@@ -645,12 +654,15 @@ export class FractalScene {
     this.replayCursor.renderOrder = 1;
     this.scene.add(this.replayCursor);
 
-    // Bloom for the glow style. A half-float buffer lets dense, overlapping
-    // additive points exceed 1.0 so only true hot-spots bloom.
-    const hdr = new THREE.WebGLRenderTarget(buffer.x, buffer.y, {
-      type: THREE.HalfFloatType,
-    });
-    this.composer = new EffectComposer(this.renderer, hdr);
+    // Bloom for the glow style. EffectComposer's default render target is
+    // half-float, letting dense, overlapping additive points exceed 1.0 so
+    // only true hot-spots bloom. Constructed WITHOUT an explicit target on
+    // purpose: handing one over pins the composer's internal pixel ratio to
+    // 1, after which the first resize() silently drops the whole glow chain
+    // to CSS resolution on hi-DPI displays. Sizing itself from the renderer
+    // keeps that bookkeeping right, and setResolutionScale (fr-4lyt) keeps
+    // it in step with every adaptive ratio change from then on.
+    this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // strength, radius, threshold — only cores brighter than `threshold` bloom.
     // A lower threshold lets the cloud's denser veins catch light; modest
@@ -1403,11 +1415,67 @@ export class FractalScene {
     this.syncProjection();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
+    this.syncBufferDependents();
+  }
+
+  /**
+   * Re-derive everything sized from the PHYSICAL drawing buffer — the EDL
+   * target/resolution and the two shader-point half-height uniforms — after
+   * anything that changes that buffer: a viewport resize or an adaptive
+   * pixel-ratio change ({@link setResolutionScale}).
+   */
+  private syncBufferDependents(): void {
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.edlTarget.setSize(buffer.x, buffer.y);
     this.edlResolution.set(buffer.x, buffer.y);
     this.dofMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
     this.fourDMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
+  }
+
+  /**
+   * The pixel ratio before adaptive scaling: the device's, capped at 2 —
+   * beyond that the extra pixels cost more than the sharpness they add.
+   */
+  private basePixelRatio(): number {
+    return Math.min(window.devicePixelRatio, 2);
+  }
+
+  /**
+   * Scale the rendering resolution (fr-4lyt): the effective pixel ratio
+   * becomes `basePixelRatio() * scale`, shrinking the drawing buffer, the
+   * glow composer chain, and the EDL target together — the point sizes'
+   * buffer-height uniforms follow, so points keep their on-screen size and
+   * the frame just softens. Clamped to [0.25, 1]; 1 restores native
+   * resolution. Exports and the flame render target are NOT scaled — see
+   * {@link withFullResolution} and {@link flameRenderSize}.
+   */
+  setResolutionScale(scale: number): void {
+    const clamped = Math.max(0.25, Math.min(1, scale));
+    if (clamped === this.resolutionScale) return;
+    this.resolutionScale = clamped;
+    this.renderNeeded = true;
+    const ratio = this.basePixelRatio() * clamped;
+    this.renderer.setPixelRatio(ratio);
+    this.composer.setPixelRatio(ratio);
+    this.syncBufferDependents();
+  }
+
+  /**
+   * Run a synchronous render-and-read at full (unscaled) resolution: exports
+   * are keepsakes, and they shouldn't inherit whatever transient downscale
+   * the adaptive governor (fr-4lyt) happens to be at. No-op at scale 1; the
+   * next live frame re-renders at the restored scale, so nothing soft ever
+   * reaches an export or nothing sharp the screen.
+   */
+  private withFullResolution<T>(readback: () => T): T {
+    const scale = this.resolutionScale;
+    if (scale === 1) return readback();
+    this.setResolutionScale(1);
+    try {
+      return readback();
+    } finally {
+      this.setResolutionScale(scale);
+    }
   }
 
   render(): void {
@@ -1447,10 +1515,12 @@ export class FractalScene {
    * already be gone). Works for every render style since each paints the canvas.
    */
   captureFrame(): string {
-    return this.withCenteredProjection(() => {
-      this.render();
-      return this.renderer.domElement.toDataURL("image/png");
-    });
+    return this.withFullResolution(() =>
+      this.withCenteredProjection(() => {
+        this.render();
+        return this.renderer.domElement.toDataURL("image/png");
+      }),
+    );
   }
 
   /**
@@ -1514,8 +1584,16 @@ export class FractalScene {
    * matches what is currently on screen 1:1.
    */
   flameRenderSize(): { width: number; height: number } {
-    const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-    return { width: Math.round(buffer.x), height: Math.round(buffer.y) };
+    // Deliberately NOT the live drawing buffer: the adaptive governor
+    // (fr-4lyt) may have that scaled down under load, but a flame render is
+    // a converging still — its quality shouldn't inherit a transient
+    // live-cloud slowdown. Floor matches how the renderer itself derives the
+    // buffer from a pixel ratio.
+    const ratio = this.basePixelRatio();
+    return {
+      width: Math.floor(this.viewportWidth * ratio),
+      height: Math.floor(this.viewportHeight * ratio),
+    };
   }
 
   /**
@@ -1671,10 +1749,12 @@ export class FractalScene {
    * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`).
    */
   captureSolidFrame(): string {
-    return this.withCenteredProjection(() => {
-      this.renderSolid();
-      return this.renderer.domElement.toDataURL("image/png");
-    });
+    return this.withFullResolution(() =>
+      this.withCenteredProjection(() => {
+        this.renderSolid();
+        return this.renderer.domElement.toDataURL("image/png");
+      }),
+    );
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */

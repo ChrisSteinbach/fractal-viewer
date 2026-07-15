@@ -68,6 +68,7 @@ import {
   PARAM,
   removeTransform,
   selectTransform,
+  setAdaptiveResolution,
   setColorGamma,
   setCustomPaletteStops,
   setFinalTransform,
@@ -297,6 +298,15 @@ describe("setMorphDetail", () => {
     const next = setMorphDetail(state, "full");
     expect(next.morphDetail).toBe("full");
     expect(state.morphDetail).toBe("adaptive");
+  });
+});
+
+describe("setAdaptiveResolution", () => {
+  it("toggles the adaptive-resolution governor immutably, defaulting to true", () => {
+    const state = initialState(true);
+    const next = setAdaptiveResolution(state, false);
+    expect(next.adaptiveResolution).toBe(false);
+    expect(state.adaptiveResolution).toBe(true);
   });
 });
 

@@ -521,12 +521,16 @@ describe("commit (fr-2c27)", () => {
 });
 
 describe("table policy", () => {
-  it("morphDetail and autoUpdate are the only entries marked persisted: false", () => {
+  it("morphDetail, autoUpdate, and adaptiveResolutionCheckbox are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
 
-    expect(neverPersisted).toEqual(["morphDetail", "autoUpdate"]);
+    expect(neverPersisted).toEqual([
+      "morphDetail",
+      "autoUpdate",
+      "adaptiveResolutionCheckbox",
+    ]);
   });
 
   it("autoUpdate apply flips state.autoUpdate", () => {
@@ -536,6 +540,15 @@ describe("table policy", () => {
     const state = applyScalarControl(initial, spec, false);
 
     expect(state.autoUpdate).toBe(false);
+  });
+
+  it("adaptiveResolutionCheckbox apply flips state.adaptiveResolution", () => {
+    const spec = specById("adaptiveResolutionCheckbox");
+    const initial = initialState(true);
+
+    const state = applyScalarControl(initial, spec, false);
+
+    expect(state.adaptiveResolution).toBe(false);
   });
 
   it("partitions entries into flat, nonFlat, and unguarded view groups exactly as declared", () => {

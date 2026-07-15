@@ -160,6 +160,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     `setViewOffset` extension still renders the full canvas; main.ts eases the
     inset per frame (panel toggle glides, reduced motion snaps, frozen flame
     views excluded), and captures/thumbnails lift it so exports stay centered.
+    Renders on demand (fr-py7z): every visual mutator marks an internal
+    `needsRender` flag — the per-frame setters (`applyCamera`, `setRot4`,
+    `setGlowExposure`, `setDrawCount`, `setReplayCursor`) compare against the
+    applied value first, so all camera/tumble motion is covered with no
+    separate is-animating inventory — the render methods clear it, and
+    main.ts's animate loop skips frames where it's clear (video recording
+    forces painting: canvas capture streams emit frames only on paint).
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `camera-tween.ts` — the orbit camera's two fit motions (pure, tested,
     injected clock), both leaving the orbit angles alone and honoring
@@ -247,6 +254,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     the live cloud's `"glow"` render style, derived from screen-space
     points-per-pixel so additive points don't blow out to white (pure, tested).
     Not the flame tone-map's `exposure` — this only scales `glowMaterial.opacity`.
+  - `resolution-governor.ts` — the adaptive render-resolution governor
+    (fr-4lyt): a pure frame-time ladder (EMA + dead-band hysteresis +
+    asymmetric sustains + post-step hold-off) that main.ts feeds the dt
+    between consecutively rendered frames; the scale it steps through
+    multiplies the base pixel ratio (`scene.setResolutionScale` re-sizes the
+    drawing buffer, glow composer, and EDL target together; point sizes
+    follow the buffer-height uniforms, so the frame just softens) — weak
+    hardware trades pixels for frame rate and earns them back on recovery.
+    PNG exports and `flameRenderSize()` stay unscaled; recording and flame
+    mode pin full resolution. Opt-out is the session-only
+    `adaptiveResolution` checkbox (`persisted: false` — a device preference,
+    never a document edit). Pure, tested.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
     localStorage so systems are shareable and survive reloads. Pure codec with a

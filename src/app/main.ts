@@ -45,6 +45,7 @@ import { Ui } from "./ui";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import { RenderSession } from "./render-session";
 import { createCanvasRecorder, formatElapsed } from "./recorder";
+import { createResolutionGovernor } from "./resolution-governor";
 import {
   addTransform,
   DEFAULT_SYMMETRY_AXIS,
@@ -256,6 +257,16 @@ function main(): void {
   // in animate() must keep rendering every frame while this is true — a
   // static scene must still record as a video of that scene, not a stall.
   let recorderActive = false;
+
+  // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
+  // sustained slow frames should trade pixels for frame rate (and when the
+  // device has earned them back); animate() feeds it the dt between
+  // consecutively rendered frames via governResolution below.
+  const resolutionGovernor = createResolutionGovernor();
+  // Timestamp of the last frame the governor sampled; null whenever the
+  // chain of consecutively rendered frames breaks (a skipped frame, a mode
+  // where sampling is off), so a gap never reads as one huge dt.
+  let lastGovernedFrameMs: number | null = null;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
@@ -2725,6 +2736,46 @@ function main(): void {
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"
   // events (handleFlameEvent) — this loop just keeps redrawing whatever
   // image was most recently uploaded via scene.setFlameImage.
+  /**
+   * Per-frame adaptive-resolution bookkeeping (fr-4lyt). Feeds the governor
+   * the dt between consecutively RENDERED frames — a skipped frame (fr-py7z)
+   * breaks the chain instead of reading as one huge dt. Sampling pauses (and
+   * resolution snaps back to full) whenever the checkbox is off, a video
+   * capture is running (recordings are keepsakes — capture at full quality
+   * and let the frame rate be whatever it is), or a flame render is showing
+   * (a frozen still exerts no per-frame GPU pressure worth reacting to, and
+   * SHOULD display at full resolution).
+   */
+  function governResolution(now: number, rendered: boolean): void {
+    if (
+      !state.adaptiveResolution ||
+      recorderActive ||
+      state.renderMode === "flame"
+    ) {
+      if (resolutionGovernor.scale !== 1) {
+        resolutionGovernor.reset();
+        scene.setResolutionScale(1);
+      }
+      lastGovernedFrameMs = null;
+      return;
+    }
+    if (!rendered) {
+      lastGovernedFrameMs = null;
+      return;
+    }
+    if (lastGovernedFrameMs !== null) {
+      const next = resolutionGovernor.sample(now - lastGovernedFrameMs);
+      if (next !== null) {
+        scene.setResolutionScale(next);
+        // A quiet trace for bug reports: a user describing "it went blurry"
+        // (or a dev wondering why it didn't) can read the ladder from the
+        // console without any UI surface existing for it.
+        console.info(`Adaptive resolution: render scale ×${next}`);
+      }
+    }
+    lastGovernedFrameMs = now;
+  }
+
   function animate(): void {
     requestAnimationFrame(animate);
     cameraTween.advance();
@@ -2775,15 +2826,17 @@ function main(): void {
       // applying the live orbit camera so the user can keep looking around
       // while accumulation converges.
       scene.applyCamera(orbit);
+      const renderedSolid = scene.needsRender || recorderActive;
       if (solidSession.hasFirstFrame) {
-        if (scene.needsRender || recorderActive) scene.renderSolid();
+        if (renderedSolid) scene.renderSolid();
       } else {
         // Keep showing the live explorer (fog + point cloud) until the
         // worker's first grid lands, avoiding a flash of an empty volume
         // during the worker startup gap.
         scene.updateFog();
-        if (scene.needsRender || recorderActive) scene.render();
+        if (renderedSolid) scene.render();
       }
+      governResolution(now, renderedSolid);
       return;
     }
     if (state.renderMode === "flame") {
@@ -2796,6 +2849,9 @@ function main(): void {
       } else {
         if (scene.needsRender || recorderActive) scene.render();
       }
+      // Flame mode takes governResolution's restore path (frozen stills
+      // display at full resolution); rendered is moot there.
+      governResolution(now, false);
       return;
     }
     // A collection show left HOLDING in the points view means the render it
@@ -2886,7 +2942,9 @@ function main(): void {
     // where nothing moved skips the GPU entirely — the compositor keeps
     // showing the last painted frame. Recording forces painting: the canvas
     // capture stream emits frames only on paint.
-    if (scene.needsRender || recorderActive) scene.render();
+    const rendered = scene.needsRender || recorderActive;
+    if (rendered) scene.render();
+    governResolution(now, rendered);
   }
   animate();
 }
