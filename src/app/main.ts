@@ -37,6 +37,8 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
+import { mutateSystem } from "../fractal/mutate-system";
+import { renderSystemThumb } from "./mutation-thumbs";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
 import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
@@ -2217,6 +2219,72 @@ function main(): void {
     scene.setFourDScaffold(null);
   }
 
+  // ── Mutation grid (fr-3vly) ────────────────────────────────────────────
+  // Directed exploration AROUND the current system — the gap between the
+  // precise sliders and Surprise Me's total reroll: eight quality-gated
+  // small perturbations (the last one a bolder wildcard) in a 3×3 modal
+  // with the current system pinned at the center. The candidates live here;
+  // the Ui only shows cells. Each candidate + thumbnail is built one
+  // animation frame at a time so the modal opens instantly and fills
+  // progressively; the token makes every re-seed (open, pick, "Mutate
+  // again") cancel the previous build, and closing the modal ends the build
+  // on its next step. Session-only — nothing here touches the document
+  // until a pick, which is a normal undoable replace-load.
+  const MUTATION_CELLS = 8;
+  /** Canvas pixels per thumbnail — ~2× the dialog's ~85-160px CSS cells so
+   * they stay crisp on hidpi screens. */
+  const MUTATION_THUMB_SIZE = 220;
+  let mutationCandidates: MorphSystem[] = [];
+  let mutationBuildToken = 0;
+
+  function buildMutationGrid(): void {
+    const token = ++mutationBuildToken;
+    const base = currentMorphSystem();
+    mutationCandidates = [];
+    ui.resetMutationCells();
+    ui.setMutationCurrent(
+      renderSystemThumb(base, MUTATION_THUMB_SIZE, Math.random),
+      MUTATION_THUMB_SIZE,
+    );
+    let index = 0;
+    const step = (): void => {
+      if (token !== mutationBuildToken || !ui.mutationsOpen()) return;
+      const wild = index === MUTATION_CELLS - 1;
+      const candidate = mutateSystem(base, Math.random, { wildcard: wild });
+      mutationCandidates[index] = candidate;
+      ui.setMutationCell(
+        index,
+        renderSystemThumb(candidate, MUTATION_THUMB_SIZE, Math.random),
+        MUTATION_THUMB_SIZE,
+        wild,
+      );
+      index += 1;
+      if (index < MUTATION_CELLS) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  /** Load mutation candidate `index` — the same replace-load path as a
+   * Surprise Me roll (undo checkpoint, morph-in, camera fit) — then re-seed
+   * the grid around the pick: the modal stays open with the pick as the new
+   * center, so exploration can keep walking outward. */
+  function pickMutation(index: number): void {
+    const candidate = mutationCandidates.at(index);
+    if (!candidate) return;
+    applyEdit(() => {
+      state = setTransforms(state, candidate.transforms);
+      state = setFinalTransform(state, candidate.finalTransform);
+      // Mutation preserves symmetry, so this re-applies the same values —
+      // kept for uniformity with the other replace-load paths.
+      state = setSymmetryOrder(state, candidate.symmetry.order);
+      state = setSymmetryAxis(state, candidate.symmetry.axis);
+    }, "always");
+    // A mutated system is no longer the polytope a preset's scaffold
+    // illustrated — clear it, like rollSurpriseSystem.
+    scene.setFourDScaffold(null);
+    buildMutationGrid();
+  }
+
   // The one place control-spec.ts's declared effects meet the app's real
   // capabilities: scene pushes, render-session forwards, and the refreshers.
   // The arrows only fire at input time — well after boot — so forwarding to
@@ -2280,6 +2348,15 @@ function main(): void {
     // ends a running drift show — the show's own legs take the same path
     // with a longer morph (see driftPolicy's launchLeg).
     onSurprise: () => rollSurpriseSystem(),
+    // The mutation grid (fr-3vly): open + build, pick (replace-load + re-seed),
+    // and reroll all share buildMutationGrid's token, so each supersedes any
+    // build still filling cells.
+    onOpenMutations: () => {
+      ui.openMutations();
+      buildMutationGrid();
+    },
+    onMutationPick: (index) => pickMutation(index),
+    onMutateAgain: () => buildMutationGrid(),
     // The ambient drift show's toggle (fr-wavo). Session-only, never
     // persisted; the button is disabled under reduced motion
     // (syncDriftAvailability), and the guard here covers a preference flip

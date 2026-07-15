@@ -263,6 +263,14 @@
           </button>
           <button
             class="btn btn-ghost"
+            id="mutateBtn"
+            type="button"
+            title="Explore small variations of the current system in a 3×3 grid"
+          >
+            🧬 Mutate
+          </button>
+          <button
+            class="btn btn-ghost"
             id="driftBtn"
             type="button"
             aria-pressed="false"
@@ -1012,6 +1020,47 @@
           then ★ Save to collection to keep it here.
         </p>
         <div id="galleryGrid" class="gallery-grid"></div>
+      </div>
+    </div>
+
+    <!-- Mutation grid (fr-3vly): directed exploration AROUND the current
+         system — 8 quality-gated small perturbations in a 3×3 grid with the
+         current system pinned at the center. Reuses the gallery modal's
+         chrome classes; only the grid itself has mutation-specific styles.
+         Cells are built by Ui (createElement, never innerHTML). -->
+    <div
+      id="mutationModal"
+      class="gallery-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mutations of the current system"
+    >
+      <div id="mutationBackdrop" class="gallery-backdrop"></div>
+      <div class="gallery-dialog mutation-dialog">
+        <div class="gallery-header">
+          <h2 class="gallery-title">Mutations</h2>
+          <button
+            id="mutationAgainBtn"
+            class="btn btn-blue gallery-drift-btn"
+            type="button"
+            title="Roll eight fresh variations of the current system"
+          >
+            ↻ Mutate again
+          </button>
+          <button
+            id="mutationCloseBtn"
+            class="notice-dismiss"
+            type="button"
+            aria-label="Close mutations"
+          >
+            ✕
+          </button>
+        </div>
+        <p class="mutation-hint">
+          Small variations of the current system — you are at the center. Click
+          one to morph into it; the grid re-seeds around your pick.
+        </p>
+        <div id="mutationGrid" class="mutation-grid"></div>
       </div>
     </div>
 

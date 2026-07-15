@@ -239,7 +239,7 @@ const FOUR_D_FORCE_POSITION_MAX = 0.5;
 /** Probe size for the quality gate: large enough for a candidate's bounds to
  * settle onto its attractor and to populate the occupancy grid, small enough
  * that rerolling is cheap — acceptance costs {@link STABILITY_PROBES} probes
- * of this size, one probe per {@link scoreCandidate} call (fr-b5x's
+ * of this size, one probe per {@link scoreSystem} call (fr-b5x's
  * stability gate; see {@link randomSystem}). Shared by the flat
  * (`runChaosGame`) and non-flat (`runChaosGame4`) probes — a larger sample
  * was tried for the 4D branch during tuning and didn't meaningfully change the
@@ -247,7 +247,7 @@ const FOUR_D_FORCE_POSITION_MAX = 0.5;
  * there was nothing 4D-specific to justify a separate budget here. */
 const PROBE_POINTS = 4000;
 /** Total candidates tried before giving up and returning the best-scoring
- * one seen (see {@link scoreCandidate}; fr-b5x), rather than an arbitrary
+ * one seen (see {@link scoreSystem}; fr-b5x), rather than an arbitrary
  * last-rolled one. Measured over 20000 seeded rolls — with the
  * {@link STABILITY_PROBES} gate in place — not one burned through all 40,
  * so the exhaustion fallback is a backstop for pathological rng streams,
@@ -781,7 +781,7 @@ export function occupiedCellCount(
 }
 
 /**
- * {@link scoreCandidate}'s sentinel for a probe whose BOUNDS gate failed:
+ * {@link scoreSystem}'s sentinel for a probe whose BOUNDS gate failed:
  * ranks strictly below every occupancy a real probe can produce (a
  * {@link PROBE_POINTS}-point probe always occupies at least one cell), so in
  * {@link randomSystem}'s best-candidate bookkeeping a degenerate,
@@ -811,8 +811,13 @@ const UNACCEPTABLE_BOUNDS_SCORE = -1;
  * Scores are comparable across the two branches — same grid, same floor —
  * so {@link randomSystem}'s best-candidate bookkeeping never needs to care
  * which kind of candidate it is holding.
+ *
+ * Shared by two acceptance gates (fr-3vly): {@link randomSystem}'s own roll
+ * here, and `mutate-system.ts`'s mutation gate, which judges a perturbed
+ * system by the exact same "renders as a real shape" bar so a mutant is held
+ * to no looser a standard than a fresh roll.
  */
-function scoreCandidate(candidate: RandomSystem, rng: Rng): number {
+export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
   if (systemIsFlat(candidate.transforms)) {
     const { positions, count, bounds } = runChaosGame(
       candidate.transforms,
@@ -849,7 +854,7 @@ function scoreCandidate(candidate: RandomSystem, rng: Rng): number {
  * candidate additionally has a chance ({@link SYMMETRY_PROBABILITY}) of a
  * rolled rotational symmetry ({@link randomSymmetry}).
  *
- * Each candidate is probed ({@link scoreCandidate} — bounds sanity plus
+ * Each candidate is probed ({@link scoreSystem} — bounds sanity plus
  * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate
  * on {@link STABILITY_PROBES} consecutive, independently-seeded probes
  * before it's returned (fr-b5x). One probe is a {@link PROBE_POINTS}-point
@@ -883,7 +888,7 @@ export function randomSystem(rng: Rng): RandomSystem {
   let bestScore = -Infinity;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) candidate = randomCandidate(rng);
-    let score = scoreCandidate(candidate, rng);
+    let score = scoreSystem(candidate, rng);
     for (
       let probe = 1;
       probe < STABILITY_PROBES && score >= MIN_OCCUPIED_CELLS;
@@ -892,7 +897,7 @@ export function randomSystem(rng: Rng): RandomSystem {
       // Stability gate (fr-b5x): the same bar, on further independent
       // probes. Folding each score in via min() also keeps the
       // best-candidate bookkeeping below judging by worst evidence seen.
-      score = Math.min(score, scoreCandidate(candidate, rng));
+      score = Math.min(score, scoreSystem(candidate, rng));
     }
     if (score >= MIN_OCCUPIED_CELLS) return candidate;
     if (score > bestScore) {

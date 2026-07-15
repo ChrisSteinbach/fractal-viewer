@@ -90,6 +90,17 @@ export interface UiHandlers {
   onPreset: (preset: Preset) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
+  /** "🧬 Mutate" was clicked (fr-3vly): open the mutation-grid modal. The app
+   * builds the candidates and fills the cells via {@link Ui.openMutations} /
+   * {@link Ui.setMutationCell}. */
+  onOpenMutations: () => void;
+  /** A mutation cell was clicked: load candidate `index` (0..7) — a normal
+   * undoable replace-load, morphing in like Surprise Me — after which the
+   * app re-seeds the grid around the pick. */
+  onMutationPick: (index: number) => void;
+  /** The mutation modal's "↻ Mutate again" was clicked: roll eight fresh
+   * candidates from the same current system. */
+  onMutateAgain: () => void;
   /** "▶ Drift" was clicked: toggle the ambient drift show (fr-wavo) —
    * session-only, like the auto-orbit/tumble motion; main.ts owns the policy. */
   onDriftToggle: () => void;
@@ -667,6 +678,23 @@ export class Ui {
   private gallerySceneCount = 0;
   private readonly toast: HTMLElement;
 
+  // Mutation grid (fr-3vly): the Presets section's "🧬 Mutate" button and the
+  // 3×3 modal it opens — the gallery modal's chrome with a fixed grid of
+  // candidate cells the app fills progressively (setMutationCell). DOM order
+  // is 0..8 with the CENTER (4) an inert current-system cell; candidate
+  // index i (0..7) maps around it.
+  private readonly mutateBtn: HTMLButtonElement;
+  private readonly mutationModal: HTMLElement;
+  private readonly mutationBackdrop: HTMLElement;
+  private readonly mutationCloseBtn: HTMLButtonElement;
+  private readonly mutationAgainBtn: HTMLButtonElement;
+  private readonly mutationGrid: HTMLElement;
+  /** The eight candidate cell buttons, by candidate index; rebuilt by
+   * {@link resetMutationCells}. */
+  private mutationCells: HTMLButtonElement[] = [];
+  /** The inert center cell showing the system being mutated. */
+  private mutationCenter: HTMLElement | null = null;
+
   // "What is this?" About dialog (fr-1zb): mirrors the gallery modal's own
   // shape (open button, backdrop, close button). aboutWatchBtn and
   // watchBuildBtn are the two "▶ Watch it build" entry points — the About
@@ -829,6 +857,12 @@ export class Ui {
     if (e.key === "Escape") this.closeAbout();
   };
 
+  /** Escape-to-close for the mutation grid (fr-3vly), same discipline as
+   * {@link onGalleryKeydown}. */
+  private readonly onMutationKeydown = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") this.closeMutations();
+  };
+
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
@@ -870,6 +904,12 @@ export class Ui {
     this.galleryDriftTitle = this.galleryDriftBtn.title;
     this.galleryGrid = this.byId("galleryGrid");
     this.galleryEmpty = this.byId("galleryEmpty");
+    this.mutateBtn = this.byId("mutateBtn");
+    this.mutationModal = this.byId("mutationModal");
+    this.mutationBackdrop = this.byId("mutationBackdrop");
+    this.mutationCloseBtn = this.byId("mutationCloseBtn");
+    this.mutationAgainBtn = this.byId("mutationAgainBtn");
+    this.mutationGrid = this.byId("mutationGrid");
     this.toast = this.byId("toast");
     this.aboutBtn = this.byId("aboutBtn");
     this.aboutModal = this.byId("aboutModal");
@@ -1105,6 +1145,19 @@ export class Ui {
     // the backdrop, and Escape (bound only while open) all just closeGallery().
     this.galleryCloseBtn.addEventListener("click", () => this.closeGallery());
     this.galleryBackdrop.addEventListener("click", () => this.closeGallery());
+    // The mutation grid (fr-3vly): opening and re-rolling go through the app
+    // (it owns the candidates); closing mirrors the gallery's pure-view
+    // ✕/backdrop/Escape trio.
+    this.mutateBtn.addEventListener("click", () => handlers.onOpenMutations());
+    this.mutationAgainBtn.addEventListener("click", () =>
+      handlers.onMutateAgain(),
+    );
+    this.mutationCloseBtn.addEventListener("click", () =>
+      this.closeMutations(),
+    );
+    this.mutationBackdrop.addEventListener("click", () =>
+      this.closeMutations(),
+    );
     // The About dialog (fr-1zb) is the same kind of pure view concern:
     // opening it needs no handler (the dialog is static content), and
     // closing it mirrors the gallery's ✕/backdrop/Escape trio exactly.
@@ -1655,6 +1708,119 @@ export class Ui {
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onAboutKeydown);
+  }
+
+  /** Open the mutation-grid modal (fr-3vly) with all nine cells reset to
+   * placeholders, and arm Escape-to-close. The app fills the cells as it
+   * builds candidates — {@link setMutationCurrent} / {@link setMutationCell}. */
+  openMutations(): void {
+    this.resetMutationCells();
+    this.mutationModal.classList.remove("hidden");
+    this.doc.addEventListener("keydown", this.onMutationKeydown);
+  }
+
+  /** Hide the mutation modal and drop its Escape listener. Idempotent. */
+  closeMutations(): void {
+    this.mutationModal.classList.add("hidden");
+    this.doc.removeEventListener("keydown", this.onMutationKeydown);
+  }
+
+  /** Whether the mutation modal is on screen. The app's progressive cell
+   * builder checks this each step so closing the modal ends the build. */
+  mutationsOpen(): boolean {
+    return !this.mutationModal.classList.contains("hidden");
+  }
+
+  /**
+   * Rebuild the 3×3 mutation grid as placeholders: an inert "current" center
+   * (DOM position 4) plus eight disabled candidate buttons, enabled as their
+   * thumbnails land ({@link setMutationCell}). Called on open and again on
+   * every re-seed (a pick or "↻ Mutate again"). All DOM via createElement,
+   * like {@link renderGallery}.
+   */
+  resetMutationCells(): void {
+    this.mutationCells = [];
+    this.mutationGrid.replaceChildren();
+    for (let dom = 0; dom < 9; dom++) {
+      if (dom === 4) {
+        const center = this.doc.createElement("div");
+        center.className = "mutation-cell mutation-cell-current";
+        center.append(this.mutationPlaceholder(), this.mutationTag("current"));
+        this.mutationCenter = center;
+        this.mutationGrid.appendChild(center);
+        continue;
+      }
+      const index = dom < 4 ? dom : dom - 1;
+      const cell = this.doc.createElement("button");
+      cell.type = "button";
+      cell.className = "mutation-cell";
+      cell.disabled = true;
+      cell.setAttribute("aria-label", `Load mutation ${index + 1}`);
+      cell.appendChild(this.mutationPlaceholder());
+      cell.addEventListener("click", () =>
+        this.handlers?.onMutationPick(index),
+      );
+      this.mutationCells[index] = cell;
+      this.mutationGrid.appendChild(cell);
+    }
+  }
+
+  /** Fill the center cell with the current system's thumbnail. */
+  setMutationCurrent(
+    pixels: Uint8ClampedArray<ArrayBuffer>,
+    size: number,
+  ): void {
+    this.mutationCenter?.replaceChildren(
+      this.thumbCanvas(pixels, size),
+      this.mutationTag("current"),
+    );
+  }
+
+  /** Fill candidate cell `index` (0..7) and enable its button; `wild` tags
+   * the grid's one bolder wildcard mutation. */
+  setMutationCell(
+    index: number,
+    pixels: Uint8ClampedArray<ArrayBuffer>,
+    size: number,
+    wild: boolean,
+  ): void {
+    const cell = this.mutationCells[index];
+    if (!cell) return;
+    cell.replaceChildren(this.thumbCanvas(pixels, size));
+    if (wild) {
+      cell.appendChild(this.mutationTag("wild"));
+      cell.setAttribute("aria-label", `Load wildcard mutation ${index + 1}`);
+    }
+    cell.disabled = false;
+  }
+
+  private mutationPlaceholder(): HTMLElement {
+    const empty = this.doc.createElement("div");
+    empty.className = "mutation-cell-empty";
+    empty.textContent = "…";
+    return empty;
+  }
+
+  private mutationTag(text: string): HTMLElement {
+    const tag = this.doc.createElement("span");
+    tag.className = "mutation-cell-tag";
+    tag.textContent = text;
+    return tag;
+  }
+
+  /** Paint an RGBA pixel buffer (mutation-thumbs.ts's output) into a fresh
+   * square canvas. jsdom — the DOM test environment — has no 2d context, so
+   * the canvas simply stays blank there. */
+  private thumbCanvas(
+    pixels: Uint8ClampedArray<ArrayBuffer>,
+    size: number,
+  ): HTMLCanvasElement {
+    const canvas = this.doc.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.putImageData(new ImageData(pixels, size, size), 0, 0);
+    return canvas;
   }
 
   /** Show the "Watch it build" narration pill, or hide it with null. */
