@@ -467,6 +467,23 @@ export class FractalScene {
    */
   private rightInsetPx = 0;
 
+  /**
+   * Whether anything visible changed since the last render (fr-py7z). Set by
+   * every mutating method — the per-frame setters (applyCamera, setRot4,
+   * setGlowExposure, setDrawCount, setReplayCursor) compare first, so a frame
+   * where nothing moved marks nothing — and cleared by the render methods.
+   * main.ts's animate loop skips rendering while this is false, dropping GPU
+   * work to zero for a static scene.
+   */
+  private renderNeeded = true;
+
+  /**
+   * Last camera pose {@link applyCamera} applied (position then target), for
+   * its no-change fast path. `null` until the first apply ever runs.
+   */
+  private lastCameraPose:
+    [number, number, number, number, number, number] | null = null;
+
   constructor(container: HTMLElement) {
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -498,6 +515,12 @@ export class FractalScene {
     // (glow) path re-applies an sRGB encode and lifts the blacks to grey.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     container.appendChild(this.renderer.domElement);
+    // A restored WebGL context comes back with an undefined drawing buffer;
+    // make sure the render-on-demand gate (fr-py7z) repaints it even if the
+    // scene is otherwise static.
+    this.renderer.domElement.addEventListener("webglcontextrestored", () => {
+      this.renderNeeded = true;
+    });
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
 
     // A quiet ground reference, not a focal point: dim lines, held translucent
@@ -687,8 +710,18 @@ export class FractalScene {
     return this.renderer.domElement;
   }
 
+  /**
+   * Whether the next animation frame must actually render (fr-py7z) — true
+   * whenever something visible changed since the last render. main.ts's
+   * animate loop is the consumer; the render methods clear it.
+   */
+  get needsRender(): boolean {
+    return this.renderNeeded;
+  }
+
   /** Upload a freshly generated point cloud (interleaved xyz + rgb buffers). */
   setPoints(positions: Float32Array, colors: Float32Array): void {
+    this.renderNeeded = true;
     this.pointGeometry.setAttribute(
       "position",
       new THREE.BufferAttribute(positions, 3),
@@ -727,6 +760,7 @@ export class FractalScene {
     radius: number,
     halfExtents: Vec4,
   ): void {
+    this.renderNeeded = true;
     this.pointGeometry.setAttribute(
       "position",
       new THREE.BufferAttribute(positions, 3),
@@ -770,6 +804,7 @@ export class FractalScene {
    * without re-running the chaos game.
    */
   setColors(colors: Float32Array): void {
+    this.renderNeeded = true;
     this.pointGeometry.setAttribute(
       "color",
       new THREE.BufferAttribute(colors, 3),
@@ -786,7 +821,12 @@ export class FractalScene {
    * frustum culling stays correct throughout.
    */
   setDrawCount(count: number | null): void {
-    this.pointGeometry.setDrawRange(0, count ?? Infinity);
+    // Per-frame caller (the replay's done-linger repeats `null`): skip the
+    // dirty mark when the range is already what's asked for (fr-py7z).
+    const target = count ?? Infinity;
+    if (this.pointGeometry.drawRange.count === target) return;
+    this.pointGeometry.setDrawRange(0, target);
+    this.renderNeeded = true;
   }
 
   /**
@@ -801,7 +841,10 @@ export class FractalScene {
     const position = this.pointGeometry.getAttribute("position") as
       THREE.BufferAttribute | undefined;
     if (index === null || !position || index < 0 || index >= position.count) {
-      this.replayCursor.visible = false;
+      if (this.replayCursor.visible) {
+        this.replayCursor.visible = false;
+        this.renderNeeded = true;
+      }
       return;
     }
     let x = position.getX(index);
@@ -821,8 +864,19 @@ export class FractalScene {
       y = m[4] * dx + m[5] * dy + m[6] * dz + m[7] * dw + c.y;
       z = m[8] * dx + m[9] * dy + m[10] * dz + m[11] * dw + c.z;
     }
+    // Per-frame caller: an idle replay (paused phase) re-pins the same spot —
+    // don't mark the frame dirty for it (fr-py7z).
+    if (
+      this.replayCursor.visible &&
+      this.replayCursor.position.x === x &&
+      this.replayCursor.position.y === y &&
+      this.replayCursor.position.z === z
+    ) {
+      return;
+    }
     this.replayCursor.position.set(x, y, z);
     this.replayCursor.visible = true;
+    this.renderNeeded = true;
   }
 
   /**
@@ -839,6 +893,7 @@ export class FractalScene {
   setFourDColorSource(
     source: { sides: { neg: Vec3; pos: Vec3 } } | { colors: Float32Array },
   ): void {
+    this.renderNeeded = true;
     const u = this.fourDMaterial.uniforms;
     if ("sides" in source) {
       (u.uSideNeg.value as THREE.Vector3).set(...source.sides.neg);
@@ -860,6 +915,7 @@ export class FractalScene {
     selected: number | null,
     showGuides: boolean,
   ): void {
+    this.renderNeeded = true;
     for (const cube of this.guideCubes) {
       this.scene.remove(cube);
       disposeTree(cube);
@@ -909,6 +965,7 @@ export class FractalScene {
 
   /** Toggle visibility of the grid, axes, and guide boxes together. */
   setGuidesVisible(showGuides: boolean): void {
+    this.renderNeeded = true;
     this.grid.visible = showGuides;
     this.axes.visible = showGuides;
     for (const cube of this.guideCubes) {
@@ -937,6 +994,7 @@ export class FractalScene {
   ): void {
     const cube = this.guideCubes[index];
     if (!cube) return;
+    this.renderNeeded = true;
     cube.position.set(...geometry.position);
     cube.rotation.set(...geometry.rotation);
     cube.scale.set(...geometry.scale);
@@ -979,8 +1037,29 @@ export class FractalScene {
   /** Place the camera from the orbit state. */
   applyCamera(orbit: OrbitCamera): void {
     const [x, y, z] = orbit.position();
+    const tx = orbit.target[0];
+    const ty = orbit.target[1];
+    const tz = orbit.target[2];
+    // Per-frame caller: a static orbit hands back the identical pose every
+    // frame — don't mark the frame dirty for it (fr-py7z). Every camera
+    // motion source (gesture, wheel, tween, auto-orbit) mutates the orbit,
+    // so this one compare covers them all.
+    const last = this.lastCameraPose;
+    if (
+      last !== null &&
+      last[0] === x &&
+      last[1] === y &&
+      last[2] === z &&
+      last[3] === tx &&
+      last[4] === ty &&
+      last[5] === tz
+    ) {
+      return;
+    }
+    this.lastCameraPose = [x, y, z, tx, ty, tz];
+    this.renderNeeded = true;
     this.camera.position.set(x, y, z);
-    this.camera.lookAt(orbit.target[0], orbit.target[1], orbit.target[2]);
+    this.camera.lookAt(tx, ty, tz);
   }
 
   /**
@@ -988,6 +1067,7 @@ export class FractalScene {
    * configures fog/background/post-processing for the chosen style.
    */
   setRenderStyle(style: RenderStyle): void {
+    this.renderNeeded = true;
     this.renderStyle = style;
     // While the 4D projection owns the point cloud, record the requested style
     // (so exiting 4D can restore it) but don't overwrite fourDMaterial. main.ts
@@ -1032,6 +1112,7 @@ export class FractalScene {
    * mapping) rather than duplicating it here.
    */
   setFourDActive(active: boolean): void {
+    this.renderNeeded = true;
     this.fourDActive = active;
     if (active) {
       this.pointCloud.material = this.fourDMaterial;
@@ -1051,6 +1132,18 @@ export class FractalScene {
    * pairing.
    */
   setRot4(m: number[]): void {
+    // Per-frame caller (the 4D tumble tick): a paused tumble hands back the
+    // same matrix — don't mark the frame dirty for it (fr-py7z).
+    const prev = this.fourDRot;
+    let changed = false;
+    for (let i = 0; i < 16; i++) {
+      if (prev[i] !== m[i]) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+    this.renderNeeded = true;
     const uRot4 = this.fourDMaterial.uniforms.uRot4.value as THREE.Matrix4;
     // prettier-ignore
     uRot4.set(
@@ -1076,6 +1169,7 @@ export class FractalScene {
    * to remove it. Follows the Show-guides toggle like the grid and axes.
    */
   setFourDScaffold(edges: [Vec4, Vec4][] | null): void {
+    this.renderNeeded = true;
     if (this.fourDScaffold) {
       this.scene.remove(this.fourDScaffold);
       this.fourDScaffold.geometry.dispose();
@@ -1166,6 +1260,7 @@ export class FractalScene {
    * so the shader's remap can't drift from the flame/solid renders'.
    */
   setFourDSlice(on: boolean, center: number, relativeColor: boolean): void {
+    this.renderNeeded = true;
     this.fourDMaterial.uniforms.uSliceOn.value = on ? 1 : 0;
     this.fourDMaterial.uniforms.uSliceCenter.value = center;
     const { shift, invScale } = sliceColorRemap({
@@ -1186,6 +1281,7 @@ export class FractalScene {
    * the camera per rendered frame via {@link updateFourDFade}.
    */
   setFourDDepthFade(on: boolean): void {
+    this.renderNeeded = true;
     this.fourDMaterial.uniforms.uFadeOn.value = on ? 1 : 0;
   }
 
@@ -1194,6 +1290,7 @@ export class FractalScene {
    * Applied to all materials at once so switching styles preserves the choice.
    */
   setPointSize(multiplier: number): void {
+    this.renderNeeded = true;
     this.baseMaterial.size = BASE_POINT_SIZE * multiplier;
     this.discMaterial.size = DISC_POINT_SIZE * multiplier;
     this.glowMaterial.size = GLOW_POINT_SIZE * multiplier;
@@ -1206,7 +1303,12 @@ export class FractalScene {
    * Called per frame while the glow style is active; pass 1 to reset.
    */
   setGlowExposure(factor: number): void {
-    this.glowMaterial.opacity = GLOW_BASE_OPACITY * factor;
+    // Per-frame caller: static inputs produce the identical factor every
+    // frame — don't mark the frame dirty for it (fr-py7z).
+    const opacity = GLOW_BASE_OPACITY * factor;
+    if (this.glowMaterial.opacity === opacity) return;
+    this.glowMaterial.opacity = opacity;
+    this.renderNeeded = true;
   }
 
   /**
@@ -1270,6 +1372,7 @@ export class FractalScene {
     const clamped = Math.max(0, Math.min(px, this.viewportWidth * 0.5));
     if (clamped === this.rightInsetPx) return;
     this.rightInsetPx = clamped;
+    this.renderNeeded = true;
     this.syncProjection();
   }
 
@@ -1294,6 +1397,7 @@ export class FractalScene {
   }
 
   resize(width: number, height: number): void {
+    this.renderNeeded = true;
     this.viewportWidth = width;
     this.viewportHeight = height;
     this.syncProjection();
@@ -1307,6 +1411,7 @@ export class FractalScene {
   }
 
   render(): void {
+    this.renderNeeded = false;
     // The 4D projection (fr-cbg spike) always renders plain: its material is
     // designed to look like the base style, and layering the recorded render
     // style's post-processing (bloom / EDL / DOF focus) over it would restyle
@@ -1447,6 +1552,7 @@ export class FractalScene {
     width: number,
     height: number,
   ): void {
+    this.renderNeeded = true;
     if (
       this.flameCanvas.width !== width ||
       this.flameCanvas.height !== height
@@ -1464,6 +1570,7 @@ export class FractalScene {
    * while a flame render is active, so the (frozen) 3D scene never draws.
    */
   renderFlame(): void {
+    this.renderNeeded = false;
     this.renderer.setRenderTarget(null);
     this.flameQuad.render(this.renderer);
   }
@@ -1501,6 +1608,7 @@ export class FractalScene {
     boundsMin: Vec3,
     boundsMax: Vec3,
   ): void {
+    this.renderNeeded = true;
     if (this.voxelTexture.image.width !== size) {
       this.voxelTexture.dispose();
       this.voxelTexture = new THREE.Data3DTexture(data, size, size, size);
@@ -1528,6 +1636,7 @@ export class FractalScene {
    * accumulation-side params, are the worker's business, not this one's).
    */
   setSolidParams(params: SolidParams): void {
+    this.renderNeeded = true;
     const u = this.voxelMaterial.uniforms;
     u.uThreshold.value = params.threshold;
     u.uAmbient.value = params.ambient;
@@ -1542,6 +1651,7 @@ export class FractalScene {
    * the live camera each call, so orbit/zoom keep working mid-render.
    */
   renderSolid(): void {
+    this.renderNeeded = false;
     this.camera.updateMatrixWorld();
     const u = this.voxelMaterial.uniforms;
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
