@@ -251,8 +251,14 @@ function main(): void {
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
 
+  // Whether a video capture is running (fr-py7z): canvas capture streams only
+  // emit frames when the canvas actually paints, so the render-on-demand gate
+  // in animate() must keep rendering every frame while this is true — a
+  // static scene must still record as a video of that scene, not a stall.
+  let recorderActive = false;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
+      recorderActive = recording;
       ui.setRecordingState(recording ? formatElapsed(0) : null);
     },
     onTick: (seconds) => {
@@ -2770,13 +2776,13 @@ function main(): void {
       // while accumulation converges.
       scene.applyCamera(orbit);
       if (solidSession.hasFirstFrame) {
-        scene.renderSolid();
+        if (scene.needsRender || recorderActive) scene.renderSolid();
       } else {
         // Keep showing the live explorer (fog + point cloud) until the
         // worker's first grid lands, avoiding a flash of an empty volume
         // during the worker startup gap.
         scene.updateFog();
-        scene.render();
+        if (scene.needsRender || recorderActive) scene.render();
       }
       return;
     }
@@ -2786,9 +2792,9 @@ function main(): void {
       // worker's first image lands, then switch over — avoids a flash of the
       // flame canvas's stale contents during the worker startup gap.
       if (flameSession.hasFirstFrame) {
-        scene.renderFlame();
+        if (scene.needsRender || recorderActive) scene.renderFlame();
       } else {
-        scene.render();
+        if (scene.needsRender || recorderActive) scene.render();
       }
       return;
     }
@@ -2875,7 +2881,12 @@ function main(): void {
     } else if (replayCaption !== null) {
       endReplayDisplay();
     }
-    scene.render();
+    // Render on demand (fr-py7z): every visual change above marked the scene
+    // dirty through its setter (per-frame setters compare first), so a frame
+    // where nothing moved skips the GPU entirely — the compositor keeps
+    // showing the last painted frame. Recording forces painting: the canvas
+    // capture stream emits frames only on paint.
+    if (scene.needsRender || recorderActive) scene.render();
   }
   animate();
 }
