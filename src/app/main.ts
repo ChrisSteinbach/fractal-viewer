@@ -1134,7 +1134,9 @@ function main(): void {
       // clip, recorder.ts's error stance.
       session.abort();
       timelinePolicy.stop();
-      ui.flashToast(`Export failed: ${String(err)}`);
+      ui.flashToast(
+        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       window.removeEventListener("resize", onResize);
       offlineExport = null;

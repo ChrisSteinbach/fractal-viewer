@@ -34,10 +34,10 @@ interface FoundBox {
 /**
  * Byte length of fixed, non-box content that precedes a box's first NESTED
  * child box — zero for the plain containers this file descends into
- * (moov/trak/mdia/minf/stbl), whose payload is nothing but a back-to-back
- * sequence of child boxes. stsd is a FullBox with a version/flags(4) +
- * entry_count(4) header before its sample entries; avc1 (a
- * VisualSampleEntry) has 78 bytes of fixed video fields before its avcC
+ * (moov/trak/mdia/minf/stbl/edts), whose payload is nothing but a
+ * back-to-back sequence of child boxes. stsd is a FullBox with a
+ * version/flags(4) + entry_count(4) header before its sample entries; avc1
+ * (a VisualSampleEntry) has 78 bytes of fixed video fields before its avcC
  * child. Without this, scanning for a child would start mid-field and
  * misread a fixed-field byte pattern as a bogus (usually zero-size) box
  * header.
@@ -95,6 +95,12 @@ function payloadView(bytes: Uint8Array, found: FoundBox): DataView {
 
 const STBL_PATH = ["moov", "trak", "mdia", "minf", "stbl"];
 
+/** The authored 30fps presentation grid, µs — what a never-reordering
+ * encoder (Chrome) echoes back in decode order. */
+function gridUs(index: number, fps = 30): number {
+  return Math.round((index * 1_000_000) / fps);
+}
+
 describe("buildMp4Header", () => {
   it("lays out ftyp, then moov, then the mdat header, with sizes matching the actual layout", () => {
     const header = buildMp4Header({
@@ -103,9 +109,9 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1, 2, 3, 4]),
       samples: [
-        { size: 100, keyframe: true },
-        { size: 200, keyframe: false },
-        { size: 150, keyframe: true },
+        { size: 100, keyframe: true, timestampUs: gridUs(0) },
+        { size: 200, keyframe: false, timestampUs: gridUs(1) },
+        { size: 150, keyframe: true, timestampUs: gridUs(2) },
       ],
     });
 
@@ -128,9 +134,9 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([9]),
       samples: [
-        { size: 10, keyframe: true },
-        { size: 20, keyframe: false },
-        { size: 30, keyframe: false },
+        { size: 10, keyframe: true, timestampUs: gridUs(0) },
+        { size: 20, keyframe: false, timestampUs: gridUs(1) },
+        { size: 30, keyframe: false, timestampUs: gridUs(2) },
       ],
     });
 
@@ -146,11 +152,11 @@ describe("buildMp4Header", () => {
       fps: 24,
       avcC: Uint8Array.from([0]),
       samples: [
-        { size: 111, keyframe: true },
-        { size: 222, keyframe: false },
-        { size: 333, keyframe: false },
-        { size: 444, keyframe: true },
-        { size: 555, keyframe: false },
+        { size: 111, keyframe: true, timestampUs: gridUs(0, 24) },
+        { size: 222, keyframe: false, timestampUs: gridUs(1, 24) },
+        { size: 333, keyframe: false, timestampUs: gridUs(2, 24) },
+        { size: 444, keyframe: true, timestampUs: gridUs(3, 24) },
+        { size: 555, keyframe: false, timestampUs: gridUs(4, 24) },
       ],
     });
 
@@ -168,9 +174,9 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1]),
       samples: [
-        { size: 1000, keyframe: true },
-        { size: 2000, keyframe: false },
-        { size: 1500, keyframe: false },
+        { size: 1000, keyframe: true, timestampUs: gridUs(0) },
+        { size: 2000, keyframe: false, timestampUs: gridUs(1) },
+        { size: 1500, keyframe: false, timestampUs: gridUs(2) },
       ],
     });
 
@@ -189,9 +195,9 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1]),
       samples: [
-        { size: 10, keyframe: true },
-        { size: 10, keyframe: false },
-        { size: 10, keyframe: true },
+        { size: 10, keyframe: true, timestampUs: gridUs(0) },
+        { size: 10, keyframe: false, timestampUs: gridUs(1) },
+        { size: 10, keyframe: true, timestampUs: gridUs(2) },
       ],
     });
 
@@ -208,8 +214,8 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1]),
       samples: [
-        { size: 1, keyframe: true },
-        { size: 1, keyframe: false },
+        { size: 1, keyframe: true, timestampUs: gridUs(0) },
+        { size: 1, keyframe: false, timestampUs: gridUs(1) },
       ],
     });
 
@@ -225,7 +231,7 @@ describe("buildMp4Header", () => {
       height: 360,
       fps: 60,
       avcC: Uint8Array.from([1]),
-      samples: [{ size: 1, keyframe: true }],
+      samples: [{ size: 1, keyframe: true, timestampUs: gridUs(0, 60) }],
     });
 
     const stts = payloadView(header, findBox(header, [...STBL_PATH, "stts"]));
@@ -239,10 +245,10 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1]),
       samples: [
-        { size: 1, keyframe: true },
-        { size: 1, keyframe: false },
-        { size: 1, keyframe: false },
-        { size: 1, keyframe: false },
+        { size: 1, keyframe: true, timestampUs: gridUs(0) },
+        { size: 1, keyframe: false, timestampUs: gridUs(1) },
+        { size: 1, keyframe: false, timestampUs: gridUs(2) },
+        { size: 1, keyframe: false, timestampUs: gridUs(3) },
       ],
     });
     const expectedDuration = 4 * 3000;
@@ -271,7 +277,7 @@ describe("buildMp4Header", () => {
       height: 720,
       fps: 30,
       avcC,
-      samples: [{ size: 10, keyframe: true }],
+      samples: [{ size: 10, keyframe: true, timestampUs: gridUs(0) }],
     });
 
     const avc1 = findBox(header, [...STBL_PATH, "stsd", "avc1"]);
@@ -327,8 +333,8 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([0]),
       samples: [
-        { size: 0x80000000, keyframe: true },
-        { size: 0x80000000, keyframe: false },
+        { size: 0x80000000, keyframe: true, timestampUs: gridUs(0) },
+        { size: 0x80000000, keyframe: false, timestampUs: gridUs(1) },
       ],
     };
 
@@ -342,11 +348,121 @@ describe("buildMp4Header", () => {
       fps: 30,
       avcC: Uint8Array.from([1]),
       samples: [
-        { size: 100, keyframe: true },
-        { size: 100, keyframe: false },
+        { size: 100, keyframe: true, timestampUs: gridUs(0) },
+        { size: 100, keyframe: false, timestampUs: gridUs(1) },
       ],
     });
 
     expect(patchMp4Duration(header, 12345)).toBe(true);
+  });
+
+  // ── B-frame reordering (fr-7dm2) ─────────────────────────────────────
+  // Firefox's H.264 encoder hands chunks back in decode order with
+  // REORDERED presentation timestamps (an IPBB cadence), whatever
+  // latencyMode asked. The observed pattern for the authored 30fps grid:
+  // 0, +3 frames, +1, +2 — used verbatim below.
+
+  it("writes no ctts and no edit list for a monotonic (never-reordered) stream", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 10, keyframe: true, timestampUs: gridUs(0) },
+        { size: 10, keyframe: false, timestampUs: gridUs(1) },
+        { size: 10, keyframe: false, timestampUs: gridUs(2) },
+      ],
+    });
+
+    expect(() => findBox(header, [...STBL_PATH, "ctts"])).toThrow(
+      /box not found/,
+    );
+    expect(() => findBox(header, ["moov", "trak", "edts"])).toThrow(
+      /box not found/,
+    );
+  });
+
+  it("represents a B-frame stream with run-length ctts offsets over synthesized decode times", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 10, keyframe: true, timestampUs: 0 },
+        { size: 10, keyframe: false, timestampUs: 100000 },
+        { size: 10, keyframe: false, timestampUs: 33333 },
+        { size: 10, keyframe: false, timestampUs: 66667 },
+      ],
+    });
+
+    // pts in ticks [0, 9000, 3000, 6000] against dts [0, 3000, 6000, 9000]:
+    // raw offsets [0, +6000, -3000, -3000], biased by 3000 →
+    // [3000, 9000, 0, 0] → three runs.
+    const ctts = payloadView(header, findBox(header, [...STBL_PATH, "ctts"]));
+    expect(ctts.getUint32(4)).toBe(3); // entry_count
+    expect([ctts.getUint32(8), ctts.getUint32(12)]).toEqual([1, 3000]);
+    expect([ctts.getUint32(16), ctts.getUint32(20)]).toEqual([1, 9000]);
+    expect([ctts.getUint32(24), ctts.getUint32(28)]).toEqual([2, 0]);
+
+    // stts stays the uniform decode cadence — reordering never touches it.
+    const stts = payloadView(header, findBox(header, [...STBL_PATH, "stts"]));
+    expect(stts.getUint32(8)).toBe(4); // sample_count
+    expect(stts.getUint32(12)).toBe(3000); // sample_delta
+
+    // The extra boxes must not desync the stco patch: the one chunk offset
+    // still lands exactly at the header's end.
+    const stco = payloadView(header, findBox(header, [...STBL_PATH, "stco"]));
+    expect(stco.getUint32(8)).toBe(header.length);
+  });
+
+  it("trims a B-frame stream's shifted lead-in with an elst edit", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 10, keyframe: true, timestampUs: 0 },
+        { size: 10, keyframe: false, timestampUs: 100000 },
+        { size: 10, keyframe: false, timestampUs: 33333 },
+        { size: 10, keyframe: false, timestampUs: 66667 },
+      ],
+    });
+
+    const elst = payloadView(
+      header,
+      findBox(header, ["moov", "trak", "edts", "elst"]),
+    );
+    expect(elst.getUint32(4)).toBe(1); // entry_count
+    expect(elst.getUint32(8)).toBe(4 * 3000); // segment_duration
+    expect(elst.getUint32(12)).toBe(3000); // media_time: the ctts bias
+    expect(elst.getUint16(16)).toBe(1); // media_rate_integer
+  });
+
+  it("writes ctts but no edit list when composition never leads decode (bias 0)", () => {
+    // Synthetic: monotonic presentation running a constant frame AHEAD of
+    // the decode cadence — offsets are positive, so no bias and no edit,
+    // but the offsets themselves still need a ctts.
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 10, keyframe: true, timestampUs: 0 },
+        { size: 10, keyframe: false, timestampUs: gridUs(2) },
+        { size: 10, keyframe: false, timestampUs: gridUs(3) },
+      ],
+    });
+
+    const ctts = payloadView(header, findBox(header, [...STBL_PATH, "ctts"]));
+    expect(ctts.getUint32(4)).toBe(2); // entry_count
+    expect([ctts.getUint32(8), ctts.getUint32(12)]).toEqual([1, 0]);
+    expect([ctts.getUint32(16), ctts.getUint32(20)]).toEqual([2, 3000]);
+    expect(() => findBox(header, ["moov", "trak", "edts"])).toThrow(
+      /box not found/,
+    );
   });
 });

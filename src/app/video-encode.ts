@@ -16,11 +16,13 @@
  * The encoder is configured with `avc: { format: "avc" }`, so chunks arrive
  * length-prefixed (MP4's sample format) and the first chunk's
  * `decoderConfig.description` IS the avcC record the muxer embeds — no
- * bitstream parsing anywhere. Timestamps are authored (`frameTimestampUs`),
- * and the session asserts they come back monotonic: the uniform-delta `stts`
- * the muxer writes cannot represent B-frame reordering, so an encoder that
- * reorders (none of the browser encoders we target do) fails the export
- * honestly instead of producing a stuttering file.
+ * bitstream parsing anywhere. Timestamps are authored (`frameTimestampUs`)
+ * and echoed back on each chunk; the chunks themselves arrive in DECODE
+ * order, which a B-frame encoder REORDERS relative to presentation —
+ * Firefox's H.264 encoder does this whatever `latencyMode` asks (fr-7dm2;
+ * Chrome's encoders never do) — so each sample records its presentation
+ * timestamp and `mp4-mux.ts` writes the ctts/elst boxes that represent the
+ * reordering.
  *
  * Like `recorder.ts`, the `VideoEncoder` glue is verified in-browser; the
  * pure pieces (level ladder, codec candidates, even-dimension crop,
@@ -163,7 +165,6 @@ export async function createOfflineEncoder(opts: {
   const samples: Mp4Sample[] = [];
   const parts: Blob[] = [];
   let avcC: Uint8Array | null = null;
-  let lastTimestamp = -1;
   let error: string | null = null;
 
   const encoder = new VideoEncoder({
@@ -181,17 +182,18 @@ export async function createOfflineEncoder(opts: {
             )
           : new Uint8Array(description.slice(0));
       }
-      if (chunk.timestamp <= lastTimestamp) {
-        // B-frame reordering — see the module header. First failure wins.
-        error ??=
-          "encoder reordered frames (B-frames), which the exporter cannot mux";
-        return;
-      }
-      lastTimestamp = chunk.timestamp;
       const bytes = new Uint8Array(chunk.byteLength);
       chunk.copyTo(bytes);
       parts.push(new Blob([bytes]));
-      samples.push({ size: chunk.byteLength, keyframe: chunk.type === "key" });
+      // Chunks arrive in DECODE order; `timestamp` is the presentation
+      // time. A B-frame encoder (Firefox — fr-7dm2) hands them back
+      // reordered, which the muxer represents via ctts/elst; recording the
+      // timestamp per sample is all it needs from here.
+      samples.push({
+        size: chunk.byteLength,
+        keyframe: chunk.type === "key",
+        timestampUs: chunk.timestamp,
+      });
     },
     error: (e) => {
       error ??= e.message;

@@ -558,9 +558,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     yields so a backgrounded tab keeps exporting); `video-encode.ts` the
     WebCodecs adapter (H.264 level ladder, avcC capture, `dequeue`
     backpressure, chunks kept as per-chunk Blobs); `mp4-mux.ts` the
-    dependency-free faststart muxer, building the header from sample SIZES
-    only so the file assembles as `Blob([header, ...chunkBlobs])` — encoded
-    bytes are never concatenated in JS memory. Render keyframes (fr-v3au)
+    dependency-free faststart muxer, building the header from sample
+    sizes/keyframes/timestamps only so the file assembles as
+    `Blob([header, ...chunkBlobs])` — encoded bytes are never concatenated
+    in JS memory — and representing a B-frame stream (Firefox's H.264
+    encoder reorders regardless of latencyMode, fr-7dm2) with synthesized
+    uniform decode times + a v0 `ctts` + an `elst` trimming the shift,
+    while a monotonic stream's file stays byte-identical (no ctts/edts at
+    all — the Chrome path). Render keyframes (fr-v3au)
     keep the realtime MediaRecorder path (their legs hold for live
     convergence — inherently realtime); the Export button routes between
     the two, shows offline progress, and doubles as its cancel. Driver +

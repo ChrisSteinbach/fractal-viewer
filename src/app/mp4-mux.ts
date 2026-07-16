@@ -16,7 +16,13 @@
 // concatenating them in JS memory. moov is written before mdat (a
 // "faststart" file), and the layout matches a conventional
 // single-video-track, single-chunk file — one avc1 sample entry, one
-// contiguous run of samples in one chunk. Box layout per ISO/IEC 14496-12.
+// contiguous run of samples in one chunk. B-frame streams (Firefox's H.264
+// encoder reorders regardless of latencyMode — fr-7dm2) are represented the
+// standard way: decode timestamps synthesized on the constant frame cadence,
+// a version-0 ctts carrying the bias-shifted composition offsets, and an
+// elst edit trimming the shift's lead-in; a monotonic stream gets neither
+// box and its file is byte-identical to the pre-fr-7dm2 layout. Box layout
+// per ISO/IEC 14496-12.
 
 /** One encoded H.264 sample (video frame) in decode order. */
 export interface Mp4Sample {
@@ -24,6 +30,18 @@ export interface Mp4Sample {
   size: number;
   /** True when this sample is an IDR sync sample (EncodedVideoChunk.type === "key"). */
   keyframe: boolean;
+  /**
+   * Presentation timestamp in microseconds (`EncodedVideoChunk.timestamp`).
+   * Decode order is the array position; an encoder that emits B-frames
+   * (Firefox's H.264 encoder does, whatever `latencyMode` asks — fr-7dm2)
+   * hands samples back with these REORDERED relative to that position, and
+   * the muxer represents the reordering with a `ctts` composition-offset
+   * table plus an `elst` edit trimming the reorder lead-in. Monotonic
+   * timestamps (Chrome's encoders) produce neither box — that file is
+   * byte-identical to what this module wrote before it learned about
+   * B-frames.
+   */
+  timestampUs: number;
 }
 
 export interface Mp4HeaderSpec {
@@ -52,6 +70,43 @@ function sampleDelta(fps: number): number {
 /** Total movie duration in timescale units. */
 function totalDuration(spec: Mp4HeaderSpec): number {
   return spec.samples.length * sampleDelta(spec.fps);
+}
+
+/**
+ * Per-sample composition offsets (in timescale units) for a B-frame stream,
+ * or `null` for a monotonic one — the no-`ctts` fast path.
+ *
+ * Decode timestamps are synthesized as `i * delta`: the exporter authors a
+ * constant frame rate, so decode cadence IS the frame cadence — the only
+ * thing an encoder reorders is presentation. Raw offsets `pts - dts` go
+ * negative for the frames a B-frame jumped ahead of, and version-0 `ctts`
+ * offsets are unsigned, so every offset is biased up by the most negative
+ * one ({@link CompositionOffsets.biasTicks}) — the standard shifted-DTS
+ * construction, with the presentation lead-in that bias creates trimmed
+ * back off by an `elst` edit (see {@link buildEdts}). After the bias the
+ * minimum offset is 0 by construction, so "all offsets equal" can only mean
+ * "all zero" — i.e. `null`, no reordering anywhere.
+ */
+interface CompositionOffsets {
+  /** Biased, non-negative per-sample `pts - dts`, index-aligned with the
+   * samples. */
+  offsetsTicks: number[];
+  /** The shift applied to every offset — how far presentation leads decode,
+   * which the `elst` edit trims from playback. */
+  biasTicks: number;
+}
+
+function compositionOffsets(spec: Mp4HeaderSpec): CompositionOffsets | null {
+  const delta = sampleDelta(spec.fps);
+  const raw = spec.samples.map(
+    (sample, i) =>
+      Math.round((sample.timestampUs * TIMESCALE) / 1_000_000) - i * delta,
+  );
+  const minRaw = raw.reduce((min, value) => Math.min(min, value), 0);
+  const biasTicks = -minRaw;
+  const offsetsTicks = raw.map((value) => value + biasTicks);
+  if (offsetsTicks.every((value) => value === 0)) return null;
+  return { offsetsTicks, biasTicks };
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +329,52 @@ function buildStsc(spec: Mp4HeaderSpec): Uint8Array {
   );
 }
 
+/** Version-0 `ctts`: run-length {sample_count, sample_offset} entries over
+ * the biased (unsigned) composition offsets. Only built when
+ * {@link compositionOffsets} found reordering. */
+function buildCtts(offsetsTicks: readonly number[]): Uint8Array {
+  const runs: { count: number; offset: number }[] = [];
+  for (const offset of offsetsTicks) {
+    const last = runs[runs.length - 1];
+    if (last !== undefined && last.offset === offset) {
+      last.count++;
+    } else {
+      runs.push({ count: 1, offset });
+    }
+  }
+  return box(
+    "ctts",
+    concatBytes([
+      fullBoxHeader(0, 0),
+      u32(runs.length),
+      ...runs.flatMap((run) => [u32(run.count), u32(run.offset)]),
+    ]),
+  );
+}
+
+/**
+ * `edts` > `elst` with one edit: play the whole presentation starting
+ * `biasTicks` into the media — trimming exactly the lead-in the shifted-DTS
+ * `ctts` construction added (see {@link compositionOffsets}), so playback
+ * still starts at the first frame with no delay. media_time is in the media
+ * (mdhd) timescale and segment_duration in the movie (mvhd) one — the same
+ * 90000 here by construction.
+ */
+function buildEdts(spec: Mp4HeaderSpec, biasTicks: number): Uint8Array {
+  const elst = box(
+    "elst",
+    concatBytes([
+      fullBoxHeader(0, 0),
+      u32(1), // entry_count
+      u32(totalDuration(spec)), // segment_duration
+      u32(biasTicks), // media_time
+      u16(1), // media_rate_integer: 1.0
+      u16(0), // media_rate_fraction
+    ]),
+  );
+  return box("edts", elst);
+}
+
 function buildStsz(spec: Mp4HeaderSpec): Uint8Array {
   return box(
     "stsz",
@@ -325,35 +426,43 @@ function buildStco(spec: Mp4HeaderSpec): BoxWithStcoOffset {
   return { bytes, stcoOffset: 16 };
 }
 
-function buildStbl(spec: Mp4HeaderSpec): BoxWithStcoOffset {
+function buildStbl(
+  spec: Mp4HeaderSpec,
+  composition: CompositionOffsets | null,
+): BoxWithStcoOffset {
   const stsd = buildStsd(spec);
   const stts = buildStts(spec);
+  // ctts sits between stts and stss (decode timing, then composition
+  // offsets, then sync samples) only when the stream was reordered — a
+  // monotonic stream's stbl is byte-identical to the pre-fr-7dm2 layout.
+  const ctts =
+    composition === null ? null : buildCtts(composition.offsetsTicks);
   const stss = buildStss(spec);
   const stsc = buildStsc(spec);
   const stsz = buildStsz(spec);
   const stco = buildStco(spec);
 
-  const bytes = box(
-    "stbl",
-    concatBytes([stsd, stts, stss, stsc, stsz, stco.bytes]),
+  const children = [stsd, stts, ctts, stss, stsc, stsz, stco.bytes].filter(
+    (child): child is Uint8Array => child !== null,
   );
+  const bytes = box("stbl", concatBytes(children));
   const stcoOffset =
     stco.stcoOffset === undefined
       ? undefined
       : 8 +
-        stsd.length +
-        stts.length +
-        stss.length +
-        stsc.length +
-        stsz.length +
+        children.reduce((sum, child) => sum + child.length, 0) -
+        stco.bytes.length +
         stco.stcoOffset;
   return { bytes, stcoOffset };
 }
 
-function buildMinf(spec: Mp4HeaderSpec): BoxWithStcoOffset {
+function buildMinf(
+  spec: Mp4HeaderSpec,
+  composition: CompositionOffsets | null,
+): BoxWithStcoOffset {
   const vmhd = buildVmhd();
   const dinf = buildDinf();
-  const stbl = buildStbl(spec);
+  const stbl = buildStbl(spec, composition);
 
   const bytes = box("minf", concatBytes([vmhd, dinf, stbl.bytes]));
   const stcoOffset =
@@ -363,10 +472,13 @@ function buildMinf(spec: Mp4HeaderSpec): BoxWithStcoOffset {
   return { bytes, stcoOffset };
 }
 
-function buildMdia(spec: Mp4HeaderSpec): BoxWithStcoOffset {
+function buildMdia(
+  spec: Mp4HeaderSpec,
+  composition: CompositionOffsets | null,
+): BoxWithStcoOffset {
   const mdhd = buildMdhd(spec);
   const hdlr = buildHdlr();
-  const minf = buildMinf(spec);
+  const minf = buildMinf(spec, composition);
 
   const bytes = box("mdia", concatBytes([mdhd, hdlr, minf.bytes]));
   const stcoOffset =
@@ -376,21 +488,34 @@ function buildMdia(spec: Mp4HeaderSpec): BoxWithStcoOffset {
   return { bytes, stcoOffset };
 }
 
-function buildTrak(spec: Mp4HeaderSpec): BoxWithStcoOffset {
+function buildTrak(
+  spec: Mp4HeaderSpec,
+  composition: CompositionOffsets | null,
+): BoxWithStcoOffset {
   const tkhd = buildTkhd(spec);
-  const mdia = buildMdia(spec);
+  // The edit list exists only to trim the shifted-DTS lead-in, so it comes
+  // and goes with a nonzero bias — reordering with bias 0 needs ctts but no
+  // edit, and a monotonic stream needs neither.
+  const edts =
+    composition !== null && composition.biasTicks > 0
+      ? buildEdts(spec, composition.biasTicks)
+      : null;
+  const mdia = buildMdia(spec, composition);
 
-  const bytes = box("trak", concatBytes([tkhd, mdia.bytes]));
+  const children = [tkhd, edts, mdia.bytes].filter(
+    (child): child is Uint8Array => child !== null,
+  );
+  const bytes = box("trak", concatBytes(children));
   const stcoOffset =
     mdia.stcoOffset === undefined
       ? undefined
-      : 8 + tkhd.length + mdia.stcoOffset;
+      : 8 + tkhd.length + (edts?.length ?? 0) + mdia.stcoOffset;
   return { bytes, stcoOffset };
 }
 
 function buildMoov(spec: Mp4HeaderSpec): BoxWithStcoOffset {
   const mvhd = buildMvhd(spec);
-  const trak = buildTrak(spec);
+  const trak = buildTrak(spec, compositionOffsets(spec));
 
   const bytes = box("moov", concatBytes([mvhd, trak.bytes]));
   const stcoOffset =
