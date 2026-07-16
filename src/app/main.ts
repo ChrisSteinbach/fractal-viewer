@@ -81,6 +81,12 @@ import {
 import type { SceneSnapshot } from "./persist";
 import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
 import { SceneCollection, type SavedSceneMode } from "./collection";
+import {
+  decodeImportFile,
+  encodeCollectionFile,
+  encodeSceneFile,
+  MAX_IMPORT_FILE_BYTES,
+} from "./scene-file";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec4 } from "../fractal/types";
@@ -193,6 +199,23 @@ async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Hand a Blob to the browser as a named download: a temporary object URL
+ * clicked through a detached `<a download>`. Shared by the PNG export and
+ * the fr-de9t scene/collection file exports. Revocation is delayed because
+ * the download latches onto the blob URL asynchronously, and revoking
+ * synchronously aborts it in some engines — 10s is comfortably past that
+ * latch on any of them.
+ */
+function triggerDownload(blob: Blob, filename: string): void {
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /** True when the user asked the OS to minimize non-essential motion. Reused by
@@ -2131,6 +2154,77 @@ function main(): void {
   }
 
   /**
+   * Import a picked or dropped JSON export file (fr-de9t) — the shared sink
+   * behind the panel's "⬆ Import file" and the window drop listeners. A
+   * `"scene"` file loads through the exact gallery-load path above
+   * ({@link loadEncodedScene}: an undoable replace, morphing in, framed by
+   * its saved camera pose); a `"collection"` backup merges into the
+   * saved-scene library (`SceneCollection.importScenes` — deduped against
+   * what's already saved) and opens the gallery so the merge is visible,
+   * not just claimed by a toast. The bytes are untrusted
+   * (`scene-file.ts`'s `decodeImportFile` is the validation boundary), so
+   * every failure lands as a toast, never a throw — including a file too
+   * large to be a plausible export, rejected before it is read into memory.
+   */
+  async function importSceneFile(file: File): Promise<void> {
+    if (file.size > MAX_IMPORT_FILE_BYTES) {
+      ui.flashToast("That file is too large to import");
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      ui.flashToast("Couldn't read that file");
+      return;
+    }
+    const imported = decodeImportFile(text);
+    if (imported === null) {
+      ui.flashToast("Not a Fractal Viewer scene or collection file");
+      return;
+    }
+    if (imported.kind === "scene") {
+      // decodeImportFile pre-validated the payload, so this load can't
+      // actually miss — the guard just keeps loadEncodedScene's contract
+      // local instead of trusting it at a distance.
+      if (loadEncodedScene(imported.encoded)) ui.flashToast("Scene loaded");
+      return;
+    }
+    if (imported.scenes.length === 0) {
+      ui.flashToast("No usable scenes in that file");
+      return;
+    }
+    const added = collection.importScenes(imported.scenes);
+    if (added === 0) {
+      // Every entry was either already saved or (rarely) too old to survive
+      // a full collection's cap eviction — either way, nothing changed.
+      ui.flashToast("Nothing new to add from that file");
+      return;
+    }
+    ui.setCollectionCount(collection.size);
+    ui.openGallery(collection.all());
+    ui.flashToast(
+      added === 1 ? "Imported 1 scene" : `Imported ${added} scenes`,
+    );
+  }
+
+  // Drag-and-drop import (fr-de9t): dropping an exported .json anywhere on
+  // the page feeds the same sink as "⬆ Import file". preventDefault runs for
+  // EVERY file drag, not just ones that turn out to be scene files — the
+  // browser's default drop action is navigating to the file, which would
+  // discard the whole session over a stray drop. Non-file drags (text
+  // selections onto inputs) are left alone.
+  window.addEventListener("dragover", (e) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  });
+  window.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) void importSceneFile(file);
+  });
+
+  /**
    * Shared choreography for edits that replace or modify the transform set.
    *
    * Centralises the autoUpdate policy in one place:
@@ -2667,6 +2761,36 @@ function main(): void {
         ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
       );
     },
+    // The file counterpart of Copy link (fr-de9t): the SAME document bytes —
+    // camera pose included — wrapped in the JSON file envelope instead of a
+    // URL, for keeping scenes where a link doesn't fit (archives, email
+    // attachments, version control).
+    onSaveSceneFile: () => {
+      const text = encodeSceneFile(encodeScene(currentDocument()), Date.now());
+      triggerDownload(
+        new Blob([text], { type: "application/json" }),
+        `fractal-scene-${Date.now()}.json`,
+      );
+      ui.flashToast("Scene file saved");
+    },
+    // The collection's escape hatch from this browser profile (fr-de9t):
+    // everything the gallery holds — encoded scenes, mode tags, thumbnails —
+    // as one JSON backup file importSceneFile can merge back anywhere.
+    onExportCollection: () => {
+      // The button disables at zero, but guard the race anyway (a delete
+      // landing between the last count sync and this click).
+      if (collection.size === 0) return;
+      const text = encodeCollectionFile(collection.all(), Date.now());
+      triggerDownload(
+        new Blob([text], { type: "application/json" }),
+        `fractal-collection-${Date.now()}.json`,
+      );
+      const n = collection.size;
+      ui.flashToast(n === 1 ? "Exported 1 scene" : `Exported ${n} scenes`);
+    },
+    onImportFile: (file) => {
+      void importSceneFile(file);
+    },
     onSavePng: () => {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
       // while a flame render is active, its own 2D canvas (true alpha; see
@@ -2691,15 +2815,7 @@ function main(): void {
           ui.flashToast("Couldn't encode the PNG");
           return;
         }
-        const link = document.createElement("a");
-        const url = URL.createObjectURL(image.blob);
-        link.href = url;
-        link.download = `fractal-${Date.now()}.png`;
-        link.click();
-        // Revoke on a delay: the download latches onto the blob URL
-        // asynchronously, and revoking synchronously aborts it in some
-        // engines. 10s is comfortably past that latch on any of them.
-        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        triggerDownload(image.blob, `fractal-${Date.now()}.png`);
         // The device ceilings may have clamped the export below the chosen
         // multiple (scene.exportPixelRatio / the flame memory clamp), so
         // report the size that actually saved.

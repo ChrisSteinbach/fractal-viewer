@@ -45,6 +45,15 @@ export interface SavedScene {
   mode?: SavedSceneMode;
 }
 
+/**
+ * What a backup file hands to {@link SceneCollection.importScenes} — a
+ * {@link SavedScene} minus its `id` (fr-de9t). Ids are storage-internal,
+ * minted per `SceneCollection` instance (see `counter` below); a backup
+ * produced by a different session or device carries ids that mean nothing
+ * here, so a merge always mints fresh ones rather than trusting the file's.
+ */
+export type ImportableScene = Omit<SavedScene, "id">;
+
 /** localStorage key the collection is persisted under; distinct from
  * `persist.ts`'s own scene key so the two never collide. */
 export const COLLECTION_STORAGE_KEY = "fractal-viewer:collection";
@@ -204,6 +213,75 @@ export class SceneCollection {
     else this.scenes.splice(at, 0, entry);
     while (this.scenes.length > COLLECTION_CAP) this.scenes.pop();
     this.persist();
+  }
+
+  /**
+   * Merge a backup file's entries into the collection (fr-de9t) — the batch
+   * counterpart to {@link add}/{@link restore}. Processes `entries` in the
+   * given order:
+   *
+   *  - Skips an entry whose `encoded` matches one already present — the same
+   *    dedupe key {@link add} uses — checked against the live list as it
+   *    grows, so a duplicate WITHIN the batch is caught too, not just a
+   *    repeat of what was already saved.
+   *  - Otherwise mints an id (`${entry.createdAt}-${this.counter++}`, the
+   *    same expression {@link add} uses), re-minting — same expression, so
+   *    `counter` just keeps advancing — while it collides with any entry
+   *    already present: a backup from a different session or device can
+   *    carry a `createdAt` (and so a candidate id) that coincides with one
+   *    already here, and gallery load/delete/{@link after} all key on `id`,
+   *    so uniqueness has to be enforced rather than assumed.
+   *  - Inserts at the position its OWN `createdAt` sorts to, newest-first —
+   *    {@link restore}'s exact insertion rule (the first entry older than it,
+   *    or the end when there is none) — so a merged backup interleaves
+   *    chronologically with what's already here instead of stacking on top
+   *    the way {@link add} does.
+   *
+   * Once every entry has been considered, the usual `COLLECTION_CAP`
+   * eviction runs once, oldest (`pop()`) first, exactly like {@link add}/
+   * {@link restore} — importing an old backup into an already-full
+   * collection can insert entries this immediately evicts again. The return
+   * value counts entries that actually SURVIVED eviction, not just
+   * insertion: every minted id is tracked in a `Set`, popped ids are deleted
+   * from it as eviction runs, and the set's final size is what's returned —
+   * a caller reporting "imported N scenes" must not count ones that didn't
+   * make it into the saved list.
+   *
+   * Persists at most once, at the very end, and only if at least one entry
+   * was actually inserted (as opposed to every entry in the batch being
+   * skipped as a duplicate) — a merge that added nothing must not touch
+   * storage at all.
+   *
+   * `mode`/`thumbnail`/`createdAt` are stored exactly as given: this method
+   * trusts its input. Validating untrusted file bytes into an
+   * {@link ImportableScene}`[]` is `scene-file.ts`'s `decodeImportFile` job,
+   * not this method's.
+   */
+  importScenes(entries: ImportableScene[]): number {
+    const importedIds = new Set<string>();
+    for (const entry of entries) {
+      if (this.scenes.some((s) => s.encoded === entry.encoded)) continue;
+
+      let id = `${entry.createdAt}-${this.counter++}`;
+      while (this.scenes.some((s) => s.id === id)) {
+        id = `${entry.createdAt}-${this.counter++}`;
+      }
+
+      const scene: SavedScene = { ...entry, id };
+      const at = this.scenes.findIndex((s) => s.createdAt < entry.createdAt);
+      if (at === -1) this.scenes.push(scene);
+      else this.scenes.splice(at, 0, scene);
+      importedIds.add(id);
+    }
+
+    if (importedIds.size === 0) return 0;
+
+    while (this.scenes.length > COLLECTION_CAP) {
+      const evicted = this.scenes.pop();
+      if (evicted) importedIds.delete(evicted.id);
+    }
+    this.persist();
+    return importedIds.size;
   }
 
   /**

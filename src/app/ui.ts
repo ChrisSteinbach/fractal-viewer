@@ -127,6 +127,9 @@ export interface UiHandlers {
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
+  /** "⤓ Save scene file" was clicked: download the current scene document as
+   * a JSON file (fr-de9t) — the file counterpart of "🔗 Copy link". */
+  onSaveSceneFile: () => void;
   /** "★ Save to collection" was clicked: snapshot the current scene into the
    * saved-scene collection (fr-cai). */
   onSaveToCollection: () => void;
@@ -144,6 +147,15 @@ export interface UiHandlers {
   onDeleteFromCollection: (id: string) => void;
   /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
   onCopyLink: () => void;
+  /** "⬇ Export collection" was clicked: download the whole saved-scene
+   * collection as a JSON backup file (fr-de9t). */
+  onExportCollection: () => void;
+  /** An import file arrived (fr-de9t) — picked through "⬆ Import file"'s
+   * hidden input, or dropped anywhere on the page (main.ts owns the drop
+   * listeners): a scene file to load, or a collection backup to merge.
+   * Reading and validating the untrusted bytes is the app's job
+   * (`scene-file.ts`'s `decodeImportFile`), not this layer's. */
+  onImportFile: (file: File) => void;
   onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
   onTransformGeometry: (index: number, geometry: Geometry) => void;
@@ -657,12 +669,22 @@ export class Ui {
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   private readonly recordVideoBtn: HTMLButtonElement;
+  private readonly saveSceneFileBtn: HTMLButtonElement;
 
   // Saved-scene collection (fr-cai): the panel's Save/Gallery/Copy-link
-  // buttons, the gallery-count readout, and the gallery modal + its parts.
+  // buttons, the gallery-count readout, and the gallery modal + its parts —
+  // plus the fr-de9t file backup/restore trio (export, import, and the
+  // hidden file input the import button opens).
   private readonly saveCollectionBtn: HTMLButtonElement;
   private readonly galleryBtn: HTMLButtonElement;
   private readonly copyLinkBtn: HTMLButtonElement;
+  private readonly exportCollectionBtn: HTMLButtonElement;
+  /** "⬇ Export collection"'s authored title, restored whenever the button
+   * re-enables — the disabled state swaps in a why-explaining one, the same
+   * self-explaining pattern as {@link syncGalleryDriftBtn}. */
+  private readonly exportCollectionTitle: string;
+  private readonly importFileBtn: HTMLButtonElement;
+  private readonly importFileInput: HTMLInputElement;
   private readonly collectionCount: HTMLElement;
   private readonly galleryModal: HTMLElement;
   private readonly galleryBackdrop: HTMLElement;
@@ -893,9 +915,14 @@ export class Ui {
     this.savePngBtn = this.byId("savePngBtn");
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
+    this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
     this.saveCollectionBtn = this.byId("saveCollectionBtn");
     this.galleryBtn = this.byId("galleryBtn");
     this.copyLinkBtn = this.byId("copyLinkBtn");
+    this.exportCollectionBtn = this.byId("exportCollectionBtn");
+    this.exportCollectionTitle = this.exportCollectionBtn.title;
+    this.importFileBtn = this.byId("importFileBtn");
+    this.importFileInput = this.byId("importFileInput");
     this.collectionCount = this.byId("collectionCount");
     this.galleryModal = this.byId("galleryModal");
     this.galleryBackdrop = this.byId("galleryBackdrop");
@@ -1132,9 +1159,27 @@ export class Ui {
     this.recordVideoBtn.addEventListener("click", () =>
       handlers.onRecordVideoToggle(),
     );
+    this.saveSceneFileBtn.addEventListener("click", () =>
+      handlers.onSaveSceneFile(),
+    );
     this.saveCollectionBtn.addEventListener("click", () =>
       handlers.onSaveToCollection(),
     );
+    this.exportCollectionBtn.addEventListener("click", () =>
+      handlers.onExportCollection(),
+    );
+    // "⬆ Import file" just opens the hidden picker; the input's change event
+    // is what carries the chosen file to the app. The value reset lets the
+    // SAME file be picked twice in a row (change wouldn't re-fire on an
+    // unchanged value) — e.g. import a backup, delete an entry, re-import.
+    this.importFileBtn.addEventListener("click", () =>
+      this.importFileInput.click(),
+    );
+    this.importFileInput.addEventListener("change", () => {
+      const file = this.importFileInput.files?.[0];
+      this.importFileInput.value = "";
+      if (file) handlers.onImportFile(file);
+    });
     this.galleryBtn.addEventListener("click", () => handlers.onOpenGallery());
     this.galleryDriftBtn.addEventListener("click", () =>
       handlers.onDriftCollection(),
@@ -1680,9 +1725,18 @@ export class Ui {
       : "Unavailable: your system asks for reduced motion";
   }
 
-  /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai). */
+  /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai) —
+   * and on "⬇ Export collection"'s enabled state (fr-de9t): an empty
+   * collection has nothing to back up, and the swapped-in title says so
+   * instead of leaving a dead button unexplained, the same self-explaining
+   * pattern as {@link syncGalleryDriftBtn}. */
   setCollectionCount(count: number): void {
     this.collectionCount.textContent = String(count);
+    this.exportCollectionBtn.disabled = count === 0;
+    this.exportCollectionBtn.title =
+      count === 0
+        ? "Nothing saved yet — ★ Save to collection first"
+        : this.exportCollectionTitle;
   }
 
   /** Open the gallery modal over `scenes` (newest-first) and arm Escape-to-close. */
