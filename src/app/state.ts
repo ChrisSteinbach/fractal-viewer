@@ -94,6 +94,16 @@ export const MORPH_DETAILS = ["adaptive", "dense", "full"] as const;
 export type MorphDetail = (typeof MORPH_DETAILS)[number];
 
 /**
+ * The Save-PNG export-size multipliers (fr-2urv): the drawing-buffer
+ * resolution Save PNG renders at, as a multiple of the screen's. The
+ * device may clamp the resulting size (texture-size / flame-memory
+ * ceilings) — see scene.ts and main.ts's flame session start.
+ */
+export const EXPORT_SCALES = [1, 2, 4] as const;
+/** One of {@link EXPORT_SCALES}. */
+export type ExportScale = (typeof EXPORT_SCALES)[number];
+
+/**
  * Render-current-view settings for the flame renderer (`src/fractal/flame.ts`).
  * Persists as a render setting like `colorMode` / `renderStyle`, independent
  * of which render mode is currently active (see {@link AppState.renderMode}).
@@ -274,6 +284,15 @@ export interface AppState {
    * compromise to another.
    */
   adaptiveResolution: boolean;
+  /**
+   * Save-PNG export resolution as a multiple of the screen's (fr-2urv) —
+   * see {@link EXPORT_SCALES}. Session-only, like {@link adaptiveResolution}:
+   * never persisted — it is a device/workflow preference, not the scene, and
+   * while a flame render is active it also sets the resolution the whole
+   * session accumulates at (a cost a shared link must not carry to another
+   * machine).
+   */
+  exportScale: ExportScale;
   panelOpen: boolean;
   /** Render-current-view settings; persists independent of {@link renderMode}. */
   flame: FlameParams;
@@ -800,6 +819,7 @@ export function initialState(panelOpen: boolean): AppState {
     autoUpdate: true,
     morphDetail: "adaptive",
     adaptiveResolution: true,
+    exportScale: 1,
     panelOpen,
     flame: {
       exposure: DEFAULT_FLAME_EXPOSURE,
@@ -1014,6 +1034,13 @@ export function setAdaptiveResolution(
   adaptiveResolution: boolean,
 ): AppState {
   return { ...state, adaptiveResolution };
+}
+
+export function setExportScale(
+  state: AppState,
+  exportScale: ExportScale,
+): AppState {
+  return { ...state, exportScale };
 }
 
 export function setPanelOpen(state: AppState, panelOpen: boolean): AppState {

@@ -381,6 +381,27 @@ const EDL_FRAGMENT = /* glsl */ `
 `;
 
 /**
+ * Hard cap on an export's drawing-buffer long side (fr-2urv), on top of the
+ * device's own `maxTextureSize`: the glow composer chain re-allocates
+ * half-float targets at the export size, so an unbounded multiple could
+ * transiently demand gigabytes of GPU memory and lose the WebGL context.
+ * 8192 px still covers a ~27-inch print at 300 dpi.
+ */
+const EXPORT_MAX_LONG_SIDE = 8192;
+
+/**
+ * A finished still export (fr-2urv): the encoded PNG plus its actual pixel
+ * size — which the device ceilings in {@link FractalScene.captureFrame}'s
+ * clamp may have held below the requested multiple, so callers report the
+ * real dimensions rather than the asked-for ones.
+ */
+export interface ExportImage {
+  blob: Blob;
+  width: number;
+  height: number;
+}
+
+/**
  * Thin wrapper around the Three.js scene graph: a point cloud, a reference grid
  * and axes, and one wireframe "guide" box per transform. This is the main home
  * for Three.js (interactions.ts also uses it for raycasting); everything else
@@ -1506,29 +1527,59 @@ export class FractalScene {
     const clamped = Math.max(0.25, Math.min(1, scale));
     if (clamped === this.resolutionScale) return;
     this.resolutionScale = clamped;
+    this.applyPixelRatio(this.basePixelRatio() * clamped);
+  }
+
+  /**
+   * Point the renderer, composer chain, and buffer-sized dependents (EDL
+   * target, point-size uniforms) at a new effective pixel ratio — the shared
+   * tail of {@link setResolutionScale} and {@link withPixelRatio}. Marks the
+   * frame dirty so the next live frame repaints at whatever ratio is left in
+   * effect.
+   */
+  private applyPixelRatio(ratio: number): void {
     this.renderNeeded = true;
-    const ratio = this.basePixelRatio() * clamped;
     this.renderer.setPixelRatio(ratio);
     this.composer.setPixelRatio(ratio);
     this.syncBufferDependents();
   }
 
   /**
-   * Run a synchronous render-and-read at full (unscaled) resolution: exports
+   * Run a synchronous render-and-read at an explicit pixel ratio: exports
    * are keepsakes, and they shouldn't inherit whatever transient downscale
-   * the adaptive governor (fr-4lyt) happens to be at. No-op at scale 1; the
-   * next live frame re-renders at the restored scale, so nothing soft ever
-   * reaches an export or nothing sharp the screen.
+   * the adaptive governor (fr-4lyt) happens to be at — and a hi-res export
+   * (fr-2urv) renders ABOVE the live ratio the same way. No-op when the live
+   * ratio already matches; the next live frame re-renders at the restored
+   * ratio, so nothing soft (or giant) ever reaches the screen.
    */
-  private withFullResolution<T>(readback: () => T): T {
-    const scale = this.resolutionScale;
-    if (scale === 1) return readback();
-    this.setResolutionScale(1);
+  private withPixelRatio<T>(ratio: number, readback: () => T): T {
+    const live = this.basePixelRatio() * this.resolutionScale;
+    if (ratio === live) return readback();
+    this.applyPixelRatio(ratio);
     try {
       return readback();
     } finally {
-      this.setResolutionScale(scale);
+      this.applyPixelRatio(live);
     }
+  }
+
+  /**
+   * The effective pixel ratio for a still export at `exportScale` × the
+   * screen resolution (fr-2urv): the base ratio times the requested
+   * multiple, clamped so the resulting drawing buffer's long side fits both
+   * the device's texture ceiling (the EDL/composer targets and the flame
+   * display texture are all textures) and {@link EXPORT_MAX_LONG_SIDE} —
+   * and never below the base ratio, so an export is never softer than the
+   * screen.
+   */
+  private exportPixelRatio(exportScale: number): number {
+    const base = this.basePixelRatio();
+    const longSide = Math.max(this.viewportWidth, this.viewportHeight) * base;
+    const maxSide = Math.min(
+      this.renderer.capabilities.maxTextureSize,
+      EXPORT_MAX_LONG_SIDE,
+    );
+    return base * Math.max(1, Math.min(exportScale, maxSide / longSide));
   }
 
   render(): void {
@@ -1562,16 +1613,21 @@ export class FractalScene {
   }
 
   /**
-   * Render one frame and read it back as a PNG data URL. Renders synchronously
-   * right before the read so the drawing buffer is still intact (the renderer
-   * runs without `preserveDrawingBuffer`, so a frame from the rAF loop would
-   * already be gone). Works for every render style since each paints the canvas.
+   * Render one frame at the export resolution (fr-2urv: `exportScale` × the
+   * screen buffer, device-clamped — see {@link exportPixelRatio}) and read it
+   * back as an encoded PNG. Renders synchronously right before the read so
+   * the drawing buffer is still intact (the renderer runs without
+   * `preserveDrawingBuffer`, so a frame from the rAF loop would already be
+   * gone); `canvas.toBlob` snapshots the bitmap synchronously at call time
+   * and only ENCODES async, so neither the cleared buffer nor the restored
+   * live ratio can race the result. Works for every render style since each
+   * paints the canvas. Resolves `null` if the browser refuses the encode.
    */
-  captureFrame(): string {
-    return this.withFullResolution(() =>
+  captureFrame(exportScale = 1): Promise<ExportImage | null> {
+    return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
       this.withCenteredProjection(() => {
         this.render();
-        return this.renderer.domElement.toDataURL("image/png");
+        return exportImageFrom(this.renderer.domElement);
       }),
     );
   }
@@ -1634,15 +1690,20 @@ export class FractalScene {
   /**
    * Physical pixel size of the drawing buffer (accounts for
    * `devicePixelRatio`) — the resolution a flame render should target so it
-   * matches what is currently on screen 1:1.
+   * matches what is currently on screen 1:1. A hi-res export session
+   * (fr-2urv) passes its `exportScale` so the WHOLE flame accumulation runs
+   * at the export size (the converging on-screen image IS the export);
+   * clamped like every export (see {@link exportPixelRatio}) so the display
+   * texture stays under the device ceiling — main.ts additionally clamps
+   * to the flame accumulation-memory budget.
    */
-  flameRenderSize(): { width: number; height: number } {
+  flameRenderSize(exportScale = 1): { width: number; height: number } {
     // Deliberately NOT the live drawing buffer: the adaptive governor
     // (fr-4lyt) may have that scaled down under load, but a flame render is
     // a converging still — its quality shouldn't inherit a transient
     // live-cloud slowdown. Floor matches how the renderer itself derives the
     // buffer from a pixel ratio.
-    const ratio = this.basePixelRatio();
+    const ratio = this.exportPixelRatio(exportScale);
     return {
       width: Math.floor(this.viewportWidth * ratio),
       height: Math.floor(this.viewportHeight * ratio),
@@ -1712,17 +1773,21 @@ export class FractalScene {
    * over opaque black so the exported PNG matches the on-screen appearance:
    * the flame quad's material is opaque (alpha ignored), and `tonemapFlame`
    * leaves zero-hit pixels black, so on screen the backdrop is pure black.
+   * No `exportScale` parameter on purpose (fr-2urv): a flame session
+   * ACCUMULATES at the export size (see {@link flameRenderSize}), so its
+   * canvas already is the export — re-scaling here would only interpolate.
    */
-  captureFlameFrame(): string {
+  captureFlameFrame(): Promise<ExportImage | null> {
     const { width, height } = this.flameCanvas;
     const out = document.createElement("canvas");
     out.width = width;
     out.height = height;
-    const ctx = out.getContext("2d")!;
+    const ctx = out.getContext("2d");
+    if (!ctx) return Promise.resolve(null);
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(this.flameCanvas, 0, 0);
-    return out.toDataURL("image/png");
+    return exportImageFrom(out);
   }
 
   /**
@@ -1799,13 +1864,15 @@ export class FractalScene {
   /**
    * Save-PNG source while the solid render is active: render synchronously
    * right before the read so the drawing buffer is intact, exactly like
-   * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`).
+   * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`)
+   * — including its export-resolution raymarch (fr-2urv: the volume is
+   * camera-independent, so one bigger frame is just more rays).
    */
-  captureSolidFrame(): string {
-    return this.withFullResolution(() =>
+  captureSolidFrame(exportScale = 1): Promise<ExportImage | null> {
+    return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
       this.withCenteredProjection(() => {
         this.renderSolid();
-        return this.renderer.domElement.toDataURL("image/png");
+        return exportImageFrom(this.renderer.domElement);
       }),
     );
   }
@@ -1895,6 +1962,24 @@ function thumbnailFrom(src: HTMLCanvasElement, maxDim: number): string {
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(src, 0, 0, w, h);
   return out.toDataURL("image/jpeg", 0.72);
+}
+
+/**
+ * Encode a canvas as a PNG {@link ExportImage} (fr-2urv). `toBlob` snapshots
+ * the bitmap synchronously at call time (only the encode runs async — see
+ * `captureFrame`'s doc for why that timing matters against the
+ * non-`preserveDrawingBuffer` renderer), and a Blob download skips the
+ * ~hundred-MB base64 string a `toDataURL` of an 8K frame would build.
+ * Resolves `null` when the browser refuses the encode.
+ */
+function exportImageFrom(src: HTMLCanvasElement): Promise<ExportImage | null> {
+  const { width, height } = src;
+  return new Promise((resolve) =>
+    src.toBlob(
+      (blob) => resolve(blob ? { blob, width, height } : null),
+      "image/png",
+    ),
+  );
 }
 
 function disableFog(material: THREE.Material | THREE.Material[]): void {

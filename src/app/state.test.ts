@@ -71,6 +71,7 @@ import {
   setAdaptiveResolution,
   setColorGamma,
   setCustomPaletteStops,
+  setExportScale,
   setFinalTransform,
   setFlameEstimatorCurve,
   setFlameEstimatorMinimumRadius,
@@ -307,6 +308,19 @@ describe("setAdaptiveResolution", () => {
     const next = setAdaptiveResolution(state, false);
     expect(next.adaptiveResolution).toBe(false);
     expect(state.adaptiveResolution).toBe(true);
+  });
+});
+
+describe("setExportScale", () => {
+  it("sets the export scale immutably", () => {
+    const state = initialState(true);
+    const next = setExportScale(state, 4);
+    expect(next.exportScale).toBe(4);
+    expect(state.exportScale).toBe(1);
+  });
+
+  it("defaults to 1", () => {
+    expect(initialState(true).exportScale).toBe(1);
   });
 });
 

@@ -35,6 +35,7 @@ function mockEffects(shared = false): ControlEffects {
     recolor: vi.fn(),
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
+    restartFlameRender: vi.fn(),
   };
 }
 
@@ -496,6 +497,55 @@ describe("effects", () => {
 
       expect(fx.restartSolidRender).not.toHaveBeenCalled();
     });
+
+    it("exportScale effect restarts the flame render when active and the scale actually changed", () => {
+      const spec = specById("exportScale");
+      const previous = { ...initialState(true), renderMode: "flame" as const };
+      const state = applyScalarControl(previous, spec, "4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.restartFlameRender).toHaveBeenCalled();
+    });
+
+    it("exportScale effect does not restart when active but the scale is unchanged", () => {
+      const spec = specById("exportScale");
+      const previous = { ...initialState(true), renderMode: "flame" as const };
+      const state = applyScalarControl(
+        previous,
+        spec,
+        String(previous.exportScale),
+      );
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.restartFlameRender).not.toHaveBeenCalled();
+    });
+
+    it("exportScale effect does not restart while the points explorer is showing", () => {
+      const spec = specById("exportScale");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.restartFlameRender).not.toHaveBeenCalled();
+    });
+
+    it("exportScale effect does not restart the flame render from solid mode", () => {
+      const spec = specById("exportScale");
+      const previous = { ...initialState(true), renderMode: "solid" as const };
+      const state = applyScalarControl(previous, spec, "2");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.restartFlameRender).not.toHaveBeenCalled();
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -521,7 +571,7 @@ describe("commit (fr-2c27)", () => {
 });
 
 describe("table policy", () => {
-  it("morphDetail, autoUpdate, and adaptiveResolutionCheckbox are the only entries marked persisted: false", () => {
+  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, and exportScale are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
@@ -530,6 +580,7 @@ describe("table policy", () => {
       "morphDetail",
       "autoUpdate",
       "adaptiveResolutionCheckbox",
+      "exportScale",
     ]);
   });
 

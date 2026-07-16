@@ -166,6 +166,17 @@
 
       <details class="panel-section" id="exportSection" name="panel-section">
         <summary>Export</summary>
+        <label class="select-label">
+          Export size
+          <select
+            id="exportScale"
+            title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
+          >
+            <option value="1" selected>1× (screen)</option>
+            <option value="2">2×</option>
+            <option value="4">4× (print)</option>
+          </select>
+        </label>
         <button class="btn btn-ghost" id="savePngBtn" type="button">
           ⤓ Save PNG
         </button>

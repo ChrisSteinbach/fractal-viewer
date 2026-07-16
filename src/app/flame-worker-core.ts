@@ -129,6 +129,16 @@ export type FlameWorkerCommand =
        */
       maxAccumBuckets?: number;
       iterationsBudget: number;
+      /**
+       * Scales `iterationsBudget` — and every later `setIterationsBudget`
+       * command — for a hi-res export session (fr-2urv): the export size's
+       * area ratio vs. the screen, so per-OUTPUT-PIXEL sample density matches
+       * a 1× render instead of dimming/noising as the histogram spreads over
+       * more buckets. Lives worker-side so the main thread's live budget
+       * slider keeps posting the SLIDER's raw value unchanged. Optional;
+       * values below 1 (or absent) mean no scaling.
+       */
+      iterationsBudgetScale?: number;
       exposure: number;
       gamma: number;
       vibrancy: number;
@@ -1066,6 +1076,8 @@ export class FlameWorkerSession {
 
   private iterationsDone = 0;
   private iterationsBudget = 0;
+  /** See the start command's `iterationsBudgetScale` (fr-2urv). Session-lifetime, set by `start`. */
+  private iterationsBudgetScale = 1;
 
   private tonemapParams: TonemapParams = {
     exposure: 1,
@@ -1137,7 +1149,9 @@ export class FlameWorkerSession {
         break;
       case "setIterationsBudget": {
         const wasFinished = this.iterationsDone >= this.iterationsBudget;
-        this.iterationsBudget = command.iterations;
+        this.iterationsBudget = Math.round(
+          command.iterations * this.iterationsBudgetScale,
+        );
         if (this.iterationsDone < this.iterationsBudget) {
           // Resuming past a prior finish (or past whatever had accumulated)
           // means a new finished frame will eventually be owed again —
@@ -1276,7 +1290,10 @@ export class FlameWorkerSession {
         )
       : [createFlameHistogram(cmd.width, cmd.height)];
     this.nextDisplaySlot = 0;
-    this.iterationsBudget = cmd.iterationsBudget;
+    this.iterationsBudgetScale = Math.max(1, cmd.iterationsBudgetScale ?? 1);
+    this.iterationsBudget = Math.round(
+      cmd.iterationsBudget * this.iterationsBudgetScale,
+    );
     this.tonemapParams = {
       exposure: cmd.exposure,
       gamma: cmd.gamma,

@@ -2,6 +2,7 @@
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import {
+  EXPORT_SCALES,
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
@@ -355,6 +356,29 @@ describe("Ui morph detail select (fr-jonj)", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(current().morphDetail).toBe("full");
+  });
+});
+
+describe("Ui export size select (fr-2urv)", () => {
+  // Guards against the dropdown and EXPORT_SCALES drifting apart — the
+  // options must match exactly, in order (the morphDetail discipline).
+  it("offers exactly EXPORT_SCALES, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#exportScale option"),
+    ).map((o) => o.value);
+    expect(values).toEqual(EXPORT_SCALES.map(String));
+  });
+
+  it("applies a selection to state through the scalar-control table", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const select = document.getElementById("exportScale") as HTMLSelectElement;
+    select.value = "4";
+    select.dispatchEvent(new Event("change"));
+
+    expect(current().exportScale).toBe(4);
   });
 });
 

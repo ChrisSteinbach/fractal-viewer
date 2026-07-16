@@ -526,6 +526,55 @@ describe("FlameWorkerSession setIterationsBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Hi-res export iteration-budget scaling (fr-2urv)
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession iterationsBudgetScale", () => {
+  // A start WITHOUT iterationsBudgetScale behaving exactly as before (events
+  // report the raw budget) is already pinned by "FlameWorkerSession start"'s
+  // "runs to completion and reports the final progress at the full budget".
+
+  it("scales the start command's iterationsBudget by iterationsBudgetScale", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ iterationsBudget: 1000, iterationsBudgetScale: 4 }),
+    );
+    scheduler.drain();
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsBudget).toBe(4000);
+    expect(last.iterationsDone).toBe(4000);
+  });
+
+  it("scales every later setIterationsBudget command by the same factor", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ iterationsBudget: 1000, iterationsBudgetScale: 4 }),
+    );
+    scheduler.drain();
+
+    session.handle({ type: "setIterationsBudget", iterations: 2000 });
+    scheduler.drain();
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsBudget).toBe(8000);
+    expect(last.iterationsDone).toBe(8000);
+  });
+
+  it("treats a scale below 1 as 1 (no scaling)", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({ iterationsBudget: 1000, iterationsBudgetScale: 0.5 }),
+    );
+    scheduler.drain();
+
+    const last = progressEvents(events).at(-1)!;
+    expect(last.iterationsBudget).toBe(1000);
+    expect(last.iterationsDone).toBe(1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Device-aware accumulation budget policy (fr-7c8)
 // ---------------------------------------------------------------------------
 
