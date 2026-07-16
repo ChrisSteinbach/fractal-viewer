@@ -1,5 +1,6 @@
 import { SceneHistory } from "./history";
-import type { CameraPose } from "./orbit";
+import type { FourDPose } from "./four-d-view";
+import type { ViewPose } from "./history";
 
 describe("SceneHistory undo", () => {
   it("returns null when nothing has been checkpointed", () => {
@@ -134,24 +135,15 @@ describe("SceneHistory canUndo / canRedo", () => {
   });
 });
 
-describe("SceneHistory camera pose (fr-uf3)", () => {
-  const poseA: CameraPose = {
-    target: [1, 0, 0],
-    radius: 10,
-    theta: 0,
-    phi: 1,
+describe("SceneHistory view pose (fr-uf3, fr-gq99)", () => {
+  const poseA: ViewPose = {
+    camera: { target: [1, 0, 0], radius: 10, theta: 0, phi: 1 },
   };
-  const poseB: CameraPose = {
-    target: [2, 0, 0],
-    radius: 20,
-    theta: 0.5,
-    phi: 1,
+  const poseB: ViewPose = {
+    camera: { target: [2, 0, 0], radius: 20, theta: 0.5, phi: 1 },
   };
-  const poseC: CameraPose = {
-    target: [3, 0, 0],
-    radius: 30,
-    theta: 1,
-    phi: 1,
+  const poseC: ViewPose = {
+    camera: { target: [3, 0, 0], radius: 30, theta: 1, phi: 1 },
   };
 
   it("a checkpoint's pose travels back through undo", () => {
@@ -191,5 +183,26 @@ describe("SceneHistory camera pose (fr-uf3)", () => {
     const history = new SceneHistory();
     history.checkpoint("a", true);
     expect(history.undo("b")?.pose).toBeUndefined();
+  });
+
+  it("the 4D half of a checkpoint's pose travels back through undo (fr-gq99)", () => {
+    const history = new SceneHistory();
+    const fourD: FourDPose = {
+      pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
+      sliceOn: true,
+      sliceCenter: 0.25,
+      sliceRelColor: false,
+    };
+    const poseWithFourD: ViewPose = { camera: poseA.camera, fourD };
+    history.checkpoint("a", true, poseWithFourD);
+    // The rotor/slice half rides along with the camera half through undo.
+    expect(history.undo("b", poseB)?.pose?.fourD).toBe(fourD);
+  });
+
+  it("a pose captured while flat has no 4D half, and undo hands it back that way", () => {
+    const history = new SceneHistory();
+    // poseA has no `fourD` field — the flat case.
+    history.checkpoint("a", true, poseA);
+    expect(history.undo("b")?.pose?.fourD).toBeUndefined();
   });
 });

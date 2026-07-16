@@ -103,7 +103,10 @@ export interface FourDPose {
  * w-slice. The live instance itself is never persisted, never part of
  * AppState/undo — but since fr-pnek a `pose()` snapshot ({@link FourDPose})
  * IS persisted via the document (a saved/shared scene, a timeline keyframe),
- * restored on load through `applyPose()`. main.ts owns pushing matrix()/slice
+ * restored on load through `applyPose()`, and since fr-gq99 the same snapshot
+ * rides undo-history entries OUT OF BAND (history.ts's `ViewPose`), so
+ * undo/redo across a whole-system replace restores the rotor/slice like the
+ * orbit camera. main.ts owns pushing matrix()/slice
  * fields to the scene; this class owns the state + the math.
  */
 export class FourDView {
