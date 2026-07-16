@@ -91,8 +91,10 @@ function isSavedScene(v: unknown): v is SavedScene {
 }
 
 /** The entry's `mode` if it is a known {@link SavedSceneMode}, else
- * undefined (= points) — see `isSavedScene` on why this never rejects. */
-function sanitizedMode(v: unknown): SavedSceneMode | undefined {
+ * undefined (= points) — see `isSavedScene` on why this never rejects.
+ * Exported for `timeline.ts`'s loader to reuse (fr-v3au) — the one
+ * validator for a persisted `SavedSceneMode`. */
+export function sanitizedMode(v: unknown): SavedSceneMode | undefined {
   return v === "flame" || v === "solid" ? v : undefined;
 }
 

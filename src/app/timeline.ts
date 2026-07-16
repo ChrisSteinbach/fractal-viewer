@@ -1,4 +1,6 @@
 import { mulberry32 } from "../fractal/rng";
+import { sanitizedMode } from "./collection";
+import type { SavedSceneMode } from "./collection";
 
 /**
  * The timeline — an ordered, AUTHORED sequence of keyframe steps played back
@@ -11,9 +13,10 @@ import { mulberry32 } from "../fractal/rng";
  * opaque-string stance `collection.ts` and `history.ts` take, and for the
  * same reason: this module doesn't need `persist.ts` (or Three.js, or the
  * DOM) to move a step around. Each step is a frozen, independent copy (its
- * own `encoded` + `thumbnail`), NOT a reference into `collection.ts`'s
- * library — deleting a collection entry, or editing the live scene, can
- * never reach in and break a saved timeline.
+ * own `encoded` + `thumbnail` + its own `morphMs`/`holdMs` — and, since
+ * fr-v3au, the render mode it plays in), NOT a reference into
+ * `collection.ts`'s library — deleting a collection entry, or editing the
+ * live scene, can never reach in and break a saved timeline.
  *
  * Unlike `SceneCollection`, which evicts its oldest entry once a save pushes
  * past its cap, `add` here REFUSES once the timeline is at `TIMELINE_CAP`
@@ -52,6 +55,13 @@ export interface TimelineStep {
   thumbnail: string;
   morphMs: number;
   holdMs: number;
+  /** Render mode this keyframe plays in (fr-v3au): the renderer that was
+   * showing when it was captured; absent = the points explorer. Playback
+   * enters this renderer on arrival and holds the schedule until the render
+   * meets its iteration budget — mirroring `SavedScene.mode` (fr-75sq), and
+   * like it stored on the STEP, never inside `encoded`, so the scene
+   * document itself stays render-mode-less (fr-39y). */
+  mode?: SavedSceneMode;
 }
 
 /** localStorage key the timeline is persisted under; distinct from
@@ -114,6 +124,11 @@ function isFiniteNumber(v: unknown): v is number {
  * in-range check here would wrongly drop an otherwise-good step over a
  * garbage timing value, when clamping it (see `clampMs`, applied by the
  * caller once a step passes this check) is enough to make it safe to keep.
+ * The optional `mode` is NOT checked here either, the same stance
+ * `collection.ts`'s `isSavedScene` takes on its own `mode` field: a garbage
+ * value shouldn't cost the whole step, so `loadTimeline` sanitizes it
+ * separately via the shared `sanitizedMode` (fr-v3au) instead of this
+ * function rejecting the step outright.
  */
 function isTimelineStep(v: unknown): v is TimelineStep {
   if (typeof v !== "object" || v === null) return false;
@@ -164,6 +179,7 @@ function loadTimeline(
             thumbnail: s.thumbnail,
             morphMs: clampMs(s.morphMs),
             holdMs: clampMs(s.holdMs),
+            mode: sanitizedMode(s.mode),
           }))
       : [];
     return { seed, steps };
@@ -220,16 +236,23 @@ export class TimelineStore {
    * unlike a collection save where a repeat is a re-bump of the same
    * keeper. The new step gets `DEFAULT_STEP_MORPH_MS`/`DEFAULT_STEP_HOLD_MS`
    * timings and an id minted the same way `SceneCollection.add` does
-   * (`${this.now()}-${this.counter++}`). Returns `null` without persisting
-   * once the timeline is already at `TIMELINE_CAP` — see the module doc for
-   * why this refuses instead of evicting. Persists on success.
+   * (`${this.now()}-${this.counter++}`). `mode` (fr-v3au) is the renderer
+   * the capture came from; omit for the points explorer (see
+   * {@link SavedSceneMode}). Returns `null` without persisting once the
+   * timeline is already at `TIMELINE_CAP` — see the module doc for why this
+   * refuses instead of evicting. Persists on success.
    */
-  add(encoded: string, thumbnail: string): TimelineStep | null {
+  add(
+    encoded: string,
+    thumbnail: string,
+    mode?: SavedSceneMode,
+  ): TimelineStep | null {
     if (this.steps.length >= TIMELINE_CAP) return null;
     const step: TimelineStep = {
       id: `${this.now()}-${this.counter++}`,
       encoded,
       thumbnail,
+      mode,
       morphMs: DEFAULT_STEP_MORPH_MS,
       holdMs: DEFAULT_STEP_HOLD_MS,
     };

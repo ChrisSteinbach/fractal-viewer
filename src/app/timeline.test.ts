@@ -432,6 +432,112 @@ describe("TimelineStore restore", () => {
   });
 });
 
+describe("TimelineStore mode (fr-v3au)", () => {
+  it("round-trips a mode tag through storage", () => {
+    const storage = memoryStorage();
+    new TimelineStore({ storage }).add("v1=a", "thumb-a", "flame");
+
+    const reloaded = new TimelineStore({ storage });
+
+    expect(reloaded.all()[0].mode).toBe("flame");
+  });
+
+  it("add without a mode leaves it undefined", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    const step = timeline.add("v1=a", "");
+
+    expect(step?.mode).toBeUndefined();
+  });
+
+  it("loads a pre-fr-v3au step with no mode field at all, mode undefined and the step intact", () => {
+    const storage = memoryStorage({
+      [TIMELINE_STORAGE_KEY]: JSON.stringify({
+        seed: 1,
+        steps: [
+          {
+            id: "1",
+            encoded: "v1=a",
+            thumbnail: "thumb-a",
+            morphMs: 1000,
+            holdMs: 500,
+          },
+        ],
+      }),
+    });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.size).toBe(1);
+    expect(timeline.all()[0]).toEqual({
+      id: "1",
+      encoded: "v1=a",
+      thumbnail: "thumb-a",
+      morphMs: 1000,
+      holdMs: 500,
+      mode: undefined,
+    });
+  });
+
+  it("drops a garbage stored mode string to undefined while keeping the step", () => {
+    const storage = memoryStorage({
+      [TIMELINE_STORAGE_KEY]: JSON.stringify({
+        seed: 1,
+        steps: [
+          {
+            id: "1",
+            encoded: "v1=a",
+            thumbnail: "",
+            morphMs: 1000,
+            holdMs: 500,
+            mode: "neon",
+          },
+        ],
+      }),
+    });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.size).toBe(1);
+    expect(timeline.all()[0].mode).toBeUndefined();
+    expect(timeline.all()[0].encoded).toBe("v1=a");
+  });
+
+  it("drops a garbage stored mode number to undefined while keeping the step", () => {
+    const storage = memoryStorage({
+      [TIMELINE_STORAGE_KEY]: JSON.stringify({
+        seed: 1,
+        steps: [
+          {
+            id: "1",
+            encoded: "v1=a",
+            thumbnail: "",
+            morphMs: 1000,
+            holdMs: 500,
+            mode: 42,
+          },
+        ],
+      }),
+    });
+
+    const timeline = new TimelineStore({ storage });
+
+    expect(timeline.size).toBe(1);
+    expect(timeline.all()[0].mode).toBeUndefined();
+    expect(timeline.all()[0].encoded).toBe("v1=a");
+  });
+
+  it("restore after remove preserves the removed step's mode", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    const a = timeline.add("v1=a", "", "solid");
+    if (!a) throw new Error("add unexpectedly refused");
+    timeline.remove(a.id);
+
+    timeline.restore(a, 0);
+
+    expect(timeline.all()[0].mode).toBe("solid");
+  });
+});
+
 describe("TimelineStore clear", () => {
   it("empties the steps and re-rolls the seed", () => {
     let rolls = 0;

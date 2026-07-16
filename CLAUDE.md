@@ -352,8 +352,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     an authored, ORDERED sequence of keyframe steps — each a frozen copy of
     an encoded scene (camera pose included; a non-flat keyframe's 4D
     rotor/slice pose too, fr-pnek) + thumbnail + its own
-    `morphMs`/`holdMs` — under its own localStorage key, the collection's
-    opaque-encoded-string stance throughout. Deliberately not references
+    `morphMs`/`holdMs` (and, fr-v3au, optionally the flame/solid
+    `SavedSceneMode` it was captured from — on the STEP like the
+    collection's tag, never inside `encoded`) — under its own localStorage
+    key, the collection's opaque-encoded-string stance throughout.
+    Deliberately not references
     into the collection: deleting a keeper can never break a timeline.
     `add` REFUSES at the 20-step cap (and `persist` never evict-retries) —
     an authored sequence must not be silently shortened; `restore(step, at)`
@@ -368,7 +371,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     a recorded clip keeps its authored length; catch-up fires only the
     LATEST due leg (never a burst), at most one event per poll, and the last
     leg always precedes `done` — a recording stop can never beat the final
-    keyframe's launch. main.ts's `launchTimelineLeg` does what a leg IS: the
+    keyframe's launch. `hold()`/`resume()` (fr-v3au) suspend that schedule
+    for a render keyframe — the leg self-holds at launch, the step enters
+    its flame/solid renderer on arrival (the `pendingRenderMode` path), and
+    the render's budget-met signal resumes the schedule with the step's own
+    `holdMs` as the post-convergence dwell, later legs keeping authored
+    RELATIVE spacing (one `startMs` shift); a clip's length is therefore
+    content-dependent once render keyframes are present (the accepted
+    fr-v3au trade — the recorder honestly captures convergence), while
+    pure-points timelines keep the authored-length guarantee.
+    main.ts's `launchTimelineLeg` does what a leg IS: the
     same replace-load morph as a drift leg, seed pinned via `legSeed`, the
     camera gliding to the step's saved pose over the leg's own duration
     (`CameraTween.glideToPose`) — poseless steps fall back to drift's
@@ -377,10 +389,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     resuming for the hold, so arrival orientations stay pinned to the saved
     poses). A second `DriftPolicy` instance conducts it (stop-on-edit,
     own-leg guard); `stopShows` in main.ts routes every "user reached in"
-    chokepoint to both shows. Export = the same run with the canvas
+    chokepoint to both shows (`switchRenderMode` spares a HOLDING run —
+    a render keyframe owns the display — and the animate loop's points
+    path self-heals a hold whose render exited early, the drift show's
+    fr-w2ve stance). Export = the same run with the canvas
     recorder rolling: whatever ends the run stops the recorder, so the clip
-    downloads. Playback is points-only by design (a converging flame/solid
-    render has no deterministic duration). Pure, injected clock, tested.
+    downloads. Pure, injected clock, tested.
   - `scene-file.ts` — the JSON file import/export codec (fr-de9t): a
     single-scene file and a whole-collection backup file (encoded scenes +
     mode tags + thumbnails; ids omitted — the merge mints fresh ones)

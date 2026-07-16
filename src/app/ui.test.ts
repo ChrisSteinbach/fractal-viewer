@@ -4258,6 +4258,31 @@ describe("Ui timeline section (fr-8v41)", () => {
       "◆",
     );
   });
+
+  it("wears a mode glyph for a flame/solid keyframe (fr-v3au)", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline(
+      [
+        { ...step("a"), mode: "flame" as const },
+        { ...step("b"), mode: "solid" as const },
+      ],
+      "0:12",
+    );
+
+    expect(rows()[0].querySelector(".timeline-step-mode")?.textContent).toBe(
+      "✺",
+    );
+    expect(rows()[1].querySelector(".timeline-step-mode")?.textContent).toBe(
+      "◆",
+    );
+  });
+
+  it("renders no mode glyph for a plain (points) keyframe", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a")], "0:06");
+
+    expect(rows()[0].querySelector(".timeline-step-mode")).toBeNull();
+  });
 });
 
 describe("Ui file import/export (fr-de9t)", () => {
