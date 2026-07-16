@@ -346,6 +346,26 @@ and UI**, so the interesting math is unit-tested without a browser:
     this build. main.ts wires the panel buttons, the hidden picker input,
     and the window drag-drop (a scene file loads via the undoable
     gallery-load path; a backup merges and opens the gallery). Pure, tested.
+  - `flame-file.ts` — the flam3/Apophysis `.flame` XML codec (fr-8uy5; see
+    `docs/flame-interop.md` for the mapping + verified conventions). Import
+    QR-decomposes each xform's 2D coefs EXACTLY onto our rotation/scale/
+    shear `Transform` (orbit pinned to the `z = 0` plane, where the 3D
+    variation lifts equal flam3's planar formulas — our twelve variation
+    names ARE flam3's attribute names), folds pure-linear blends and posts
+    on affine maps, and degrades the rest (xaos, posts on nonlinear maps,
+    unknown variations, opacity) into deduplicated human-readable warnings;
+    a flame palette becomes an 8-stop `CustomPalette`. Same trust-boundary
+    contract as `scene-file.ts`: never throws, every returned scene is
+    verified `decodeScene`-loadable, `null` strictly means "not a flame
+    file". Export writes the system's XY shadow (exact for z-flat systems —
+    imports round-trip) with kaleidoscope copies baked into explicit xforms
+    (composed coefs for affine maps, `post` for nonlinear ones), the
+    resolved palette as the 256-entry block, and probe-framed center/scale.
+    DOMParser-tied, hence `src/app/` (tests run under jsdom). main.ts routes
+    the shared import sink (picker + drop): one flame loads as the current
+    scene hinting the flame render, a multi-flame file merges into the
+    collection tagged mode `"flame"`; "⬇ Export .flame" sits beside the
+    JSON scene export.
   - `ui.ts` — control panel + transform list, built with `createElement`. The
     panel's categories are an exclusive-open accordion of native
     `<details name="panel-section">` sections (fr-zoi) — the browser owns

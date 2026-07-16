@@ -191,6 +191,17 @@
         >
           ⤓ Save scene file
         </button>
+        <!-- flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a
+             .flame file other flame tools can open. Import goes through the
+             same ⬆ Import file picker / drag-drop as the JSON files. -->
+        <button
+          class="btn btn-ghost"
+          id="saveFlameFileBtn"
+          type="button"
+          title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) — importing .flame files works via ⬆ Import file or drag-and-drop"
+        >
+          ⤓ Export .flame
+        </button>
       </details>
 
       <!-- Outside #explorerControls on purpose (fr-75sq), like Export: saving
@@ -228,7 +239,7 @@
           class="btn btn-ghost"
           id="importFileBtn"
           type="button"
-          title="Load a scene file, or merge a collection backup into this gallery — you can also drop the file anywhere on the page"
+          title="Load a scene file, a flam3/Apophysis .flame file, or merge a collection backup into this gallery — you can also drop the file anywhere on the page"
         >
           ⬆ Import file
         </button>
@@ -236,7 +247,7 @@
           type="file"
           id="importFileInput"
           class="hidden"
-          accept=".json,application/json"
+          accept=".json,application/json,.flame,.xml,application/xml,text/xml"
           aria-hidden="true"
           tabindex="-1"
         />

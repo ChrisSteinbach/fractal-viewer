@@ -130,6 +130,9 @@ export interface UiHandlers {
   /** "⤓ Save scene file" was clicked: download the current scene document as
    * a JSON file (fr-de9t) — the file counterpart of "🔗 Copy link". */
   onSaveSceneFile: () => void;
+  /** "⤓ Export .flame" was clicked: download the system's XY shadow as a
+   * flam3/Apophysis .flame file (fr-8uy5, `flame-file.ts`). */
+  onSaveFlameFile: () => void;
   /** "★ Save to collection" was clicked: snapshot the current scene into the
    * saved-scene collection (fr-cai). */
   onSaveToCollection: () => void;
@@ -670,6 +673,7 @@ export class Ui {
   private readonly savePngBtn: HTMLButtonElement;
   private readonly recordVideoBtn: HTMLButtonElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
+  private readonly saveFlameFileBtn: HTMLButtonElement;
 
   // Saved-scene collection (fr-cai): the panel's Save/Gallery/Copy-link
   // buttons, the gallery-count readout, and the gallery modal + its parts —
@@ -916,6 +920,7 @@ export class Ui {
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
     this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
+    this.saveFlameFileBtn = this.byId("saveFlameFileBtn");
     this.saveCollectionBtn = this.byId("saveCollectionBtn");
     this.galleryBtn = this.byId("galleryBtn");
     this.copyLinkBtn = this.byId("copyLinkBtn");
@@ -1161,6 +1166,9 @@ export class Ui {
     );
     this.saveSceneFileBtn.addEventListener("click", () =>
       handlers.onSaveSceneFile(),
+    );
+    this.saveFlameFileBtn.addEventListener("click", () =>
+      handlers.onSaveFlameFile(),
     );
     this.saveCollectionBtn.addEventListener("click", () =>
       handlers.onSaveToCollection(),
