@@ -42,543 +42,174 @@ and UI**, so the interesting math is unit-tested without a browser:
 
 - **`src/fractal/`** — Dependency-free core. No Three.js, no DOM.
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
-    Three.js conventions so output is identical to the original viewer.
-  - `affine4.ts` — the 4D affine group (4×4 + translation), `toTransform4`
-    (lift a 3D `Transform` to 4D), and the `systemIsFlat` predicate that decides
-    whether a system is 4D at all — derived from the transforms, never stored.
-  - `chaos-game.ts` — the IFS iterator: warm-up, escape-reset, bounds tracking.
-    Takes an injected RNG so runs are reproducible in tests; an optional
-    `IterationRng` (fr-2wfw) moves every iteration-local draw (stochastic
-    variations, escape reseeds) onto a per-iteration stream so ε-different
-    same-seed runs stay point-for-point correspondent — what keeps a morph
-    flowing instead of boiling. `SymmetryParams.blend` (fr-eykn) fades the
-    kaleidoscope copies' pick weights continuously (0 ≡ order 1, bit-exact).
-  - `chaos-game-4d.ts` — the 4D twin of `chaos-game.ts` (`runChaosGame4`): the
-    same warm-up/escape/reseed/bounds loop unrolled to four coordinates
-    (including the `IterationRng` parameter). 4D has no kaleidoscope symmetry
-    by design.
-  - `color.ts` — `Color.setHSL`-faithful HSL→RGB and the five color-mode
-    palettes; since fr-3b6 the height/radius ramps can sample a gradient
-    palette instead of the built-in HSL formulas (`rampPaletteId`,
-    `"legacy"` = the built-ins) — `buildColorModeLUT`/`writePaletteRampColor`
-    is the ONE ramp definition the explorer, solid render, and legend share.
-    The 4D projection's "By 4D Radius" mode follows the same selection
-    (fr-6ue): `buildColors4`, the flame/voxel workers' 4D radius LUT, and the
-    4D legend all take the resolved ramp palette. In the panel the 4D look
-    controls (4D Color, depth fade) live in the Appearance section beside
-    their flat siblings, with the one ramp row statically beneath the
-    color-select pair (fr-15g) — the 4D View section keeps only the spatial
-    tumble/slice controls.
-    The position mode's axis colors are user-pickable too (fr-8k7,
-    `PositionAxisColors`): `writePositionColor` — a clipped
-    coordinate-weighted blend, absent = the legacy XYZ→RGB identity — is the
-    ONE custom-position definition `buildColors` and `accumulateVoxels`
-    share; the legend shows the live colors as X/Y/Z swatches.
-  - `flame.ts` — the CPU fractal-flame still: accumulate the chaos game into a
-    2-D hit/color histogram (`accumulateFlame`) and tone-map it (`tonemapFlame`:
-    exposure/gamma/vibrancy over a log-density curve). CPU oracle for
-    `flame-gpu.ts`.
-  - `flame-4d.ts` — the 4D twin (`accumulateFlame4`), CPU oracle for
-    `flame-gpu-4d.ts`; slices with the `0.06` ghost floor like the point cloud
-    (unlike the solid render's `0`).
-  - `flame-gpu.ts` — the WebGPU flame kernel (WGSL) + pure packing/dispatch-
-    planning/histogram-conversion layer; Vitest-tested like the rest of this
-    directory, pinned against `flame.ts`'s `accumulateFlame` (its CPU oracle)
-    by the agreement harness in `src/app/gpu-bench/`, which CI runs headless
-    on SwiftShader (`npm run bench:gpu`, the `gpu-agreement` job; fr-jnu) —
-    vitest additionally pins the WGSL variation switch's case numbering to
-    `KERNEL_VARIATION_INDEX` statically.
-  - `flame-gpu-4d.ts` — the 4D twin of `flame-gpu.ts`: the 4D WGSL kernel
-    (4x4+t affines, `variations4`, the rotor+camera projection, the four
-    `FourDRenderColor` modes, fixed-point soft-slice weights), pinned against
-    `flame-4d.ts`'s `accumulateFlame4` by the same harness's 4D scenarios
-    (and the same static variation-switch pin in vitest).
-  - `morph.ts` — pure interpolation between two attractor-shaping systems
-    (`lerpSystem`, fr-idze) for replace-load tweening instead of a snap:
-    endpoint-exact at t=0/1 (the same object reference), rotation lerped
-    through the nearest turn, a transform-count mismatch fading surplus
-    maps in/out by weight with their geometry pinned bit-exact, flat↔4D
-    pairs kept continuous via the derived w-scale, and differing
-    kaleidoscopes crossfaded through `SymmetryParams.blend` (fr-eykn) —
-    the departing one out over the first half, the arriving one in over
-    the second, continuous at the midpoint.
-  - `mutate-system.ts` — the mutation grid's perturbation core (fr-3vly):
-    `mutateSystem` nudges every numeric field of an existing system by a
-    small seeded amount — clamps mirror the editor sliders, optional keys
-    stay exactly as present/absent so flat stays flat and maps keep their
-    ids — with one `wildcard` option widening the jitter and adding a
-    structural kick (a variation-type swap, or a full rotation reroll for a
-    purely affine map). Candidates are quality-gated by `random-system.ts`'s
-    own exported `scoreSystem` probes — the same "renders as a real shape"
-    bar as a fresh roll — returning the best-scoring candidate on
-    exhaustion, never failing.
-  - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
-    256×3 LUT) shared by the flame and solid renders and (fr-3b6) the
-    explorer's height/radius ramp recolor; the `"legacy"` sentinel
-    falls back to flat per-transform hue. Since fr-55k also the user-authored
-    `CustomPalette` (2–8 evenly spaced sRGB stops, sampled piecewise-linearly
-    into the same LUT): `PaletteSelection` (preset id | `"custom"`) is the
-    UI/state vocabulary, `PaletteSpec` (preset id | payload) the worker/GPU
-    wire's, `resolvePalette` the bridge — plus the stop seeding
-    (`seedCustomStops`) and strict `#rrggbb` codecs the editor and `persist.ts`
-    share.
-  - `presets.ts` — default + named systems (Sierpinski, Menger, spiral, pyramid,
-    octahedron/icosahedron/dodecahedron flakes) + add-transform.
-  - `project4.ts` — the SO(4) rotor→matrix + camera projection the 4D renders
-    share, the frozen-view snapshot shape (`FourDView`), `sliceWeight`, and the
-    single-source-of-truth `SLICE_GHOST_FLOOR` (`0.06`).
-  - `random-system.ts` — the "Surprise Me" generator (`randomSystem`): rolls a
-    complete random IFS (2–4 maps, occasional single-axis mirrored scale,
-    optional final-transform lens, optional kaleidoscope, 25% chance of a 4D
-    `w` extension — itself occasionally w-mirrored via a negative `w.scale`,
-    fr-bew) and quality-gates each candidate with short chaos-game
-    probes (bounds sanity + grid occupancy), rerolling up to 40× and keeping
-    the best rather than ever failing. Takes an injected `Rng`, so rolls are
-    reproducible in tests.
+    Three.js conventions.
+  - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
+    3D→4D), `systemIsFlat` predicate (derived from transforms, never stored).
+  - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
+    Injected RNG for reproducibility; optional `IterationRng` keeps morphs
+    point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
+    weights continuously.
+  - `chaos-game-4d.ts` — 4D twin (`runChaosGame4`), same loop unrolled to four
+    coords. No kaleidoscope symmetry by design.
+  - `color.ts` — HSL→RGB and five color-mode palettes.
+    `buildColorModeLUT`/`writePaletteRampColor` is the ONE ramp definition the
+    explorer, solid render, and legend share (4D radius mode included).
+    `writePositionColor` is the ONE custom-position definition `buildColors`
+    and `accumulateVoxels` share.
+  - `flame.ts` — CPU fractal-flame: `accumulateFlame` (2D histogram) +
+    `tonemapFlame` (exposure/gamma/vibrancy). CPU oracle for `flame-gpu.ts`.
+  - `flame-4d.ts` — 4D twin (`accumulateFlame4`), CPU oracle for
+    `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`).
+  - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
+    layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
+  - `flame-gpu-4d.ts` — 4D WGSL kernel (4x4+t affines, `variations4`,
+    rotor+camera projection, four `FourDRenderColor` modes). Same agreement harness.
+  - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
+    rotation lerped nearest-turn, transform-count mismatches fade surplus by
+    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade.
+  - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
+    nudge of every field, clamps mirror sliders, optional keys preserved
+    exactly; `wildcard` option adds structural kicks. Quality-gated by
+    `scoreSystem`.
+  - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
+    - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
+      `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
+  - `presets.ts` — default + named systems + add-transform.
+  - `project4.ts` — SO(4) rotor→matrix + camera projection, `FourDView`,
+    `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
+  - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,
+    optional kaleidoscope, 25% 4D), quality-gated by chaos-game probes,
+    rerolls up to 40×. Injected `Rng`.
   - `rng.ts` — seedable mulberry32 PRNG.
-  - `types.ts` — the dependency-free type vocabulary the whole codebase is
-    written against: `Transform` / `Transform4`, `Vec3` / `Vec4`, `Bounds` /
-    `Bounds4`, and the `WExtension` that makes a system 4D — plus the
-    `VARIATION_TYPES` / `COLOR_MODES` / `FOUR_D_COLOR_MODES` / `SYMMETRY_AXES`
-    const arrays, each the single source of truth for a derived union type and a
-    `persist.ts` validator.
-  - `variations.ts` — the dozen nonlinear fractal-flame variations (`spherical`,
-    `swirl`, `julia`, …) as pure, total functions; `composeVariations` blends a
-    transform's weighted list.
-  - `variations4.ts` — the same twelve variations lifted one dimension up,
-    reproducing their 3D counterparts bit-for-bit at `w = 0`.
-  - `vec.ts` — three tiny generic numeric helpers (`clamp`, `clone3`, `to255`),
-    dependency-free so the plain-number app modules can share them; nothing in the
-    fractal core itself imports it.
-  - `voxel.ts` — the solid render core: accumulate the chaos game into a
-    world-space 3-D density grid (`accumulateVoxels`), size it
-    (`computeVoxelBounds`), and pack it to an RGBA8 volume (`voxelTextureData`:
-    color in RGB, log-density in alpha). `buildColorModeLUT` reuses `color.ts`'s
-    modes + gamma so solid colors match the live cloud.
-  - `voxel-4d.ts` — the 4D twin (`computeVoxelBounds4` / `accumulateVoxels4`);
-    slices with a `0` floor, not the flame's `0.06`.
+  - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
+    `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
+    `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
+  - `variations.ts` — dozen nonlinear flame variations as pure functions;
+    `composeVariations` blends a transform's weighted list.
+  - `variations4.ts` — same variations lifted to 4D, bit-exact at `w = 0`.
+  - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
+  - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
+    `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
+  - `voxel-4d.ts` — 4D twin; slices with `0` floor (not flame's `0.06`).
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
-  - `scene.ts` — the main Three.js wrapper (scene, camera, renderer, point
-    cloud, guide boxes, fog). Three.js is confined to this file,
-    `interactions.ts`, and `voxel-material.ts`; everything else works with plain
-    numbers. `captureThumbnail` reads the display down to a small JPEG data URL
-    for the collection gallery (fr-cai); mode-aware since fr-75sq — a save made
-    from a flame/solid render thumbnails the rendered frame, not the cloud.
-    `setRightInset` (fr-936q) aims the projection at the region the desktop
-    panel overlay leaves uncovered — the camera's `aspect` describes that
-    visible region (so every fit frames clear of the panel) while a
-    `setViewOffset` extension still renders the full canvas; main.ts eases the
-    inset per frame (panel toggle glides, reduced motion snaps, frozen flame
-    views excluded), and captures/thumbnails lift it so exports stay centered.
-    Save-PNG captures render at the session-only Export-size multiple
-    (fr-2urv): `captureFrame(exportScale)` / `captureSolidFrame(exportScale)`
-    re-render one frame at `basePixelRatio × scale` — clamped to the device
-    texture ceiling and an 8192px long side — and resolve a PNG Blob +
-    actual dimensions (`toBlob`; the bitmap snapshot is synchronous, only
-    the encode is async); a flame session ACCUMULATES at the export size
-    (`flameRenderSize(exportScale)`, additionally clamped to the
-    accumulation-memory budget in main.ts, with the iteration budget scaled
-    by the area ratio so per-pixel density matches 1×), so
-    `captureFlameFrame` just reads the flame canvas at its native size.
-    Renders on demand (fr-py7z): every visual mutator marks an internal
-    `needsRender` flag — the per-frame setters (`applyCamera`, `setRot4`,
-    `setGlowExposure`, `setDrawCount`, `setReplayCursor`) compare against the
-    applied value first, so all camera/tumble motion is covered with no
-    separate is-animating inventory — the render methods clear it, and
-    main.ts's animate loop skips frames where it's clear (video recording
-    forces painting: canvas capture streams emit frames only on paint).
+  - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
+    boxes, fog). Three.js confined to this file, `interactions.ts`, and
+    `voxel-material.ts`. `setRightInset` aims projection clear of the desktop
+    panel. Captures: `captureFrame`/`captureSolidFrame` render at export scale
+    (clamped to device limits + 8192px); flame accumulates at export size so
+    `captureFlameFrame` reads native. Renders on demand via `needsRender` flag.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
-  - `camera-tween.ts` — the orbit camera's three motions (pure, tested,
-    injected clock), mutually exclusive and honoring reduced motion: the
-    smoothstep GLIDE that auto-frames a freshly generated attractor (preset
-    load / Surprise Me) instead of snapping, (fr-cfoc) the dt-aware
-    exponential CHASE that follows a morphing attractor's live bounds —
-    retargeted per intermediate arrival, replaced by the terminal fit's
-    glide for the settle — both leaving the orbit angles alone, and
-    (fr-8v41) the directed POSE GLIDE to a saved `CameraPose`, the one
-    motion that moves theta/phi (nearest-turn theta, self-timed by the
-    timeline leg's own morph duration); `poseGliding` is how main.ts pauses
-    the auto-orbit while a glide owns theta.
-  - `framing-bounds.ts` — what those fit motions FRAME (fr-3xfk): per-axis
-    trimmed-quantile bounds of the delivered cloud (and the 4D twin, a
-    distance-from-center quantile that stays tumble-invariant), computed
-    worker-side onto every `CloudResult` (`frameBounds`/`frameRadius`) so a
-    nonlinear variation's sparse flung points can't inflate the fit the way
-    they do the raw min/max `bounds` — which everything that must cover every
-    point (color normalization, culling spheres) still reads. The glow-exposure
-    density estimate reads `frameBounds` too (fr-2b82): it wants where the
-    mass is, and the raw box's outlier inflation over-brightened the glow.
-    Same trim rationale as `voxel.ts`'s `BOUNDS_QUANTILE`, deliberately its
-    own constant. Pure, tested.
-  - `morph-tween.ts` — the replace-load system morph driver (fr-jx9o):
-    per-frame sampler over `../fractal/morph`'s `lerpSystem` with a pinned seed
-    so consecutive frames' clouds stay point-for-point correspondent, chained
-    restarts resuming from the live sample; polled by main.ts's animate loop,
-    which streams each sample as an intermediate generation request — sized
-    by `morph-budget.ts` — and sends the real replaced/fit request on the
-    terminal sample (fr-a04l) — reduced motion skips straight to that
-    terminal request. Since fr-wavo the morph's duration is a `start()`
-    parameter (default `MORPH_TWEEN_MS`), so a drift leg can glide slower
-    than a click.
-  - `morph-budget.ts` — the morph's adaptive intermediate point budget
-    (fr-a5gu): an EMA of per-point generation cost — fed by every delivered
-    generation's latency (measured by `cloud-generator.ts`) — sizes each
-    intermediate request to ~one frame's worth of chaos game on this device,
-    clamped to `[MORPH_MIN_POINTS, MORPH_MAX_POINTS]`. The session-only
-    Morph Detail select (fr-jonj, `MORPH_DETAILS` in state.ts) trades that
-    smoothness back for density — a sparse intermediate cloud video-encodes
-    to near-black: `"dense"` scales budget and ceiling ×8, `"full"` runs
-    intermediates at the scene's own count. Pure, tested.
-  - `mutation-thumbs.ts` — the mutation grid's thumbnail renderer (fr-3vly):
-    a pure, canvas-free chaos-game scatter (flat directly, 4D via
-    `toTransform4`) into an RGBA pixel buffer — one FIXED oblique view so
-    all nine grid cells stay comparable, additive per-transform color so
-    density reads as brightness (`captureThumbnail` can't serve here:
-    candidates are never in the scene). main.ts owns the candidates and
-    builds the 3×3 modal grid one cell per animation frame (the current
-    system pinned inert at the center, the last cell `mutate-system.ts`'s
-    wildcard, a token guarding every re-seed); a pick is a normal undoable
-    replace-load morphing in — the same path as Surprise Me — after which
-    the grid re-seeds around the pick, and ui.ts's modal mirrors the
-    gallery's chrome (✕/backdrop/Escape). Pure, tested.
-  - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
-    dwell/advance state machine (injected clock, like `build-replay.ts`)
-    polled by main.ts's animate loop; when a dwell elapses it fires one leg —
-    a Surprise-Me roll (or, fr-w2ve, the next saved scene) morphing in over
-    `DRIFT_MORPH_MS` with a normal "replace" undo checkpoint, then a fresh
-    dwell. Since fr-w2ve the deadline can also be HELD (`hold` /
-    `resumeAfter(DRIFT_RENDER_LINGER_MS)` / `holding`): active but awaiting
-    an external signal instead of the clock. main.ts + `drift-policy.ts`
-    own the policy: session-only, STOPS (never pauses) on any undoable
-    edit / undo / manual replace-load, unavailable under reduced motion; a
-    render-mode switch stops a random show but only holds a collection one
-    — the gallery slideshow (`onDriftCollection`) walks
-    `SceneCollection.after`'s loop, plays each entry in the mode it was
-    SAVED from (fr-75sq, via `pendingRenderMode`; untagged = points), and
-    departs a still one `DRIFT_RENDER_LINGER_MS` after its render meets
-    the iteration budget (the flame/solid progress events). Between legs
-    the poll is one comparison, so a dwelling show does no per-frame work.
-  - `drift-policy.ts` — an automated show's stop/advance conductor
-    (fr-4otp): the ONE guarded `stop()` every "user reached in" chokepoint
-    calls — no-op'd while the show's own leg applies itself (the own-leg
-    guard, which is how a leg's replace-load survives the stop-on-edit
-    rule) and while idle, so the injected `onStopped` UI sync (and
-    fr-ygr1's "stopped" toast) can never fire for a stop that didn't
-    happen — and `advance(launchLeg)`, which runs one leg under that guard
-    and itself ends the show at a leg boundary under reduced motion or a
-    dry leg source (`launchLeg` returning false: an emptied/fully-corrupt
-    collection, an undecodable timeline step), the dry stop deferred until
-    the guard unwinds — deferring it is the fr-4otp fix; issued from inside
-    the leg it was swallowed and the show polled forever. Since fr-8v41 the
-    show surface is the structural `ConductableShow` and the leg body is
-    `advance`'s parameter, so one instance conducts the drift show and a
-    second conducts the timeline player. main.ts's wiring decides what a
-    leg does and which stops toast. Pure, injected effects, tested.
-  - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
-    timing/phase state machine that reveals the displayed cloud in generation
-    order (hop → accrete/emerge → spotlight → done, with narration captions)
-    — the buffer IS chaos-game order, so the growing prefix faithfully
-    replays the drawing. The spotlight tour (fr-01kf) walks the base maps
-    one at a time over the finished cloud — main.ts dims every other map's
-    points (`color.ts`'s `dimColorsExcept` over the result's
-    `transformIndices`, both 3D and 4D) and pins the guide-box emphasis
-    (`scene.setGuideHighlight`, which the hop phase also flashes per
-    landing) — so each map's landings read as a shrunken copy of the whole
-    (A = ⋃ fᵢ(A)); skipped for single-map systems. Polled per frame by
-    main.ts's animate loop; `scene.setDrawCount` / `setReplayCursor` do the
-    drawing (pure, tested, injected clock).
-    Since fr-hpci, main.ts overlays a temporary showcase while it plays: color
-    switches to By Transform (`colorMode`/`fourDColor`, skipped if already that
-    mode), the guides are forced visible (boxes, grid, axes, 4D scaffold —
-    `refreshGuides` pushes the whole `guidesShown()` derivation, not just the
-    boxes), and auto-orbit/auto-tumble run — not forced under reduced motion. Display-layer only: AppState and the persisted
-    document never see it — main.ts's `recolor()` / `applyFourDColor()` /
-    `refreshGuides()` and the `ui.ts` legend fold a session-only `replayShowcase`
-    flag instead — and `endReplayDisplay` restores it all on every exit,
-    including a panel now opened mid-replay, which cancels the replay too.
-  - `exposure.ts` — `glowExposure`: a density-adaptive brightness multiplier for
-    the live cloud's `"glow"` render style, derived from screen-space
-    points-per-pixel so additive points don't blow out to white (pure, tested).
-    Not the flame tone-map's `exposure` — this only scales `glowMaterial.opacity`.
-  - `resolution-governor.ts` — the adaptive render-resolution governor
-    (fr-4lyt): a pure frame-time ladder (EMA + dead-band hysteresis +
-    asymmetric sustains + post-step hold-off) that main.ts feeds the dt
-    between consecutively rendered frames; the scale it steps through
-    multiplies the base pixel ratio (`scene.setResolutionScale` re-sizes the
-    drawing buffer, glow composer, and EDL target together; point sizes
-    follow the buffer-height uniforms, so the frame just softens) — weak
-    hardware trades pixels for frame rate and earns them back on recovery.
-    PNG exports and `flameRenderSize()` stay unscaled; recording and flame
-    mode pin full resolution. Opt-out is the session-only
-    `adaptiveResolution` checkbox (`persisted: false` — a device preference,
-    never a document edit). Pure, tested.
+  - `camera-tween.ts` — three mutually exclusive camera motions (pure, tested,
+    injected clock): smoothstep GLIDE (auto-frame on load), exponential CHASE
+    (follow morphing bounds), directed POSE GLIDE to a saved `CameraPose`
+    (moves theta/phi, nearest-turn). All honor reduced motion.
+  - `framing-bounds.ts` — trimmed-quantile bounds (`frameBounds`/`frameRadius`)
+    computed worker-side so nonlinear outliers don't inflate fits. Raw `bounds`
+    still used where every point matters (color normalization, culling). Pure, tested.
+  - `morph-tween.ts` — replace-load morph driver: per-frame `lerpSystem`
+    sampler with pinned seed; main.ts streams intermediates sized by
+    `morph-budget.ts`, sends real request on terminal sample. Configurable
+    duration. Pure, tested.
+  - `morph-budget.ts` — adaptive intermediate point budget: EMA of per-point
+    cost sizes each intermediate to ~one frame's chaos game, clamped
+    `[MIN, MAX]`. Morph Detail select trades smoothness for density. Pure, tested.
+  - `mutation-thumbs.ts` — mutation grid thumbnail renderer: canvas-free
+    chaos-game scatter into RGBA buffer, fixed oblique view, additive
+    per-transform color. main.ts owns the 3x3 modal grid. Pure, tested.
+  - `drift.ts` — ambient "Drift" show: dwell/advance state machine (injected
+    clock), fires Surprise-Me rolls or saved-scene legs. Can HOLD awaiting an
+    external signal (render convergence). Session-only, stops on user edits.
+  - `drift-policy.ts` — show stop/advance conductor: guarded `stop()` (no-op
+    during own leg or while idle) + `advance(launchLeg)` with own-leg guard.
+    `ConductableShow` surface shared by drift and timeline player. Pure, tested.
+  - `build-replay.ts` — "Watch it build" replay: timing/phase state machine
+    (hop -> accrete -> spotlight -> done) revealing the cloud in generation
+    order. Spotlight tours base maps one at a time. main.ts overlays a
+    temporary showcase (By Transform color, guides visible, auto-orbit).
+    Pure, tested, injected clock.
+  - `exposure.ts` — `glowExposure`: density-adaptive brightness for the
+    `"glow"` render style (not the flame tone-map). Pure, tested.
+  - `resolution-governor.ts` — adaptive resolution: frame-time ladder (EMA +
+    hysteresis) trades pixels for frame rate. Exports/flame stay unscaled.
+    Session-only `adaptiveResolution` opt-out. Pure, tested.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
-  - `persist.ts` — encode/decode the scene to a `#v1=<base64url>` URL hash +
-    localStorage so systems are shareable and survive reloads. Pure codec with a
-    strict, never-throwing decoder; storage/location are injected (tested).
-    Since fr-1k4 the saved/shared/collection document also carries the
-    orbit-camera pose (`CameraPose`, optional; a malformed pose drops to
-    `undefined` instead of rejecting the scene) so a reopened PWA / reloaded
-    tab restores its framing — undo-history snapshots stay camera-less on
-    purpose (history.ts dedupes by string equality). Since fr-pnek a
-    non-flat scene's document additionally carries the 4D view pose
-    (`FourDPose`: rotor pair + w-slice, same optional/quiet-drop contract,
-    pair renormalized via `normalizeRotorPair` on decode; the tumble
-    on/speed stay out — fr-0ya viewer pref), applied by main.ts where the
-    fresh-visit 4D reset would otherwise land (`pendingFourDPose`, the
-    pendingRenderMode pattern) — undo snapshots stay pose-less for the same
-    dedup reason.
-  - `history.ts` — session-only undo/redo stacks over the encoded scene
-    snapshot (pure, tested).
-  - `edit-session.ts` — the burst-coalescing policy over `history.ts`: collapses a
-    rapid edit burst (e.g. a slider drag) into one undo checkpoint and one
-    debounced save, and drives undo/redo. Every side effect (snapshot, persist,
-    restore, UI sync, the timer) is injected; pure, tested.
-  - `collection.ts` — the saved-scene collection (fr-cai): a persistent
-    multi-slot library of encoded scenes + thumbnails under its own
-    localStorage key, layered over the same `encodeScene` codec as the
-    single-scene autosave (`persist.ts`) and undo history (`history.ts`).
-    `after(id)` (fr-w2ve) is the drift slideshow's loop cursor: the entry
-    following an id in gallery order, wrapping, front on a vanished id.
-    An entry saved from a flame/solid render carries that mode
-    (`SavedSceneMode`, fr-75sq) — on the ENTRY, never inside `encoded`, so
-    the document/share-link stays render-mode-less per fr-39y; a garbage
-    mode from storage drops to undefined without losing the entry. Pure,
-    injected storage/clock, tested. `importScenes` (fr-de9t) is the backup
-    merge: dedupe by `encoded`, createdAt-sorted insertion (like `restore`),
-    fresh collision-free ids, cap eviction — returning only the count that
-    survived.
-  - `timeline.ts` — the animation timeline's persistent document (fr-8v41):
-    an authored, ORDERED sequence of keyframe steps — each a frozen copy of
-    an encoded scene (camera pose included; a non-flat keyframe's 4D
-    rotor/slice pose too, fr-pnek) + thumbnail + its own
-    `morphMs`/`holdMs` (and, fr-v3au, optionally the flame/solid
-    `SavedSceneMode` it was captured from — on the STEP like the
-    collection's tag, never inside `encoded`) — under its own localStorage
-    key, the collection's opaque-encoded-string stance throughout.
-    Deliberately not references
-    into the collection: deleting a keeper can never break a timeline.
-    `add` REFUSES at the 20-step cap (and `persist` never evict-retries) —
-    an authored sequence must not be silently shortened; `restore(step, at)`
-    is the delete-toast's undo (fr-ifts pattern, index-addressed). A
-    persisted `seed` + `legSeed(seed, i)` give playback its deterministic
-    per-leg morph seeds — the reproducible half of "deterministic video
-    export". Pure, injected storage/clock, tested.
-  - `timeline-player.ts` — the timeline's playback clock (fr-8v41): the
-    drift show's directed, FINITE sibling, polled per frame like its
-    siblings. Unlike `DriftShow`'s reschedule-from-now, the schedule is
-    ABSOLUTE against start (`due[i]` accumulates each step's morph+hold), so
-    a recorded clip keeps its authored length; catch-up fires only the
-    LATEST due leg (never a burst), at most one event per poll, and the last
-    leg always precedes `done` — a recording stop can never beat the final
-    keyframe's launch. `hold()`/`resume()` (fr-v3au) suspend that schedule
-    for a render keyframe — the leg self-holds at launch, the step enters
-    its flame/solid renderer on arrival (the `pendingRenderMode` path), and
-    the render's budget-met signal resumes the schedule with the step's own
-    `holdMs` as the post-convergence dwell, later legs keeping authored
-    RELATIVE spacing (one `startMs` shift); a clip's length is therefore
-    content-dependent once render keyframes are present (the accepted
-    fr-v3au trade — the recorder honestly captures convergence), while
-    pure-points timelines keep the authored-length guarantee.
-    main.ts's `launchTimelineLeg` does what a leg IS: the
-    same replace-load morph as a drift leg, seed pinned via `legSeed`, the
-    camera gliding to the step's saved pose over the leg's own duration
-    (`CameraTween.glideToPose`) — poseless steps fall back to drift's
-    fit+chase — and a 4D keyframe's rotor/slice gliding likewise
-    (`FourDTween`, fr-pnek: tumble suspended while the glide owns the rotor,
-    resuming for the hold, so arrival orientations stay pinned to the saved
-    poses). A second `DriftPolicy` instance conducts it (stop-on-edit,
-    own-leg guard); `stopShows` in main.ts routes every "user reached in"
-    chokepoint to both shows (`switchRenderMode` spares a HOLDING run —
-    a render keyframe owns the display — and the animate loop's points
-    path self-heals a hold whose render exited early, the drift show's
-    fr-w2ve stance). Export = the same run with the canvas
-    recorder rolling: whatever ends the run stops the recorder, so the clip
-    downloads — unless the run qualifies for the offline frame-exact path
-    (fr-92t9, `offline-export.ts`), which drives this same player on the
-    virtual clock instead. Pure, injected clock, tested.
-  - `scene-file.ts` — the JSON file import/export codec (fr-de9t): a
-    single-scene file and a whole-collection backup file (encoded scenes +
-    mode tags + thumbnails; ids omitted — the merge mints fresh ones)
-    sharing one `{app, kind, version}` envelope. `decodeImportFile` is the
-    never-throwing trust boundary for picked/dropped files: every `encoded`
-    it returns has already passed `decodeScene` (a returned scene is
-    genuinely loadable), thumbnails must be bounded `data:image/` URLs, and
-    entries keep their ORIGINAL encoded strings — never re-canonicalized —
-    so a newer build's fields survive an import/re-export round trip through
-    this build. main.ts wires the panel buttons, the hidden picker input,
-    and the window drag-drop (a scene file loads via the undoable
-    gallery-load path; a backup merges and opens the gallery). Pure, tested.
-  - `flame-file.ts` — the flam3/Apophysis `.flame` XML codec (fr-8uy5; see
-    `docs/flame-interop.md` for the mapping + verified conventions). Import
-    QR-decomposes each xform's 2D coefs EXACTLY onto our rotation/scale/
-    shear `Transform` (orbit pinned to the `z = 0` plane, where the 3D
-    variation lifts equal flam3's planar formulas — our twelve variation
-    names ARE flam3's attribute names), folds pure-linear blends and posts
-    on affine maps, and degrades the rest (xaos, posts on nonlinear maps,
-    unknown variations, opacity) into deduplicated human-readable warnings;
-    a flame palette becomes an 8-stop `CustomPalette`. Same trust-boundary
-    contract as `scene-file.ts`: never throws, every returned scene is
-    verified `decodeScene`-loadable, `null` strictly means "not a flame
-    file". Export writes the system's XY shadow (exact for z-flat systems —
-    imports round-trip) with kaleidoscope copies baked into explicit xforms
-    (composed coefs for affine maps, `post` for nonlinear ones), the
-    resolved palette as the 256-entry block, and probe-framed center/scale.
-    DOMParser-tied, hence `src/app/` (tests run under jsdom). main.ts routes
-    the shared import sink (picker + drop): one flame loads as the current
-    scene hinting the flame render, a multi-flame file merges into the
-    collection tagged mode `"flame"`; "⬇ Export .flame" sits beside the
-    JSON scene export.
-  - `ui.ts` — control panel + transform list, built with `createElement`. The
-    panel's categories are an exclusive-open accordion of native
-    `<details name="panel-section">` sections (fr-zoi) — the browser owns
-    which one is open; `Ui` re-anchors the tapped summary after the
-    exclusivity reflow — only while the panel is on screen (fr-dd4b: the
-    restore below also opens sections with the panel parked off-screen, and
-    scrollIntoView toward it pans a phone's viewport clean off the app) —
-    and remembers the open section per render mode (fr-99o: Points ↔ Flame
-    ↔ Solid each restore their own on switch; session-only, like
-    `renderMode` itself). Mode content that is NOT a section — Points'
-    Undo/Redo row, the flame/solid hint + progress blocks — sits above the
-    whole accordion, right under the mode switch (fr-374p): wedged between
-    two collapsed headers it would read as the upper section's open content.
-  - `control-spec.ts` — declarative spec table for the panel's simple scalar
-    controls (slider/select/checkbox ↔ one state field): `Ui` derives lookup,
-    listeners, and label sync from it; `main.ts` derives the one generic
-    handler. Adding a scalar setting = one spec entry + one index.html row
-    (pure, tested).
-  - `constants.ts` — shared UI/interaction magic numbers (`MOBILE_BREAKPOINT`, the
-    guide-box scale clamps) kept out of `src/fractal/` on purpose.
-  - `interactions.ts` — pointer / touch / wheel handling (uses Three.js
-    raycasting for transform drags).
-  - `slider-scroll-guard.ts` — undoes the tap-jump a panel slider commits on
-    `pointerdown` when the touch turns out to be a panel scroll (fr-zoi):
-    Blink jumps the thumb before `touch-action: pan-y` can classify the
-    gesture, then fires `pointercancel` once it claims the pan — the guard
-    snapshots the value pre-jump and restores it on that signal (plus a
-    pure-vertical `pointerup`/`touchend` fallback for engines without the
-    cancel). Delegated on `#panel`, so the dynamic editor sliders are covered
-    (tested).
-  - `main.ts` — entry point; wires state ↔ scene ↔ ui ↔ interactions.
-  - `regen-scheduler.ts` — the rAF coalescer (fr-acc) in front of
-    `regenerate()`: collapses a drag/slider burst into one generation request
-    per animation frame instead of one per input event. Now bounds
-    request-building/postMessage traffic to the cloud worker (fr-5kx); in the
-    generator's synchronous fallback mode it's again all that stops a drag
-    from running a full generation per input event.
-  - `cloud-worker.ts` / `cloud-worker-core.ts` — the live point cloud's
-    generation worker (fr-5kx): a one-shot request → response, not a session
-    state machine like flame/voxel have. Seeded chaos game (`generateCloud`);
-    the 3D path bakes its color buffer (`buildColors`) worker-side and the 4D
-    path lifts transforms through `toTransform4` worker-side too, so a
-    regeneration costs the main thread only a transferable-buffer upload.
-  - `cloud-generator.ts` — the main-thread client for the cloud worker
-    (fr-5kx): at most one request in flight, latest wins, OR-merging a
-    coalesced request's `replaced`/`fit` flags so a superseded preset load's
-    fresh-visit reset and camera fit still land. Times every generation and
-    reports the latency to `onResult` (fr-a5gu — `morph-budget.ts`'s feed).
-    Falls back to running the same `generateCloud` synchronously if the
-    worker never loads or crashes — the live cloud IS the app, unlike the
-    optional flame/solid overlays — and `generateSync` takes that path
-    deliberately at boot. `settle()` resolves once nothing is in flight or
-    parked, every delivery made — the offline export's per-frame await
-    (fr-92t9). Pure, injected deps, tested.
-  - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
-    kernels from inside the flame worker (one shared driver, two packing
-    factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
-    seam (WebGPU when available, CPU otherwise). All resource creation is
-    error-scoped, so allocation refusals fail at create time as a classified
-    `FlameGpuSizeError` — reported device limits overstate real, dynamic
-    allocator ceilings (fr-2w5; see
-    `docs/investigation-fr-2w5-gpu-selection.md`).
-  - `flame-worker.ts` / `flame-worker-core.ts` — the flame render worker: thin
-    `postMessage` glue around a plain-testable session (`FlameWorkerSession`)
-    driving CPU (`accumulateFlame` / `accumulateFlame4`) or WebGPU accumulation
-    behind the `FlameAccumBackend` seam; SharedArrayBuffer fast path,
-    postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D;
-    `iterationsBudgetScale` (fr-2urv) scales the budget — and every live
-    `setIterationsBudget` — for a hi-res export session, so per-output-pixel
-    density matches a 1× render.
-    GPU failures run a recovery ladder (`handleGpuFailure`, fr-2w5): retry ON
-    the GPU at a smaller supersample, one fresh-device retry (refusing a
-    software adapter after real hardware), and only then the permanent CPU
-    fallback — whose `gpuUnavailable` reason annotates the UI's CPU backend
-    note (CPU is the one fallback, on every browser).
-  - `flame-perf.ts` — `FlamePerfMeter`, opt-in flame-throughput diagnostics
-    (behind the `?flameperf` URL param): windows the worker's per-chunk timing
-    samples into a throughput summary. Pure, tested; deliberately changes no
-    render behavior.
-  - `voxel-worker.ts` / `voxel-worker-core.ts` — the solid render worker, same
-    shape as the flame worker but postMessage-transfer only (the solid render
-    has no live tone-map to fast-path).
-  - `voxel-material.ts` — the Three.js GLSL3 raymarcher `ShaderMaterial` that
-    displays the voxel volume (isosurface march + gradient-normal shading; live
-    threshold/light/ambient uniforms `scene.ts` pushes with no worker round-trip).
-  - `render-session.ts` — the `enter` / `exit` / `terminate` + first-frame-gate
-    choreography shared by the flame and solid render controllers
-    (`RenderSession`); which renderer is showing is the session-only
-    `renderMode` (`"points" | "flame" | "solid"`, fr-39y) in `AppState`,
-    switched by the panel's segmented control and never persisted. A preset
-    can hint the mode it showcases (`PRESET_RENDER_HINTS` in `presets.ts`).
-  - `four-d-view.ts` — the session-only 4D view state (the `RotorPair`,
-    auto-tumble, soft w-slice); `main.ts` freezes it into a render's `fourD`
-    snapshot when the system is 4D. Since fr-pnek the rotor + slice (never
-    the tumble on/speed — that's the fr-0ya viewer pref) also snapshot to a
-    persistable `FourDPose` (`pose()`/`applyPose`), the 4D sibling of
-    `CameraPose`, and `FourDTween` is the directed pose glide a timeline leg
-    drives (rotor slerp + slice-center lerp over the leg's own morph
-    duration) — `CameraTween.glideToPose`'s 4D twin, suspending the
-    auto-tumble while it owns the rotor.
-  - `rotor4.ts` — SO(4) rotation as a renormalizable unit-quaternion pair
-    (`RotorPair`), composed cheaply over a long session; `slerpRotorPair`
-    (geodesic interpolation with the double-cover sign fix) and
-    `normalizeRotorPair` (the decode trust boundary) serve the persisted
-    pose (fr-pnek).
-  - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — the video-capture
-    feature: `createCanvasRecorder` streams the shared WebGL canvas through
-    `MediaRecorder` to a downloadable clip (MP4 preferred for upload
-    compatibility, WebM fallback); the two dependency-free binary patchers rewrite
-    the duration metadata the browser's `MediaRecorder` leaves unset so uploads
-    are accepted. Pure helpers are tested; the `MediaRecorder` glue is verified
-    in-browser.
-  - `offline-export.ts` / `video-encode.ts` / `mp4-mux.ts` — the timeline's
-    offline frame-exact export (fr-92t9), the realtime capture's
-    deterministic sibling: for a pure-points timeline on a browser whose
-    WebCodecs can encode H.264, ⏺ Export steps the SAME playback machinery
-    on a VIRTUAL clock instead of recording the live canvas — main.ts's
-    `nowMs()` (virtual during an export, `performance.now()` otherwise)
-    feeds every clock consumer on the playback path, the animate loop is
-    split into `tickLogic`/`tickRender` so the driver can await
-    `CloudGenerator.settle()` between deciding a frame and painting it, and
-    morph intermediates run at the scene's own count (the adaptive budget
-    is measured device speed — exactly the nondeterminism being removed).
-    Same device + same timeline + hands off ⇒ the same clip, hitches and
-    all-day exports notwithstanding. `offline-export.ts` is the pure driver
-    loop (step → settle → forced render → encode → yield, MessageChannel
-    yields so a backgrounded tab keeps exporting); `video-encode.ts` the
-    WebCodecs adapter (H.264 level ladder, avcC capture, `dequeue`
-    backpressure, chunks kept as per-chunk Blobs); `mp4-mux.ts` the
-    dependency-free faststart muxer, building the header from sample
-    sizes/keyframes/timestamps only so the file assembles as
-    `Blob([header, ...chunkBlobs])` — encoded bytes are never concatenated
-    in JS memory — and representing a B-frame stream (Firefox's H.264
-    encoder reorders regardless of latencyMode, fr-7dm2) with synthesized
-    uniform decode times + a v0 `ctts` + an `elst` trimming the shift,
-    while a monotonic stream's file stays byte-identical (no ctts/edts at
-    all — the Chrome path). Render keyframes (fr-v3au)
-    keep the realtime MediaRecorder path (their legs hold for live
-    convergence — inherently realtime); the Export button routes between
-    the two, shows offline progress, and doubles as its cancel. Driver +
-    muxer + pure helpers tested; the `VideoEncoder` glue is verified
-    in-browser (the `recorder.ts` stance).
-  - `register-sw.ts` — service-worker registration + the reload-once
-    cross-origin-isolation bootstrap (gives the flame worker its
-    SharedArrayBuffer fast path; postMessage transfer is the fallback).
-  - `sw/sw.ts` — hand-written service worker (vite-plugin-pwa
-    `injectManifest`): Workbox precache composed with COOP/COEP header
-    injection in ONE fetch handler. Lives in its own TS program
-    (`sw/tsconfig.json`) because the WebWorker lib conflicts with the app's
-    DOM lib; `npm run lint` type-checks both programs.
+  - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
+    Strict never-throwing decoder. Document carries optional `CameraPose` and
+    optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
+    `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
+    string equality).
+  - `history.ts` — session-only undo/redo stacks (pure, tested).
+  - `edit-session.ts` — burst-coalescing over `history.ts`: one undo checkpoint
+    per slider drag + debounced save. All effects injected; pure, tested.
+  - `collection.ts` — persistent multi-slot scene library (localStorage).
+    `after(id)` is the drift slideshow's loop cursor. Entries carry optional
+    `SavedSceneMode` (on the ENTRY, never inside `encoded`). `importScenes`
+    merges backups with dedup + fresh ids. Pure, tested.
+  - `timeline.ts` — animation timeline document: ordered keyframe steps (frozen
+    encoded scene + thumbnail + `morphMs`/`holdMs` + optional render mode).
+    20-step cap (refuses, never evicts). `legSeed(seed, i)` for deterministic
+    playback. Not references into the collection. Pure, tested.
+  - `timeline-player.ts` — timeline playback clock: ABSOLUTE schedule against
+    start, catch-up fires only LATEST due leg. `hold()`/`resume()` suspend for
+    render keyframes (content-dependent clip length). main.ts's
+    `launchTimelineLeg` wires the morph + camera pose glide + 4D rotor/slice
+    glide per leg. A second `DriftPolicy` conducts it. Export = same run with
+    recorder rolling, or the offline path. Pure, tested.
+  - `scene-file.ts` — JSON import/export: single-scene + collection backup
+    sharing `{app, kind, version}` envelope. `decodeImportFile` is the
+    never-throwing trust boundary (entries keep ORIGINAL encoded strings).
+    Pure, tested.
+  - `flame-file.ts` — flam3/Apophysis `.flame` XML codec (see
+    `docs/flame-interop.md`). Import QR-decomposes 2D coefs onto our
+    `Transform`, folds pure-linear blends/posts, degrades unsupported features
+    to warnings; palette becomes 8-stop `CustomPalette`. Export writes XY
+    shadow with kaleidoscope baked into explicit xforms. DOMParser-tied (jsdom
+    tests). Pure, tested.
+  - `ui.ts` — control panel + transform list (`createElement`). Accordion of
+    `<details name="panel-section">` sections, remembers open section per
+    render mode. Mode content above the accordion (undo row, render progress).
+  - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
+    setting = one spec entry + one index.html row (pure, tested).
+  - `constants.ts` — shared UI/interaction magic numbers.
+  - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
+  - `slider-scroll-guard.ts` — undoes tap-jump on panel sliders when touch
+    becomes a scroll (tested).
+  - `main.ts` — entry point; wires state <-> scene <-> ui <-> interactions.
+  - `regen-scheduler.ts` — rAF coalescer: one generation request per frame.
+  - `cloud-worker.ts` / `cloud-worker-core.ts` — point cloud generation worker:
+    one-shot request/response, seeded chaos game, colors + 4D transforms
+    baked worker-side.
+  - `cloud-generator.ts` — main-thread cloud worker client: at most one request
+    in flight, latest wins, OR-merges coalesced flags. Synchronous fallback if
+    worker crashes. `settle()` for offline export. Pure, tested.
+  - `flame-gpu-backend.ts` — drives flame WGSL kernels inside the flame worker
+    behind `FlameAccumBackend` seam. Error-scoped resource creation
+    (`FlameGpuSizeError`).
+  - `flame-worker.ts` / `flame-worker-core.ts` — flame render worker:
+    `FlameWorkerSession` driving CPU or WebGPU accumulation; SAB fast path,
+    transfer fallback. GPU failure recovery ladder: retry smaller -> fresh
+    device -> CPU fallback.
+  - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
+  - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
+  - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
+  - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
+    flame/solid controllers. `renderMode` is session-only, never persisted.
+  - `four-d-view.ts` — session-only 4D view state (rotor, tumble, slice).
+    `FourDPose` snapshots rotor + slice for persistence. `FourDTween` is the
+    directed pose glide (rotor slerp + slice lerp).
+  - `rotor4.ts` — SO(4) rotation as renormalizable unit-quaternion pair
+    (`RotorPair`); `slerpRotorPair` + `normalizeRotorPair`.
+  - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — video capture:
+    `MediaRecorder` -> MP4 (preferred) or WebM; binary patchers fix missing
+    duration metadata.
+  - `offline-export.ts` / `video-encode.ts` / `mp4-mux.ts` — offline
+    frame-exact timeline export: steps playback on a VIRTUAL clock (main.ts's
+    `nowMs()`), awaits `CloudGenerator.settle()` per frame for determinism.
+    `video-encode.ts` = WebCodecs H.264 adapter; `mp4-mux.ts` = dependency-free
+    faststart muxer (handles B-frame reordering). Render keyframes use the
+    realtime MediaRecorder path instead.
+  - `register-sw.ts` — service-worker registration + COOP/COEP bootstrap.
+  - `sw/sw.ts` — Workbox precache + COOP/COEP headers (own TS program).
 
 Core algorithm: the chaos game on an IFS — repeatedly apply a randomly chosen
 affine map to a moving point and plot where it lands; the cloud converges on the
