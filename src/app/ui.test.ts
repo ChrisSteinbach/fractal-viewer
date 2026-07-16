@@ -42,6 +42,9 @@ function noopHandlers(): UiHandlers {
     onRedo: vi.fn(),
     onPreset: vi.fn(),
     onSurprise: vi.fn(),
+    onOpenMutations: vi.fn(),
+    onMutationPick: vi.fn(),
+    onMutateAgain: vi.fn(),
     onDriftToggle: vi.fn(),
     onScalarControl: vi.fn(),
     onRegenerate: vi.fn(),
@@ -4019,6 +4022,98 @@ describe("Ui collection gallery", () => {
     ui.closeGallery();
     expect(
       document.getElementById("galleryModal")?.classList.contains("hidden"),
+    ).toBe(true);
+  });
+});
+
+describe("Ui mutation grid (fr-3vly)", () => {
+  const SIZE = 4;
+  const pixels = () => new Uint8ClampedArray(SIZE * SIZE * 4);
+  const cells = () =>
+    Array.from(document.querySelectorAll("#mutationGrid .mutation-cell"));
+
+  it("opens with nine placeholder cells: eight disabled buttons around an inert 'current' center", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    expect(
+      document.getElementById("mutationModal")?.classList.contains("hidden"),
+    ).toBe(false);
+    const all = cells();
+    expect(all).toHaveLength(9);
+    const buttons = all.filter((el) => el instanceof HTMLButtonElement);
+    expect(buttons).toHaveLength(8);
+    expect(buttons.every((b) => b.disabled)).toBe(true);
+    const center = all[4];
+    expect(center).not.toBeInstanceOf(HTMLButtonElement);
+    expect(center.querySelector(".mutation-cell-tag")?.textContent).toBe(
+      "current",
+    );
+  });
+
+  it("setMutationCell enables the cell and a click fires onMutationPick with the candidate index", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    ui.setMutationCell(4, pixels(), SIZE, false);
+    // Candidate 4 sits AFTER the center, at DOM position 5.
+    const cell = cells()[5] as HTMLButtonElement;
+    expect(cell.disabled).toBe(false);
+    expect(cell.querySelector("canvas")).not.toBeNull();
+    cell.click();
+    expect(handlers.onMutationPick).toHaveBeenCalledWith(4);
+  });
+
+  it("a still-unfilled cell stays disabled and never fires a pick", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openMutations();
+    const cell = cells()[0] as HTMLButtonElement;
+    cell.click();
+    expect(handlers.onMutationPick).not.toHaveBeenCalled();
+  });
+
+  it("tags the wildcard cell", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setMutationCell(7, pixels(), SIZE, true);
+    const cell = cells()[8];
+    expect(cell.querySelector(".mutation-cell-tag")?.textContent).toBe("wild");
+  });
+
+  it("resetMutationCells returns every cell to a disabled placeholder", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    ui.setMutationCell(0, pixels(), SIZE, false);
+    ui.resetMutationCells();
+    const cell = cells()[0] as HTMLButtonElement;
+    expect(cell.disabled).toBe(true);
+    expect(cell.querySelector("canvas")).toBeNull();
+  });
+
+  it("the Mutate button fires onOpenMutations and 'Mutate again' fires onMutateAgain", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    document.getElementById("mutateBtn")?.click();
+    expect(handlers.onOpenMutations).toHaveBeenCalledTimes(1);
+    document.getElementById("mutationAgainBtn")?.click();
+    expect(handlers.onMutateAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it("closeMutations hides the modal and mutationsOpen reflects it", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    expect(ui.mutationsOpen()).toBe(true);
+    ui.closeMutations();
+    expect(ui.mutationsOpen()).toBe(false);
+    expect(
+      document.getElementById("mutationModal")?.classList.contains("hidden"),
     ).toBe(true);
   });
 });

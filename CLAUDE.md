@@ -102,6 +102,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     kaleidoscopes crossfaded through `SymmetryParams.blend` (fr-eykn) —
     the departing one out over the first half, the arriving one in over
     the second, continuous at the midpoint.
+  - `mutate-system.ts` — the mutation grid's perturbation core (fr-3vly):
+    `mutateSystem` nudges every numeric field of an existing system by a
+    small seeded amount — clamps mirror the editor sliders, optional keys
+    stay exactly as present/absent so flat stays flat and maps keep their
+    ids — with one `wildcard` option widening the jitter and adding a
+    structural kick (a variation-type swap, or a full rotation reroll for a
+    purely affine map). Candidates are quality-gated by `random-system.ts`'s
+    own exported `scoreSystem` probes — the same "renders as a real shape"
+    bar as a fresh roll — returning the best-scoring candidate on
+    exhaustion, never failing.
   - `palette.ts` — Inigo-Quilez cosine-gradient palettes (`buildPaletteLUT` →
     256×3 LUT) shared by the flame and solid renders and (fr-3b6) the
     explorer's height/radius ramp recolor; the `"legacy"` sentinel
@@ -205,6 +215,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     smoothness back for density — a sparse intermediate cloud video-encodes
     to near-black: `"dense"` scales budget and ceiling ×8, `"full"` runs
     intermediates at the scene's own count. Pure, tested.
+  - `mutation-thumbs.ts` — the mutation grid's thumbnail renderer (fr-3vly):
+    a pure, canvas-free chaos-game scatter (flat directly, 4D via
+    `toTransform4`) into an RGBA pixel buffer — one FIXED oblique view so
+    all nine grid cells stay comparable, additive per-transform color so
+    density reads as brightness (`captureThumbnail` can't serve here:
+    candidates are never in the scene). main.ts owns the candidates and
+    builds the 3×3 modal grid one cell per animation frame (the current
+    system pinned inert at the center, the last cell `mutate-system.ts`'s
+    wildcard, a token guarding every re-seed); a pick is a normal undoable
+    replace-load morphing in — the same path as Surprise Me — after which
+    the grid re-seeds around the pick, and ui.ts's modal mirrors the
+    gallery's chrome (✕/backdrop/Escape). Pure, tested.
   - `drift.ts` — the ambient "Drift" show's timing loop (fr-wavo): a pure
     dwell/advance state machine (injected clock, like `build-replay.ts`)
     polled by main.ts's animate loop; when a dwell elapses it fires one leg —
