@@ -10,7 +10,6 @@ describe("DriftPolicy.stop", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => true,
       onStopped: (notify) => stops.push(notify),
     });
 
@@ -28,7 +27,6 @@ describe("DriftPolicy.stop", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => true,
       onStopped: (notify) => stops.push(notify),
     });
 
@@ -44,7 +42,6 @@ describe("DriftPolicy.stop", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => true,
       onStopped: (notify) => stops.push(notify),
     });
 
@@ -66,14 +63,13 @@ describe("DriftPolicy.advance", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => {
-        launchCount += 1;
-        return true;
-      },
       onStopped: (notify) => stops.push(notify),
     });
 
-    policy.advance();
+    policy.advance(() => {
+      launchCount += 1;
+      return true;
+    });
 
     expect(launchCount).toBe(1);
     expect(show.active).toBe(true);
@@ -91,14 +87,13 @@ describe("DriftPolicy.advance", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => true,
-      launchLeg: () => {
-        launchCount += 1;
-        return true;
-      },
       onStopped: (notify) => stops.push(notify),
     });
 
-    policy.advance();
+    policy.advance(() => {
+      launchCount += 1;
+      return true;
+    });
 
     expect(launchCount).toBe(0);
     expect(show.active).toBe(false);
@@ -117,16 +112,15 @@ describe("DriftPolicy own-leg guard", () => {
     const policy: DriftPolicy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => {
-        // Simulates the leg's replace-load flowing through main.ts's
-        // applyEdit chokepoint, which calls policy.stop() on every edit.
-        policy.stop({ notify: true });
-        return true;
-      },
       onStopped: (notify) => stops.push(notify),
     });
 
-    policy.advance();
+    policy.advance(() => {
+      // Simulates the leg's replace-load flowing through main.ts's
+      // applyEdit chokepoint, which calls policy.stop() on every edit.
+      policy.stop({ notify: true });
+      return true;
+    });
 
     expect(show.active).toBe(true);
     expect(stops).toEqual([]);
@@ -142,10 +136,9 @@ describe("DriftPolicy own-leg guard", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => true,
       onStopped: (notify) => stops.push(notify),
     });
-    policy.advance();
+    policy.advance(() => true);
 
     policy.stop();
 
@@ -163,11 +156,10 @@ describe("DriftPolicy own-leg guard", () => {
     const policy = new DriftPolicy({
       show,
       reducedMotion: () => false,
-      launchLeg: () => false,
       onStopped: (notify) => stops.push(notify),
     });
 
-    policy.advance();
+    policy.advance(() => false);
 
     expect(show.active).toBe(false);
     expect(stops).toEqual([false]);

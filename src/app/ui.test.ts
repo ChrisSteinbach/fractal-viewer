@@ -58,6 +58,12 @@ function noopHandlers(): UiHandlers {
     onDriftCollection: vi.fn(),
     onLoadFromCollection: vi.fn(),
     onDeleteFromCollection: vi.fn(),
+    onTimelineAddKeyframe: vi.fn(),
+    onTimelinePlayToggle: vi.fn(),
+    onTimelineExport: vi.fn(),
+    onTimelineRemoveStep: vi.fn(),
+    onTimelineMoveStep: vi.fn(),
+    onTimelineStepTiming: vi.fn(),
     onCopyLink: vi.fn(),
     onExportCollection: vi.fn(),
     onImportFile: vi.fn(),
@@ -4051,6 +4057,206 @@ describe("Ui collection gallery", () => {
     expect(
       document.getElementById("galleryModal")?.classList.contains("hidden"),
     ).toBe(true);
+  });
+});
+
+describe("Ui timeline section (fr-8v41)", () => {
+  const step = (id: string, thumbnail = "", morphMs = 4000, holdMs = 2000) => ({
+    id,
+    encoded: `v1=${id}`,
+    thumbnail,
+    morphMs,
+    holdMs,
+  });
+
+  function addBtn(): HTMLButtonElement {
+    return document.getElementById("timelineAddBtn") as HTMLButtonElement;
+  }
+  function playBtn(): HTMLButtonElement {
+    return document.getElementById("timelinePlayBtn") as HTMLButtonElement;
+  }
+  function exportBtn(): HTMLButtonElement {
+    return document.getElementById("timelineExportBtn") as HTMLButtonElement;
+  }
+  function status(): HTMLElement {
+    return document.getElementById("timelineStatus") as HTMLElement;
+  }
+  function empty(): HTMLElement {
+    return document.getElementById("timelineEmpty") as HTMLElement;
+  }
+  function rows(): HTMLElement[] {
+    return Array.from(document.querySelectorAll<HTMLElement>(".timeline-step"));
+  }
+  function timingInputs(row: HTMLElement): HTMLInputElement[] {
+    return Array.from(
+      row.querySelectorAll<HTMLInputElement>("input[type='number']"),
+    );
+  }
+
+  it("renders one row per step, the first row's thumbnail, and the timing inputs in seconds", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTimeline(
+      [step("a", "data:image/jpeg;base64,aaa", 4000, 2000), step("b")],
+      "0:06",
+    );
+
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0].querySelector("img")?.getAttribute("src")).toBe(
+      "data:image/jpeg;base64,aaa",
+    );
+    const [morphInput, holdInput] = timingInputs(rows()[0]);
+    expect(morphInput.value).toBe("4");
+    expect(holdInput.value).toBe("2");
+  });
+
+  it("shows the empty hint, hides the status line, and disables Play/Export for an empty timeline", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([], "0:00");
+
+    expect(empty().classList.contains("hidden")).toBe(false);
+    expect(status().classList.contains("hidden")).toBe(true);
+    expect(playBtn().disabled).toBe(true);
+    expect(exportBtn().disabled).toBe(true);
+  });
+
+  it("shows a keyframe count and the given duration label, with Play enabled", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a"), step("b")], "0:12");
+
+    expect(empty().classList.contains("hidden")).toBe(true);
+    expect(status().classList.contains("hidden")).toBe(false);
+    expect(status().textContent).toBe("2 keyframes · 0:12");
+    expect(playBtn().disabled).toBe(false);
+  });
+
+  it("fires onTimelineAddKeyframe when the Add button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    addBtn().click();
+    expect(handlers.onTimelineAddKeyframe).toHaveBeenCalledOnce();
+  });
+
+  it("commits an edited morph seconds input as milliseconds", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a")], "0:06");
+
+    const [morphInput] = timingInputs(rows()[0]);
+    morphInput.value = "2.5";
+    morphInput.dispatchEvent(new Event("change"));
+
+    expect(handlers.onTimelineStepTiming).toHaveBeenCalledWith("a", {
+      morphMs: 2500,
+    });
+  });
+
+  it("commits an edited hold seconds input as milliseconds", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a")], "0:06");
+
+    const [, holdInput] = timingInputs(rows()[0]);
+    holdInput.value = "3";
+    holdInput.dispatchEvent(new Event("change"));
+
+    expect(handlers.onTimelineStepTiming).toHaveBeenCalledWith("a", {
+      holdMs: 3000,
+    });
+  });
+
+  it("restores the displayed value and fires nothing when a timing input commits empty", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a", "", 4000, 2000)], "0:06");
+
+    const [morphInput] = timingInputs(rows()[0]);
+    morphInput.value = "";
+    morphInput.dispatchEvent(new Event("change"));
+
+    expect(morphInput.value).toBe("4");
+    expect(handlers.onTimelineStepTiming).not.toHaveBeenCalled();
+  });
+
+  it("disables the first row's ↑ and the last row's ↓, and fires onTimelineMoveStep(-1) from a middle row's ↑", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a"), step("b"), step("c")], "0:18");
+
+    const [first, middle, last] = rows();
+    expect(
+      first.querySelector<HTMLButtonElement>(
+        '[aria-label="Move keyframe 1 earlier"]',
+      )?.disabled,
+    ).toBe(true);
+    expect(
+      last.querySelector<HTMLButtonElement>(
+        '[aria-label="Move keyframe 3 later"]',
+      )?.disabled,
+    ).toBe(true);
+
+    middle
+      .querySelector<HTMLButtonElement>(
+        '[aria-label="Move keyframe 2 earlier"]',
+      )
+      ?.click();
+    expect(handlers.onTimelineMoveStep).toHaveBeenCalledWith("b", -1);
+  });
+
+  it("fires onTimelineRemoveStep when a row's ✕ is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a")], "0:06");
+
+    rows()[0]
+      .querySelector<HTMLButtonElement>(".timeline-step-delete")
+      ?.click();
+    expect(handlers.onTimelineRemoveStep).toHaveBeenCalledWith("a");
+  });
+
+  it("swaps the Play button to Stop and disables Export while active, then restores both", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a")], "0:06");
+
+    ui.setTimelineActive(true);
+    expect(playBtn().textContent).toBe("■ Stop");
+    expect(exportBtn().disabled).toBe(true);
+
+    ui.setTimelineActive(false);
+    expect(playBtn().textContent).toBe("▶ Play timeline");
+    expect(exportBtn().disabled).toBe(false);
+  });
+
+  it("disables Play and Export with the reduced-motion title even with steps rendered", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a")], "0:06");
+
+    ui.setTimelineAvailable(false);
+
+    expect(playBtn().disabled).toBe(true);
+    expect(playBtn().title).toBe(
+      "Unavailable: your system asks for reduced motion",
+    );
+    expect(exportBtn().disabled).toBe(true);
+    expect(exportBtn().title).toBe(
+      "Unavailable: your system asks for reduced motion",
+    );
+  });
+
+  it("renders the ◆ placeholder instead of an img when a keyframe's thumbnail is blank", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a", "")], "0:06");
+
+    expect(rows()[0].querySelector("img")).toBeNull();
+    expect(rows()[0].querySelector(".timeline-step-noimg")?.textContent).toBe(
+      "◆",
+    );
   });
 });
 
