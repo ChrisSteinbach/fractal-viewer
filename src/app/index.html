@@ -183,6 +183,14 @@
         <button class="btn btn-ghost" id="recordVideoBtn" type="button">
           ● Record video
         </button>
+        <button
+          class="btn btn-ghost"
+          id="saveSceneFileBtn"
+          type="button"
+          title="Download the current scene as a JSON file — the file counterpart of Copy link; re-import it here on any device"
+        >
+          ⤓ Save scene file
+        </button>
       </details>
 
       <!-- Outside #explorerControls on purpose (fr-75sq), like Export: saving
@@ -204,6 +212,34 @@
         <button class="btn btn-ghost" id="copyLinkBtn" type="button">
           🔗 Copy link
         </button>
+        <!-- File backup/restore (fr-de9t): the collection otherwise lives only
+             in this browser profile's localStorage. Import also accepts
+             single-scene files (and either kind dropped anywhere on the
+             page); the hidden input is the picker ⬆ Import file opens. -->
+        <button
+          class="btn btn-ghost"
+          id="exportCollectionBtn"
+          type="button"
+          title="Download the whole collection as a JSON backup file"
+        >
+          ⬇ Export collection
+        </button>
+        <button
+          class="btn btn-ghost"
+          id="importFileBtn"
+          type="button"
+          title="Load a scene file, or merge a collection backup into this gallery — you can also drop the file anywhere on the page"
+        >
+          ⬆ Import file
+        </button>
+        <input
+          type="file"
+          id="importFileInput"
+          class="hidden"
+          accept=".json,application/json"
+          aria-hidden="true"
+          tabindex="-1"
+        />
       </details>
 
       <div id="explorerControls">

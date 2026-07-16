@@ -51,12 +51,15 @@ function noopHandlers(): UiHandlers {
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
     onRecordVideoToggle: vi.fn(),
+    onSaveSceneFile: vi.fn(),
     onSaveToCollection: vi.fn(),
     onOpenGallery: vi.fn(),
     onDriftCollection: vi.fn(),
     onLoadFromCollection: vi.fn(),
     onDeleteFromCollection: vi.fn(),
     onCopyLink: vi.fn(),
+    onExportCollection: vi.fn(),
+    onImportFile: vi.fn(),
     onSelect: vi.fn(),
     onTransformGeometry: vi.fn(),
     onToggleFinalTransform: vi.fn(),
@@ -4047,6 +4050,86 @@ describe("Ui collection gallery", () => {
     expect(
       document.getElementById("galleryModal")?.classList.contains("hidden"),
     ).toBe(true);
+  });
+});
+
+describe("Ui file import/export (fr-de9t)", () => {
+  it("fires onSaveSceneFile when ⤓ Save scene file is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    document.getElementById("saveSceneFileBtn")?.click();
+    expect(handlers.onSaveSceneFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onExportCollection when ⬇ Export collection is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.setCollectionCount(1);
+    document.getElementById("exportCollectionBtn")?.click();
+    expect(handlers.onExportCollection).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables ⬇ Export collection at count zero with an explanatory title, re-enabling on a save", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const btn = document.getElementById(
+      "exportCollectionBtn",
+    ) as HTMLButtonElement;
+    const authoredTitle = btn.title;
+
+    ui.setCollectionCount(0);
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).not.toBe(authoredTitle);
+
+    ui.setCollectionCount(3);
+    expect(btn.disabled).toBe(false);
+    expect(btn.title).toBe(authoredTitle);
+  });
+
+  it("⬆ Import file opens the hidden picker", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const input = document.getElementById(
+      "importFileInput",
+    ) as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, "click");
+    document.getElementById("importFileBtn")?.click();
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the picked file to onImportFile and resets the input so the same file can be re-picked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const input = document.getElementById(
+      "importFileInput",
+    ) as HTMLInputElement;
+    const file = new File(["{}"], "backup.json", { type: "application/json" });
+    Object.defineProperty(input, "files", {
+      value: [file],
+      configurable: true,
+    });
+
+    input.dispatchEvent(new Event("change"));
+
+    expect(handlers.onImportFile).toHaveBeenCalledWith(file);
+    expect(input.value).toBe("");
+  });
+
+  it("does not fire onImportFile when the picker is dismissed with no file", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const input = document.getElementById(
+      "importFileInput",
+    ) as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [], configurable: true });
+
+    input.dispatchEvent(new Event("change"));
+
+    expect(handlers.onImportFile).not.toHaveBeenCalled();
   });
 });
 

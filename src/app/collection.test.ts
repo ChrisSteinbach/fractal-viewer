@@ -326,3 +326,152 @@ describe("SceneCollection saved-from mode (fr-75sq)", () => {
     expect(collection.all()[0].mode).toBeUndefined();
   });
 });
+
+describe("SceneCollection importScenes (fr-de9t)", () => {
+  it("merges new entries into createdAt order among existing entries", () => {
+    const storage = fakeStorage();
+    let t = 100;
+    const collection = new SceneCollection({ storage, now: () => t });
+    collection.add("v1=oldest", ""); // createdAt 100
+    t = 300;
+    collection.add("v1=newest", ""); // createdAt 300
+
+    const imported = collection.importScenes([
+      { encoded: "v1=middle", thumbnail: "", createdAt: 200 },
+    ]);
+
+    expect(imported).toBe(1);
+    expect(collection.all().map((s) => s.encoded)).toEqual([
+      "v1=newest",
+      "v1=middle",
+      "v1=oldest",
+    ]);
+  });
+
+  it("skips an entry whose encoded already exists, without touching storage", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=dup", "original-thumb");
+    const setItemSpy = vi.fn(storage.setItem);
+    storage.setItem = setItemSpy;
+
+    const imported = collection.importScenes([
+      { encoded: "v1=dup", thumbnail: "imported-thumb", createdAt: 999 },
+    ]);
+
+    expect(imported).toBe(0);
+    expect(collection.size).toBe(1);
+    expect(collection.all()[0].thumbnail).toBe("original-thumb");
+    expect(setItemSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips a duplicate within the batch, keeping only the first", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+
+    const imported = collection.importScenes([
+      { encoded: "v1=same", thumbnail: "first", createdAt: 100 },
+      { encoded: "v1=same", thumbnail: "second", createdAt: 200 },
+    ]);
+
+    expect(imported).toBe(1);
+    expect(collection.size).toBe(1);
+    expect(collection.all()[0].thumbnail).toBe("first");
+  });
+
+  it("preserves createdAt, mode, and thumbnail on the imported entry", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+
+    collection.importScenes([
+      {
+        encoded: "v1=solid-scene",
+        thumbnail: "data:image/png;base64,xyz",
+        createdAt: 4242,
+        mode: "solid",
+      },
+    ]);
+
+    const imported = collection.all()[0];
+    expect(imported.createdAt).toBe(4242);
+    expect(imported.mode).toBe("solid");
+    expect(imported.thumbnail).toBe("data:image/png;base64,xyz");
+  });
+
+  it("mints unique ids even when createdAt collides or a fresh instance's counter restarts", () => {
+    // Two entries sharing a createdAt in one batch still get distinct ids —
+    // the shared per-instance counter disambiguates them.
+    const batchCollection = new SceneCollection({ storage: fakeStorage() });
+    batchCollection.importScenes([
+      { encoded: "v1=same-time-a", thumbnail: "", createdAt: 500 },
+      { encoded: "v1=same-time-b", thumbnail: "", createdAt: 500 },
+    ]);
+    const batchIds = batchCollection.all().map((s) => s.id);
+    expect(new Set(batchIds).size).toBe(2);
+
+    // A fresh instance's counter restarts at 0, so its first minted id
+    // (`${T}-0`) can collide with an entry already in storage that was
+    // minted by a different instance sharing the same createdAt T.
+    const storage = fakeStorage();
+    const T = 700;
+    new SceneCollection({ storage, now: () => T }).add("v1=existing", "");
+
+    const collection = new SceneCollection({ storage });
+    const imported = collection.importScenes([
+      { encoded: "v1=imported", thumbnail: "", createdAt: T },
+    ]);
+
+    expect(imported).toBe(1);
+    const ids = collection.all().map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("evicts past COLLECTION_CAP and returns only the surviving count", () => {
+    const storage = fakeStorage();
+    let t = 0;
+    const collection = new SceneCollection({ storage, now: () => t });
+    for (let i = 0; i < COLLECTION_CAP; i++) {
+      t = i + 1; // createdAt 1..COLLECTION_CAP, strictly increasing
+      collection.add(`v1=fill-${i}`, "");
+    }
+    expect(collection.size).toBe(COLLECTION_CAP);
+
+    const staleImported = collection.importScenes([
+      { encoded: "v1=too-old", thumbnail: "", createdAt: 0 },
+    ]);
+    expect(staleImported).toBe(0);
+    expect(collection.size).toBe(COLLECTION_CAP);
+    expect(collection.all().some((s) => s.encoded === "v1=too-old")).toBe(
+      false,
+    );
+
+    const freshImported = collection.importScenes([
+      { encoded: "v1=newer-1", thumbnail: "", createdAt: 9999 },
+      { encoded: "v1=newer-2", thumbnail: "", createdAt: 10000 },
+    ]);
+    expect(freshImported).toBe(2);
+    expect(collection.size).toBe(COLLECTION_CAP);
+    expect(collection.all().some((s) => s.encoded === "v1=newer-1")).toBe(true);
+    expect(collection.all().some((s) => s.encoded === "v1=newer-2")).toBe(true);
+  });
+
+  it("persists the merged list once on success", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    const setItemSpy = vi.fn(storage.setItem);
+    storage.setItem = setItemSpy;
+
+    collection.importScenes([
+      { encoded: "v1=one", thumbnail: "", createdAt: 10 },
+      { encoded: "v1=two", thumbnail: "", createdAt: 20 },
+    ]);
+
+    expect(setItemSpy).toHaveBeenCalledTimes(1);
+
+    const reloaded = new SceneCollection({ storage });
+    expect(
+      reloaded
+        .all()
+        .map((s) => s.encoded)
+        .sort(),
+    ).toEqual(["v1=one", "v1=two"]);
+  });
+});

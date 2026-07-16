@@ -153,6 +153,16 @@ of snapping (see **Presets** below).
   collection** starts the looping slideshow described above. **🔗 Copy link** copies a
   shareable `#v1=…` link built fresh from the current state, not the
   (debounced) address bar.
+  **⬇ Export collection** (fr-de9t) downloads the whole gallery — encoded
+  scenes, mode tags, thumbnails — as one JSON backup file (disabled while
+  the collection is empty), and **⬆ Import file** merges a backup back in:
+  new entries slot into their saved chronological order, ones already
+  present are skipped, and the gallery opens to show the result. The same
+  import also accepts a single **⤓ Save scene file** export (loading it like
+  a gallery card), and either kind of file can simply be dropped anywhere on
+  the page. The collection otherwise lives only in this browser profile's
+  localStorage — export a backup before clearing site data or when moving
+  devices.
 - **Points** — log-scaled slider for the point count (1k–5M); takes effect on
   **Regenerate Points** (or immediately on other edits when auto-update is on).
 - **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
@@ -194,6 +204,12 @@ of snapping (see **Presets** below).
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active.
+- **⤓ Save scene file** (fr-de9t) — download the current scene as a small JSON
+  file: the same document bytes as 🔗 Copy link (camera pose included),
+  wrapped in a file envelope instead of a URL, for keeping scenes where a
+  link doesn't fit — archives, email attachments, version control. Load one
+  back with **⬆ Import file** (see **Collection**) or by dropping it anywhere
+  on the page.
 - **Final-transform lens** — the _(warps the whole cloud)_ checkbox in the
   **Transforms** section turns on a **final transform**: one more affine +
   variation map applied to every point as it is plotted, bending the whole
@@ -285,6 +301,12 @@ as you edit, and mirrored to `localStorage`. So:
   number of systems in a persistent gallery; reload one from ▦ Gallery, or
   copy a fresh link for the current scene with 🔗 Copy link — the multi-slot
   counterpart to this single autosaved scene (see **Collection** above).
+- **Take scenes off this device with files** (fr-de9t). ⤓ Save scene file
+  exports the current scene as JSON; ⬇ Export collection backs up the whole
+  gallery. ⬆ Import file (or dropping a file onto the page) loads a scene
+  file or merges a backup — both localStorage stores above are trapped in
+  one browser profile, and these files are how a library survives clearing
+  site data or moving devices.
 
 Camera angle, selection, and panel state are intentionally left out — a shared
 link is about the _system_, not where you happened to be looking. See

@@ -330,7 +330,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     (`SavedSceneMode`, fr-75sq) — on the ENTRY, never inside `encoded`, so
     the document/share-link stays render-mode-less per fr-39y; a garbage
     mode from storage drops to undefined without losing the entry. Pure,
-    injected storage/clock, tested.
+    injected storage/clock, tested. `importScenes` (fr-de9t) is the backup
+    merge: dedupe by `encoded`, createdAt-sorted insertion (like `restore`),
+    fresh collision-free ids, cap eviction — returning only the count that
+    survived.
+  - `scene-file.ts` — the JSON file import/export codec (fr-de9t): a
+    single-scene file and a whole-collection backup file (encoded scenes +
+    mode tags + thumbnails; ids omitted — the merge mints fresh ones)
+    sharing one `{app, kind, version}` envelope. `decodeImportFile` is the
+    never-throwing trust boundary for picked/dropped files: every `encoded`
+    it returns has already passed `decodeScene` (a returned scene is
+    genuinely loadable), thumbnails must be bounded `data:image/` URLs, and
+    entries keep their ORIGINAL encoded strings — never re-canonicalized —
+    so a newer build's fields survive an import/re-export round trip through
+    this build. main.ts wires the panel buttons, the hidden picker input,
+    and the window drag-drop (a scene file loads via the undoable
+    gallery-load path; a backup merges and opens the gallery). Pure, tested.
   - `ui.ts` — control panel + transform list, built with `createElement`. The
     panel's categories are an exclusive-open accordion of native
     `<details name="panel-section">` sections (fr-zoi) — the browser owns
