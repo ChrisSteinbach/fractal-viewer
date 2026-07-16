@@ -203,3 +203,234 @@ describe("TimelinePlayer restart after done", () => {
     expect(player.active).toBe(false);
   });
 });
+
+describe("TimelinePlayer held legs (fr-v3au)", () => {
+  it("hold suspends firing: frame() returns null repeatedly however far the clock runs, staying active and held", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150, 300]; end due: 450.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+
+    player.hold();
+
+    t = 1_000_000; // way past every due time, including endDue (450)
+    expect(player.frame()).toBe(null);
+    expect(player.frame()).toBe(null);
+    expect(player.frame()).toBe(null);
+    expect(player.active).toBe(true);
+    expect(player.holding).toBe(true);
+  });
+
+  it("resume re-arms from the held leg's own holdMs, not a fixed linger", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150, 300]; end due: 450.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+    player.hold();
+
+    const resumeAt = 500_000; // arbitrary late clock reading
+    t = resumeAt;
+    player.resume();
+
+    // Leg 0's own holdMs (50) governs the re-armed due time, counted from
+    // the resume instant, not from the original due times.
+    t = resumeAt + 49;
+    expect(player.frame()).toBe(null);
+    t = resumeAt + 50;
+    expect(player.frame()).toEqual({ kind: "leg", index: 1 });
+  });
+
+  it("authored relative spacing survives a resume: later legs aren't shifted by how long the hold lasted", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150, 300]; end due: 450.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+    player.hold();
+
+    t = 500_000;
+    player.resume();
+    t = 500_050;
+    expect(player.frame()).toEqual({ kind: "leg", index: 1 });
+
+    // Leg 2 is due at leg 1's actual due time (500_050) plus step 1's own
+    // morphMs + holdMs (100 + 50 = 150) = 500_200 — the AUTHORED spacing,
+    // regardless of how long the hold ran before the resume.
+    t = 500_199;
+    expect(player.frame()).toBe(null);
+    t = 500_200;
+    expect(player.frame()).toEqual({ kind: "leg", index: 2 });
+  });
+
+  it("hold on the last leg resumes into done, holdMs later", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0]; end due: 150.
+    player.start([{ morphMs: 100, holdMs: 50 }]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+    player.hold();
+
+    t = 1_000_000; // way past end due (150)
+    expect(player.frame()).toBe(null);
+    expect(player.active).toBe(true);
+
+    const resumeAt = 2_000_000;
+    t = resumeAt;
+    player.resume();
+
+    t = resumeAt + 49;
+    expect(player.frame()).toBe(null);
+    t = resumeAt + 50;
+    expect(player.frame()).toEqual({ kind: "done" });
+    expect(player.active).toBe(false);
+  });
+
+  it("resume while not holding is a no-op: a running schedule's next leg still fires on its original due time", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150]; end due: 300.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+
+    player.resume(); // stray signal — not holding, must do nothing
+
+    t = 149;
+    expect(player.frame()).toBe(null);
+    t = 150;
+    expect(player.frame()).toEqual({ kind: "leg", index: 1 });
+  });
+
+  it("hold before any leg has fired is a no-op: leg 0 still fires on the first poll", () => {
+    const t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+
+    player.hold(); // no leg fired yet — must do nothing
+
+    expect(player.holding).toBe(false);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+  });
+
+  it("hold while idle is a no-op, both before the first start() and after a run completes", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    player.hold();
+    expect(player.holding).toBe(false);
+    expect(player.frame()).toBe(null);
+
+    player.start([{ morphMs: 100, holdMs: 50 }]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+    t = 150;
+    expect(player.frame()).toEqual({ kind: "done" });
+    expect(player.active).toBe(false);
+
+    player.hold(); // idle again after done — still a no-op
+    expect(player.holding).toBe(false);
+    expect(player.frame()).toBe(null);
+  });
+
+  it("stop clears a hold: a fresh start() afterward is not held", () => {
+    const t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+    player.hold();
+    expect(player.holding).toBe(true);
+
+    player.stop();
+    expect(player.holding).toBe(false);
+    expect(player.active).toBe(false);
+    expect(player.frame()).toBe(null);
+
+    player.start([{ morphMs: 100, holdMs: 50 }]);
+    expect(player.holding).toBe(false);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+  });
+
+  it("double hold is idempotent: a second hold() changes nothing, one resume() still re-arms it", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150, 300]; end due: 450.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+    expect(player.frame()).toEqual({ kind: "leg", index: 0 });
+
+    player.hold();
+    player.hold(); // redundant — must not re-anchor the held leg
+
+    const resumeAt = 500_000;
+    t = resumeAt;
+    player.resume();
+
+    t = resumeAt + 49;
+    expect(player.frame()).toBe(null);
+    t = resumeAt + 50;
+    expect(player.frame()).toEqual({ kind: "leg", index: 1 });
+  });
+
+  it("catch-up then hold: holding the leg fired by a catch-up jump still resumes correctly", () => {
+    let t = 0;
+    const player = new TimelinePlayer(() => t);
+
+    // due: [0, 150, 300]; end due: 450.
+    player.start([
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+      { morphMs: 100, holdMs: 50 },
+    ]);
+
+    // Blow the clock past every due time before the very first poll — the
+    // catch-up rule fires only the latest, leg 2.
+    t = 1_000_000;
+    expect(player.frame()).toEqual({ kind: "leg", index: 2 });
+
+    player.hold();
+    expect(player.holding).toBe(true);
+
+    const resumeAt = 2_000_000;
+    t = resumeAt;
+    player.resume();
+
+    // Leg 2's own holdMs (50) governs the done time.
+    t = resumeAt + 49;
+    expect(player.frame()).toBe(null);
+    t = resumeAt + 50;
+    expect(player.frame()).toEqual({ kind: "done" });
+    expect(player.active).toBe(false);
+  });
+});

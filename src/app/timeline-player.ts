@@ -24,11 +24,35 @@
  * protect, so resuming its cadence from wherever the viewer refocused is
  * strictly better than replaying a backlog. A timeline has the opposite
  * requirement — it's the thing fr-8v41's video export RECORDS, and a
- * recorded clip must come out the authored length every time, so a leg's
- * poll landing a frame late must never stretch the schedule for the legs
- * after it. Anchoring every due time to the original `startMs` is what
- * makes that true: a late poll fires late and the rest of the run is
- * unaffected.
+ * recorded clip must come out the authored length every time (points-only —
+ * see "Held legs" below for the render-keyframe exception), so a leg's poll
+ * landing a frame late must never stretch the schedule for the legs after
+ * it. Anchoring every due time to the original `startMs` is what makes that
+ * true: a late poll fires late and the rest of the run is unaffected.
+ *
+ * ## Held legs: schedule segments that end on a SIGNAL (fr-v3au)
+ *
+ * A keyframe that plays as a converging flame/solid render has no
+ * deterministic duration for the absolute schedule above to price in — "how
+ * long until this step is over" is "until the render meets its iteration
+ * budget", not a `morphMs`/`holdMs` pair known up front. So the caller holds
+ * the schedule at that leg's launch ({@link TimelinePlayer.hold}) and
+ * resumes it ({@link TimelinePlayer.resume}) once the render's completion
+ * signal arrives. While held, the held leg's own `holdMs` is reinterpreted:
+ * instead of "how long until the next leg departs", it becomes the
+ * POST-convergence dwell — the author-controlled linger after the render
+ * finishes, with no separate linger constant the way `drift.ts`'s
+ * `DRIFT_RENDER_LINGER_MS` is for the ambient show.
+ *
+ * Between holds the schedule stays authored-exact: `resume()` is one shift
+ * of `startMs`, so every leg after the held one keeps its authored RELATIVE
+ * spacing no matter how long the hold lasted — re-anchoring the same way
+ * `start()` anchors once at the top of the run, just done again at resume
+ * time. The consequence lands on fr-8v41's export: a recorded clip's length
+ * becomes content-dependent once render keyframes are in the mix — an
+ * accepted trade (fr-v3au), since the recorder is then honestly capturing
+ * however long convergence actually took, and a pure-points timeline (which
+ * never holds) keeps its authored-length guarantee unchanged.
  *
  * ## Catch-up: at most one leg per poll, always the latest due
  *
@@ -105,6 +129,12 @@ export class TimelinePlayer {
    * the course of a run so `frame()` never re-scans a leg it already
    * fired — the O(1)-between-due-times cost the module header describes. */
   private nextLeg = 0;
+  /** Index of the last-fired leg at the moment {@link hold} was called;
+   * `null` when not held. Doubles as the held flag — see {@link holding}. */
+  private heldLeg: number | null = null;
+  /** The timings passed to the most recent {@link start} — kept only so
+   * {@link resume} can read the held leg's own `holdMs`. Empty while idle. */
+  private timings: readonly StepTiming[] = [];
 
   /**
    * @param now Monotonic clock in ms (`() => performance.now()` in the
@@ -143,10 +173,14 @@ export class TimelinePlayer {
       this.due = [];
       this.endDue = 0;
       this.nextLeg = 0;
+      this.timings = [];
+      this.heldLeg = null;
       return;
     }
     this.startMs = this.now();
     this.nextLeg = 0;
+    this.timings = timings;
+    this.heldLeg = null;
     const due = new Array<number>(timings.length);
     let acc = 0;
     for (let i = 0; i < timings.length; i++) {
@@ -163,10 +197,69 @@ export class TimelinePlayer {
    * `DriftShow`). */
   stop(): void {
     this.startMs = null;
+    this.heldLeg = null;
   }
 
   /**
-   * Poll once per animation frame. Returns `null` while idle, between due
+   * Whether the player is active but held — awaiting {@link resume} rather
+   * than a due time. See "Held legs" in the module header.
+   */
+  get holding(): boolean {
+    return this.startMs !== null && this.heldLeg !== null;
+  }
+
+  /**
+   * Suspend the schedule while staying active: {@link frame} stops firing —
+   * no leg, no `done` — however far the clock runs, until {@link resume}
+   * re-arms it (or {@link stop} ends the run). The caller's contract is to
+   * call this only from the handling of a leg event it just received, same
+   * animation frame — `hold` records `nextLeg - 1`, the leg that just
+   * fired, as the one being held on.
+   *
+   * A silent no-op in three cases, matching `DriftShow.hold`'s stance that
+   * holding is a way of BEING active, never a way of becoming or
+   * re-becoming it:
+   * - idle (`startMs === null`) — nothing to hold.
+   * - already held (`heldLeg !== null`) — a second `hold()` changes
+   *   nothing; only {@link resume} clears a hold.
+   * - no leg has fired yet (`nextLeg === 0`) — there's no just-fired leg to
+   *   attribute the hold to.
+   */
+  hold(): void {
+    if (this.startMs === null) return;
+    if (this.heldLeg !== null) return;
+    if (this.nextLeg === 0) return;
+    this.heldLeg = this.nextLeg - 1;
+  }
+
+  /**
+   * End a {@link hold}: the next event becomes due exactly
+   * `timings[heldLeg].holdMs` from now — the held leg's own authored hold,
+   * restarted against the signal's arrival — and every leg after it keeps
+   * its authored RELATIVE spacing, because this is a single shift of
+   * `startMs` rather than a per-leg reschedule. Holding on the LAST leg
+   * resumes into `done` firing `holdMs` later, for free, out of the same
+   * formula (`nextDueOffset` falls back to `endDue`) — no separate branch.
+   *
+   * Acts ONLY while holding — while idle (a completion signal arriving
+   * after {@link stop}) or while running on the live clock (a stray signal
+   * from a render the player was never holding for), this is deliberately a
+   * no-op: an external signal must neither restart a stopped run nor shift
+   * a schedule that's already ticking. Same stance as `drift.ts`'s
+   * `DriftShow.resumeAfter`.
+   */
+  resume(): void {
+    if (this.startMs === null || this.heldLeg === null) return;
+    const nextDueOffset =
+      this.nextLeg < this.due.length ? this.due[this.nextLeg] : this.endDue;
+    this.startMs =
+      this.now() + this.timings[this.heldLeg].holdMs - nextDueOffset;
+    this.heldLeg = null;
+  }
+
+  /**
+   * Poll once per animation frame. Returns `null` while idle, held (see
+   * {@link hold} — the module header's "Held legs" section), between due
    * times, or when nothing is newly due. Otherwise returns exactly ONE
    * {@link TimelinePlayerEvent}:
    *
@@ -182,6 +275,7 @@ export class TimelinePlayer {
    */
   frame(): TimelinePlayerEvent | null {
     if (this.startMs === null) return null;
+    if (this.heldLeg !== null) return null;
     const t = this.now() - this.startMs;
 
     let latestFired = -1;

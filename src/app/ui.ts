@@ -2121,6 +2121,20 @@ export class Ui {
       row.appendChild(placeholder);
     }
 
+    if (step.mode === "flame" || step.mode === "solid") {
+      // A keyframe captured from a flame/solid render (fr-v3au) plays back
+      // in that renderer and holds until it converges — flagged with the
+      // same glyph vocabulary as galleryCard's mode caption (fr-75sq). A
+      // plain (points) step gets no element at all.
+      const mode = this.doc.createElement("span");
+      mode.className = "timeline-step-mode";
+      mode.textContent = step.mode === "flame" ? "✺" : "◆";
+      mode.title = `Plays as a ${step.mode} render — playback holds until it converges`;
+      mode.setAttribute("role", "img");
+      mode.setAttribute("aria-label", `${step.mode} render keyframe`);
+      row.appendChild(mode);
+    }
+
     row.appendChild(
       this.timelineTimingInput(
         "morph",

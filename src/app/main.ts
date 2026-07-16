@@ -771,27 +771,45 @@ function main(): void {
   // render to complete, then a second longer" (fr-w2ve). resumeAfter acts
   // only while holding, so ordinary renders, a stopped show, and an
   // already-resumed one are all untouched by stray progress.
+  //
+  // A timeline playback holding on a render keyframe (fr-v3au) departs on
+  // the same signal — resume() re-arms the schedule with the step's own
+  // holdMs as the post-convergence dwell (timeline-player.ts's "Held
+  // legs"), and like resumeAfter it no-ops unless holding. The extra
+  // renderMode gate is because a timeline hold spans the leg's whole
+  // points-mode morph, not just the render (launchTimelineLeg holds at
+  // launch): a terminated session's trailing completion event arriving in
+  // that window — the exited render's worker posts from a task queue
+  // terminate() can't unsend — must not start the departure clock while
+  // the step's own render is still converging or yet to enter.
   function noteRenderProgress(
     mode: "flame" | "solid",
     done: number,
     budget: number,
   ): void {
     renderComplete[mode] = done >= budget;
-    if (done >= budget) driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
+    if (done >= budget) {
+      driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
+      if (state.renderMode === mode) timelinePlayer.resume();
+    }
   }
 
   // ── Animation timeline (fr-8v41) ─────────────────────────────────────
   // The drift show's DIRECTED counterpart: an authored, persistent sequence
   // of keyframe steps — each a frozen scene document + thumbnail + its own
-  // morph/hold timing (timeline.ts) — played back as a chain of the same
+  // morph/hold timing, and since fr-v3au optionally the flame/solid mode it
+  // was captured from (timeline.ts) — played back as a chain of the same
   // replace-load morphs a drift leg uses, and optionally recorded to a
   // video clip (onTimelineExport). timeline-player.ts owns WHEN each leg
   // fires (an absolute schedule, so a recorded clip keeps its authored
-  // length); launchTimelineLeg below owns what a leg does; and a second
-  // DriftPolicy instance conducts it with the exact same stop-on-edit /
-  // own-leg-guard semantics as the drift show. The two shows are mutually
-  // exclusive: each start stops the other, and stopShows() is the one
-  // helper every shared "user reached in" chokepoint calls.
+  // length — with render keyframes excepted: their legs hold the schedule
+  // until the render converges, so a clip's length becomes
+  // content-dependent, the fr-v3au trade); launchTimelineLeg below owns
+  // what a leg does; and a second DriftPolicy instance conducts it with the
+  // exact same stop-on-edit / own-leg-guard semantics as the drift show.
+  // The two shows are mutually exclusive: each start stops the other, and
+  // stopShows() is the one helper every shared "user reached in"
+  // chokepoint calls.
   const timeline = new TimelineStore();
   const timelinePlayer = new TimelinePlayer(() => performance.now());
   const timelinePolicy = new DriftPolicy({
@@ -847,6 +865,18 @@ function main(): void {
    * playback first (see the onTimeline* handlers). Returns false on a
    * vanished or undecodable step (untrusted localStorage), ending the show
    * at the leg boundary like a dried-up collection (fr-4otp).
+   *
+   * A RENDER keyframe (fr-v3au) — a step tagged with the flame/solid mode
+   * it was captured from — additionally re-enters that renderer when the
+   * morph's terminal cloud lands (pendingRenderMode, exactly
+   * advanceCollectionLeg's re-arm) and self-holds the player's schedule
+   * right here at launch: the next departure has no clock until this
+   * step's render meets its iteration budget (noteRenderProgress resumes
+   * it), with the step's own holdMs serving as the post-convergence dwell
+   * (timeline-player.ts's "Held legs"). Holding from launch rather than
+   * from the render's entry means no schedule deadline can slip through
+   * during the morph or the terminal request's in-flight gap — even a
+   * holdMs: 0 render step converges before departing.
    */
   function launchTimelineLeg(index: number): boolean {
     const step = timeline.all()[index];
@@ -868,6 +898,10 @@ function main(): void {
     if (snap.fourD) {
       fourDTween.glideToPose(snap.fourD, step.morphMs);
       pendingFourDPose = snap.fourD;
+    }
+    if (step.mode) {
+      pendingRenderMode = step.mode;
+      timelinePlayer.hold();
     }
     return true;
   }
@@ -913,12 +947,16 @@ function main(): void {
 
   // Reflect the timeline document in its panel section — rows, count, and
   // the total-duration label (the recorder's own m:ss formatter, so the
-  // status line and the recording button speak the same dialect).
+  // status line and the recording button speak the same dialect). A render
+  // keyframe (fr-v3au) holds playback for however long its render takes to
+  // converge, so once any step carries a mode the authored total is only a
+  // floor — the "+" says so.
   function refreshTimelineUi(): void {
     const steps = timeline.all();
+    const label = formatElapsed(Math.round(timelineDurationMs(steps) / 1000));
     ui.renderTimeline(
       steps,
-      formatElapsed(Math.round(timelineDurationMs(steps) / 1000)),
+      steps.some((step) => step.mode !== undefined) ? `${label}+` : label,
     );
   }
 
@@ -2205,14 +2243,22 @@ function main(): void {
         // segmented control they just clicked.
         driftPolicy.stop();
       }
-      // Timeline playback is points-only by design (fr-8v41: a converging
-      // flame/solid render has no deterministic duration for the schedule
-      // to hold), so a manual switch away from the explorer ends it — a
-      // STOP like the random drift show's, and silent for the same reason
-      // as above. A leg's own applyDecodedSnapshot never reaches here:
-      // playback keeps renderMode at "points", so its switch is the no-op
-      // early return.
-      timelinePolicy.stop();
+      // Timeline playback survives this switch only while HELD (fr-v3au):
+      // holding means a render keyframe owns the display — the entry
+      // arriving here is the show's own (the leg armed pendingRenderMode
+      // and held the schedule at launch), or a manual mid-hold look-around,
+      // which survives for the same reason a collection show's does — the
+      // render mode is how the keyframe displays, not a reach into the
+      // show, and whichever render converges resumes the schedule
+      // (noteRenderProgress). During a points phase (a plain keyframe's
+      // morph or dwell — not holding), a manual switch away from the
+      // explorer still ends playback: there is no deterministic duration
+      // for the absolute schedule to hold across an uninvited render
+      // (fr-8v41). A STOP like the random drift show's, and silent for the
+      // same reason as above. A leg's own applyDecodedSnapshot never
+      // reaches here: playback keeps renderMode at "points" between render
+      // keyframes, so its switch is the no-op early return.
+      if (!timelinePlayer.holding) timelinePolicy.stop();
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
       // the DOCUMENT's system, so snap the display to it — and animate()
       // stops polling the tween during a render, so an unsnapped morph would
@@ -3154,9 +3200,13 @@ function main(): void {
     // every policy stop.
     onTimelineAddKeyframe: () => {
       timelinePolicy.stop({ notify: true });
+      // A keyframe added from a flame/solid render is tagged with that mode
+      // (fr-v3au) — the same capture rule as onSaveToCollection's (fr-75sq):
+      // playback re-enters the renderer and holds until it converges.
       const step = timeline.add(
         encodeScene(currentDocument()),
         captureCurrentThumbnail(),
+        state.renderMode === "points" ? undefined : state.renderMode,
       );
       // The store refuses at cap rather than evicting part of an authored
       // sequence (timeline.ts) — say so instead of silently doing nothing.
@@ -3183,7 +3233,11 @@ function main(): void {
     // (fr-8v41) — whatever ends the run also stops the recorder, so the
     // clip downloads (see timelineExporting). If a manual recording is
     // already running, adopt it rather than toggling it off — the run's
-    // end will finalize it exactly the same way.
+    // end will finalize it exactly the same way. With render keyframes in
+    // the sequence (fr-v3au) the clip runs longer than the authored total —
+    // each one records its render converging for however long that takes on
+    // this device — so the cap warning below fires on what is then only a
+    // floor; the recorder's own cap still cuts an overlong run honestly.
     onTimelineExport: () => {
       if (
         timelinePlayer.active ||
@@ -3748,9 +3802,13 @@ function main(): void {
     // show above (and the same after-the-morph-poll ordering rationale) —
     // when a leg comes due, load that keyframe under the own-leg guard;
     // when the run's schedule completes, finish the playback (un-light the
-    // toggle, stop an export run's recorder so the clip downloads). At most
-    // one of the two shows is ever active, and between events this poll is
-    // one comparison (timeline-player.ts).
+    // toggle, stop an export run's recorder so the clip downloads). Also
+    // polled above the render modes' early returns on purpose: a run
+    // holding on a render keyframe (fr-v3au) lives THROUGH the flame/solid
+    // still, and its resumed departure must fire from inside that mode —
+    // the leg's own applyDecodedSnapshot is what exits back to points. At
+    // most one of the two shows is ever active, and between events this
+    // poll is one comparison (timeline-player.ts).
     const timelineEvent = timelinePlayer.frame();
     if (timelineEvent) {
       if (timelineEvent.kind === "leg") {
@@ -3801,6 +3859,18 @@ function main(): void {
     // hold is only ever taken together with a flame/solid mode, whose early
     // returns sit above.
     if (driftShow.holding) driftShow.resumeAfter(DRIFT_DWELL_MS);
+    // The timeline's twin (fr-v3au), with one more condition: a timeline
+    // hold starts at the render keyframe's LAUNCH (launchTimelineLeg), so
+    // holding-in-points is also the leg's ordinary morph and the terminal
+    // request's in-flight gap — phases where pendingRenderMode is still
+    // armed for the render this hold awaits. Only once it has been consumed
+    // (the render entered, then exited early: Back, or a worker error) does
+    // a points-mode hold mean the completion signal is never coming —
+    // resume, so the schedule dwells the step's own holdMs on the points
+    // cloud now showing and the show goes on (the drift stance above).
+    if (timelinePlayer.holding && pendingRenderMode === null) {
+      timelinePlayer.resume();
+    }
     // One clamped dt for both kinds of automatic motion (4D tumble / 3D
     // auto-orbit — mutually exclusive by viewIs4D). Clamp it: a backgrounded
     // tab suspends RAF (and a render's early returns skip this path
