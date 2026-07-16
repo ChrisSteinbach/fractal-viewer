@@ -31,13 +31,19 @@ export function pickRecorderMime(
 }
 
 /**
- * Target encoder bitrate: ~0.08 bits per pixel per frame assuming 60fps,
- * clamped to [8, 30] Mbps. Point clouds are high-frequency content that
- * browser default bitrates smear badly; upload targets re-encode anyway, so
- * erring high costs only local file size.
+ * Target encoder bitrate: ~0.08 bits per pixel per frame at `fps` (the
+ * MediaRecorder capture path assumes its 60Hz default; the offline
+ * frame-exact export passes its own rate, fr-92t9), clamped to [8, 30] Mbps.
+ * Point clouds are high-frequency content that browser default bitrates
+ * smear badly; upload targets re-encode anyway, so erring high costs only
+ * local file size.
  */
-export function recordingBitsPerSecond(width: number, height: number): number {
-  const target = Math.round(width * height * 60 * 0.08);
+export function recordingBitsPerSecond(
+  width: number,
+  height: number,
+  fps = 60,
+): number {
+  const target = Math.round(width * height * fps * 0.08);
   return Math.min(Math.max(target, 8_000_000), 30_000_000);
 }
 

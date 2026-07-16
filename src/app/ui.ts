@@ -60,6 +60,7 @@ import {
   MAX_GUIDE_SCALE,
 } from "./constants";
 import { videoCaptureSupported } from "./recorder";
+import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
 
 export type { Preset };
@@ -747,6 +748,11 @@ export class Ui {
   private timelineAvailable = true;
   private timelineActive = false;
   private timelineStepCount = 0;
+  /** Non-null while the offline frame-exact export runs (fr-92t9): the
+   * progress fragment the Export button shows — and the signal that the
+   * button is currently the run's CANCEL affordance rather than a start
+   * ({@link setTimelineExportProgress}). */
+  private timelineExportProgress: string | null = null;
 
   // Mutation grid (fr-3vly): the Presets section's "🧬 Mutate" button and the
   // 3×3 modal it opens — the gallery modal's chrome with a fixed grid of
@@ -985,7 +991,13 @@ export class Ui {
     this.timelinePlayTitle = this.timelinePlayBtn.title;
     this.timelineExportBtn = this.byId("timelineExportBtn");
     this.timelineExportTitle = this.timelineExportBtn.title;
-    this.timelineExportBtn.classList.toggle("hidden", !videoCaptureSupported());
+    // Visible when EITHER capture path exists: the realtime MediaRecorder
+    // capture, or the offline frame-exact WebCodecs export (fr-92t9) —
+    // main.ts's onTimelineExport routes between them.
+    this.timelineExportBtn.classList.toggle(
+      "hidden",
+      !videoCaptureSupported() && !offlineExportSupported(),
+    );
     this.timelineStatus = this.byId("timelineStatus");
     this.timelineList = this.byId("timelineList");
     this.timelineEmpty = this.byId("timelineEmpty");
@@ -2251,6 +2263,18 @@ export class Ui {
     this.syncTimelineButtons();
   }
 
+  /** Reflect the offline frame-exact export's progress on the Export button
+   * (fr-92t9): non-null (e.g. "42%") relabels it "⏳ Exporting 42%" and
+   * keeps it ENABLED as the run's cancel affordance (main.ts routes the
+   * click to a stop; the partial clip still saves); null restores the
+   * ordinary label and disabled-state derivation. */
+  setTimelineExportProgress(progress: string | null): void {
+    this.timelineExportProgress = progress;
+    this.timelineExportBtn.textContent =
+      progress === null ? "⏺ Export clip" : `⏳ Exporting ${progress}`;
+    this.syncTimelineButtons();
+  }
+
   /** Self-explaining disabled-state derivation for Play/Export — the
    * `syncGalleryDriftBtn` pattern: each button's `disabled` and `title` are
    * re-derived from the remembered availability/active/count flags whenever
@@ -2265,6 +2289,15 @@ export class Ui {
         ? "Add a keyframe or two first"
         : this.timelinePlayTitle;
 
+    // Mid-offline-export (fr-92t9) the button is the run's cancel
+    // affordance: always enabled, whatever the availability/active flags
+    // say (the run being active is exactly why it must stay clickable).
+    if (this.timelineExportProgress !== null) {
+      this.timelineExportBtn.disabled = false;
+      this.timelineExportBtn.title =
+        "Stop exporting — the partial clip still saves";
+      return;
+    }
     this.timelineExportBtn.disabled =
       !this.timelineAvailable || empty || this.timelineActive;
     this.timelineExportBtn.title = !this.timelineAvailable

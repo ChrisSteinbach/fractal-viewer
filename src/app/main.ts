@@ -53,7 +53,14 @@ import {
   createCanvasRecorder,
   formatElapsed,
   MAX_RECORDING_SECONDS,
+  recordingFileName,
 } from "./recorder";
+import { OFFLINE_EXPORT_FPS, runOfflineExport } from "./offline-export";
+import {
+  createOfflineEncoder,
+  offlineExportSupported,
+  type OfflineEncoderSession,
+} from "./video-encode";
 import { createResolutionGovernor } from "./resolution-governor";
 import {
   addTransform,
@@ -322,6 +329,26 @@ function main(): void {
   // recorder that isn't running and toasting a clip that never saved.
   let timelineExporting = false;
 
+  // ── Offline frame-exact export (fr-92t9) ────────────────────────────
+  // While an offline export runs, the whole playback pipeline ticks on a
+  // VIRTUAL clock stepped by the export driver (offline-export.ts) instead
+  // of performance.now(): every clock consumer on the playback path — the
+  // timeline player, the camera/4D pose glides, the morph tween, the
+  // animate loop's dt bookkeeping — reads nowMs() so a hitch, a slow
+  // device, or a backgrounded tab can never change WHICH sample lands on
+  // which exported frame. Outside an export, nowMs() IS performance.now().
+  let virtualNowMs: number | null = null;
+  const nowMs = (): number => virtualNowMs ?? performance.now();
+  // Non-null while the offline export's driver owns the ticking (animate()
+  // stands aside). `completed` distinguishes a natural finish from a stop
+  // when the driver finalizes the clip — finishTimelinePlayback marks it,
+  // the driver reads it for the toast copy.
+  let offlineExport: { completed: boolean } | null = null;
+  // Guards onTimelineExport re-entry across startOfflineExport's async
+  // encoder probe (before the player is active) and doubles as the "the
+  // Export button is currently a cancel affordance" flag.
+  let offlineExportPending = false;
+
   // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
   // sustained slow frames should trade pixels for frame rate (and when the
   // device has earned them back); animate() feeds it the dt between
@@ -417,7 +444,9 @@ function main(): void {
   // poses either way — that is the deterministic half fr-pnek needs.
   const fourDTween = new FourDTween(
     fourDView,
-    () => performance.now(),
+    // nowMs, not performance.now(): a timeline leg's rotor glide must step
+    // on the offline export's virtual clock (fr-92t9).
+    nowMs,
     prefersReducedMotion,
   );
 
@@ -811,13 +840,19 @@ function main(): void {
   // stopShows() is the one helper every shared "user reached in"
   // chokepoint calls.
   const timeline = new TimelineStore();
-  const timelinePlayer = new TimelinePlayer(() => performance.now());
+  // nowMs, not performance.now(): an offline export drives the same player
+  // on the virtual clock (fr-92t9).
+  const timelinePlayer = new TimelinePlayer(nowMs);
   const timelinePolicy = new DriftPolicy({
     show: timelinePlayer,
     reducedMotion: prefersReducedMotion,
     onStopped: (notify) => {
       ui.setTimelineActive(false);
       if (notify) ui.flashToast("Timeline stopped");
+      // An OFFLINE export run needs nothing here (fr-92t9): its driver
+      // notices the player went inactive, finalizes the partial clip
+      // itself, and owns the toast.
+      if (offlineExport !== null) return;
       // A stopped export run still finalizes its clip: everything recorded
       // up to the stop downloads (an honest partial clip), rather than
       // vanishing with the show.
@@ -916,7 +951,12 @@ function main(): void {
    */
   function finishTimelinePlayback(): void {
     ui.setTimelineActive(false);
-    if (timelineExporting) {
+    if (offlineExport !== null) {
+      // The offline export's natural end (fr-92t9): the driver sees the
+      // player inactive after this step, finalizes the clip, and toasts —
+      // just record that the run COMPLETED (vs. was stopped) for its copy.
+      offlineExport.completed = true;
+    } else if (timelineExporting) {
       timelineExporting = false;
       recorder.stop();
       ui.flashToast("Timeline finished — saving clip");
@@ -943,6 +983,173 @@ function main(): void {
     ui.setTimelineActive(true);
     state = setPanelOpen(state, false);
     ui.updateLabels(state);
+  }
+
+  /**
+   * The offline frame-exact export's entry (fr-92t9): probe for a WebCodecs
+   * H.264 encoder sized to the canvas, then hand the run to
+   * {@link driveOfflineExport}. When no encodable config exists (Firefox
+   * without H.264 encode, an exotic canvas size), fall back to the realtime
+   * MediaRecorder capture — the offline path is an upgrade, never a
+   * gatekeeper. `offlineExportPending` spans the whole thing, including the
+   * async probe, so a second Export click can't double-start (the handler
+   * turns those clicks into the cancel affordance instead).
+   */
+  async function startOfflineExport(): Promise<void> {
+    offlineExportPending = true;
+    try {
+      // Pin the render resolution BEFORE reading the canvas size — the
+      // encoder's dimensions are fixed for the whole clip, and the adaptive
+      // governor must not resize the buffer under it (its own sampling is
+      // skipped for the run's forced renders; see tickRender).
+      resolutionGovernor.reset();
+      scene.setResolutionScale(1);
+      const session = await createOfflineEncoder({
+        width: scene.canvas.width,
+        height: scene.canvas.height,
+        fps: OFFLINE_EXPORT_FPS,
+      });
+      // The probe awaited: a raced ▶ Play (or a timeline emptied by edits)
+      // wins — abandon the export rather than double-starting a show.
+      if (session === null) {
+        ui.flashToast("Frame-exact export unavailable — recording live");
+        startTimelinePlayback(true);
+        if (!recorderActive) recorder.toggle();
+        return;
+      }
+      if (timelinePlayer.active || timeline.size === 0) {
+        session.abort();
+        return;
+      }
+      await driveOfflineExport(session);
+    } finally {
+      offlineExportPending = false;
+    }
+  }
+
+  /**
+   * One offline export run (fr-92t9): flip the app onto the virtual clock,
+   * start the ordinary timeline playback, and let `offline-export.ts`'s
+   * driver loop step it one exported frame at a time — each frame's logic
+   * ticked at its exact virtual time, its generation settled, its render
+   * forced, its pixels encoded — until the player finishes, a stop reaches
+   * it (every existing chokepoint works unchanged: the driver just notices
+   * the player went inactive and finalizes the partial clip), or the
+   * recorder-parity frame cap cuts it. The `finally` unwinds the virtual
+   * clock: real time may be BEHIND it (a hold-heavy run exports faster than
+   * realtime), so anything still timed against it — pose glides, a
+   * mid-flight morph, the dt baselines — is snapped/reset rather than left
+   * to freeze until the wall clock catches up.
+   */
+  async function driveOfflineExport(
+    session: OfflineEncoderSession,
+  ): Promise<void> {
+    const frameMs = 1000 / OFFLINE_EXPORT_FPS;
+    const capFrames = MAX_RECORDING_SECONDS * OFFLINE_EXPORT_FPS;
+    const totalFrames = Math.max(
+      1,
+      Math.min(
+        Math.ceil(timelineDurationMs(timeline.all()) / frameMs),
+        capFrames,
+      ),
+    );
+    // t0 = real now, so tweens already in flight continue seamlessly onto
+    // the virtual clock; from here it advances by frame arithmetic only.
+    const t0 = performance.now();
+    virtualNowMs = t0;
+    lastMotionTickMs = t0;
+    lastInsetTickMs = t0;
+    startTimelinePlayback(false);
+    // Snap the projection inset to its closed-panel target rather than
+    // letting it ease across the clip's opening frames: deterministic
+    // framing from frame 0 (the realtime path glides instead — its clip
+    // honestly records whatever the screen did).
+    sceneRightInset = panelInsetTarget();
+    scene.setRightInset(sceneRightInset);
+    offlineExport = { completed: false };
+    ui.setTimelineExportProgress("0%");
+    // The panel just closed over the progress readout, so say the run is
+    // rolling — the finish/stop toast is the other bookend.
+    ui.flashToast("Exporting frame-exact clip…");
+    // The canvas size is the encoder's contract — a resize mid-run stops
+    // the show (recorder.ts parity) and the partial clip still saves.
+    const onResize = (): void => {
+      timelinePolicy.stop();
+    };
+    window.addEventListener("resize", onResize);
+    // MessageChannel, not setTimeout: timers are throttled in background
+    // tabs, and exporting from one is exactly this path's advantage over
+    // the realtime capture (which must stop when rAF stalls).
+    const yieldChannel = new MessageChannel();
+    try {
+      const run = await runOfflineExport({
+        startMs: t0,
+        frameMs,
+        maxFrames: capFrames,
+        totalFrames,
+        stepFrame: async (frameNowMs) => {
+          virtualNowMs = frameNowMs;
+          tickLogic(frameNowMs);
+          await cloudGenerator.settle();
+        },
+        running: () => timelinePlayer.active,
+        renderFrame: (frameNowMs) => {
+          tickRender(frameNowMs, true);
+        },
+        encodeFrame: (index) => session.encodeFrame(scene.canvas, index),
+        onProgress: (done, total) => {
+          ui.setTimelineExportProgress(
+            `${String(Math.min(100, Math.round((done / total) * 100)))}%`,
+          );
+        },
+        yieldToUi: () =>
+          new Promise((resolve) => {
+            yieldChannel.port1.onmessage = (): void => {
+              resolve();
+            };
+            yieldChannel.port2.postMessage(undefined);
+          }),
+      });
+      // Cut at the cap with the playback still going: end the show — the
+      // pre-start toast already warned the end would be missing.
+      if (run.capped) timelinePolicy.stop();
+      const completed = offlineExport.completed;
+      const clip = await session.finish();
+      if (clip !== null) {
+        triggerDownload(clip, recordingFileName("video/mp4", Date.now()));
+        ui.flashToast(
+          completed
+            ? "Timeline finished — clip saved"
+            : "Export stopped — partial clip saved",
+        );
+      } else {
+        ui.flashToast(
+          session.error !== null
+            ? `Export failed: ${session.error}`
+            : "Export produced no data",
+        );
+      }
+    } catch (err) {
+      // An encodeFrame rejection (encoder death mid-run) — discard the
+      // clip, recorder.ts's error stance.
+      session.abort();
+      timelinePolicy.stop();
+      ui.flashToast(`Export failed: ${String(err)}`);
+    } finally {
+      window.removeEventListener("resize", onResize);
+      offlineExport = null;
+      virtualNowMs = null;
+      // Unwind the virtual clock (see the doc comment): snap anything still
+      // timed against it and restart the dt chains from real time.
+      cameraTween.finish();
+      fourDTween.finish();
+      snapMorph();
+      const realNow = performance.now();
+      lastMotionTickMs = realNow;
+      lastInsetTickMs = realNow;
+      lastGovernedFrameMs = null;
+      ui.setTimelineExportProgress(null);
+    }
   }
 
   // Reflect the timeline document in its panel section — rows, count, and
@@ -1140,7 +1347,10 @@ function main(): void {
       from,
       currentMorphSystem(),
       seed ?? rollSeed(),
-      performance.now(),
+      // nowMs, not performance.now(): a timeline leg's morph must start on
+      // the offline export's virtual clock (fr-92t9), and animate() samples
+      // it with the same clock.
+      nowMs(),
       durationMs,
     );
     morphFinalFit = fit;
@@ -1220,7 +1430,15 @@ function main(): void {
       // and every non-morph request use the full count.
       numPoints:
         morph && !morph.final
-          ? morphBudget.budget(state.numPoints, state.morphDetail)
+          ? morphBudget.budget(
+              state.numPoints,
+              // An offline export runs every intermediate at the scene's own
+              // count (fr-92t9): the adaptive budget is sized from MEASURED
+              // device speed — exactly the nondeterminism the frame-exact
+              // path exists to remove — and the driver awaits each
+              // generation anyway, so there is no frame rate to protect.
+              offlineExport !== null ? "full" : state.morphDetail,
+            )
           : state.numPoints,
       seed: morph?.seed ?? rollSeed(),
       symmetry,
@@ -1601,7 +1819,9 @@ function main(): void {
   // WHICH bounds to frame and hands it the live camera fov/aspect.
   const cameraTween = new CameraTween(
     orbit,
-    () => performance.now(),
+    // nowMs, not performance.now(): a timeline leg's pose glide must step
+    // on the offline export's virtual clock (fr-92t9).
+    nowMs,
     prefersReducedMotion,
   );
 
@@ -3239,6 +3459,14 @@ function main(): void {
     // this device — so the cap warning below fires on what is then only a
     // floor; the recorder's own cap still cuts an overlong run honestly.
     onTimelineExport: () => {
+      // While an offline export runs (fr-92t9), the button is the cancel
+      // affordance: stop the show and the driver saves the partial clip.
+      // During the pre-playback probe gap the stop no-ops — the click just
+      // can't double-start (offlineExportPending gates below).
+      if (offlineExportPending) {
+        timelinePolicy.stop();
+        return;
+      }
       if (
         timelinePlayer.active ||
         prefersReducedMotion() ||
@@ -3246,10 +3474,28 @@ function main(): void {
       ) {
         return;
       }
-      if (timelineDurationMs(timeline.all()) > MAX_RECORDING_SECONDS * 1000) {
+      const steps = timeline.all();
+      if (timelineDurationMs(steps) > MAX_RECORDING_SECONDS * 1000) {
         ui.flashToast(
           `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
         );
+      }
+      // Frame-exact offline export (fr-92t9) whenever the run is pure
+      // points and WebCodecs can encode it. Render keyframes (fr-v3au)
+      // hold for live convergence — that's inherently realtime, so those
+      // timelines keep the MediaRecorder capture; so does a run started
+      // with a manual recording already rolling (it owns the canvas
+      // stream — adopt it, as before).
+      if (
+        offlineExportSupported() &&
+        !recorderActive &&
+        steps.every((step) => step.mode === undefined)
+      ) {
+        void startOfflineExport();
+        return;
+      }
+      if (offlineExportSupported() && steps.some((s) => s.mode !== undefined)) {
+        ui.flashToast("Timeline has render keyframes — recording live");
       }
       startTimelinePlayback(true);
       if (!recorderActive) recorder.toggle();
@@ -3755,8 +4001,32 @@ function main(): void {
 
   function animate(): void {
     requestAnimationFrame(animate);
+    // While an offline export runs (fr-92t9), its driver owns the ticking —
+    // stepping tickLogic/tickRender below on the VIRTUAL clock, one exported
+    // frame at a time, awaiting each frame's generation between the two.
+    // This loop running as well would double-tick every state machine
+    // against a second clock, so it stands aside entirely; it keeps
+    // scheduling itself, which is also how it resumes the moment the export
+    // ends.
+    if (offlineExport !== null) return;
+    const now = nowMs();
+    tickLogic(now);
+    tickRender(now, false);
+  }
+
+  /**
+   * The animate loop's LOGIC phase (split out for fr-92t9): everything that
+   * decides WHAT this frame shows — camera/pose tween advance, the panel
+   * inset ease, the morph sample (which issues this frame's generation
+   * request), and the drift/timeline show polls (which may launch a leg or
+   * finish a run). The realtime loop runs it back-to-back with
+   * {@link tickRender}; the offline export driver runs it at each frame's
+   * virtual time and AWAITS the generator settling in between, so the
+   * frame's own sample — not the previous frame's — is what gets rendered
+   * and encoded.
+   */
+  function tickLogic(now: number): void {
     cameraTween.advance();
-    const now = performance.now();
     // Ease the projection toward the panel-aware inset (fr-936q). Skipped
     // while a flame render is showing — its view is frozen by contract, and
     // the projection must not drift under the baked image; the ease resumes
@@ -3817,12 +4087,26 @@ function main(): void {
         finishTimelinePlayback();
       }
     }
+  }
+
+  /**
+   * The animate loop's RENDER phase (split out for fr-92t9): the per-mode
+   * scene painting plus everything display-side that rides it — the motion
+   * dt tick (auto-orbit / 4D tumble), glow exposure, the build replay's
+   * reveal, and the adaptive-resolution governor. `force` is the offline
+   * export driver's flag: render-on-demand would skip a visually-identical
+   * dwell frame, but the encoder needs a painted canvas for every
+   * timestamp — and the governor is skipped on those forced frames (the
+   * export pinned the scale to 1, and "frame time" between virtual steps
+   * measures nothing the ladder should react to).
+   */
+  function tickRender(now: number, force: boolean): void {
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
       // while accumulation converges.
       scene.applyCamera(orbit);
-      const renderedSolid = scene.needsRender || recorderActive;
+      const renderedSolid = scene.needsRender || recorderActive || force;
       if (solidSession.hasFirstFrame) {
         if (renderedSolid) scene.renderSolid();
       } else {
@@ -3832,7 +4116,7 @@ function main(): void {
         scene.updateFog();
         if (renderedSolid) scene.render();
       }
-      governResolution(now, renderedSolid);
+      if (!force) governResolution(now, renderedSolid);
       return;
     }
     if (state.renderMode === "flame") {
@@ -3841,13 +4125,13 @@ function main(): void {
       // worker's first image lands, then switch over — avoids a flash of the
       // flame canvas's stale contents during the worker startup gap.
       if (flameSession.hasFirstFrame) {
-        if (scene.needsRender || recorderActive) scene.renderFlame();
+        if (scene.needsRender || recorderActive || force) scene.renderFlame();
       } else {
-        if (scene.needsRender || recorderActive) scene.render();
+        if (scene.needsRender || recorderActive || force) scene.render();
       }
       // Flame mode takes governResolution's restore path (frozen stills
       // display at full resolution); rendered is moot there.
-      governResolution(now, false);
+      if (!force) governResolution(now, false);
       return;
     }
     // A collection show left HOLDING in the points view means the render it
@@ -3987,9 +4271,9 @@ function main(): void {
     // where nothing moved skips the GPU entirely — the compositor keeps
     // showing the last painted frame. Recording forces painting: the canvas
     // capture stream emits frames only on paint.
-    const rendered = scene.needsRender || recorderActive;
+    const rendered = scene.needsRender || recorderActive || force;
     if (rendered) scene.render();
-    governResolution(now, rendered);
+    if (!force) governResolution(now, rendered);
   }
   animate();
 }

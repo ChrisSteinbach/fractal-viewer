@@ -1,0 +1,352 @@
+import { buildMp4Header } from "./mp4-mux";
+import { patchMp4Duration } from "./mp4-duration";
+
+// ---------------------------------------------------------------------------
+// Local box-walking helpers — independent of mp4-mux.ts's own internals, so
+// a bug in its offset bookkeeping can't hide from these tests. Compact
+// (u32) box sizes only: sufficient for parsing this module's own output.
+// ---------------------------------------------------------------------------
+
+/** Read one box's declared size + 4-char type at `offset` within `bytes`. */
+function readBoxHeader(
+  bytes: Uint8Array,
+  offset: number,
+): { size: number; type: string } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    size: view.getUint32(offset),
+    type: String.fromCharCode(
+      bytes[offset + 4],
+      bytes[offset + 5],
+      bytes[offset + 6],
+      bytes[offset + 7],
+    ),
+  };
+}
+
+interface FoundBox {
+  /** Offset of the box's first payload byte (just past its 8-byte header). */
+  payloadStart: number;
+  /** The box's own declared total size (header + payload). */
+  size: number;
+}
+
+/**
+ * Byte length of fixed, non-box content that precedes a box's first NESTED
+ * child box — zero for the plain containers this file descends into
+ * (moov/trak/mdia/minf/stbl), whose payload is nothing but a back-to-back
+ * sequence of child boxes. stsd is a FullBox with a version/flags(4) +
+ * entry_count(4) header before its sample entries; avc1 (a
+ * VisualSampleEntry) has 78 bytes of fixed video fields before its avcC
+ * child. Without this, scanning for a child would start mid-field and
+ * misread a fixed-field byte pattern as a bogus (usually zero-size) box
+ * header.
+ */
+const CHILD_BOX_PREFIX: Record<string, number> = {
+  stsd: 8,
+  avc1: 78,
+};
+
+/**
+ * Walk a path of box types (e.g. ["moov","trak","mdia"]) starting from the
+ * top level of `bytes`, descending into each match's payload for the next
+ * segment. Throws when a segment can't be found, or when a box's declared
+ * size couldn't possibly be real (< 8, the smallest legal box) — tests want
+ * a loud failure pointing at the bad box, not an offset that never advances.
+ */
+function findBox(bytes: Uint8Array, path: readonly string[]): FoundBox {
+  let start = 0;
+  let end = bytes.byteLength;
+  let found: FoundBox | undefined;
+  for (const type of path) {
+    found = undefined;
+    let offset = start;
+    while (offset + 8 <= end) {
+      const header = readBoxHeader(bytes, offset);
+      if (header.size < 8) {
+        throw new Error(
+          `invalid box size ${header.size} at offset ${offset} while scanning for "${type}"`,
+        );
+      }
+      if (header.type === type) {
+        found = { payloadStart: offset + 8, size: header.size };
+        break;
+      }
+      offset += header.size;
+    }
+    if (found === undefined) {
+      throw new Error(`box not found: ${path.join(" > ")} (missing "${type}")`);
+    }
+    start = found.payloadStart + (CHILD_BOX_PREFIX[type] ?? 0);
+    end = found.payloadStart + found.size - 8;
+  }
+  if (found === undefined) throw new Error("empty path");
+  return found;
+}
+
+/** A DataView over exactly a found box's payload (header stripped). */
+function payloadView(bytes: Uint8Array, found: FoundBox): DataView {
+  return new DataView(
+    bytes.buffer,
+    bytes.byteOffset + found.payloadStart,
+    found.size - 8,
+  );
+}
+
+const STBL_PATH = ["moov", "trak", "mdia", "minf", "stbl"];
+
+describe("buildMp4Header", () => {
+  it("lays out ftyp, then moov, then the mdat header, with sizes matching the actual layout", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 480,
+      fps: 30,
+      avcC: Uint8Array.from([1, 2, 3, 4]),
+      samples: [
+        { size: 100, keyframe: true },
+        { size: 200, keyframe: false },
+        { size: 150, keyframe: true },
+      ],
+    });
+
+    const ftyp = readBoxHeader(header, 0);
+    expect(ftyp.type).toBe("ftyp");
+
+    const moov = readBoxHeader(header, ftyp.size);
+    expect(moov.type).toBe("moov");
+
+    const mdat = readBoxHeader(header, ftyp.size + moov.size);
+    expect(mdat.type).toBe("mdat");
+
+    expect(header.length).toBe(ftyp.size + moov.size + 8);
+  });
+
+  it("points stco's one chunk offset at the first sample's byte position (the header's own length)", () => {
+    const header = buildMp4Header({
+      width: 320,
+      height: 240,
+      fps: 30,
+      avcC: Uint8Array.from([9]),
+      samples: [
+        { size: 10, keyframe: true },
+        { size: 20, keyframe: false },
+        { size: 30, keyframe: false },
+      ],
+    });
+
+    const stco = payloadView(header, findBox(header, [...STBL_PATH, "stco"]));
+    expect(stco.getUint32(4)).toBe(1); // entry_count
+    expect(stco.getUint32(8)).toBe(header.length); // chunk_offset
+  });
+
+  it("declares mdat's size as 8 plus the sum of every sample's size", () => {
+    const header = buildMp4Header({
+      width: 100,
+      height: 100,
+      fps: 24,
+      avcC: Uint8Array.from([0]),
+      samples: [
+        { size: 111, keyframe: true },
+        { size: 222, keyframe: false },
+        { size: 333, keyframe: false },
+        { size: 444, keyframe: true },
+        { size: 555, keyframe: false },
+      ],
+    });
+
+    const ftyp = readBoxHeader(header, 0);
+    const moov = readBoxHeader(header, ftyp.size);
+    const mdat = readBoxHeader(header, ftyp.size + moov.size);
+
+    expect(mdat.size).toBe(8 + 111 + 222 + 333 + 444 + 555);
+  });
+
+  it("stsz lists each sample's size in order, with sample_size 0 and the right count", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 1000, keyframe: true },
+        { size: 2000, keyframe: false },
+        { size: 1500, keyframe: false },
+      ],
+    });
+
+    const stsz = payloadView(header, findBox(header, [...STBL_PATH, "stsz"]));
+    expect(stsz.getUint32(4)).toBe(0); // sample_size
+    expect(stsz.getUint32(8)).toBe(3); // sample_count
+    expect(stsz.getUint32(12)).toBe(1000);
+    expect(stsz.getUint32(16)).toBe(2000);
+    expect(stsz.getUint32(20)).toBe(1500);
+  });
+
+  it("stss lists the 1-based indices of keyframe samples", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 10, keyframe: true },
+        { size: 10, keyframe: false },
+        { size: 10, keyframe: true },
+      ],
+    });
+
+    const stss = payloadView(header, findBox(header, [...STBL_PATH, "stss"]));
+    expect(stss.getUint32(4)).toBe(2); // entry_count
+    expect(stss.getUint32(8)).toBe(1);
+    expect(stss.getUint32(12)).toBe(3);
+  });
+
+  it("stts holds one entry of {sampleCount, delta} at a 3000-unit delta for 30fps", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 1, keyframe: true },
+        { size: 1, keyframe: false },
+      ],
+    });
+
+    const stts = payloadView(header, findBox(header, [...STBL_PATH, "stts"]));
+    expect(stts.getUint32(4)).toBe(1); // entry_count
+    expect(stts.getUint32(8)).toBe(2); // sample_count
+    expect(stts.getUint32(12)).toBe(3000); // sample_delta
+  });
+
+  it("stts uses a 1500-unit delta for 60fps", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 60,
+      avcC: Uint8Array.from([1]),
+      samples: [{ size: 1, keyframe: true }],
+    });
+
+    const stts = payloadView(header, findBox(header, [...STBL_PATH, "stts"]));
+    expect(stts.getUint32(12)).toBe(1500); // sample_delta
+  });
+
+  it("mvhd, tkhd, and mdhd all report the same duration, and both timescales read 90000", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 1, keyframe: true },
+        { size: 1, keyframe: false },
+        { size: 1, keyframe: false },
+        { size: 1, keyframe: false },
+      ],
+    });
+    const expectedDuration = 4 * 3000;
+
+    const mvhd = payloadView(header, findBox(header, ["moov", "mvhd"]));
+    expect(mvhd.getUint32(12)).toBe(90000); // timescale
+    expect(mvhd.getUint32(16)).toBe(expectedDuration);
+
+    const tkhd = payloadView(header, findBox(header, ["moov", "trak", "tkhd"]));
+    expect(tkhd.getUint32(20)).toBe(expectedDuration);
+
+    const mdhd = payloadView(
+      header,
+      findBox(header, ["moov", "trak", "mdia", "mdhd"]),
+    );
+    expect(mdhd.getUint32(12)).toBe(90000); // timescale
+    expect(mdhd.getUint32(16)).toBe(expectedDuration);
+  });
+
+  it("embeds avcC verbatim, and matches width/height in avc1 (u16) and tkhd (16.16 fixed point)", () => {
+    const avcC = Uint8Array.from([
+      1, 100, 0, 31, 255, 225, 0, 5, 103, 66, 0, 31,
+    ]);
+    const header = buildMp4Header({
+      width: 1280,
+      height: 720,
+      fps: 30,
+      avcC,
+      samples: [{ size: 10, keyframe: true }],
+    });
+
+    const avc1 = findBox(header, [...STBL_PATH, "stsd", "avc1"]);
+    const avc1View = payloadView(header, avc1);
+    expect(avc1View.getUint16(24)).toBe(1280); // width
+    expect(avc1View.getUint16(26)).toBe(720); // height
+
+    const avcCFound = findBox(header, [...STBL_PATH, "stsd", "avc1", "avcC"]);
+    const avcCBytes = header.slice(
+      avcCFound.payloadStart,
+      avcCFound.payloadStart + (avcCFound.size - 8),
+    );
+    expect(avcCBytes).toEqual(avcC);
+
+    const tkhd = payloadView(header, findBox(header, ["moov", "trak", "tkhd"]));
+    expect(tkhd.getUint32(76)).toBe(1280 * 0x10000); // width, 16.16 fixed
+    expect(tkhd.getUint32(80)).toBe(720 * 0x10000); // height, 16.16 fixed
+  });
+
+  it("produces a well-formed header for zero samples, with every sample table's entry_count at 0", () => {
+    const header = buildMp4Header({
+      width: 320,
+      height: 240,
+      fps: 30,
+      avcC: Uint8Array.from([0]),
+      samples: [],
+    });
+
+    const ftyp = readBoxHeader(header, 0);
+    const moov = readBoxHeader(header, ftyp.size);
+    const mdat = readBoxHeader(header, ftyp.size + moov.size);
+    expect(mdat.type).toBe("mdat");
+    expect(mdat.size).toBe(8);
+
+    expect(
+      payloadView(header, findBox(header, [...STBL_PATH, "stts"])).getUint32(4),
+    ).toBe(0);
+    expect(
+      payloadView(header, findBox(header, [...STBL_PATH, "stss"])).getUint32(4),
+    ).toBe(0);
+    expect(
+      payloadView(header, findBox(header, [...STBL_PATH, "stsc"])).getUint32(4),
+    ).toBe(0);
+    expect(
+      payloadView(header, findBox(header, [...STBL_PATH, "stco"])).getUint32(4),
+    ).toBe(0);
+  });
+
+  it("throws RangeError when the mdat payload would overflow a u32 box size", () => {
+    const spec = {
+      width: 2,
+      height: 2,
+      fps: 30,
+      avcC: Uint8Array.from([0]),
+      samples: [
+        { size: 0x80000000, keyframe: true },
+        { size: 0x80000000, keyframe: false },
+      ],
+    };
+
+    expect(() => buildMp4Header(spec)).toThrow(RangeError);
+  });
+
+  it("produces a box tree patchMp4Duration can walk and patch", () => {
+    const header = buildMp4Header({
+      width: 640,
+      height: 360,
+      fps: 30,
+      avcC: Uint8Array.from([1]),
+      samples: [
+        { size: 100, keyframe: true },
+        { size: 100, keyframe: false },
+      ],
+    });
+
+    expect(patchMp4Duration(header, 12345)).toBe(true);
+  });
+});
