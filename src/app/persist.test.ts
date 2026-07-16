@@ -2452,3 +2452,294 @@ describe("fromSnapshot camera", () => {
     expect("camera" in result).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4D view pose (fr-pnek) — the optional tumble rotor + soft w-slice window a
+// saved/shared/collection document was framed with (see SceneSnapshot.fourD's
+// doc): the 4D sibling of the camera-pose block above. Same quiet-fallback
+// decode policy as camera: anything malformed drops ONLY the pose, never the
+// whole scene, and the numeric fields don't coerce from strings either. The
+// rotor pair goes one step further than camera's plain clamp — a valid but
+// non-unit pair is renormalized (rotor4.ts's normalizeRotorPair), so the
+// decoded pair is always directly usable as a view rotation.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene fourD", () => {
+  it("round-trips a 4D view pose, keeping the rotor unit-length and near the original components", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      fourD: {
+        pair: {
+          p: [0.9689, 0.2474, 0, 0],
+          q: [0.9689, 0, 0, 0.2474],
+        },
+        sliceOn: true,
+        sliceCenter: 0.35,
+        sliceRelColor: true,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceOn).toBe(true);
+    expect(result!.fourD!.sliceCenter).toBeCloseTo(0.35, 4);
+    expect(result!.fourD!.sliceRelColor).toBe(true);
+
+    const { p, q } = result!.fourD!.pair;
+    expect(Math.hypot(...p)).toBeCloseTo(1, 6);
+    expect(Math.hypot(...q)).toBeCloseTo(1, 6);
+    expect(p[0]).toBeCloseTo(0.9689, 3);
+    expect(p[1]).toBeCloseTo(0.2474, 3);
+    expect(p[2]).toBeCloseTo(0, 3);
+    expect(p[3]).toBeCloseTo(0, 3);
+    expect(q[0]).toBeCloseTo(0.9689, 3);
+    expect(q[1]).toBeCloseTo(0, 3);
+    expect(q[2]).toBeCloseTo(0, 3);
+    expect(q[3]).toBeCloseTo(0.2474, 3);
+  });
+
+  it("omits fourD from the encoded payload and decodes back to undefined when the snapshot has none", () => {
+    const payload = decodePayload(encodeScene(baseSnapshot()));
+    expect("fourD" in payload).toBe(false);
+    expect(decodeScene(encodeScene(baseSnapshot()))!.fourD).toBeUndefined();
+  });
+
+  it("encodes byte-identically whether fourD is left absent or explicitly set to undefined", () => {
+    const without = baseSnapshot();
+    expect(encodeScene(without)).toBe(
+      encodeScene({ ...without, fourD: undefined }),
+    );
+  });
+
+  it("keeps decoding a scene with no fourD field at all as a valid, non-null scene", () => {
+    // A hand-built payload with no `fourD` key at all.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when fourD is not an object", () => {
+    const raw = { ...baseSnapshot(), fourD: "tumbling" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+    // The rest of the scene survives — this is a quiet fallback, not a
+    // whole-scene rejection.
+    expect(result!.transforms).toHaveLength(1);
+  });
+
+  it("drops the pose when fourD is null", () => {
+    const raw = { ...baseSnapshot(), fourD: null };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when p is a string instead of an array", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: "not-an-array",
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when p has fewer than 4 components", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when p contains a string entry instead of a number", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: ["1", 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when p contains a non-finite entry (NaN serializes to null)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [NaN, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when a rotor half is all-zero (norm below the normalizable threshold)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [0, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when sliceCenter is a numeric string instead of a number", () => {
+    // Unlike most other fields in this file, fourD does NOT coerce with
+    // Number(x) — a string like "0.5" must not sneak past as a valid center.
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: "0.5",
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("drops the pose when sliceCenter is not finite (Infinity serializes to null)", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: null,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fourD).toBeUndefined();
+  });
+
+  it("clamps an out-of-range sliceCenter above the maximum down to 1", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: true,
+        sliceCenter: 5,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceCenter).toBe(1);
+  });
+
+  it("clamps an out-of-range sliceCenter below the minimum up to -1", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: true,
+        sliceCenter: -5,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceCenter).toBe(-1);
+  });
+
+  it("coerces absent sliceOn/sliceRelColor to false while still keeping the pose", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceCenter: 0.2,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceOn).toBe(false);
+    expect(result!.fourD!.sliceRelColor).toBe(false);
+    expect(result!.fourD!.sliceCenter).toBeCloseTo(0.2, 4);
+  });
+
+  it("renormalizes a non-unit rotor pair to unit length", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [2, 0, 0, 0],
+        q: [0, 0, 2, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fourD).not.toBeUndefined();
+    const { p, q } = result!.fourD!.pair;
+    expect(p).toEqual([1, 0, 0, 0]);
+    expect(q).toEqual([0, 0, 1, 0]);
+  });
+});
+
+describe("fromSnapshot fourD", () => {
+  it("does not leak a fourD key into the returned AppState", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      fourD: {
+        pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
+        sliceOn: true,
+        sliceCenter: 0.2,
+        sliceRelColor: false,
+      },
+    };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect("fourD" in result).toBe(false);
+  });
+});

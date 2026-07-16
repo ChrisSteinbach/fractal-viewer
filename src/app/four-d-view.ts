@@ -1,5 +1,12 @@
-import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
+import {
+  identityRotorPair,
+  normalizeRotorPair,
+  rotateInPlane,
+  rotorMatrix,
+  slerpRotorPair,
+} from "./rotor4";
 import type { RotorPair } from "./rotor4";
+import { smoothstep } from "./orbit";
 
 /**
  * Session-only 4D projection VIEW state — the accumulated rotor (tumble ticks
@@ -15,14 +22,16 @@ import type { RotorPair } from "./rotor4";
  * voxel render snapshot (main.ts's `fourDRenderSnapshot`) freezes for a
  * worker. The rotor pair itself stays PRIVATE: rotor4.ts's renormalization
  * invariant (see its module doc comment) only holds if every mutation goes
- * through `rotateInPlane`, so this class exposes the pair only indirectly —
- * via `matrix()`, `reset()`, `tick()`, and `rotate()` — unlike `tumbleOn`/
- * `tumbleSpeed`/`sliceOn`/`sliceCenter`/`sliceRelColor`, which are plain
- * session data with no invariant to protect, so the animate loop and UI
- * handlers read and write them directly. One exception since fr-g98: the UI's
- * tumble CHECKBOX flows through `setTumbleUserChoice`, not a bare `tumbleOn`
- * write, because a manual toggle must also be remembered as the sticky choice
- * that future `reset()`s respect.
+ * through `rotateInPlane` — or, since fr-pnek, through rotor4.ts's
+ * `normalizeRotorPair` — so this class exposes the pair only indirectly — via
+ * `matrix()`, `reset()`, `tick()`, `rotate()`, and (fr-pnek) `pose()` /
+ * `applyPose()` — unlike `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/
+ * `sliceRelColor`, which are plain session data with no invariant to protect,
+ * so the animate loop and UI handlers read and write them directly. One
+ * exception since fr-g98: the UI's tumble CHECKBOX flows through
+ * `setTumbleUserChoice`, not a bare `tumbleOn` write, because a manual toggle
+ * must also be remembered as the sticky choice that future `reset()`s
+ * respect.
  *
  * `viewTransition` is a free function, not a method, because it never touches
  * the rotor or the slice at all — it is main.ts's `regenerate()` deciding
@@ -75,10 +84,27 @@ export function viewTransition(
 }
 
 /**
+ * The persistable 4D VIEW pose (fr-pnek) — the 4D sibling of orbit.ts's
+ * `CameraPose` (fr-1k4): the accumulated view rotor plus the soft w-slice
+ * window, everything needed to reproduce a saved 4D framing. Deliberately
+ * EXCLUDES `tumbleOn`/`tumbleSpeed`: auto-motion is a viewer PREFERENCE
+ * (fr-0ya's combined auto-motion pref), never document state.
+ */
+export interface FourDPose {
+  pair: RotorPair;
+  sliceOn: boolean;
+  sliceCenter: number;
+  sliceRelColor: boolean;
+}
+
+/**
  * Session-only 4D projection VIEW state: the accumulated rotor (tumble +
  * Shift-drag/wheel all compose into it), the tumble pause/speed, and the soft
- * w-slice. Never persisted, never part of AppState/undo. main.ts owns pushing
- * matrix()/slice fields to the scene; this class owns the state + the math.
+ * w-slice. The live instance itself is never persisted, never part of
+ * AppState/undo — but since fr-pnek a `pose()` snapshot ({@link FourDPose})
+ * IS persisted via the document (a saved/shared scene, a timeline keyframe),
+ * restored on load through `applyPose()`. main.ts owns pushing matrix()/slice
+ * fields to the scene; this class owns the state + the math.
  */
 export class FourDView {
   private pair: RotorPair = identityRotorPair();
@@ -172,5 +198,162 @@ export class FourDView {
   /** Row-major 4x4 view rotation for the uRot4 shader uniform (rotorMatrix). */
   matrix(): number[] {
     return rotorMatrix(this.pair);
+  }
+
+  /** Snapshot the current view as a persistable {@link FourDPose} (fr-pnek):
+   * the rotor pair plus the three slice fields — everything `applyPose`
+   * needs to reproduce this exact framing later (a save, a share link, a
+   * timeline keyframe). The quaternions are deep-copied into fresh arrays:
+   * the private `pair` must never leak by reference, or a caller mutating
+   * the snapshot (or a later `rotateInPlane`/`applyPose` call on THIS view)
+   * could corrupt it. */
+  pose(): FourDPose {
+    return {
+      pair: {
+        p: [this.pair.p[0], this.pair.p[1], this.pair.p[2], this.pair.p[3]],
+        q: [this.pair.q[0], this.pair.q[1], this.pair.q[2], this.pair.q[3]],
+      },
+      sliceOn: this.sliceOn,
+      sliceCenter: this.sliceCenter,
+      sliceRelColor: this.sliceRelColor,
+    };
+  }
+
+  /** Restore a {@link FourDPose} (fr-pnek) — the ONE sanctioned way to set
+   * the rotor pair directly rather than composing it via `rotateInPlane`:
+   * `pose.pair`'s halves are run through rotor4.ts's `normalizeRotorPair`,
+   * which re-establishes the same unit-length invariant a `rotateInPlane`
+   * chain maintains incrementally (see the class doc comment), so the pair
+   * stays valid however the pose arrived (a JSON round trip, a hand-authored
+   * timeline). If normalization fails — defensive only; a decoded pose has
+   * already passed this same check once, in persist.ts — the current pair is
+   * left untouched rather than clobbered with garbage. The three slice
+   * fields are set from `pose` UNCONDITIONALLY, independent of whether the
+   * pair validated. Never touches `tumbleOn`/`tumbleSpeed`/
+   * `tumbleUserChoice` — auto-motion is excluded from `FourDPose` by design
+   * (see its doc comment). */
+  applyPose(pose: FourDPose): void {
+    const normalized = normalizeRotorPair(pose.pair.p, pose.pair.q);
+    if (normalized) this.pair = normalized;
+    this.sliceOn = pose.sliceOn;
+    this.sliceCenter = pose.sliceCenter;
+    this.sliceRelColor = pose.sliceRelColor;
+  }
+}
+
+/** In-flight rotor/slice glide (fr-pnek): a directed smoothstep to a SAVED
+ * {@link FourDPose} — the 4D sibling of `camera-tween.ts`'s `PoseTween`. Only
+ * the rotor and the slice CENTER are interpolated over the glide; `sliceOn`/
+ * `sliceRelColor` apply from the target immediately (see
+ * `FourDTween.advance`) since a binary can't fade partway. */
+interface FourDGlide {
+  startMs: number;
+  durationMs: number;
+  fromPair: RotorPair;
+  fromCenter: number;
+  to: FourDPose;
+}
+
+/**
+ * The directed rotor/slice glide a timeline leg drives (fr-pnek) — the 4D
+ * sibling of `camera-tween.ts`'s `CameraTween.glideToPose`: a self-timed
+ * smoothstep from the view's current rotor/slice to a SAVED {@link
+ * FourDPose}, mutating an injected {@link FourDView} in place via {@link
+ * FourDView.applyPose}. While a glide is active, main.ts suspends the
+ * auto-tumble (`FourDView.tick`) — the glide owns the rotor for its
+ * duration; the tumble resumes for the leg's hold once the glide lands.
+ *
+ * Like `CameraTween`, this owns no Three.js/DOM and takes its clock (`now`)
+ * and the reduced-motion probe (`reducedMotion`) as injected capabilities, so
+ * tests drive it with a fake clock and no browser.
+ */
+export class FourDTween {
+  private glide: FourDGlide | null = null;
+
+  /**
+   * @param view The `FourDView` this glide mutates in place (via `applyPose`).
+   * @param now Monotonic clock in ms (`() => performance.now()` in the app);
+   *   both the start timestamp and the per-frame progress read the SAME clock.
+   * @param reducedMotion True when the user asked to minimize motion — the
+   *   glide is skipped and the pose is applied in a single snap.
+   */
+  constructor(
+    private readonly view: FourDView,
+    private readonly now: () => number,
+    private readonly reducedMotion: () => boolean,
+  ) {}
+
+  /** Whether a glide is currently in flight. */
+  get active(): boolean {
+    return this.glide !== null;
+  }
+
+  /**
+   * Glide the view to a SAVED {@link FourDPose} (fr-pnek) — a timeline leg's
+   * 4D camera move — over `durationMs`, the leg's own morph length (not a
+   * fixed constant, mirroring `CameraTween.glideToPose`). Under reduced
+   * motion, or a non-positive `durationMs` (a zero-length glide's first
+   * {@link advance} would otherwise divide by zero), snaps straight to the
+   * pose via `view.applyPose` instead of animating, clearing any in-flight
+   * glide. Starting a new glide replaces one already in flight — the
+   * freshest request is the live intent.
+   */
+  glideToPose(pose: FourDPose, durationMs: number): void {
+    if (this.reducedMotion() || durationMs <= 0) {
+      this.view.applyPose(pose);
+      this.glide = null;
+      return;
+    }
+    this.glide = {
+      startMs: this.now(),
+      durationMs,
+      fromPair: this.view.pose().pair,
+      fromCenter: this.view.sliceCenter,
+      to: pose,
+    };
+  }
+
+  /**
+   * Advance the in-flight glide (a no-op when idle). Interpolates the rotor
+   * by `slerpRotorPair` and the slice CENTER by linear lerp, both under the
+   * smoothstep of elapsed/durationMs; `sliceOn`/`sliceRelColor` are taken
+   * from the TARGET from the very first frame — a binary can't fade, so the
+   * arriving keyframe's slice on/off and relative-color state establish
+   * immediately while only its center and the rotor's orientation glide.
+   * Clears itself once it reaches the target (`t >= 1`: the final
+   * `applyPose` call has already landed the exact target). Called once per
+   * animation frame by main.ts — like `CameraTween.advance` — only while the
+   * 4D view is showing.
+   */
+  advance(): void {
+    if (!this.glide) return;
+    const { startMs, durationMs, fromPair, fromCenter, to } = this.glide;
+    const t = smoothstep((this.now() - startMs) / durationMs);
+    this.view.applyPose({
+      pair: slerpRotorPair(fromPair, to.pair, t),
+      sliceOn: to.sliceOn,
+      sliceRelColor: to.sliceRelColor,
+      sliceCenter: fromCenter + (to.sliceCenter - fromCenter) * t,
+    });
+    if (t >= 1) this.glide = null;
+  }
+
+  /** Cancel any in-flight glide outright, without moving the view — a user
+   * Shift-drag grabbing the rotor mid-glide wins. */
+  cancel(): void {
+    this.glide = null;
+  }
+
+  /**
+   * Complete an in-flight glide instantly: snap the view to the target pose
+   * and clear it. A no-op when idle. Mirrors `CameraTween.finish`: a
+   * flame/solid render freezes the rotor into its worker snapshot at enter,
+   * so an in-flight glide must have LANDED by then, not still be gliding
+   * toward its target.
+   */
+  finish(): void {
+    if (!this.glide) return;
+    this.view.applyPose(this.glide.to);
+    this.glide = null;
   }
 }

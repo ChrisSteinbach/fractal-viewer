@@ -1,4 +1,6 @@
-import { FourDView, viewTransition } from "./four-d-view";
+import { FourDView, FourDTween, viewTransition } from "./four-d-view";
+import type { FourDPose } from "./four-d-view";
+import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 
 // prettier-ignore
 const IDENTITY = [
@@ -241,6 +243,314 @@ describe("FourDView", () => {
 
       expectMatClose(view.matrix(), IDENTITY);
     });
+  });
+
+  describe("pose", () => {
+    it("returns the current rotor pair and slice fields", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.rotate(0.3, 0, 0);
+      view.sliceOn = true;
+      view.sliceCenter = 0.4;
+      view.sliceRelColor = true;
+
+      const pose = view.pose();
+
+      expectMatClose(rotorMatrix(pose.pair), view.matrix());
+      expect(pose.sliceOn).toBe(true);
+      expect(pose.sliceCenter).toBe(0.4);
+      expect(pose.sliceRelColor).toBe(true);
+    });
+
+    it("deep-copies the rotor: mutating the snapshot leaves the view unchanged", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.rotate(0.3, 0, 0);
+      const before = view.matrix();
+
+      const pose = view.pose();
+      pose.pair.p[0] = 999;
+      pose.pair.q[1] = 999;
+
+      expectMatClose(view.matrix(), before);
+    });
+  });
+
+  describe("applyPose", () => {
+    it("round-trips: applyPose(pose()) preserves the matrix and slice fields", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.rotate(0.2, -0.4, 0.1);
+      view.sliceOn = true;
+      view.sliceCenter = -0.7;
+      view.sliceRelColor = true;
+      const before = view.matrix();
+      const pose = view.pose();
+
+      view.applyPose(pose);
+
+      expectMatClose(view.matrix(), before);
+      expect(view.sliceOn).toBe(true);
+      expect(view.sliceCenter).toBe(-0.7);
+      expect(view.sliceRelColor).toBe(true);
+    });
+
+    it("restores a pose captured from a different view instance", () => {
+      const source = new FourDView();
+      source.reset(false);
+      source.rotate(0.5, 0, 0.2);
+      source.sliceCenter = 0.3;
+      const pose = source.pose();
+
+      const target = new FourDView();
+      target.applyPose(pose);
+
+      expectMatClose(target.matrix(), source.matrix());
+      expect(target.sliceCenter).toBe(0.3);
+    });
+
+    it("normalizes a hand-scaled pair to match the unscaled rotation", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.rotate(0.3, 0, 0);
+      const unscaledMatrix = view.matrix();
+      const pose = view.pose();
+      const scaledPose: FourDPose = {
+        ...pose,
+        pair: {
+          p: [
+            pose.pair.p[0] * 3,
+            pose.pair.p[1] * 3,
+            pose.pair.p[2] * 3,
+            pose.pair.p[3] * 3,
+          ],
+          q: [
+            pose.pair.q[0] * 3,
+            pose.pair.q[1] * 3,
+            pose.pair.q[2] * 3,
+            pose.pair.q[3] * 3,
+          ],
+        },
+      };
+
+      const target = new FourDView();
+      target.applyPose(scaledPose);
+
+      expectMatClose(target.matrix(), unscaledMatrix);
+    });
+
+    it("keeps the current rotor when the pose's pair is degenerate, but still applies the slice fields", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.rotate(0.4, 0, 0);
+      const before = view.matrix();
+      const degeneratePose: FourDPose = {
+        pair: { p: [0, 0, 0, 0], q: [0, 0, 0, 0] },
+        sliceOn: true,
+        sliceCenter: 0.9,
+        sliceRelColor: true,
+      };
+
+      view.applyPose(degeneratePose);
+
+      expectMatClose(view.matrix(), before);
+      expect(view.sliceOn).toBe(true);
+      expect(view.sliceCenter).toBe(0.9);
+      expect(view.sliceRelColor).toBe(true);
+    });
+
+    it("never touches tumbleOn/tumbleSpeed", () => {
+      const view = new FourDView();
+      view.reset(false);
+      view.tumbleOn = false;
+      view.tumbleSpeed = 2.5;
+      const pose = view.pose();
+
+      view.applyPose(pose);
+
+      expect(view.tumbleOn).toBe(false);
+      expect(view.tumbleSpeed).toBe(2.5);
+    });
+  });
+});
+
+describe("FourDTween", () => {
+  it("snaps immediately under reduced motion", () => {
+    const view = new FourDView();
+    view.reset(false);
+    const clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => true,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+
+    tween.glideToPose(targetPose, 1000);
+
+    expectMatClose(view.matrix(), rotorMatrix(targetPose.pair));
+    expect(view.sliceOn).toBe(true);
+    expect(view.sliceCenter).toBe(0.5);
+    expect(view.sliceRelColor).toBe(true);
+    expect(tween.active).toBe(false);
+  });
+
+  it("snaps immediately when durationMs is 0", () => {
+    const view = new FourDView();
+    view.reset(false);
+    const clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+
+    tween.glideToPose(targetPose, 0);
+
+    expectMatClose(view.matrix(), rotorMatrix(targetPose.pair));
+    expect(tween.active).toBe(false);
+  });
+
+  it("interpolates the rotor and slice center partway through a normal glide", () => {
+    const view = new FourDView();
+    view.reset(false); // rotor at identity, sliceCenter 0
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+
+    tween.glideToPose(targetPose, 1000);
+    clock = 500;
+    tween.advance();
+
+    // smoothstep(0.5) = 0.5, so sliceCenter is halfway from 0 to 0.5.
+    expect(view.sliceCenter).toBeCloseTo(0.25);
+    // Booleans establish from the target immediately, not partway.
+    expect(view.sliceOn).toBe(true);
+    expect(view.sliceRelColor).toBe(true);
+    // The rotor sits at the smoothstep midpoint: half of the xy rotation's
+    // own half-angle.
+    expectMatClose(
+      view.matrix(),
+      rotorMatrix(rotateInPlane(identityRotorPair(), "xy", 0.4)),
+    );
+    expect(tween.active).toBe(true);
+  });
+
+  it("lands exactly on the target at/after the glide's duration", () => {
+    const view = new FourDView();
+    view.reset(false);
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+
+    tween.glideToPose(targetPose, 1000);
+    clock = 1000;
+    tween.advance();
+
+    expectMatClose(view.matrix(), rotorMatrix(targetPose.pair));
+    expect(view.sliceCenter).toBe(0.5);
+    expect(tween.active).toBe(false);
+  });
+
+  it("cancel() stops the glide without moving the view further", () => {
+    const view = new FourDView();
+    view.reset(false);
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+    tween.glideToPose(targetPose, 1000);
+    clock = 500;
+    tween.advance();
+    const midMatrix = view.matrix();
+    const midCenter = view.sliceCenter;
+
+    tween.cancel();
+    clock = 1000;
+    tween.advance(); // now a no-op
+
+    expectMatClose(view.matrix(), midMatrix);
+    expect(view.sliceCenter).toBe(midCenter);
+    expect(tween.active).toBe(false);
+  });
+
+  it("finish() snaps to the target and deactivates", () => {
+    const view = new FourDView();
+    view.reset(false);
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
+      sliceOn: true,
+      sliceCenter: 0.5,
+      sliceRelColor: true,
+    };
+    tween.glideToPose(targetPose, 1000);
+    clock = 300;
+    tween.advance();
+
+    tween.finish();
+
+    expectMatClose(view.matrix(), rotorMatrix(targetPose.pair));
+    expect(view.sliceCenter).toBe(0.5);
+    expect(tween.active).toBe(false);
+  });
+
+  it("finish() is a no-op when idle", () => {
+    const view = new FourDView();
+    view.reset(false);
+    const before = view.matrix();
+    const tween = new FourDTween(
+      view,
+      () => 0,
+      () => false,
+    );
+
+    tween.finish();
+
+    expectMatClose(view.matrix(), before);
+    expect(tween.active).toBe(false);
   });
 });
 
