@@ -1396,16 +1396,25 @@ export class Ui {
     );
   }
 
+  /** Reflect a 4D slice state in the panel controls (fr-pnek) — how a
+   * restored document's saved 4D pose, applied to the view out from under
+   * the UI (main.ts's applyFourDPose), keeps the panel truthful. The
+   * position row shows/hides with the toggle exactly as its change handler
+   * does. */
+  setFourDSlice(on: boolean, center: number, relColor: boolean): void {
+    this.fourDSliceToggle.checked = on;
+    this.fourDSliceRow.classList.toggle("hidden", !on);
+    this.fourDSliceSlider.value = String(center);
+    this.fourDSliceLabel.textContent = center.toFixed(2);
+    this.fourDSliceRelColorToggle.checked = relColor;
+  }
+
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
    * a slice left behind by the previous visit never silently applies. The
    * slice-relative color option (fr-nn6) resets with it: it's slice view
    * state, and the fresh-visit default is the faithful whole-cloud ramp. */
   resetFourDSlice(): void {
-    this.fourDSliceToggle.checked = false;
-    this.fourDSliceRow.classList.add("hidden");
-    this.fourDSliceSlider.value = "0";
-    this.fourDSliceLabel.textContent = "0.00";
-    this.fourDSliceRelColorToggle.checked = false;
+    this.setFourDSlice(false, 0, false);
   }
 
   /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`

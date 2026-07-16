@@ -1,4 +1,5 @@
 import type { Rotation4, Vec4 } from "../fractal/types";
+import { clamp } from "../fractal/vec";
 
 /**
  * # SO(4) as a quaternion pair — the app-side rotor for the 4D view (fr-woc)
@@ -183,6 +184,138 @@ export function rotateInPlane(
   return {
     p: normalize(quatMul(dp, pair.p)),
     q: normalize(quatMul(dq, pair.q)),
+  };
+}
+
+/** Checks that a persisted rotor half (see {@link normalizeRotorPair}) is
+ * exactly 4 finite numbers with a Euclidean norm large enough to normalize
+ * meaningfully — a near-zero quaternion has no direction to rescale onto the
+ * unit 3-sphere. */
+function isNormalizableHalf(values: readonly number[]): boolean {
+  return (
+    values.length === 4 &&
+    values.every((v) => typeof v === "number" && Number.isFinite(v)) &&
+    Math.hypot(values[0], values[1], values[2], values[3]) >= 1e-6
+  );
+}
+
+/**
+ * Validate and normalize a persisted rotor pair (fr-pnek) — the trust-
+ * boundary helper for restoring a {@link RotorPair} from OUTSIDE this
+ * module's own composition chain (a JSON round trip through persist.ts, or a
+ * timeline keyframe's saved pose). `rotateInPlane` keeps `p`/`q` unit length
+ * by construction (see the module doc comment's renormalization section),
+ * but decoded data carries no such guarantee — wrong length, non-numbers or
+ * `NaN`/`Infinity` from a hand-edited hash, or a (near) zero quaternion.
+ * Returns `null` unless BOTH `p` and `q` have exactly 4 finite numeric
+ * entries and each has norm ≥ 1e-6; otherwise returns a FRESH {@link
+ * RotorPair} with each half rescaled to unit length. Never mutates the
+ * inputs. `persist.ts`'s decoder and `FourDView.applyPose` (four-d-view.ts)
+ * both funnel a decoded/restored pose through this, so the renormalization
+ * invariant (see the module doc comment) survives the round trip.
+ */
+export function normalizeRotorPair(
+  p: readonly number[],
+  q: readonly number[],
+): RotorPair | null {
+  if (!isNormalizableHalf(p) || !isNormalizableHalf(q)) return null;
+  return {
+    p: normalize([p[0], p[1], p[2], p[3]]),
+    q: normalize([q[0], q[1], q[2], q[3]]),
+  };
+}
+
+/** Hamilton dot product of two quaternions, treated as plain 4-vectors — the
+ * cosine of the angle between them when both are unit length. */
+function quatDot(a: Quat, b: Quat): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+}
+
+/** Shallow copy of a {@link Quat} — explicit index-by-index, matching
+ * `camera-tween.ts`'s convention of never spreading a fixed-length tuple. */
+function cloneQuat(q: Quat): Quat {
+  return [q[0], q[1], q[2], q[3]];
+}
+
+/** The antipodal quaternion `-q` — the same 3-sphere point's double-cover
+ * partner (see {@link slerpRotorPair}'s doc comment). */
+function negateQuat(q: Quat): Quat {
+  return [-q[0], -q[1], -q[2], -q[3]];
+}
+
+/**
+ * Slerp a single quaternion half along its own great-circle arc, assuming
+ * `a`/`b` are already unit length (every `RotorPair` half always is —
+ * {@link slerpRotorPair} only ever calls this with the pair's own halves, or
+ * their sign-fixed copies). Falls back to a normalized component lerp when
+ * the arc is too short to divide by `sinθ` safely — the standard
+ * quaternion-slerp numerical-stability guard.
+ */
+function slerpQuat(a: Quat, b: Quat, t: number): Quat {
+  const dot = clamp(quatDot(a, b), -1, 1);
+  const theta = Math.acos(dot);
+  const sinTheta = Math.sin(theta);
+  if (sinTheta < 1e-5) {
+    return normalize([
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t,
+      a[3] + (b[3] - a[3]) * t,
+    ]);
+  }
+  const wa = Math.sin((1 - t) * theta) / sinTheta;
+  const wb = Math.sin(t * theta) / sinTheta;
+  return normalize([
+    a[0] * wa + b[0] * wb,
+    a[1] * wa + b[1] * wb,
+    a[2] * wa + b[2] * wb,
+    a[3] * wa + b[3] * wb,
+  ]);
+}
+
+/**
+ * SO(4) geodesic interpolation between two rotor pairs (fr-pnek), driving the
+ * directed rotor glide in four-d-view.ts's `FourDTween` — the 4D sibling of
+ * `camera-tween.ts`'s pose-glide lerp.
+ *
+ * ## Double cover
+ *
+ * `(p, q)` and `(−p, −q)` describe the SAME SO(4) rotation: negating both
+ * halves cancels in `p·x·q̄` (two sign flips multiply out to nothing — see
+ * the module doc comment). So before interpolating, this picks whichever
+ * sign of `b` sits CLOSER to `a` — the shorter way round the double cover —
+ * by the sign of their COMBINED dot product `d = a.p·b.p + a.q·b.q`; a
+ * negative `d` flips BOTH halves of `b` together. The sign fix must apply to
+ * both halves together — flipping only one would target a different `(p, q)`
+ * pair entirely, not merely reparametrize the same rotation (see the module
+ * doc comment: a rotation is the PAIR acting jointly, not either half alone).
+ *
+ * Each half is then slerped independently along its own great-circle arc
+ * (standard quaternion slerp — {@link slerpQuat}) and renormalized, the same
+ * float-safety reasoning as `rotateInPlane`'s post-composition normalize.
+ *
+ * Exact at the endpoints: `t <= 0` returns a copy of `a`, `t >= 1` returns a
+ * copy of the sign-fixed `b` (identical rotation to `b`, though possibly
+ * negated) — so a glide's first and last frame land on exactly the authored
+ * keyframes, with no accumulated float drift from the slerp formula itself.
+ * Pure: neither input is mutated.
+ */
+export function slerpRotorPair(
+  a: RotorPair,
+  b: RotorPair,
+  t: number,
+): RotorPair {
+  if (t <= 0) return { p: cloneQuat(a.p), q: cloneQuat(a.q) };
+
+  const d = quatDot(a.p, b.p) + quatDot(a.q, b.q);
+  const targetP = d < 0 ? negateQuat(b.p) : cloneQuat(b.p);
+  const targetQ = d < 0 ? negateQuat(b.q) : cloneQuat(b.q);
+
+  if (t >= 1) return { p: targetP, q: targetQ };
+
+  return {
+    p: slerpQuat(a.p, targetP, t),
+    q: slerpQuat(a.q, targetQ, t),
   };
 }
 

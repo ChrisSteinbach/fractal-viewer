@@ -320,7 +320,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     orbit-camera pose (`CameraPose`, optional; a malformed pose drops to
     `undefined` instead of rejecting the scene) so a reopened PWA / reloaded
     tab restores its framing — undo-history snapshots stay camera-less on
-    purpose (history.ts dedupes by string equality).
+    purpose (history.ts dedupes by string equality). Since fr-pnek a
+    non-flat scene's document additionally carries the 4D view pose
+    (`FourDPose`: rotor pair + w-slice, same optional/quiet-drop contract,
+    pair renormalized via `normalizeRotorPair` on decode; the tumble
+    on/speed stay out — fr-0ya viewer pref), applied by main.ts where the
+    fresh-visit 4D reset would otherwise land (`pendingFourDPose`, the
+    pendingRenderMode pattern) — undo snapshots stay pose-less for the same
+    dedup reason.
   - `history.ts` — session-only undo/redo stacks over the encoded scene
     snapshot (pure, tested).
   - `edit-session.ts` — the burst-coalescing policy over `history.ts`: collapses a
@@ -343,7 +350,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     survived.
   - `timeline.ts` — the animation timeline's persistent document (fr-8v41):
     an authored, ORDERED sequence of keyframe steps — each a frozen copy of
-    an encoded scene (camera pose included) + thumbnail + its own
+    an encoded scene (camera pose included; a non-flat keyframe's 4D
+    rotor/slice pose too, fr-pnek) + thumbnail + its own
     `morphMs`/`holdMs` — under its own localStorage key, the collection's
     opaque-encoded-string stance throughout. Deliberately not references
     into the collection: deleting a keeper can never break a timeline.
@@ -364,7 +372,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     same replace-load morph as a drift leg, seed pinned via `legSeed`, the
     camera gliding to the step's saved pose over the leg's own duration
     (`CameraTween.glideToPose`) — poseless steps fall back to drift's
-    fit+chase. A second `DriftPolicy` instance conducts it (stop-on-edit,
+    fit+chase — and a 4D keyframe's rotor/slice gliding likewise
+    (`FourDTween`, fr-pnek: tumble suspended while the glide owns the rotor,
+    resuming for the hold, so arrival orientations stay pinned to the saved
+    poses). A second `DriftPolicy` instance conducts it (stop-on-edit,
     own-leg guard); `stopShows` in main.ts routes every "user reached in"
     chokepoint to both shows. Export = the same run with the canvas
     recorder rolling: whatever ends the run stops the recorder, so the clip
@@ -493,9 +504,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     can hint the mode it showcases (`PRESET_RENDER_HINTS` in `presets.ts`).
   - `four-d-view.ts` — the session-only 4D view state (the `RotorPair`,
     auto-tumble, soft w-slice); `main.ts` freezes it into a render's `fourD`
-    snapshot when the system is 4D.
+    snapshot when the system is 4D. Since fr-pnek the rotor + slice (never
+    the tumble on/speed — that's the fr-0ya viewer pref) also snapshot to a
+    persistable `FourDPose` (`pose()`/`applyPose`), the 4D sibling of
+    `CameraPose`, and `FourDTween` is the directed pose glide a timeline leg
+    drives (rotor slerp + slice-center lerp over the leg's own morph
+    duration) — `CameraTween.glideToPose`'s 4D twin, suspending the
+    auto-tumble while it owns the rotor.
   - `rotor4.ts` — SO(4) rotation as a renormalizable unit-quaternion pair
-    (`RotorPair`), composed cheaply over a long session.
+    (`RotorPair`), composed cheaply over a long session; `slerpRotorPair`
+    (geodesic interpolation with the double-cover sign fix) and
+    `normalizeRotorPair` (the decode trust boundary) serve the persisted
+    pose (fr-pnek).
   - `recorder.ts` / `mp4-duration.ts` / `webm-duration.ts` — the video-capture
     feature: `createCanvasRecorder` streams the shared WebGL canvas through
     `MediaRecorder` to a downloadable clip (MP4 preferred for upload

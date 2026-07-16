@@ -1,6 +1,7 @@
 import { toTransform4 } from "../fractal/affine4";
 import { wSupport } from "./rotor4";
-import { FourDView, viewTransition } from "./four-d-view";
+import { FourDTween, FourDView, viewTransition } from "./four-d-view";
+import type { FourDPose } from "./four-d-view";
 import {
   buildColors,
   buildColors4,
@@ -397,9 +398,38 @@ function main(): void {
   // rotor (tumble ticks and Shift-drag/Shift-wheel deltas all compose into it),
   // the tumble pause/speed, and the soft w-slice. Reset to a fresh-visit
   // baseline by resetFourDView() whenever the view starts showing a genuinely
-  // new 4D system, never persisted. The state machine + its math live in
-  // four-d-view.ts; this file just pushes matrix()/slice fields to the scene.
+  // new 4D system; the live instance is never persisted, though a pose()
+  // snapshot of it rides the saved document (fr-pnek — see currentDocument).
+  // The state machine + its math live in four-d-view.ts; this file just
+  // pushes matrix()/slice fields to the scene.
   const fourDView = new FourDView();
+
+  // The directed rotor/slice glide a timeline playback leg drives (fr-pnek):
+  // the 4D sibling of cameraTween.glideToPose, easing the view from wherever
+  // the tumble left it onto the arriving keyframe's saved FourDPose over the
+  // leg's own morph duration. While it is active, animate() suspends the
+  // auto-tumble tick — the glide owns the rotor — and applyCloudResult's
+  // fresh-visit reset stands aside (see the transition block there); the
+  // tumble resumes for the hold once the glide lands, which keeps playback
+  // alive between keyframes exactly the way the 3D auto-orbit keeps spinning
+  // after a camera pose glide. Arrival ORIENTATIONS stay pinned to the saved
+  // poses either way — that is the deterministic half fr-pnek needs.
+  const fourDTween = new FourDTween(
+    fourDView,
+    () => performance.now(),
+    prefersReducedMotion,
+  );
+
+  // A loaded document's 4D pose (fr-pnek), waiting for its cloud to land:
+  // the pendingRenderMode pattern one field over, applied to the VIEW rather
+  // than the render mode. loadEncodedScene / launchTimelineLeg / boot arm it
+  // right after applyDecodedSnapshot (which, like every other edit path,
+  // clears it); applyCloudResult applies it wherever the fresh-visit 4D
+  // reset would otherwise fire — the first non-flat arrival of a morphing
+  // load, and the terminal replaced arrival, which would otherwise stomp a
+  // just-restored (or just-glided) pose back to the identity baseline — and
+  // consumes it once the replaced request lands.
+  let pendingFourDPose: FourDPose | null = null;
 
   // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
   // above — a slow turntable on the orbit camera's theta, so a flat system's
@@ -803,7 +833,15 @@ function main(): void {
    * duration (CameraTween.glideToPose — the fit flag stays off so the
    * arrival can't fight it): the author's framing IS the shot, where a
    * drift leg deliberately auto-fits instead. A step saved without a pose
-   * falls back to exactly the drift leg's fit-and-chase. Steps resolve by
+   * falls back to exactly the drift leg's fit-and-chase. A step saved from
+   * a non-flat system additionally carries its 4D view pose (fr-pnek) —
+   * the rotor orientation and w-slice the author framed — and the 4D view
+   * glides onto it the same way (FourDTween, rotor slerp + slice-center
+   * lerp over the leg's own duration); the pose is ALSO armed as
+   * pendingFourDPose so the arrival that lands the replaced request
+   * re-applies it exactly, covering both a glide that finished a beat
+   * before the cloud landed and one a user gesture cancelled out from
+   * under the show. Steps resolve by
    * index at leg time, which is why every timeline EDIT stops a running
    * playback first (see the onTimeline* handlers). Returns false on a
    * vanished or undecodable step (untrusted localStorage), ending the show
@@ -824,6 +862,12 @@ function main(): void {
       legSeed(timeline.seed, index),
     );
     if (pose) cameraTween.glideToPose(pose, step.morphMs);
+    // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
+    // every load's behalf (the pendingRenderMode pattern, fr-pnek).
+    if (snap.fourD) {
+      fourDTween.glideToPose(snap.fourD, step.morphMs);
+      pendingFourDPose = snap.fourD;
+    }
     return true;
   }
 
@@ -917,6 +961,44 @@ function main(): void {
     pushFourDSlice();
     ui.resetFourDSlice();
     ui.resetFourDTumble(fourDView.tumbleOn);
+  }
+
+  // Restore a saved 4D view pose (fr-pnek) — resetFourDView's document-
+  // driven sibling, and the 4D mirror of applyCameraPose: rotor + slice
+  // snap to the pose, and the same scene/UI pushes the reset does keep the
+  // shader uniforms and the panel's slice controls in step. Tumble on/off/
+  // speed are deliberately untouched — they're not in the pose (fr-0ya).
+  // The explicit setRot4 matters on the paths where animate()'s own per-4D-
+  // frame push hasn't run yet (boot's synchronous first paint).
+  function applyFourDPose(pose: FourDPose): void {
+    fourDTween.cancel();
+    fourDView.applyPose(pose);
+    pushFourDSlice();
+    scene.setRot4(fourDView.matrix());
+    syncFourDSliceUi();
+  }
+
+  // Reflect the live slice state in the panel controls — the sync side of
+  // ui.setFourDSlice, shared by applyFourDPose and the frame a pose glide
+  // lands on (see animate()'s 4D block).
+  function syncFourDSliceUi(): void {
+    ui.setFourDSlice(
+      fourDView.sliceOn,
+      fourDView.sliceCenter,
+      fourDView.sliceRelColor,
+    );
+  }
+
+  // The user's hand landing on the 4D view (a Shift-drag/-wheel rotor
+  // gesture, a slice control) takes it back from the document (fr-pnek):
+  // cancel an in-flight pose glide — its per-frame applyPose would overwrite
+  // the gesture on the very next frame — AND drop a pose still waiting for
+  // its cloud, which would otherwise re-stomp the gesture at arrival. The
+  // 4D sibling of cancelTween on a camera grab; deliberately does NOT stop
+  // a running show (neither does grabbing the camera).
+  function releaseFourDPoseControl(): void {
+    fourDTween.cancel();
+    pendingFourDPose = null;
   }
 
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
@@ -1151,7 +1233,31 @@ function main(): void {
     // outcomes are mutually exclusive-ish (resetFourD needs nonFlat, the other
     // two need !nonFlat), so they read as independent guards here.
     const transition = viewTransition(nonFlat, wasNonFlat, request.replaced);
-    if (transition.resetFourD) resetFourDView();
+    if (transition.resetFourD) {
+      if (fourDTween.active) {
+        // A timeline leg's rotor glide owns the view (fr-pnek): the fresh-
+        // visit reset would stomp it mid-flight (and the glide's next
+        // advance would overwrite the reset anyway — a pointless flicker).
+        // The glide lands the saved pose itself; nothing to do here.
+      } else if (pendingFourDPose) {
+        // The loaded document carries its own 4D framing (fr-pnek): apply
+        // it where the fresh-visit baseline would otherwise land — the
+        // first non-flat arrival of a morphing load shows the destination
+        // orientation immediately, and the terminal replaced arrival
+        // re-applies it rather than resetting a pose the load (or a
+        // just-finished timeline glide) put there. Not consumed here: the
+        // clear below keys off the replaced request itself, so a morph's
+        // in-between arrivals can't strand the terminal one pose-less.
+        applyFourDPose(pendingFourDPose);
+      } else {
+        resetFourDView();
+      }
+    }
+    // The pending pose is armed for exactly one load; the replaced request
+    // IS that load's landing (even when it lands flat — a corrupt document
+    // could pair a 4D pose with flat transforms), so consume it here rather
+    // than inside the nonFlat-gated branch above.
+    if (request.replaced) pendingFourDPose = null;
     if (transition.resetAutoOrbit) resetAutoOrbitView();
     if (transition.clearScaffold) {
       // scene.setFourDActive(false) (just above) restores the 3D material/
@@ -2111,6 +2217,12 @@ function main(): void {
       // stops polling the tween during a render, so an unsnapped morph would
       // otherwise resume, stale, on exit.
       snapMorph();
+      // And a 4D pose glide (fr-pnek), for the same freeze: the render's
+      // worker snapshot reads fourDView.matrix() at enter (see
+      // fourDRenderSnapshot), so an in-flight glide must LAND first — the
+      // exact mirror of cameraTween.finish() on the flame path in
+      // applyCloudResult.
+      fourDTween.finish();
     }
     if (state.renderMode === "flame") flameSession.exit();
     else if (state.renderMode === "solid") solidSession.exit();
@@ -2216,8 +2328,16 @@ function main(): void {
     stopShows({ notify: true });
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
-    // the time travel / gallery load.
+    // the time travel / gallery load — nor inherit a 4D pose armed for a
+    // load it just superseded (fr-pnek; callers that WANT a pose re-arm it
+    // right after this returns, mirroring pendingRenderMode). The pose
+    // GLIDE is superseded the same way: left alive, a leg's still-flying
+    // glide would freeze when this load lands flat (animate()'s 4D block
+    // stops advancing it) and then snap its stale pose onto the NEXT
+    // non-flat visit. A timeline leg re-arms its own glide right after.
     pendingRenderMode = null;
+    pendingFourDPose = null;
+    fourDTween.cancel();
     // The pre-load display target — the morph's `from` endpoint (a chained
     // restart ignores it and resumes from the live sample; see
     // MorphTween.start). Captured before fromSnapshot replaces the document.
@@ -2284,13 +2404,21 @@ function main(): void {
 
   /**
    * The full persistable document: the scene ({@link toSnapshot}) plus the
-   * live camera pose (fr-1k4). Used for the autosave/hash, the collection,
-   * and share links. Undo-history snapshots deliberately stay camera-less
-   * (see SceneSnapshot.camera's doc) — that's why `snapshot` below does NOT
-   * use this.
+   * live camera pose (fr-1k4) and — while the system is non-flat — the live
+   * 4D view pose (fr-pnek), so a saved/shared scene (and, crucially, a
+   * timeline keyframe, which freezes this exact document) reproduces its
+   * tumble orientation and w-slice, not just its 3D framing. Used for the
+   * autosave/hash, the collection, share links, and timeline keyframes.
+   * Undo-history snapshots deliberately stay camera-less AND pose-less
+   * (see SceneSnapshot.camera's/fourD's docs) — that's why `snapshot`
+   * below does NOT use this.
    */
   function currentDocument(): SceneSnapshot {
-    return { ...toSnapshot(state), camera: cameraPose() };
+    return {
+      ...toSnapshot(state),
+      camera: cameraPose(),
+      fourD: viewIs4D ? fourDView.pose() : undefined,
+    };
   }
 
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
@@ -2333,11 +2461,14 @@ function main(): void {
    * "replace" undo checkpoint (making the load undoable and arming the
    * debounced save) via `beginEdit("replace")` before applying, and restores
    * the framing: the pose saved with the scene when there is one (fr-1k4),
-   * an auto-fit for entries with no stored pose. A corrupt entry (decode
-   * returns null — can't happen for our own encodeScene output, but the
-   * collection is untrusted localStorage) is ignored rather than blanking
-   * the current scene; the boolean return says whether the load actually
-   * applied, so onLoadFromCollection never arms a render-mode hint
+   * an auto-fit for entries with no stored pose — and the saved 4D view
+   * pose when the document carries one (fr-pnek), armed as pendingFourDPose
+   * so it lands with the restored cloud (the fresh-visit reset at arrival
+   * would stomp an immediate apply; see applyCloudResult). A corrupt entry
+   * (decode returns null — can't happen for our own encodeScene output, but
+   * the collection is untrusted localStorage) is ignored rather than
+   * blanking the current scene; the boolean return says whether the load
+   * actually applied, so onLoadFromCollection never arms a render-mode hint
    * (fr-75sq) for a load that never happened.
    */
   function loadEncodedScene(encoded: string): boolean {
@@ -2346,6 +2477,9 @@ function main(): void {
     editSession.beginEdit("replace");
     applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
+    // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
+    // every load's behalf (the pendingRenderMode pattern, fr-pnek).
+    if (snap.fourD) pendingFourDPose = snap.fourD;
     return true;
   }
 
@@ -2550,8 +2684,10 @@ function main(): void {
     // anything.
     stopShows({ notify: true });
     // Any fresh edit supersedes a preset hint still waiting for its cloud
-    // (fr-39y) — onPreset re-arms it right after this returns.
+    // (fr-39y) — onPreset re-arms it right after this returns — and a 4D
+    // pose still waiting for its load's cloud (fr-pnek), same staleness.
     pendingRenderMode = null;
+    pendingFourDPose = null;
     if (effect === "auto") snapMorph();
     const morphFrom = currentMorphSystem();
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
@@ -3269,22 +3405,34 @@ function main(): void {
       ui.updateLabels(state);
     },
     onRenderMode: (mode) => {
-      // A manual switch outranks a preset hint still waiting for its cloud.
+      // A manual switch outranks a preset hint still waiting for its cloud —
+      // and drops a 4D pose waiting for one (fr-pnek): whatever load armed
+      // it, the user just reached in over it.
       pendingRenderMode = null;
+      pendingFourDPose = null;
       switchRenderMode(mode);
     },
     // Slice state is session-only view state (like the tumble clock): it never
-    // touches AppState or persistence, so these write straight to fourDView and
-    // re-upload the slice trio to the scene (see pushFourDSlice).
+    // touches AppState or persistence AS STATE — though a snapshot of it rides
+    // the saved document as part of the 4D pose (fr-pnek, currentDocument) —
+    // so these write straight to fourDView and re-upload the slice trio to
+    // the scene (see pushFourDSlice). Each first cancels an in-flight pose
+    // glide and drops a pending pose (releaseFourDPoseControl): the glide
+    // re-applies its slice fields every frame, and the pending pose would
+    // re-stomp at arrival — the user's hand wins, same as a camera grab
+    // cancelling cameraTween.
     onFourDSliceToggle: (checked) => {
+      releaseFourDPoseControl();
       fourDView.sliceOn = checked;
       pushFourDSlice();
     },
     onFourDSliceInput: (value) => {
+      releaseFourDPoseControl();
       fourDView.sliceCenter = value;
       pushFourDSlice();
     },
     onFourDSliceRelColorToggle: (checked) => {
+      releaseFourDPoseControl();
       fourDView.sliceRelColor = checked;
       pushFourDSlice();
     },
@@ -3347,6 +3495,9 @@ function main(): void {
       // blocks all drags during the flame render; the solid render keeps its
       // camera gestures live, so the w-plane gesture needs this gate.
       if (state.renderMode !== "points") return;
+      // Grabbing the rotor cancels a pose glide / pending pose (fr-pnek) —
+      // the user's hand wins, same as a camera grab cancelling cameraTween.
+      releaseFourDPoseControl();
       fourDView.rotate(xw, yw, zw);
       // animate() pushes fourDView.matrix() next frame; nothing else to do.
     },
@@ -3424,6 +3575,18 @@ function main(): void {
   } else {
     fitCameraToAttractor();
     cameraTween.finish();
+  }
+  // The 4D sibling (fr-pnek): a restored non-flat scene reapplies the tumble
+  // orientation + w-slice it was saved with. AFTER the synchronous boot
+  // generation above — its inline arrival runs the fresh-visit reset this
+  // apply must land on top of, not under. Applied directly rather than via
+  // pendingFourDPose: the async density upgrade below is replaced:false, so
+  // arming the pending pose here would leave it dangling for whatever
+  // UNRELATED replaced request comes first (a preset click minutes later).
+  // A pose paired with a flat scene (hand-crafted document) is ignored,
+  // matching currentDocument never writing one for a flat system.
+  if (saved?.fourD && viewIs4D) {
+    applyFourDPose(saved.fourD);
   }
   // A flat boot never routes through regenerate()'s flip/replacement branches,
   // so seed the auto-orbit baseline (incl. the reduced-motion pause and the
@@ -3647,8 +3810,24 @@ function main(): void {
       // and it keeps one code path. lastMotionTickMs (above) still advances
       // while paused, so resuming doesn't replay the gap as a jump. The point
       // color re-derives in-shader from the new rotation, so nothing else
-      // needs updating per frame.
-      fourDView.tick(dt);
+      // needs updating per frame. While a timeline leg's pose glide is in
+      // flight (fr-pnek) it owns the rotor — the tumble stands aside instead
+      // of composing on top and jittering the approach — and the slice
+      // uniforms follow the glide's per-frame center lerp; the tumble
+      // resumes on the frame after the glide lands.
+      if (fourDTween.active) {
+        fourDTween.advance();
+        pushFourDSlice();
+        // The frame the glide lands on: reflect the arrived slice in the
+        // panel controls. The per-frame lerp above deliberately skips the
+        // UI (the panel is closed during playback), but the LANDING must
+        // not leave it stale for when the panel reopens — the arrival-side
+        // sync (applyFourDPose via pendingFourDPose) only covers legs whose
+        // cloud landed after the glide had already finished.
+        if (!fourDTween.active) syncFourDSliceUi();
+      } else {
+        fourDView.tick(dt);
+      }
       scene.setRot4(fourDView.matrix());
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse

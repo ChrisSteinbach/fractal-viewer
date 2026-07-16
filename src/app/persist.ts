@@ -60,6 +60,8 @@ import {
 } from "./state";
 import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
 import { clampPhi, clampRadius, type CameraPose } from "./orbit";
+import type { FourDPose } from "./four-d-view";
+import { normalizeRotorPair } from "./rotor4";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { clamp } from "../fractal/vec";
 
@@ -154,6 +156,22 @@ export interface SceneSnapshot {
    * dedup keeps comparing camera-less bytes.)
    */
   camera?: CameraPose;
+  /**
+   * Optional 4D view pose (fr-pnek): the tumble rotor + soft w-slice window
+   * a saved/shared/collection scene was framed with (see {@link FourDPose})
+   * — the 4D sibling of `camera` just above. Optional like `camera` — and
+   * DELIBERATELY absent from the ENCODED undo-history snapshot STRING for
+   * the same reason, only more so: `history.ts` dedupes checkpoints by
+   * comparing `encodeScene` output with `===`, and the live rotor drifts
+   * every tumble frame, which would defeat that dedup even harder than
+   * camera drift would. `main.ts` (not this module) attaches `fourD` only
+   * when writing a persisted / shared / collection document, and only while
+   * the system is non-flat — never to an in-session undo checkpoint. Tumble
+   * on/off + speed are deliberately NOT part of the pose — a viewer
+   * PREFERENCE (fr-0ya), never document state; see `FourDPose`'s own doc
+   * comment.
+   */
+  fourD?: FourDPose;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -197,21 +215,22 @@ export function toSnapshot(state: AppState): SceneSnapshot {
 /**
  * Merge a restored snapshot over a base AppState (typically `initialState`),
  * overwriting exactly the persisted fields while leaving session-only state
- * (selection, autoUpdate, panel) from `base` intact. `camera` is a
- * document-only field with no `AppState` counterpart (it's applied instead
- * by `main.ts`'s boot/load call sites), so it is explicitly destructured out
- * and never spread. The rest stays the exact inverse of `toSnapshot`, with
- * nothing else to hand-sync. `positionAxisColors` (fr-8k7) is read explicitly
- * off `snapshot` rather than relying on the `rest` spread, so its absence
- * always clears `base`'s value even when the incoming snapshot object never
- * declares the key at all — unlike `customPalette`, which only clears
- * because `toSnapshot`/`decodeScene` happen to always emit that key.
+ * (selection, autoUpdate, panel) from `base` intact. `camera` and `fourD`
+ * (fr-pnek) are document-only fields with no `AppState` counterpart (they're
+ * applied instead by `main.ts`'s boot/load call sites), so both are
+ * explicitly destructured out and never spread. The rest stays the exact
+ * inverse of `toSnapshot`, with nothing else to hand-sync.
+ * `positionAxisColors` (fr-8k7) is read explicitly off `snapshot` rather than
+ * relying on the `rest` spread, so its absence always clears `base`'s value
+ * even when the incoming snapshot object never declares the key at all —
+ * unlike `customPalette`, which only clears because `toSnapshot`/
+ * `decodeScene` happen to always emit that key.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
   base: AppState,
 ): AppState {
-  const { camera: _camera, ...rest } = snapshot;
+  const { camera: _camera, fourD: _fourD, ...rest } = snapshot;
   return {
     ...base,
     ...rest,
@@ -834,6 +853,53 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
   };
 }
 
+/**
+ * Validate the untrusted `fourD` scene field (fr-pnek): the 4D view pose a
+ * save/share/collection document was written with (see {@link FourDPose}) —
+ * the 4D sibling of `camera`/{@link decodeCameraPose} just above, and its
+ * validation policy is identical in spirit: a 4D pose is view state, not
+ * structural data, so anything malformed drops ONLY the pose — returns
+ * `undefined` — rather than rejecting the whole scene (`null`):
+ *
+ * - not a non-null object;
+ * - `p` / `q` not both arrays — once narrowed, they're handed to
+ *   `rotor4.ts`'s {@link normalizeRotorPair}, which is the actual trust
+ *   boundary: it requires exactly 4 finite `typeof "number"` entries per
+ *   half (deliberately NOT the `Number(x)` coercion most other fields in
+ *   this file use — the same strictness rationale as `decodeCameraPose`'s
+ *   `radius`/`theta`/`phi`) with a norm large enough to normalize, and
+ *   returns a fresh unit-normalized pair or `null` — relayed here as
+ *   `undefined` without duplicating any of that per-entry logic;
+ * - `sliceCenter` not literally typeof `"number"` and finite — same
+ *   all-or-nothing stance as `decodeCameraPose`'s scalar fields: the whole
+ *   pose drops rather than defaulting just this one field.
+ *
+ * A validated pose clamps `sliceCenter` to `[-1, 1]` (the slice-position
+ * slider's own range — see index.html's `fourDSliceSlider`); `sliceOn` /
+ * `sliceRelColor` coerce with `Boolean(...)`, the same contract
+ * `showGuides`/`fourDDepthFade` use elsewhere in this file — absent
+ * coerces to off.
+ */
+function decodeFourDPose(raw: unknown): FourDPose | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const f = raw as Record<string, unknown>;
+
+  if (!Array.isArray(f.p) || !Array.isArray(f.q)) return undefined;
+  const pair = normalizeRotorPair(f.p, f.q);
+  if (pair === null) return undefined;
+
+  const { sliceCenter } = f;
+  if (typeof sliceCenter !== "number" || !Number.isFinite(sliceCenter))
+    return undefined;
+
+  return {
+    pair,
+    sliceOn: Boolean(f.sliceOn),
+    sliceCenter: clamp(sliceCenter, -1, 1),
+    sliceRelColor: Boolean(f.sliceRelColor),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Encode / decode
 // ---------------------------------------------------------------------------
@@ -950,6 +1016,13 @@ export function encodeScene(s: SceneSnapshot): string {
       theta: number;
       phi: number;
     };
+    fourD?: {
+      p: number[];
+      q: number[];
+      sliceOn: boolean;
+      sliceCenter: number;
+      sliceRelColor: boolean;
+    };
   } = {
     transforms: s.transforms.map(encodeTransform),
     numPoints: s.numPoints,
@@ -1029,6 +1102,22 @@ export function encodeScene(s: SceneSnapshot): string {
       phi: round4(s.camera.phi),
     };
   }
+  // Written only when present, like camera above (fr-pnek) — an undo-history
+  // snapshot (which never carries a 4D pose either — see SceneSnapshot.fourD's
+  // doc) stays byte-identical. Wire form flattens the rotor pair to p/q (URL
+  // compactness — no nested `pair` object). Quaternion components +
+  // sliceCenter are rounded to 4 decimals like every other float in this
+  // file: the resulting angle error is far below visibility, and the decoder
+  // renormalizes the pair anyway.
+  if (s.fourD) {
+    payload.fourD = {
+      p: s.fourD.pair.p.map(round4),
+      q: s.fourD.pair.q.map(round4),
+      sliceOn: s.fourD.sliceOn,
+      sliceCenter: round4(s.fourD.sliceCenter),
+      sliceRelColor: s.fourD.sliceRelColor,
+    };
+  }
   return "v1=" + toBase64url(JSON.stringify(payload));
 }
 
@@ -1093,6 +1182,12 @@ export function encodeScene(s: SceneSnapshot): string {
  * string coercion — see {@link decodeCameraPose}) but the same in spirit:
  * absent or malformed NEVER rejects the scene, it just decodes to
  * `undefined`, same as customPalette above.
+ *
+ * fourD (fr-pnek) is the optional 4D view pose — the tumble rotor plus the
+ * soft w-slice window (see {@link FourDPose}), the 4D sibling of `camera`
+ * just above. Same policy as `camera`, including its stricter no-coercion
+ * stance on the numeric fields (see {@link decodeFourDPose}): absent or
+ * malformed never rejects the scene, it just decodes to `undefined`.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1223,6 +1318,12 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // exactly like customPalette above. See decodeCameraPose.
     const camera = decodeCameraPose(o.camera);
 
+    // fourD (fr-pnek): the optional 4D view pose (tumble rotor + soft
+    // w-slice). Never rejects the scene — a malformed or absent value
+    // quietly decodes to undefined, exactly like camera above. See
+    // decodeFourDPose.
+    const fourD = decodeFourDPose(o.fourD);
+
     return {
       transforms,
       finalTransform,
@@ -1242,6 +1343,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       customPalette,
       positionAxisColors,
       camera,
+      fourD,
     };
   } catch {
     return null;

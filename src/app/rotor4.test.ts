@@ -1,9 +1,12 @@
 import {
   identityRotorPair,
+  normalizeRotorPair,
   rotateInPlane,
   rotorMatrix,
+  slerpRotorPair,
   wSupport,
 } from "./rotor4";
+import type { RotorPair } from "./rotor4";
 import { rotationMatrix4 } from "../fractal/affine4";
 import type { Rotation4, Vec4 } from "../fractal/types";
 
@@ -161,5 +164,126 @@ describe("wSupport", () => {
   it("is 0 for zero half-extents under a non-identity rotation", () => {
     const m = rotorMatrix(rotateInPlane(identityRotorPair(), "xw", 0.7));
     expect(wSupport(m, [0, 0, 0, 0])).toBe(0);
+  });
+});
+
+describe("normalizeRotorPair", () => {
+  it("rejects a pair when either half has the wrong length", () => {
+    expect(normalizeRotorPair([1, 0, 0], [1, 0, 0, 0])).toBeNull();
+    expect(normalizeRotorPair([1, 0, 0, 0], [1, 0, 0, 0, 0])).toBeNull();
+  });
+
+  it("rejects a pair when either half has a non-number entry", () => {
+    const withString = [1, 0, 0, "0"] as unknown as number[];
+    expect(normalizeRotorPair(withString, [1, 0, 0, 0])).toBeNull();
+    expect(normalizeRotorPair([1, 0, 0, 0], withString)).toBeNull();
+  });
+
+  it("rejects a pair when either half has a non-finite entry", () => {
+    expect(normalizeRotorPair([1, 0, 0, NaN], [1, 0, 0, 0])).toBeNull();
+    expect(normalizeRotorPair([1, 0, 0, 0], [Infinity, 0, 0, 0])).toBeNull();
+  });
+
+  it("rejects a pair when either half's norm is near zero", () => {
+    expect(normalizeRotorPair([0, 0, 0, 0], [1, 0, 0, 0])).toBeNull();
+    expect(normalizeRotorPair([1, 0, 0, 0], [1e-9, 0, 0, 0])).toBeNull();
+  });
+
+  it("normalizes a scaled pair to unit halves", () => {
+    expect(normalizeRotorPair([2, 0, 0, 0], [0, 3, 0, 0])).toEqual({
+      p: [1, 0, 0, 0],
+      q: [0, 1, 0, 0],
+    });
+  });
+
+  it("returns fresh arrays: mutating the result doesn't touch the input", () => {
+    const p = [2, 0, 0, 0];
+    const q = [0, 3, 0, 0];
+
+    const result = normalizeRotorPair(p, q);
+    result!.p[0] = 999;
+    result!.q[1] = 999;
+
+    expect(p).toEqual([2, 0, 0, 0]);
+    expect(q).toEqual([0, 3, 0, 0]);
+  });
+});
+
+describe("slerpRotorPair", () => {
+  it("returns a's rotation at t=0 and b's rotation at t=1", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(identityRotorPair(), "xy", 0.8);
+
+    expectMatClose(rotorMatrix(slerpRotorPair(a, b, 0)), rotorMatrix(a));
+    expectMatClose(rotorMatrix(slerpRotorPair(a, b, 1)), rotorMatrix(b));
+  });
+
+  it("reaches the half-angle rotation at the midpoint of a single xy-plane rotation", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(identityRotorPair(), "xy", 0.8);
+
+    const mid = slerpRotorPair(a, b, 0.5);
+
+    expectMatClose(
+      rotorMatrix(mid),
+      rotorMatrix(rotateInPlane(identityRotorPair(), "xy", 0.4)),
+    );
+  });
+
+  it("reaches the half-angle rotation at the midpoint of a w-mixing xw-plane rotation", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(identityRotorPair(), "xw", 0.8);
+
+    const mid = slerpRotorPair(a, b, 0.5);
+
+    expectMatClose(
+      rotorMatrix(mid),
+      rotorMatrix(rotateInPlane(identityRotorPair(), "xw", 0.4)),
+    );
+  });
+
+  it("gives the same result for b's double-cover-negated twin (same rotation as b)", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(identityRotorPair(), "xy", 0.8);
+    const bNegated: RotorPair = {
+      p: [-b.p[0], -b.p[1], -b.p[2], -b.p[3]],
+      q: [-b.q[0], -b.q[1], -b.q[2], -b.q[3]],
+    };
+
+    expectMatClose(
+      rotorMatrix(slerpRotorPair(a, bNegated, 0.5)),
+      rotorMatrix(slerpRotorPair(a, b, 0.5)),
+    );
+  });
+
+  it("keeps both halves at unit length across several t values", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(
+      rotateInPlane(identityRotorPair(), "xy", 0.8),
+      "zw",
+      -1.1,
+    );
+
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      const result = slerpRotorPair(a, b, t);
+      expect(Math.hypot(...result.p)).toBeCloseTo(1);
+      expect(Math.hypot(...result.q)).toBeCloseTo(1);
+    }
+  });
+
+  it("does not mutate its input pairs", () => {
+    const a = identityRotorPair();
+    const b = rotateInPlane(identityRotorPair(), "xy", 0.8);
+    const snapshotAP = [...a.p];
+    const snapshotAQ = [...a.q];
+    const snapshotBP = [...b.p];
+    const snapshotBQ = [...b.q];
+
+    slerpRotorPair(a, b, 0.5);
+
+    expect(a.p).toEqual(snapshotAP);
+    expect(a.q).toEqual(snapshotAQ);
+    expect(b.p).toEqual(snapshotBP);
+    expect(b.q).toEqual(snapshotBQ);
   });
 });
