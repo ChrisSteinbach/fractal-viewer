@@ -394,7 +394,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     path self-heals a hold whose render exited early, the drift show's
     fr-w2ve stance). Export = the same run with the canvas
     recorder rolling: whatever ends the run stops the recorder, so the clip
-    downloads. Pure, injected clock, tested.
+    downloads — unless the run qualifies for the offline frame-exact path
+    (fr-92t9, `offline-export.ts`), which drives this same player on the
+    virtual clock instead. Pure, injected clock, tested.
   - `scene-file.ts` — the JSON file import/export codec (fr-de9t): a
     single-scene file and a whole-collection backup file (encoded scenes +
     mode tags + thumbnails; ids omitted — the merge mints fresh ones)
@@ -478,7 +480,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     Falls back to running the same `generateCloud` synchronously if the
     worker never loads or crashes — the live cloud IS the app, unlike the
     optional flame/solid overlays — and `generateSync` takes that path
-    deliberately at boot. Pure, injected deps, tested.
+    deliberately at boot. `settle()` resolves once nothing is in flight or
+    parked, every delivery made — the offline export's per-frame await
+    (fr-92t9). Pure, injected deps, tested.
   - `flame-gpu-backend.ts` — drives `flame-gpu.ts`'s and `flame-gpu-4d.ts`'s
     kernels from inside the flame worker (one shared driver, two packing
     factories), behind `flame-worker-core.ts`'s pluggable `FlameAccumBackend`
@@ -537,6 +541,36 @@ and UI**, so the interesting math is unit-tested without a browser:
     the duration metadata the browser's `MediaRecorder` leaves unset so uploads
     are accepted. Pure helpers are tested; the `MediaRecorder` glue is verified
     in-browser.
+  - `offline-export.ts` / `video-encode.ts` / `mp4-mux.ts` — the timeline's
+    offline frame-exact export (fr-92t9), the realtime capture's
+    deterministic sibling: for a pure-points timeline on a browser whose
+    WebCodecs can encode H.264, ⏺ Export steps the SAME playback machinery
+    on a VIRTUAL clock instead of recording the live canvas — main.ts's
+    `nowMs()` (virtual during an export, `performance.now()` otherwise)
+    feeds every clock consumer on the playback path, the animate loop is
+    split into `tickLogic`/`tickRender` so the driver can await
+    `CloudGenerator.settle()` between deciding a frame and painting it, and
+    morph intermediates run at the scene's own count (the adaptive budget
+    is measured device speed — exactly the nondeterminism being removed).
+    Same device + same timeline + hands off ⇒ the same clip, hitches and
+    all-day exports notwithstanding. `offline-export.ts` is the pure driver
+    loop (step → settle → forced render → encode → yield, MessageChannel
+    yields so a backgrounded tab keeps exporting); `video-encode.ts` the
+    WebCodecs adapter (H.264 level ladder, avcC capture, `dequeue`
+    backpressure, chunks kept as per-chunk Blobs); `mp4-mux.ts` the
+    dependency-free faststart muxer, building the header from sample
+    sizes/keyframes/timestamps only so the file assembles as
+    `Blob([header, ...chunkBlobs])` — encoded bytes are never concatenated
+    in JS memory — and representing a B-frame stream (Firefox's H.264
+    encoder reorders regardless of latencyMode, fr-7dm2) with synthesized
+    uniform decode times + a v0 `ctts` + an `elst` trimming the shift,
+    while a monotonic stream's file stays byte-identical (no ctts/edts at
+    all — the Chrome path). Render keyframes (fr-v3au)
+    keep the realtime MediaRecorder path (their legs hold for live
+    convergence — inherently realtime); the Export button routes between
+    the two, shows offline progress, and doubles as its cancel. Driver +
+    muxer + pure helpers tested; the `VideoEncoder` glue is verified
+    in-browser (the `recorder.ts` stance).
   - `register-sw.ts` — service-worker registration + the reload-once
     cross-origin-isolation bootstrap (gives the flame worker its
     SharedArrayBuffer fast path; postMessage transfer is the fallback).

@@ -95,6 +95,9 @@ export class CloudGenerator {
   /** Results with `id` below this were superseded by a `generateSync` and
    * must not be delivered (their arrival still dispatches `pending`). */
   private staleBelowId = 0;
+  /** Resolvers for callers awaiting {@link settle}, parked while the
+   * generator is not yet fully idle. */
+  private settledResolvers: (() => void)[] = [];
 
   constructor(deps: CloudGeneratorDeps) {
     this.deps = deps;
@@ -147,12 +150,34 @@ export class CloudGenerator {
     this.computeAndDeliver(request);
   }
 
+  /**
+   * Resolves once the generator is fully drained: no request in flight,
+   * nothing parked in `pending`, and every settled result already
+   * delivered via `onResult` — not merely posted. Resolves immediately
+   * when already idle, including permanent synchronous-fallback mode,
+   * where every `request()` computes and delivers inline before
+   * returning. The offline frame-exact video export (fr-92t9) awaits this
+   * between issuing a frame's generation request and rendering/encoding
+   * that frame, so each exported frame shows exactly its own sample
+   * rather than a stale or still-computing one. Multiple concurrent
+   * callers all resolve together.
+   */
+  settle(): Promise<void> {
+    if (this.inFlight === null && this.pending === null) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.settledResolvers.push(() => resolve());
+    });
+  }
+
   /** Run `request` through the synchronous compute and deliver it, timing
    * the compute for `onResult`'s latency report. */
   private computeAndDeliver(request: CloudRequest): void {
     const startedAtMs = this.now();
     const result = this.deps.computeSync(request);
     this.deps.onResult(result, request, this.now() - startedAtMs);
+    this.flushSettled();
   }
 
   private send(request: CloudRequest): void {
@@ -179,6 +204,10 @@ export class CloudGenerator {
     if (result.id >= this.staleBelowId) {
       this.deps.onResult(result, request, elapsedMs);
     }
+    // If next !== null, inFlight is that successor and the generator is
+    // NOT idle — flushSettled correctly leaves settle() waiters parked
+    // until the successor's own arrival flushes again.
+    this.flushSettled();
   }
 
   private handleError(): void {
@@ -193,7 +222,25 @@ export class CloudGenerator {
     this.inFlight = null;
     this.pending = null;
     if (latest !== null) {
-      this.computeAndDeliver(latest);
+      this.computeAndDeliver(latest); // also flushes settle() waiters
     }
+    this.flushSettled();
+  }
+
+  /** Resolve and clear every {@link settle} waiter, if the generator has
+   * just become fully idle. Called from the end of every method that can
+   * leave it idle: `handleResult` (after posting any parked successor —
+   * see the comment there), `computeAndDeliver` (the broken-mode
+   * `request()` path and `generateSync`, the latter of which can leave a
+   * stale worker request in flight, in which case this correctly leaves
+   * waiters parked for that request's own arrival), and `handleError`
+   * (covers the case where an error arrives with nothing outstanding to
+   * re-run, so `computeAndDeliver` never fires). Redundant calls are
+   * harmless — idle is idle, and an empty waiter list is a no-op. */
+  private flushSettled(): void {
+    if (this.inFlight !== null || this.pending !== null) return;
+    const resolvers = this.settledResolvers;
+    this.settledResolvers = [];
+    for (const resolve of resolvers) resolve();
   }
 }

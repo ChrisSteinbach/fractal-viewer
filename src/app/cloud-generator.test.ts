@@ -394,3 +394,84 @@ describe("CloudGenerator latency reporting (fr-a5gu)", () => {
     expect(delivered).toEqual([7, 7]);
   });
 });
+
+describe("CloudGenerator settle() (fr-92t9)", () => {
+  it("resolves immediately when the generator is idle", async () => {
+    const h = harness();
+
+    await expect(h.generator.settle()).resolves.toBeUndefined();
+  });
+
+  it("called while a request is in flight resolves only after the result is delivered", async () => {
+    const h = harness();
+    const events: string[] = [];
+
+    h.generator.request(params()); // A, in flight
+    const waiter = h.generator.settle().then(() => events.push("settled"));
+
+    h.deliverResult(fakeResult(1)); // delivers synchronously via onResult
+    events.push("result");
+
+    await waiter;
+
+    expect(events).toEqual(["result", "settled"]);
+  });
+
+  it("does not resolve when the in-flight result arrives if a parked request posts as its successor", async () => {
+    const h = harness();
+
+    h.generator.request(params({ seed: 1 })); // A, in flight
+    h.generator.request(params({ seed: 2 })); // B, parked
+
+    let settled = false;
+    h.generator.settle().then(() => {
+      settled = true;
+    });
+
+    h.deliverResult(fakeResult(1)); // A's result; B posts as successor, not yet delivered
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    h.deliverResult(fakeResult(2)); // B's result; generator now fully idle
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
+  it("resolves immediately after request() in permanent synchronous fallback mode", async () => {
+    const h = harness("returns-null");
+
+    h.generator.request(params()); // computed and delivered inline already
+
+    await expect(h.generator.settle()).resolves.toBeUndefined();
+  });
+
+  it("resolves after the synchronous re-run delivery triggered by a worker error", async () => {
+    const h = harness();
+
+    h.generator.request(params({ seed: 1 })); // A, in flight
+
+    let settled = false;
+    h.generator.settle().then(() => {
+      settled = true;
+    });
+
+    h.triggerError(); // re-runs A synchronously and delivers it, falling back
+
+    await Promise.resolve();
+    expect(settled).toBe(true);
+  });
+
+  it("resolves all concurrent waiters", async () => {
+    const h = harness();
+
+    h.generator.request(params()); // in flight
+
+    const settleA = h.generator.settle();
+    const settleB = h.generator.settle();
+
+    h.deliverResult(fakeResult(1));
+
+    await expect(settleA).resolves.toBeUndefined();
+    await expect(settleB).resolves.toBeUndefined();
+  });
+});
