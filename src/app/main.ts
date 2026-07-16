@@ -1601,12 +1601,40 @@ function main(): void {
   // RenderSession.enter, so `start` only builds and kicks off.
   const flameSession = new RenderSession<FlameWorkerCommand>({
     start: () => {
-      const { width, height } = scene.flameRenderSize();
-      const projection = scene.flameProjectionMatrix();
-
       // Phone/tablet-class devices: shared with the memory-budget computation
       // below, so only read matchMedia once.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
+      // Device-aware memory budget for the supersampled accumulator (fr-7c8).
+      // Computed here because its inputs — deviceMemory (Chromium-only,
+      // hence the cast; absent from TS's DOM lib) and pointer coarseness —
+      // are main-thread/window facilities a worker can't reliably read.
+      const maxAccumBuckets = flameAccumBudgetBuckets(
+        (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+        coarse,
+      );
+
+      // The render target: the screen buffer × the Export-size multiple
+      // (fr-2urv; scene clamps to its texture ceilings), then shrunk until
+      // the histogram fits the accumulation budget even at supersample 1 —
+      // the worker's own clampSupersampleToBudget can't go below 1×, and on
+      // a phone overshooting the budget kills the tab rather than throwing
+      // (see FLAME_ACCUM_FLOOR_BYTES). At 1× this is exactly the screen.
+      const base = scene.flameRenderSize();
+      let { width, height } = scene.flameRenderSize(state.exportScale);
+      const over = Math.sqrt((width * height) / maxAccumBuckets);
+      if (over > 1) {
+        width = Math.floor(width / over);
+        height = Math.floor(height / over);
+      }
+      // Scale the iteration budget with the export area so per-OUTPUT-PIXEL
+      // sample density — brightness and noise — matches the 1× render the
+      // budget slider was tuned against (see the worker command's
+      // iterationsBudgetScale doc). 1 exactly at 1×.
+      const iterationsBudgetScale = Math.max(
+        1,
+        (width * height) / (base.width * base.height),
+      );
+      const projection = scene.flameProjectionMatrix();
 
       flameShared = tryCreateFlameSharedSession(width, height);
       console.info(
@@ -1631,15 +1659,9 @@ function main(): void {
         // a render a reproducible pure function of its inputs.
         seed: Math.floor(Math.random() * 0xffffffff),
         requestedSupersample: state.flame.supersample,
-        // Device-aware memory budget for the supersampled accumulator (fr-7c8).
-        // Computed here because its inputs — deviceMemory (Chromium-only,
-        // hence the cast; absent from TS's DOM lib) and pointer coarseness —
-        // are main-thread/window facilities a worker can't reliably read.
-        maxAccumBuckets: flameAccumBudgetBuckets(
-          (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
-          coarse,
-        ),
+        maxAccumBuckets,
         iterationsBudget: state.flame.iterations,
+        iterationsBudgetScale,
         exposure: state.flame.exposure,
         gamma: state.flame.gamma,
         vibrancy: state.flame.vibrancy,
@@ -2304,6 +2326,7 @@ function main(): void {
     recolor,
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
+    restartFlameRender: () => flameSession.enter(),
   };
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -2648,17 +2671,40 @@ function main(): void {
       // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
       // while a flame render is active, its own 2D canvas (true alpha; see
       // captureFlameFrame) — or, while a solid render is active, a fresh
-      // raymarch of the live camera (captureSolidFrame) — and hand it to the
-      // browser as a timestamped download.
-      const link = document.createElement("a");
-      link.href =
-        state.renderMode === "solid"
-          ? scene.captureSolidFrame()
-          : state.renderMode === "flame"
+      // raymarch of the live camera (captureSolidFrame) — at the Export-size
+      // multiple (fr-2urv), and hand it to the browser as a timestamped
+      // download. During a render's first-frame gap the screen still shows
+      // the explorer (the sessions' first-frame gate), so the export
+      // honestly captures that instead — the same fr-75sq discipline as
+      // onSaveToCollection's thumbnail. Recording pins 1×: a hi-res capture
+      // resizes the shared canvas mid-stream, which MediaRecorder capture
+      // doesn't survive (the flame branch never resizes, so it's exempt).
+      const scale = recorderActive ? 1 : state.exportScale;
+      const capture =
+        state.renderMode === "solid" && solidSession.hasFirstFrame
+          ? scene.captureSolidFrame(scale)
+          : state.renderMode === "flame" && flameSession.hasFirstFrame
             ? scene.captureFlameFrame()
-            : scene.captureFrame();
-      link.download = `fractal-${Date.now()}.png`;
-      link.click();
+            : scene.captureFrame(scale);
+      void capture.then((image) => {
+        if (!image) {
+          ui.flashToast("Couldn't encode the PNG");
+          return;
+        }
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(image.blob);
+        link.href = url;
+        link.download = `fractal-${Date.now()}.png`;
+        link.click();
+        // Revoke on a delay: the download latches onto the blob URL
+        // asynchronously, and revoking synchronously aborts it in some
+        // engines. 10s is comfortably past that latch on any of them.
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        // The device ceilings may have clamped the export below the chosen
+        // multiple (scene.exportPixelRatio / the flame memory clamp), so
+        // report the size that actually saved.
+        ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
+      });
     },
     onSelect: (index) => {
       state = selectTransform(state, index);

@@ -13,6 +13,7 @@ import {
   setAutoUpdate,
   setColorGamma,
   setColorMode,
+  setExportScale,
   setFlameEstimatorCurve,
   setFlameEstimatorMinimumRadius,
   setFlameEstimatorRadius,
@@ -41,7 +42,13 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
 } from "./state";
-import type { AppState, MorphDetail, RenderStyle, SolidParams } from "./state";
+import type {
+  AppState,
+  ExportScale,
+  MorphDetail,
+  RenderStyle,
+  SolidParams,
+} from "./state";
 
 /**
  * Declarative specs for the panel's SIMPLE SCALAR controls (fr-dig): every
@@ -173,6 +180,11 @@ export interface ControlEffects {
    * Render click) — the resolution slider's only path to a new grid while
    * active, since a grid's dimensions are fixed at allocation. */
   restartSolidRender(): void;
+  /** Restart the whole flame render session — the Export-size select's only
+   * path to a new accumulation while a flame render is active (fr-2urv),
+   * since the histogram/shared-frame dimensions are fixed at `start`; the
+   * flame twin of {@link restartSolidRender}. */
+  restartFlameRender(): void;
 }
 
 /**
@@ -426,6 +438,27 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     persisted: false,
     read: (s) => s.adaptiveResolution,
     apply: (s, checked) => setAdaptiveResolution(s, checked),
+  },
+  // ——— Export ———
+  {
+    // Save-PNG export size (fr-2urv): a session preference like autoUpdate /
+    // adaptiveResolution (never enters the scene document — and for flame it
+    // sets the LIVE render's cost, which a shared link must not carry to
+    // another machine). Points/solid read it at capture time (main.ts's
+    // onSavePng), so no effect there; an ACTIVE flame render accumulates at
+    // the export size and must re-accumulate at the new one — its
+    // histogram/shared-frame dims are fixed at start, like the solid grid —
+    // hence the restart on a real change, mirroring solidResolutionSlider.
+    kind: "select",
+    id: "exportScale",
+    persisted: false,
+    read: (s) => String(s.exportScale),
+    apply: (s, raw) => setExportScale(s, Number(raw) as ExportScale),
+    effect: (s, fx, previous) => {
+      if (s.renderMode === "flame" && s.exportScale !== previous.exportScale) {
+        fx.restartFlameRender();
+      }
+    },
   },
   // ——— Symmetry (flat systems only: the 4D chaos game has no symmetry
   // parameter at all, and the section hides while non-flat) ———

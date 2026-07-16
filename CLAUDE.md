@@ -170,6 +170,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     `setViewOffset` extension still renders the full canvas; main.ts eases the
     inset per frame (panel toggle glides, reduced motion snaps, frozen flame
     views excluded), and captures/thumbnails lift it so exports stay centered.
+    Save-PNG captures render at the session-only Export-size multiple
+    (fr-2urv): `captureFrame(exportScale)` / `captureSolidFrame(exportScale)`
+    re-render one frame at `basePixelRatio × scale` — clamped to the device
+    texture ceiling and an 8192px long side — and resolve a PNG Blob +
+    actual dimensions (`toBlob`; the bitmap snapshot is synchronous, only
+    the encode is async); a flame session ACCUMULATES at the export size
+    (`flameRenderSize(exportScale)`, additionally clamped to the
+    accumulation-memory budget in main.ts, with the iteration budget scaled
+    by the area ratio so per-pixel density matches 1×), so
+    `captureFlameFrame` just reads the flame canvas at its native size.
     Renders on demand (fr-py7z): every visual mutator marks an internal
     `needsRender` flag — the per-frame setters (`applyCamera`, `setRot4`,
     `setGlowExposure`, `setDrawCount`, `setReplayCursor`) compare against the
@@ -385,7 +395,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     `postMessage` glue around a plain-testable session (`FlameWorkerSession`)
     driving CPU (`accumulateFlame` / `accumulateFlame4`) or WebGPU accumulation
     behind the `FlameAccumBackend` seam; SharedArrayBuffer fast path,
-    postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D.
+    postMessage-transfer fallback. A `fourD` field on `start` flips it to 4D;
+    `iterationsBudgetScale` (fr-2urv) scales the budget — and every live
+    `setIterationsBudget` — for a hi-res export session, so per-output-pixel
+    density matches a 1× render.
     GPU failures run a recovery ladder (`handleGpuFailure`, fr-2w5): retry ON
     the GPU at a smaller supersample, one fresh-device retry (refusing a
     software adapter after real hardware), and only then the permanent CPU
