@@ -52,6 +52,7 @@ function noopHandlers(): UiHandlers {
     onSavePng: vi.fn(),
     onRecordVideoToggle: vi.fn(),
     onSaveSceneFile: vi.fn(),
+    onSaveFlameFile: vi.fn(),
     onSaveToCollection: vi.fn(),
     onOpenGallery: vi.fn(),
     onDriftCollection: vi.fn(),
@@ -4060,6 +4061,22 @@ describe("Ui file import/export (fr-de9t)", () => {
     ui.bind(handlers);
     document.getElementById("saveSceneFileBtn")?.click();
     expect(handlers.onSaveSceneFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onSaveFlameFile when ⤓ Export .flame is clicked (fr-8uy5)", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    document.getElementById("saveFlameFileBtn")?.click();
+    expect(handlers.onSaveFlameFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts .flame files in the import picker (fr-8uy5)", () => {
+    new Ui(document);
+    const accept =
+      document.getElementById("importFileInput")?.getAttribute("accept") ?? "";
+    expect(accept).toContain(".json");
+    expect(accept).toContain(".flame");
   });
 
   it("fires onExportCollection when ⬇ Export collection is clicked", () => {

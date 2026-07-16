@@ -87,6 +87,7 @@ import {
   encodeSceneFile,
   MAX_IMPORT_FILE_BYTES,
 } from "./scene-file";
+import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec4 } from "../fractal/types";
@@ -2180,7 +2181,11 @@ function main(): void {
     }
     const imported = decodeImportFile(text);
     if (imported === null) {
-      ui.flashToast("Not a Fractal Viewer scene or collection file");
+      // Not our JSON envelope — maybe a flam3/Apophysis .flame file
+      // (fr-8uy5). Its decoder is the same kind of never-throwing trust
+      // boundary, so trying it on arbitrary text is safe and cheap.
+      if (importFlameText(text)) return;
+      ui.flashToast("Not a scene, collection, or .flame file");
       return;
     }
     if (imported.kind === "scene") {
@@ -2206,6 +2211,79 @@ function main(): void {
     ui.flashToast(
       added === 1 ? "Imported 1 scene" : `Imported ${added} scenes`,
     );
+  }
+
+  /**
+   * Try `text` as a flam3/Apophysis `.flame` file (fr-8uy5) — the fallback
+   * branch of {@link importSceneFile} once the JSON envelope has been ruled
+   * out. Returns whether the text WAS a flame file, even an unusable one
+   * (the toast then says why nothing loaded and the caller must not fall
+   * through to the "not a recognized file" message).
+   *
+   * One flame loads exactly like an imported scene file
+   * ({@link loadEncodedScene}) and then arms the flame render for the
+   * arriving cloud — the mode the artifact was authored for, same as a
+   * collection entry tagged "flame" (fr-75sq) — re-armed AFTER the load,
+   * which clears any stale hint (advanceCollectionLeg orders it the same
+   * way). A multi-flame file (an Apophysis batch) merges into the
+   * collection tagged mode "flame" instead, so nothing is silently
+   * dropped; thumbnails start blank exactly like a JSON backup entry whose
+   * thumbnail was stripped. Mapping compromises (dropped posts, unknown
+   * variations, …) surface as a toast suffix + the full list on the
+   * console — fidelity notes, not errors.
+   */
+  function importFlameText(text: string): boolean {
+    const flame = decodeFlameFile(text);
+    if (flame === null) return false;
+    if (flame.scenes.length === 0) {
+      ui.flashToast("No usable flames in that file");
+      return true;
+    }
+    const suffix = flameNotesSuffix("import", flame.warnings);
+    if (flame.scenes.length === 1) {
+      const { name, encoded } = flame.scenes[0];
+      // decodeFlameFile pre-validated the payload (same guard-not-trust
+      // shape as the JSON scene branch above).
+      if (loadEncodedScene(encoded)) {
+        pendingRenderMode = "flame";
+        ui.flashToast(`Imported "${name}"${suffix}`);
+      }
+      return true;
+    }
+    const now = Date.now();
+    const added = collection.importScenes(
+      flame.scenes.map((scene, i) => ({
+        encoded: scene.encoded,
+        // Descending stamps keep the FILE's order in the newest-first
+        // gallery: the batch's first flame shows first.
+        createdAt: now - i,
+        mode: "flame",
+        thumbnail: "",
+      })),
+    );
+    if (added === 0) {
+      ui.flashToast("Nothing new to add from that file");
+      return true;
+    }
+    ui.setCollectionCount(collection.size);
+    ui.openGallery(collection.all());
+    ui.flashToast(
+      (added === 1 ? "Imported 1 flame" : `Imported ${added} flames`) + suffix,
+    );
+    return true;
+  }
+
+  /** One terse toast suffix for the flame codec's fidelity warnings, with
+   * the full list on the console for the curious (fr-8uy5). */
+  function flameNotesSuffix(
+    direction: "import" | "export",
+    warnings: string[],
+  ): string {
+    if (warnings.length === 0) return "";
+    console.info(`[.flame ${direction}]`, warnings);
+    return warnings.length === 1
+      ? " (1 note — see console)"
+      : ` (${warnings.length} notes — see console)`;
   }
 
   // Drag-and-drop import (fr-de9t): dropping an exported .json anywhere on
@@ -2772,6 +2850,22 @@ function main(): void {
         `fractal-scene-${Date.now()}.json`,
       );
       ui.flashToast("Scene file saved");
+    },
+    // flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a .flame
+    // file (flame-file.ts; docs/flame-interop.md). Projection compromises —
+    // 3D/4D structure, x/y-axis kaleidoscopes — surface exactly like the
+    // import path's notes: a toast suffix + the console list.
+    onSaveFlameFile: () => {
+      const stamp = Date.now();
+      const { xml, warnings } = encodeFlameFile(
+        currentDocument(),
+        `fractal-${stamp}`,
+      );
+      triggerDownload(
+        new Blob([xml], { type: "application/xml" }),
+        `fractal-${stamp}.flame`,
+      );
+      ui.flashToast(`Flame file saved${flameNotesSuffix("export", warnings)}`);
     },
     // The collection's escape hatch from this browser profile (fr-de9t):
     // everything the gallery holds — encoded scenes, mode tags, thumbnails —
