@@ -1,5 +1,6 @@
 import { EditSession } from "./edit-session";
-import type { CameraPose } from "./orbit";
+import type { FourDPose } from "./four-d-view";
+import type { ViewPose } from "./history";
 
 /**
  * Models the app's moving scene-document state as a plain string and records
@@ -8,33 +9,32 @@ import type { CameraPose } from "./orbit";
  * no DOM, no real clock. `fireSave` fires whatever debounce is currently
  * armed (the 300 ms save timer in the app); `current`/`setScene` stand in for
  * reading and mutating the app's live `state`; `currentPose`/`setPose` stand
- * in for the live orbit camera (fr-uf3). `restore` mirrors main.ts: only a
- * cross-replace step moves the camera, so only then does the modelled live
- * pose follow the restored entry.
+ * in for the live view pose — since fr-gq99 the whole view framing, the orbit
+ * camera (fr-uf3) plus, for a non-flat system, the 4D rotor/slice half, not
+ * just the camera. `restore` mirrors main.ts: only a cross-replace step moves
+ * the camera, so only then does the modelled live pose follow the restored
+ * entry.
  */
 function harness(): {
   session: EditSession;
   persisted: string[];
-  restored: { snapshot: string; replaced: boolean; pose?: CameraPose }[];
+  restored: { snapshot: string; replaced: boolean; pose?: ViewPose }[];
   undoRedo: [boolean, boolean][];
   setScene: (next: string) => void;
-  setPose: (next: CameraPose) => void;
+  setPose: (next: ViewPose) => void;
   current: () => string;
   fireSave: () => void;
   savePending: () => boolean;
 } {
   let current = "s0";
-  let currentPose: CameraPose = {
-    target: [0, 0, 0],
-    radius: 8,
-    theta: 0,
-    phi: 1,
+  let currentPose: ViewPose = {
+    camera: { target: [0, 0, 0], radius: 8, theta: 0, phi: 1 },
   };
   const persisted: string[] = [];
   const restored: {
     snapshot: string;
     replaced: boolean;
-    pose?: CameraPose;
+    pose?: ViewPose;
   }[] = [];
   const undoRedo: [boolean, boolean][] = [];
   let pending: (() => void) | null = null;
@@ -65,7 +65,7 @@ function harness(): {
     setScene: (next: string) => {
       current = next;
     },
-    setPose: (next: CameraPose) => {
+    setPose: (next: ViewPose) => {
       currentPose = next;
     },
     current: () => current,
@@ -136,19 +136,23 @@ describe("EditSession replace", () => {
   });
 });
 
-describe("EditSession camera pose across a replace (fr-uf3)", () => {
-  const poseS0: CameraPose = {
-    target: [0, 0, 0],
-    radius: 10,
-    theta: 0,
-    phi: 1,
+describe("EditSession view pose across a replace (fr-uf3, fr-gq99)", () => {
+  const poseS0: ViewPose = {
+    camera: { target: [0, 0, 0], radius: 10, theta: 0, phi: 1 },
   };
-  const poseS1: CameraPose = {
-    target: [1, 1, 1],
-    radius: 20,
-    theta: 0.5,
-    phi: 1.2,
+  const poseS1: ViewPose = {
+    camera: { target: [1, 1, 1], radius: 20, theta: 0.5, phi: 1.2 },
   };
+  const fourD: FourDPose = {
+    pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
+    sliceOn: true,
+    sliceCenter: 0.25,
+    sliceRelColor: false,
+  };
+  // Same camera halves as poseS0/poseS1, but pose4D also carries a 4D half
+  // (viewing a non-flat system) while poseFlat has none (the replace landed flat).
+  const pose4D: ViewPose = { camera: poseS0.camera, fourD };
+  const poseFlat: ViewPose = { camera: poseS1.camera };
 
   it("undo across a replace restores the checkpoint's captured pose, not the current framing", () => {
     const h = harness();
@@ -211,6 +215,38 @@ describe("EditSession camera pose across a replace (fr-uf3)", () => {
     // replaced=false is the signal main.ts's restoreSnapshot uses to leave the
     // live camera untouched for an ordinary parameter edit.
     expect(last.replaced).toBe(false);
+  });
+
+  it("undo across a replace restores the checkpoint's captured 4D pose, not the current one (fr-gq99)", () => {
+    const h = harness();
+    h.setPose(pose4D); // viewing a non-flat system
+    h.session.beginEdit("replace"); // checkpoints s0 tagged replaced, captures pose4D
+    h.setScene("s1");
+    h.setPose(poseFlat); // the replace landed flat
+    h.fireSave();
+
+    h.session.undo();
+    const last = h.restored[h.restored.length - 1];
+    expect(last.replaced).toBe(true);
+    expect(last.pose).toBe(pose4D);
+    // The pre-replace 4D rotor/slice comes back too, not just the camera.
+    expect(last.pose?.fourD).toBe(fourD);
+  });
+
+  it("redo hands back the parked pose's missing 4D half as absent (fr-gq99)", () => {
+    const h = harness();
+    h.setPose(pose4D);
+    h.session.beginEdit("replace");
+    h.setScene("s1");
+    h.setPose(poseFlat);
+    h.fireSave();
+
+    h.session.undo(); // parks s1 with poseFlat (no 4D half) on the redo stack
+    h.session.redo();
+    const last = h.restored[h.restored.length - 1];
+    expect(last.snapshot).toBe("s1");
+    // The flat state was parked with no 4D half, so redo hands back exactly that.
+    expect(last.pose?.fourD).toBeUndefined();
   });
 });
 

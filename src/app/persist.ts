@@ -166,7 +166,10 @@ export interface SceneSnapshot {
    * every tumble frame, which would defeat that dedup even harder than
    * camera drift would. `main.ts` (not this module) attaches `fourD` only
    * when writing a persisted / shared / collection document, and only while
-   * the system is non-flat — never to an in-session undo checkpoint. Tumble
+   * the system is non-flat — never to an in-session undo checkpoint. (Like
+   * `camera`, undo/redo across a whole-system replace DOES restore the
+   * pre-replace rotor/slice — fr-gq99 — via the same out-of-band
+   * `HistoryEntry.pose` channel, never these encoded bytes.) Tumble
    * on/off + speed are deliberately NOT part of the pose — a viewer
    * PREFERENCE (fr-0ya), never document state; see `FourDPose`'s own doc
    * comment.

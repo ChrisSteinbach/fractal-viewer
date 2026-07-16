@@ -47,6 +47,7 @@ import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
+import type { ViewPose } from "./history";
 import { RenderSession } from "./render-session";
 import {
   createCanvasRecorder,
@@ -2383,49 +2384,68 @@ function main(): void {
    * alone, while a step that crosses a whole-system replacement restores the
    * exact pre-replace `pose` the checkpoint captured out of band (fr-uf3) —
    * the same applyDecodedSnapshot-then-applyCameraPose shape as
-   * {@link loadEncodedScene}. A `replaced` step with no captured pose
-   * (defensive — the app always supplies one via the EditSession `pose` dep)
-   * falls back to auto-fitting the restored attractor.
+   * {@link loadEncodedScene}. When that captured pose carries a 4D half
+   * (fr-gq99 — the checkpointed system was non-flat), the rotor/slice come
+   * back the same way the gallery load's saved 4D pose does: armed as
+   * pendingFourDPose, so applyCloudResult lands it with the restored cloud
+   * where the fresh-visit reset would otherwise fire — an immediate
+   * applyFourDPose here would just be stomped at arrival. A `replaced` step
+   * with no captured pose (defensive — the app always supplies one via the
+   * EditSession `pose` dep) falls back to auto-fitting the restored attractor.
    */
   function restoreSnapshot(
     snapshot: string,
     replaced: boolean,
-    pose?: CameraPose,
+    pose?: ViewPose,
   ): void {
     const snap = decodeScene(snapshot);
     if (!snap) return; // can't happen: entries are encodeScene output
     if (replaced && pose) {
       applyDecodedSnapshot(snap, false, false);
-      applyCameraPose(pose);
+      applyCameraPose(pose.camera);
+      // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
+      // every load's behalf (the pendingRenderMode pattern, fr-pnek).
+      if (pose.fourD) pendingFourDPose = pose.fourD;
     } else {
       applyDecodedSnapshot(snap, replaced, false);
     }
   }
 
   /**
-   * The full persistable document: the scene ({@link toSnapshot}) plus the
-   * live camera pose (fr-1k4) and — while the system is non-flat — the live
-   * 4D view pose (fr-pnek), so a saved/shared scene (and, crucially, a
-   * timeline keyframe, which freezes this exact document) reproduces its
-   * tumble orientation and w-slice, not just its 3D framing. Used for the
-   * autosave/hash, the collection, share links, and timeline keyframes.
-   * Undo-history snapshots deliberately stay camera-less AND pose-less
-   * (see SceneSnapshot.camera's/fourD's docs) — that's why `snapshot`
-   * below does NOT use this.
+   * The live view framing — the orbit camera (fr-1k4) plus, while the
+   * displayed system is non-flat, the 4D rotor/slice pose (fr-pnek). The ONE
+   * definition of "how this scene is being looked at right now", shared by
+   * the persisted document ({@link currentDocument}, whose `camera`/`fourD`
+   * fields this deliberately mirrors) and the out-of-band capture onto each
+   * undo-history entry (the EditSession `pose` dep below; fr-uf3, fr-gq99).
    */
-  function currentDocument(): SceneSnapshot {
+  function viewPose(): ViewPose {
     return {
-      ...toSnapshot(state),
       camera: cameraPose(),
       fourD: viewIs4D ? fourDView.pose() : undefined,
     };
+  }
+
+  /**
+   * The full persistable document: the scene ({@link toSnapshot}) plus the
+   * live view framing ({@link viewPose}: camera pose fr-1k4, 4D view pose
+   * fr-pnek), so a saved/shared scene (and, crucially, a timeline keyframe,
+   * which freezes this exact document) reproduces its tumble orientation and
+   * w-slice, not just its 3D framing. Used for the autosave/hash, the
+   * collection, share links, and timeline keyframes. Undo-history snapshots
+   * deliberately stay camera-less AND pose-less (see SceneSnapshot.camera's/
+   * fourD's docs) — that's why `snapshot` below does NOT use this; history
+   * carries the same framing OUT OF BAND instead (fr-uf3, fr-gq99).
+   */
+  function currentDocument(): SceneSnapshot {
+    return { ...toSnapshot(state), ...viewPose() };
   }
 
   // Session-only undo/redo plus the edit-burst / debounced-save policy layered
   // over it (see edit-session.ts). The injected deps are the app's real
   // capabilities: encode and persist the live scene document, apply a restored
   // snapshot (restoreSnapshot above — which must not checkpoint), read the live
-  // camera pose (captured out of band per history entry, fr-uf3), reflect
+  // view pose (captured out of band per history entry, fr-uf3/fr-gq99), reflect
   // undo/redo availability in the UI, and the debounced save-timer itself. Edit
   // handlers call editSession.beginEdit() BEFORE mutating the document; Ctrl+Z/
   // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
@@ -2433,10 +2453,11 @@ function main(): void {
     snapshot: () => encodeScene(toSnapshot(state)),
     persist: () => saveScene(currentDocument()),
     restore: restoreSnapshot,
-    // The live orbit pose, captured out of band onto each history entry
-    // (fr-uf3) so undo/redo across a replace restores the exact framing —
-    // never into the snapshot string, which stays camera-less for the dedup.
-    pose: cameraPose,
+    // The live view pose — orbit camera (fr-uf3) plus the 4D rotor/slice
+    // while non-flat (fr-gq99) — captured out of band onto each history entry
+    // so undo/redo across a replace restores the exact framing — never into
+    // the snapshot string, which stays camera-less for the dedup.
+    pose: viewPose,
     syncUi: (canUndo, canRedo) => ui.setUndoRedo(canUndo, canRedo),
     schedule: (fn) => {
       const id = setTimeout(fn, SAVE_DEBOUNCE_MS);
