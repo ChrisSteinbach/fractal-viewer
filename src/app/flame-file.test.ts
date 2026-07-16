@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { composeAffine } from "../fractal/affine";
 import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { COLLECTION_CAP } from "./collection";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { decodeScene, toSnapshot } from "./persist";
 import type { SceneSnapshot } from "./persist";
@@ -330,6 +331,25 @@ describe("decodeFlameFile", () => {
     const snap = decodeScene(file!.scenes[0].encoded);
     expect(snap).not.toBeNull();
     expect(snap!.transforms).toHaveLength(MAX_TRANSFORMS);
+  });
+
+  it("caps the flames read from one file at the collection size and warns", () => {
+    const flames = Array.from(
+      { length: COLLECTION_CAP + 1 },
+      (_, i) =>
+        `<flame name="f${i}"><xform weight="1" coefs="0.5 0 0 0.5 0 0"/></flame>`,
+    ).join("");
+    const file = decodeFlameFile(`<flames>${flames}</flames>`);
+    expect(file).not.toBeNull();
+    expect(file!.scenes).toHaveLength(COLLECTION_CAP);
+    // File order is kept: the dropped flame is the LAST one, not an arbitrary one.
+    expect(file!.scenes[0].name).toBe("f0");
+    expect(file!.scenes[COLLECTION_CAP - 1].name).toBe(
+      `f${COLLECTION_CAP - 1}`,
+    );
+    expect(
+      file!.warnings.some((w) => w.includes(`first ${COLLECTION_CAP} flames`)),
+    ).toBe(true);
   });
 
   it("clamps an oversized variation weight to the maximum", () => {
