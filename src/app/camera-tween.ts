@@ -4,7 +4,8 @@
  * from main.ts's closure so the pure interpolation is unit-tested without a
  * browser — the same way `orbit.ts` is for the rest of the camera math.
  * Since fr-cfoc it also owns the morph-tracking CHASE, the glide's sibling
- * that follows a MOVING fit — see {@link CameraTween}'s doc for how the two
+ * that follows a MOVING fit, and since fr-8v41 the directed POSE GLIDE to a
+ * saved camera pose — see {@link CameraTween}'s doc for how the three
  * motions relate.
  *
  * A whole-system replacement (preset load / Surprise Me) can leave the previous
@@ -24,7 +25,13 @@
  * skips the glide entirely and snaps the camera to the fit in one step.
  */
 import type { Bounds, Vec3, Vec4 } from "../fractal/types";
-import { boundsCenter, fitRadius, smoothstep, type OrbitCamera } from "./orbit";
+import {
+  boundsCenter,
+  fitRadius,
+  smoothstep,
+  type CameraPose,
+  type OrbitCamera,
+} from "./orbit";
 
 /** Duration of the auto-fit glide, in milliseconds. */
 export const CAMERA_TWEEN_MS = 600;
@@ -96,6 +103,22 @@ interface Chase {
   lastMs: number;
 }
 
+/** In-flight pose glide (fr-8v41): a directed smoothstep to a SAVED camera
+ * pose — unlike Tween/Chase it moves theta/phi too, and it times itself
+ * (durationMs is the timeline leg's own morph length, not CAMERA_TWEEN_MS). */
+interface PoseTween {
+  startMs: number;
+  durationMs: number;
+  fromRadius: number;
+  toRadius: number;
+  fromTarget: Vec3;
+  toTarget: Vec3;
+  fromTheta: number;
+  toTheta: number;
+  fromPhi: number;
+  toPhi: number;
+}
+
 /**
  * The auto-fit camera glide state machine over an {@link OrbitCamera}. main.ts
  * calls {@link fitToBounds} to start a glide (from `fitCameraToAttractor`),
@@ -103,7 +126,7 @@ interface Chase {
  * and {@link cancel} on the next user gesture so grabbing the camera mid-glide
  * feels like a normal orbit rather than a fight with the animation.
  *
- * Two mutually exclusive motions (fr-cfoc):
+ * Three mutually exclusive motions (fr-cfoc, fr-8v41):
  *
  * - The **glide** ({@link fitToBounds}): a one-shot {@link CAMERA_TWEEN_MS}
  *   smoothstep to a fixed fit — a whole-system load's landing.
@@ -115,13 +138,20 @@ interface Chase {
  *   terminal sample still carries the real `fit`, whose glide takes over
  *   from the chase for the settle: from an already-tracking pose that final
  *   glide is a short touch-down rather than a leap.
+ * - The **pose glide** ({@link glideToPose}): a directed, self-timed
+ *   smoothstep to a SAVED {@link CameraPose} — a timeline leg's camera move
+ *   (fr-8v41). The one motion that moves theta/phi: the fit glide and chase
+ *   deliberately leave the orbit ANGLES to the user (see the module header),
+ *   but a timeline keyframe's saved pose IS the author's framing, angles
+ *   included.
  *
- * Starting either motion clears the other — whichever was requested last is
- * the live intent.
+ * Starting any one motion clears the other two — whichever was requested
+ * last is the live intent.
  */
 export class CameraTween {
   private tween: Tween | null = null;
   private chase: Chase | null = null;
+  private poseTween: PoseTween | null = null;
 
   /**
    * @param orbit The camera this glide mutates in place (target + radius).
@@ -136,9 +166,19 @@ export class CameraTween {
     private readonly reducedMotion: () => boolean,
   ) {}
 
-  /** Whether a glide or a tracking chase is currently in flight. */
+  /** Whether a glide, a tracking chase, or a pose glide is currently in flight. */
   get active(): boolean {
-    return this.tween !== null || this.chase !== null;
+    return (
+      this.tween !== null || this.chase !== null || this.poseTween !== null
+    );
+  }
+
+  /** Whether the in-flight motion is a pose glide (fr-8v41). main.ts reads
+   * this to suppress the auto-orbit's per-frame theta advance while a glide
+   * owns theta — the fit glide/chase never touch theta, so they compose with
+   * the auto-orbit and deliberately do NOT set this. */
+  get poseGliding(): boolean {
+    return this.poseTween !== null;
   }
 
   /** The fit for `bounds` under `framing` — the shared target both motions
@@ -158,7 +198,8 @@ export class CameraTween {
   }
 
   /** Jump the camera straight to a fit — the reduced-motion path of both
-   * motions, clearing whichever was in flight. */
+   * fit motions, clearing whichever motion (including a pose glide) was in
+   * flight. */
   private snapTo(toTarget: Vec3, toRadius: number): void {
     this.orbit.target[0] = toTarget[0];
     this.orbit.target[1] = toTarget[1];
@@ -166,6 +207,22 @@ export class CameraTween {
     this.orbit.spherical.radius = toRadius;
     this.tween = null;
     this.chase = null;
+    this.poseTween = null;
+  }
+
+  /** Jump the camera straight to a full pose (target/radius/theta/phi) — the
+   * reduced-motion/zero-duration path of {@link glideToPose} and its {@link
+   * finish} completion, clearing all three motion records. */
+  private snapToPose(pose: CameraPose): void {
+    this.orbit.target[0] = pose.target[0];
+    this.orbit.target[1] = pose.target[1];
+    this.orbit.target[2] = pose.target[2];
+    this.orbit.spherical.radius = pose.radius;
+    this.orbit.spherical.theta = pose.theta;
+    this.orbit.spherical.phi = pose.phi;
+    this.tween = null;
+    this.chase = null;
+    this.poseTween = null;
   }
 
   /**
@@ -181,6 +238,7 @@ export class CameraTween {
       return;
     }
     this.chase = null;
+    this.poseTween = null;
     this.tween = {
       startMs: this.now(),
       fromRadius: this.orbit.spherical.radius,
@@ -210,6 +268,7 @@ export class CameraTween {
       return;
     }
     this.tween = null;
+    this.poseTween = null;
     if (this.chase) {
       // Retarget without touching lastMs — the next advance() still
       // measures its dt from the last step, not from this arrival.
@@ -221,14 +280,94 @@ export class CameraTween {
   }
 
   /**
+   * Glide the orbit camera to a SAVED {@link CameraPose} (fr-8v41): a
+   * timeline leg's directed camera move from wherever the camera currently
+   * is to the arriving step's authored framing, over `durationMs` — the
+   * leg's own morph length, NOT {@link CAMERA_TWEEN_MS}. Unlike {@link
+   * fitToBounds}/{@link track}, this moves theta/phi too: a saved pose IS
+   * the author's framing, angles included.
+   *
+   * `theta` is unbounded (see orbit.ts), so lerping straight from the
+   * camera's current theta to the pose's recorded theta could swing the
+   * long way round if the two happen to sit in different windings — instead
+   * this steers by the NEAREST TURN, the shortest signed angular delta.
+   *
+   * Under reduced motion, or a non-positive `durationMs` (a zero-length
+   * glide's first {@link advance} would otherwise divide by zero), snaps
+   * straight to the pose instead of animating. Replaces an in-flight {@link
+   * fitToBounds} glide or {@link track} chase — the pose glide is the
+   * fresher intent.
+   */
+  glideToPose(pose: CameraPose, durationMs: number): void {
+    const fromTheta = this.orbit.spherical.theta;
+    // Nearest turn: the shortest signed delta (in (-π, π]) from fromTheta to
+    // pose.theta, so the glide never swings the long way round a pose that's
+    // a small angle away but recorded in a different winding.
+    const delta = Math.atan2(
+      Math.sin(pose.theta - fromTheta),
+      Math.cos(pose.theta - fromTheta),
+    );
+    const toTheta = fromTheta + delta;
+
+    if (this.reducedMotion() || durationMs <= 0) {
+      this.snapToPose(pose);
+      return;
+    }
+
+    this.tween = null;
+    this.chase = null;
+    this.poseTween = {
+      startMs: this.now(),
+      durationMs,
+      fromRadius: this.orbit.spherical.radius,
+      toRadius: pose.radius,
+      fromTarget: [
+        this.orbit.target[0],
+        this.orbit.target[1],
+        this.orbit.target[2],
+      ],
+      toTarget: [pose.target[0], pose.target[1], pose.target[2]],
+      fromTheta,
+      toTheta,
+      fromPhi: this.orbit.spherical.phi,
+      toPhi: pose.phi,
+    };
+  }
+
+  /**
    * Advance the in-flight motion (a no-op when idle). A glide interpolates
    * the orbit target + radius by the smoothstep of elapsed/{@link
    * CAMERA_TWEEN_MS} and clears itself once it reaches the target (t ≥ 1); a
-   * chase closes `1 - exp(-dt/τ)` of its remaining distance and never
-   * self-terminates (see {@link track}). Called from animate() before
-   * `applyCamera` so the frame it takes effect on is the one drawn.
+   * pose glide ({@link glideToPose}) does the same but over its own
+   * `durationMs` and additionally interpolates theta/phi; a chase closes
+   * `1 - exp(-dt/τ)` of its remaining distance and never self-terminates
+   * (see {@link track}). Called from animate() before `applyCamera` so the
+   * frame it takes effect on is the one drawn.
    */
   advance(): void {
+    if (this.poseTween) {
+      const {
+        startMs,
+        durationMs,
+        fromRadius,
+        toRadius,
+        fromTarget,
+        toTarget,
+        fromTheta,
+        toTheta,
+        fromPhi,
+        toPhi,
+      } = this.poseTween;
+      const t = smoothstep((this.now() - startMs) / durationMs);
+      this.orbit.spherical.radius = fromRadius + (toRadius - fromRadius) * t;
+      this.orbit.target[0] = fromTarget[0] + (toTarget[0] - fromTarget[0]) * t;
+      this.orbit.target[1] = fromTarget[1] + (toTarget[1] - fromTarget[1]) * t;
+      this.orbit.target[2] = fromTarget[2] + (toTarget[2] - fromTarget[2]) * t;
+      this.orbit.spherical.theta = fromTheta + (toTheta - fromTheta) * t;
+      this.orbit.spherical.phi = fromPhi + (toPhi - fromPhi) * t;
+      if (t >= 1) this.poseTween = null;
+      return;
+    }
     if (this.tween) {
       const { startMs, fromRadius, toRadius, fromTarget, toTarget } =
         this.tween;
@@ -257,17 +396,28 @@ export class CameraTween {
   cancel(): void {
     this.tween = null;
     this.chase = null;
+    this.poseTween = null;
   }
 
   /**
    * Complete any in-flight motion instantly: jump the camera to its end
-   * target/radius and clear it. A no-op when idle. Used when a preset's
-   * render-mode hint (fr-39y) enters the flame render right as the fresh
-   * cloud lands — the flame freezes the camera into its projection snapshot
-   * at enter time, so the fit must have LANDED by then, not still be gliding
-   * toward frame.
+   * pose (or target/radius) and clear it. A no-op when idle. Used when a
+   * preset's render-mode hint (fr-39y) enters the flame render right as the
+   * fresh cloud lands — the flame freezes the camera into its projection
+   * snapshot at enter time, so the fit (or pose glide) must have LANDED by
+   * then, not still be gliding toward frame.
    */
   finish(): void {
+    if (this.poseTween) {
+      const { toTarget, toRadius, toTheta, toPhi } = this.poseTween;
+      this.snapToPose({
+        target: toTarget,
+        radius: toRadius,
+        theta: toTheta,
+        phi: toPhi,
+      });
+      return;
+    }
     const end = this.tween ?? this.chase;
     if (!end) return;
     this.snapTo(end.toTarget, end.toRadius);

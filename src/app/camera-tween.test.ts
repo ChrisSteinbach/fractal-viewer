@@ -1,4 +1,5 @@
 import { OrbitCamera, boundsCenter, fitRadius } from "./orbit";
+import type { CameraPose } from "./orbit";
 import type { Bounds } from "../fractal/types";
 import {
   CameraTween,
@@ -402,5 +403,350 @@ describe("CameraTween.track (fr-cfoc)", () => {
     expect(orbit.spherical.radius).toBeCloseTo(fit.radius);
     expect(orbit.target[0]).toBeCloseTo(fit.target[0]);
     expect(tween.active).toBe(false);
+  });
+});
+
+describe("CameraTween.glideToPose (fr-8v41)", () => {
+  // Well clear of the boot camera's own pose (target [0,0,0], radius ~8.12,
+  // theta ~0.785, phi ~1.054 for new OrbitCamera([5, 4, 5])) and of
+  // SAMPLE_BOUNDS's fit, so a test that reaches this pose can't pass by
+  // coincidentally landing where a fit glide/chase would have too.
+  const SAMPLE_POSE: CameraPose = {
+    target: [7, -3, 9],
+    radius: 15,
+    theta: 0.5,
+    phi: 1.0,
+  };
+  // The leg's own morph length — deliberately different from CAMERA_TWEEN_MS
+  // so a test can't pass by accidentally reusing the fit glide's duration.
+  const POSE_DURATION_MS = 800;
+
+  it("reaches the exact pose and goes inactive once elapsed >= durationMs", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+
+    clock = POSE_DURATION_MS;
+    tween.advance();
+
+    expect(orbit.target[0]).toBeCloseTo(SAMPLE_POSE.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(SAMPLE_POSE.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(SAMPLE_POSE.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(SAMPLE_POSE.radius);
+    expect(orbit.spherical.theta).toBeCloseTo(SAMPLE_POSE.theta);
+    expect(orbit.spherical.phi).toBeCloseTo(SAMPLE_POSE.phi);
+    expect(tween.active).toBe(false);
+  });
+
+  it("sits at the smoothstep(0.5) = 0.5 blend of from→to at the midpoint", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const fromRadius = orbit.spherical.radius;
+    const fromTheta = orbit.spherical.theta;
+    const fromPhi = orbit.spherical.phi;
+    const fromTarget = [...orbit.target];
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+
+    clock = POSE_DURATION_MS / 2;
+    tween.advance();
+
+    expect(orbit.spherical.radius).toBeCloseTo(
+      (fromRadius + SAMPLE_POSE.radius) / 2,
+    );
+    expect(orbit.spherical.theta).toBeCloseTo(
+      (fromTheta + SAMPLE_POSE.theta) / 2,
+    );
+    expect(orbit.spherical.phi).toBeCloseTo((fromPhi + SAMPLE_POSE.phi) / 2);
+    expect(orbit.target[0]).toBeCloseTo(
+      (fromTarget[0] + SAMPLE_POSE.target[0]) / 2,
+    );
+    expect(orbit.target[1]).toBeCloseTo(
+      (fromTarget[1] + SAMPLE_POSE.target[1]) / 2,
+    );
+    expect(orbit.target[2]).toBeCloseTo(
+      (fromTarget[2] + SAMPLE_POSE.target[2]) / 2,
+    );
+    // Still in flight — a partial advance must not clear the glide.
+    expect(tween.active).toBe(true);
+  });
+
+  it("steers by the nearest turn: a pose theta past a full winding moves backward through 0, not forward through π", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    orbit.spherical.theta = 0.2;
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    // Recorded a full winding further round than the orbit's current theta,
+    // but the nearest path to it is backward through 0, not forward through π.
+    const pose: CameraPose = {
+      target: [orbit.target[0], orbit.target[1], orbit.target[2]],
+      radius: orbit.spherical.radius,
+      theta: 2 * Math.PI - 0.2,
+      phi: orbit.spherical.phi,
+    };
+    tween.glideToPose(pose, POSE_DURATION_MS);
+
+    clock = POSE_DURATION_MS / 2;
+    tween.advance();
+    expect(orbit.spherical.theta).toBeCloseTo(0);
+
+    clock = POSE_DURATION_MS;
+    tween.advance();
+    expect(orbit.spherical.theta).toBeCloseTo(-0.2);
+  });
+
+  it("snaps the whole pose immediately under reduced motion, inactive right away", () => {
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => 0,
+      () => true,
+    );
+
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+
+    expect(orbit.target[0]).toBeCloseTo(SAMPLE_POSE.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(SAMPLE_POSE.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(SAMPLE_POSE.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(SAMPLE_POSE.radius);
+    expect(orbit.spherical.theta).toBeCloseTo(SAMPLE_POSE.theta);
+    expect(orbit.spherical.phi).toBeCloseTo(SAMPLE_POSE.phi);
+    expect(tween.active).toBe(false);
+  });
+
+  it("snaps immediately when durationMs is 0, inactive right away", () => {
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => 0,
+      () => false,
+    );
+
+    tween.glideToPose(SAMPLE_POSE, 0);
+
+    expect(orbit.target[0]).toBeCloseTo(SAMPLE_POSE.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(SAMPLE_POSE.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(SAMPLE_POSE.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(SAMPLE_POSE.radius);
+    expect(orbit.spherical.theta).toBeCloseTo(SAMPLE_POSE.theta);
+    expect(orbit.spherical.phi).toBeCloseTo(SAMPLE_POSE.phi);
+    expect(tween.active).toBe(false);
+  });
+
+  it("replaces an in-flight fitToBounds glide — advance lands on the pose, not the old fit", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.fitToBounds(SAMPLE_BOUNDS, FRAMING);
+
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = POSE_DURATION_MS;
+    tween.advance();
+
+    // POSE_DURATION_MS (800) is well past CAMERA_TWEEN_MS (600): if the fit
+    // glide had survived, it would have already landed on SAMPLE_BOUNDS's
+    // fit and cleared. Landing exactly on the pose instead proves it didn't.
+    expect(orbit.target[0]).toBeCloseTo(SAMPLE_POSE.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(SAMPLE_POSE.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(SAMPLE_POSE.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(SAMPLE_POSE.radius);
+    expect(tween.active).toBe(false);
+  });
+
+  it("is replaced by fitToBounds — poseGliding flips false and the fit glide takes over", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = 100;
+    tween.advance();
+    expect(tween.poseGliding).toBe(true);
+
+    tween.fitToBounds(SAMPLE_BOUNDS, FRAMING);
+    expect(tween.poseGliding).toBe(false);
+
+    clock = 100 + CAMERA_TWEEN_MS;
+    tween.advance();
+
+    const fit = expectedFit(SAMPLE_BOUNDS);
+    expect(orbit.target[0]).toBeCloseTo(fit.target[0]);
+    expect(orbit.spherical.radius).toBeCloseTo(fit.radius);
+    expect(tween.active).toBe(false);
+  });
+
+  it("is replaced by track — poseGliding flips false and the chase takes over", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = 100;
+    tween.advance();
+    expect(tween.poseGliding).toBe(true);
+
+    tween.track(SAMPLE_BOUNDS, FRAMING);
+
+    // Replaced by a chase, not just cleared to idle — the chase never
+    // self-terminates, so it's still active with nothing further to do.
+    expect(tween.poseGliding).toBe(false);
+    expect(tween.active).toBe(true);
+  });
+
+  it("is cleared by track's reduced-motion snap path", () => {
+    let clock = 0;
+    let reduced = false;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => reduced,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = 100;
+    tween.advance();
+    expect(tween.poseGliding).toBe(true);
+
+    reduced = true;
+    tween.track(SAMPLE_BOUNDS, FRAMING);
+
+    expect(tween.poseGliding).toBe(false);
+    expect(tween.active).toBe(false);
+    const fit = expectedFit(SAMPLE_BOUNDS);
+    expect(orbit.target[0]).toBeCloseTo(fit.target[0]);
+    expect(orbit.spherical.radius).toBeCloseTo(fit.radius);
+  });
+
+  it("cancel() mid-glide keeps the camera's partial pose, inactive after", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = POSE_DURATION_MS / 2;
+    tween.advance();
+    const radiusAtCancel = orbit.spherical.radius;
+    const thetaAtCancel = orbit.spherical.theta;
+    const targetAtCancel = [...orbit.target];
+
+    tween.cancel();
+    clock = POSE_DURATION_MS;
+    tween.advance();
+
+    expect(orbit.spherical.radius).toBe(radiusAtCancel);
+    expect(orbit.spherical.theta).toBe(thetaAtCancel);
+    expect(orbit.target).toEqual(targetAtCancel);
+    expect(tween.active).toBe(false);
+  });
+
+  it("finish() mid-glide jumps to the exact end pose, inactive after", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    clock = POSE_DURATION_MS / 3;
+    tween.advance();
+    expect(tween.active).toBe(true);
+
+    tween.finish();
+
+    expect(orbit.target[0]).toBeCloseTo(SAMPLE_POSE.target[0]);
+    expect(orbit.target[1]).toBeCloseTo(SAMPLE_POSE.target[1]);
+    expect(orbit.target[2]).toBeCloseTo(SAMPLE_POSE.target[2]);
+    expect(orbit.spherical.radius).toBeCloseTo(SAMPLE_POSE.radius);
+    expect(orbit.spherical.theta).toBeCloseTo(SAMPLE_POSE.theta);
+    expect(orbit.spherical.phi).toBeCloseTo(SAMPLE_POSE.phi);
+    expect(tween.active).toBe(false);
+  });
+
+  it("poseGliding is false before any motion starts", () => {
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => 0,
+      () => false,
+    );
+
+    expect(tween.poseGliding).toBe(false);
+  });
+
+  it("poseGliding is true while a pose glide is in flight", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+    expect(tween.poseGliding).toBe(true);
+
+    clock = POSE_DURATION_MS / 2;
+    tween.advance();
+    expect(tween.poseGliding).toBe(true);
+  });
+
+  it("poseGliding is false during a plain fitToBounds glide", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+
+    tween.fitToBounds(SAMPLE_BOUNDS, FRAMING);
+    expect(tween.poseGliding).toBe(false);
+
+    clock = CAMERA_TWEEN_MS / 2;
+    tween.advance();
+    expect(tween.poseGliding).toBe(false);
+  });
+
+  it("poseGliding is false once the pose glide completes", () => {
+    let clock = 0;
+    const orbit = new OrbitCamera([5, 4, 5]);
+    const tween = new CameraTween(
+      orbit,
+      () => clock,
+      () => false,
+    );
+    tween.glideToPose(SAMPLE_POSE, POSE_DURATION_MS);
+
+    clock = POSE_DURATION_MS;
+    tween.advance();
+
+    expect(tween.poseGliding).toBe(false);
   });
 });

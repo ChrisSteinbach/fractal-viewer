@@ -38,6 +38,7 @@ import type {
 import { clone3, to255 } from "../fractal/vec";
 import type { Preset } from "../fractal/presets";
 import type { SavedScene } from "./collection";
+import type { TimelineStep } from "./timeline";
 import type { AppState, RenderMode } from "./state";
 import {
   RENDER_MODES,
@@ -148,6 +149,28 @@ export interface UiHandlers {
   onLoadFromCollection: (id: string) => void;
   /** A gallery card's ✕ was clicked: delete that saved scene by its id. */
   onDeleteFromCollection: (id: string) => void;
+  /** "📍 Add keyframe" was clicked (fr-8v41): append the current view —
+   * scene document + camera pose + a thumbnail of what's showing — to the
+   * animation timeline. */
+  onTimelineAddKeyframe: () => void;
+  /** "▶ Play timeline" / "■ Stop" was clicked: toggle timeline playback —
+   * session-only motion like the drift show; main.ts owns the policy. */
+  onTimelinePlayToggle: () => void;
+  /** "⏺ Export clip" was clicked: play the timeline while recording the
+   * canvas to a downloadable video clip (fr-8v41). */
+  onTimelineExport: () => void;
+  /** A timeline row's ✕ was clicked: remove that keyframe by its id. */
+  onTimelineRemoveStep: (id: string) => void;
+  /** A timeline row's ↑/↓ was clicked: move that keyframe one slot earlier
+   * (-1) or later (+1) in playback order. */
+  onTimelineMoveStep: (id: string, delta: -1 | 1) => void;
+  /** A timeline row's morph/hold seconds input committed a new value —
+   * already parsed and converted to MILLISECONDS; only the edited field is
+   * present. Non-numeric input never reaches this (the row restores itself). */
+  onTimelineStepTiming: (
+    id: string,
+    timing: { morphMs?: number; holdMs?: number },
+  ) => void;
   /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
   onCopyLink: () => void;
   /** "⬇ Export collection" was clicked: download the whole saved-scene
@@ -704,6 +727,27 @@ export class Ui {
   private gallerySceneCount = 0;
   private readonly toast: HTMLElement;
 
+  // Animation timeline (fr-8v41): the panel's own authoring section, outside
+  // #explorerControls like Collection/Export (adding a keyframe works from a
+  // flame/solid render too). Play/Export mirror the Drift toggle's
+  // lit/self-explaining-disabled-title pattern — see syncTimelineButtons.
+  private readonly timelineAddBtn: HTMLButtonElement;
+  private readonly timelinePlayBtn: HTMLButtonElement;
+  private readonly timelinePlayTitle: string;
+  private readonly timelineExportBtn: HTMLButtonElement;
+  private readonly timelineExportTitle: string;
+  private readonly timelineStatus: HTMLElement;
+  private readonly timelineList: HTMLElement;
+  private readonly timelineEmpty: HTMLElement;
+  /** Inputs to the Play/Export buttons' disabled state (see
+   * syncTimelineButtons): reduced-motion availability
+   * ({@link setTimelineAvailable}), whether playback is running
+   * ({@link setTimelineActive}), and whether there's anything to play
+   * ({@link renderTimeline}). */
+  private timelineAvailable = true;
+  private timelineActive = false;
+  private timelineStepCount = 0;
+
   // Mutation grid (fr-3vly): the Presets section's "🧬 Mutate" button and the
   // 3×3 modal it opens — the gallery modal's chrome with a fixed grid of
   // candidate cells the app fills progressively (setMutationCell). DOM order
@@ -936,6 +980,15 @@ export class Ui {
     this.galleryDriftTitle = this.galleryDriftBtn.title;
     this.galleryGrid = this.byId("galleryGrid");
     this.galleryEmpty = this.byId("galleryEmpty");
+    this.timelineAddBtn = this.byId("timelineAddBtn");
+    this.timelinePlayBtn = this.byId("timelinePlayBtn");
+    this.timelinePlayTitle = this.timelinePlayBtn.title;
+    this.timelineExportBtn = this.byId("timelineExportBtn");
+    this.timelineExportTitle = this.timelineExportBtn.title;
+    this.timelineExportBtn.classList.toggle("hidden", !videoCaptureSupported());
+    this.timelineStatus = this.byId("timelineStatus");
+    this.timelineList = this.byId("timelineList");
+    this.timelineEmpty = this.byId("timelineEmpty");
     this.mutateBtn = this.byId("mutateBtn");
     this.mutationModal = this.byId("mutationModal");
     this.mutationBackdrop = this.byId("mutationBackdrop");
@@ -1198,6 +1251,18 @@ export class Ui {
     // the backdrop, and Escape (bound only while open) all just closeGallery().
     this.galleryCloseBtn.addEventListener("click", () => this.closeGallery());
     this.galleryBackdrop.addEventListener("click", () => this.closeGallery());
+    // Timeline (fr-8v41): the three top-level actions are parameterless,
+    // like Surprise Me / Drift — row-level actions (remove/move/timing) are
+    // wired per-row in renderTimeline instead.
+    this.timelineAddBtn.addEventListener("click", () =>
+      handlers.onTimelineAddKeyframe(),
+    );
+    this.timelinePlayBtn.addEventListener("click", () =>
+      handlers.onTimelinePlayToggle(),
+    );
+    this.timelineExportBtn.addEventListener("click", () =>
+      handlers.onTimelineExport(),
+    );
     // The mutation grid (fr-3vly): opening and re-rolling go through the app
     // (it owns the candidates); closing mirrors the gallery's pure-view
     // ✕/backdrop/Escape trio.
@@ -1986,6 +2051,206 @@ export class Ui {
     card.appendChild(del);
 
     return card;
+  }
+
+  /**
+   * (Re)build the timeline rows in playback order (fr-8v41): called by
+   * main.ts at boot and after every timeline edit (add/remove/move/retime).
+   * `durationLabel` arrives preformatted (e.g. "0:18") — main.ts owns
+   * formatting the summed morph/hold milliseconds into a clock label. All DOM
+   * is built with `createElement`, never `innerHTML` — the same stance as
+   * {@link renderGallery}: a step's thumbnail only ever sets `img.src`, and
+   * its id only ever rides a closure, never markup.
+   */
+  renderTimeline(steps: TimelineStep[], durationLabel: string): void {
+    this.timelineStepCount = steps.length;
+    this.timelineEmpty.classList.toggle("hidden", steps.length > 0);
+    this.timelineStatus.classList.toggle("hidden", steps.length === 0);
+    if (steps.length > 0) {
+      const n = steps.length;
+      this.timelineStatus.textContent = `${n} keyframe${n === 1 ? "" : "s"} · ${durationLabel}`;
+    } else {
+      this.timelineStatus.textContent = "";
+    }
+    this.timelineList.replaceChildren(
+      ...steps.map((step, i) => this.timelineRow(step, i, steps.length)),
+    );
+    this.syncTimelineButtons();
+  }
+
+  /** Build one {@link renderTimeline} row for `step` at position `i`
+   * (0-based) of `total` rows — the display number, the disabled-arrow
+   * ends, and the two timing inputs all key off these. */
+  private timelineRow(
+    step: TimelineStep,
+    i: number,
+    total: number,
+  ): HTMLElement {
+    const n = i + 1;
+    const row = this.doc.createElement("div");
+    row.className = "timeline-step";
+
+    const index = this.doc.createElement("span");
+    index.className = "timeline-step-index";
+    index.textContent = String(n);
+    row.appendChild(index);
+
+    if (step.thumbnail) {
+      const img = this.doc.createElement("img");
+      img.className = "timeline-step-thumb";
+      img.src = step.thumbnail;
+      img.alt = "";
+      img.loading = "lazy";
+      row.appendChild(img);
+    } else {
+      // Capture failed, or the step predates thumbnails — a neutral
+      // placeholder still reads as "a keyframe" and keeps the row's layout,
+      // the same stance as renderGallery's card placeholder.
+      const placeholder = this.doc.createElement("div");
+      placeholder.className = "timeline-step-noimg";
+      placeholder.textContent = "◆";
+      row.appendChild(placeholder);
+    }
+
+    row.appendChild(
+      this.timelineTimingInput(
+        "morph",
+        step.morphMs,
+        "Seconds the morph into this keyframe takes",
+        `Morph seconds into keyframe ${n}`,
+        (morphMs) => this.handlers?.onTimelineStepTiming(step.id, { morphMs }),
+      ),
+    );
+    row.appendChild(
+      this.timelineTimingInput(
+        "hold",
+        step.holdMs,
+        "Seconds to hold on this keyframe before moving on",
+        `Hold seconds on keyframe ${n}`,
+        (holdMs) => this.handlers?.onTimelineStepTiming(step.id, { holdMs }),
+      ),
+    );
+
+    const actions = this.doc.createElement("div");
+    actions.className = "timeline-step-actions";
+
+    const up = this.doc.createElement("button");
+    up.type = "button";
+    up.className = "timeline-step-btn";
+    up.textContent = "↑";
+    up.setAttribute("aria-label", `Move keyframe ${n} earlier`);
+    up.disabled = i === 0;
+    up.addEventListener("click", () =>
+      this.handlers?.onTimelineMoveStep(step.id, -1),
+    );
+    actions.appendChild(up);
+
+    const down = this.doc.createElement("button");
+    down.type = "button";
+    down.className = "timeline-step-btn";
+    down.textContent = "↓";
+    down.setAttribute("aria-label", `Move keyframe ${n} later`);
+    down.disabled = i === total - 1;
+    down.addEventListener("click", () =>
+      this.handlers?.onTimelineMoveStep(step.id, 1),
+    );
+    actions.appendChild(down);
+
+    const remove = this.doc.createElement("button");
+    remove.type = "button";
+    remove.className = "timeline-step-btn timeline-step-delete";
+    remove.textContent = "✕";
+    remove.setAttribute("aria-label", `Remove keyframe ${n}`);
+    remove.addEventListener("click", () =>
+      this.handlers?.onTimelineRemoveStep(step.id),
+    );
+    actions.appendChild(remove);
+
+    row.appendChild(actions);
+    return row;
+  }
+
+  /** One morph/hold `<input type="number">`, wrapped in its labeled
+   * `label.timeline-step-timing` (fr-8v41). Committing an empty or
+   * non-finite value restores the input's displayed seconds from
+   * `currentMs` instead of calling `onCommit` — the row undoes the bad edit
+   * in place rather than ever sending a garbage value on; range clamping is
+   * the store's job (`timeline.ts`'s `clampMs`), so the min/max attributes
+   * here are just affordance. */
+  private timelineTimingInput(
+    fieldLabel: "morph" | "hold",
+    currentMs: number,
+    title: string,
+    ariaLabel: string,
+    onCommit: (ms: number) => void,
+  ): HTMLElement {
+    const wrapper = this.doc.createElement("label");
+    wrapper.className = "timeline-step-timing";
+    wrapper.appendChild(this.doc.createTextNode(fieldLabel));
+
+    const input = this.doc.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.max = "30";
+    input.step = "0.5";
+    input.value = String(currentMs / 1000);
+    input.title = title;
+    input.setAttribute("aria-label", ariaLabel);
+    input.addEventListener("change", () => {
+      const secs = Number(input.value);
+      if (input.value === "" || !Number.isFinite(secs)) {
+        input.value = String(currentMs / 1000);
+        return;
+      }
+      onCommit(Math.round(secs * 1000));
+    });
+    wrapper.appendChild(input);
+    return wrapper;
+  }
+
+  /** Mirror {@link setDriftActive}'s lit/"stop"-affordance shape for the
+   * Play button (fr-8v41): "■ Stop" + pressed + blue while playback runs,
+   * "▶ Play timeline" + ghost otherwise. */
+  setTimelineActive(on: boolean): void {
+    this.timelineActive = on;
+    this.timelinePlayBtn.textContent = on ? "■ Stop" : "▶ Play timeline";
+    this.timelinePlayBtn.setAttribute("aria-pressed", String(on));
+    this.timelinePlayBtn.classList.toggle("btn-ghost", !on);
+    this.timelinePlayBtn.classList.toggle("btn-blue", on);
+    this.syncTimelineButtons();
+  }
+
+  /** Enable/disable timeline PLAYBACK for the OS reduced-motion preference —
+   * mirrors {@link setDriftAvailable}. "📍 Add keyframe" is unaffected:
+   * authoring isn't motion. */
+  setTimelineAvailable(available: boolean): void {
+    this.timelineAvailable = available;
+    this.syncTimelineButtons();
+  }
+
+  /** Self-explaining disabled-state derivation for Play/Export — the
+   * `syncGalleryDriftBtn` pattern: each button's `disabled` and `title` are
+   * re-derived from the remembered availability/active/count flags whenever
+   * any of them changes. */
+  private syncTimelineButtons(): void {
+    const empty = this.timelineStepCount === 0;
+    this.timelinePlayBtn.disabled =
+      !this.timelineActive && (!this.timelineAvailable || empty);
+    this.timelinePlayBtn.title = !this.timelineAvailable
+      ? "Unavailable: your system asks for reduced motion"
+      : empty
+        ? "Add a keyframe or two first"
+        : this.timelinePlayTitle;
+
+    this.timelineExportBtn.disabled =
+      !this.timelineAvailable || empty || this.timelineActive;
+    this.timelineExportBtn.title = !this.timelineAvailable
+      ? "Unavailable: your system asks for reduced motion"
+      : empty
+        ? "Add a keyframe or two first"
+        : this.timelineActive
+          ? "Already playing — stop first"
+          : this.timelineExportTitle;
   }
 
   /**

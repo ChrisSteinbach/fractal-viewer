@@ -253,6 +253,45 @@
         />
       </details>
 
+      <!-- Animation timeline (fr-8v41): an authored sequence of keyframes played
+           back as a chain of morphs — the drift show's directed counterpart.
+           Outside #explorerControls like Collection: adding a keyframe works from
+           a flame/solid render too (the capture falls back to what's showing). -->
+      <details class="panel-section" id="timelineSection" name="panel-section">
+        <summary>Timeline</summary>
+        <button
+          class="btn btn-green"
+          id="timelineAddBtn"
+          type="button"
+          title="Capture the current view — system and camera — as the next keyframe"
+        >
+          📍 Add keyframe
+        </button>
+        <button
+          class="btn btn-ghost"
+          id="timelinePlayBtn"
+          type="button"
+          aria-pressed="false"
+          title="Play the timeline: morph through the keyframes in order, with each one's own timings"
+        >
+          ▶ Play timeline
+        </button>
+        <button
+          class="btn btn-ghost"
+          id="timelineExportBtn"
+          type="button"
+          title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
+        >
+          ⏺ Export clip
+        </button>
+        <div id="timelineStatus" class="timeline-status hidden"></div>
+        <div id="timelineList" class="timeline-list"></div>
+        <p id="timelineEmpty" class="timeline-empty">
+          📍 Add keyframe captures the current view. Build a sequence, then ▶
+          Play it — or ⏺ Export it as a video clip.
+        </p>
+      </details>
+
       <div id="explorerControls">
         <details
           class="panel-section"

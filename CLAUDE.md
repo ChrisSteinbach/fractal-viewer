@@ -188,13 +188,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     main.ts's animate loop skips frames where it's clear (video recording
     forces painting: canvas capture streams emit frames only on paint).
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
-  - `camera-tween.ts` — the orbit camera's two fit motions (pure, tested,
-    injected clock), both leaving the orbit angles alone and honoring
-    reduced motion: the smoothstep GLIDE that auto-frames a freshly
-    generated attractor (preset load / Surprise Me) instead of snapping,
-    and (fr-cfoc) the dt-aware exponential CHASE that follows a morphing
-    attractor's live bounds — retargeted per intermediate arrival, replaced
-    by the terminal fit's glide for the settle.
+  - `camera-tween.ts` — the orbit camera's three motions (pure, tested,
+    injected clock), mutually exclusive and honoring reduced motion: the
+    smoothstep GLIDE that auto-frames a freshly generated attractor (preset
+    load / Surprise Me) instead of snapping, (fr-cfoc) the dt-aware
+    exponential CHASE that follows a morphing attractor's live bounds —
+    retargeted per intermediate arrival, replaced by the terminal fit's
+    glide for the settle — both leaving the orbit angles alone, and
+    (fr-8v41) the directed POSE GLIDE to a saved `CameraPose`, the one
+    motion that moves theta/phi (nearest-turn theta, self-timed by the
+    timeline leg's own morph duration); `poseGliding` is how main.ts pauses
+    the auto-orbit while a glide owns theta.
   - `framing-bounds.ts` — what those fit motions FRAME (fr-3xfk): per-axis
     trimmed-quantile bounds of the delivered cloud (and the 4D twin, a
     distance-from-center quantile that stays tumble-invariant), computed
@@ -254,19 +258,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     departs a still one `DRIFT_RENDER_LINGER_MS` after its render meets
     the iteration budget (the flame/solid progress events). Between legs
     the poll is one comparison, so a dwelling show does no per-frame work.
-  - `drift-policy.ts` — the drift show's stop/advance conductor (fr-4otp):
-    the ONE guarded `stop()` every "user reached in" chokepoint calls —
-    no-op'd while the show's own leg applies itself (the own-leg guard,
-    which is how a leg's replace-load survives the stop-on-edit rule) and
-    while idle, so the injected `onStopped` UI sync (and fr-ygr1's "Drift
-    stopped" toast) can never fire for a stop that didn't happen — and
-    `advance()`, which runs one leg under that guard and itself ends the
-    show at a leg boundary under reduced motion or a dry leg source
-    (`launchLeg` returning false: an emptied/fully-corrupt collection),
-    the dry stop deferred until the guard unwinds — deferring it is the
-    fr-4otp fix; issued from inside the leg it was swallowed and the show
-    polled forever. main.ts's wiring decides what a leg does and which
-    stops toast. Pure, injected effects, tested.
+  - `drift-policy.ts` — an automated show's stop/advance conductor
+    (fr-4otp): the ONE guarded `stop()` every "user reached in" chokepoint
+    calls — no-op'd while the show's own leg applies itself (the own-leg
+    guard, which is how a leg's replace-load survives the stop-on-edit
+    rule) and while idle, so the injected `onStopped` UI sync (and
+    fr-ygr1's "stopped" toast) can never fire for a stop that didn't
+    happen — and `advance(launchLeg)`, which runs one leg under that guard
+    and itself ends the show at a leg boundary under reduced motion or a
+    dry leg source (`launchLeg` returning false: an emptied/fully-corrupt
+    collection, an undecodable timeline step), the dry stop deferred until
+    the guard unwinds — deferring it is the fr-4otp fix; issued from inside
+    the leg it was swallowed and the show polled forever. Since fr-8v41 the
+    show surface is the structural `ConductableShow` and the leg body is
+    `advance`'s parameter, so one instance conducts the drift show and a
+    second conducts the timeline player. main.ts's wiring decides what a
+    leg does and which stops toast. Pure, injected effects, tested.
   - `build-replay.ts` — the "Watch it build" replay (fr-1zb): a pure
     timing/phase state machine that reveals the displayed cloud in generation
     order (hop → accrete/emerge → spotlight → done, with narration captions)
@@ -334,6 +341,35 @@ and UI**, so the interesting math is unit-tested without a browser:
     merge: dedupe by `encoded`, createdAt-sorted insertion (like `restore`),
     fresh collision-free ids, cap eviction — returning only the count that
     survived.
+  - `timeline.ts` — the animation timeline's persistent document (fr-8v41):
+    an authored, ORDERED sequence of keyframe steps — each a frozen copy of
+    an encoded scene (camera pose included) + thumbnail + its own
+    `morphMs`/`holdMs` — under its own localStorage key, the collection's
+    opaque-encoded-string stance throughout. Deliberately not references
+    into the collection: deleting a keeper can never break a timeline.
+    `add` REFUSES at the 20-step cap (and `persist` never evict-retries) —
+    an authored sequence must not be silently shortened; `restore(step, at)`
+    is the delete-toast's undo (fr-ifts pattern, index-addressed). A
+    persisted `seed` + `legSeed(seed, i)` give playback its deterministic
+    per-leg morph seeds — the reproducible half of "deterministic video
+    export". Pure, injected storage/clock, tested.
+  - `timeline-player.ts` — the timeline's playback clock (fr-8v41): the
+    drift show's directed, FINITE sibling, polled per frame like its
+    siblings. Unlike `DriftShow`'s reschedule-from-now, the schedule is
+    ABSOLUTE against start (`due[i]` accumulates each step's morph+hold), so
+    a recorded clip keeps its authored length; catch-up fires only the
+    LATEST due leg (never a burst), at most one event per poll, and the last
+    leg always precedes `done` — a recording stop can never beat the final
+    keyframe's launch. main.ts's `launchTimelineLeg` does what a leg IS: the
+    same replace-load morph as a drift leg, seed pinned via `legSeed`, the
+    camera gliding to the step's saved pose over the leg's own duration
+    (`CameraTween.glideToPose`) — poseless steps fall back to drift's
+    fit+chase. A second `DriftPolicy` instance conducts it (stop-on-edit,
+    own-leg guard); `stopShows` in main.ts routes every "user reached in"
+    chokepoint to both shows. Export = the same run with the canvas
+    recorder rolling: whatever ends the run stops the recorder, so the clip
+    downloads. Playback is points-only by design (a converging flame/solid
+    render has no deterministic duration). Pure, injected clock, tested.
   - `scene-file.ts` — the JSON file import/export codec (fr-de9t): a
     single-scene file and a whole-collection backup file (encoded scenes +
     mode tags + thumbnails; ids omitted — the merge mints fresh ones)

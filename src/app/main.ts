@@ -47,7 +47,11 @@ import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import { RenderSession } from "./render-session";
-import { createCanvasRecorder, formatElapsed } from "./recorder";
+import {
+  createCanvasRecorder,
+  formatElapsed,
+  MAX_RECORDING_SECONDS,
+} from "./recorder";
 import { createResolutionGovernor } from "./resolution-governor";
 import {
   addTransform,
@@ -101,6 +105,13 @@ import {
   DRIFT_RENDER_LINGER_MS,
 } from "./drift";
 import { DriftPolicy } from "./drift-policy";
+import {
+  legSeed,
+  TIMELINE_CAP,
+  timelineDurationMs,
+  TimelineStore,
+} from "./timeline";
+import { TimelinePlayer } from "./timeline-player";
 import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
@@ -298,6 +309,17 @@ function main(): void {
   // static scene must still record as a video of that scene, not a stall.
   let recorderActive = false;
 
+  // Whether the current timeline playback is an EXPORT run (fr-8v41):
+  // onTimelineExport started the recorder alongside the playback, and
+  // whatever ends the playback — its natural finish, a stop-on-edit, the
+  // toggle — hands the recorder its stop so the clip finalizes and
+  // downloads. Cleared by the recorder's own lifecycle too (onStateChange
+  // false / onError below): a recording that ended on its own — the 120s
+  // cap, a hidden tab, a manual stop on the Record button, a failed start —
+  // degrades the run to a plain playback instead of later "stopping" a
+  // recorder that isn't running and toasting a clip that never saved.
+  let timelineExporting = false;
+
   // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
   // sustained slow frames should trade pixels for frame rate (and when the
   // device has earned them back); animate() feeds it the dt between
@@ -311,12 +333,19 @@ function main(): void {
     onStateChange: (recording) => {
       recorderActive = recording;
       ui.setRecordingState(recording ? formatElapsed(0) : null);
+      // A finalized clip ends an export run's recording half however it
+      // stopped (fr-8v41) — see timelineExporting's doc.
+      if (!recording) timelineExporting = false;
     },
     onTick: (seconds) => {
       ui.setRecordingState(formatElapsed(seconds));
     },
     onError: (message) => {
       console.error(`Video recording: ${message}`);
+      // An export run whose recording failed (or never started) keeps
+      // playing as a plain run — the flag clears so its finish doesn't
+      // claim a clip was saved (fr-8v41).
+      timelineExporting = false;
     },
   });
 
@@ -576,8 +605,9 @@ function main(): void {
   // Electric-Sheep-on-a-TV use case. Session-only motion like the auto-orbit
   // and tumble, never persisted. drift.ts owns the timing loop;
   // drift-policy.ts the stop/advance conduct (driftPolicy below); this file
-  // the wiring: what a leg does (launchLeg), the hold/resume choreography
-  // around renders, and the reduced-motion gate (syncDriftAvailability).
+  // the wiring: what a leg does (launchDriftLeg), the hold/resume
+  // choreography around renders, and the reduced-motion gate
+  // (syncMotionAvailability).
   const driftShow = new DriftShow(() => performance.now());
   // What a leg departs TOWARD (fr-w2ve): a fresh Surprise-Me roll ("random",
   // the original show), or the next saved scene in the gallery's own order,
@@ -591,10 +621,12 @@ function main(): void {
   // The show's stop/advance conductor (drift-policy.ts, fr-4otp): the
   // own-leg guard that exempts a leg's own replace-load from the
   // stop-on-edit rule, and the leg-boundary exits (reduced motion, a
-  // dried-up collection). driftPolicy.stop is called from every "the user
-  // reached in" moment: applyEdit and the bespoke beginEdit handlers (any
-  // undoable edit), time travel and MANUAL gallery loads
-  // (applyDecodedSnapshot), starting a build replay, and the toggle itself.
+  // dried-up collection). Every "the user reached in" moment stops the
+  // show — applyEdit and the bespoke beginEdit handlers (any undoable
+  // edit), time travel and MANUAL gallery loads (applyDecodedSnapshot),
+  // starting a build replay, and the toggle itself; since fr-8v41 the
+  // shared chokepoints call stopShows, which routes the stop to this
+  // policy AND the timeline playback's (at most one show is ever active).
   // Leaving the points view (switchRenderMode) stops a RANDOM show too,
   // while a collection show survives it as a held slideshow (fr-w2ve — see
   // switchRenderMode). Camera input deliberately never calls it — the
@@ -612,24 +644,25 @@ function main(): void {
   const driftPolicy = new DriftPolicy({
     show: driftShow,
     reducedMotion: prefersReducedMotion,
-    // One drift leg (fr-wavo): press Surprise Me — or, for a collection
-    // show (fr-w2ve), load the next saved scene — on the show's behalf:
-    // the same "replace" undo checkpoint a manual press/load cuts (undo
-    // walks back through the show; history.ts's cap bounds it), the same
-    // camera auto-fit, but gliding the display morph over DRIFT_MORPH_MS
-    // instead of the snappier click-feedback default. A surprise roll
-    // always launches; a collection leg reports whether anything was left
-    // to play — false ends the show once the leg unwinds (fr-4otp).
-    launchLeg: () => {
-      if (driftSource === "collection") return advanceCollectionLeg();
-      rollSurpriseSystem(DRIFT_MORPH_MS);
-      return true;
-    },
     onStopped: (notify) => {
       ui.setDriftActive(false);
       if (notify) ui.flashToast("Drift stopped");
     },
   });
+
+  // One drift leg (fr-wavo), passed to driftPolicy.advance at the poll site:
+  // press Surprise Me — or, for a collection show (fr-w2ve), load the next
+  // saved scene — on the show's behalf: the same "replace" undo checkpoint a
+  // manual press/load cuts (undo walks back through the show; history.ts's
+  // cap bounds it), the same camera auto-fit, but gliding the display morph
+  // over DRIFT_MORPH_MS instead of the snappier click-feedback default. A
+  // surprise roll always launches; a collection leg reports whether anything
+  // was left to play — false ends the show once the leg unwinds (fr-4otp).
+  function launchDriftLeg(): boolean {
+    if (driftSource === "collection") return advanceCollectionLeg();
+    rollSurpriseSystem(DRIFT_MORPH_MS);
+    return true;
+  }
 
   /**
    * The next playable stop on the collection show's loop (fr-w2ve): walk
@@ -714,6 +747,149 @@ function main(): void {
   ): void {
     renderComplete[mode] = done >= budget;
     if (done >= budget) driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
+  }
+
+  // ── Animation timeline (fr-8v41) ─────────────────────────────────────
+  // The drift show's DIRECTED counterpart: an authored, persistent sequence
+  // of keyframe steps — each a frozen scene document + thumbnail + its own
+  // morph/hold timing (timeline.ts) — played back as a chain of the same
+  // replace-load morphs a drift leg uses, and optionally recorded to a
+  // video clip (onTimelineExport). timeline-player.ts owns WHEN each leg
+  // fires (an absolute schedule, so a recorded clip keeps its authored
+  // length); launchTimelineLeg below owns what a leg does; and a second
+  // DriftPolicy instance conducts it with the exact same stop-on-edit /
+  // own-leg-guard semantics as the drift show. The two shows are mutually
+  // exclusive: each start stops the other, and stopShows() is the one
+  // helper every shared "user reached in" chokepoint calls.
+  const timeline = new TimelineStore();
+  const timelinePlayer = new TimelinePlayer(() => performance.now());
+  const timelinePolicy = new DriftPolicy({
+    show: timelinePlayer,
+    reducedMotion: prefersReducedMotion,
+    onStopped: (notify) => {
+      ui.setTimelineActive(false);
+      if (notify) ui.flashToast("Timeline stopped");
+      // A stopped export run still finalizes its clip: everything recorded
+      // up to the stop downloads (an honest partial clip), rather than
+      // vanishing with the show.
+      if (timelineExporting) {
+        timelineExporting = false;
+        recorder.stop();
+      }
+    },
+  });
+
+  // Every chokepoint where the user reaches in — applyEdit, time travel and
+  // manual gallery loads (applyDecodedSnapshot), the bespoke beginEdit
+  // handlers, starting a build replay — must end WHICHEVER show is running;
+  // at most one ever is, and each policy no-ops when its own show is idle
+  // (or mid-own-leg), so calling both is always safe. The drift/timeline
+  // toggles themselves deliberately do NOT use this: each stops its own
+  // show silently and the OTHER show with a toast (see the handlers).
+  function stopShows(opts?: { notify?: boolean }): void {
+    driftPolicy.stop(opts);
+    timelinePolicy.stop(opts);
+  }
+
+  /**
+   * One timeline playback leg (fr-8v41): load step `index`'s frozen scene
+   * as a replace-load morphing over the step's own `morphMs` — the same
+   * "replace" undo checkpoint + morphing applyDecodedSnapshot path as a
+   * collection drift leg (advanceCollectionLeg), with two directed
+   * differences. The morph seed is pinned from the timeline's stored seed
+   * (timeline.ts's legSeed), so every playback run of the same timeline
+   * generates the same content stream — the deterministic half of the
+   * export. And the camera GLIDES to the step's saved pose over the same
+   * duration (CameraTween.glideToPose — the fit flag stays off so the
+   * arrival can't fight it): the author's framing IS the shot, where a
+   * drift leg deliberately auto-fits instead. A step saved without a pose
+   * falls back to exactly the drift leg's fit-and-chase. Steps resolve by
+   * index at leg time, which is why every timeline EDIT stops a running
+   * playback first (see the onTimeline* handlers). Returns false on a
+   * vanished or undecodable step (untrusted localStorage), ending the show
+   * at the leg boundary like a dried-up collection (fr-4otp).
+   */
+  function launchTimelineLeg(index: number): boolean {
+    const step = timeline.all()[index];
+    if (!step) return false;
+    const snap = decodeScene(step.encoded);
+    if (!snap) return false;
+    editSession.beginEdit("replace");
+    const pose = snap.camera;
+    applyDecodedSnapshot(
+      snap,
+      pose === undefined,
+      true,
+      step.morphMs,
+      legSeed(timeline.seed, index),
+    );
+    if (pose) cameraTween.glideToPose(pose, step.morphMs);
+    return true;
+  }
+
+  /**
+   * A timeline run reached its natural end (fr-8v41): the player has
+   * already deactivated itself (its `done` event is what got us here), so
+   * the policy's stop would no-op — un-light the toggle directly, and for
+   * an export run hand the recorder its stop so the clip finalizes and
+   * downloads. The toast tells the user WHY the motion just stopped: the
+   * panel closed when playback started, so nothing else on screen says so.
+   */
+  function finishTimelinePlayback(): void {
+    ui.setTimelineActive(false);
+    if (timelineExporting) {
+      timelineExporting = false;
+      recorder.stop();
+      ui.flashToast("Timeline finished — saving clip");
+    } else {
+      ui.flashToast("Timeline finished");
+    }
+  }
+
+  /**
+   * Arm a playback run over the timeline's current steps (fr-8v41) —
+   * shared by ▶ Play and ⏺ Export (which additionally starts the recorder;
+   * `exporting` tags the run so whatever ends it also stops the recorder).
+   * Starting the directed show ends the ambient one — with the toast
+   * (fr-ygr1): the user is looking at the Timeline buttons, not the Drift
+   * toggle. Closes the panel like the drift toggle does: the show owns the
+   * stage — which also glides the desktop projection inset back to center
+   * (fr-936q), exactly what an exported clip should record. Callers guard
+   * emptiness/reduced motion; leg 0 fires on the next animate frame.
+   */
+  function startTimelinePlayback(exporting: boolean): void {
+    driftPolicy.stop({ notify: true });
+    timelineExporting = exporting;
+    timelinePlayer.start(timeline.all());
+    ui.setTimelineActive(true);
+    state = setPanelOpen(state, false);
+    ui.updateLabels(state);
+  }
+
+  // Reflect the timeline document in its panel section — rows, count, and
+  // the total-duration label (the recorder's own m:ss formatter, so the
+  // status line and the recording button speak the same dialect).
+  function refreshTimelineUi(): void {
+    const steps = timeline.all();
+    ui.renderTimeline(
+      steps,
+      formatElapsed(Math.round(timelineDurationMs(steps) / 1000)),
+    );
+  }
+
+  // The displayed frame as a small gallery/timeline thumbnail: mode-aware
+  // (fr-75sq) — a capture from a flame/solid render reads the rendered
+  // frame, except during the render's first-frame gap, when the screen
+  // honestly still shows the explorer. Shared by "★ Save to collection"
+  // and "📍 Add keyframe" (fr-8v41).
+  function captureCurrentThumbnail(): string {
+    const mode =
+      state.renderMode === "flame" && flameSession.hasFirstFrame
+        ? "flame"
+        : state.renderMode === "solid" && solidSession.hasFirstFrame
+          ? "solid"
+          : "points";
+    return scene.captureThumbnail(mode);
   }
 
   // Push the current soft-slice view state to the scene shader. Shared by
@@ -817,11 +993,19 @@ function main(): void {
    * current snap behavior IS the reduced-motion path (the `finish()`
    * discard covers a morph left in flight when the OS preference flipped
    * mid-tween — the plain replaced request supersedes it whole).
+   *
+   * `seed` pins the morph's generation seed (fr-8v41): a timeline playback
+   * leg passes its deterministic per-leg seed (timeline.ts's legSeed) so
+   * every run of the same timeline generates the same content stream;
+   * omitted, a fresh random seed is rolled as ever. (A chained restart
+   * keeps the in-flight morph's seed regardless — see MorphTween.start —
+   * which is itself the timeline's own earlier leg seed during playback.)
    */
   function regenerateReplaced(
     from: MorphSystem,
     fit: boolean,
     durationMs = MORPH_TWEEN_MS,
+    seed?: number,
   ): void {
     if (prefersReducedMotion()) {
       morphTween.finish();
@@ -834,7 +1018,7 @@ function main(): void {
     morphTween.start(
       from,
       currentMorphSystem(),
-      rollSeed(),
+      seed ?? rollSeed(),
       performance.now(),
       durationMs,
     );
@@ -1914,6 +2098,14 @@ function main(): void {
         // segmented control they just clicked.
         driftPolicy.stop();
       }
+      // Timeline playback is points-only by design (fr-8v41: a converging
+      // flame/solid render has no deterministic duration for the schedule
+      // to hold), so a manual switch away from the explorer ends it — a
+      // STOP like the random drift show's, and silent for the same reason
+      // as above. A leg's own applyDecodedSnapshot never reaches here:
+      // playback keeps renderMode at "points", so its switch is the no-op
+      // early return.
+      timelinePolicy.stop();
       // So does the morph (fr-a04l): the flame/solid start commands snapshot
       // the DOCUMENT's system, so snap the display to it — and animate()
       // stops polling the tween during a render, so an unsnapped morph would
@@ -2005,12 +2197,15 @@ function main(): void {
    * away from a pose the caller is about to restore (fr-uf3). `morphMs`
    * stretches that tween for a collection drift leg (fr-w2ve), exactly like
    * applyEdit's own `morphMs`; omitted, the click-feedback default governs.
+   * `morphSeed` pins the morph's generation seed for a timeline playback
+   * leg (fr-8v41; see regenerateReplaced).
    */
   function applyDecodedSnapshot(
     snap: SceneSnapshot,
     refit: boolean,
     morph: boolean,
     morphMs?: number,
+    morphSeed?: number,
   ): void {
     // Undo/redo and a gallery load are the user reaching in: both end the
     // drift show (fr-wavo) — this is the one chokepoint on their shared path.
@@ -2018,7 +2213,7 @@ function main(): void {
     // here, but under the policy's own-leg guard the stop no-ops before
     // ever reaching the toast — only a genuine undo/redo or manual load
     // actually stops (and announces) anything.
-    driftPolicy.stop({ notify: true });
+    stopShows({ notify: true });
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load.
@@ -2038,7 +2233,7 @@ function main(): void {
       state = selectTransform(state, null);
     }
     if (morph) {
-      regenerateReplaced(morphFrom, refit, morphMs);
+      regenerateReplaced(morphFrom, refit, morphMs, morphSeed);
     } else {
       morphTween.finish();
       regenerate(true, refit);
@@ -2353,7 +2548,7 @@ function main(): void {
     // too, but under the policy's own-leg guard the stop no-ops before the
     // toast — only a genuine user edit actually stops (and announces)
     // anything.
-    driftPolicy.stop({ notify: true });
+    stopShows({ notify: true });
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns.
     pendingRenderMode = null;
@@ -2554,7 +2749,7 @@ function main(): void {
     onMutateAgain: () => buildMutationGrid(),
     // The ambient drift show's toggle (fr-wavo). Session-only, never
     // persisted; the button is disabled under reduced motion
-    // (syncDriftAvailability), and the guard here covers a preference flip
+    // (syncMotionAvailability), and the guard here covers a preference flip
     // that raced the disable. Starting the show closes the panel like
     // "Watch it build" does — it's a lean-back display; the current
     // attractor gets a full dwell before the first departure (drift.ts).
@@ -2568,6 +2763,10 @@ function main(): void {
         return;
       }
       if (prefersReducedMotion()) return;
+      // Starting the ambient show ends a running timeline playback — with
+      // the toast (fr-ygr1): the user is looking at the Drift toggle, not
+      // the timeline's lit Play button (fr-8v41).
+      timelinePolicy.stop({ notify: true });
       driftSource = "random";
       driftShow.start();
       ui.setDriftActive(true);
@@ -2601,7 +2800,7 @@ function main(): void {
       // (fr-ygr1): a slider/select/checkbox edit is exactly the "the user
       // was doing something else" case.
       if (spec.persisted !== false) {
-        driftPolicy.stop({ notify: true });
+        stopShows({ notify: true });
         editSession.beginEdit();
       }
       state = applyScalarControl(state, spec, raw);
@@ -2622,7 +2821,7 @@ function main(): void {
     onCustomPaletteStops: (stops) => {
       // Notify (fr-ygr1): a gradient-editor edit, same bucket as any other
       // document edit.
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       editSession.beginEdit();
       state = setCustomPaletteStops(state, stops);
       ui.updateLabels(state);
@@ -2651,7 +2850,7 @@ function main(): void {
     onPositionAxisColors: (colors) => {
       // Notify (fr-ygr1): an axis-color-picker edit, same bucket as any
       // other document edit.
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
@@ -2672,7 +2871,7 @@ function main(): void {
       // ask for, same bucket as an edit reaching in from elsewhere (see
       // the driftPolicy wiring's doc, which groups "starting a build replay" with
       // applyEdit/time-travel/gallery-loads as "the user reached in").
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       // Snap any in-flight morph before replaying (fr-a04l): the replay
       // reveals the displayed buffer, which should be the settled target,
       // not a mid-morph intermediate. (Morph landings cancel a replay
@@ -2747,15 +2946,9 @@ function main(): void {
     // gate), so the thumbnail honestly captures that instead — the tag
     // stays the render's, which is what the save meant.
     onSaveToCollection: () => {
-      const thumbnailMode =
-        state.renderMode === "flame" && flameSession.hasFirstFrame
-          ? "flame"
-          : state.renderMode === "solid" && solidSession.hasFirstFrame
-            ? "solid"
-            : "points";
       collection.add(
         encodeScene(currentDocument()),
-        scene.captureThumbnail(thumbnailMode),
+        captureCurrentThumbnail(),
         state.renderMode === "points" ? undefined : state.renderMode,
       );
       ui.setCollectionCount(collection.size);
@@ -2774,6 +2967,9 @@ function main(): void {
     // the guard covers a click racing either change.
     onDriftCollection: () => {
       if (prefersReducedMotion() || collection.size === 0) return;
+      // Same mutual exclusion as onDriftToggle: the slideshow ends a
+      // running timeline playback, with the toast (fr-8v41).
+      timelinePolicy.stop({ notify: true });
       driftSource = "collection";
       driftLastPlayedId = null;
       driftShow.start();
@@ -2789,6 +2985,93 @@ function main(): void {
       ui.closeGallery();
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
+    },
+    // Animation timeline (fr-8v41). Authoring edits (add/remove/move/
+    // retime) act on the persistent TimelineStore and re-render the
+    // section — and each one stops a running playback FIRST: the run
+    // captured its schedule at start and launchTimelineLeg resolves steps
+    // by index at leg time, so editing under it would desynchronize the
+    // show from the sequence it's playing. Those stops notify (fr-ygr1):
+    // mid-playback the panel is the user reaching in from a control that
+    // isn't the lit Play toggle. While nothing is playing they no-op, like
+    // every policy stop.
+    onTimelineAddKeyframe: () => {
+      timelinePolicy.stop({ notify: true });
+      const step = timeline.add(
+        encodeScene(currentDocument()),
+        captureCurrentThumbnail(),
+      );
+      // The store refuses at cap rather than evicting part of an authored
+      // sequence (timeline.ts) — say so instead of silently doing nothing.
+      if (!step) {
+        ui.flashToast(`Timeline is full (${TIMELINE_CAP} keyframes)`);
+        return;
+      }
+      refreshTimelineUi();
+      ui.flashToast("Keyframe added");
+    },
+    // ▶ Play / ■ Stop. The stop branch is silent (fr-ygr1): the explicit
+    // toggle itself, the user is looking right at it — mirroring
+    // onDriftToggle. The reduced-motion/empty guards cover a click racing
+    // the disabled-state sync, like the drift toggle's own guard.
+    onTimelinePlayToggle: () => {
+      if (timelinePlayer.active) {
+        timelinePolicy.stop();
+        return;
+      }
+      if (prefersReducedMotion() || timeline.size === 0) return;
+      startTimelinePlayback(false);
+    },
+    // ⏺ Export clip: the same playback run with the recorder rolling
+    // (fr-8v41) — whatever ends the run also stops the recorder, so the
+    // clip downloads (see timelineExporting). If a manual recording is
+    // already running, adopt it rather than toggling it off — the run's
+    // end will finalize it exactly the same way.
+    onTimelineExport: () => {
+      if (
+        timelinePlayer.active ||
+        prefersReducedMotion() ||
+        timeline.size === 0
+      ) {
+        return;
+      }
+      if (timelineDurationMs(timeline.all()) > MAX_RECORDING_SECONDS * 1000) {
+        ui.flashToast(
+          `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
+        );
+      }
+      startTimelinePlayback(true);
+      if (!recorderActive) recorder.toggle();
+    },
+    onTimelineRemoveStep: (id) => {
+      timelinePolicy.stop({ notify: true });
+      const steps = timeline.all();
+      const at = steps.findIndex((s) => s.id === id);
+      if (at === -1) return; // raced double-click — nothing to remove.
+      const step = steps[at];
+      timeline.remove(id);
+      refreshTimelineUi();
+      // Undo (the collection delete's fr-ifts pattern): a removed keyframe
+      // may be the only copy of its scene anywhere — the live document has
+      // long since moved on — so the toast hands the exact step back to
+      // TimelineStore.restore at its old index.
+      ui.flashToast("Keyframe removed", {
+        label: "Undo",
+        onAction: () => {
+          timeline.restore(step, at);
+          refreshTimelineUi();
+        },
+      });
+    },
+    onTimelineMoveStep: (id, delta) => {
+      timelinePolicy.stop({ notify: true });
+      timeline.move(id, delta);
+      refreshTimelineUi();
+    },
+    onTimelineStepTiming: (id, timing) => {
+      timelinePolicy.stop({ notify: true });
+      timeline.setTiming(id, timing);
+      refreshTimelineUi();
     },
     onLoadFromCollection: (id) => {
       const entry = collection.all().find((s) => s.id === id);
@@ -2924,7 +3207,7 @@ function main(): void {
     onTransformGeometry: (index, geometry) => {
       // Notify (fr-ygr1): a panel-slider transform edit, same bucket as any
       // other document edit.
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       scene.setGuideGeometry(index, geometry);
@@ -2956,7 +3239,7 @@ function main(): void {
     onFinalTransformGeometry: (geometry) => {
       // Notify (fr-ygr1): a panel-slider final-transform edit, same bucket
       // as any other document edit.
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       editSession.beginEdit();
       state = setFinalTransform(state, { id: 0, ...geometry });
       ui.renderTransformList(
@@ -3043,7 +3326,7 @@ function main(): void {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
       // the drift show like every other undoable edit (fr-wavo). Notify
       // (fr-ygr1): same bucket as any other document edit.
-      driftPolicy.stop({ notify: true });
+      stopShows({ notify: true });
       editSession.beginEdit();
       state = updateTransform(state, index, geometry);
       ui.renderTransformList(
@@ -3162,22 +3445,31 @@ function main(): void {
     cloudGenerator.request(bootParams);
   }
 
-  // Drift is unavailable under reduced motion — no motion means no drift
-  // (fr-wavo): the toggle disables itself with an explanation rather than
-  // silently doing nothing. Tracked live, so flipping the OS preference
-  // mid-session both disables the toggle and ends a running show
-  // immediately (DriftPolicy.advance's leg-boundary check is the belt-and-braces
-  // for engines that never fire the change event).
+  // Drift and timeline playback are unavailable under reduced motion — no
+  // motion means no show (fr-wavo, fr-8v41): both toggles disable
+  // themselves with an explanation rather than silently doing nothing
+  // (timeline AUTHORING stays available — adding keyframes isn't motion).
+  // Tracked live, so flipping the OS preference mid-session both disables
+  // the toggles and ends a running show immediately (DriftPolicy.advance's
+  // leg-boundary check is the belt-and-braces for engines that never fire
+  // the change event).
   const reducedMotionQuery = window.matchMedia?.(
     "(prefers-reduced-motion: reduce)",
   );
-  function syncDriftAvailability(): void {
-    ui.setDriftAvailable(!prefersReducedMotion());
+  function syncMotionAvailability(): void {
+    const available = !prefersReducedMotion();
+    ui.setDriftAvailable(available);
+    ui.setTimelineAvailable(available);
     // Silent (fr-ygr1): the reduced-motion availability sync itself.
-    if (prefersReducedMotion()) driftPolicy.stop();
+    if (!available) stopShows();
   }
-  syncDriftAvailability();
-  reducedMotionQuery?.addEventListener("change", syncDriftAvailability);
+  syncMotionAvailability();
+  reducedMotionQuery?.addEventListener("change", syncMotionAvailability);
+
+  // Boot-time render of the timeline section (fr-8v41): the store loaded
+  // whatever the last session authored; every later edit re-renders through
+  // the same helper.
+  refreshTimelineUi();
 
   // While a flame render is active, accumulation/downsample/tone-map all
   // happen in the worker (see flame-worker-core.ts) and arrive as "progress"
@@ -3267,7 +3559,22 @@ function main(): void {
     // flame/solid still — held while it converges, due again a beat after
     // it completes — while a random show is stopped by switchRenderMode
     // before those modes can even show (fr-wavo).
-    if (driftShow.frame()) driftPolicy.advance();
+    if (driftShow.frame()) driftPolicy.advance(launchDriftLeg);
+    // The timeline playback (fr-8v41): same conductor pattern as the drift
+    // show above (and the same after-the-morph-poll ordering rationale) —
+    // when a leg comes due, load that keyframe under the own-leg guard;
+    // when the run's schedule completes, finish the playback (un-light the
+    // toggle, stop an export run's recorder so the clip downloads). At most
+    // one of the two shows is ever active, and between events this poll is
+    // one comparison (timeline-player.ts).
+    const timelineEvent = timelinePlayer.frame();
+    if (timelineEvent) {
+      if (timelineEvent.kind === "leg") {
+        timelinePolicy.advance(() => launchTimelineLeg(timelineEvent.index));
+      } else {
+        finishTimelinePlayback();
+      }
+    }
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
       // applying the live orbit camera so the user can keep looking around
@@ -3317,12 +3624,19 @@ function main(): void {
     // orientation on refocus/exit.
     const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
     lastMotionTickMs = now;
-    if (!viewIs4D && autoOrbitOn && !gestures.gestureActive()) {
+    if (
+      !viewIs4D &&
+      autoOrbitOn &&
+      !gestures.gestureActive() &&
+      !cameraTween.poseGliding
+    ) {
       // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
       // before applyCamera so it lands on this frame. Pure camera motion —
       // no RNG, no regenerate, no save (camera is never persisted).
       // Paused while the user's hand is on the canvas (same theta a drag
-      // writes); composes freely with the auto-fit tween (radius/target).
+      // writes); composes freely with the auto-fit tween (radius/target) —
+      // but NOT with a timeline leg's pose glide (fr-8v41), the one camera
+      // motion that owns theta itself, so it pauses for that too.
       orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
     }
     scene.applyCamera(orbit);
