@@ -115,7 +115,7 @@ export function encodeSceneFile(encoded: string, exportedAt: number): string {
 }
 
 /**
- * Serialize a whole collection for an "Export collection" backup download.
+ * Serialize a whole collection for a "⬇ Back up collection" download.
  * Pass `SceneCollection.all()`'s result (newest-first); order is preserved
  * exactly as given, never re-sorted. `id` is DELIBERATELY omitted from every
  * entry — it is storage-internal, minted per `SceneCollection` instance (see
@@ -148,7 +148,7 @@ export function encodeCollectionFile(
 }
 
 /**
- * Serialize the authored timeline for a "⬇ Export timeline" download
+ * Serialize the authored timeline for a "⬇ Back up timeline" download
  * (fr-h9rk). Pass `TimelineStore.all()`'s result (playback order —
  * preserved exactly, never re-sorted). `seed` is the timeline's persisted
  * determinism root (see `timeline.ts`'s `legSeed`): carrying it means a

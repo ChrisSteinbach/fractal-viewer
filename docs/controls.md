@@ -136,7 +136,7 @@ of snapping (see **Presets** below).
 - **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
   (see **Sharing & persistence** below). Available in every render mode
-  (fr-75sq), like Export. **★ Save to collection** saves the current system
+  (fr-75sq), like Capture and Share. **★ Save to collection** saves the current system
   with a thumbnail of what's actually showing — the live cloud, or the
   flame/solid frame while one of those renders is up — and confirms with a
   toast. A save made from a Flame/Solid render also **tags the entry with
@@ -150,20 +150,26 @@ of snapping (see **Presets** below).
   back exactly as saved. Like a preset load, it morphs smoothly into the new
   shape rather than snapping. Each card has a ✕ to delete it; Escape, the
   backdrop, or the header ✕ close the modal, and the header's **▶ Drift
-  collection** starts the looping slideshow described above. **🔗 Copy link** copies a
-  shareable `#v1=…` link built fresh from the current state, not the
-  (debounced) address bar.
-  **⬇ Export collection** (fr-de9t) downloads the whole gallery — encoded
+  collection** starts the looping slideshow described above.
+  **⬇ Back up collection** (fr-de9t) downloads the whole gallery — encoded
   scenes, mode tags, thumbnails — as one JSON backup file (disabled while
-  the collection is empty), and **⬆ Import file** merges a backup back in:
-  new entries slot into their saved chronological order, ones already
-  present are skipped, and the gallery opens to show the result. The same
-  import also accepts a single **⤓ Save scene file** export (loading it like
-  a gallery card) and a **⬇ Export timeline** backup (fr-h9rk, replacing the
-  authored timeline — with an Undo toast when one was there), and any of
-  these files can simply be dropped anywhere on the page. The collection otherwise lives only in this browser profile's
-  localStorage — export a backup before clearing site data or when moving
+  the collection is empty). Restoring goes through **Share**'s **⬆ Import
+  file**: merged entries slot into their saved chronological order, ones
+  already present are skipped, and the gallery opens to show the result.
+  The collection otherwise lives only in this browser profile's
+  localStorage — back it up before clearing site data or when moving
   devices.
+- **Share** (fr-5mdt) — the current scene as a portable document, plus the
+  app's one import door. **🔗 Copy link** copies a shareable `#v1=…` link
+  built fresh from the current state, not the (debounced) address bar.
+  **⤓ Save scene file** is the link's file counterpart (see below);
+  **⤓ Export .flame** writes the system's flat XY shadow as a
+  flam3/Apophysis `.flame` file other flame tools can open (see
+  [flame-interop.md](flame-interop.md)). **⬆ Import file** — or dropping a
+  file anywhere on the page — loads a scene file, imports a `.flame` file,
+  merges a collection backup into the gallery, or restores a timeline
+  backup (fr-h9rk, replacing the authored timeline — with an Undo toast
+  when one was there).
 - **Points** — log-scaled slider for the point count (1k–5M); takes effect on
   **Regenerate Points** (or immediately on other edits when auto-update is on).
 - **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
@@ -209,7 +215,7 @@ of snapping (see **Presets** below).
   file: the same document bytes as 🔗 Copy link (camera pose included),
   wrapped in a file envelope instead of a URL, for keeping scenes where a
   link doesn't fit — archives, email attachments, version control. Load one
-  back with **⬆ Import file** (see **Collection**) or by dropping it anywhere
+  back with **⬆ Import file** (see **Share**) or by dropping it anywhere
   on the page.
 - **Final-transform lens** — the _(warps the whole cloud)_ checkbox in the
   **Transforms** section turns on a **final transform**: one more affine +
@@ -299,12 +305,13 @@ as you edit, and mirrored to `localStorage`. So:
   exact system; a pasted link takes priority over any locally saved scene.
 - **Reloads restore your last scene** even without a link, from `localStorage`.
 - **Keep more than one with the Collection.** ★ Save to collection stores any
-  number of systems in a persistent gallery; reload one from ▦ Gallery, or
-  copy a fresh link for the current scene with 🔗 Copy link — the multi-slot
-  counterpart to this single autosaved scene (see **Collection** above).
+  number of systems in a persistent gallery; reload one from ▦ Gallery — the
+  multi-slot counterpart to this single autosaved scene (see **Collection**
+  above). 🔗 Copy link (in **Share**) copies a fresh link for the current
+  scene, not the (debounced) address bar.
 - **Take scenes off this device with files** (fr-de9t). ⤓ Save scene file
-  exports the current scene as JSON; ⬇ Export collection backs up the whole
-  gallery; ⬇ Export timeline (fr-h9rk) backs up the authored animation
+  exports the current scene as JSON; ⬇ Back up collection backs up the whole
+  gallery; ⬇ Back up timeline (fr-h9rk) backs up the authored animation
   timeline, playback seed included. ⬆ Import file (or dropping a file onto
   the page) loads a scene file, merges a collection backup, or restores a
   timeline — all the localStorage stores above are trapped in one browser
