@@ -17,7 +17,12 @@ import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
-import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
+import {
+  contextAntialias,
+  DARK_BACKDROP,
+  HAZE_BACKDROP,
+  hexToRgb01,
+} from "./constants";
 import type { RenderStyle, SolidParams } from "./state";
 import {
   configureVoxelTexture,
@@ -551,7 +556,16 @@ export class FractalScene {
     this.camera.position.set(5, 4, 5);
     this.camera.lookAt(0, 0, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // MSAA is a context-creation-time choice (fr-rr2m): on at low DPR where
+    // aliasing shows, off at DPR >= 2 where the buffer already oversamples
+    // and the samples would quadruple fill/memory. `?msaa=0|1` overrides for
+    // on-device profiling.
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: contextAntialias(
+        window.devicePixelRatio,
+        new URLSearchParams(window.location.search).get("msaa"),
+      ),
+    });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(this.basePixelRatio());
     // Colors are authored as verbatim sRGB (ColorManagement is off), so the
