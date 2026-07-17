@@ -160,7 +160,7 @@ export interface UiHandlers {
   /** "⏺ Export clip" was clicked: play the timeline while recording the
    * canvas to a downloadable video clip (fr-8v41). */
   onTimelineExport: () => void;
-  /** "⬇ Export timeline" was clicked (fr-h9rk): download the authored
+  /** "⬇ Back up timeline" was clicked (fr-h9rk): download the authored
    * timeline — keyframe steps + the playback determinism seed — as a JSON
    * backup file, the timeline counterpart of {@link onExportCollection}. */
   onExportTimeline: () => void;
@@ -178,7 +178,7 @@ export interface UiHandlers {
   ) => void;
   /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
   onCopyLink: () => void;
-  /** "⬇ Export collection" was clicked: download the whole saved-scene
+  /** "⬇ Back up collection" was clicked: download the whole saved-scene
    * collection as a JSON backup file (fr-de9t). */
   onExportCollection: () => void;
   /** An import file arrived (fr-de9t) — picked through "⬆ Import file"'s
@@ -712,7 +712,7 @@ export class Ui {
   private readonly galleryBtn: HTMLButtonElement;
   private readonly copyLinkBtn: HTMLButtonElement;
   private readonly exportCollectionBtn: HTMLButtonElement;
-  /** "⬇ Export collection"'s authored title, restored whenever the button
+  /** "⬇ Back up collection"'s authored title, restored whenever the button
    * re-enables — the disabled state swaps in a why-explaining one, the same
    * self-explaining pattern as {@link syncGalleryDriftBtn}. */
   private readonly exportCollectionTitle: string;
@@ -743,7 +743,7 @@ export class Ui {
   private readonly timelineExportBtn: HTMLButtonElement;
   private readonly timelineExportTitle: string;
   private readonly exportTimelineBtn: HTMLButtonElement;
-  /** "⬇ Export timeline"'s authored title, restored whenever the button
+  /** "⬇ Back up timeline"'s authored title, restored whenever the button
    * re-enables — the disabled state swaps in a why-explaining one, the same
    * self-explaining pattern as {@link exportCollectionTitle} (fr-h9rk). */
   private readonly exportTimelineTitle: string;
@@ -1835,7 +1835,7 @@ export class Ui {
   }
 
   /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai) —
-   * and on "⬇ Export collection"'s enabled state (fr-de9t): an empty
+   * and on "⬇ Back up collection"'s enabled state (fr-de9t): an empty
    * collection has nothing to back up, and the swapped-in title says so
    * instead of leaving a dead button unexplained, the same self-explaining
    * pattern as {@link syncGalleryDriftBtn}. */
@@ -2296,13 +2296,13 @@ export class Ui {
    * any of them changes. */
   private syncTimelineButtons(): void {
     const empty = this.timelineStepCount === 0;
-    // "⬇ Export timeline" only needs something to write (fr-h9rk): a pure
+    // "⬇ Back up timeline" only needs something to write (fr-h9rk): a pure
     // data read, so neither reduced motion nor a running playback disables
-    // it — the emptiness-only rule "⬇ Export collection" follows
+    // it — the emptiness-only rule "⬇ Back up collection" follows
     // (setCollectionCount), unlike its Play/Export-clip neighbors below.
     this.exportTimelineBtn.disabled = empty;
     this.exportTimelineBtn.title = empty
-      ? "Add a keyframe first — there's nothing to save yet"
+      ? "Add a keyframe first — there's nothing to back up yet"
       : this.exportTimelineTitle;
 
     this.timelinePlayBtn.disabled =

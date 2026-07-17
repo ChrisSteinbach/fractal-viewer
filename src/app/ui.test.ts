@@ -4288,7 +4288,7 @@ describe("Ui timeline section (fr-8v41)", () => {
     expect(rows()[0].querySelector(".timeline-step-mode")).toBeNull();
   });
 
-  it("fires onExportTimeline when ⬇ Export timeline is clicked", () => {
+  it("fires onExportTimeline when ⬇ Back up timeline is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -4299,14 +4299,14 @@ describe("Ui timeline section (fr-8v41)", () => {
     expect(handlers.onExportTimeline).toHaveBeenCalledOnce();
   });
 
-  it("disables ⬇ Export timeline only while the timeline is empty", () => {
+  it("disables ⬇ Back up timeline only while the timeline is empty", () => {
     const ui = new Ui(document);
     const authoredTitle = exportTimelineBtn().title;
 
     ui.renderTimeline([], "0:00");
     expect(exportTimelineBtn().disabled).toBe(true);
     expect(exportTimelineBtn().title).toBe(
-      "Add a keyframe first — there's nothing to save yet",
+      "Add a keyframe first — there's nothing to back up yet",
     );
 
     ui.renderTimeline([step("a")], "0:06");
@@ -4314,7 +4314,7 @@ describe("Ui timeline section (fr-8v41)", () => {
     expect(exportTimelineBtn().title).toBe(authoredTitle);
   });
 
-  it("keeps ⬇ Export timeline enabled during playback and under reduced motion — a data read, not motion", () => {
+  it("keeps ⬇ Back up timeline enabled during playback and under reduced motion — a data read, not motion", () => {
     const ui = new Ui(document);
     ui.renderTimeline([step("a")], "0:06");
 
@@ -4350,7 +4350,7 @@ describe("Ui file import/export (fr-de9t)", () => {
     expect(accept).toContain(".flame");
   });
 
-  it("fires onExportCollection when ⬇ Export collection is clicked", () => {
+  it("fires onExportCollection when ⬇ Back up collection is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -4359,7 +4359,7 @@ describe("Ui file import/export (fr-de9t)", () => {
     expect(handlers.onExportCollection).toHaveBeenCalledTimes(1);
   });
 
-  it("disables ⬇ Export collection at count zero with an explanatory title, re-enabling on a save", () => {
+  it("disables ⬇ Back up collection at count zero with an explanatory title, re-enabling on a save", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     const btn = document.getElementById(

@@ -164,10 +164,13 @@
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
 
-      <details class="panel-section" id="exportSection" name="panel-section">
-        <summary>Export</summary>
+      <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way
+           snapshots of what's on screen. The scene-document traffic (link,
+           JSON file, .flame, import) lives in the Share section below. -->
+      <details class="panel-section" id="captureSection" name="panel-section">
+        <summary>Capture</summary>
         <label class="select-label">
-          Export size
+          Capture size
           <select
             id="exportScale"
             title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
@@ -183,32 +186,59 @@
         <button class="btn btn-ghost" id="recordVideoBtn" type="button">
           ● Record video
         </button>
+      </details>
+
+      <!-- Share (fr-5mdt): the current scene as a portable DOCUMENT — link,
+           JSON file, .flame interop — plus the app's one import door, which
+           format-sniffs every file kind (scene JSON, .flame, collection and
+           timeline backups; decodeImportFile routes). Outside
+           #explorerControls like its neighbors (fr-75sq): all of it works
+           while a flame/solid render is showing. -->
+      <details class="panel-section" id="shareSection" name="panel-section">
+        <summary>Share</summary>
+        <button class="btn btn-ghost" id="copyLinkBtn" type="button">
+          🔗 Copy link
+        </button>
         <button
           class="btn btn-ghost"
           id="saveSceneFileBtn"
           type="button"
-          title="Download the current scene as a JSON file — the file counterpart of Copy link; re-import it here on any device"
+          title="Download the current scene as a JSON file — the file counterpart of 🔗 Copy link; load it back with ⬆ Import file on any device"
         >
           ⤓ Save scene file
         </button>
         <!-- flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a
-             .flame file other flame tools can open. Import goes through the
-             same ⬆ Import file picker / drag-drop as the JSON files. -->
+             .flame file other flame tools can open. -->
         <button
           class="btn btn-ghost"
           id="saveFlameFileBtn"
           type="button"
-          title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) — importing .flame files works via ⬆ Import file or drag-and-drop"
+          title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) that other flame tools can open"
         >
           ⤓ Export .flame
         </button>
+        <button
+          class="btn btn-ghost"
+          id="importFileBtn"
+          type="button"
+          title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into the gallery; you can also drop the file anywhere on the page"
+        >
+          ⬆ Import file
+        </button>
+        <input
+          type="file"
+          id="importFileInput"
+          class="hidden"
+          accept=".json,application/json,.flame,.xml,application/xml,text/xml"
+          aria-hidden="true"
+          tabindex="-1"
+        />
         <p class="flame-hint">
-          To load a saved file, use ⬆&nbsp;Import&nbsp;file in the Collection
-          section — or drop it anywhere on the page.
+          Files also load by dropping them anywhere on the page.
         </p>
       </details>
 
-      <!-- Outside #explorerControls on purpose (fr-75sq), like Export: saving
+      <!-- Outside #explorerControls on purpose (fr-75sq), like Capture: saving
            a keeper / opening the gallery works while a flame/solid render is
            showing — the save then captures the rendered frame and tags the
            entry with the mode it came from. -->
@@ -224,37 +254,17 @@
         <button class="btn btn-ghost" id="galleryBtn" type="button">
           ▦ Gallery (<span id="collectionCount">0</span>)
         </button>
-        <button class="btn btn-ghost" id="copyLinkBtn" type="button">
-          🔗 Copy link
-        </button>
-        <!-- File backup/restore (fr-de9t): the collection otherwise lives only
-             in this browser profile's localStorage. Import also accepts
-             single-scene files (and either kind dropped anywhere on the
-             page); the hidden input is the picker ⬆ Import file opens. -->
+        <!-- File backup (fr-de9t): the collection otherwise lives only in
+             this browser profile's localStorage. Restore goes through the
+             Share section's ⬆ Import file / drag-drop (fr-5mdt). -->
         <button
           class="btn btn-ghost"
           id="exportCollectionBtn"
           type="button"
-          title="Download the whole collection as a JSON backup file"
+          title="Download the whole collection as a JSON backup file — restore it with Share's ⬆ Import file"
         >
-          ⬇ Export collection
+          ⬇ Back up collection
         </button>
-        <button
-          class="btn btn-ghost"
-          id="importFileBtn"
-          type="button"
-          title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into this gallery; you can also drop the file anywhere on the page"
-        >
-          ⬆ Import file
-        </button>
-        <input
-          type="file"
-          id="importFileInput"
-          class="hidden"
-          accept=".json,application/json,.flame,.xml,application/xml,text/xml"
-          aria-hidden="true"
-          tabindex="-1"
-        />
       </details>
 
       <!-- Animation timeline (fr-8v41): an authored sequence of keyframes played
@@ -288,16 +298,16 @@
         >
           ⏺ Export clip
         </button>
-        <!-- File backup/restore (fr-h9rk): the timeline otherwise lives only
-             in this browser profile's localStorage. Import goes through the
-             same ⬆ Import file picker / drag-drop as the other JSON files. -->
+        <!-- File backup (fr-h9rk): the timeline otherwise lives only in this
+             browser profile's localStorage. Restore goes through the Share
+             section's ⬆ Import file / drag-drop (fr-5mdt). -->
         <button
           class="btn btn-ghost"
           id="exportTimelineBtn"
           type="button"
-          title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it via ⬆ Import file"
+          title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it with Share's ⬆ Import file"
         >
-          ⬇ Export timeline
+          ⬇ Back up timeline
         </button>
         <div id="timelineStatus" class="timeline-status hidden"></div>
         <div id="timelineList" class="timeline-list"></div>
