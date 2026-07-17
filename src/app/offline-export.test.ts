@@ -22,6 +22,11 @@ function makeDeps(
       return Promise.resolve();
     },
     running: () => running,
+    renderParked: () => false,
+    nextParkSignal: () => {
+      log.push("parkSignal");
+      return Promise.resolve();
+    },
     renderFrame: (nowMs) => log.push(`render@${String(nowMs)}`),
     encodeFrame: (index) => {
       log.push(`encode#${String(index)}`);
@@ -161,5 +166,74 @@ describe("runOfflineExport", () => {
     );
     expect(log.filter((e) => e.startsWith("step"))).toEqual(["step@1000"]);
     expect(log.filter((e) => e.startsWith("progress"))).toEqual([]);
+  });
+
+  it("parks on a converging render keyframe, repaints while still parked, and captures the converged still once unparked", async () => {
+    // Two convergence progress chunks: wake #1 is still parked (a repaint,
+    // not a capture), wake #2 is the budget-met resume that unparks — it
+    // must NOT paint inside the park loop, so the only paint at t=1000
+    // after that is the normal capture render right after the loop.
+    let parkSignals = 0;
+    const { deps, log } = makeDeps({
+      stopAfterSteps: 2,
+      totalFrames: 1,
+      renderParked: () => parkSignals < 2,
+      nextParkSignal: () => {
+        parkSignals++;
+        log.push("parkSignal");
+        return Promise.resolve();
+      },
+    });
+
+    const run = await runOfflineExport(deps);
+
+    expect(log).toEqual([
+      "step@1000",
+      "parkSignal",
+      "render@1000",
+      "parkSignal",
+      "render@1000",
+      "encode#0",
+      "progress:1/1",
+      "yield",
+      "step@1100",
+    ]);
+    expect(run).toEqual({ frames: 1, capped: false });
+  });
+
+  it("captures nothing when a stop lands while parked", async () => {
+    // renderParked never clears on its own — only the stop (flipped by the
+    // second park signal) ends the park loop, so nothing downstream of it
+    // (the capture render, the encode) may run.
+    let running = true;
+    let parkSignals = 0;
+    const { deps, log } = makeDeps({
+      running: () => running,
+      renderParked: () => true,
+      nextParkSignal: () => {
+        parkSignals++;
+        log.push("parkSignal");
+        if (parkSignals >= 2) running = false;
+        return Promise.resolve();
+      },
+    });
+
+    const run = await runOfflineExport(deps);
+
+    expect(log).toEqual([
+      "step@1000",
+      "parkSignal",
+      "render@1000",
+      "parkSignal",
+    ]);
+    expect(run).toEqual({ frames: 0, capped: false });
+  });
+
+  it("never consults the park signal on a run that never parks", async () => {
+    const { deps, log } = makeDeps({ stopAfterSteps: 2 });
+
+    await runOfflineExport(deps);
+
+    expect(log).not.toContain("parkSignal");
   });
 });
