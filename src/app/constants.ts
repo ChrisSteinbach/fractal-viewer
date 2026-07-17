@@ -44,3 +44,31 @@ export function hexToRgb01(hex: string): [number, number, number] {
     parseInt(hex.slice(5, 7), 16) / 255,
   ];
 }
+
+/**
+ * Whether to request MSAA (`antialias: true`) when creating the WebGL
+ * context (fr-rr2m). A context-creation-time decision — WebGL cannot toggle
+ * it live, so this is a boot heuristic.
+ *
+ * MSAA pays off only at low pixel densities: at `dpr >= 2` the drawing
+ * buffer already carries 4x the CSS-pixel samples, so geometric aliasing
+ * (the guide lines and grid — point sprites barely benefit) is much less
+ * visible, while 4x MSAA still multiplies fill/memory cost on exactly the
+ * devices that can least afford it (phones and tablets at DPR 2–3). DPR-1
+ * desktop displays keep MSAA: aliasing is most visible there and desktop
+ * GPUs shrug off the cost. Note the glow and EDL styles render through
+ * non-multisampled offscreen targets, so context MSAA never applied to them
+ * anyway — only the direct-to-canvas styles (depth fade, DOF, 4D) are
+ * affected either way.
+ *
+ * `override` carries the `?msaa` URL param for on-device A/B profiling:
+ * `"0"` forces MSAA off, any other present value (`?msaa`, `?msaa=1`)
+ * forces it on, and `null` (param absent) defers to the DPR heuristic.
+ */
+export function contextAntialias(
+  dpr: number,
+  override: string | null = null,
+): boolean {
+  if (override !== null) return override !== "0";
+  return dpr < 2;
+}
