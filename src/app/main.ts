@@ -348,6 +348,18 @@ function main(): void {
   // encoder probe (before the player is active) and doubles as the "the
   // Export button is currently a cancel affordance" flag.
   let offlineExportPending = false;
+  // Wakes the offline export driver's render-keyframe park (fr-6jic):
+  // non-null only while the driver awaits nextParkSignal with the virtual
+  // clock parked on a converging flame/solid still. Resolved on every
+  // signal that could end the park — render progress (noteRenderProgress,
+  // whose budget-met resume is what actually unparks), a render session
+  // exiting early (the deactivate deps), the playback stopping (the
+  // policy's onStopped) — and the driver re-checks its park condition and
+  // re-arms after each, so spurious wakes are harmless.
+  let offlineParkWaiter: (() => void) | null = null;
+  function notifyOfflinePark(): void {
+    offlineParkWaiter?.();
+  }
 
   // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
   // sustained slow frames should trade pixels for frame rate (and when the
@@ -821,6 +833,11 @@ function main(): void {
       driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
       if (state.renderMode === mode) timelinePlayer.resume();
     }
+    // An offline export parked on this render (fr-6jic) re-checks on every
+    // progress event: a budget-met resume above unparks it (the schedule is
+    // re-armed against the parked virtual clock), and a still-converging
+    // chunk repaints the canvas so the park is visible.
+    notifyOfflinePark();
   }
 
   // ── Animation timeline (fr-8v41) ─────────────────────────────────────
@@ -849,10 +866,15 @@ function main(): void {
     onStopped: (notify) => {
       ui.setTimelineActive(false);
       if (notify) ui.flashToast("Timeline stopped");
-      // An OFFLINE export run needs nothing here (fr-92t9): its driver
-      // notices the player went inactive, finalizes the partial clip
-      // itself, and owns the toast.
-      if (offlineExport !== null) return;
+      // An OFFLINE export run needs nothing here beyond a park wake
+      // (fr-92t9): its driver notices the player went inactive, finalizes
+      // the partial clip itself, and owns the toast. The wake matters when
+      // the stop lands mid-park (fr-6jic) — a driver awaiting a render
+      // signal that will never resume must still learn the run ended.
+      if (offlineExport !== null) {
+        notifyOfflinePark();
+        return;
+      }
       // A stopped export run still finalizes its clip: everything recorded
       // up to the stop downloads (an honest partial clip), rather than
       // vanishing with the show.
@@ -1035,11 +1057,18 @@ function main(): void {
    * forced, its pixels encoded — until the player finishes, a stop reaches
    * it (every existing chokepoint works unchanged: the driver just notices
    * the player went inactive and finalizes the partial clip), or the
-   * recorder-parity frame cap cuts it. The `finally` unwinds the virtual
-   * clock: real time may be BEHIND it (a hold-heavy run exports faster than
-   * realtime), so anything still timed against it — pose glides, a
-   * mid-flight morph, the dt baselines — is snapped/reset rather than left
-   * to freeze until the wall clock catches up.
+   * recorder-parity frame cap cuts it. A render keyframe's leg (fr-6jic)
+   * parks the driver instead of holding the clip open: the leg's morph
+   * captures as points, the flame/solid session converges to its budget in
+   * real time with the virtual clock (and the frame counter) standing
+   * still, and the step's holdMs then dwells on the CONVERGED still — so
+   * the clip comes out the authored length, unlike the realtime capture,
+   * which honestly records however long convergence took (fr-v3au). The
+   * `finally` unwinds the virtual clock: real time may be BEHIND it (a
+   * hold-heavy run exports faster than realtime), so anything still timed
+   * against it — pose glides, a mid-flight morph, the dt baselines — is
+   * snapped/reset rather than left to freeze until the wall clock catches
+   * up.
    */
   async function driveOfflineExport(
     session: OfflineEncoderSession,
@@ -1093,6 +1122,22 @@ function main(): void {
           await cloudGenerator.settle();
         },
         running: () => timelinePlayer.active,
+        // Parked while a render keyframe converges (fr-6jic): the player is
+        // holding (launchTimelineLeg held at launch) AND the leg's terminal
+        // cloud has entered its flame/solid session. During the leg's
+        // points-mode morph the hold is already on but the mode is still
+        // "points", so morph frames capture normally; the park engages on
+        // the frame whose settle landed the terminal cloud (its
+        // applyCloudResult consumed pendingRenderMode into the session) and
+        // disengages when noteRenderProgress's budget-met resume drops
+        // `holding` — or, for a render that exits early, when its
+        // deactivate drops the mode back to "points".
+        renderParked: () =>
+          timelinePlayer.holding && state.renderMode !== "points",
+        nextParkSignal: () =>
+          new Promise<void>((resolve) => {
+            offlineParkWaiter = resolve;
+          }),
         renderFrame: (frameNowMs) => {
           tickRender(frameNowMs, true);
         },
@@ -1141,6 +1186,10 @@ function main(): void {
       window.removeEventListener("resize", onResize);
       offlineExport = null;
       virtualNowMs = null;
+      // Hygiene: the run is over, so no park can be pending — drop the last
+      // (already-resolved) waiter rather than letting an ordinary render's
+      // progress keep poking it (fr-6jic).
+      offlineParkWaiter = null;
       // Unwind the virtual clock (see the doc comment): snap anything still
       // timed against it and restart the dt chains from real time.
       cameraTween.finish();
@@ -2286,6 +2335,11 @@ function main(): void {
       // showing can't yank the app out of it via a blind write.
       if (state.renderMode === "flame") state = setRenderMode(state, "points");
       refreshUi();
+      // An offline export parked on this render (fr-6jic): an early exit —
+      // worker error, Back — terminated the worker, so no further progress
+      // event will ever wake the driver; this is its signal to re-check
+      // (renderMode left flame) and fall back to capturing points.
+      notifyOfflinePark();
     },
   });
 
@@ -2429,6 +2483,9 @@ function main(): void {
       // deactivate for why this is not a blind write.
       if (state.renderMode === "solid") state = setRenderMode(state, "points");
       refreshUi();
+      // A parked offline export's early-exit wake (fr-6jic) — see the flame
+      // session's deactivate.
+      notifyOfflinePark();
     },
   });
 
@@ -3455,11 +3512,14 @@ function main(): void {
     // (fr-8v41) — whatever ends the run also stops the recorder, so the
     // clip downloads (see timelineExporting). If a manual recording is
     // already running, adopt it rather than toggling it off — the run's
-    // end will finalize it exactly the same way. With render keyframes in
-    // the sequence (fr-v3au) the clip runs longer than the authored total —
-    // each one records its render converging for however long that takes on
-    // this device — so the cap warning below fires on what is then only a
-    // floor; the recorder's own cap still cuts an overlong run honestly.
+    // end will finalize it exactly the same way. On the REALTIME path,
+    // render keyframes in the sequence (fr-v3au) make the clip run longer
+    // than the authored total — each one records its render converging for
+    // however long that takes on this device — so the cap warning below
+    // fires on what is then only a floor; the recorder's own cap still
+    // cuts an overlong run honestly. The offline path instead parks its
+    // clock through convergence (fr-6jic), so there the authored total is
+    // exact.
     onTimelineExport: () => {
       // While an offline export runs (fr-92t9), the button is the cancel
       // affordance: stop the show and the driver saves the partial clip.
@@ -3482,22 +3542,16 @@ function main(): void {
           `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
         );
       }
-      // Frame-exact offline export (fr-92t9) whenever the run is pure
-      // points and WebCodecs can encode it. Render keyframes (fr-v3au)
-      // hold for live convergence — that's inherently realtime, so those
-      // timelines keep the MediaRecorder capture; so does a run started
-      // with a manual recording already rolling (it owns the canvas
-      // stream — adopt it, as before).
-      if (
-        offlineExportSupported() &&
-        !recorderActive &&
-        steps.every((step) => step.mode === undefined)
-      ) {
+      // Frame-exact offline export (fr-92t9) whenever WebCodecs can encode
+      // it — render keyframes included (fr-6jic): their legs park the
+      // driver's virtual clock while the flame/solid render converges and
+      // capture only the converged still for the step's holdMs. A run
+      // started with a manual recording already rolling keeps the realtime
+      // MediaRecorder capture (it owns the canvas stream — adopt it, as
+      // before); so does a browser without an encodable H.264 config.
+      if (offlineExportSupported() && !recorderActive) {
         void startOfflineExport();
         return;
-      }
-      if (offlineExportSupported() && steps.some((s) => s.mode !== undefined)) {
-        ui.flashToast("Timeline has render keyframes — recording live");
       }
       startTimelinePlayback(true);
       if (!recorderActive) recorder.toggle();

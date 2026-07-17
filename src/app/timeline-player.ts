@@ -48,11 +48,16 @@
  * of `startMs`, so every leg after the held one keeps its authored RELATIVE
  * spacing no matter how long the hold lasted — re-anchoring the same way
  * `start()` anchors once at the top of the run, just done again at resume
- * time. The consequence lands on fr-8v41's export: a recorded clip's length
- * becomes content-dependent once render keyframes are in the mix — an
- * accepted trade (fr-v3au), since the recorder is then honestly capturing
- * however long convergence actually took, and a pure-points timeline (which
- * never holds) keeps its authored-length guarantee unchanged.
+ * time. The consequence lands on fr-8v41's REALTIME export: a recorded
+ * clip's length becomes content-dependent once render keyframes are in the
+ * mix — an accepted trade (fr-v3au), since the recorder is then honestly
+ * capturing however long convergence actually took, and a pure-points
+ * timeline (which never holds) keeps its authored-length guarantee
+ * unchanged. The offline export escapes the trade (fr-6jic): its driver
+ * runs this player on a VIRTUAL clock and parks that clock through the
+ * hold — the render converges in real time, no frames are captured, and
+ * `resume()`'s re-anchor lands against the parked reading — so even a
+ * render-keyframe timeline exports at its authored length there.
  *
  * ## Catch-up: at most one leg per poll, always the latest due
  *

@@ -151,7 +151,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     playback. Not references into the collection. Pure, tested.
   - `timeline-player.ts` — timeline playback clock: ABSOLUTE schedule against
     start, catch-up fires only LATEST due leg. `hold()`/`resume()` suspend for
-    render keyframes (content-dependent clip length). main.ts's
+    render keyframes (content-dependent realtime clip length). main.ts's
     `launchTimelineLeg` wires the morph + camera pose glide + 4D rotor/slice
     glide per leg. A second `DriftPolicy` conducts it. Export = same run with
     recorder rolling, or the offline path. Pure, tested.
@@ -206,8 +206,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     frame-exact timeline export: steps playback on a VIRTUAL clock (main.ts's
     `nowMs()`), awaits `CloudGenerator.settle()` per frame for determinism.
     `video-encode.ts` = WebCodecs H.264 adapter; `mp4-mux.ts` = dependency-free
-    faststart muxer (handles B-frame reordering). Render keyframes use the
-    realtime MediaRecorder path instead.
+    faststart muxer (handles B-frame reordering). Render keyframes PARK the
+    clock while the flame/solid render converges (no frames captured), then
+    dwell the step's holdMs on the converged still — authored clip length.
   - `register-sw.ts` — service-worker registration + COOP/COEP bootstrap.
   - `sw/sw.ts` — Workbox precache + COOP/COEP headers (own TS program).
 
