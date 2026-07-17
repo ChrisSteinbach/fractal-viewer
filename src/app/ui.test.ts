@@ -61,6 +61,7 @@ function noopHandlers(): UiHandlers {
     onTimelineAddKeyframe: vi.fn(),
     onTimelinePlayToggle: vi.fn(),
     onTimelineExport: vi.fn(),
+    onExportTimeline: vi.fn(),
     onTimelineRemoveStep: vi.fn(),
     onTimelineMoveStep: vi.fn(),
     onTimelineStepTiming: vi.fn(),
@@ -4078,6 +4079,9 @@ describe("Ui timeline section (fr-8v41)", () => {
   function exportBtn(): HTMLButtonElement {
     return document.getElementById("timelineExportBtn") as HTMLButtonElement;
   }
+  function exportTimelineBtn(): HTMLButtonElement {
+    return document.getElementById("exportTimelineBtn") as HTMLButtonElement;
+  }
   function status(): HTMLElement {
     return document.getElementById("timelineStatus") as HTMLElement;
   }
@@ -4282,6 +4286,42 @@ describe("Ui timeline section (fr-8v41)", () => {
     ui.renderTimeline([step("a")], "0:06");
 
     expect(rows()[0].querySelector(".timeline-step-mode")).toBeNull();
+  });
+
+  it("fires onExportTimeline when ⬇ Export timeline is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTimeline([step("a")], "0:06");
+
+    exportTimelineBtn().click();
+
+    expect(handlers.onExportTimeline).toHaveBeenCalledOnce();
+  });
+
+  it("disables ⬇ Export timeline only while the timeline is empty", () => {
+    const ui = new Ui(document);
+    const authoredTitle = exportTimelineBtn().title;
+
+    ui.renderTimeline([], "0:00");
+    expect(exportTimelineBtn().disabled).toBe(true);
+    expect(exportTimelineBtn().title).toBe(
+      "Add a keyframe first — there's nothing to save yet",
+    );
+
+    ui.renderTimeline([step("a")], "0:06");
+    expect(exportTimelineBtn().disabled).toBe(false);
+    expect(exportTimelineBtn().title).toBe(authoredTitle);
+  });
+
+  it("keeps ⬇ Export timeline enabled during playback and under reduced motion — a data read, not motion", () => {
+    const ui = new Ui(document);
+    ui.renderTimeline([step("a")], "0:06");
+
+    ui.setTimelineActive(true);
+    ui.setTimelineAvailable(false);
+
+    expect(exportTimelineBtn().disabled).toBe(false);
   });
 });
 

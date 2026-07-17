@@ -6,12 +6,16 @@
  * directly — `collection.ts` deliberately does not import this module or
  * `persist.ts`, so scene decoding stays out of the storage layer).
  *
- * Two file kinds share one JSON envelope:
+ * Three file kinds share one JSON envelope:
  *  - `"scene"` — a single encoded scene, for an "Export scene" / "Import
  *    scene" pair acting on the current document.
  *  - `"collection"` — a whole saved-scene library backup, for an "Export
  *    collection" / "Import collection" pair that merges back via
  *    `SceneCollection.importScenes`.
+ *  - `"timeline"` — an authored animation timeline backup (ordered steps +
+ *    the playback determinism seed), restored via `TimelineStore.replaceAll`
+ *    (a whole-timeline REPLACEMENT, not a merge — see that method's doc
+ *    comment).
  *
  * `decodeImportFile` is the trust boundary for untrusted file bytes — a file
  * picked from disk could be anything: hand-edited, from a future or older
@@ -34,6 +38,8 @@
 import { decodeScene } from "./persist";
 import { COLLECTION_CAP } from "./collection";
 import type { ImportableScene, SavedScene, SavedSceneMode } from "./collection";
+import { TIMELINE_CAP } from "./timeline";
+import type { ImportableTimelineStep, TimelineStep } from "./timeline";
 
 /**
  * Format version written into every exported file. {@link decodeImportFile}
@@ -72,11 +78,20 @@ export const MAX_IMPORT_FILE_BYTES = 32 * 1024 * 1024;
  * A parsed, validated import file — {@link decodeImportFile}'s success
  * shape. A `"collection"` file's `scenes` may be empty (every entry turned
  * out to be individually invalid); reporting that to the user is the
- * caller's concern, not this module's.
+ * caller's concern, not this module's. A `"timeline"` file's `steps` may
+ * likewise be empty; its `seed` is `undefined` when the file's is
+ * missing/corrupt — costing the field, not the file, mirroring
+ * `loadTimeline`'s own stance on a corrupt persisted seed — and
+ * `TimelineStore.replaceAll` rolls a fresh one when it sees `undefined`.
  */
 export type ImportedFile =
   | { kind: "scene"; encoded: string }
-  | { kind: "collection"; scenes: ImportableScene[] };
+  | { kind: "collection"; scenes: ImportableScene[] }
+  | {
+      kind: "timeline";
+      seed: number | undefined;
+      steps: ImportableTimelineStep[];
+    };
 
 /**
  * Serialize one scene for an "Export scene" download. `encoded` is a
@@ -125,6 +140,45 @@ export function encodeCollectionFile(
         createdAt: s.createdAt,
         mode: s.mode,
         thumbnail: s.thumbnail,
+      })),
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Serialize the authored timeline for a "⬇ Export timeline" download
+ * (fr-h9rk). Pass `TimelineStore.all()`'s result (playback order —
+ * preserved exactly, never re-sorted). `seed` is the timeline's persisted
+ * determinism root (see `timeline.ts`'s `legSeed`): carrying it means a
+ * re-imported timeline replays — and video-exports — the exact same
+ * point-for-point morphs, not merely the same scenes in the same order.
+ * `id` is DELIBERATELY omitted from every step, for the same reason
+ * {@link encodeCollectionFile} omits it — storage-internal, minted per
+ * `TimelineStore` instance, and re-minted fresh on import (see
+ * `TimelineStore.replaceAll`). A step with no `mode` (the points explorer)
+ * naturally omits that key too, since `JSON.stringify` drops
+ * `undefined`-valued properties.
+ */
+export function encodeTimelineFile(
+  steps: TimelineStep[],
+  seed: number,
+  exportedAt: number,
+): string {
+  return JSON.stringify(
+    {
+      app: SCENE_FILE_APP,
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt,
+      seed,
+      steps: steps.map((s) => ({
+        encoded: s.encoded,
+        mode: s.mode,
+        thumbnail: s.thumbnail,
+        morphMs: s.morphMs,
+        holdMs: s.holdMs,
       })),
     },
     null,
@@ -189,17 +243,60 @@ function sanitizeImportedScene(v: unknown): ImportableScene | null {
 }
 
 /**
+ * Validate one untrusted parsed entry from a `"timeline"` file's `steps`
+ * array into an {@link ImportableTimelineStep}, or `null` to drop it — the
+ * timeline-file sibling of {@link sanitizeImportedScene}: the same per-entry
+ * lenience (one bad step costs itself, not the whole file) and the same
+ * {@link decodeScene} gate keeping a step nothing in this build can actually
+ * load out of the file. `morphMs`/`holdMs` only need to be NUMBERS, not
+ * FINITE ones — the exact stance `timeline.ts`'s `isTimelineStep` takes on
+ * its own persisted steps (see its doc comment): an out-of-range value, or
+ * even a non-finite one from a raw JSON overflow literal like `1e999`, is
+ * clamped by `TimelineStore.replaceAll`, not worth dropping an otherwise-good
+ * step over. `mode`/`thumbnail` reuse the same collection sanitizers
+ * `sanitizeImportedScene` does — cost the field, never the step.
+ */
+function sanitizeImportedStep(v: unknown): ImportableTimelineStep | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  const { encoded, morphMs, holdMs, mode, thumbnail } = o;
+
+  if (typeof encoded !== "string" || decodeScene(encoded) === null) {
+    return null;
+  }
+  if (typeof morphMs !== "number" || typeof holdMs !== "number") return null;
+
+  return {
+    encoded,
+    morphMs,
+    holdMs,
+    mode: sanitizedImportMode(mode),
+    thumbnail: sanitizedImportThumbnail(thumbnail),
+  };
+}
+
+/**
  * Parse and validate an import file's raw text, or `null` if it isn't one —
  * the never-throws trust boundary for untrusted file bytes (see this
  * module's doc comment). Requires the exact envelope this module writes:
  * `app === "fractal-viewer"`, `version === {@link SCENE_FILE_VERSION}`
  * (strict — a future breaking format change bumps the version and is
  * rejected rather than misread; an additive change wouldn't bump it and
- * decodes here unchanged), and `kind` one of `"scene"` / `"collection"`.
+ * decodes here unchanged), and `kind` one of `"scene"` / `"collection"` /
+ * `"timeline"`.
  *
  * For `kind: "scene"`, the `scene` field must be a string that
  * {@link decodeScene} itself accepts — a scene file whose one payload is
  * unusable has nothing to offer, so the whole file is rejected.
+ *
+ * For `kind: "timeline"`, `steps` must be an array; entries are validated
+ * INDIVIDUALLY by {@link sanitizeImportedStep}, dropping bad ones rather
+ * than rejecting the file — the same lenience a `"collection"` file's
+ * scenes get, below, and the same bounded-work cap, here
+ * {@link TIMELINE_CAP} valid entries. A missing or non-finite `seed` becomes
+ * `undefined` rather than rejecting the file — `TimelineStore.replaceAll`
+ * rolls a fresh one when it sees that. The result may likewise carry an
+ * empty `steps` array; reporting that is the caller's concern.
  *
  * For `kind: "collection"`, `scenes` must be an array; entries are then
  * validated INDIVIDUALLY by {@link sanitizeImportedScene}, dropping bad ones
@@ -225,7 +322,9 @@ export function decodeImportFile(text: string): ImportedFile | null {
 
     if (app !== SCENE_FILE_APP) return null;
     if (version !== SCENE_FILE_VERSION) return null;
-    if (kind !== "scene" && kind !== "collection") return null;
+    if (kind !== "scene" && kind !== "collection" && kind !== "timeline") {
+      return null;
+    }
 
     if (kind === "scene") {
       const { scene } = o;
@@ -233,6 +332,23 @@ export function decodeImportFile(text: string): ImportedFile | null {
         return null;
       }
       return { kind: "scene", encoded: scene };
+    }
+
+    if (kind === "timeline") {
+      const { steps: rawSteps, seed } = o;
+      if (!Array.isArray(rawSteps)) return null;
+      const steps: ImportableTimelineStep[] = [];
+      for (const raw of rawSteps) {
+        if (steps.length >= TIMELINE_CAP) break;
+        const entry = sanitizeImportedStep(raw);
+        if (entry !== null) steps.push(entry);
+      }
+      return {
+        kind: "timeline",
+        seed:
+          typeof seed === "number" && Number.isFinite(seed) ? seed : undefined,
+        steps,
+      };
     }
 
     const { scenes: rawScenes } = o;

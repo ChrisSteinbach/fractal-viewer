@@ -568,6 +568,163 @@ describe("TimelineStore clear", () => {
   });
 });
 
+describe("TimelineStore replaceAll (fr-h9rk)", () => {
+  it("replaces the existing steps wholesale, in the given order", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    timeline.add("v1=old-a", "");
+    timeline.add("v1=old-b", "");
+
+    timeline.replaceAll([
+      {
+        encoded: "v1=new-a",
+        thumbnail: "thumb-a",
+        morphMs: 1000,
+        holdMs: 500,
+      },
+      {
+        encoded: "v1=new-b",
+        thumbnail: "thumb-b",
+        morphMs: 2000,
+        holdMs: 1000,
+      },
+      {
+        encoded: "v1=new-c",
+        thumbnail: "thumb-c",
+        morphMs: 3000,
+        holdMs: 1500,
+      },
+    ]);
+
+    expect(timeline.all().map((s) => s.encoded)).toEqual([
+      "v1=new-a",
+      "v1=new-b",
+      "v1=new-c",
+    ]);
+  });
+
+  it("stores the given seed", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+
+    timeline.replaceAll([], 1234);
+
+    expect(timeline.seed).toBe(1234);
+  });
+
+  it("rolls a fresh seed when none is given", () => {
+    const seeds = [7, 99];
+    let i = 0;
+    const timeline = new TimelineStore({
+      storage: memoryStorage(),
+      rollSeed: () => seeds[i++],
+    });
+    expect(timeline.seed).toBe(7);
+
+    timeline.replaceAll([
+      { encoded: "v1=a", thumbnail: "", morphMs: 1000, holdMs: 500 },
+    ]);
+
+    expect(timeline.seed).toBe(99);
+  });
+
+  it("mints fresh ids for the imported steps", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+
+    timeline.replaceAll([
+      { encoded: "v1=a", thumbnail: "", morphMs: 1000, holdMs: 500 },
+      { encoded: "v1=b", thumbnail: "", morphMs: 1000, holdMs: 500 },
+    ]);
+
+    const [a, b] = timeline.all();
+    expect(a.id).toBeTruthy();
+    expect(b.id).toBeTruthy();
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it("clamps timings to [0, MAX_STEP_MS]", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+
+    timeline.replaceAll([
+      { encoded: "v1=a", thumbnail: "", morphMs: Infinity, holdMs: -5 },
+    ]);
+
+    expect(timeline.all()[0].morphMs).toBe(MAX_STEP_MS);
+    expect(timeline.all()[0].holdMs).toBe(0);
+  });
+
+  it("truncates beyond TIMELINE_CAP", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    const steps = Array.from({ length: TIMELINE_CAP + 3 }, (_, i) => ({
+      encoded: `v1=scene-${i}`,
+      thumbnail: "",
+      morphMs: 1000,
+      holdMs: 500,
+    }));
+
+    timeline.replaceAll(steps);
+
+    expect(timeline.size).toBe(TIMELINE_CAP);
+    expect(timeline.all().map((s) => s.encoded)).toEqual(
+      steps.slice(0, TIMELINE_CAP).map((s) => s.encoded),
+    );
+  });
+
+  it("persists: a second store over the same storage sees the imported steps and seed", () => {
+    const storage = memoryStorage();
+    const first = new TimelineStore({ storage });
+
+    first.replaceAll(
+      [
+        { encoded: "v1=a", thumbnail: "thumb-a", morphMs: 1000, holdMs: 500 },
+        {
+          encoded: "v1=b",
+          thumbnail: "thumb-b",
+          morphMs: 2000,
+          holdMs: 1000,
+        },
+      ],
+      4242,
+    );
+
+    const second = new TimelineStore({ storage });
+
+    expect(second.all().map((s) => s.encoded)).toEqual(["v1=a", "v1=b"]);
+    expect(second.seed).toBe(4242);
+  });
+
+  it("keeps each step's mode tag", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+
+    timeline.replaceAll([
+      {
+        encoded: "v1=a",
+        thumbnail: "",
+        morphMs: 1000,
+        holdMs: 500,
+        mode: "flame",
+      },
+    ]);
+
+    expect(timeline.all()[0].mode).toBe("flame");
+  });
+
+  it("round-trips a previous all() snapshot — the undo path", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    timeline.add("v1=a", "thumb-a");
+    timeline.add("v1=b", "thumb-b");
+    const prev = timeline.all();
+    const prevSeed = timeline.seed;
+
+    timeline.replaceAll(
+      [{ encoded: "v1=c", thumbnail: "", morphMs: 1000, holdMs: 500 }],
+      9999,
+    );
+    timeline.replaceAll(prev, prevSeed);
+
+    expect(timeline.all().map((s) => s.encoded)).toEqual(["v1=a", "v1=b"]);
+    expect(timeline.seed).toBe(prevSeed);
+  });
+});
+
 describe("legSeed", () => {
   it("is stable for the same seed and index across calls", () => {
     expect(legSeed(42, 0)).toBe(legSeed(42, 0));

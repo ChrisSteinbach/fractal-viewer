@@ -243,7 +243,7 @@
           class="btn btn-ghost"
           id="importFileBtn"
           type="button"
-          title="Load a scene file, a flam3/Apophysis .flame file, or merge a collection backup into this gallery — you can also drop the file anywhere on the page"
+          title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into this gallery; you can also drop the file anywhere on the page"
         >
           ⬆ Import file
         </button>
@@ -287,6 +287,17 @@
           title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
         >
           ⏺ Export clip
+        </button>
+        <!-- File backup/restore (fr-h9rk): the timeline otherwise lives only
+             in this browser profile's localStorage. Import goes through the
+             same ⬆ Import file picker / drag-drop as the other JSON files. -->
+        <button
+          class="btn btn-ghost"
+          id="exportTimelineBtn"
+          type="button"
+          title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it via ⬆ Import file"
+        >
+          ⬇ Export timeline
         </button>
         <div id="timelineStatus" class="timeline-status hidden"></div>
         <div id="timelineList" class="timeline-list"></div>

@@ -160,6 +160,10 @@ export interface UiHandlers {
   /** "⏺ Export clip" was clicked: play the timeline while recording the
    * canvas to a downloadable video clip (fr-8v41). */
   onTimelineExport: () => void;
+  /** "⬇ Export timeline" was clicked (fr-h9rk): download the authored
+   * timeline — keyframe steps + the playback determinism seed — as a JSON
+   * backup file, the timeline counterpart of {@link onExportCollection}. */
+  onExportTimeline: () => void;
   /** A timeline row's ✕ was clicked: remove that keyframe by its id. */
   onTimelineRemoveStep: (id: string) => void;
   /** A timeline row's ↑/↓ was clicked: move that keyframe one slot earlier
@@ -179,9 +183,10 @@ export interface UiHandlers {
   onExportCollection: () => void;
   /** An import file arrived (fr-de9t) — picked through "⬆ Import file"'s
    * hidden input, or dropped anywhere on the page (main.ts owns the drop
-   * listeners): a scene file to load, or a collection backup to merge.
-   * Reading and validating the untrusted bytes is the app's job
-   * (`scene-file.ts`'s `decodeImportFile`), not this layer's. */
+   * listeners): a scene file to load, a collection backup to merge, or a
+   * timeline backup to restore. Reading and validating the untrusted bytes
+   * is the app's job (`scene-file.ts`'s `decodeImportFile`), not this
+   * layer's. */
   onImportFile: (file: File) => void;
   onSelect: (index: EditTarget) => void;
   /** A panel slider edited the selected transform's geometry. */
@@ -737,6 +742,11 @@ export class Ui {
   private readonly timelinePlayTitle: string;
   private readonly timelineExportBtn: HTMLButtonElement;
   private readonly timelineExportTitle: string;
+  private readonly exportTimelineBtn: HTMLButtonElement;
+  /** "⬇ Export timeline"'s authored title, restored whenever the button
+   * re-enables — the disabled state swaps in a why-explaining one, the same
+   * self-explaining pattern as {@link exportCollectionTitle} (fr-h9rk). */
+  private readonly exportTimelineTitle: string;
   private readonly timelineStatus: HTMLElement;
   private readonly timelineList: HTMLElement;
   private readonly timelineEmpty: HTMLElement;
@@ -991,6 +1001,8 @@ export class Ui {
     this.timelinePlayTitle = this.timelinePlayBtn.title;
     this.timelineExportBtn = this.byId("timelineExportBtn");
     this.timelineExportTitle = this.timelineExportBtn.title;
+    this.exportTimelineBtn = this.byId("exportTimelineBtn");
+    this.exportTimelineTitle = this.exportTimelineBtn.title;
     // Visible when EITHER capture path exists: the realtime MediaRecorder
     // capture, or the offline frame-exact WebCodecs export (fr-92t9) —
     // main.ts's onTimelineExport routes between them.
@@ -1274,6 +1286,9 @@ export class Ui {
     );
     this.timelineExportBtn.addEventListener("click", () =>
       handlers.onTimelineExport(),
+    );
+    this.exportTimelineBtn.addEventListener("click", () =>
+      handlers.onExportTimeline(),
     );
     // The mutation grid (fr-3vly): opening and re-rolling go through the app
     // (it owns the candidates); closing mirrors the gallery's pure-view
@@ -2281,6 +2296,15 @@ export class Ui {
    * any of them changes. */
   private syncTimelineButtons(): void {
     const empty = this.timelineStepCount === 0;
+    // "⬇ Export timeline" only needs something to write (fr-h9rk): a pure
+    // data read, so neither reduced motion nor a running playback disables
+    // it — the emptiness-only rule "⬇ Export collection" follows
+    // (setCollectionCount), unlike its Play/Export-clip neighbors below.
+    this.exportTimelineBtn.disabled = empty;
+    this.exportTimelineBtn.title = empty
+      ? "Add a keyframe first — there's nothing to save yet"
+      : this.exportTimelineTitle;
+
     this.timelinePlayBtn.disabled =
       !this.timelineActive && (!this.timelineAvailable || empty);
     this.timelinePlayBtn.title = !this.timelineAvailable

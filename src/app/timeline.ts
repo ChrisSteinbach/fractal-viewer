@@ -64,6 +64,16 @@ export interface TimelineStep {
   mode?: SavedSceneMode;
 }
 
+/**
+ * What an import file hands to {@link TimelineStore.replaceAll} — a
+ * {@link TimelineStep} minus its `id` (fr-h9rk). Ids are storage-internal,
+ * minted per `TimelineStore` instance (see `counter` below); a file produced
+ * by a different session or device carries ids that mean nothing here, so
+ * import always mints fresh ones rather than trusting the file's — the same
+ * stance `collection.ts`'s `ImportableScene` takes on its own backup file.
+ */
+export type ImportableTimelineStep = Omit<TimelineStep, "id">;
+
 /** localStorage key the timeline is persisted under; distinct from
  * `collection.ts`'s and `persist.ts`'s own keys so the three never collide. */
 export const TIMELINE_STORAGE_KEY = "fractal-viewer:timeline";
@@ -326,6 +336,44 @@ export class TimelineStore {
     if (timing.holdMs !== undefined && Number.isFinite(timing.holdMs)) {
       step.holdMs = clampMs(timing.holdMs);
     }
+    this.persist();
+  }
+
+  /**
+   * Replace the ENTIRE timeline with `steps` and `seed` — the import file's
+   * whole-timeline REPLACEMENT (fr-h9rk), not a merge. An authored sequence
+   * isn't mergeable the way a collection backup is: `SceneCollection.
+   * importScenes` interleaves a backup's entries into whatever library
+   * already exists, but a timeline IS its order — there's no sensible way to
+   * splice one imported sequence into another already-arranged one. So
+   * import swaps the whole thing out instead, and the CALLER owns any undo
+   * snapshot (e.g. capturing `all()`/`seed` beforehand) — this method
+   * doesn't stage one itself.
+   *
+   * Each incoming step is minted a fresh id the same way `add` does
+   * (`${this.now()}-${this.counter++}`) — imported steps carry none (a
+   * timeline file omits `id`, the same storage-internal field the collection
+   * file omits) — and its timings are clamped the same way the storage
+   * loader clamps a loaded step's (`clampMs`): a hand-edited file can carry a
+   * raw JSON overflow literal like `1e999`, which parses to `Infinity`.
+   * Steps beyond `TIMELINE_CAP` are dropped by the same leading slice
+   * `loadTimeline` applies.
+   *
+   * An omitted or non-finite `seed` rolls a fresh one via `rollSeed` —
+   * `loadTimeline`'s exact stance on its own missing/corrupt seed: it
+   * shouldn't cost the authored sequence, just its determinism root.
+   * Persists.
+   */
+  replaceAll(steps: readonly ImportableTimelineStep[], seed?: number): void {
+    this.steps = steps.slice(0, TIMELINE_CAP).map((s) => ({
+      id: `${this.now()}-${this.counter++}`,
+      encoded: s.encoded,
+      thumbnail: s.thumbnail,
+      mode: s.mode,
+      morphMs: clampMs(s.morphMs),
+      holdMs: clampMs(s.holdMs),
+    }));
+    this.seedValue = isFiniteNumber(seed) ? seed : this.rollSeed();
     this.persist();
   }
 

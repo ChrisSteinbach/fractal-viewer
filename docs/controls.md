@@ -159,8 +159,9 @@ of snapping (see **Presets** below).
   new entries slot into their saved chronological order, ones already
   present are skipped, and the gallery opens to show the result. The same
   import also accepts a single **⤓ Save scene file** export (loading it like
-  a gallery card), and either kind of file can simply be dropped anywhere on
-  the page. The collection otherwise lives only in this browser profile's
+  a gallery card) and a **⬇ Export timeline** backup (fr-h9rk, replacing the
+  authored timeline — with an Undo toast when one was there), and any of
+  these files can simply be dropped anywhere on the page. The collection otherwise lives only in this browser profile's
   localStorage — export a backup before clearing site data or when moving
   devices.
 - **Points** — log-scaled slider for the point count (1k–5M); takes effect on
@@ -303,10 +304,12 @@ as you edit, and mirrored to `localStorage`. So:
   counterpart to this single autosaved scene (see **Collection** above).
 - **Take scenes off this device with files** (fr-de9t). ⤓ Save scene file
   exports the current scene as JSON; ⬇ Export collection backs up the whole
-  gallery. ⬆ Import file (or dropping a file onto the page) loads a scene
-  file or merges a backup — both localStorage stores above are trapped in
-  one browser profile, and these files are how a library survives clearing
-  site data or moving devices.
+  gallery; ⬇ Export timeline (fr-h9rk) backs up the authored animation
+  timeline, playback seed included. ⬆ Import file (or dropping a file onto
+  the page) loads a scene file, merges a collection backup, or restores a
+  timeline — all the localStorage stores above are trapped in one browser
+  profile, and these files are how a library survives clearing site data or
+  moving devices.
 
 Camera angle, selection, and panel state are intentionally left out — a shared
 link is about the _system_, not where you happened to be looking. See
