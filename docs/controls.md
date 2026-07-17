@@ -63,11 +63,11 @@ Transform** sliders that appear in the panel while a transform is selected.
 
 ## Panel controls
 
-The panel's categories — **Export**, **Transforms**, **Presets**,
-**Collection**, **Appearance**, **Symmetry**, and **3D View**/**4D View** — are
-collapsible sections, and opening one closes the previous (fr-zoi), so the
-whole panel stays about one phone-screen tall instead of demanding a long
-scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
+The panel's categories — **Capture**, **Share**, **Collection**,
+**Timeline**, **Transforms**, **Presets**, **Appearance**, **Symmetry**, and
+**3D View**/**4D View** — are collapsible sections, and opening one closes
+the previous (fr-zoi), so the whole panel stays about one phone-screen tall
+instead of demanding a long scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
 **Tone** / **Blur** / **Quality** for Flame, **Surface** / **Lighting** /
 **Quality** for Solid, with the render's progress readout pinned above the
 sections — and the panel remembers which section was open in each mode, so
@@ -170,6 +170,75 @@ of snapping (see **Presets** below).
   merges a collection backup into the gallery, or restores a timeline
   backup (fr-h9rk, replacing the authored timeline — with an Undo toast
   when one was there).
+- **Timeline** (fr-8v41) — an authored animation: an ordered sequence of
+  keyframes played back as a chain of morphs, the drift show's directed
+  counterpart — you decide what plays, in what order, at what pace. Like the
+  Collection it is available in every render mode, and it persists in this
+  browser profile's localStorage (file backup below). **📍 Add keyframe**
+  captures the current view — the system AND the camera pose, plus the 4D
+  rotor/slice view for a non-flat system, so a 4D shot is framed exactly as
+  authored — as the next step, with a thumbnail of what's actually showing.
+  Each step is a frozen, independent copy, not a reference into the
+  collection: deleting a gallery entry (or editing onward) can never break a
+  saved timeline. The timeline holds 20 keyframes at most, and adding to a
+  full one refuses with a toast rather than silently evicting part of an
+  authored sequence. Each row shows its thumbnail, two seconds inputs —
+  **morph** (how long the glide INTO this keyframe takes, up to 30 s) and
+  **hold** (how long to linger on it) — and ↑/↓/✕ to reorder or remove it
+  (with an Undo toast: a removed keyframe may be the only copy of its scene
+  anywhere); the status line above the rows totals the authored duration
+  ("3 keyframes · 0:18"). **▶ Play timeline** morphs from whatever is live
+  into keyframe 1, holds, and moves on — each landing the same undoable
+  replace-load as a drift leg, so undo walks back through the run; the panel
+  closes when playback starts, and starting it ends a running Drift (and
+  vice versa — at most one show ever runs). The camera GLIDES to each step's
+  saved pose over that step's morph seconds — the author's framing is the
+  shot — while a step saved without a pose auto-fits and chases like a drift
+  leg, and a 4D step's rotor/slice glides into place the same way. Every
+  leg's morph seed derives from the timeline's own stored seed, so the same
+  timeline plays the same content stream every time — the deterministic half
+  of the export below. Like Drift it STOPS (never pauses) when you reach in:
+  any edit, undo/redo, a preset / Surprise Me / gallery load, a manual
+  switch to a Flame/Solid render (outside a render keyframe's own hold), or
+  starting another show — and every timeline edit (add / remove / reorder /
+  retime / import) stops a running playback first, while camera and 4D-view
+  drags leave it running (grabbing the camera simply takes over from the
+  pose glide). Playback and clip export are unavailable under reduced motion
+  (the disabled buttons say why); authoring and backup stay available —
+  adding keyframes isn't motion.
+  A keyframe added while a Flame/Solid render is showing becomes a **render
+  keyframe** (fr-v3au), wearing the gallery's ✺/◆ glyph: on playback its leg
+  morphs in as the point cloud, re-enters that renderer on arrival (with the
+  render settings it was saved with), and HOLDS the schedule until the
+  render converges — the step's hold seconds then dwell on the converged
+  image before the next leg departs. Convergence time is content- and
+  device-dependent, so once any step is a render keyframe the authored total
+  is only a floor — the status line says so with a "+" ("0:18+"). The
+  render's accumulator seed is pinned per leg too (fr-4ff7), so the
+  converged still is identical run to run, residual noise included.
+  **⏺ Export clip** plays the timeline and downloads the result as a video.
+  Whenever the browser can encode H.264 (WebCodecs), the export runs OFFLINE
+  and frame-exact (fr-92t9): the whole pipeline steps on a virtual clock —
+  each frame's morph sample generated at its exact time, at the scene's full
+  point count (no need to touch **Morph Detail**), rendered, and encoded to
+  a 30 fps MP4 — so a hitch can't drop a frame, the same timeline exports
+  the same clip on the same device, and a background tab keeps exporting.
+  Render keyframes PARK the virtual clock while their render converges (no
+  convergence footage), then dwell the authored hold on the converged still,
+  so the clip comes out exactly the authored length (fr-6jic). The button
+  turns into the progress readout and the cancel affordance ("⏳ Exporting
+  42%") — cancelling (or resizing the window mid-run) still saves the
+  partial clip. Without WebCodecs H.264 — or when a manual ● Record video is
+  already rolling, which the export adopts — the clip records LIVE off the
+  canvas instead: content still seed-deterministic, but frame timing is
+  realtime and render keyframes honestly record however long convergence
+  took. Either way clips cap at 2:00, and a toast warns up front when the
+  authored total exceeds that. **⬇ Back up timeline** (fr-h9rk) downloads
+  the whole thing — keyframes, timings, mode tags, and the playback seed, so
+  a restored timeline replays (and exports) the very same morphs — as one
+  JSON file; restore it with **Share**'s **⬆ Import file** (or drop it onto
+  the page), which REPLACES the authored timeline, with an Undo toast when
+  there was one.
 - **Points** — log-scaled slider for the point count (1k–5M); takes effect on
   **Regenerate Points** (or immediately on other edits when auto-update is on).
 - **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
