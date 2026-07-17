@@ -98,6 +98,7 @@ import {
   decodeImportFile,
   encodeCollectionFile,
   encodeSceneFile,
+  encodeTimelineFile,
   MAX_IMPORT_FILE_BYTES,
 } from "./scene-file";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
@@ -2837,7 +2838,11 @@ function main(): void {
    * its saved camera pose); a `"collection"` backup merges into the
    * saved-scene library (`SceneCollection.importScenes` — deduped against
    * what's already saved) and opens the gallery so the merge is visible,
-   * not just claimed by a toast. The bytes are untrusted
+   * not just claimed by a toast; a `"timeline"` backup (fr-h9rk) REPLACES
+   * the authored timeline wholesale (`TimelineStore.replaceAll` — a
+   * sequence isn't mergeable the way a grab-bag collection is), with an
+   * Undo toast handing the outgoing sequence back when there was one.
+   * The bytes are untrusted
    * (`scene-file.ts`'s `decodeImportFile` is the validation boundary), so
    * every failure lands as a toast, never a throw — including a file too
    * large to be a plausible export, rejected before it is read into memory.
@@ -2860,7 +2865,7 @@ function main(): void {
       // (fr-8uy5). Its decoder is the same kind of never-throwing trust
       // boundary, so trying it on arbitrary text is safe and cheap.
       if (importFlameText(text)) return;
-      ui.flashToast("Not a scene, collection, or .flame file");
+      ui.flashToast("Not a scene, collection, timeline, or .flame file");
       return;
     }
     if (imported.kind === "scene") {
@@ -2868,6 +2873,43 @@ function main(): void {
       // actually miss — the guard just keeps loadEncodedScene's contract
       // local instead of trusting it at a distance.
       if (loadEncodedScene(imported.encoded)) ui.flashToast("Scene loaded");
+      return;
+    }
+    if (imported.kind === "timeline") {
+      if (imported.steps.length === 0) {
+        ui.flashToast("No usable keyframes in that file");
+        return;
+      }
+      // An import is an authoring edit: like every onTimeline* handler it
+      // stops a running playback FIRST (a run resolves steps by index at
+      // leg time — swapping the sequence under it would desynchronize the
+      // show from what it's playing).
+      timelinePolicy.stop({ notify: true });
+      // Snapshot the outgoing timeline for the Undo toast below (the
+      // fr-ifts delete-toast pattern): replaceAll is a wholesale swap, and
+      // the replaced sequence may hold the only copy of its scenes
+      // anywhere.
+      const prevSteps = timeline.all();
+      const prevSeed = timeline.seed;
+      timeline.replaceAll(imported.steps, imported.seed);
+      refreshTimelineUi();
+      const n = timeline.size;
+      const count = `${n} keyframe${n === 1 ? "" : "s"}`;
+      if (prevSteps.length === 0) {
+        ui.flashToast(`Timeline imported — ${count}`);
+        return;
+      }
+      ui.flashToast(`Timeline replaced — ${count}`, {
+        label: "Undo",
+        onAction: () => {
+          // The undo is itself a timeline edit — same stop-first rule as
+          // the import above (a replay of the imported sequence may
+          // already be running by the time the toast is clicked).
+          timelinePolicy.stop({ notify: true });
+          timeline.replaceAll(prevSteps, prevSeed);
+          refreshTimelineUi();
+        },
+      });
       return;
     }
     if (imported.scenes.length === 0) {
@@ -3677,6 +3719,30 @@ function main(): void {
       );
       const n = collection.size;
       ui.flashToast(n === 1 ? "Exported 1 scene" : `Exported ${n} scenes`);
+    },
+    // The timeline's own escape hatch (fr-h9rk) — the collection backup's
+    // exact pattern one section over: the authored sequence (steps,
+    // timings, render-mode tags) PLUS its determinism seed, as one JSON
+    // file the shared import sink restores anywhere. Carrying the seed
+    // means the restored timeline replays — and video-exports — the same
+    // morphs, not just the same scenes.
+    onExportTimeline: () => {
+      // The button disables at zero, but guard the race anyway (an edit
+      // landing between the last renderTimeline sync and this click).
+      if (timeline.size === 0) return;
+      const text = encodeTimelineFile(
+        timeline.all(),
+        timeline.seed,
+        Date.now(),
+      );
+      triggerDownload(
+        new Blob([text], { type: "application/json" }),
+        `fractal-timeline-${Date.now()}.json`,
+      );
+      const n = timeline.size;
+      ui.flashToast(
+        n === 1 ? "Exported 1 keyframe" : `Exported ${n} keyframes`,
+      );
     },
     onImportFile: (file) => {
       void importSceneFile(file);

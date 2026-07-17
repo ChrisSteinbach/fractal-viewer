@@ -155,10 +155,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     `launchTimelineLeg` wires the morph + camera pose glide + 4D rotor/slice
     glide per leg. A second `DriftPolicy` conducts it. Export = same run with
     recorder rolling, or the offline path. Pure, tested.
-  - `scene-file.ts` — JSON import/export: single-scene + collection backup
-    sharing `{app, kind, version}` envelope. `decodeImportFile` is the
-    never-throwing trust boundary (entries keep ORIGINAL encoded strings).
-    Pure, tested.
+  - `scene-file.ts` — JSON import/export: single-scene + collection backup +
+    timeline backup sharing `{app, kind, version}` envelope. `decodeImportFile`
+    is the never-throwing trust boundary (entries keep ORIGINAL encoded
+    strings). Pure, tested.
   - `flame-file.ts` — flam3/Apophysis `.flame` XML codec (see
     `docs/flame-interop.md`). Import QR-decomposes 2D coefs onto our
     `Transform`, folds pure-linear blends/posts, degrades unsupported features

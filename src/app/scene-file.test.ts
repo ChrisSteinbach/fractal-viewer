@@ -2,6 +2,7 @@ import {
   decodeImportFile,
   encodeCollectionFile,
   encodeSceneFile,
+  encodeTimelineFile,
   MAX_IMPORT_THUMBNAIL_CHARS,
   SCENE_FILE_VERSION,
 } from "./scene-file";
@@ -9,6 +10,7 @@ import { encodeScene } from "./persist";
 import type { SceneSnapshot } from "./persist";
 import { COLLECTION_CAP } from "./collection";
 import type { SavedScene } from "./collection";
+import { TIMELINE_CAP } from "./timeline";
 import {
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
@@ -161,6 +163,111 @@ describe("scene-file: collection backup", () => {
     const parsed = JSON.parse(file) as { scenes: Record<string, unknown>[] };
 
     expect("id" in parsed.scenes[0]).toBe(false);
+  });
+});
+
+describe("scene-file: timeline file", () => {
+  it("round-trips steps and seed through encodeTimelineFile/decodeImportFile", () => {
+    const encodedA = encodeScene(baseSnapshot());
+    const encodedB = encodeScene({ ...baseSnapshot(), numPoints: 250_000 });
+
+    const file = encodeTimelineFile(
+      [
+        {
+          id: "step-1",
+          encoded: encodedA,
+          thumbnail: "data:image/jpeg;base64,aa",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+        {
+          id: "step-2",
+          encoded: encodedB,
+          thumbnail: "data:image/jpeg;base64,bb",
+          morphMs: 4000,
+          holdMs: 2000,
+          mode: "flame",
+        },
+      ],
+      777,
+      999,
+    );
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded).toEqual({
+      kind: "timeline",
+      seed: 777,
+      steps: [
+        {
+          encoded: encodedA,
+          thumbnail: "data:image/jpeg;base64,aa",
+          morphMs: 1000,
+          holdMs: 500,
+          mode: undefined,
+        },
+        {
+          encoded: encodedB,
+          thumbnail: "data:image/jpeg;base64,bb",
+          morphMs: 4000,
+          holdMs: 2000,
+          mode: "flame",
+        },
+      ],
+    });
+    expect(decoded.steps[0].encoded).toBe(encodedA);
+    expect(decoded.steps[1].encoded).toBe(encodedB);
+  });
+
+  it("omits id from every step in an exported timeline file", () => {
+    const file = encodeTimelineFile(
+      [
+        {
+          id: "should-not-appear-1",
+          encoded: encodeScene(baseSnapshot()),
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+        {
+          id: "should-not-appear-2",
+          encoded: encodeScene(baseSnapshot()),
+          thumbnail: "",
+          morphMs: 2000,
+          holdMs: 1000,
+        },
+      ],
+      1,
+      1,
+    );
+    const parsed = JSON.parse(file) as { steps: Record<string, unknown>[] };
+
+    expect(parsed.steps.every((s) => !("id" in s))).toBe(true);
+  });
+
+  it("writes app/kind/version/exportedAt/seed into the exported file", () => {
+    const file = encodeTimelineFile(
+      [
+        {
+          id: "1",
+          encoded: encodeScene(baseSnapshot()),
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+      ],
+      4242,
+      555,
+    );
+    const parsed = JSON.parse(file) as Record<string, unknown>;
+
+    expect(parsed.app).toBe("fractal-viewer");
+    expect(parsed.kind).toBe("timeline");
+    expect(parsed.version).toBe(SCENE_FILE_VERSION);
+    expect(parsed.exportedAt).toBe(555);
+    expect(parsed.seed).toBe(4242);
   });
 });
 
@@ -345,6 +452,239 @@ describe("decodeImportFile: collection kind", () => {
     }
 
     expect(decoded.scenes).toHaveLength(2);
+  });
+});
+
+describe("decodeImportFile: timeline kind", () => {
+  it("rejects a non-array steps field", () => {
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: "nope",
+    });
+    expect(decodeImportFile(file)).toBeNull();
+  });
+
+  it("drops a step whose encoded doesn't decode, keeping valid neighbors in order", () => {
+    const encodedA = encodeScene(baseSnapshot());
+    const encodedC = encodeScene({ ...baseSnapshot(), numPoints: 250_000 });
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: [
+        { encoded: encodedA, thumbnail: "", morphMs: 1000, holdMs: 500 },
+        { encoded: "v1=garbage", thumbnail: "", morphMs: 1000, holdMs: 500 },
+        { encoded: encodedC, thumbnail: "", morphMs: 1000, holdMs: 500 },
+      ],
+    });
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded.steps.map((s) => s.encoded)).toEqual([encodedA, encodedC]);
+  });
+
+  it("drops a step with a non-number morphMs", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: [
+        { encoded, thumbnail: "", morphMs: 1000, holdMs: 500 },
+        { encoded, thumbnail: "", morphMs: "4000", holdMs: 500 },
+      ],
+    });
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded.steps).toHaveLength(1);
+  });
+
+  it("keeps a step whose timing is a raw JSON overflow literal (1e999 → Infinity) — clamping is the store's job", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file =
+      `{"app":"fractal-viewer","kind":"timeline","version":${SCENE_FILE_VERSION},` +
+      `"exportedAt":1,"seed":1,"steps":[{"encoded":${JSON.stringify(encoded)},` +
+      `"thumbnail":"","morphMs":1e999,"holdMs":500}]}`;
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded.steps).toHaveLength(1);
+    expect(decoded.steps[0].morphMs).toBe(Infinity);
+  });
+
+  it("caps steps at TIMELINE_CAP even when the file holds more", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const steps = Array.from({ length: TIMELINE_CAP + 5 }, () => ({
+      encoded,
+      thumbnail: "",
+      morphMs: 1000,
+      holdMs: 500,
+    }));
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps,
+    });
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded.steps).toHaveLength(TIMELINE_CAP);
+  });
+
+  it("yields seed undefined when the file's seed is missing", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      steps: [{ encoded, thumbnail: "", morphMs: 1000, holdMs: 500 }],
+    });
+
+    const decoded = decodeImportFile(file);
+    if (decoded === null || decoded.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decoded.seed).toBeUndefined();
+    expect(decoded.steps).toHaveLength(1);
+  });
+
+  it("yields seed undefined when the seed is non-finite (null / string)", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const makeFile = (seed: unknown) =>
+      JSON.stringify({
+        app: "fractal-viewer",
+        kind: "timeline",
+        version: SCENE_FILE_VERSION,
+        exportedAt: 1,
+        seed,
+        steps: [{ encoded, thumbnail: "", morphMs: 1000, holdMs: 500 }],
+      });
+
+    const decodedNull = decodeImportFile(makeFile(null));
+    const decodedString = decodeImportFile(makeFile("7"));
+    if (decodedNull === null || decodedNull.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+    if (decodedString === null || decodedString.kind !== "timeline") {
+      throw new Error("expected a decoded timeline file");
+    }
+
+    expect(decodedNull.seed).toBeUndefined();
+    expect(decodedString.seed).toBeUndefined();
+  });
+
+  it("accepts an empty steps array as an empty timeline file", () => {
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: [],
+    });
+
+    expect(decodeImportFile(file)).toEqual({
+      kind: "timeline",
+      seed: 1,
+      steps: [],
+    });
+  });
+
+  it('replaces a non-"data:image/" step thumbnail with ""', () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: [
+        {
+          encoded,
+          thumbnail: "https://evil.example/x.png",
+          morphMs: 1000,
+          holdMs: 500,
+        },
+      ],
+    });
+
+    const decoded = decodeImportFile(file);
+
+    expect(decoded).toEqual({
+      kind: "timeline",
+      seed: 1,
+      steps: [
+        {
+          encoded,
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+          mode: undefined,
+        },
+      ],
+    });
+  });
+
+  it("replaces an unrecognized step mode with undefined", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const file = JSON.stringify({
+      app: "fractal-viewer",
+      kind: "timeline",
+      version: SCENE_FILE_VERSION,
+      exportedAt: 1,
+      seed: 1,
+      steps: [
+        {
+          encoded,
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+          mode: "banana",
+        },
+      ],
+    });
+
+    const decoded = decodeImportFile(file);
+
+    expect(decoded).toEqual({
+      kind: "timeline",
+      seed: 1,
+      steps: [
+        {
+          encoded,
+          thumbnail: "",
+          morphMs: 1000,
+          holdMs: 500,
+          mode: undefined,
+        },
+      ],
+    });
   });
 });
 
