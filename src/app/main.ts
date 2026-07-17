@@ -435,6 +435,29 @@ function main(): void {
   // by a manual mode switch, so it can only ever fire for the load that
   // armed it.
   let pendingRenderMode: RenderMode | null = null;
+  // A timeline render keyframe's deterministic accumulator seed (fr-4ff7):
+  // launchTimelineLeg arms it alongside pendingRenderMode, and whichever
+  // flame/solid session start that hint triggers consumes it via
+  // nextRenderSeed() below — making the converged still a pure function of
+  // the timeline, residual noise included, so replaying (or offline-
+  // exporting, fr-6jic) the same timeline reproduces it exactly. Cleared
+  // wherever pendingRenderMode is cleared (applyEdit / applyDecodedSnapshot
+  // / a manual mode switch) so a stale seed can never leak into a render
+  // its own leg didn't arm; every other start rolls Math.random as before.
+  let pendingRenderSeed: number | null = null;
+
+  // The one seed roll both render-session starts share: a worker needs an
+  // explicit numeric seed — a live Rng (like Math.random) can't cross
+  // postMessage — which as a side effect makes a render a reproducible pure
+  // function of its inputs. A pending timeline seed (above) pins the roll;
+  // consuming it HERE, at start time, covers the realtime and offline
+  // export paths alike without either knowing about the pinning.
+  function nextRenderSeed(): number {
+    const seed = pendingRenderSeed ?? Math.floor(Math.random() * 0xffffffff);
+    pendingRenderSeed = null;
+    return seed;
+  }
+
   // The session-only 4D VIEW state (fr-woc/fr-6x2/fr-nn6): the accumulated
   // rotor (tumble ticks and Shift-drag/Shift-wheel deltas all compose into it),
   // the tumble pause/speed, and the soft w-slice. Reset to a fresh-visit
@@ -934,7 +957,11 @@ function main(): void {
    * (timeline-player.ts's "Held legs"). Holding from launch rather than
    * from the render's entry means no schedule deadline can slip through
    * during the morph or the terminal request's in-flight gap — even a
-   * holdMs: 0 render step converges before departing.
+   * holdMs: 0 render step converges before departing. The render's
+   * accumulator seed is pinned too (fr-4ff7): pendingRenderSeed carries
+   * the leg's own legSeed draw into that session start, so the converged
+   * still — not just the morph into it — is identical run to run,
+   * residual noise included.
    */
   function launchTimelineLeg(index: number): boolean {
     const step = timeline.all()[index];
@@ -943,13 +970,8 @@ function main(): void {
     if (!snap) return false;
     editSession.beginEdit("replace");
     const pose = snap.camera;
-    applyDecodedSnapshot(
-      snap,
-      pose === undefined,
-      true,
-      step.morphMs,
-      legSeed(timeline.seed, index),
-    );
+    const seed = legSeed(timeline.seed, index);
+    applyDecodedSnapshot(snap, pose === undefined, true, step.morphMs, seed);
     if (pose) cameraTween.glideToPose(pose, step.morphMs);
     // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
     // every load's behalf (the pendingRenderMode pattern, fr-pnek).
@@ -959,6 +981,13 @@ function main(): void {
     }
     if (step.mode) {
       pendingRenderMode = step.mode;
+      // The render's accumulator seed is pinned to the same per-leg draw
+      // as the morph (fr-4ff7): distinct consumers (cloud-worker point
+      // correspondence vs flame/solid accumulation), so sharing the value
+      // is harmless, and one draw per leg keeps the determinism story
+      // simple. Consumed by the session start the arrival's
+      // pendingRenderMode switch triggers (see nextRenderSeed).
+      pendingRenderSeed = seed;
       timelinePlayer.hold();
     }
     return true;
@@ -2279,10 +2308,9 @@ function main(): void {
         projection,
         width,
         height,
-        // A worker needs an explicit numeric seed — a live Rng (like
-        // Math.random) can't cross postMessage — which as a side effect makes
-        // a render a reproducible pure function of its inputs.
-        seed: Math.floor(Math.random() * 0xffffffff),
+        // Rolled through the shared helper so a timeline render keyframe
+        // can pin it (fr-4ff7) — see nextRenderSeed's doc.
+        seed: nextRenderSeed(),
         requestedSupersample: state.flame.supersample,
         maxAccumBuckets,
         iterationsBudget: state.flame.iterations,
@@ -2446,10 +2474,9 @@ function main(): void {
         // Snapshotted at entry like colorMode/rampPalette above (fr-8k7).
         positionAxisColors: state.positionAxisColors,
         iterationsBudget: state.solid.iterations,
-        // A worker needs an explicit numeric seed — a live Rng (like
-        // Math.random) can't cross postMessage — which as a side effect makes
-        // a render a reproducible pure function of its inputs.
-        seed: Math.floor(Math.random() * 0xffffffff),
+        // Rolled through the shared helper so a timeline render keyframe
+        // can pin it (fr-4ff7) — see nextRenderSeed's doc.
+        seed: nextRenderSeed(),
         // Device-aware memory budget for the voxel grid + texture (fr-8x7) —
         // the same two main-thread-only signals, for the same reasons, as the
         // flame render's maxAccumBuckets above (fr-7c8).
@@ -2663,6 +2690,7 @@ function main(): void {
     // stops advancing it) and then snap its stale pose onto the NEXT
     // non-flat visit. A timeline leg re-arms its own glide right after.
     pendingRenderMode = null;
+    pendingRenderSeed = null;
     pendingFourDPose = null;
     fourDTween.cancel();
     // The pre-load display target — the morph's `from` endpoint (a chained
@@ -3075,6 +3103,7 @@ function main(): void {
     // (fr-39y) — onPreset re-arms it right after this returns — and a 4D
     // pose still waiting for its load's cloud (fr-pnek), same staleness.
     pendingRenderMode = null;
+    pendingRenderSeed = null;
     pendingFourDPose = null;
     if (effect === "auto") snapMorph();
     const morphFrom = currentMorphSystem();
@@ -3852,6 +3881,7 @@ function main(): void {
       // and drops a 4D pose waiting for one (fr-pnek): whatever load armed
       // it, the user just reached in over it.
       pendingRenderMode = null;
+      pendingRenderSeed = null;
       pendingFourDPose = null;
       switchRenderMode(mode);
     },
