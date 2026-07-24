@@ -2,7 +2,7 @@
   "name": "fractal-viewer",
   "version": "1.0.0",
   "type": "module",
-  "description": "Interactive 3D IFS fractal viewer (chaos game) built with Three.js",
+  "description": "Interactive 3D IFS fractal explorer (chaos game) built with Three.js",
   "scripts": {
     "dev": "vite",
     "build": "node scripts/collect-third-party-licenses.mjs && vite build",

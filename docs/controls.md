@@ -1,6 +1,6 @@
 # Controls
 
-The viewer has two interaction modes. Switch between them from the panel's
+Fractal Explorer has two interaction modes. Switch between them from the panel's
 **Transforms** section (its **Select to edit** list): choose **🎥 Camera View**
 for camera mode, or a specific **Transform N** to edit that map. The help box (top-left) always shows the active
 mode and its gestures, adapting the wording to the device: mouse verbs
@@ -97,8 +97,8 @@ of snapping (see **Presets** below).
   smoothly from the current shape into the new one instead of snapping; the
   OS's reduced-motion preference opts out to the instant snap (fr-a04l).
 - **▶ Drift** (fr-wavo) — next to **Surprise Me**: an ambient, ever-evolving
-  show for leaving the viewer running (a TV via the PWA, a second screen).
-  While drifting, the viewer dwells on the current attractor for about five
+  show for leaving the explorer running (a TV via the PWA, a second screen).
+  While drifting, the explorer dwells on the current attractor for about five
   seconds, then glides over about five more into a fresh quality-gated
   Surprise-Me roll, dwells on that, and repeats; the panel closes when the
   show starts so the stage is clear. Every landing is a normal, undoable

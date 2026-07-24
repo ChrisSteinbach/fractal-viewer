@@ -884,7 +884,7 @@ export function encodeFlameFile(
 
   const framing = probeFraming(s);
   const flameAttrs =
-    `name="${escapeXml(name)}" version="fractal-viewer" ` +
+    `name="${escapeXml(name)}" version="fractal-explorer" ` +
     `size="${EXPORT_SIZE} ${EXPORT_SIZE}" ` +
     `center="${fmt(framing.centerX)} ${fmt(framing.centerY)}" ` +
     `scale="${fmt(Math.round(framing.scale * 100) / 100)}" ` +
