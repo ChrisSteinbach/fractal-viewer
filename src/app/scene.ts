@@ -12,7 +12,7 @@ import {
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
-import { clone3 } from "../fractal/vec";
+import { clamp, clone3 } from "../fractal/vec";
 import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
@@ -32,10 +32,13 @@ import {
   marchStepsForGrid,
 } from "./voxel-material";
 import {
+  configureSurfaceLUTTexture,
   createSurfaceMaterial,
   setSurfaceSystem as packSurfaceSystem,
 } from "./surface-material";
 import type { SurfaceDE } from "../fractal/surface-de";
+import { SURFACE_COLOR_SOURCES } from "./state";
+import type { SurfaceParams } from "./state";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -502,6 +505,10 @@ export class FractalScene {
   // "session" is uniforms, so like the solid render the camera stays LIVE.
   private readonly surfaceMaterial: THREE.ShaderMaterial;
   private readonly surfaceQuad: FullScreenQuad;
+  /** Lazily allocated 256x1 ramp for the surface tracer's palette/height/
+   * radius color sources — dimensions never change, so one texture is
+   * mutated in place (see {@link setSurfaceColorLUT}). */
+  private surfaceLUTTexture: THREE.DataTexture | null = null;
 
   /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
   private viewportWidth: number;
@@ -1925,13 +1932,60 @@ export class FractalScene {
   /**
    * Upload a freshly built surface distance estimator (epic fr-7jlk) so the
    * next {@link renderSurface} call sphere-traces it. `colors[j]` is the
-   * sRGB base color for `de.maps[j]` — main.ts keys them by each slot's
-   * `baseIndex`, so kaleidoscope copies inherit their base map's color
-   * exactly like the explorer's "By Transform" mode.
+   * sRGB base color and `trapIndices[j]` the orbit-trap palette coordinate
+   * for `de.maps[j]` — main.ts keys both by each slot's `baseIndex`, so
+   * kaleidoscope copies inherit their base map's color exactly like the
+   * explorer's "By Transform" mode.
    */
-  setSurfaceSystem(de: SurfaceDE, colors: Vec3[]): void {
+  setSurfaceSystem(de: SurfaceDE, colors: Vec3[], trapIndices: number[]): void {
     this.renderNeeded = true;
-    packSurfaceSystem(this.surfaceMaterial, de, colors);
+    packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
+  }
+
+  /**
+   * Push the surface render's lighting + color-source settings to the
+   * tracer. Pure GPU uniforms — live-reactive at full frame rate, nothing
+   * to restart (the tracer has no accumulation at all). The colorSource
+   * string maps to the shader's integer dispatch via its position in
+   * `SURFACE_COLOR_SOURCES` — the single source of truth both sides key on.
+   */
+  setSurfaceParams(params: SurfaceParams): void {
+    this.renderNeeded = true;
+    const u = this.surfaceMaterial.uniforms;
+    u.uAmbient.value = params.ambient;
+    (u.uLightDir.value as THREE.Vector3).copy(
+      lightDirection(params.lightAzimuth, params.lightElevation),
+    );
+    u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
+  }
+
+  /**
+   * Upload a 256x3 color ramp (0..1 floats from `surfaceColorLUT` — built
+   * by color.ts/palette.ts's ONE ramp definitions) for the surface tracer's
+   * palette/height/radius color sources. Quantized to RGBA8 here: byte
+   * textures filter linearly everywhere, and the ramp was authored in
+   * 8-bit-per-stop terms to begin with. The texture is allocated once and
+   * mutated in place — its 256x1 dimensions never change.
+   */
+  setSurfaceColorLUT(lut: Float32Array): void {
+    this.renderNeeded = true;
+    if (!this.surfaceLUTTexture) {
+      this.surfaceLUTTexture = new THREE.DataTexture(
+        new Uint8Array(256 * 4),
+        256,
+        1,
+      );
+      configureSurfaceLUTTexture(this.surfaceLUTTexture);
+      this.surfaceMaterial.uniforms.uColorLUT.value = this.surfaceLUTTexture;
+    }
+    const data = this.surfaceLUTTexture.image.data as Uint8Array;
+    for (let i = 0; i < 256; i++) {
+      data[i * 4] = Math.round(clamp(lut[i * 3], 0, 1) * 255);
+      data[i * 4 + 1] = Math.round(clamp(lut[i * 3 + 1], 0, 1) * 255);
+      data[i * 4 + 2] = Math.round(clamp(lut[i * 3 + 2], 0, 1) * 255);
+      data[i * 4 + 3] = 255;
+    }
+    this.surfaceLUTTexture.needsUpdate = true;
   }
 
   /**

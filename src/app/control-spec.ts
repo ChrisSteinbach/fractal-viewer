@@ -1,9 +1,11 @@
 import type { ColorMode, FourDColorMode, SymmetryAxis } from "../fractal/types";
-import { resolvePalette } from "../fractal/palette";
+import { buildColorModeLUT } from "../fractal/color";
+import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
 import {
+  DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
   MAX_COLOR_GAMMA,
   MAX_NUM_POINTS,
@@ -39,6 +41,11 @@ import {
   setSolidPaletteId,
   setSolidResolution,
   setSolidThreshold,
+  setSurfaceAmbient,
+  setSurfaceColorSource,
+  setSurfaceLightAzimuth,
+  setSurfaceLightElevation,
+  setSurfacePaletteId,
   setSymmetryAxis,
   setSymmetryOrder,
 } from "./state";
@@ -48,6 +55,8 @@ import type {
   MorphDetail,
   RenderStyle,
   SolidParams,
+  SurfaceColorSource,
+  SurfaceParams,
 } from "./state";
 
 /**
@@ -144,6 +153,13 @@ export interface ControlSceneEffects {
   setGuidesVisible(showGuides: boolean): void;
   setFourDDepthFade(on: boolean): void;
   setSolidParams(params: SolidParams): void;
+  /** The surface tracer's live uniforms (fr-7jlk) — lighting + color-source
+   * dispatch, all read every frame; see {@link SurfaceParams}. */
+  setSurfaceParams(params: SurfaceParams): void;
+  /** The surface tracer's 256x3 color LUT for the palette/height/radius
+   * colorSources (see {@link surfaceColorLUT}) — uploaded once per change,
+   * unlike `setSurfaceParams`' every-frame uniforms. */
+  setSurfaceColorLUT(lut: Float32Array): void;
 }
 
 /**
@@ -302,6 +318,60 @@ function liveTonemapEffect(
 const solidParamsEffect: ControlEffect = (state, fx) => {
   fx.scene.setSolidParams(state.solid);
 };
+
+/** The surface tracer's lighting sliders (fr-7jlk) — pure GPU uniforms, live
+ * at full frame rate exactly like {@link solidParamsEffect}'s, but with no
+ * accumulation behind them at all (see `SurfaceParams`'s doc). */
+const surfaceParamsEffect: ControlEffect = (state, fx) => {
+  fx.scene.setSurfaceParams(state.surface);
+};
+
+/**
+ * The surface tracer's color LUT for whichever `colorSource` (fr-7jlk) needs
+ * one — pure so `main.ts` (at session start) and this module's own
+ * `surfaceColorSource`/`surfacePalette` effects below can rebuild it without
+ * touching Three.js. `null` for `"transform"`, which has no LUT at all: the
+ * tracer reads each slot's own `uMapColor` instead (see
+ * `surface-material.ts`).
+ *
+ * `"palette"` resolves `state.surface.paletteId` through the shared fr-55k
+ * custom-palette bridge ({@link resolvePalette}), exactly like the flame/
+ * solid palette effects below. {@link buildPaletteLUT} returns `null` only
+ * for the `"legacy"` sentinel (see `palette.ts`) — a value the surface
+ * palette `<select>` never actually offers (its options mirror
+ * `solidPalette`'s minus `"legacy"`), but a decoded/shared scene could still
+ * carry one; falling back to {@link DEFAULT_SOLID_PALETTE} (the surface
+ * render's own default, reused from the solid render rather than
+ * redeclared) keeps this function honest for that case, and a hard-coded
+ * white LUT is the last-resort guarantee this never returns `null` for a
+ * source that needs one.
+ *
+ * `"height"`/`"radius"` reuse the explorer's ONE ramp definition
+ * ({@link buildColorModeLUT}), gamma included — the same ramp the panel
+ * legend and the solid render's `"legacy"`-palette path already share.
+ */
+export function surfaceColorLUT(state: AppState): Float32Array | null {
+  const { colorSource } = state.surface;
+  if (colorSource === "transform") return null;
+  if (colorSource === "height" || colorSource === "radius") {
+    return buildColorModeLUT(
+      colorSource,
+      state.colorGamma,
+      resolvePalette(state.rampPaletteId, state.customPalette),
+    );
+  }
+  // "palette": an orbit-trap coordinate through the surface's own palette.
+  const lut =
+    buildPaletteLUT(
+      resolvePalette(state.surface.paletteId, state.customPalette),
+    ) ??
+    buildPaletteLUT(resolvePalette(DEFAULT_SOLID_PALETTE, state.customPalette));
+  if (lut) return lut;
+  // Unreachable in practice (DEFAULT_SOLID_PALETTE names a real gradient,
+  // never "legacy"), but buildPaletteLUT's own signature admits null, so
+  // this keeps the function total: never null for a LUT-needing source.
+  return new Float32Array(256 * 3).fill(1);
+}
 
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // ——— Explorer: appearance ———
@@ -742,6 +812,75 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       ) {
         fx.restartSolidRender();
       }
+    },
+  },
+  // ——— Surface render (fr-7jlk) ———
+  // Every field is a live GPU uniform (see SurfaceParams's doc): unlike the
+  // flame/solid siblings above, NOTHING here ever restarts a worker or an
+  // accumulation — there is none. The lighting sliders just forward the
+  // settled params; the two color controls additionally rebuild the LUT
+  // (surfaceColorLUT), pushing it only when the source actually needs one.
+  {
+    kind: "range",
+    id: "surfaceLightAzimuthSlider",
+    label: {
+      id: "surfaceLightAzimuthLabel",
+      text: (s) => `${Math.round(s.surface.lightAzimuth)}°`,
+    },
+    read: (s) => String(s.surface.lightAzimuth),
+    apply: (s, raw) => setSurfaceLightAzimuth(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceLightElevationSlider",
+    label: {
+      id: "surfaceLightElevationLabel",
+      text: (s) => `${Math.round(s.surface.lightElevation)}°`,
+    },
+    read: (s) => String(s.surface.lightElevation),
+    apply: (s, raw) => setSurfaceLightElevation(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceAmbientSlider",
+    label: {
+      id: "surfaceAmbientLabel",
+      text: (s) => `${Math.round(s.surface.ambient * 100)}%`,
+    },
+    read: (s) => String(s.surface.ambient),
+    apply: (s, raw) => setSurfaceAmbient(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    // Re-points the tracer's base-color dispatch. Unlike the flame/solid
+    // palette selects, nothing restarts — there is no accumulation to bake
+    // the old source into — so the effect just pushes the settled params
+    // AND the LUT the new source needs (surfaceColorLUT returns null for
+    // "transform", which has none).
+    kind: "select",
+    id: "surfaceColorSource",
+    read: (s) => s.surface.colorSource,
+    apply: (s, raw) => setSurfaceColorSource(s, raw as SurfaceColorSource),
+    effect: (s, fx) => {
+      fx.scene.setSurfaceParams(s.surface);
+      const lut = surfaceColorLUT(s);
+      if (lut) fx.scene.setSurfaceColorLUT(lut);
+    },
+  },
+  {
+    // Same params+LUT effect as surfaceColorSource above — live-reactive,
+    // unlike the flame/solid palette selects, which restart their worker's
+    // accumulation because the old palette is baked into it.
+    kind: "select",
+    id: "surfacePalette",
+    read: (s) => s.surface.paletteId,
+    apply: (s, raw) => setSurfacePaletteId(s, raw as PaletteSelection),
+    effect: (s, fx) => {
+      fx.scene.setSurfaceParams(s.surface);
+      const lut = surfaceColorLUT(s);
+      if (lut) fx.scene.setSurfaceColorLUT(lut);
     },
   },
 ];

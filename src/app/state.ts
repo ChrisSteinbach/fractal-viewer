@@ -203,6 +203,82 @@ export interface SolidParams {
   paletteId: PaletteSelection;
 }
 
+/**
+ * The surface render's base-color source (fr-7jlk; see
+ * {@link SurfaceParams.colorSource}). `"transform"` keys each map's own
+ * By-Transform color, exactly like the explorer's colorMode of the same
+ * name; `"palette"` paints an orbit-trap coordinate through a cosine-gradient
+ * palette — the flame's structural-coloring idea (`palette.ts`), one
+ * dimension over; `"height"`/`"radius"` reuse the explorer's ONE ramp
+ * definition (`color.ts`'s `buildColorModeLUT`), the same ramp the solid
+ * render's `"legacy"`-palette path and the panel legend already share.
+ *
+ * This array is the single source of truth for the {@link SurfaceColorSource}
+ * type and the persistence validator (`VALID_SURFACE_COLOR_SOURCES` in
+ * `persist.ts`) — the same discipline {@link RENDER_STYLES}/
+ * {@link MORPH_DETAILS} use above. The surface tracer's GLSL `uColorSource`
+ * uniform (`surface-material.ts`) currently dispatches on this exact 0-3
+ * order, so keep it append-only unless that shader dispatch moves too.
+ */
+export const SURFACE_COLOR_SOURCES = [
+  "transform",
+  "palette",
+  "height",
+  "radius",
+] as const;
+
+export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
+
+/**
+ * Settings for the surface render (fr-7jlk; the sphere-traced implicit
+ * surface — `surface-material.ts`'s GLSL tracer over `surface-de.ts`'s
+ * analytic distance estimator). Persists as a render-settings block like
+ * {@link FlameParams}/{@link SolidParams}, independent of whether the render
+ * is active.
+ *
+ * Every field here is a LIVE GPU uniform: the tracer has no accumulation to
+ * restart at all (unlike the flame's histogram or the solid render's voxel
+ * grid), so every change — including `colorSource`/`paletteId` — takes
+ * effect the very next frame, at full frame rate, with nothing to re-run.
+ */
+export interface SurfaceParams {
+  /** Light's horizontal angle in degrees. Same physical meaning as
+   * {@link SolidParams.lightAzimuth} — `PARAM.surfaceLightAzimuth` reuses its
+   * `MIN_SOLID_LIGHT_AZIMUTH`/`MAX_SOLID_LIGHT_AZIMUTH` range. Live-reactive
+   * (see the interface doc). */
+  lightAzimuth: number;
+  /** Light's height above the horizon in degrees. Same physical meaning as
+   * {@link SolidParams.lightElevation} — `PARAM.surfaceLightElevation`
+   * reuses its `MIN_SOLID_LIGHT_ELEVATION`/`MAX_SOLID_LIGHT_ELEVATION` range.
+   * Live-reactive. */
+  lightElevation: number;
+  /** Fill-light floor in [0, 1]: how bright fully shadowed/occluded surfaces
+   * stay. Same physical meaning as {@link SolidParams.ambient} —
+   * `PARAM.surfaceAmbient` reuses its `MIN_SOLID_AMBIENT`/`MAX_SOLID_AMBIENT`
+   * range. Live-reactive. */
+  ambient: number;
+  /**
+   * Base-color source (fr-7jlk) — see {@link SurfaceColorSource} for what
+   * each value means. Live-reactive, like every field here.
+   */
+  colorSource: SurfaceColorSource;
+  /**
+   * Structural-coloring palette for the `"palette"` colorSource (shares
+   * fr-6us's `PaletteSelection` union — see `palette.ts`), sampled along the
+   * orbit-trap coordinate. `"custom"` (fr-55k) selects the user-authored
+   * gradient in {@link AppState.customPalette}. Defaults to
+   * {@link DEFAULT_SOLID_PALETTE} — the same gradient the solid render
+   * defaults to, reused rather than redeclared, so a fresh session's two
+   * converging renders share one default look; an absent or unrecognized
+   * decoded value falls back to the same default (see `persist.ts`). Inert
+   * while `colorSource` isn't `"palette"`, but stored regardless so it's
+   * ready the moment the user switches to it. Live-reactive, unlike
+   * {@link FlameParams.paletteId}/{@link SolidParams.paletteId}: there is no
+   * accumulation for the old palette to be baked into, so nothing restarts.
+   */
+  paletteId: PaletteSelection;
+}
+
 /** Snapshot of everything the UI and renderer need to draw a frame. */
 export interface AppState {
   transforms: Transform[];
@@ -298,13 +374,16 @@ export interface AppState {
   flame: FlameParams;
   /** Solid render settings; persists independent of {@link renderMode}. */
   solid: SolidParams;
+  /** Surface render settings; persists independent of {@link renderMode},
+   * like {@link solid}. */
+  surface: SurfaceParams;
   /**
    * Which renderer is displaying the attractor (fr-39y) — see
    * {@link RENDER_MODES}. Session-only, like `selectedTransform` /
    * `autoUpdate`: never persisted, so the app always boots into the
    * `"points"` explorer (see `persist.ts`'s `SceneSnapshot`, which omits
-   * this field). The flame/solid render SETTINGS ({@link flame} /
-   * {@link solid}) persist independently of it.
+   * this field). The flame/solid/surface render SETTINGS ({@link flame} /
+   * {@link solid} / {@link surface}) persist independently of it.
    */
   renderMode: RenderMode;
   /**
@@ -790,6 +869,26 @@ export const PARAM = defineParams({
     max: MAX_SOLID_AMBIENT,
     default: DEFAULT_SOLID_AMBIENT,
   },
+  // Surface render (fr-7jlk) lighting is the SAME physical quantity as the
+  // solid render's lighting just above (a horizontal light angle, a height
+  // above the horizon, a fill-light floor) — these three reuse the solid
+  // MIN_/MAX_/DEFAULT_ constants directly rather than redeclaring identical
+  // ranges under a new name.
+  surfaceLightAzimuth: {
+    min: MIN_SOLID_LIGHT_AZIMUTH,
+    max: MAX_SOLID_LIGHT_AZIMUTH,
+    default: DEFAULT_SOLID_LIGHT_AZIMUTH,
+  },
+  surfaceLightElevation: {
+    min: MIN_SOLID_LIGHT_ELEVATION,
+    max: MAX_SOLID_LIGHT_ELEVATION,
+    default: DEFAULT_SOLID_LIGHT_ELEVATION,
+  },
+  surfaceAmbient: {
+    min: MIN_SOLID_AMBIENT,
+    max: MAX_SOLID_AMBIENT,
+    default: DEFAULT_SOLID_AMBIENT,
+  },
   symmetryOrder: {
     min: MIN_SYMMETRY_ORDER,
     max: MAX_SYMMETRY_ORDER,
@@ -839,6 +938,13 @@ export function initialState(panelOpen: boolean): AppState {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
+    },
+    surface: {
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
     },
     renderMode: "points",
@@ -1327,6 +1433,93 @@ export function setSolidPaletteId(
     solid: { ...state.solid, paletteId },
     ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
       ? { customPalette: { stops: seedCustomStops(state.solid.paletteId) } }
+      : {}),
+  };
+}
+
+/** Set the surface render's light horizontal angle (degrees), clamped.
+ * Live-reactive — see {@link SurfaceParams}'s doc: unlike the solid render's
+ * identically-named setter, the surface tracer has no accumulation to
+ * restart at all. */
+export function setSurfaceLightAzimuth(
+  state: AppState,
+  lightAzimuth: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, lightAzimuth),
+    },
+  };
+}
+
+/** Set the surface render's light height above the horizon (degrees),
+ * clamped. Live-reactive like {@link setSurfaceLightAzimuth}. */
+export function setSurfaceLightElevation(
+  state: AppState,
+  lightElevation: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      lightElevation: clampToSpec(PARAM.surfaceLightElevation, lightElevation),
+    },
+  };
+}
+
+/** Set the surface render's fill-light floor, clamped. Live-reactive like
+ * {@link setSurfaceLightAzimuth}. */
+export function setSurfaceAmbient(state: AppState, ambient: number): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      ambient: clampToSpec(PARAM.surfaceAmbient, ambient),
+    },
+  };
+}
+
+/**
+ * Set the surface render's base-color source (fr-7jlk) — see
+ * {@link SurfaceColorSource}. Not clamped — it is an enum, and the UI only
+ * offers valid values (persistence validates untrusted input in
+ * `decodeScene`), like {@link setFourDColor}'s sibling enum field. Unlike a
+ * flame/solid palette switch, there is no accumulation for the old source to
+ * be baked into, so this is live-reactive: nothing restarts.
+ */
+export function setSurfaceColorSource(
+  state: AppState,
+  colorSource: SurfaceColorSource,
+): AppState {
+  return { ...state, surface: { ...state.surface, colorSource } };
+}
+
+/**
+ * Set the surface render's structural-coloring palette (fr-7jlk; shares
+ * fr-6us's `PaletteSelection` union — see `palette.ts`). Not clamped — it is
+ * an enum, and the UI only offers valid ids (persistence validates untrusted
+ * input in `decodeScene`). Live-reactive, unlike {@link setFlamePaletteId}/
+ * {@link setSolidPaletteId}: the surface tracer has no accumulation for the
+ * old palette to be baked into, so nothing restarts.
+ *
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * yet set — seeds it from the palette being REPLACED (the previous
+ * `surface.paletteId`), via `palette.ts`'s {@link seedCustomStops}, exactly
+ * like {@link setFlamePaletteId}/{@link setSolidPaletteId}. Picking a preset
+ * id, or re-picking Custom when a payload already exists, leaves
+ * `customPalette` untouched.
+ */
+export function setSurfacePaletteId(
+  state: AppState,
+  paletteId: PaletteSelection,
+): AppState {
+  return {
+    ...state,
+    surface: { ...state.surface, paletteId },
+    ...(paletteId === CUSTOM_PALETTE_ID && state.customPalette === undefined
+      ? { customPalette: { stops: seedCustomStops(state.surface.paletteId) } }
       : {}),
   };
 }

@@ -972,6 +972,73 @@
         </details>
       </div>
 
+      <div id="surfaceControls" class="hidden">
+        <details
+          class="panel-section"
+          id="surfaceLookSection"
+          name="panel-section"
+        >
+          <summary>Surface Look</summary>
+          <label class="select-label">
+            Color source
+            <select id="surfaceColorSource">
+              <option value="transform">By Transform</option>
+              <option value="palette">Palette (orbit trap)</option>
+              <option value="height">Height ramp</option>
+              <option value="radius">Radius ramp</option>
+            </select>
+          </label>
+          <div id="surfacePaletteRow" class="hidden">
+            <label class="select-label">
+              Palette
+              <select id="surfacePalette">
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+          <label class="select-label">
+            Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>
+            <input
+              type="range"
+              id="surfaceLightAzimuthSlider"
+              min="-180"
+              max="180"
+              step="5"
+              value="135"
+            />
+          </label>
+          <label class="select-label">
+            Light Height: <span id="surfaceLightElevationLabel">50°</span>
+            <input
+              type="range"
+              id="surfaceLightElevationSlider"
+              min="5"
+              max="85"
+              step="5"
+              value="50"
+            />
+          </label>
+          <label class="select-label">
+            Ambient: <span id="surfaceAmbientLabel">25%</span>
+            <input
+              type="range"
+              id="surfaceAmbientSlider"
+              min="0"
+              max="0.8"
+              step="0.05"
+              value="0.25"
+            />
+          </label>
+        </details>
+      </div>
+
       <details
         class="panel-section hidden"
         id="threeDControls"

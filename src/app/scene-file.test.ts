@@ -78,6 +78,13 @@ function baseSnapshot(): SceneSnapshot {
       ambient: DEFAULT_SOLID_AMBIENT,
       paletteId: DEFAULT_SOLID_PALETTE,
     },
+    surface: {
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
+      paletteId: DEFAULT_SOLID_PALETTE,
+    },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };

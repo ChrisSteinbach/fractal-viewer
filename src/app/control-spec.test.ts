@@ -1,6 +1,11 @@
-import { applyScalarControl, SCALAR_CONTROLS } from "./control-spec";
+import {
+  applyScalarControl,
+  SCALAR_CONTROLS,
+  surfaceColorLUT,
+} from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
 import {
+  DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_COLOR_GAMMA,
@@ -8,6 +13,8 @@ import {
   MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
 } from "./state";
+import { buildColorModeLUT } from "../fractal/color";
+import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -27,6 +34,8 @@ function mockEffects(shared = false): ControlEffects {
       setGuidesVisible: vi.fn(),
       setFourDDepthFade: vi.fn(),
       setSolidParams: vi.fn(),
+      setSurfaceParams: vi.fn(),
+      setSurfaceColorLUT: vi.fn(),
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
@@ -546,6 +555,150 @@ describe("effects", () => {
       expect(fx.restartFlameRender).not.toHaveBeenCalled();
       expect(fx.restartSolidRender).not.toHaveBeenCalled();
     });
+  });
+
+  describe("surface render controls", () => {
+    it("surfaceLightAzimuthSlider effect forwards the settled surface params to the scene", () => {
+      const spec = specById("surfaceLightAzimuthSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "90");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+    });
+
+    it("surfaceLightElevationSlider effect forwards the settled surface params to the scene", () => {
+      const spec = specById("surfaceLightElevationSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "60");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+    });
+
+    it("surfaceAmbientSlider effect forwards the settled surface params to the scene", () => {
+      const spec = specById("surfaceAmbientSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+    });
+
+    it("surfaceColorSource effect pushes the settled params and the new LUT", () => {
+      const spec = specById("surfaceColorSource");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "height");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+      expect(fx.scene.setSurfaceColorLUT).toHaveBeenCalledWith(
+        surfaceColorLUT(state),
+      );
+    });
+
+    it('surfaceColorSource effect does not push a LUT for "transform"', () => {
+      const spec = specById("surfaceColorSource");
+      const previous = {
+        ...initialState(true),
+        surface: {
+          ...initialState(true).surface,
+          colorSource: "height" as const,
+        },
+      };
+      const state = applyScalarControl(previous, spec, "transform");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+      expect(fx.scene.setSurfaceColorLUT).not.toHaveBeenCalled();
+    });
+
+    it("surfacePalette effect pushes the settled params and the new LUT", () => {
+      const spec = specById("surfacePalette");
+      const previous = {
+        ...initialState(true),
+        surface: {
+          ...initialState(true).surface,
+          colorSource: "palette" as const,
+        },
+      };
+      const state = applyScalarControl(previous, spec, "aurora");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+      expect(fx.scene.setSurfaceColorLUT).toHaveBeenCalledWith(
+        surfaceColorLUT(state),
+      );
+    });
+  });
+});
+
+describe("surfaceColorLUT", () => {
+  it('returns null for the "transform" colorSource', () => {
+    const state = initialState(true);
+    expect(state.surface.colorSource).toBe("transform"); // sanity: the default
+    expect(surfaceColorLUT(state)).toBeNull();
+  });
+
+  it('returns a 768-length Float32Array for the "palette" colorSource', () => {
+    const state = {
+      ...initialState(true),
+      surface: {
+        ...initialState(true).surface,
+        colorSource: "palette" as const,
+        paletteId: "aurora" as const,
+      },
+    };
+    const lut = surfaceColorLUT(state);
+    expect(lut).not.toBeNull();
+    expect(lut!.length).toBe(768);
+  });
+
+  it('falls back to the default gradient for the "palette" colorSource when paletteId is "legacy"', () => {
+    // "legacy" has no gradient LUT (buildPaletteLUT returns null for it) —
+    // the surface palette <select> never actually offers it, but a decoded
+    // scene could still carry one, and this source always needs a LUT.
+    const state = {
+      ...initialState(true),
+      surface: {
+        ...initialState(true).surface,
+        colorSource: "palette" as const,
+        paletteId: "legacy" as const,
+      },
+    };
+    const lut = surfaceColorLUT(state);
+    expect(lut).not.toBeNull();
+    expect(lut).toEqual(buildPaletteLUT(DEFAULT_SOLID_PALETTE));
+  });
+
+  it('respects colorGamma for the "height" colorSource, matching a direct buildColorModeLUT call', () => {
+    const state = {
+      ...initialState(true),
+      colorGamma: 2.4,
+      surface: {
+        ...initialState(true).surface,
+        colorSource: "height" as const,
+      },
+    };
+    expect(surfaceColorLUT(state)).toEqual(
+      buildColorModeLUT(
+        "height",
+        state.colorGamma,
+        resolvePalette(state.rampPaletteId, state.customPalette),
+      ),
+    );
   });
 });
 
