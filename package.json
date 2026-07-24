@@ -32,7 +32,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
-    "@types/three": "^0.185.0",
+    "@types/three": "^0.185.1",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitest/coverage-v8": "^4.1.10",
     "@webgpu/types": "^0.1.71",
@@ -52,6 +52,6 @@
     "workbox-precaching": "^7.4.1"
   },
   "dependencies": {
-    "three": "^0.185.0"
+    "three": "^0.185.1"
   }
 }
