@@ -103,7 +103,7 @@ if (problems.length > 0) {
 }
 
 const header = [
-  "Third-party software notices for Fractal Viewer",
+  "Third-party software notices for Fractal Explorer",
   "",
   "This build bundles the open-source packages below. Their license",
   "notices are reproduced in full, as their licenses require.",

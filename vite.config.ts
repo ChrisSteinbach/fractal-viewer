@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { VitePWA } from "vite-plugin-pwa";
 
-const APP_NAME = "Fractal Viewer";
+const APP_NAME = "Fractal Explorer";
 
 export default defineConfig({
   root: "src/app",
@@ -49,7 +49,8 @@ export default defineConfig({
       manifest: {
         name: APP_NAME,
         short_name: APP_NAME,
-        description: "Interactive 3D/4D IFS fractal viewer built with Three.js",
+        description:
+          "Interactive 3D/4D IFS fractal explorer built with Three.js",
         // Both mirror the WebGL backdrop's top stop (DARK_BACKDROP.top in
         // src/app/constants.ts) so the installed-PWA chrome tint and launch
         // splash match the page top. Keep in sync with index.html's

@@ -133,7 +133,7 @@ function showError(message: string): void {
     error.textContent = message;
     error.style.display = "block";
   }
-  console.error("Fractal Viewer:", message);
+  console.error("Fractal Explorer:", message);
 }
 
 /**

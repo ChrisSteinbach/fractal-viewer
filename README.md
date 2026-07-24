@@ -1,6 +1,6 @@
-# Fractal Viewer
+# Fractal Explorer
 
-An interactive 3D/4D **Iterated Function System (IFS)** fractal viewer. Design a set
+An interactive 3D/4D **Iterated Function System (IFS)** fractal explorer. Design a set
 of affine transforms and watch the [chaos game](docs/architecture.md) render their
 attractor as a live point cloud — rotate the camera, drag transforms around, swap
 between presets, and recolor the cloud in real time. Built with TypeScript,

@@ -1,6 +1,6 @@
 # `.flame` interop (fr-8uy5)
 
-How the viewer's scene vocabulary maps onto the flam3/Apophysis `.flame` XML
+How Fractal Explorer's scene vocabulary maps onto the flam3/Apophysis `.flame` XML
 format, and exactly where the mapping is lossy. Implemented by
 `src/app/flame-file.ts` (`decodeFlameFile` / `encodeFlameFile`), reachable
 through the same panel buttons and drag-drop as the JSON scene files
@@ -44,7 +44,7 @@ Three facts line the two vocabularies up better than they first appear:
 
 ## Import (`.flame` → scene)
 
-| flame                                                | viewer                                                                                              |
+| flame                                                | explorer                                                                                            |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                          |
 | pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                         |
@@ -61,7 +61,7 @@ Three facts line the two vocabularies up better than they first appear:
 | palette (`<palette>` hex block or `<color>` entries) | downsampled onto an 8-stop `CustomPalette`; `flame.paletteId` and `rampPaletteId` become `"custom"` |
 | `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                   |
 | `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                          |
-| `size`/`center`/`scale`/`rotate`                     | ignored — the viewer auto-fits its own camera                                                       |
+| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                     |
 
 Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements

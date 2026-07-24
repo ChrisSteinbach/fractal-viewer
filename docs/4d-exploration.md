@@ -9,7 +9,7 @@ up again.
 
 ## Verdict
 
-Extending the viewer past 3D is **productive at exactly n = 4, for points
+Extending the explorer past 3D is **productive at exactly n = 4, for points
 mode**, and unproductive as a general n-D feature. The math is nearly free —
 the pure core has already paid for most of it — and point clouds are the rare
 rendering primitive that survives extra dimensions. The genuinely expensive

@@ -1,6 +1,6 @@
 # Architecture
 
-Fractal Viewer renders an **Iterated Function System (IFS)** with the _chaos game_
+Fractal Explorer renders an **Iterated Function System (IFS)** with the _chaos game_
 and draws the result as a Three.js point cloud. The code splits cleanly into a
 pure, dependency-free core (`src/fractal/`) and a rendering/UI layer (`src/app/`).
 
@@ -46,7 +46,7 @@ applyAffine(t, p) = position + R · (scale ⊙ p)
 
 `rotationMatrixXYZ` reproduces `THREE.Matrix4.makeRotationFromEuler` for
 `order = "XYZ"` element-for-element, so the math here matches what the guide boxes
-do on the GPU and the fractal looks identical to the original standalone viewer.
+do on the GPU and the fractal looks identical to the original standalone version.
 `affine.test.ts` pins this down with identity, single-axis 90° rotations, scale,
 translation, and a composed case against hand-computed values.
 
@@ -314,7 +314,7 @@ rotation so the projection's motion reads as genuinely 4D at a glance.
 
 ## Scene persistence
 
-`persist.ts` keeps the viewer share-ready. The persistent subset of `AppState`
+`persist.ts` keeps the explorer share-ready. The persistent subset of `AppState`
 (transforms, point count/size, color mode, color contrast, depth style, guide
 visibility) is serialized to a compact `v1=<base64url>` payload and written to
 both the URL hash (`history.replaceState`, so edits don't pile up in the
@@ -478,7 +478,7 @@ cloud IS the app, unlike the optional flame/solid overlays, `cloud-generator.ts`
 carries a permanent synchronous fallback — the very same `generateCloud` run
 inline on the main thread — for when the worker can't be created, fails to
 load, or crashes, so a dead worker degrades to janky-but-correct rather than a
-dead viewer. Boot's first generation deliberately takes that same synchronous
+dead app. Boot's first generation deliberately takes that same synchronous
 path too, not as a fallback but by design, so first paint already shows a
 cloud instead of a blank frame behind a worker round-trip.
 

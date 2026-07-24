@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-**Fractal Viewer** — an interactive 3D/4D IFS (Iterated Function System) fractal
-viewer. A set of affine transforms is rendered with the "chaos game" into a live
+**Fractal Explorer** — an interactive 3D/4D IFS (Iterated Function System) fractal
+explorer. A set of affine transforms is rendered with the "chaos game" into a live
 Three.js point cloud. Built with TypeScript + Vite, packaged as a PWA, deployed to
 GitHub Pages. Reference docs in `docs/`.
 
