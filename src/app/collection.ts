@@ -25,7 +25,7 @@
  * history) stays render-mode-less per fr-39y; only the user's own gallery
  * remembers how a keeper was meant to be displayed.
  */
-export type SavedSceneMode = "flame" | "solid";
+export type SavedSceneMode = "flame" | "solid" | "surface";
 
 /**
  * One saved scene in the collection. `encoded` is a `persist.ts`
@@ -95,7 +95,7 @@ function isSavedScene(v: unknown): v is SavedScene {
  * Exported for `timeline.ts`'s loader to reuse (fr-v3au) — the one
  * validator for a persisted `SavedSceneMode`. */
 export function sanitizedMode(v: unknown): SavedSceneMode | undefined {
-  return v === "flame" || v === "solid" ? v : undefined;
+  return v === "flame" || v === "solid" || v === "surface" ? v : undefined;
 }
 
 /**

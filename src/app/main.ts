@@ -8,8 +8,13 @@ import {
   colorModeUsesRampPalette,
   dimColorsExcept,
   fourDColorNeedsAttribute,
+  transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
+import { effectiveSymmetryOrder } from "../fractal/chaos-game";
+import { analyzeSurfaceSystem, buildSurfaceDE } from "../fractal/surface-de";
+import type { SurfaceDE } from "../fractal/surface-de";
+import { SURFACE_MAX_MAPS } from "./surface-material";
 import {
   DEFAULT_GAMMA_THRESHOLD,
   tonemapFlame,
@@ -104,7 +109,7 @@ import {
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
-import type { Bounds, Vec4 } from "../fractal/types";
+import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -826,7 +831,7 @@ function main(): void {
   // INSIDE a converging render (the Collection section is reachable there
   // since fr-75sq) must hold for that render's completion rather than
   // dwell-and-yank it.
-  const renderComplete = { flame: false, solid: false };
+  const renderComplete = { flame: false, solid: false, surface: false };
 
   // A converging flame/solid render reported progress: record whether its
   // budget is met (a budget raised on a finished render genuinely
@@ -848,7 +853,7 @@ function main(): void {
   // terminate() can't unsend — must not start the departure clock while
   // the step's own render is still converging or yet to enter.
   function noteRenderProgress(
-    mode: "flame" | "solid",
+    mode: "flame" | "solid" | "surface",
     done: number,
     budget: number,
   ): void {
@@ -1259,7 +1264,9 @@ function main(): void {
         ? "flame"
         : state.renderMode === "solid" && solidSession.hasFirstFrame
           ? "solid"
-          : "points";
+          : state.renderMode === "surface" && surfaceSession.hasFirstFrame
+            ? "surface"
+            : "points";
     return scene.captureThumbnail(mode);
   }
 
@@ -2532,7 +2539,89 @@ function main(): void {
     },
   });
 
-  // The one path between the three render modes (fr-39y): exit whichever
+  // Per-slot colors for the surface tracer: each symmetry-expanded slot
+  // inherits its BASE map's "By Transform" color (transformColors), the same
+  // `idx % baseTransformCount` keying the explorer's own coloring uses.
+  function surfaceSlotColors(de: SurfaceDE): Vec3[] {
+    const palette = transformColors(state.transforms.length);
+    return de.maps.map((m) => palette[m.baseIndex]);
+  }
+
+  // The surface render session (epic fr-7jlk): sphere-trace the attractor as
+  // an implicit surface against the analytic distance estimator. No worker
+  // and no accumulation — buildSurfaceDE is pure math (analytic inverses +
+  // a small seeded bounding probe, a few ms) and the whole "session" is GPU
+  // uniforms, so the render is ready the moment start() returns. The
+  // RenderSession skeleton still buys the choreography every render shares:
+  // exit-on-undo/redo (via applyDecodedSnapshot's switchRenderMode), error →
+  // exit, and the repaint-on-leaving discipline (fr-w9wl). Like the solid
+  // render the DE is world-space, so the camera stays LIVE.
+  const surfaceSession = new RenderSession<never>({
+    start: () => {
+      try {
+        const de = buildSurfaceDE(
+          state.transforms,
+          state.finalTransform ?? null,
+          state.symmetry,
+        );
+        scene.setSurfaceSystem(de, surfaceSlotColors(de));
+        surfaceSession.markFirstFrame();
+      } catch (error) {
+        // Unreachable while the segmented control's gate tracks
+        // analyzeSurfaceSystem, but a build failure must fall back to the
+        // explorer rather than strand the mode (the flame/solid
+        // worker-error contract). Deferred a tick: enter() only stores the
+        // handle after start() returns, and exit() has to see it.
+        console.error(
+          "Surface render failed to build; returning to explorer.",
+          error,
+        );
+        showRenderError();
+        queueMicrotask(() => surfaceSession.exit());
+      }
+      return { post: () => {}, terminate: () => {} };
+    },
+    clearNotes: () => {
+      // The one surface note (the degraded-march notice) is derived from
+      // the DOCUMENT, not the session — refreshSurfaceEligibility owns it,
+      // so there is nothing session-scoped to clear.
+    },
+    resetProgress: () => {
+      // Instant render, but the flag must never carry stale-true across
+      // sessions (fr-75sq), like the flame/solid resets.
+      renderComplete.surface = false;
+    },
+    activate: () => {
+      // Drop any transform selection: no guide boxes in this mode, so a
+      // raycast drag should orbit the camera (the solid session's reasoning).
+      state = selectTransform(state, null);
+      state = setRenderMode(state, "surface");
+      refreshGuides();
+      refreshUi();
+      // With the mode flipped and the DE uploaded (start() marked the first
+      // frame — skipped if the build failed), the instant render is a
+      // COMPLETE render: the same budget-met signal a converging flame/solid
+      // progress event sends, so a holding collection show or timeline
+      // render keyframe departs on schedule instead of waiting forever.
+      if (surfaceSession.hasFirstFrame) noteRenderProgress("surface", 1, 1);
+    },
+    deactivate: () => {
+      // Reset only the mode this session owns — see the flame session's
+      // deactivate for why this is not a blind write.
+      if (state.renderMode === "surface") {
+        state = setRenderMode(state, "points");
+        // Repaint the explorer over the last traced frame (fr-w9wl): the
+        // tracer shares the one canvas and the same render-on-demand gate.
+        scene.invalidate();
+      }
+      refreshUi();
+      // A parked offline export's early-exit wake (fr-6jic) — see the flame
+      // session's deactivate.
+      notifyOfflinePark();
+    },
+  });
+
+  // The one path between the render modes (fr-39y): exit whichever
   // converging render is active, then enter the target's session. Driving
   // both steps through the sessions' own enter/exit keeps their choreography
   // (worker teardown, note/progress resets, the active flag + UI refresh)
@@ -2595,8 +2684,10 @@ function main(): void {
     }
     if (state.renderMode === "flame") flameSession.exit();
     else if (state.renderMode === "solid") solidSession.exit();
+    else if (state.renderMode === "surface") surfaceSession.exit();
     if (target === "flame") flameSession.enter();
     else if (target === "solid") solidSession.enter();
+    else if (target === "surface") surfaceSession.enter();
   }
 
   // The lens has no guide box, so map its selection (like camera) to "nothing
@@ -2647,6 +2738,48 @@ function main(): void {
           ? (state.finalTransform ?? null)
           : state.transforms[sel];
     ui.renderTransformEditor(editing, sel);
+    refreshSurfaceEligibility();
+  }
+
+  /**
+   * Keep the Surface mode button's gate tracking the DOCUMENT (epic
+   * fr-7jlk): the pure marchability analysis (cheap — no bounding probe)
+   * plus the material's uniform-array cap on the symmetry-EXPANDED map
+   * count. Rides refreshUi — the one chokepoint every document edit,
+   * snapshot load, and undo/redo already funnels through — so the button
+   * enables/disables live as variations, 4D blocks, scales, weights, or
+   * symmetry orders change.
+   */
+  function refreshSurfaceEligibility(): void {
+    const analysis = analyzeSurfaceSystem(
+      state.transforms,
+      state.finalTransform ?? null,
+    );
+    if (analysis.status === "ineligible") {
+      ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
+      return;
+    }
+    const activeMaps = state.transforms.filter(
+      (t) => (t.weight ?? 1) > 0,
+    ).length;
+    const expanded =
+      effectiveSymmetryOrder(state.symmetry.order, state.transforms.length) *
+      activeMaps;
+    if (expanded > SURFACE_MAX_MAPS) {
+      ui.setSurfaceEligibility(
+        "ineligible",
+        `symmetry expands to ${expanded} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
+      );
+      return;
+    }
+    if (analysis.status === "degraded") {
+      ui.setSurfaceEligibility(
+        "degraded",
+        `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
+      );
+      return;
+    }
+    ui.setSurfaceEligibility("eligible", null);
   }
 
   /**
@@ -3807,9 +3940,11 @@ function main(): void {
       const capture =
         state.renderMode === "solid" && solidSession.hasFirstFrame
           ? scene.captureSolidFrame(scale)
-          : state.renderMode === "flame" && flameSession.hasFirstFrame
-            ? scene.captureFlameFrame()
-            : scene.captureFrame(scale);
+          : state.renderMode === "surface" && surfaceSession.hasFirstFrame
+            ? scene.captureSurfaceFrame(scale)
+            : state.renderMode === "flame" && flameSession.hasFirstFrame
+              ? scene.captureFlameFrame()
+              : scene.captureFrame(scale);
       void capture.then((image) => {
         if (!image) {
           ui.flashToast("Couldn't encode the PNG");
@@ -4284,6 +4419,25 @@ function main(): void {
         if (renderedSolid) scene.render();
       }
       if (!force) governResolution(now, renderedSolid);
+      return;
+    }
+    if (state.renderMode === "surface") {
+      // The DE is world-space like the solid volume: live orbit camera. The
+      // first-frame gate only matters for the (unreachable-in-practice)
+      // failed-build window — the uniforms are uploaded synchronously in
+      // enter() — but keeping it preserves the sessions' shared contract.
+      scene.applyCamera(orbit);
+      const renderedSurface = scene.needsRender || recorderActive || force;
+      if (surfaceSession.hasFirstFrame) {
+        if (renderedSurface) scene.renderSurface();
+      } else {
+        scene.updateFog();
+        if (renderedSurface) scene.render();
+      }
+      // Marching cost scales with pixels exactly like the solid raymarch,
+      // so the same ladder trades resolution for frame rate (exports are
+      // unscaled: captureSurfaceFrame pins its own pixel ratio).
+      if (!force) governResolution(now, renderedSurface);
       return;
     }
     if (state.renderMode === "flame") {
