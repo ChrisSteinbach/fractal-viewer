@@ -99,6 +99,11 @@ import {
   setSolidPaletteId,
   setSolidResolution,
   setSolidThreshold,
+  setSurfaceAmbient,
+  setSurfaceColorSource,
+  setSurfaceLightAzimuth,
+  setSurfaceLightElevation,
+  setSurfacePaletteId,
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
@@ -158,6 +163,22 @@ describe("initialState", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
+    });
+  });
+
+  // fr-7jlk: the surface render's lighting reuses the solid render's own
+  // MIN_/MAX_/DEFAULT_ constants (same physical meaning), and its default
+  // colorSource is "transform" — not "palette" — so a fresh session's
+  // surface render shows each map's own color, not the (still-primed)
+  // gradient paletteId.
+  it("boots with the surface render at its default settings", () => {
+    const state = initialState(true);
+    expect(state.surface).toEqual({
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
@@ -750,11 +771,12 @@ describe("setRenderMode", () => {
     expect(state.renderMode).toBe("flame");
   });
 
-  it("leaves the flame and solid settings untouched", () => {
+  it("leaves the flame/solid/surface settings untouched", () => {
     const state = initialState(true);
     const next = setRenderMode(state, "flame");
     expect(next.flame).toBe(state.flame);
     expect(next.solid).toBe(state.solid);
+    expect(next.surface).toBe(state.surface);
   });
 });
 
@@ -915,6 +937,116 @@ describe("setSolidPaletteId", () => {
     const state = setSolidPaletteId(initialState(true), "moss");
     const next = setSolidPaletteId(state, "custom");
     expect(next.solid.paletteId).toBe("custom");
+    expect(next.customPalette).toEqual({ stops: seedCustomStops("moss") });
+  });
+});
+
+describe("setSurfaceLightAzimuth", () => {
+  it("sets the light's horizontal angle immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceLightAzimuth(state, -90);
+    expect(next.surface.lightAzimuth).toBe(-90);
+    expect(state.surface.lightAzimuth).toBe(DEFAULT_SOLID_LIGHT_AZIMUTH);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setSurfaceLightAzimuth(initialState(true), 999).surface.lightAzimuth,
+    ).toBe(MAX_SOLID_LIGHT_AZIMUTH);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setSurfaceLightAzimuth(initialState(true), -999).surface.lightAzimuth,
+    ).toBe(MIN_SOLID_LIGHT_AZIMUTH);
+  });
+});
+
+describe("setSurfaceLightElevation", () => {
+  it("sets the light's elevation immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceLightElevation(state, 70);
+    expect(next.surface.lightElevation).toBe(70);
+    expect(state.surface.lightElevation).toBe(DEFAULT_SOLID_LIGHT_ELEVATION);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setSurfaceLightElevation(initialState(true), 999).surface.lightElevation,
+    ).toBe(MAX_SOLID_LIGHT_ELEVATION);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setSurfaceLightElevation(initialState(true), -999).surface.lightElevation,
+    ).toBe(MIN_SOLID_LIGHT_ELEVATION);
+  });
+});
+
+describe("setSurfaceAmbient", () => {
+  it("sets the ambient floor immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceAmbient(state, 0.5);
+    expect(next.surface.ambient).toBe(0.5);
+    expect(state.surface.ambient).toBe(DEFAULT_SOLID_AMBIENT);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSurfaceAmbient(initialState(true), 5).surface.ambient).toBe(
+      MAX_SOLID_AMBIENT,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSurfaceAmbient(initialState(true), -5).surface.ambient).toBe(
+      MIN_SOLID_AMBIENT,
+    );
+  });
+});
+
+describe("setSurfaceColorSource", () => {
+  it("sets the color source immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceColorSource(state, "palette");
+    expect(next.surface.colorSource).toBe("palette");
+    expect(state.surface.colorSource).toBe("transform");
+  });
+
+  it("leaves the other surface params untouched", () => {
+    const state = initialState(true);
+    const next = setSurfaceColorSource(state, "height");
+    expect(next.surface.lightAzimuth).toBe(state.surface.lightAzimuth);
+    expect(next.surface.ambient).toBe(state.surface.ambient);
+    expect(next.surface.paletteId).toBe(state.surface.paletteId);
+  });
+});
+
+describe("setSurfacePaletteId", () => {
+  it("sets the palette id immutably", () => {
+    const state = initialState(true);
+    // "aurora", not the "spectrum" default — a no-op write couldn't prove
+    // immutability.
+    const next = setSurfacePaletteId(state, "aurora");
+    expect(next.surface.paletteId).toBe("aurora");
+    expect(state.surface.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+  });
+
+  it("leaves the other surface params untouched", () => {
+    const state = initialState(true);
+    const next = setSurfacePaletteId(state, "ember");
+    expect(next.surface.lightAzimuth).toBe(state.surface.lightAzimuth);
+    expect(next.surface.lightElevation).toBe(state.surface.lightElevation);
+    expect(next.surface.ambient).toBe(state.surface.ambient);
+    expect(next.surface.colorSource).toBe(state.surface.colorSource);
+  });
+
+  // fr-55k: the surface twin of setSolidPaletteId's seeding test — "moss",
+  // not the "spectrum" default, to prove it seeds from the ACTUAL previous
+  // SURFACE id (independent of the flame/solid palettes' own selections).
+  it("seeds customPalette from the previous surface palette on first switch to custom", () => {
+    const state = setSurfacePaletteId(initialState(true), "moss");
+    const next = setSurfacePaletteId(state, "custom");
+    expect(next.surface.paletteId).toBe("custom");
     expect(next.customPalette).toEqual({ stops: seedCustomStops("moss") });
   });
 });
@@ -1213,11 +1345,12 @@ describe("setRampPaletteId", () => {
     expect(state.rampPaletteId).toBe(DEFAULT_RAMP_PALETTE);
   });
 
-  it("leaves the flame/solid palette ids untouched", () => {
+  it("leaves the flame/solid/surface palette ids untouched", () => {
     const state = initialState(true);
     const next = setRampPaletteId(state, "ember");
     expect(next.flame.paletteId).toBe(state.flame.paletteId);
     expect(next.solid.paletteId).toBe(state.solid.paletteId);
+    expect(next.surface.paletteId).toBe(state.surface.paletteId);
   });
 
   // fr-3b6: the first switch to Custom seeds a tweakable copy of whatever

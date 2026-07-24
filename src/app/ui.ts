@@ -837,6 +837,13 @@ export class Ui {
   // itself carries the eligibility gate — see setSurfaceEligibility.
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
+  // The surface render's own settings block (fr-7jlk v2): lighting sliders
+  // plus the base-color source/palette selects, the same solidControls
+  // pattern one render mode over. surfacePaletteRow additionally gates on
+  // colorSource === "palette" — the palette only means anything for that one
+  // source, like glowBrightnessRow's renderStyle gate.
+  private readonly surfaceControls: HTMLElement;
+  private readonly surfacePaletteRow: HTMLElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
@@ -916,17 +923,15 @@ export class Ui {
   >;
 
   /** Which accordion section is open, remembered per render mode (fr-99o) so
-   * switching Points ↔ Flame ↔ Solid restores each mode's working section
-   * instead of landing on an all-collapsed panel. `""` = the user
+   * switching Points ↔ Flame ↔ Solid ↔ Surface restores each mode's working
+   * section instead of landing on an all-collapsed panel. `""` = the user
    * deliberately collapsed everything in that mode. Session-only, like
    * `renderMode` itself. */
   private readonly openSectionByMode: Record<RenderMode, string> = {
     points: "presetSection",
     flame: "flameToneSection",
     solid: "solidSurfaceSection",
-    // No surface-owned sections yet (v1 ships without sliders); Capture is
-    // the natural working section while sphere-tracing.
-    surface: "captureSection",
+    surface: "surfaceLookSection",
   };
 
   /** The render mode {@link updateLabels} last saw — its change is what
@@ -1068,6 +1073,8 @@ export class Ui {
     this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
+    this.surfaceControls = this.byId("surfaceControls");
+    this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceRow = this.byId("fourDSliceRow");
@@ -1552,6 +1559,17 @@ export class Ui {
     this.explorerControls.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
+    this.surfaceControls.classList.toggle(
+      "hidden",
+      state.renderMode !== "surface",
+    );
+    // The surface palette select only means anything for the "palette"
+    // colorSource — like glowBrightnessRow, hidden whenever that source
+    // isn't the active one.
+    this.surfacePaletteRow.classList.toggle(
+      "hidden",
+      state.surface.colorSource !== "palette",
+    );
     // …including each mode's non-section block above the accordion (fr-374p):
     // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
     // affect the frozen render, same reason the editing controls hide), and
@@ -1627,8 +1645,9 @@ export class Ui {
       if (input.value !== hex) input.value = hex;
     }
     // Accordion restore (fr-99o): entering a render mode re-opens the section
-    // the user last had open there (defaults: Presets / Tone / Surface — see
-    // openSectionByMode). Setting .open trips the details name-group
+    // the user last had open there (defaults: Presets / Tone / Surface /
+    // Surface Look — see openSectionByMode). Setting .open trips the details
+    // name-group
     // exclusivity, so the previous mode's section closes by itself. Runs
     // after the visibility gating above so the hidden check reads this
     // update's state, and only on an actual mode change so a collapse the

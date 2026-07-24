@@ -411,6 +411,30 @@ describe("Ui glow brightness slider", () => {
   });
 });
 
+describe("Ui surface palette row (fr-7jlk)", () => {
+  function surfacePaletteRow(): HTMLElement {
+    return document.getElementById("surfacePaletteRow") as HTMLElement;
+  }
+
+  it('is hidden while the surface colorSource is not "palette"', () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "height" },
+    });
+    expect(surfacePaletteRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it('is shown while the surface colorSource is "palette"', () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "palette" },
+    });
+    expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("Ui color contrast slider", () => {
   function colorGammaRow(): HTMLElement {
     return document.getElementById("colorGammaRow") as HTMLElement;
@@ -1951,11 +1975,14 @@ describe("Ui 4D group", () => {
 });
 
 describe("Ui render mode switch (fr-39y)", () => {
-  function modeBtn(mode: "points" | "flame" | "solid"): HTMLButtonElement {
+  function modeBtn(
+    mode: "points" | "flame" | "solid" | "surface",
+  ): HTMLButtonElement {
     const id = {
       points: "modePointsBtn",
       flame: "modeFlameBtn",
       solid: "modeSolidBtn",
+      surface: "modeSurfaceBtn",
     }[mode];
     return document.getElementById(id) as HTMLButtonElement;
   }
@@ -1970,6 +1997,9 @@ describe("Ui render mode switch (fr-39y)", () => {
   }
   function solidControls(): HTMLElement {
     return document.getElementById("solidControls") as HTMLElement;
+  }
+  function surfaceControls(): HTMLElement {
+    return document.getElementById("surfaceControls") as HTMLElement;
   }
 
   it("fires onRenderMode with the flame mode when the flame segment is clicked", () => {
@@ -1986,6 +2016,14 @@ describe("Ui render mode switch (fr-39y)", () => {
     ui.bind(handlers);
     modeBtn("solid").click();
     expect(handlers.onRenderMode).toHaveBeenCalledWith("solid");
+  });
+
+  it("fires onRenderMode with the surface mode when the surface segment is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    modeBtn("surface").click();
+    expect(handlers.onRenderMode).toHaveBeenCalledWith("surface");
   });
 
   // Fires even for the segment that's already active (index.html boots with
@@ -2031,6 +2069,22 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(modeBtn("solid").getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("shows only the surface controls and marks the surface segment active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
+
+    expect(explorerControls().classList.contains("hidden")).toBe(true);
+    expect(surfaceControls().classList.contains("hidden")).toBe(false);
+    expect(flameControls().classList.contains("hidden")).toBe(true);
+    expect(solidControls().classList.contains("hidden")).toBe(true);
+    expect(byId("undoRedoRow").classList.contains("hidden")).toBe(true);
+    expect(byId("surfaceStatus").classList.contains("hidden")).toBe(false);
+    expect(byId("flameStatus").classList.contains("hidden")).toBe(true);
+    expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
+    expect(modeBtn("surface").classList.contains("active")).toBe(true);
+    expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows the explorer and marks the points segment active by default", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
@@ -2056,6 +2110,7 @@ describe("Ui render mode switch (fr-39y)", () => {
       "explorerControls",
       "flameControls",
       "solidControls",
+      "surfaceControls",
     ]) {
       const children = Array.from(byId(containerId).children);
       expect(children.length).toBeGreaterThan(0);
@@ -2068,7 +2123,12 @@ describe("Ui render mode switch (fr-39y)", () => {
     }
 
     const firstSection = document.querySelector("#panel details.panel-section");
-    for (const floatingId of ["undoRedoRow", "flameStatus", "solidStatus"]) {
+    for (const floatingId of [
+      "undoRedoRow",
+      "flameStatus",
+      "solidStatus",
+      "surfaceStatus",
+    ]) {
       const position = byId(floatingId).compareDocumentPosition(firstSection!);
       expect(
         position & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -3795,6 +3855,9 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["solidAmbientSlider", PARAM.solidAmbient],
     ["solidIterationsSlider", PARAM.solidIterations],
     ["solidResolutionSlider", PARAM.solidResolution],
+    ["surfaceLightAzimuthSlider", PARAM.surfaceLightAzimuth],
+    ["surfaceLightElevationSlider", PARAM.surfaceLightElevation],
+    ["surfaceAmbientSlider", PARAM.surfaceAmbient],
   ];
 
   it.each(DIRECT)("%s min/max match its ParamSpec", (id, spec) => {
@@ -3855,6 +3918,12 @@ describe("panel accordion sections (fr-zoi)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(details("solidSurfaceSection").open).toBe(true);
+  });
+
+  it("entering surface mode opens its Surface Look section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
+    expect(details("surfaceLookSection").open).toBe(true);
   });
 
   it("returning to points restores the explorer's section", () => {

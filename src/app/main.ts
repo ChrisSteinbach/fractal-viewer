@@ -86,7 +86,7 @@ import {
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
-import { applyScalarControl } from "./control-spec";
+import { applyScalarControl, surfaceColorLUT } from "./control-spec";
 import type { ControlEffects } from "./control-spec";
 import {
   decodeScene,
@@ -2547,6 +2547,14 @@ function main(): void {
     return de.maps.map((m) => palette[m.baseIndex]);
   }
 
+  // Per-slot orbit-trap palette coordinates: base map i of n spreads evenly
+  // over [0, 1] — the flame's `paletteIndex(i, n)` idea, keyed by baseIndex
+  // so kaleidoscope copies share their base map's coordinate.
+  function surfaceTrapIndices(de: SurfaceDE): number[] {
+    const denom = Math.max(1, state.transforms.length - 1);
+    return de.maps.map((m) => m.baseIndex / denom);
+  }
+
   // The surface render session (epic fr-7jlk): sphere-trace the attractor as
   // an implicit surface against the analytic distance estimator. No worker
   // and no accumulation — buildSurfaceDE is pure math (analytic inverses +
@@ -2564,7 +2572,18 @@ function main(): void {
           state.finalTransform ?? null,
           state.symmetry,
         );
-        scene.setSurfaceSystem(de, surfaceSlotColors(de));
+        scene.setSurfaceSystem(
+          de,
+          surfaceSlotColors(de),
+          surfaceTrapIndices(de),
+        );
+        // Lighting/color settings + (when the colorSource needs one) the
+        // ramp LUT: pushed at entry so a fresh session reflects the
+        // persisted SurfaceParams; the control-spec effects keep them live
+        // from there.
+        scene.setSurfaceParams(state.surface);
+        const lut = surfaceColorLUT(state);
+        if (lut) scene.setSurfaceColorLUT(lut);
         surfaceSession.markFirstFrame();
       } catch (error) {
         // Unreachable while the segmented control's gate tracks

@@ -56,9 +56,17 @@ import {
   MIN_W_SHEAR,
   PARAM,
   RENDER_STYLES,
+  SURFACE_COLOR_SOURCES,
   clampToSpec,
 } from "./state";
-import type { AppState, FlameParams, RenderStyle, SolidParams } from "./state";
+import type {
+  AppState,
+  FlameParams,
+  RenderStyle,
+  SolidParams,
+  SurfaceColorSource,
+  SurfaceParams,
+} from "./state";
 import { clampPhi, clampRadius, type CameraPose } from "./orbit";
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
@@ -114,6 +122,10 @@ export interface SceneSnapshot {
   /** Solid render settings (see {@link AppState.solid}); like `flame`, the
    * session-only `renderMode` is intentionally NOT part of this snapshot. */
   solid: SolidParams;
+  /** Surface render settings (see {@link AppState.surface}); like `flame`/
+   * `solid`, the session-only `renderMode` is intentionally NOT part of this
+   * snapshot. */
+  surface: SurfaceParams;
   /**
    * Rotational/mirror symmetry (fr-6im, see {@link AppState.symmetry}).
    * Persists like `colorMode`/`renderStyle` — always present, unlike the
@@ -208,6 +220,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     showGuides: state.showGuides,
     flame: state.flame,
     solid: state.solid,
+    surface: state.surface,
     symmetry: state.symmetry,
     glowBrightness: state.glowBrightness,
     customPalette: state.customPalette,
@@ -277,6 +290,9 @@ const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
 
 /** Exact set of valid SymmetryAxis values. */
 const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
+
+/** Exact set of valid SurfaceColorSource values (fr-7jlk). */
+const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
 
 /**
  * Cap on variations per transform when decoding untrusted input. There are only
@@ -778,6 +794,87 @@ function decodeSolidParams(
 }
 
 /**
+ * Validate the untrusted `surface` render-settings block (fr-7jlk),
+ * following `decodeSolidParams`'s presence rules exactly: an absent block —
+ * or an absent field within a present block — decodes quietly to its
+ * default, while a present-but-malformed (non-finite) value rejects the
+ * whole scene. Finite values are clamped into range.
+ *
+ * `colorSource` is a QUIET-fallback enum, like `symmetry.axis` (see
+ * {@link decodeSymmetry}): an unrecognized or missing value decodes to
+ * `"transform"` rather than rejecting the scene — a base-color choice is
+ * cosmetic, not worth losing an otherwise-valid shared link over.
+ *
+ * `paletteId` (fr-7jlk) mirrors `flame.paletteId`/`solid.paletteId` exactly:
+ * an unknown or missing id decodes to {@link DEFAULT_SOLID_PALETTE} — the
+ * surface render's own default, reused from the solid render rather than
+ * redeclared, see `state.ts`'s `SurfaceParams` — rather than rejecting the
+ * scene. `hasCustomPalette` (fr-55k) extends that mirror exactly like the
+ * other two blocks' own parameter: a `"custom"` id is accepted only when a
+ * valid `customPalette` payload actually decoded alongside it (see
+ * {@link decodeCustomPalette}), otherwise it takes the same quiet fallback an
+ * unrecognized id takes.
+ */
+function decodeSurfaceParams(
+  raw: unknown,
+  hasCustomPalette: boolean,
+): SurfaceParams | null {
+  const defaults: SurfaceParams = {
+    lightAzimuth: PARAM.surfaceLightAzimuth.default,
+    lightElevation: PARAM.surfaceLightElevation.default,
+    ambient: PARAM.surfaceAmbient.default,
+    colorSource: "transform",
+    paletteId: DEFAULT_SOLID_PALETTE,
+  };
+  if (raw === undefined) return defaults;
+  if (typeof raw !== "object" || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+
+  const out = { ...defaults };
+  const numeric: Exclude<keyof SurfaceParams, "colorSource" | "paletteId">[] = [
+    "lightAzimuth",
+    "lightElevation",
+    "ambient",
+  ];
+  for (const key of numeric) {
+    if (s[key] === undefined) continue;
+    const value = Number(s[key]);
+    if (!Number.isFinite(value)) return null;
+    out[key] = value;
+  }
+
+  // colorSource (fr-7jlk): unknown or missing quietly becomes "transform" —
+  // the same quiet-fallback contract as symmetry.axis just below.
+  const colorSource: SurfaceColorSource =
+    typeof s.colorSource === "string" &&
+    VALID_SURFACE_COLOR_SOURCES.has(s.colorSource)
+      ? (s.colorSource as SurfaceColorSource)
+      : "transform";
+
+  // paletteId (fr-7jlk): unknown or missing quietly becomes the default —
+  // same quiet-fallback contract as flame.paletteId/solid.paletteId (see
+  // decodeFlameParams). "custom" (fr-55k) is accepted only alongside a valid
+  // decoded customPalette payload.
+  const paletteId: PaletteSelection =
+    typeof s.paletteId === "string" &&
+    (VALID_PALETTE_IDS.has(s.paletteId) ||
+      (s.paletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
+      ? (s.paletteId as PaletteSelection)
+      : DEFAULT_SOLID_PALETTE;
+
+  return {
+    lightAzimuth: clampToSpec(PARAM.surfaceLightAzimuth, out.lightAzimuth),
+    lightElevation: clampToSpec(
+      PARAM.surfaceLightElevation,
+      out.lightElevation,
+    ),
+    ambient: clampToSpec(PARAM.surfaceAmbient, out.ambient),
+    colorSource,
+    paletteId,
+  };
+}
+
+/**
  * Validate the untrusted `symmetry` block (fr-6im). Unlike `flame`/`solid`, a
  * malformed field never rejects the whole scene: `order` coerces and clamps
  * (an out-of-range or non-finite request quietly becomes the nearest valid
@@ -1009,6 +1106,7 @@ export function encodeScene(s: SceneSnapshot): string {
     showGuides: boolean;
     flame: FlameParams;
     solid: SolidParams;
+    surface: SurfaceParams;
     symmetry: SymmetryParams;
     glowBrightness: number;
     customPalette?: { stops: string[] };
@@ -1067,6 +1165,13 @@ export function encodeScene(s: SceneSnapshot): string {
       lightElevation: round4(s.solid.lightElevation),
       ambient: round4(s.solid.ambient),
       paletteId: s.solid.paletteId,
+    },
+    surface: {
+      lightAzimuth: round4(s.surface.lightAzimuth),
+      lightElevation: round4(s.surface.lightElevation),
+      ambient: round4(s.surface.ambient),
+      colorSource: s.surface.colorSource,
+      paletteId: s.surface.paletteId,
     },
     symmetry: {
       order: Math.round(s.symmetry.order),
@@ -1267,6 +1372,8 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (flame === null) return null;
     const solid = decodeSolidParams(o.solid, customPalette !== undefined);
     if (solid === null) return null;
+    const surface = decodeSurfaceParams(o.surface, customPalette !== undefined);
+    if (surface === null) return null;
 
     // symmetry: never rejects — a missing block or malformed field quietly
     // falls back to its default. See decodeSymmetry.
@@ -1341,6 +1448,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       showGuides: Boolean(o.showGuides),
       flame,
       solid,
+      surface,
       symmetry,
       glowBrightness,
       customPalette,

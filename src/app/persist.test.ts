@@ -45,6 +45,8 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_GLOW_BRIGHTNESS,
+  MAX_SOLID_LIGHT_AZIMUTH,
+  MAX_SOLID_LIGHT_ELEVATION,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SYMMETRY_ORDER,
@@ -129,6 +131,13 @@ function baseSnapshot(): SceneSnapshot {
       ambient: DEFAULT_SOLID_AMBIENT,
       paletteId: DEFAULT_SOLID_PALETTE,
     },
+    surface: {
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
+      paletteId: DEFAULT_SOLID_PALETTE,
+    },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
@@ -171,6 +180,13 @@ describe("encodeScene / decodeScene round-trip", () => {
       lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
       lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
       ambient: DEFAULT_SOLID_AMBIENT,
+      paletteId: DEFAULT_SOLID_PALETTE,
+    });
+    expect(result!.surface).toEqual({
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
     });
   });
@@ -1505,6 +1521,166 @@ describe("decodeScene solid params", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Surface render params (fr-7jlk — same "absent defaults quietly, malformed
+// numeric field rejects" contract as the flame/solid blocks above; unlike
+// those numeric fields, `colorSource` is a QUIET-fallback enum, like
+// symmetry.axis, not a reject-the-scene field)
+// ---------------------------------------------------------------------------
+
+describe("decodeScene surface params", () => {
+  it("round-trips a fully customized surface block", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: {
+        lightAzimuth: -45,
+        lightElevation: 70,
+        ambient: 0.5,
+        colorSource: "radius",
+        paletteId: "spectrum",
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.surface).toEqual({
+      lightAzimuth: -45,
+      lightElevation: 70,
+      ambient: 0.5,
+      colorSource: "radius",
+      paletteId: "spectrum",
+    });
+  });
+
+  it("defaults quietly when the surface block is absent entirely", () => {
+    // A hand-built payload with no `surface` key at all.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface).toEqual({
+      lightAzimuth: DEFAULT_SOLID_LIGHT_AZIMUTH,
+      lightElevation: DEFAULT_SOLID_LIGHT_ELEVATION,
+      ambient: DEFAULT_SOLID_AMBIENT,
+      colorSource: "transform",
+      paletteId: DEFAULT_SOLID_PALETTE,
+    });
+  });
+
+  it("returns null when surface is present but not an object", () => {
+    const raw = { ...baseSnapshot(), surface: "bright" };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when lightAzimuth is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, lightAzimuth: "x" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("returns null when ambient is present but non-finite", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, ambient: "murky" },
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
+  });
+
+  it("clamps out-of-range lightAzimuth/lightElevation/ambient into their allowed bands", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: {
+        ...baseSnapshot().surface,
+        lightAzimuth: 999,
+        lightElevation: 999,
+        ambient: -5,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.surface.lightAzimuth).toBe(MAX_SOLID_LIGHT_AZIMUTH);
+    expect(result!.surface.lightElevation).toBe(MAX_SOLID_LIGHT_ELEVATION);
+    expect(result!.surface.ambient).toBe(MIN_SOLID_AMBIENT);
+  });
+
+  it("round-trips a non-default colorSource", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, colorSource: "height" },
+    };
+    expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("height");
+  });
+
+  it('falls back to "transform" for an unrecognized colorSource instead of rejecting the scene', () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, colorSource: "psychedelic" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.colorSource).toBe("transform");
+  });
+
+  it("defaults colorSource when the surface block omits it", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: {
+        lightAzimuth: 100,
+        lightElevation: 60,
+        ambient: 0.3,
+        paletteId: "spectrum",
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.colorSource).toBe("transform");
+  });
+
+  it("round-trips a non-default paletteId", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, paletteId: "aurora" },
+    };
+    expect(decodeScene(encodeScene(s))!.surface.paletteId).toBe("aurora");
+  });
+
+  it("falls back to the default for an unknown paletteId instead of rejecting the scene", () => {
+    // Unlike lightAzimuth/lightElevation/ambient, an unknown palette does
+    // NOT nuke the whole scene — mirrors flame.paletteId/solid.paletteId's
+    // fallback behavior.
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, paletteId: "chartreuse" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+  });
+
+  it("defaults paletteId when the surface block omits it", () => {
+    // A surface block carrying every field except paletteId.
+    const raw = {
+      ...baseSnapshot(),
+      surface: {
+        lightAzimuth: 100,
+        lightElevation: 60,
+        ambient: 0.3,
+        colorSource: "radius",
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Custom palette (fr-55k) — the one user-authored gradient slot. Absent,
 // malformed, or an out-of-range stop count all quietly decode to `undefined`
 // rather than rejecting the scene; flame.paletteId / solid.paletteId accept
@@ -1584,6 +1760,38 @@ describe("decodeScene customPalette", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.solid.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+    expect(result!.customPalette).toBeUndefined();
+  });
+
+  it("round-trips a custom surface paletteId selection alongside the same payload", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 0.4, 0.2],
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.customPalette).toEqual({
+      stops: [
+        [0.2, 0.4, 0.6],
+        [0.8, 0.4, 0.2],
+      ],
+    });
+    expect(result!.surface.paletteId).toBe("custom");
+  });
+
+  it("falls back to the default for a custom surface paletteId with no customPalette payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, paletteId: "custom" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.paletteId).toBe(DEFAULT_SOLID_PALETTE);
     expect(result!.customPalette).toBeUndefined();
   });
 
