@@ -2362,7 +2362,16 @@ function main(): void {
       // per-mode boolean had (clearing flameActive could never touch
       // solidActive), so an idempotent exit() while some OTHER mode is
       // showing can't yank the app out of it via a blind write.
-      if (state.renderMode === "flame") state = setRenderMode(state, "points");
+      if (state.renderMode === "flame") {
+        state = setRenderMode(state, "points");
+        // Force the explorer to repaint over the frozen flame image (fr-w9wl):
+        // flame and points share the one canvas, and returning to points is a
+        // visible change that goes through no scene mutator — so with
+        // auto-orbit off nothing else marks the frame dirty and render-on-
+        // demand (fr-py7z) would leave the stale flame frame on screen until
+        // the next camera move.
+        scene.invalidate();
+      }
       refreshUi();
       // An offline export parked on this render (fr-6jic): an early exit —
       // worker error, Back — terminated the worker, so no further progress
@@ -2509,7 +2518,13 @@ function main(): void {
     deactivate: () => {
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
-      if (state.renderMode === "solid") state = setRenderMode(state, "points");
+      if (state.renderMode === "solid") {
+        state = setRenderMode(state, "points");
+        // Repaint the explorer over the last raymarched frame (fr-w9wl) — see
+        // the flame session's deactivate; the solid volume shares the same one
+        // canvas and the same render-on-demand gate.
+        scene.invalidate();
+      }
       refreshUi();
       // A parked offline export's early-exit wake (fr-6jic) — see the flame
       // session's deactivate.
