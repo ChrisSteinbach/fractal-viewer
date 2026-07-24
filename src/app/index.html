@@ -114,6 +114,15 @@
         >
           ◆ Solid
         </button>
+        <button
+          class="segment"
+          id="modeSurfaceBtn"
+          type="button"
+          aria-pressed="false"
+          title="Sphere-traced surface of the attractor"
+        >
+          ◈ Surface
+        </button>
       </div>
 
       <!-- Mode-scoped content that is NOT part of any accordion section lives
@@ -162,6 +171,15 @@
           react live.
         </p>
         <div id="solidProgress" class="flame-progress">0%</div>
+      </div>
+
+      <div id="surfaceStatus" class="hidden">
+        <p class="flame-hint">
+          The attractor as a true implicit surface, ray-marched live from a
+          distance estimator — zoom in and detail keeps resolving. Renders
+          instantly and stays fully orbitable.
+        </p>
+        <p id="surfaceNote" class="flame-note-info hidden"></p>
       </div>
 
       <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way

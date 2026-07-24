@@ -31,6 +31,11 @@ import {
   lightDirection,
   marchStepsForGrid,
 } from "./voxel-material";
+import {
+  createSurfaceMaterial,
+  setSurfaceSystem as packSurfaceSystem,
+} from "./surface-material";
+import type { SurfaceDE } from "../fractal/surface-de";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -491,6 +496,13 @@ export class FractalScene {
   private readonly voxelMaterial: THREE.ShaderMaterial;
   private readonly voxelQuad: FullScreenQuad;
 
+  // The surface render (epic fr-7jlk): the IFS attractor sphere-traced as an
+  // implicit surface against an analytic distance estimator (see
+  // surface-material.ts / surface-de.ts). No volume, no worker — the whole
+  // "session" is uniforms, so like the solid render the camera stays LIVE.
+  private readonly surfaceMaterial: THREE.ShaderMaterial;
+  private readonly surfaceQuad: FullScreenQuad;
+
   /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
   private viewportWidth: number;
   private viewportHeight: number;
@@ -765,6 +777,10 @@ export class FractalScene {
     this.voxelTexture = emptyVoxelTexture();
     this.voxelMaterial = createVoxelMaterial(this.voxelTexture);
     this.voxelQuad = new FullScreenQuad(this.voxelMaterial);
+
+    // Zero-map placeholder until the first setSurfaceSystem call.
+    this.surfaceMaterial = createSurfaceMaterial();
+    this.surfaceQuad = new FullScreenQuad(this.surfaceMaterial);
   }
 
   get canvas(): HTMLCanvasElement {
@@ -1696,7 +1712,7 @@ export class FractalScene {
    * empty thumbnail as "no image" and renders a placeholder card.
    */
   captureThumbnail(
-    mode: "points" | "flame" | "solid" = "points",
+    mode: "points" | "flame" | "solid" | "surface" = "points",
     maxDim = 160,
   ): string {
     if (mode === "flame") {
@@ -1710,6 +1726,7 @@ export class FractalScene {
     }
     return this.withCenteredProjection(() => {
       if (mode === "solid") this.renderSolid();
+      else if (mode === "surface") this.renderSurface();
       else this.render();
       return thumbnailFrom(this.renderer.domElement, maxDim);
     });
@@ -1905,6 +1922,62 @@ export class FractalScene {
     );
   }
 
+  /**
+   * Upload a freshly built surface distance estimator (epic fr-7jlk) so the
+   * next {@link renderSurface} call sphere-traces it. `colors[j]` is the
+   * sRGB base color for `de.maps[j]` — main.ts keys them by each slot's
+   * `baseIndex`, so kaleidoscope copies inherit their base map's color
+   * exactly like the explorer's "By Transform" mode.
+   */
+  setSurfaceSystem(de: SurfaceDE, colors: Vec3[]): void {
+    this.renderNeeded = true;
+    packSurfaceSystem(this.surfaceMaterial, de, colors);
+  }
+
+  /**
+   * Sphere-trace the surface DE from the CURRENT camera, filling the canvas
+   * — used in place of {@link render} while the surface render is active.
+   * Reads the live camera each call (the DE is world-space and
+   * camera-independent, exactly like the solid render's volume), so
+   * orbit/zoom keep working. The cone-tracing hit epsilon is the camera's
+   * angular pixel footprint, recomputed here so an export-scaled drawing
+   * buffer (see {@link captureSurfaceFrame}) traces at its own, finer
+   * resolution rather than the on-screen one.
+   */
+  renderSurface(): void {
+    this.renderNeeded = false;
+    this.camera.updateMatrixWorld();
+    const u = this.surfaceMaterial.uniforms;
+    (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
+    (u.uInvProjView.value as THREE.Matrix4)
+      .multiplyMatrices(
+        this.camera.projectionMatrix,
+        this.camera.matrixWorldInverse,
+      )
+      .invert();
+    const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
+    u.uPixelEps.value =
+      (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(size.y, 1);
+    this.renderer.setRenderTarget(null);
+    this.surfaceQuad.render(this.renderer);
+  }
+
+  /**
+   * Save-PNG source while the surface render is active: render synchronously
+   * right before the read so the drawing buffer is intact, exactly like
+   * {@link captureSolidFrame} — one bigger frame is just more rays (and
+   * {@link renderSurface}'s per-call pixel epsilon means the export traces
+   * at export resolution, not the screen's).
+   */
+  captureSurfaceFrame(exportScale = 1): Promise<ExportImage | null> {
+    return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
+      this.withCenteredProjection(() => {
+        this.renderSurface();
+        return exportImageFrom(this.renderer.domElement);
+      }),
+    );
+  }
+
   /** Park the depth-of-field focal plane on the centre of the cloud. */
   private focusDof(): void {
     const bounds = this.pointGeometry.boundingSphere;
@@ -1930,6 +2003,8 @@ export class FractalScene {
 
 const ZERO = new THREE.Vector3();
 const NO_SHEAR: Vec3 = [0, 0, 0];
+/** Scratch for `renderSurface`'s per-call drawing-buffer query. */
+const DRAW_SIZE = new THREE.Vector2();
 
 /**
  * Build a guide cell's wireframe edges + translucent faces. Any shear is baked

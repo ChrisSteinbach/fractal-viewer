@@ -832,6 +832,12 @@ export class Ui {
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
 
+  // The surface render's status block (epic fr-7jlk): a hint paragraph plus
+  // one note line (degraded-march notice while active). The mode button
+  // itself carries the eligibility gate — see setSurfaceEligibility.
+  private readonly surfaceStatus: HTMLElement;
+  private readonly surfaceNote: HTMLElement;
+
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
   // shown exactly when the 4D block is not (flat system, no render active).
@@ -918,6 +924,9 @@ export class Ui {
     points: "presetSection",
     flame: "flameToneSection",
     solid: "solidSurfaceSection",
+    // No surface-owned sections yet (v1 ships without sliders); Capture is
+    // the natural working section while sphere-tracing.
+    surface: "captureSection",
   };
 
   /** The render mode {@link updateLabels} last saw — its change is what
@@ -1045,10 +1054,13 @@ export class Ui {
       points: this.byId("modePointsBtn"),
       flame: this.byId("modeFlameBtn"),
       solid: this.byId("modeSolidBtn"),
+      surface: this.byId("modeSurfaceBtn"),
     };
     this.undoRedoRow = this.byId("undoRedoRow");
     this.flameStatus = this.byId("flameStatus");
     this.solidStatus = this.byId("solidStatus");
+    this.surfaceStatus = this.byId("surfaceStatus");
+    this.surfaceNote = this.byId("surfaceNote");
     this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
@@ -1547,6 +1559,10 @@ export class Ui {
     this.undoRedoRow.classList.toggle("hidden", rendering);
     this.flameStatus.classList.toggle("hidden", state.renderMode !== "flame");
     this.solidStatus.classList.toggle("hidden", state.renderMode !== "solid");
+    this.surfaceStatus.classList.toggle(
+      "hidden",
+      state.renderMode !== "surface",
+    );
     this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
     // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
     // the 4D block: exactly one of the two shows outside a render. It hides
@@ -2706,6 +2722,35 @@ export class Ui {
         ? `Reduced to ${effective}³ (from ${requested}³) to fit available memory.`
         : `Reduced to ${effective}³ to fit available memory.`;
     this.solidResolutionNote.classList.remove("hidden");
+  }
+
+  /**
+   * Reflect the surface render's marchability (epic fr-7jlk, from
+   * `analyzeSurfaceSystem` + the uniform-array cap): `ineligible` disables
+   * the mode button outright with the reason in its tooltip (the mode
+   * physically can't run — no valid distance estimator); `degraded` keeps it
+   * enabled but shows `detail` as an in-mode note (anisotropic maps marched
+   * conservatively); `eligible` restores the default affordance. main.ts
+   * recomputes this on every document change, so the button tracks edits
+   * live — including while some other render is active.
+   */
+  setSurfaceEligibility(
+    status: "eligible" | "degraded" | "ineligible",
+    detail: string | null,
+  ): void {
+    const button = this.modeButtons.surface;
+    const blocked = status === "ineligible";
+    button.disabled = blocked;
+    button.title = blocked
+      ? `Surface render unavailable: ${detail ?? "not marchable"}`
+      : "Sphere-traced surface of the attractor";
+    if (status === "degraded" && detail) {
+      this.surfaceNote.textContent = detail;
+      this.surfaceNote.classList.remove("hidden");
+    } else {
+      this.surfaceNote.textContent = "";
+      this.surfaceNote.classList.add("hidden");
+    }
   }
 
   /**

@@ -61,7 +61,7 @@ export type RenderStyle = (typeof RENDER_STYLES)[number];
  * so the app always boots into the explorer (see `persist.ts`'s
  * `SceneSnapshot`, which omits this field).
  */
-export const RENDER_MODES = ["points", "flame", "solid"] as const;
+export const RENDER_MODES = ["points", "flame", "solid", "surface"] as const;
 
 export type RenderMode = (typeof RENDER_MODES)[number];
 

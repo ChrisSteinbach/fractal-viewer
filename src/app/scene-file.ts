@@ -192,7 +192,7 @@ export function encodeTimelineFile(
  * garbage value loaded from storage: it costs the field, not the entry.
  */
 function sanitizedImportMode(v: unknown): SavedSceneMode | undefined {
-  return v === "flame" || v === "solid" ? v : undefined;
+  return v === "flame" || v === "solid" || v === "surface" ? v : undefined;
 }
 
 /**
