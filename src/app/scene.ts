@@ -577,7 +577,7 @@ export class FractalScene {
     // make sure the render-on-demand gate (fr-py7z) repaints it even if the
     // scene is otherwise static.
     this.renderer.domElement.addEventListener("webglcontextrestored", () => {
-      this.renderNeeded = true;
+      this.invalidate();
     });
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
 
@@ -778,6 +778,20 @@ export class FractalScene {
    */
   get needsRender(): boolean {
     return this.renderNeeded;
+  }
+
+  /**
+   * Force the next animation frame to repaint even if none of the per-frame
+   * setters detect a change (fr-py7z). The public form of the internal dirty
+   * flag, for the callers whose visible change is NOT expressed through one of
+   * this scene's own mutators: returning to the live explorer from a
+   * flame/solid render (fr-w9wl) — all three modes paint the one canvas, so
+   * the point cloud must repaint over the lingering render image, which with
+   * auto-orbit off no camera motion would otherwise trigger — and a restored
+   * WebGL context (below).
+   */
+  invalidate(): void {
+    this.renderNeeded = true;
   }
 
   /** Upload a freshly generated point cloud (interleaved xyz + rgb buffers). */
