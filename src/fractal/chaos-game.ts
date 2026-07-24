@@ -63,8 +63,11 @@ export function effectiveSymmetryOrder(
 
 /** Row-major 3x3 rotation by `angle` radians about a single axis — one
  * nonzero Euler angle into {@link rotationMatrixXYZ} gives exactly that,
- * since the other two axes' sin/cos terms all collapse to 0/1. */
-function symmetryRotation(
+ * since the other two axes' sin/cos terms all collapse to 0/1. Exported so
+ * `surface-de.ts` can expand kaleidoscope copies with the exact same
+ * matrices {@link prepareChaosGame} uses (no drift between the plotted set
+ * and its distance estimator). */
+export function symmetryRotation(
   axis: SymmetryParams["axis"],
   angle: number,
 ): number[] {
