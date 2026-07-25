@@ -1002,6 +1002,34 @@
                 <option value="custom">Custom</option>
               </select>
             </label>
+            <div id="surfaceCustomPaletteRow" class="custom-palette-row hidden">
+              <div
+                id="surfaceCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="surfaceCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="surfaceCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last color stop"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="surfaceCustomPaletteAdd"
+                  type="button"
+                  title="Add a color stop"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
           </div>
           <label class="select-label">
             Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>

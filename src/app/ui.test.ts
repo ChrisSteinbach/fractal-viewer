@@ -10,6 +10,8 @@ import {
   PARAM,
   setFlamePaletteId,
   setSolidPaletteId,
+  setSurfaceColorSource,
+  setSurfacePaletteId,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
 import { applyScalarControl } from "./control-spec";
@@ -2798,6 +2800,36 @@ describe("custom palette editor (fr-55k)", () => {
         .getElementById("flameCustomPaletteRow")
         ?.classList.contains("hidden"),
     ).toBe(false);
+  });
+
+  it("shows the surface custom-palette editor once surface.paletteId is custom", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setSurfacePaletteId(initialState(true), "custom"));
+    expect(
+      document
+        .getElementById("surfaceCustomPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+  });
+
+  it("keeps the surface editor's CONTAINER gated on the orbit-trap colorSource", () => {
+    // The editor row itself keys on paletteId (fr-ibcm), but it sits inside
+    // #surfacePaletteRow, which updateLabels hides unless the colorSource is
+    // "palette" — both gates must hold for the editor to actually show.
+    const ui = new Ui(document);
+    const custom = setSurfacePaletteId(initialState(true), "custom");
+    ui.updateLabels(setSurfaceColorSource(custom, "palette"));
+    expect(
+      document
+        .getElementById("surfacePaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+    ui.updateLabels(setSurfaceColorSource(custom, "transform"));
+    expect(
+      document
+        .getElementById("surfacePaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
   });
 
   it("renders one color input per stop with hex values matching the stops", () => {
