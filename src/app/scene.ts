@@ -36,10 +36,19 @@ import {
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setSurfaceSystem as packSurfaceSystem,
+  SURFACE_FULL_AO_TAPS,
+  SURFACE_FULL_HIT_FLOOR,
+  SURFACE_FULL_MARCH_STEPS,
+  SURFACE_FULL_SHADOW_STEPS,
+  SURFACE_PREVIEW_AO_TAPS,
+  SURFACE_PREVIEW_HIT_FLOOR,
+  SURFACE_PREVIEW_MARCH_STEPS,
   SURFACE_PREVIEW_MAX_DEPTH,
   SURFACE_PREVIEW_SCALE,
+  SURFACE_PREVIEW_SHADOW_STEPS,
 } from "./surface-material";
 import type { RenderTier } from "./render-tier";
+import { createStripPlanner, type StripPlanner } from "./strip-planner";
 import {
   createSurfaceMaterial4,
   setSurfaceSystem4 as packSurfaceSystem4,
@@ -538,12 +547,26 @@ export class FractalScene {
    * {@link renderSurface} so resizes/DPR changes are absorbed without a
    * per-frame reallocation. */
   private readonly surfacePreviewTarget: THREE.WebGLRenderTarget;
+  private readonly surfaceBlitMaterial: THREE.ShaderMaterial;
   private readonly surfaceBlitQuad: FullScreenQuad;
   /** The ACTIVE DE's own descent depth cap, recorded by
    * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: the preview tier
    * clamps `uMaxDepth` below it and the full tier restores it, so the two
    * tiers can interleave freely (fr-5ne3). */
   private surfaceFullMaxDepth = 0;
+  /** Full-resolution target every FULL-quality trace renders into as
+   * adaptive scissored strips (fr-sjff): a forced-completion readback
+   * between strips keeps every GPU submission bounded, so a pathological
+   * close-up can no longer wedge the GPU process — the failure that used
+   * to require a browser restart. The async settle job spreads the strips
+   * across animation frames; {@link renderSurface}'s full tier runs them
+   * to completion synchronously (capture/offline export). */
+  private readonly surfaceSettleTarget: THREE.WebGLRenderTarget;
+  /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
+  private surfaceStripJob: {
+    planner: StripPlanner;
+    lastStripMs: number | null;
+  } | null = null;
 
   /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
   private viewportWidth: number;
@@ -834,9 +857,16 @@ export class FractalScene {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
     });
-    this.surfaceBlitQuad = new FullScreenQuad(
-      createSurfaceBlitMaterial(this.surfacePreviewTarget.texture),
+    this.surfaceSettleTarget = new THREE.WebGLRenderTarget(2, 2, {
+      depthBuffer: false,
+      stencilBuffer: false,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+    });
+    this.surfaceBlitMaterial = createSurfaceBlitMaterial(
+      this.surfacePreviewTarget.texture,
     );
+    this.surfaceBlitQuad = new FullScreenQuad(this.surfaceBlitMaterial);
   }
 
   get canvas(): HTMLCanvasElement {
@@ -2097,17 +2127,127 @@ export class FractalScene {
    * resolution rather than the on-screen one.
    *
    * `tier` (fr-5ne3) is main.ts's interaction split: "full" (the default —
-   * capture and offline export land here by construction) traces the canvas
-   * at full quality; "preview" traces {@link surfacePreviewTarget} at
-   * {@link SURFACE_PREVIEW_SCALE} with `uMaxDepth` clamped to
-   * {@link SURFACE_PREVIEW_MAX_DEPTH} and stretches it over the canvas — the
-   * cheap frames that keep a drag/tumble fluid while the settle frame
-   * carries the quality. Both knobs are plain uniform writes restored by the
-   * next full-tier call, so the shader bodies (and their CPU-oracle
-   * discipline) are untouched.
+   * capture and offline export land here by construction) traces at full
+   * quality SYNCHRONOUSLY, as the same adaptive scissored strips the async
+   * settle job uses (fr-sjff: a `gl.finish()` between strips bounds every
+   * GPU submission, so even a pathological close-up export cannot wedge
+   * the GPU process), then presents the completed frame; "preview" traces
+   * {@link surfacePreviewTarget} at {@link SURFACE_PREVIEW_SCALE} with the
+   * preview-tier quality knobs (depth clamp, march/shadow/AO budgets, hit
+   * floor) and stretches it over the canvas — the cheap frames that keep a
+   * drag/tumble fluid while the settle frame carries the quality. Every
+   * knob is a plain uniform write restored by the next full-tier call, so
+   * the shader bodies (and their CPU-oracle discipline) are untouched.
    */
   renderSurface(tier: RenderTier = "full"): void {
     this.renderNeeded = false;
+    const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
+    if (tier === "preview") {
+      // uPixelEps derives from the TARGET's height: the cone-style hit
+      // test coarsens to match the preview pixels (fewer march steps) with
+      // no extra fudge factor.
+      const w = Math.max(1, Math.round(size.x * SURFACE_PREVIEW_SCALE));
+      const h = Math.max(1, Math.round(size.y * SURFACE_PREVIEW_SCALE));
+      sizeTarget(this.surfacePreviewTarget, w, h);
+      this.setSurfaceFrameUniforms("preview", h);
+      this.renderer.setRenderTarget(this.surfacePreviewTarget);
+      this.surfaceQuad.render(this.renderer);
+      this.renderer.setRenderTarget(null);
+      this.blitSurface(this.surfacePreviewTarget.texture, null);
+      return;
+    }
+    // Full quality, synchronously — but never as one unbounded GPU
+    // submission (fr-sjff): the same adaptive strips as the async settle
+    // job, run to completion right here. Capture and offline export land
+    // on this path, so a pathological close-up export is watchdog-safe
+    // too. A stale async job must not interleave with this frame's strips.
+    this.abandonSurfaceSettle();
+    sizeTarget(this.surfaceSettleTarget, size.x, size.y);
+    this.setSurfaceFrameUniforms("full", size.y);
+    this.surfaceStripJob = {
+      planner: createStripPlanner(size.y),
+      lastStripMs: null,
+    };
+    this.renderSurfaceStrips(Infinity);
+    this.blitSurface(this.surfaceSettleTarget.texture, null);
+  }
+
+  /**
+   * Start the ASYNC full-quality settle job (fr-sjff): freeze the camera +
+   * full-tier quality uniforms (main.ts abandons the job on any
+   * invalidation, so they cannot go stale mid-job), seed the settle target
+   * with the parked preview stretched to full size — per-step progress
+   * blits then show the preview sharpening strip by strip, never
+   * uninitialized rows — and arm the strip planner.
+   * {@link stepSurfaceSettle} does the actual tracing, a bounded slice per
+   * animation frame.
+   */
+  beginSurfaceSettle(): void {
+    const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
+    sizeTarget(this.surfaceSettleTarget, size.x, size.y);
+    this.setSurfaceFrameUniforms("full", size.y);
+    this.blitSurface(
+      this.surfacePreviewTarget.texture,
+      this.surfaceSettleTarget,
+    );
+    // Force the seed — and every frame still queued before it — to
+    // COMPLETE before the probe strip runs, so the probe's measurement is
+    // the probe alone, not leftover backlog. A 1x1 readback is the one
+    // sync a driver cannot fake (see renderSurfaceStrips); on a healthy
+    // device this is microseconds.
+    this.renderer.setRenderTarget(this.surfaceSettleTarget);
+    const gl = this.renderer.getContext();
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    this.renderer.setRenderTarget(null);
+    this.surfaceStripJob = {
+      planner: createStripPlanner(size.y),
+      lastStripMs: null,
+    };
+  }
+
+  /**
+   * Advance the settle job by about {@link SURFACE_SETTLE_STEP_BUDGET_MS}
+   * of measured GPU time and repaint the canvas with the progress (the
+   * traced strips over the preview-seeded rest). Returns true when the
+   * frame is complete (the job is then disarmed). No-op true when no job
+   * is running.
+   */
+  stepSurfaceSettle(): boolean {
+    if (!this.surfaceStripJob) return true;
+    const done = this.renderSurfaceStrips(SURFACE_SETTLE_STEP_BUDGET_MS);
+    this.blitSurface(this.surfaceSettleTarget.texture, null);
+    return done;
+  }
+
+  /** Discard the in-flight settle job (a fresh invalidation supersedes
+   * it). The settle target keeps its stale pixels; nothing reads them
+   * until a new job re-seeds it. */
+  abandonSurfaceSettle(): void {
+    this.surfaceStripJob = null;
+  }
+
+  /** Whether a settle job is mid-flight (main.ts steps it per frame). */
+  get surfaceSettleActive(): boolean {
+    return this.surfaceStripJob !== null;
+  }
+
+  /**
+   * Repaint the canvas from the COMPLETED settle target — main.ts's cheap
+   * repaint for recorder frames of a parked, already-settled view (the
+   * caller tracks validity; a re-trace would be seconds of GPU for an
+   * identical image).
+   */
+  presentSettledSurface(): void {
+    this.blitSurface(this.surfaceSettleTarget.texture, null);
+  }
+
+  /**
+   * Camera + per-tier quality uniforms on the ACTIVE surface material, for
+   * a trace whose buffer is `height` pixels tall. The tier knobs are all
+   * tracer-side (march/shadow/AO budgets, hit floor, depth clamp — plain
+   * uniform writes); the oracle-mirrored DE bodies never change.
+   */
+  private setSurfaceFrameUniforms(tier: RenderTier, height: number): void {
     this.camera.updateMatrixWorld();
     const u = this.activeSurfaceMaterial.uniforms;
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
@@ -2117,31 +2257,81 @@ export class FractalScene {
         this.camera.matrixWorldInverse,
       )
       .invert();
-    const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
-    const eps = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
-    if (tier === "preview") {
-      // uPixelEps derives from the TARGET's height: the cone-style hit
-      // test coarsens to match the preview pixels (fewer march steps) with
-      // no extra fudge factor.
-      const w = Math.max(1, Math.round(size.x * SURFACE_PREVIEW_SCALE));
-      const h = Math.max(1, Math.round(size.y * SURFACE_PREVIEW_SCALE));
-      const target = this.surfacePreviewTarget;
-      if (target.width !== w || target.height !== h) target.setSize(w, h);
-      u.uPixelEps.value = eps / h;
-      u.uMaxDepth.value = Math.min(
-        this.surfaceFullMaxDepth,
-        SURFACE_PREVIEW_MAX_DEPTH,
-      );
+    u.uPixelEps.value =
+      (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(height, 1);
+    const preview = tier === "preview";
+    u.uMaxDepth.value = preview
+      ? Math.min(this.surfaceFullMaxDepth, SURFACE_PREVIEW_MAX_DEPTH)
+      : this.surfaceFullMaxDepth;
+    u.uMarchSteps.value = preview
+      ? SURFACE_PREVIEW_MARCH_STEPS
+      : SURFACE_FULL_MARCH_STEPS;
+    u.uShadowSteps.value = preview
+      ? SURFACE_PREVIEW_SHADOW_STEPS
+      : SURFACE_FULL_SHADOW_STEPS;
+    u.uAoTaps.value = preview ? SURFACE_PREVIEW_AO_TAPS : SURFACE_FULL_AO_TAPS;
+    u.uHitFloor.value = preview
+      ? SURFACE_PREVIEW_HIT_FLOOR
+      : SURFACE_FULL_HIT_FLOOR;
+  }
+
+  /**
+   * Render strips of the in-flight job into the settle target until about
+   * `budgetMs` of MEASURED GPU time is spent (Infinity = run to
+   * completion, the sync path). The 1x1 readback after each strip is the
+   * point, not an accident: a readback of freshly rendered pixels is a
+   * DATA DEPENDENCY, so it cannot return before the strip's draws
+   * complete — it is what bounds every submission (the watchdog fix) and
+   * what produces the true measurement the planner sizes the next strip
+   * with. `gl.finish()` is deliberately NOT used: some command-buffer
+   * paths return from it before execution (observed on
+   * Chromium+SwiftShader), which would silently batch every strip back
+   * into the one giant unbounded submission this mechanism exists to
+   * prevent. Returns true (and disarms the job) when all rows are traced.
+   */
+  private renderSurfaceStrips(budgetMs: number): boolean {
+    const job = this.surfaceStripJob;
+    if (!job) return true;
+    const target = this.surfaceSettleTarget;
+    const gl = this.renderer.getContext();
+    let spent = 0;
+    let strip = job.planner.next(job.lastStripMs);
+    while (strip) {
+      target.scissorTest = true;
+      target.scissor.set(0, strip.y, target.width, strip.rows);
+      // setRenderTarget re-applies the target's scissor each call — the
+      // r185 idiom for scissored render-target draws.
       this.renderer.setRenderTarget(target);
+      const t0 = performance.now();
       this.surfaceQuad.render(this.renderer);
-      this.renderer.setRenderTarget(null);
-      this.surfaceBlitQuad.render(this.renderer);
-      return;
+      // Forced-completion sync + measurement (see the method doc). Reads
+      // the strip's own corner while the target is still bound.
+      gl.readPixels(0, strip.y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+      job.lastStripMs = performance.now() - t0;
+      spent += job.lastStripMs;
+      if (spent >= budgetMs) break;
+      strip = job.planner.next(job.lastStripMs);
     }
-    u.uPixelEps.value = eps / Math.max(size.y, 1);
-    u.uMaxDepth.value = this.surfaceFullMaxDepth;
+    target.scissorTest = false;
+    target.scissor.set(0, 0, target.width, target.height);
     this.renderer.setRenderTarget(null);
-    this.surfaceQuad.render(this.renderer);
+    if (job.planner.done) {
+      this.surfaceStripJob = null;
+      return true;
+    }
+    return false;
+  }
+
+  /** Stretch `src` over `target` (null = the canvas) via the shared blit
+   * quad. */
+  private blitSurface(
+    src: THREE.Texture,
+    target: THREE.WebGLRenderTarget | null,
+  ): void {
+    this.surfaceBlitMaterial.uniforms.uSrc.value = src;
+    this.renderer.setRenderTarget(target);
+    this.surfaceBlitQuad.render(this.renderer);
+    this.renderer.setRenderTarget(null);
   }
 
   /**
@@ -2187,6 +2377,25 @@ const ZERO = new THREE.Vector3();
 const NO_SHEAR: Vec3 = [0, 0, 0];
 /** Scratch for `renderSurface`'s per-call drawing-buffer query. */
 const DRAW_SIZE = new THREE.Vector2();
+/** Measured GPU time (ms) each async settle step spends tracing strips —
+ * roughly one strip at the planner's target, several when they come in
+ * cheaper. Low enough that the page stays responsive (and interruptible)
+ * while a heavy frame settles over many animation frames. */
+const SURFACE_SETTLE_STEP_BUDGET_MS = 40;
+/** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
+const SYNC_PIXEL = new Uint8Array(4);
+
+/** Resize a render target only when the wanted size differs — `setSize`
+ * reallocates, so per-frame calls must be no-ops at steady state. */
+function sizeTarget(
+  target: THREE.WebGLRenderTarget,
+  width: number,
+  height: number,
+): void {
+  if (target.width !== width || target.height !== height) {
+    target.setSize(width, height);
+  }
+}
 
 /**
  * Build a guide cell's wireframe edges + translucent faces. Any shear is baked

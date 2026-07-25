@@ -62,10 +62,19 @@ const SURFACE_FRAGMENT = /* glsl */ `
   precision highp float;
 
   const int MAX_MAPS = ${SURFACE_MAX_MAPS};
-  /** Sphere-trace step budget per ray. */
-  const int MARCH_STEPS = 96;
-  /** Penumbra shadow-ray step budget per hit. */
-  const int SHADOW_STEPS = 32;
+  /** Sphere-trace step budget per ray — a per-tier uniform (fr-sjff): the
+   * preview tier trades steps for frame rate on map-heavy systems whose DE
+   * cost the depth clamp can't touch. Tracer-side only, like the loop caps
+   * below — the DE bodies stay oracle-mirrored. */
+  uniform int uMarchSteps;
+  /** Penumbra shadow-ray step budget per hit (per-tier). */
+  uniform int uShadowSteps;
+  /** Ambient-occlusion probe count along the normal (per-tier). */
+  uniform int uAoTaps;
+  /** Absolute floor of the cone hit test, as a fraction of the bounding
+   * radius (per-tier): the preview accepts coarser hits near the camera,
+   * where uPixelEps * t degenerates. */
+  uniform float uHitFloor;
 
   /** Inverse linear part per symmetry-expanded map (uMapCount live slots;
    * the rest are stale/identity and never read). */
@@ -468,12 +477,12 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // march runs the plain DE overload; the hit's coloring extras are
     // fetched once below.
     bool hit = false;
-    for (int i = 0; i < MARCH_STEPS; i++) {
+    for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
       float d = surfaceDE(ro + rd * t);
-      if (d < max(uPixelEps * t, uBoundingRadius * 1.0e-5)) {
+      if (d < max(uPixelEps * t, uBoundingRadius * uHitFloor)) {
         hit = true;
         break;
       }
@@ -527,7 +536,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // means fully lit from there on, and near-black penumbras end early.
     float shadow = 1.0;
     float ts = h * 2.0;
-    for (int i = 0; i < SHADOW_STEPS; i++) {
+    for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
       float d = surfaceDE(sp);
       shadow = min(shadow, 8.0 * d / ts);
@@ -544,7 +553,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float occ = 0.0;
     float wgt = 1.0;
     float norm = 0.0;
-    for (int i = 1; i <= 5; i++) {
+    for (int i = 1; i <= uAoTaps; i++) {
       float hh = uBoundingRadius * 0.02 * float(i);
       occ += wgt * clamp((hh - surfaceDE(pos + n * hh)) / hh, 0.0, 1.0);
       norm += wgt;
@@ -602,6 +611,28 @@ export const SURFACE_PREVIEW_SCALE = 0.3;
  * the preview deliberately keeps).
  */
 export const SURFACE_PREVIEW_MAX_DEPTH = 12;
+
+/**
+ * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
+ * flat maps, kaleidoscope expansions) pay their cost per DE CALL, which the
+ * preview depth clamp can't reduce — so the preview also trims how many DE
+ * calls a pixel can spend. All tracer-side (march loop, shadow loop, AO
+ * taps, hit-test floor): none of these appear in the CPU oracle's distance
+ * contract, so the oracle-mirrored DE bodies are untouched. The FULL tier
+ * values are exactly the constants the shaders were born with.
+ */
+export const SURFACE_FULL_MARCH_STEPS = 96;
+export const SURFACE_PREVIEW_MARCH_STEPS = 40;
+export const SURFACE_FULL_SHADOW_STEPS = 32;
+export const SURFACE_PREVIEW_SHADOW_STEPS = 12;
+export const SURFACE_FULL_AO_TAPS = 5;
+export const SURFACE_PREVIEW_AO_TAPS = 3;
+/** Cone hit-test floor as a fraction of the bounding radius. The preview's
+ * is coarser so close-up frames (where uPixelEps * t degenerates and every
+ * ray is near-surface) accept early instead of burning the whole march
+ * budget per pixel. */
+export const SURFACE_FULL_HIT_FLOOR = 1.0e-5;
+export const SURFACE_PREVIEW_HIT_FLOOR = 2.0e-4;
 
 const BLIT_FRAGMENT = /* glsl */ `
   precision highp float;
@@ -707,6 +738,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
+      // Full-tier defaults; the scene overwrites all four per tier
+      // (fr-sjff).
+      uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
+      uShadowSteps: { value: SURFACE_FULL_SHADOW_STEPS },
+      uAoTaps: { value: SURFACE_FULL_AO_TAPS },
+      uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
     vertexShader: SURFACE_VERTEX,
     fragmentShader: SURFACE_FRAGMENT,
