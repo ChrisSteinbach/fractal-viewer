@@ -74,7 +74,36 @@ import type { Transform, Transform4, Vec4 } from "./types";
  * distance, stalling the march or reading as ghostly, oversized bulges in
  * the rendered surface. Measuring exactly how loose — is the gap small
  * enough for a real render, or does it need slice-aware tightening — is the
- * fr-beck experiment this module exists to support; nothing here answers it.
+ * fr-beck experiment this module exists to support; the verdict below
+ * answers it.
+ *
+ * SPIKE VERDICT (fr-beck, measured 2026-07): GO for a slice-mode render.
+ * {@link estimateDistance4}'s validity held on every conformal, >=3-map
+ * preset measured (pentatope, sixteenCellFlake, tesseract): 0 violations
+ * across 2100 queries (700 each — jittered/uniform/exact). But the slice
+ * march itself was dominated by ghosts on those same three systems: measured
+ * ghost-of-marcher-hits ran 53.5-84.6% on pentatope's two measured slices,
+ * 13.7% on tesseract, 4.7% on sixteenCellFlake — and every measured ghost
+ * point traced to ONE mechanism: 100% attributed to a shallow, barely-
+ * escaped sibling certificate (median recording depth 0-1 of a 14-level
+ * cap), never to the terminal bound or the depth-0 sphere floor. Shrinking
+ * the march hit-epsilon 4x (0.01R -> 0.0025R) barely moved it (pentatope's
+ * two slices: 53.5%/84.6% -> 50.0%/83.3%) — a bound-tightness problem, not a
+ * march-discretization one. {@link estimateDistance4Refined} — one extra
+ * Hutchinson level applied to exactly that certificate — measurably
+ * ELIMINATES it: 0.0% ghost-of-hits on every slice measured across all
+ * three systems, slice DE/d3 median tightness improves from 0.48-0.59 to
+ * 0.68-0.73 (pentatope), slice-tightness stalling drops to exactly 0%, and
+ * base validity is preserved (0 violations, unchanged). Measured exclusion:
+ * doubleRotation-profile systems (2 maps, 6:1 selection weight, sigma
+ * 0.93/0.22) overshoot `dist4(., A)` via a DIFFERENT mechanism — greedy
+ * BRANCH-SELECTION risk inherited from 3D `estimateDistance` (confirmed
+ * reproduced on the shipped, unmodified 3D module during this spike) —
+ * which the certificate refinement never touches: its violations measurably
+ * WORSEN under refinement (39 -> 49 over the same 700-query mix) and its
+ * march stays majority-ghost even refined (91.5% -> 52.9% of hits). An
+ * eligibility-side guard for that profile is follow-up work, not covered by
+ * this spike. Full experiment tables live on the fr-beck bead.
  */
 
 /** Fixed sweep order for {@link singularValues4}'s cyclic Jacobi: the six
@@ -575,6 +604,143 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
 
   // Terminal bound of the descended branch (the KIFS last-value formula):
   // non-positive when the point tracked the attractor to the depth cap.
+  const terminal = scale * (lastR - R);
+  let d = Math.min(best, terminal);
+  if (sphereBound > d) d = sphereBound;
+  return d;
+}
+
+/**
+ * Certificate-refinement variant of {@link estimateDistance4}: identical
+ * greedy descent, terminal KIFS bound, and depth-0 sphere floor — the only
+ * change is what certificate an ESCAPED sibling (`r_j > R`) earns. The base
+ * version stops at one Hutchinson level (`sigmaMin_j * (r_j - R)`, the base
+ * case `dist(q, A) >= |q| - R` applied directly to the sibling's own inverse
+ * image `q'_j`); this variant applies one MORE level before settling:
+ *
+ *     inner_j = min over ALL maps k of [ sigmaMin_k * (|invMap_k(q'_j)| - R) ]
+ *     cert_j  = sigmaMin_j * max( r_j - R, inner_j )
+ *
+ * VALIDITY. Each `inner_j` term lower-bounds `dist(q'_j, f_k(A))` regardless
+ * of sign — an inner image landing inside the bounding sphere gives a `<= 0`
+ * term, trivially a valid (if useless) lower bound — so the `min` over every
+ * `k` lower-bounds `dist(q'_j, A)` itself (the same "min of per-branch lower
+ * bounds lower-bounds the overall min" argument the module doc's VALIDITY
+ * section already leans on). `max`ing that in against the untouched base
+ * case can only RAISE the certificate, never lower it:
+ * `estimateDistance4Refined(de, p) >= estimateDistance4(de, p)` at every
+ * `p` — pinned by `surface-de-4d.test.ts`'s "never falls below the base
+ * estimate" test.
+ *
+ * WHY THIS EXISTS. fr-beck's spike measured WHICH term of
+ * {@link estimateDistance4}'s `min(best, terminal)` (floored by the depth-0
+ * sphere bound) produces
+ * every false-hit ("ghost") a `w = w0` slice march would register: on every
+ * system measured, 100% of measured ghost points traced to the
+ * sibling-certificate term (`best`), NEVER the terminal bound or the sphere
+ * floor — and the winning certificate was fixed almost immediately (median
+ * recording depth 0-1 of a 14-level cap on pentatope). That is exactly a
+ * barely-escaped sibling (`r_j` just past `R`) whose certificate never gets
+ * refined again, because the base case is the ENTIRE Hutchinson
+ * decomposition it receives — one more level closes most of that gap. See
+ * the module doc's SPIKE VERDICT section for the measured numbers this
+ * conclusion rests on.
+ *
+ * COST. Refining EVERY escaped sibling at every level (what this function
+ * does) is the measured quality CEILING, not a costed production path: on
+ * pentatope it costs 5.65x {@link estimateDistance4}'s own inverse-affine-
+ * application count per call (measured: 18.87 -> 106.57 mean applications
+ * per call). A GPU port should refine only the tracked `cert1`/`cert2`
+ * candidates (the two escaped siblings whose certificate could actually
+ * become `best` at this level) rather than every escaped map — this
+ * function intentionally pays the wasteful, exhaustive cost so the
+ * measurement isolates the refinement's QUALITY, not an
+ * already-cost-optimized implementation's.
+ */
+export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
+  const R = de.boundingRadius;
+  let x = p[0];
+  let y = p[1];
+  let z = p[2];
+  let w = p[3];
+  const sphereBound = Math.sqrt(x * x + y * y + z * z + w * w) - R;
+
+  let best = Infinity;
+  let scale = 1;
+  let lastR = Math.sqrt(x * x + y * y + z * z + w * w);
+
+  for (let depth = 0; depth < de.maxDepth; depth++) {
+    let greedyR = Infinity;
+    let gx = 0;
+    let gy = 0;
+    let gz = 0;
+    let gw = 0;
+    let gSigma = 1;
+    let greedyIndex = -1;
+    let cert1 = Infinity;
+    let cert2 = Infinity;
+    let cert1Index = -1;
+    for (let j = 0; j < de.maps.length; j++) {
+      const map = de.maps[j];
+      const im = map.invM;
+      const it = map.invT;
+      const ix = im[0] * x + im[1] * y + im[2] * z + im[3] * w + it[0];
+      const iy = im[4] * x + im[5] * y + im[6] * z + im[7] * w + it[1];
+      const iz = im[8] * x + im[9] * y + im[10] * z + im[11] * w + it[2];
+      const iw = im[12] * x + im[13] * y + im[14] * z + im[15] * w + it[3];
+      const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+      if (r < greedyR) {
+        greedyR = r;
+        gx = ix;
+        gy = iy;
+        gz = iz;
+        gw = iw;
+        gSigma = map.sigmaMin;
+        greedyIndex = j;
+      }
+      if (r > R) {
+        // One extra Hutchinson level on this escaped sibling's own inverse
+        // image, over every map k (see the doc comment's VALIDITY note).
+        let inner = Infinity;
+        for (let k = 0; k < de.maps.length; k++) {
+          const mapK = de.maps[k];
+          const imK = mapK.invM;
+          const itK = mapK.invT;
+          const kx =
+            imK[0] * ix + imK[1] * iy + imK[2] * iz + imK[3] * iw + itK[0];
+          const ky =
+            imK[4] * ix + imK[5] * iy + imK[6] * iz + imK[7] * iw + itK[1];
+          const kz =
+            imK[8] * ix + imK[9] * iy + imK[10] * iz + imK[11] * iw + itK[2];
+          const kw =
+            imK[12] * ix + imK[13] * iy + imK[14] * iz + imK[15] * iw + itK[3];
+          const rk = Math.sqrt(kx * kx + ky * ky + kz * kz + kw * kw);
+          const innerTerm = mapK.sigmaMin * (rk - R);
+          if (innerTerm < inner) inner = innerTerm;
+        }
+        const bound = map.sigmaMin * Math.max(r - R, inner);
+        if (bound < cert1) {
+          cert2 = cert1;
+          cert1 = bound;
+          cert1Index = j;
+        } else if (bound < cert2) {
+          cert2 = bound;
+        }
+      }
+    }
+    const siblingCert = cert1Index === greedyIndex ? cert2 : cert1;
+    if (siblingCert < Infinity && scale * siblingCert < best) {
+      best = scale * siblingCert;
+    }
+    x = gx;
+    y = gy;
+    z = gz;
+    w = gw;
+    lastR = greedyR;
+    scale *= gSigma;
+    if (greedyR > de.escapeRadius) break;
+  }
+
   const terminal = scale * (lastR - R);
   let d = Math.min(best, terminal);
   if (sphereBound > d) d = sphereBound;

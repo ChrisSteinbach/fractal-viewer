@@ -2,6 +2,7 @@ import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
   estimateDistance4,
+  estimateDistance4Refined,
   singularValues4,
   transformSigmas4,
 } from "./surface-de-4d";
@@ -561,6 +562,121 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
     const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
       const nearest = nearestDistance4(cloud, q);
       return estimateDistance4(de, q) > nearest + 1e-9;
+    });
+    expect(violatesSomewhere).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------
+// estimateDistance4Refined (fr-beck spike verdict — see the module doc's
+// SPIKE VERDICT section): the certificate-refinement variant that measurably
+// eliminates the slice-march ghosting section (e) traced to the sibling-
+// certificate term, without touching the doubleRotation-profile greedy
+// branch-selection gap the tests above already document.
+// -----------------------------------------------------------------------
+
+describe("estimateDistance4Refined never falls below the base estimate", () => {
+  it("holds for pentatope across the validityQueries mix", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of validityQueries(cloud)) {
+      const base = estimateDistance4(de, q);
+      const refined = estimateDistance4Refined(de, q);
+      expect(refined).toBeGreaterThanOrEqual(base - 1e-12);
+    }
+  });
+});
+
+describe("estimateDistance4Refined validity (never exceeds the true distance to a sampled cloud)", () => {
+  it("holds for pentatope across jittered/uniform/exact queries", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of validityQueries(cloud)) {
+      const nearest = nearestDistance4(cloud, q);
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("holds for sixteenCellFlake across jittered/uniform/exact queries", () => {
+    const transforms = sixteenCellFlake();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of validityQueries(cloud)) {
+      const nearest = nearestDistance4(cloud, q);
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+});
+
+describe("estimateDistance4Refined collapses a measured ghost point", () => {
+  it("tightens a pentatope void probe that would false-hit a slice march at eps_hit=0.01R", () => {
+    // Pinned from the fr-beck spike's (g2) run (`surface-de-4d.spike.test.ts`,
+    // seeds: main cloud mulberry32(101)/500_000, w0 = 10th percentile of the
+    // w-distribution, void probe mulberry32(31) index 3): a genuine void
+    // (d3 = 0.2057 >> theta_vis = 0.05*R = 0.0516) where the base estimator
+    // reads DE = 0.00562 — comfortably under the eps_hit = 0.01*R = 0.01032
+    // a slice march would hit-test against, i.e. a measured false-hit
+    // ("ghost") — while the refined estimator reads 0.1372, over 4x the
+    // eps_hit and correctly signalling "no content here". Measured
+    // (bit-exact to this system's boundingRadius, R = 1.03171):
+    //   base    = 0.005624521216463618
+    //   refined = 0.13723927851937934
+    //   d3      = 0.20574953287596418  (true nearest slice distance)
+    //   d4      = 0.20575046436319630  (true nearest 4D distance — d3 ≈ d4:
+    //             the nearest attractor content is already in this slice,
+    //             so this is exactly the base estimator's OWN slack, not
+    //             off-slice content the base case could ever have reached)
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const p: Vec4 = [
+      0.2012058828743044, -0.22083853166311757, 0.28312175332393863,
+      -0.24930457323789598,
+    ];
+    const base = estimateDistance4(de, p);
+    const refined = estimateDistance4Refined(de, p);
+    expect(base).toBeLessThan(0.011);
+    expect(refined).toBeGreaterThan(0.03);
+  });
+});
+
+describe("estimateDistance4Refined does not repair the greedy branch-selection overshoot (doubleRotation)", () => {
+  it("still violates somewhere on the same jitteredQueries(cloud, 20) set the base estimator violates on", () => {
+    // Companion to "shows off-attractor jittered queries CAN exceed the
+    // cloud-distance bound here" above: that test shows the BASE estimator
+    // overshoots on doubleRotation via the greedy branch-selection heuristic
+    // (not a certificate-tightness problem — see the module doc's SPIKE
+    // VERDICT section). The certificate refinement only ever raises a
+    // certificate; it cannot fix a wrong branch selection, so the same
+    // overshoot survives refinement — this pins that the two mechanisms are
+    // independent, not that refinement is broken.
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
+      const nearest = nearestDistance4(cloud, q);
+      return estimateDistance4Refined(de, q) > nearest + 1e-9;
     });
     expect(violatesSomewhere).toBe(true);
   });
