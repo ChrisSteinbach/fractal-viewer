@@ -3650,13 +3650,17 @@ function main(): void {
       if (state.solid.paletteId === CUSTOM_PALETTE_ID)
         solidSession.post({ type: "setPalette", palette });
       // The surface tracer's LUT bakes whichever palette its colorSource
-      // samples — the surface palette (orbit trap) or the explorer ramp
-      // (height/radius) — so re-upload it whenever the edited gradient is
-      // the one it currently samples (fr-ibcm). Pure uniforms: the change
-      // lands next frame, mid-render, with nothing to restart.
+      // samples — the surface palette (orbit trap, rings, or escape depth —
+      // fr-rl4b's rings/escape ride the same paletteId as the orbit trap) or
+      // the explorer ramp (height/radius) — so re-upload it whenever the
+      // edited gradient is the one it currently samples (fr-ibcm). Pure
+      // uniforms: the change lands next frame, mid-render, with nothing to
+      // restart.
       const surfaceSource = state.surface.colorSource;
       if (
-        (surfaceSource === "palette" &&
+        ((surfaceSource === "palette" ||
+          surfaceSource === "rings" ||
+          surfaceSource === "escape") &&
           state.surface.paletteId === CUSTOM_PALETTE_ID) ||
         ((surfaceSource === "height" || surfaceSource === "radius") &&
           state.rampPaletteId === CUSTOM_PALETTE_ID)

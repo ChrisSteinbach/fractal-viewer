@@ -140,11 +140,20 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * slice at. */
   uniform float uW0;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
-   * palette, 2 = height ramp, 3 = radius ramp. Sources 1-3 sample
-   * uColorLUT. */
+   * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = escape
+   * depth. Sources 1-5 sample uColorLUT. */
   uniform int uColorSource;
-  /** 256x1 RGBA ramp for sources 1-3, built CPU-side by color.ts's ONE
-   * ramp definition and uploaded by the scene — no ramp math lands here. */
+  /** Per-level decay of the orbit-trap blend weight (flam3's color speed,
+   * fr-rl4b): 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
+   * every level weighs the same. Read by the "palette" source only. */
+  uniform float uColorSpeed;
+  /** The system's FULL descent depth (setSurfaceSystem4's de.maxDepth) — the
+   * escape-depth color normalizer. Deliberately NOT uMaxDepth: the preview
+   * tier clamps that per frame (fr-5ne3), and normalizing by a tier-varying
+   * depth would pop every escape-depth color on settle. */
+  uniform float uColorMaxDepth;
+  /** 256x1 RGBA ramp for sources 1-5, built CPU-side by color.ts's ONE ramp
+   * definition and uploaded by the scene — no ramp math lands here. */
   uniform sampler2D uColorLUT;
   /** Unit vector pointing from surfaces TOWARD the light. */
   uniform vec3 uLightDir;
@@ -331,24 +340,39 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /**
    * Hit-shading variant: the SAME refined beam descent as the plain
    * overload — keep the two bodies in lockstep, both mirror
-   * estimateDistance4Refined — plus two tracer-side extras that are NOT
-   * part of the CPU oracle's distance contract (surface-de-4d.ts mirrors
+   * estimateDistance4Refined — plus tracer-side extras that are NOT part
+   * of the CPU oracle's distance contract (surface-de-4d.ts mirrors
    * distance only). firstChoice is the depth-0 winning candidate's map,
    * keying by-transform color (identical to the old greedy pick: level 0
-   * has one chain at scale 1, so the selection key ranks by radius alone).
-   * trap is a flame-style structural blend of the winning candidates'
-   * palette coordinates, accumulated TOP-DOWN with geometrically decaying
-   * weight (level d weighs 2^-d, normalized at the end): the depth-0
-   * choice — which top-level copy of the attractor the hit sits in —
-   * carries half the final coordinate, matching flam3's convention where
-   * the LAST-applied transform dominates a plotted point's color (descent
+   * has one chain at scale 1, so the selection key ranks by radius
+   * alone). trap is a flame-style structural blend of the winning
+   * candidates' palette coordinates, accumulated TOP-DOWN with
+   * geometrically decaying weight (level d weighs uColorSpeed^d,
+   * normalized at the end; 0.5 is the classic decay): the depth-0 choice
+   * — which top-level copy of the attractor the hit sits in — dominates
+   * the final coordinate, matching flam3's convention where the
+   * LAST-applied transform dominates a plotted point's color (descent
    * order is application order reversed, so descent level 0 is the most
    * significant digit; the previous deepest-first recurrence rendered as
-   * per-pixel palette noise — fr-gt9i). It follows the per-level best
-   * candidate and stops when every chain has escaped. Called ONCE per
-   * hit; the march itself uses the plain overload.
+   * per-pixel palette noise — fr-gt9i). rings is the classic geometric
+   * orbit trap (fr-rl4b): the winning chain's closest radial approach
+   * |image|/R across the descent, min-tracked exactly where the trap
+   * blend samples — radial shells in raw attractor space that follow the
+   * fractal's own structure. esc is the escaped-depth fraction: how many
+   * descent levels ran (the loop breaks once every chain has escaped)
+   * over the system's FULL depth uColorMaxDepth, so deep local structure
+   * paints hot iteration-count-style bands and the value is tier-stable.
+   * It follows the per-level best candidate and stops when every chain
+   * has escaped. Called ONCE per hit; the march itself uses the plain
+   * overload.
    */
-  float surfaceDE(vec3 p, out int firstChoice, out float trap) {
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float esc
+  ) {
     vec4 q = uInvRotor * vec4(p, uW0);
     q = uFinalInvM * q + uFinalInvT;
     float startR = length(q);
@@ -364,9 +388,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     bool bLive = false;
     firstChoice = 0;
     trap = 0.0;
+    rings = 1.0;
+    esc = 0.0;
     float trapAcc = 0.0;
     float trapNorm = 0.0;
     float trapW = 1.0;
+    float escLevels = 0.0;
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive) {
         break;
@@ -429,7 +456,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       }
       trapAcc += trapW * uTrapIndex[c1Map];
       trapNorm += trapW;
-      trapW *= 0.5;
+      trapW *= uColorSpeed;
+      rings = min(rings, c1R / uBoundingRadius);
+      escLevels += 1.0;
       aLive = false;
       bLive = false;
       if (c1Key < 1e29) {
@@ -463,6 +492,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
     // guard just keeps a zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
+    rings = clamp(rings, 0.0, 1.0);
+    esc = clamp(escLevels / max(uColorMaxDepth, 1.0), 0.0, 1.0);
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -533,11 +564,14 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 pos = ro + rd * t;
 
     // One hit-info evaluation for the coloring extras: the hit point's
-    // depth-0 greedy map + orbit-trap coordinate (the distance itself is
-    // discarded — the march already accepted this point).
+    // depth-0 greedy map, orbit-trap coordinate, rings trap, and escape
+    // depth (the distance itself is discarded — the march already accepted
+    // this point).
     int firstChoice;
     float trap;
-    surfaceDE(pos, firstChoice, trap);
+    float rings;
+    float esc;
+    surfaceDE(pos, firstChoice, trap, rings, esc);
 
     // --- shade --------------------------------------------------------------
     // Normal from the DE gradient (tetrahedron offsets: four samples instead
@@ -552,8 +586,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       e.xxx * surfaceDE(pos + e.xxx * h);
     vec3 n = dot(grad, grad) > 1e-12 ? normalize(grad) : -rd;
 
-    // Base color by source. Sources 1-3 sample the LUT built CPU-side by
-    // color.ts's ONE ramp definition — no ramp math lands here.
+    // Base color by source. Sources 1-5 sample the LUT built CPU-side by
+    // color.ts's ONE ramp definition — no ramp math lands here; rings and
+    // escape depth arrive pre-normalized from the descent.
     vec3 base;
     if (uColorSource == 0) {
       base = uMapColor[clamp(firstChoice, 0, uMapCount - 1)];
@@ -566,7 +601,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         // radius is slice-invariant, so height (a plain 3D world-space
         // coordinate) doesn't swim as uW0 slides either.
         u = clamp(pos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
-      } else {
+      } else if (uColorSource == 3) {
         // The TRUE 4D radius, matching the cloud's 4D radius color mode:
         // lift the hit back into the attractor frame and measure it there.
         // length() is rotation-invariant, so this reading is invariant
@@ -574,6 +609,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         // length(pos), which would swim under either.
         vec4 q4 = uInvRotor * vec4(pos, uW0);
         u = clamp(length(q4) / uVisibleRadius, 0.0, 1.0);
+      } else if (uColorSource == 4) {
+        u = rings;
+      } else {
+        u = esc;
       }
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
@@ -688,6 +727,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uInvRotor: { value: new THREE.Matrix4() },
       uW0: { value: 0 },
       uColorSource: { value: 0 },
+      uColorSpeed: { value: 0.5 },
+      uColorMaxDepth: { value: 1 },
       uColorLUT: { value: placeholderLUT },
       uLightDir: { value: lightDirection(135, 50) },
       uAmbient: { value: 0.25 },
@@ -772,6 +813,9 @@ export function setSurfaceSystem4(
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
+  // The escape-depth color source normalizes by the FULL depth even while
+  // the preview tier clamps uMaxDepth (fr-5ne3) — tier-stable colors.
+  u.uColorMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may have

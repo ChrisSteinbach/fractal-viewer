@@ -35,6 +35,7 @@ import {
   DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SURFACE_COLOR_SPEED,
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
   MAX_COLOR_GAMMA,
@@ -49,6 +50,7 @@ import {
   MAX_SOLID_LIGHT_ELEVATION,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
+  MAX_SURFACE_COLOR_SPEED,
   MAX_SYMMETRY_ORDER,
   MAX_W_ANGLE,
   MAX_W_POSITION,
@@ -137,6 +139,7 @@ function baseSnapshot(): SceneSnapshot {
       ambient: DEFAULT_SOLID_AMBIENT,
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
+      colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
@@ -188,6 +191,7 @@ describe("encodeScene / decodeScene round-trip", () => {
       ambient: DEFAULT_SOLID_AMBIENT,
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
+      colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     });
   });
 
@@ -1537,6 +1541,7 @@ describe("decodeScene surface params", () => {
         ambient: 0.5,
         colorSource: "radius",
         paletteId: "spectrum",
+        colorSpeed: 0.8,
       },
     };
     const result = decodeScene(encodeScene(s));
@@ -1546,6 +1551,7 @@ describe("decodeScene surface params", () => {
       ambient: 0.5,
       colorSource: "radius",
       paletteId: "spectrum",
+      colorSpeed: 0.8,
     });
   });
 
@@ -1569,6 +1575,7 @@ describe("decodeScene surface params", () => {
       ambient: DEFAULT_SOLID_AMBIENT,
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
+      colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     });
   });
 
@@ -1609,12 +1616,37 @@ describe("decodeScene surface params", () => {
     expect(result!.surface.ambient).toBe(MIN_SOLID_AMBIENT);
   });
 
+  it("clamps an out-of-range colorSpeed into its allowed band", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, colorSpeed: 7 },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.surface.colorSpeed).toBe(MAX_SURFACE_COLOR_SPEED);
+  });
+
   it("round-trips a non-default colorSource", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       surface: { ...baseSnapshot().surface, colorSource: "height" },
     };
     expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("height");
+  });
+
+  it('round-trips the "rings" colorSource (fr-rl4b)', () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, colorSource: "rings" },
+    };
+    expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("rings");
+  });
+
+  it('round-trips the "escape" colorSource (fr-rl4b)', () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: { ...baseSnapshot().surface, colorSource: "escape" },
+    };
+    expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("escape");
   });
 
   it('falls back to "transform" for an unrecognized colorSource instead of rejecting the scene', () => {
@@ -1677,6 +1709,23 @@ describe("decodeScene surface params", () => {
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
     expect(result!.surface.paletteId).toBe(DEFAULT_SOLID_PALETTE);
+  });
+
+  it("defaults colorSpeed when the surface block omits it", () => {
+    // A surface block carrying every field except colorSpeed.
+    const raw = {
+      ...baseSnapshot(),
+      surface: {
+        lightAzimuth: 100,
+        lightElevation: 60,
+        ambient: 0.3,
+        colorSource: "radius",
+        paletteId: "spectrum",
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.surface.colorSpeed).toBe(DEFAULT_SURFACE_COLOR_SPEED);
   });
 });
 

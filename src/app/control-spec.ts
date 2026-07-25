@@ -43,6 +43,7 @@ import {
   setSolidThreshold,
   setSurfaceAmbient,
   setSurfaceColorSource,
+  setSurfaceColorSpeed,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -334,17 +335,19 @@ const surfaceParamsEffect: ControlEffect = (state, fx) => {
  * tracer reads each slot's own `uMapColor` instead (see
  * `surface-material.ts`).
  *
- * `"palette"` resolves `state.surface.paletteId` through the shared fr-55k
- * custom-palette bridge ({@link resolvePalette}), exactly like the flame/
- * solid palette effects below. {@link buildPaletteLUT} returns `null` only
- * for the `"legacy"` sentinel (see `palette.ts`) — a value the surface
- * palette `<select>` never actually offers (its options mirror
- * `solidPalette`'s minus `"legacy"`), but a decoded/shared scene could still
- * carry one; falling back to {@link DEFAULT_SOLID_PALETTE} (the surface
- * render's own default, reused from the solid render rather than
- * redeclared) keeps this function honest for that case, and a hard-coded
- * white LUT is the last-resort guarantee this never returns `null` for a
- * source that needs one.
+ * `"palette"`, `"rings"`, and `"escape"` (fr-rl4b — the latter two are
+ * orbit-trap-derived sources that read a different coordinate off the same
+ * descent hit-info `"palette"` already reads) all resolve
+ * `state.surface.paletteId` through the shared fr-55k custom-palette bridge
+ * ({@link resolvePalette}), exactly like the flame/solid palette effects
+ * below. {@link buildPaletteLUT} returns `null` only for the `"legacy"`
+ * sentinel (see `palette.ts`) — a value the surface palette `<select>` never
+ * actually offers (its options mirror `solidPalette`'s minus `"legacy"`),
+ * but a decoded/shared scene could still carry one; falling back to
+ * {@link DEFAULT_SOLID_PALETTE} (the surface render's own default, reused
+ * from the solid render rather than redeclared) keeps this function honest
+ * for that case, and a hard-coded white LUT is the last-resort guarantee
+ * this never returns `null` for a source that needs one.
  *
  * `"height"`/`"radius"` reuse the explorer's ONE ramp definition
  * ({@link buildColorModeLUT}), gamma included — the same ramp the panel
@@ -360,7 +363,8 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
       resolvePalette(state.rampPaletteId, state.customPalette),
     );
   }
-  // "palette": an orbit-trap coordinate through the surface's own palette.
+  // "palette" / "rings" / "escape" (fr-rl4b): an orbit-trap-derived
+  // coordinate through the surface's own user-selected palette.
   const lut =
     buildPaletteLUT(
       resolvePalette(state.surface.paletteId, state.customPalette),
@@ -851,6 +855,23 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
     read: (s) => String(s.surface.ambient),
     apply: (s, raw) => setSurfaceAmbient(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    // Color speed (fr-rl4b): per-level decay of the "palette" source's
+    // orbit-trap blend weight — flam3's "color speed" one render over. Only
+    // shown while colorSource === "palette" (see ui.ts's
+    // surfaceColorSpeedRow gating); inert for every other source, but a
+    // plain GPU uniform like its surface siblings, so the effect is the
+    // same surfaceParamsEffect push regardless.
+    kind: "range",
+    id: "surfaceColorSpeedSlider",
+    label: {
+      id: "surfaceColorSpeedLabel",
+      text: (s) => `${Math.round(s.surface.colorSpeed * 100)}%`,
+    },
+    read: (s) => String(s.surface.colorSpeed),
+    apply: (s, raw) => setSurfaceColorSpeed(s, Number(raw)),
     effect: surfaceParamsEffect,
   },
   {

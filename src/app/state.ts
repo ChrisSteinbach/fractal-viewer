@@ -211,13 +211,19 @@ export interface SolidParams {
  * palette — the flame's structural-coloring idea (`palette.ts`), one
  * dimension over; `"height"`/`"radius"` reuse the explorer's ONE ramp
  * definition (`color.ts`'s `buildColorModeLUT`), the same ramp the solid
- * render's `"legacy"`-palette path and the panel legend already share.
+ * render's `"legacy"`-palette path and the panel legend already share;
+ * `"rings"` is the classic geometric orbit trap (fr-rl4b) — the descent's
+ * closest radial approach to the attractor's center, painted through the
+ * same palette as `"palette"`, reading as concentric structure-following
+ * shells; `"escape"` paints the descent depth at which the hit point's
+ * last candidate chain escaped — iteration-count-style bands showing how
+ * deep the local structure runs, through the same palette.
  *
  * This array is the single source of truth for the {@link SurfaceColorSource}
  * type and the persistence validator (`VALID_SURFACE_COLOR_SOURCES` in
  * `persist.ts`) — the same discipline {@link RENDER_STYLES}/
  * {@link MORPH_DETAILS} use above. The surface tracer's GLSL `uColorSource`
- * uniform (`surface-material.ts`) currently dispatches on this exact 0-3
+ * uniform (`surface-material.ts`) currently dispatches on this exact 0-5
  * order, so keep it append-only unless that shader dispatch moves too.
  */
 export const SURFACE_COLOR_SOURCES = [
@@ -225,6 +231,8 @@ export const SURFACE_COLOR_SOURCES = [
   "palette",
   "height",
   "radius",
+  "rings",
+  "escape",
 ] as const;
 
 export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
@@ -277,6 +285,14 @@ export interface SurfaceParams {
    * accumulation for the old palette to be baked into, so nothing restarts.
    */
   paletteId: PaletteSelection;
+  /**
+   * Per-level decay of the `"palette"` source's orbit-trap blend weight
+   * (fr-rl4b) — flam3's "color speed" one render over; see
+   * {@link DEFAULT_SURFACE_COLOR_SPEED} for the endpoints. Inert for every
+   * other colorSource, but stored regardless (like {@link paletteId}).
+   * Live-reactive.
+   */
+  colorSpeed: number;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -616,6 +632,14 @@ export const MAX_SOLID_LIGHT_ELEVATION = 85;
 export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
+/** Per-level decay of the surface render's orbit-trap color blend
+ * (fr-rl4b) — flam3's "color speed", one render over. 0.5 is the classic
+ * halving the blend shipped with (fr-gt9i); 0 paints each top-level copy a
+ * single pure color; 1 weighs every descent level equally (maximum
+ * blending). */
+export const DEFAULT_SURFACE_COLOR_SPEED = 0.5;
+export const MIN_SURFACE_COLOR_SPEED = 0;
+export const MAX_SURFACE_COLOR_SPEED = 1;
 /**
  * Default solid-render palette (fr-1kt): the same spectrum gradient as
  * {@link DEFAULT_FLAME_PALETTE}, for one coherent default look across both
@@ -889,6 +913,11 @@ export const PARAM = defineParams({
     max: MAX_SOLID_AMBIENT,
     default: DEFAULT_SOLID_AMBIENT,
   },
+  surfaceColorSpeed: {
+    min: MIN_SURFACE_COLOR_SPEED,
+    max: MAX_SURFACE_COLOR_SPEED,
+    default: DEFAULT_SURFACE_COLOR_SPEED,
+  },
   symmetryOrder: {
     min: MIN_SYMMETRY_ORDER,
     max: MAX_SYMMETRY_ORDER,
@@ -946,6 +975,7 @@ export function initialState(panelOpen: boolean): AppState {
       ambient: DEFAULT_SOLID_AMBIENT,
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
+      colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     },
     renderMode: "points",
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
@@ -1477,6 +1507,21 @@ export function setSurfaceAmbient(state: AppState, ambient: number): AppState {
     surface: {
       ...state.surface,
       ambient: clampToSpec(PARAM.surfaceAmbient, ambient),
+    },
+  };
+}
+
+/** Set the surface render's orbit-trap color speed (fr-rl4b), clamped.
+ * Live-reactive like {@link setSurfaceLightAzimuth}. */
+export function setSurfaceColorSpeed(
+  state: AppState,
+  colorSpeed: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      colorSpeed: clampToSpec(PARAM.surfaceColorSpeed, colorSpeed),
     },
   };
 }
