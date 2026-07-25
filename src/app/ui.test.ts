@@ -2012,6 +2012,32 @@ describe("Ui render mode switch (fr-39y)", () => {
     expect(handlers.onRenderMode).toHaveBeenCalledWith("flame");
   });
 
+  it("toasts the gate reason when a disabled Surface segment is tapped", () => {
+    // The tooltip is hover-only — touch would learn nothing. Pointer events
+    // are still dispatched for disabled controls, so the tap surfaces the
+    // reason as a toast (see the bind() listener).
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.setSurfaceEligibility("ineligible", "map 1 uses variations");
+    modeBtn("surface").dispatchEvent(
+      new Event("pointerdown", { bubbles: true }),
+    );
+    const toast = document.getElementById("toast") as HTMLElement;
+    expect(toast.classList.contains("hidden")).toBe(false);
+    expect(toast.textContent).toContain("map 1 uses variations");
+  });
+
+  it("stays silent on pointerdown while the Surface segment is enabled", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.setSurfaceEligibility("eligible", null);
+    modeBtn("surface").dispatchEvent(
+      new Event("pointerdown", { bubbles: true }),
+    );
+    const toast = document.getElementById("toast") as HTMLElement;
+    expect(toast.classList.contains("hidden")).toBe(true);
+  });
+
   it("fires onRenderMode with the solid mode when the solid segment is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

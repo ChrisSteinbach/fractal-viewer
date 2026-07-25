@@ -1373,6 +1373,15 @@ export class Ui {
         handlers.onRenderMode(mode),
       );
     }
+    // A disabled Surface segment swallows clicks silently, and its
+    // reason-carrying tooltip is hover-only — invisible on touch. Pointer
+    // events, unlike click/mouse events, ARE still dispatched for disabled
+    // form controls, so the tap is heard here and the tooltip text becomes
+    // a toast: every input modality learns WHY the mode is unavailable.
+    this.modeButtons.surface.addEventListener("pointerdown", () => {
+      const surface = this.modeButtons.surface;
+      if (surface.disabled && surface.title) this.flashToast(surface.title);
+    });
     this.autoOrbitToggle.addEventListener("change", () => {
       const on = this.autoOrbitToggle.checked;
       // Same "row hides with its toggle" pattern as the 4D tumble below
