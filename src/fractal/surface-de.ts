@@ -63,36 +63,39 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  */
 
 /** Per-map anisotropy ratio `sigma_max / sigma_min` at or below which the
- * system counts as conformal-enough to march at full speed. */
-const CONFORMAL_RATIO = 1.05;
+ * system counts as conformal-enough to march at full speed. Shared with the
+ * 4D twin (`surface-de-4d.ts`) — like `chaos-game-4d.ts` importing
+ * `chaos-game.ts`'s constants, this keeps the two eligibility ladders from
+ * ever drifting apart. */
+export const CONFORMAL_RATIO = 1.05;
 
 /** A map whose largest singular value reaches this stops counting as a
  * contraction (Hutchinson's condition for the IFS attractor to exist — and
  * for greedy inverse descent to terminate). */
-const CONTRACTION_LIMIT = 0.999;
+export const CONTRACTION_LIMIT = 0.999;
 
 /** Smallest singular value below which a map is treated as non-invertible
  * (a flat/degenerate map has no inverse to descend through). */
-const NEAR_SINGULAR_SIGMA = 1e-4;
+export const NEAR_SINGULAR_SIGMA = 1e-4;
 
 /** Points drawn by the seeded bounding-radius probe. */
-const PROBE_POINTS = 8192;
+export const PROBE_POINTS = 8192;
 
 /** Fixed seed for the bounding-radius probe: the DE for a given system must
  * be deterministic (tests, GLSL uniforms, and repeated builds all agree). */
-const PROBE_SEED = 0x5eedf00d;
+export const PROBE_SEED = 0x5eedf00d;
 
 /** Pad factor applied to the probe's sampled `maxR` — the probe sees a
  * finite sample of the attractor, whose true supremum sits slightly beyond. */
-const RADIUS_PAD = 1.05;
+export const RADIUS_PAD = 1.05;
 
 /** Descent stops once the tracked point escapes this multiple of `R`:
  * beyond it, deeper certificates cannot improve the min. */
-const ESCAPE_FACTOR = 2;
+export const ESCAPE_FACTOR = 2;
 
 /** Accumulated-contraction floor that sizes {@link SurfaceDE.maxDepth}:
  * descend until the slowest map chain has shrunk features below ~1e-4. */
-const DEPTH_RESOLUTION = 1e-4;
+export const DEPTH_RESOLUTION = 1e-4;
 
 /** `prepareChaosGame`'s no-symmetry default, duplicated here because it is
  * private there; order 1 is the identity expansion for any axis. */
