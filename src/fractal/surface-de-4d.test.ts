@@ -535,23 +535,17 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
     expect(d).toBeGreaterThanOrEqual(8 - de.boundingRadius - 1e-9);
   });
 
-  it("shows off-attractor jittered queries CAN exceed the cloud-distance bound here — a known, inherited limitation, not a 4D-specific defect", () => {
+  it("holds under the width-2 beam: no query in jitteredQueries(cloud, 20) exceeds the cloud-distance bound (fr-v6yg fix)", () => {
     // doubleRotation has only two maps, weight 6:1, sigma 0.93 vs 0.22 (see
-    // its preset doc): a system this far from evenly-weighted/conformal is
-    // exactly where the module doc's documented "residual risk" applies —
-    // "branches whose images stay inside the sphere carry no positive
-    // certificate ... the residual risk of that choice is what the
-    // eligibility analysis' stepScale fudge (and the marcher's hit epsilon)
-    // absorbs." Confirmed during this spike's development that this is
-    // INHERITED, not introduced by the 4D port: a structurally identical
-    // 2-map, weight-6:1, sigma-0.93/0.22 3D system built on the production,
-    // unmodified `surface-de.ts` shows the same overshoot against its own
-    // sampled cloud. Off-attractor validity for low-map-count,
-    // high-disparity systems is exactly the kind of caveat a feasibility
-    // spike exists to surface — contrast the exact-sample test above (which
-    // this preset satisfies) and pentatope/sixteenCellFlake's validity
-    // tests (whose many, evenly-weighted maps satisfy the full jittered
-    // query mix cleanly).
+    // its preset doc) — a system this far from evenly-weighted/conformal is
+    // exactly the profile fr-v6yg's width-2 descent beam was built to repair
+    // (see this module's FR-V6YG RESOLUTION doc section): a second
+    // simultaneous in-sphere branch, dropped uncounted at width 1, is
+    // refined by the second chain instead of lost. Tolerance is 1e-6, not
+    // the validity tests' 1e-9 above: this system still descends the full
+    // 48-level cap, and the "holds validity for exact cloud-sample queries"
+    // test above already documents an accumulated fp-noise floor of ~1e-7 at
+    // that depth.
     const transforms = doubleRotation();
     const de = buildSurfaceDE4(transforms);
     const cloud = runChaosGame4(
@@ -561,7 +555,31 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
     );
     const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
       const nearest = nearestDistance4(cloud, q);
-      return estimateDistance4(de, q) > nearest + 1e-9;
+      return estimateDistance4(de, q) > nearest + 1e-6;
+    });
+    expect(violatesSomewhere).toBe(false);
+  });
+
+  it("still violates somewhere when forced back to beamWidth 1 — the single-chain mechanism the beam repairs", () => {
+    // Forcing the built DE's beamWidth to 1 reproduces the OLD greedy
+    // single-chain descent value-for-value (see the module doc): a second
+    // simultaneous in-sphere branch is dropped uncounted instead of refined,
+    // and doubleRotation's 2-map, weight-6:1, sigma-0.93/0.22 profile —
+    // confirmed during fr-beck's development to be INHERITED from 3D
+    // `estimateDistance`, not introduced by the 4D port — is exactly where
+    // that drop measurably overshoots the cloud-distance bound. This is the
+    // bug the width-2 beam test above fixes; both tests share the same
+    // cloud and query set so the only variable is beamWidth.
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
+      const nearest = nearestDistance4(cloud, q);
+      return estimateDistance4({ ...de, beamWidth: 1 }, q) > nearest + 1e-9;
     });
     expect(violatesSomewhere).toBe(true);
   });
@@ -571,8 +589,11 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
 // estimateDistance4Refined (fr-beck spike verdict — see the module doc's
 // SPIKE VERDICT section): the certificate-refinement variant that measurably
 // eliminates the slice-march ghosting section (e) traced to the sibling-
-// certificate term, without touching the doubleRotation-profile greedy
-// branch-selection gap the tests above already document.
+// certificate term. The doubleRotation-profile greedy branch-selection gap
+// fr-beck also measured is a SEPARATE mechanism refinement never touches on
+// its own (still reproducible by forcing beamWidth: 1, see the tests below);
+// fr-v6yg's width-2 descent beam is what closes it in the built DE — see
+// this module's FR-V6YG RESOLUTION doc section.
 // -----------------------------------------------------------------------
 
 describe("estimateDistance4Refined never falls below the base estimate", () => {
@@ -626,19 +647,22 @@ describe("estimateDistance4Refined validity (never exceeds the true distance to 
   });
 });
 
-describe("estimateDistance4Refined collapses a measured ghost point", () => {
-  it("tightens a pentatope void probe that would false-hit a slice march at eps_hit=0.01R", () => {
+describe("estimateDistance4 beam and estimateDistance4Refined both collapse a measured ghost point", () => {
+  it("clears a pentatope void probe that would false-hit a slice march at eps_hit=0.01R — width-1 alone still ghosts", () => {
     // Pinned from the fr-beck spike's (g2) run (`surface-de-4d.spike.test.ts`,
     // seeds: main cloud mulberry32(101)/500_000, w0 = 10th percentile of the
     // w-distribution, void probe mulberry32(31) index 3): a genuine void
-    // (d3 = 0.2057 >> theta_vis = 0.05*R = 0.0516) where the base estimator
-    // reads DE = 0.00562 — comfortably under the eps_hit = 0.01*R = 0.01032
-    // a slice march would hit-test against, i.e. a measured false-hit
-    // ("ghost") — while the refined estimator reads 0.1372, over 4x the
-    // eps_hit and correctly signalling "no content here". Measured
-    // (bit-exact to this system's boundingRadius, R = 1.03171):
-    //   base    = 0.005624521216463618
-    //   refined = 0.13723927851937934
+    // (d3 = 0.2057 >> theta_vis = 0.05*R = 0.0516) where the OLD single-chain
+    // estimator — still reproduced by forcing beamWidth: 1 below — reads
+    // DE = 0.00562, comfortably under the eps_hit = 0.01*R = 0.01032 a slice
+    // march would hit-test against, i.e. a measured false-hit ("ghost").
+    // fr-v6yg's width-2 beam (built DE, no forcing) ALSO clears this ghost —
+    // not just the certificate refinement it was originally measured
+    // against — though refinement stays the stronger of the two. Measured
+    // (this build, this point, bit-exact to boundingRadius R = 1.03171):
+    //   width-1 base    = 0.005624521216463618  (the historical ghost)
+    //   width-2 base    = 0.06858950489971172   (built DE — clears eps_hit)
+    //   width-2 refined = 0.1519913667366567    (clears it by a wider margin)
     //   d3      = 0.20574953287596418  (true nearest slice distance)
     //   d4      = 0.20575046436319630  (true nearest 4D distance — d3 ≈ d4:
     //             the nearest attractor content is already in this slice,
@@ -650,23 +674,25 @@ describe("estimateDistance4Refined collapses a measured ghost point", () => {
       0.2012058828743044, -0.22083853166311757, 0.28312175332393863,
       -0.24930457323789598,
     ];
-    const base = estimateDistance4(de, p);
-    const refined = estimateDistance4Refined(de, p);
-    expect(base).toBeLessThan(0.011);
-    expect(refined).toBeGreaterThan(0.03);
+    const base1 = estimateDistance4({ ...de, beamWidth: 1 }, p);
+    const base2 = estimateDistance4(de, p);
+    const refined2 = estimateDistance4Refined(de, p);
+    expect(base1).toBeLessThan(0.011);
+    expect(base2).toBeGreaterThan(0.05);
+    expect(refined2).toBeGreaterThan(0.03);
   });
 });
 
-describe("estimateDistance4Refined does not repair the greedy branch-selection overshoot (doubleRotation)", () => {
-  it("still violates somewhere on the same jitteredQueries(cloud, 20) set the base estimator violates on", () => {
-    // Companion to "shows off-attractor jittered queries CAN exceed the
-    // cloud-distance bound here" above: that test shows the BASE estimator
-    // overshoots on doubleRotation via the greedy branch-selection heuristic
-    // (not a certificate-tightness problem — see the module doc's SPIKE
-    // VERDICT section). The certificate refinement only ever raises a
-    // certificate; it cannot fix a wrong branch selection, so the same
-    // overshoot survives refinement — this pins that the two mechanisms are
-    // independent, not that refinement is broken.
+describe("estimateDistance4Refined does not repair width-1's branch-selection overshoot; the width-2 beam does (doubleRotation)", () => {
+  it("still violates somewhere at beamWidth 1 — certificate refinement and branch selection are independent mechanisms", () => {
+    // Companion to the width-1 mechanism test in the descent-depth-stress
+    // describe above: that test shows the BASE estimator overshoots on
+    // doubleRotation, forced to beamWidth 1, via the greedy branch-selection
+    // heuristic (not a certificate-tightness problem — see the module doc's
+    // SPIKE VERDICT section). The certificate refinement only ever raises a
+    // certificate; it cannot fix a wrong branch selection, so at width 1 the
+    // same overshoot survives refinement — this pins that the two
+    // mechanisms are independent, not that refinement is broken.
     const transforms = doubleRotation();
     const de = buildSurfaceDE4(transforms);
     const cloud = runChaosGame4(
@@ -676,8 +702,29 @@ describe("estimateDistance4Refined does not repair the greedy branch-selection o
     );
     const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
       const nearest = nearestDistance4(cloud, q);
-      return estimateDistance4Refined(de, q) > nearest + 1e-9;
+      return (
+        estimateDistance4Refined({ ...de, beamWidth: 1 }, q) > nearest + 1e-9
+      );
     });
     expect(violatesSomewhere).toBe(true);
+  });
+
+  it("has no violations on the built (width-2) DE — the beam, not refinement, is what repairs branch selection", () => {
+    // Same query set and the same 1e-6 depth-descent tolerance as the base
+    // estimator's width-2 fix test above: fr-v6yg's width-2 beam is what
+    // closes the branch-selection gap, independent of (and in addition to)
+    // certificate refinement.
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const violatesSomewhere = jitteredQueries(cloud, 20).some((q) => {
+      const nearest = nearestDistance4(cloud, q);
+      return estimateDistance4Refined(de, q) > nearest + 1e-6;
+    });
+    expect(violatesSomewhere).toBe(false);
   });
 });

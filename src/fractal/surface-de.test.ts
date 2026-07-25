@@ -338,6 +338,96 @@ describe("estimateDistance on an anisotropic system", () => {
   });
 });
 
+describe("estimateDistance beam descent (fr-v6yg)", () => {
+  it("buildSurfaceDE always builds beamWidth 2", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    expect(de.beamWidth).toBe(2);
+  });
+
+  it("holds for the 3D mirror of doubleRotation's profile: no jittered query exceeds the cloud-distance bound", () => {
+    // The 3D mirror of the 4D `doubleRotation` preset's profile (2 maps,
+    // weight 6:1, sigma 0.93 vs 0.22 — see `surface-de-4d.test.ts`'s
+    // doubleRotation descent-depth-stress tests for the 4D original this
+    // mirrors). Its slowest map (sigma 0.93) drives maxDepth to the
+    // 48-level cap, same as that 4D twin's depth-stress test — so this uses
+    // the same 1e-6 tolerance that test documents an accumulated fp-noise
+    // floor for (~1e-7 at 48 levels), looser than the other estimateDistance
+    // tests above.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const jitterRng = mulberry32(2);
+    const queries: Vec3[] = [];
+    for (let i = 0; i < cloud.count; i += 40) {
+      queries.push([
+        cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3,
+      ]);
+    }
+    for (const q of queries) {
+      const nearest = nearestDistance(cloud, q);
+      expect(estimateDistance(de, q)).toBeLessThanOrEqual(nearest + 1e-6);
+    }
+  });
+
+  it("overshoots somewhere on the same queries when forced to beamWidth 1 — the fr-v6yg overshoot the beam repairs", () => {
+    // Same profile and query construction as the fix test above, forced
+    // back to beamWidth 1 (the old single-chain algorithm). Measured (this
+    // exact profile, this test's cloud/query construction): max excess
+    // ~26% of R — the same order of magnitude as the module doc's own
+    // harness figure for this profile (worst measured case across every
+    // system it tried, ~19% of R over a broader query sweep).
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+    const de = { ...buildSurfaceDE(transforms), beamWidth: 1 as const };
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const jitterRng = mulberry32(2);
+    const queries: Vec3[] = [];
+    for (let i = 0; i < cloud.count; i += 40) {
+      queries.push([
+        cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3,
+      ]);
+    }
+    const violatesSomewhere = queries.some((q) => {
+      const nearest = nearestDistance(cloud, q);
+      return estimateDistance(de, q) > nearest + 1e-9;
+    });
+    expect(violatesSomewhere).toBe(true);
+  });
+});
+
 describe("buildSurfaceDE with kaleidoscope symmetry", () => {
   it("expands to order * baseCount maps, cycling baseIndex through the base maps", () => {
     const transforms = sierpinskiTetrahedron();
