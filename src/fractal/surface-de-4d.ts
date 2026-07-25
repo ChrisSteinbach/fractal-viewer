@@ -54,9 +54,13 @@ import type { Transform, Transform4, Vec4 } from "./types";
  *   transform", no `postRotations`/`baseTransformCount` to carry), so there
  *   is nothing here to expand — {@link SurfaceDE4.maps} is the input maps
  *   1:1, unlike 3D's symmetry-expanded `SurfaceDEMap[]`.
- * - No final-transform lens: 3D's `SurfaceDE.final` is a straightforward
- *   port waiting to happen, deliberately deferred until this spike's verdict
- *   on whether a 4D surface render is worth building out at all.
+ * - The final-transform lens is no longer on this list. It was originally
+ *   deferred here as 3D's `SurfaceDE.final` "waiting to happen" until this
+ *   spike's verdict landed; it has SINCE landed (fr-vxoj, post-verdict), a
+ *   straight port one dimension up — {@link SurfaceDE4.final}, matching
+ *   `analyzeSurfaceSystem4`/`buildSurfaceDE4` bookkeeping, and the lens
+ *   prologue/epilogue {@link estimateDistance4} and
+ *   {@link estimateDistance4Refined} apply in lockstep.
  *
  * THE SLICE CAVEAT — why this spike exists in the first place. The app would
  * never march the full 4D attractor `A` for display; it marches a `w = w0`
@@ -290,8 +294,9 @@ function isActive(t: Transform): boolean {
 }
 
 /** What {@link analyzeSurfaceSystem4} feeds the 4D DE build. Same shape as
- * 3D's `SurfaceEligibility`, minus the final-transform bookkeeping this
- * spike does not cover (see the module doc). */
+ * 3D's `SurfaceEligibility` — final-transform bookkeeping included (see
+ * {@link analyzeSurfaceSystem4}'s doc for the one place its gate
+ * deliberately diverges from 3D's). */
 export interface SurfaceEligibility4 {
   /** See 3D's `SurfaceEligibility.status`. */
   status: SurfaceEligibilityStatus;
@@ -315,11 +320,19 @@ export interface SurfaceEligibility4 {
  * ignored), and there is no `isFlatTransform` gate — a system extending into
  * 4D is the entire point of this module, not a disqualifier. Weight-0 maps
  * are still ignored (never selected, so they add nothing to the attractor);
- * there is no final-transform parameter (spike scope, see the module doc)
- * and no symmetry to affect eligibility either way.
+ * no symmetry to affect eligibility either way.
+ *
+ * The optional `finalTransform` mirrors 3D's final-transform gate (active
+ * variations disqualify, near-zero scale disqualifies, anisotropy folds into
+ * the reported worst case) with the SAME 4D-specific carve-out as the
+ * per-map loop above: no `isFlatTransform` gate and no "extends into 4D"
+ * reason for the final transform either — lifting the visible set out of
+ * the `w = 0` slice via the final transform is exactly this module's point,
+ * not a disqualifier.
  */
 export function analyzeSurfaceSystem4(
   transforms: Transform[],
+  finalTransform: Transform | null = null,
 ): SurfaceEligibility4 {
   const reasons: string[] = [];
   const sigmas = transforms.map((t) => transformSigmas4(toTransform4(t)));
@@ -347,6 +360,22 @@ export function analyzeSurfaceSystem4(
       anisotropy = Math.max(anisotropy, s.max / s.min);
     }
   });
+
+  if (finalTransform) {
+    if (hasActiveVariations(finalTransform)) {
+      reasons.push("final transform uses variations");
+    }
+    // Unlike the per-map loop's isFlatTransform check in 3D's
+    // analyzeSurfaceSystem, there is no isFlatTransform gate and no "extends
+    // into 4D" reason for the final transform here: a final transform
+    // extending into 4D is fine — that is this module's entire point.
+    const s = transformSigmas4(toTransform4(finalTransform));
+    if (s.min < NEAR_SINGULAR_SIGMA) {
+      reasons.push("final transform is nearly flat (scale ≈ 0)");
+    } else {
+      anisotropy = Math.max(anisotropy, s.max / s.min);
+    }
+  }
 
   const status: SurfaceEligibilityStatus =
     reasons.length > 0
@@ -436,15 +465,18 @@ export interface SurfaceDE4Map {
 }
 
 /** Everything {@link estimateDistance4} needs, precomputed — the 4D
- * analogue of 3D's `SurfaceDE` (minus `visibleBoundingRadius`/`final`: no
- * final-transform lens in this spike, see the module doc). */
+ * analogue of 3D's `SurfaceDE`, final-transform lens included (fr-vxoj,
+ * post-verdict — see the module doc's landing note). */
 export interface SurfaceDE4 {
   /** One inverse map per ACTIVE input transform (weight-0 maps contribute no
    * slot — they are never selected, so they add nothing to the attractor). */
   maps: SurfaceDE4Map[];
-  /** Bounding-hypersphere radius of the attractor, probed by a seeded 4D
-   * chaos game and padded. */
+  /** Bounding-hypersphere radius of the RAW attractor (pre-final-transform),
+   * probed by a seeded 4D chaos game and padded. */
   boundingRadius: number;
+  /** Radius bounding the VISIBLE set `F(attractor)` — equals
+   * `boundingRadius` when there is no final transform. */
+  visibleBoundingRadius: number;
   /** `ESCAPE_FACTOR * boundingRadius` — descent past this cannot help. */
   escapeRadius: number;
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
@@ -457,21 +489,31 @@ export interface SurfaceDE4 {
   beamWidth: 1 | 2;
   /** March step multiplier from {@link analyzeSurfaceSystem4}. */
   stepScale: number;
+  /** Pre-inverted final-transform lens (the plotted set is `F(attractor)`),
+   * or `null`. Applied ONCE to the query point; the result is un-scaled by
+   * its `sigmaMin`. Validity transfers dimension-free:
+   * `dist(q, F(A)) >= sigma_min(F) * dist(F^-1(q), A)` holds in any
+   * dimension (see the module doc's VALIDITY TRANSFERS VERBATIM section), so
+   * the slice lower-bound argument is unaffected by the lens. */
+  final: { invM: number[]; invT: Vec4; sigmaMin: number } | null;
 }
 
 /**
  * Precompute the {@link SurfaceDE4} for a system: every active map lifted
  * (`toTransform4`) and analytically inverted, a probed bounding-hypersphere
- * radius, and a depth cap sized off the slowest contraction. Mirrors 3D's
- * `buildSurfaceDE` minus symmetry expansion (there is none to expand — every
- * slot is a base map 1:1) and minus the final-transform lens (deferred; see
- * the module doc).
+ * radius, a depth cap sized off the slowest contraction, and the
+ * pre-inverted final-transform lens. Mirrors 3D's `buildSurfaceDE` minus
+ * symmetry expansion (there is none to expand — every slot is a base map
+ * 1:1).
  *
  * Throws when the system is ineligible ({@link analyzeSurfaceSystem4}) — the
  * app would gate on the analysis first, so reaching the throw is a bug.
  */
-export function buildSurfaceDE4(transforms: Transform[]): SurfaceDE4 {
-  const analysis = analyzeSurfaceSystem4(transforms);
+export function buildSurfaceDE4(
+  transforms: Transform[],
+  finalTransform: Transform | null = null,
+): SurfaceDE4 {
+  const analysis = analyzeSurfaceSystem4(transforms, finalTransform);
   if (analysis.status === "ineligible") {
     throw new Error(
       `system has no surface distance estimator: ${analysis.reasons.join("; ")}`,
@@ -525,13 +567,40 @@ export function buildSurfaceDE4(transforms: Transform[]): SurfaceDE4 {
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
   );
 
+  // Final-transform lens, mirroring 3D's buildSurfaceDE lines 485-500: lift,
+  // invert the composed 4x4, and derive invT with the same row-major
+  // pattern as the per-map inversion above. The probe above never applies
+  // this — it measures the RAW attractor, and the DE descends the raw
+  // attractor and applies the lens to the query instead (see
+  // estimateDistance4's prologue).
+  let final: SurfaceDE4["final"] = null;
+  let visibleBoundingRadius = boundingRadius;
+  if (finalTransform) {
+    const liftedFinal = toTransform4(finalTransform);
+    const affine = composeAffine4(liftedFinal);
+    const invM = inverse4(affine.m);
+    const [tx, ty, tz, tw] = affine.t;
+    const invT: Vec4 = [
+      -(invM[0] * tx + invM[1] * ty + invM[2] * tz + invM[3] * tw),
+      -(invM[4] * tx + invM[5] * ty + invM[6] * tz + invM[7] * tw),
+      -(invM[8] * tx + invM[9] * ty + invM[10] * tz + invM[11] * tw),
+      -(invM[12] * tx + invM[13] * ty + invM[14] * tz + invM[15] * tw),
+    ];
+    const s = transformSigmas4(liftedFinal);
+    final = { invM, invT, sigmaMin: s.min };
+    // |F(x)| <= sigma_max·|x| + |t| bounds the visible set F(attractor).
+    visibleBoundingRadius = s.max * boundingRadius + Math.hypot(tx, ty, tz, tw);
+  }
+
   return {
     maps,
     boundingRadius,
+    visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
     beamWidth: 2,
     stepScale: analysis.stepScale,
+    final,
   };
 }
 
@@ -540,31 +609,52 @@ export function buildSurfaceDE4(transforms: Transform[]): SurfaceDE4 {
  * descent with sibling-certificate tracking, a structural port of 3D's
  * `estimateDistance` (see the module doc for why the validity argument
  * transfers) with every coordinate step unrolled to four terms instead of
- * three, and no final-transform block (this spike does not build a lens —
- * see the module doc). See the 3D twin's doc for the beam mechanics: the
- * selection key `chainScale · (r - R)`, the frozen certificates every
- * non-descended escaped candidate folds, the terminal bound a chain folds
- * at escape or the depth cap, and the width-1 equivalence to the classic
- * greedy descent. Width 2 is what repairs the fr-v6yg branch-selection
- * overshoot (doubleRotation's profile) that certificate refinement
- * provably cannot touch.
+ * three, and the same final-transform lens prologue/epilogue as the 3D twin
+ * (applied once to the query, un-scaled by its `sigmaMin` on the way out —
+ * see the module doc's landing note and `SurfaceDE4.final`). See the 3D
+ * twin's doc for the beam mechanics: the selection key
+ * `chainScale · (r - R)`, the frozen certificates every non-descended
+ * escaped candidate folds, the terminal bound a chain folds at escape or
+ * the depth cap, and the width-1 equivalence to the classic greedy descent.
+ * Width 2 is what repairs the fr-v6yg branch-selection overshoot
+ * (doubleRotation's profile) that certificate refinement provably cannot
+ * touch.
  */
 export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
+  let x = p[0];
+  let y = p[1];
+  let z = p[2];
+  let w = p[3];
+  let finalScale = 1;
+  if (de.final) {
+    const f = de.final;
+    const im = f.invM;
+    const it = f.invT;
+    const qx = im[0] * x + im[1] * y + im[2] * z + im[3] * w + it[0];
+    const qy = im[4] * x + im[5] * y + im[6] * z + im[7] * w + it[1];
+    const qz = im[8] * x + im[9] * y + im[10] * z + im[11] * w + it[2];
+    const qw = im[12] * x + im[13] * y + im[14] * z + im[15] * w + it[3];
+    x = qx;
+    y = qy;
+    z = qz;
+    w = qw;
+    finalScale = f.sigmaMin;
+  }
+
   const R = de.boundingRadius;
-  const startR = Math.sqrt(
-    p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + p[3] * p[3],
-  );
+  const startR = Math.sqrt(x * x + y * y + z * z + w * w);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
 
-  // Chain slot A starts at the query; slot B idles until beam selection
-  // fills it (width-2 systems only). Mirrors 3D's estimateDistance with a
-  // fourth coordinate on every chain and candidate slot.
-  let aX = p[0];
-  let aY = p[1];
-  let aZ = p[2];
-  let aW = p[3];
+  // Chain slot A starts at the (lensed) query; slot B idles until beam
+  // selection fills it (width-2 systems only). Mirrors 3D's
+  // estimateDistance with a fourth coordinate on every chain and candidate
+  // slot.
+  let aX = x;
+  let aY = y;
+  let aZ = z;
+  let aW = w;
   let aScale = 1;
   let aR = startR;
   let aLive = true;
@@ -691,13 +781,14 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   }
   let d = best;
   if (sphereBound > d) d = sphereBound;
-  return d;
+  return d * finalScale;
 }
 
 /**
  * Certificate-refinement variant of {@link estimateDistance4}: identical
- * greedy descent, terminal KIFS bound, and depth-0 sphere floor — the only
- * change is what certificate an ESCAPED sibling (`r_j > R`) earns. The base
+ * greedy descent, terminal KIFS bound, depth-0 sphere floor, and
+ * final-transform lens prologue/epilogue — the only change is what
+ * certificate an ESCAPED sibling (`r_j > R`) earns. The base
  * version stops at one Hutchinson level (`sigmaMin_j * (r_j - R)`, the base
  * case `dist(q, A) >= |q| - R` applied directly to the sibling's own inverse
  * image `q'_j`); this variant applies one MORE level before settling:
@@ -742,10 +833,28 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
  * should take.
  */
 export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
+  let x = p[0];
+  let y = p[1];
+  let z = p[2];
+  let w = p[3];
+  let finalScale = 1;
+  if (de.final) {
+    const f = de.final;
+    const im = f.invM;
+    const it = f.invT;
+    const qx = im[0] * x + im[1] * y + im[2] * z + im[3] * w + it[0];
+    const qy = im[4] * x + im[5] * y + im[6] * z + im[7] * w + it[1];
+    const qz = im[8] * x + im[9] * y + im[10] * z + im[11] * w + it[2];
+    const qw = im[12] * x + im[13] * y + im[14] * z + im[15] * w + it[3];
+    x = qx;
+    y = qy;
+    z = qz;
+    w = qw;
+    finalScale = f.sigmaMin;
+  }
+
   const R = de.boundingRadius;
-  const startR = Math.sqrt(
-    p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + p[3] * p[3],
-  );
+  const startR = Math.sqrt(x * x + y * y + z * z + w * w);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
@@ -780,10 +889,10 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
     return childScale * Math.max(r - R, inner);
   };
 
-  let aX = p[0];
-  let aY = p[1];
-  let aZ = p[2];
-  let aW = p[3];
+  let aX = x;
+  let aY = y;
+  let aZ = z;
+  let aW = w;
   let aScale = 1;
   let aR = startR;
   let aLive = true;
@@ -922,5 +1031,5 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   }
   let d = best;
   if (sphereBound > d) d = sphereBound;
-  return d;
+  return d * finalScale;
 }
