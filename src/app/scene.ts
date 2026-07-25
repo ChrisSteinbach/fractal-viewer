@@ -33,9 +33,13 @@ import {
 } from "./voxel-material";
 import {
   configureSurfaceLUTTexture,
+  createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setSurfaceSystem as packSurfaceSystem,
+  SURFACE_PREVIEW_MAX_DEPTH,
+  SURFACE_PREVIEW_SCALE,
 } from "./surface-material";
+import type { RenderTier } from "./render-tier";
 import {
   createSurfaceMaterial4,
   setSurfaceSystem4 as packSurfaceSystem4,
@@ -528,6 +532,18 @@ export class FractalScene {
    * radius color sources — dimensions never change, so one texture is
    * mutated in place (see {@link setSurfaceColorLUT}). */
   private surfaceLUTTexture: THREE.DataTexture | null = null;
+  /** Preview-tier target (fr-5ne3): while the view moves, the tracer
+   * renders here at {@link SURFACE_PREVIEW_SCALE} of the drawing buffer and
+   * {@link surfaceBlitQuad} stretches it over the canvas. Lazily sized in
+   * {@link renderSurface} so resizes/DPR changes are absorbed without a
+   * per-frame reallocation. */
+  private readonly surfacePreviewTarget: THREE.WebGLRenderTarget;
+  private readonly surfaceBlitQuad: FullScreenQuad;
+  /** The ACTIVE DE's own descent depth cap, recorded by
+   * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: the preview tier
+   * clamps `uMaxDepth` below it and the full tier restores it, so the two
+   * tiers can interleave freely (fr-5ne3). */
+  private surfaceFullMaxDepth = 0;
 
   /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
   private viewportWidth: number;
@@ -809,6 +825,18 @@ export class FractalScene {
     this.surfaceMaterial4 = createSurfaceMaterial4();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad = new FullScreenQuad(this.surfaceMaterial);
+    // Placeholder-sized; renderSurface's preview path sizes it to the live
+    // drawing buffer. No depth/stencil — the tracer is a full-screen quad —
+    // and linear filtering so the upscale blit smooths rather than blocks.
+    this.surfacePreviewTarget = new THREE.WebGLRenderTarget(2, 2, {
+      depthBuffer: false,
+      stencilBuffer: false,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+    });
+    this.surfaceBlitQuad = new FullScreenQuad(
+      createSurfaceBlitMaterial(this.surfacePreviewTarget.texture),
+    );
   }
 
   get canvas(): HTMLCanvasElement {
@@ -1963,6 +1991,7 @@ export class FractalScene {
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
+    this.surfaceFullMaxDepth = de.maxDepth;
   }
 
   /**
@@ -1980,6 +2009,7 @@ export class FractalScene {
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
+    this.surfaceFullMaxDepth = de.maxDepth;
   }
 
   /**
@@ -2065,8 +2095,18 @@ export class FractalScene {
    * angular pixel footprint, recomputed here so an export-scaled drawing
    * buffer (see {@link captureSurfaceFrame}) traces at its own, finer
    * resolution rather than the on-screen one.
+   *
+   * `tier` (fr-5ne3) is main.ts's interaction split: "full" (the default —
+   * capture and offline export land here by construction) traces the canvas
+   * at full quality; "preview" traces {@link surfacePreviewTarget} at
+   * {@link SURFACE_PREVIEW_SCALE} with `uMaxDepth` clamped to
+   * {@link SURFACE_PREVIEW_MAX_DEPTH} and stretches it over the canvas — the
+   * cheap frames that keep a drag/tumble fluid while the settle frame
+   * carries the quality. Both knobs are plain uniform writes restored by the
+   * next full-tier call, so the shader bodies (and their CPU-oracle
+   * discipline) are untouched.
    */
-  renderSurface(): void {
+  renderSurface(tier: RenderTier = "full"): void {
     this.renderNeeded = false;
     this.camera.updateMatrixWorld();
     const u = this.activeSurfaceMaterial.uniforms;
@@ -2078,8 +2118,28 @@ export class FractalScene {
       )
       .invert();
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
-    u.uPixelEps.value =
-      (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(size.y, 1);
+    const eps = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
+    if (tier === "preview") {
+      // uPixelEps derives from the TARGET's height: the cone-style hit
+      // test coarsens to match the preview pixels (fewer march steps) with
+      // no extra fudge factor.
+      const w = Math.max(1, Math.round(size.x * SURFACE_PREVIEW_SCALE));
+      const h = Math.max(1, Math.round(size.y * SURFACE_PREVIEW_SCALE));
+      const target = this.surfacePreviewTarget;
+      if (target.width !== w || target.height !== h) target.setSize(w, h);
+      u.uPixelEps.value = eps / h;
+      u.uMaxDepth.value = Math.min(
+        this.surfaceFullMaxDepth,
+        SURFACE_PREVIEW_MAX_DEPTH,
+      );
+      this.renderer.setRenderTarget(target);
+      this.surfaceQuad.render(this.renderer);
+      this.renderer.setRenderTarget(null);
+      this.surfaceBlitQuad.render(this.renderer);
+      return;
+    }
+    u.uPixelEps.value = eps / Math.max(size.y, 1);
+    u.uMaxDepth.value = this.surfaceFullMaxDepth;
     this.renderer.setRenderTarget(null);
     this.surfaceQuad.render(this.renderer);
   }

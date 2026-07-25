@@ -579,6 +579,62 @@ const SURFACE_FRAGMENT = /* glsl */ `
   }
 `;
 
+/**
+ * Preview-tier knobs (fr-5ne3): while the view is moving, the scene traces
+ * into an offscreen target this fraction of the drawing buffer per side
+ * (~11x fewer rays at 0.3) and upscales — deriving `uPixelEps` from the
+ * SMALLER target's height, so the cone-style hit test coarsens to match the
+ * preview pixels (fewer march steps) with no extra fudge factor.
+ */
+export const SURFACE_PREVIEW_SCALE = 0.3;
+
+/**
+ * Preview-tier descent-depth clamp on `uMaxDepth` (fr-5ne3). `buildSurfaceDE`
+ * sizes the full depth so the SLOWEST contraction chain resolves features
+ * below ~1e-4 — up to 48 levels, and it is exactly those slowly-contracting
+ * systems whose per-level beam + certificate sweeps make interaction
+ * unusable. Clamping the cap (a plain uniform write — the shader bodies and
+ * the CPU oracle are untouched) leaves fast-contracting systems' 8-12 levels
+ * alone and flattens only that tail. The artifact profile is safe by
+ * construction: a chain still alive at the cap contributes the same valid
+ * terminal lower bound, so fine detail renders slightly inflated/smoothed —
+ * no balloon ghosts (those come from dropping certificate refinement, which
+ * the preview deliberately keeps).
+ */
+export const SURFACE_PREVIEW_MAX_DEPTH = 12;
+
+const BLIT_FRAGMENT = /* glsl */ `
+  precision highp float;
+  uniform sampler2D uSrc;
+  in vec2 vUv;
+  out vec4 outColor;
+  void main() {
+    outColor = texture(uSrc, vUv);
+  }
+`;
+
+/**
+ * Verbatim upscale blit for the preview tier (fr-5ne3): stretches the
+ * preview target over the canvas. Hand-rolled rather than MeshBasicMaterial
+ * so no color-space chunk can ever transform the tracer's authored-sRGB
+ * output (ColorManagement is off app-wide, and this module keeps all
+ * surface GLSL in one place). `src` is the preview target's texture —
+ * bound once here by object identity, which `WebGLRenderTarget.setSize`
+ * preserves across reallocations.
+ */
+export function createSurfaceBlitMaterial(
+  src: THREE.Texture,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: { uSrc: { value: src } },
+    vertexShader: SURFACE_VERTEX,
+    fragmentShader: BLIT_FRAGMENT,
+    depthTest: false,
+    depthWrite: false,
+  });
+}
+
 /** The sampler state every uploaded color LUT needs: linear filtering (ramp
  * lookups interpolate between the 256 stops) and edge clamping (u = 0 and
  * u = 1 must read the end stops, never wrap to the ramp's other end).

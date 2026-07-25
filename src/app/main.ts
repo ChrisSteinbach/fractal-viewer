@@ -71,6 +71,7 @@ import {
   type OfflineEncoderSession,
 } from "./video-encode";
 import { createResolutionGovernor } from "./resolution-governor";
+import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
   DEFAULT_SYMMETRY_AXIS,
@@ -380,6 +381,11 @@ function main(): void {
   // chain of consecutively rendered frames breaks (a skipped frame, a mode
   // where sampling is off), so a gap never reads as one huge dt.
   let lastGovernedFrameMs: number | null = null;
+  // Surface-mode interaction tier (fr-5ne3): cheap preview traces while the
+  // view is moving, one full-quality settle frame once it parks. Owns the
+  // surface render's cost outright — the resolution governor takes its
+  // flame-style restore path there (see governResolution).
+  const surfaceRenderTier = createRenderTierScheduler();
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
@@ -2653,6 +2659,9 @@ function main(): void {
       // Drop any transform selection: no guide boxes in this mode, so a
       // raycast drag should orbit the camera (the solid session's reasoning).
       state = selectTransform(state, null);
+      // A fresh session must not inherit the previous one's pending settle
+      // timer (fr-5ne3).
+      surfaceRenderTier.reset();
       state = setRenderMode(state, "surface");
       refreshGuides();
       refreshUi();
@@ -4386,15 +4395,20 @@ function main(): void {
    * breaks the chain instead of reading as one huge dt. Sampling pauses (and
    * resolution snaps back to full) whenever the checkbox is off, a video
    * capture is running (recordings are keepsakes — capture at full quality
-   * and let the frame rate be whatever it is), or a flame render is showing
+   * and let the frame rate be whatever it is), a flame render is showing
    * (a frozen still exerts no per-frame GPU pressure worth reacting to, and
-   * SHOULD display at full resolution).
+   * SHOULD display at full resolution), or the surface render is active
+   * (the preview/settle tier owns its cost — fr-5ne3 — and the settled
+   * still must display at full resolution; the ladder would fight the tier,
+   * and render-on-demand starves it of the step-up samples it needs to
+   * recover, parking stills blurry).
    */
   function governResolution(now: number, rendered: boolean): void {
     if (
       !state.adaptiveResolution ||
       recorderActive ||
-      state.renderMode === "flame"
+      state.renderMode === "flame" ||
+      state.renderMode === "surface"
     ) {
       if (resolutionGovernor.scale !== 1) {
         resolutionGovernor.reset();
@@ -4586,17 +4600,30 @@ function main(): void {
         advanceFourDPose(dt4);
         scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
       }
-      const renderedSurface = scene.needsRender || recorderActive || force;
       if (surfaceSession.hasFirstFrame) {
-        if (renderedSurface) scene.renderSurface();
+        // The interaction tier split (fr-5ne3): an invalidated frame traces
+        // the cheap preview immediately — a drag's first tick can never
+        // hitch on a multi-second full trace — and the scheduler fires ONE
+        // full-quality settle frame once the view has been quiet for
+        // TIER_SETTLE_MS. Offline-export frames (force) bypass the
+        // scheduler: they run on the virtual clock and are keepsakes —
+        // always full. A recorder repaint of a PARKED view (no
+        // invalidation) also stays full, matching the pre-tier behavior of
+        // recording stills at quality; a recorded drag captures the
+        // preview frames the user actually saw.
+        const tier = force
+          ? "full"
+          : surfaceRenderTier.frame(now, scene.needsRender);
+        if (tier !== null) scene.renderSurface(tier);
+        else if (recorderActive) scene.renderSurface("full");
       } else {
         scene.updateFog();
-        if (renderedSurface) scene.render();
+        if (scene.needsRender || recorderActive || force) scene.render();
       }
-      // Marching cost scales with pixels exactly like the solid raymarch,
-      // so the same ladder trades resolution for frame rate (exports are
-      // unscaled: captureSurfaceFrame pins its own pixel ratio).
-      if (!force) governResolution(now, renderedSurface);
+      // The preview/settle tier owns surface-mode cost, so the resolution
+      // ladder takes its flame-style restore path here (see
+      // governResolution) — the settled still displays at full resolution.
+      if (!force) governResolution(now, false);
       return;
     }
     if (state.renderMode === "flame") {

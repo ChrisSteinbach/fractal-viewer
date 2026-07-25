@@ -152,7 +152,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     `"glow"` render style (not the flame tone-map). Pure, tested.
   - `resolution-governor.ts` — adaptive resolution: frame-time ladder (EMA +
     hysteresis) trades pixels for frame rate. Exports/flame stay unscaled.
-    Session-only `adaptiveResolution` opt-out. Pure, tested.
+    Session-only `adaptiveResolution` opt-out. Bypassed in surface mode
+    (render-tier.ts owns that cost). Pure, tested.
+  - `render-tier.ts` — surface-mode interaction tier (fr-5ne3): invalidated
+    frames trace a cheap preview (0.3-scale offscreen target, `uMaxDepth`
+    clamped — uniform writes only, shader bodies untouched); one full-quality
+    settle frame fires after `TIER_SETTLE_MS` of quiet. Capture/offline
+    `force` frames stay full. Pure, tested, injected clock.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and
