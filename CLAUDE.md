@@ -218,6 +218,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     oracle discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
     fixed-size (24-slot) uniform arrays. Callers gate eligibility first, so
     an over-cap map count throws here rather than degrading silently.
+    Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
+    dominates, flam3's convention — fr-gt9i).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined

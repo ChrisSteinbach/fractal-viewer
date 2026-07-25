@@ -12,7 +12,8 @@ import { lightDirection } from "./voxel-material";
  * ghost-eliminator ported down from the 4D tracer, closing the smooth
  * "balloon" membranes the plain certificates rendered across attractor
  * voids), precomputed by `buildSurfaceDE` (`src/fractal/surface-de.ts`)
- * and packed into fixed-size uniform arrays here. Hits are shaded in the solid raymarcher's vocabulary — DE-gradient
+ * and packed into fixed-size uniform arrays here. Hits are shaded in the
+ * solid raymarcher's vocabulary — DE-gradient
  * normals, Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow
  * ray toward the light, DE-probed ambient occlusion — with four base-color
  * sources (by-transform, orbit-trap palette, height ramp, radius ramp; the
@@ -292,13 +293,19 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * distance only). firstChoice is the depth-0 winning candidate's map,
    * keying by-transform color (identical to the old greedy pick: level 0
    * has one chain at scale 1, so the selection key ranks by radius
-   * alone). trap is a flame-style running blend of the winning
-   * candidates' palette coordinates — seeded at depth 0, then
-   * (trap + uTrapIndex[choice]) * 0.5 per deeper level, so the deepest
-   * choices weight the finest detail (flam3's structural-coordinate idea
-   * adapted to descent order); it follows chain A, the per-level best,
-   * and stops when every chain has escaped. Called ONCE per hit; the
-   * march itself uses the plain overload.
+   * alone). trap is a flame-style structural blend of the winning
+   * candidates' palette coordinates, accumulated TOP-DOWN with
+   * geometrically decaying weight (level d weighs 2^-d, normalized at the
+   * end): the depth-0 choice — WHICH top-level copy of the attractor the
+   * hit sits in — carries half the final coordinate, matching flam3's
+   * convention where the LAST-applied transform dominates a plotted
+   * point's color (descent order is application order reversed, so
+   * descent level 0 is the most significant digit). The previous blend
+   * ran the recurrence deepest-first — address digits that vary
+   * sub-pixel, which rendered as per-pixel palette noise with no
+   * distinguishable color regions (fr-gt9i). It follows the per-level
+   * best candidate and stops when every chain has escaped. Called ONCE
+   * per hit; the march itself uses the plain overload.
    */
   float surfaceDE(vec3 p, out int firstChoice, out float trap) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -315,6 +322,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
     bool bLive = false;
     firstChoice = 0;
     trap = 0.0;
+    float trapAcc = 0.0;
+    float trapNorm = 0.0;
+    float trapW = 1.0;
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive) {
         break;
@@ -374,10 +384,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       if (depth == 0) {
         firstChoice = c1Map;
-        trap = uTrapIndex[c1Map];
-      } else {
-        trap = (trap + uTrapIndex[c1Map]) * 0.5;
       }
+      trapAcc += trapW * uTrapIndex[c1Map];
+      trapNorm += trapW;
+      trapW *= 0.5;
       aLive = false;
       bLive = false;
       if (c1Key < 1e29) {
@@ -407,6 +417,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
     if (bLive) {
       best = min(best, bScale * (bR - uBoundingRadius));
     }
+    // Normalize the top-down blend. Every call that can reach a hit runs
+    // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
+    // guard just keeps a zero-map placeholder call from dividing by zero.
+    trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
