@@ -182,7 +182,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * ESCAPE-RADIUS folds and the two TERMINAL folds at loop end stay PLAIN,
    * exactly as estimateDistance4Refined keeps them — refining those would
    * cost another inverse-map sweep for candidates already destined for the
-   * running min by a cheaper route. 1e30 stands in for Infinity
+   * running min by a cheaper route. Every refined fold site carries the
+   * oracle's fr-1z6p laziness guard: refinement can only RAISE a
+   * certificate, so a fold whose PLAIN certificate already fails to beat
+   * the running min is skipped whole — bit-exact, and it caps the inner
+   * sweeps at the folds that actually advance the min (measured on the
+   * fr-v6yg harness: tesseract 1504 -> 450 apps/call, values unchanged).
+   * 1e30 stands in for Infinity
    * (slot-occupancy tests use < 1e29): with sigma products <= 1 and real
    * distances O(1..10) it can never be confused for a real bound. This
    * plain overload is the workhorse (march, normals, shadow, occlusion);
@@ -242,7 +248,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
             // New best: the old best shifts to runner-up, whose previous
             // occupant folds its REFINED certificate (fr-beck: one extra
             // Hutchinson level closes the barely-escaped-sibling ghost).
-            if (c2R > uBoundingRadius) {
+            if (c2R > uBoundingRadius && c2Cert < best) {
               best = min(best, refinedCert4(c2Q, c2R, c2Scale));
             }
             c2Key = c1Key;
@@ -256,7 +262,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
             c1R = r;
             c1Cert = cert;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius) {
+            if (c2R > uBoundingRadius && c2Cert < best) {
               best = min(best, refinedCert4(c2Q, c2R, c2Scale));
             }
             c2Key = key;
@@ -264,7 +270,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius) {
+          } else if (r > uBoundingRadius && cert < best) {
             best = min(best, refinedCert4(img, r, childScale));
           }
         }
@@ -369,7 +375,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           float childScale = pScale * uSigmaMin[j];
           float cert = childScale * (r - uBoundingRadius);
           if (key < c1Key) {
-            if (c2R > uBoundingRadius) {
+            if (c2R > uBoundingRadius && c2Cert < best) {
               best = min(best, refinedCert4(c2Q, c2R, c2Scale));
             }
             c2Key = c1Key;
@@ -384,7 +390,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
             c1Cert = cert;
             c1Map = j;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius) {
+            if (c2R > uBoundingRadius && c2Cert < best) {
               best = min(best, refinedCert4(c2Q, c2R, c2Scale));
             }
             c2Key = key;
@@ -392,7 +398,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius) {
+          } else if (r > uBoundingRadius && cert < best) {
             best = min(best, refinedCert4(img, r, childScale));
           }
         }

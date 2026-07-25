@@ -2,13 +2,14 @@ import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
   estimateDistance,
+  estimateDistanceRefined,
   singularValues3,
   transformSigmas,
 } from "./surface-de";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { runChaosGame } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
-import { sierpinskiTetrahedron } from "./presets";
+import { defaultTransforms, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
@@ -460,6 +461,179 @@ describe("estimateDistance with kaleidoscope symmetry", () => {
       ];
       expect(estimateDistance(de, p)).toBeLessThanOrEqual(0.08);
     }
+  });
+});
+
+// -----------------------------------------------------------------------
+// estimateDistanceRefined (fr-1z6p — fr-beck's 4D ghost-eliminator ported
+// down; see the module doc's refined-certificates paragraph): one extra
+// Hutchinson level applied to escaped-sibling certificates before they
+// freeze, lifting the barely-escaped near-zero bounds the marcher
+// false-hit as smooth "balloon" membranes across attractor voids. The GLSL
+// tracer mirrors THIS estimator; the plain one stays as the mechanism seam.
+// -----------------------------------------------------------------------
+
+describe("estimateDistanceRefined never falls below the base estimate", () => {
+  it("holds for sierpinskiTetrahedron across jittered, uniform, and on-cloud queries", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(42));
+    const rng = mulberry32(9);
+    const queries: Vec3[] = [];
+    for (let i = 0; i < 60; i++) {
+      const idx = (i * 331) % cloud.count;
+      queries.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+      ]);
+    }
+    for (let i = 0; i < 40; i++) {
+      queries.push([(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3]);
+    }
+    for (let i = 0; i < 20; i++) {
+      const idx = (i * 977) % cloud.count;
+      queries.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ]);
+    }
+    for (const q of queries) {
+      expect(estimateDistanceRefined(de, q)).toBeGreaterThanOrEqual(
+        estimateDistance(de, q) - 1e-12,
+      );
+    }
+  });
+});
+
+describe("estimateDistanceRefined validity (never exceeds the true distance to a sampled cloud)", () => {
+  it("holds for sierpinskiTetrahedron across uniform probes", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const rng = mulberry32(1234);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("on a kaleidoscope system, trades the base estimator's balloons for the disclosed fr-jkpn overshoot envelope", () => {
+    // 3D-specific coverage the 4D suite has no analogue for: the refined
+    // inner sweep runs over the symmetry-EXPANDED map list (12 slots here),
+    // whose rotated inverses only exist in this module. Order 3 triples
+    // every branch, so >= 3 simultaneous in-sphere branches drop uncounted
+    // (fr-jkpn) — which breaks STRICT validity for the refined estimator:
+    // raising certificates elsewhere exposes the invalid min the dropped
+    // branches leave behind. Measured on this exact cloud/probe stream:
+    //   base:    0 violations, but 3/140 genuine-void probes read under
+    //            the 0.01R marcher proxy — balloons on the symmetric
+    //            render (probe #76: est 0.0009 vs true distance 0.0564)
+    //   refined: 0 ghosts, 2/200 probes overshoot by <= 0.0465 (2.6%R) —
+    //            the disclosed fr-jkpn class (~2-5%R)
+    // So this pins the TRADE, not strict validity: refined stays inside
+    // the disclosed envelope and eliminates every balloon, while the base
+    // estimator (checked by the same sweep) still fabricates them.
+    const transforms = sierpinskiTetrahedron();
+    const symmetry = { order: 3, axis: "z" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const R = de.boundingRadius;
+    const cloud = runChaosGame(
+      transforms,
+      300000,
+      mulberry32(7),
+      null,
+      symmetry,
+    );
+    const rng = mulberry32(1234);
+    let baseGhosts = 0;
+    for (let i = 0; i < 200; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      const nearest = nearestDistance(cloud, p);
+      const refined = estimateDistanceRefined(de, p);
+      expect(refined).toBeLessThanOrEqual(nearest + 0.05 * R);
+      if (nearest > 0.05 * R) {
+        if (estimateDistance(de, p) < 0.01 * R) baseGhosts++;
+        expect(refined).toBeGreaterThanOrEqual(0.01 * R);
+      }
+    }
+    expect(baseGhosts).toBeGreaterThan(0);
+  });
+
+  it("holds at the built width on the doubleRotation-mirror profile — refinement does not reopen the branch-selection overshoot the beam closed", () => {
+    // The scary interaction, pinned: refinement RAISES certificates, and on
+    // profiles where descent drops in-sphere branches (fr-jkpn) a raised min
+    // can expose more of the drop's invalidity — fr-beck measured exactly
+    // that at width 1 in 4D. At the BUILT width 2 the beam keeps this
+    // profile clean, refined or not (harness: viol=4 exact-class @5.2e-9 fp
+    // noise, maxExcess 0.0%R). Same 48-level depth cap and 1e-6 tolerance
+    // as the base estimator's beam tests above.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const jitterRng = mulberry32(2);
+    for (let i = 0; i < cloud.count; i += 40) {
+      const q: Vec3 = [
+        cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3,
+      ];
+      const nearest = nearestDistance(cloud, q);
+      expect(estimateDistanceRefined(de, q)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+});
+
+describe("estimateDistanceRefined collapses a measured balloon point the base estimator false-hits", () => {
+  it("clears the sierpinski central-void probe that rendered as a membrane across the cavity", () => {
+    // Pinned from the fr-1z6p finder (cloud mulberry32(101)/300_000, uniform
+    // probe stream mulberry32(3), probe #140): a genuine void point in the
+    // tetrahedron's central cavity — the smooth membrane the surface render
+    // visibly painted across it. Measured (this build, bit-exact to
+    // R = 1.7736184730150315):
+    //   width-2 base    = 0.010280685515655863  (< 0.01*R = 0.0177...: a
+    //                     marcher false-hit — the balloon)
+    //   width-2 refined = 0.2739168941440459    (clears eps_hit 15x over)
+    //   true nearest sampled distance = 0.3634189034867699 (20% of R)
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const p: Vec3 = [
+      0.20299153421451924, -0.2487552135097045, -0.019194388149953938,
+    ];
+    expect(estimateDistance(de, p)).toBeLessThan(0.01 * de.boundingRadius);
+    expect(estimateDistanceRefined(de, p)).toBeGreaterThan(0.1);
+  });
+
+  it("clears a default-preset void probe the same way", () => {
+    // Same finder, default preset, probe #464. Measured: base
+    // 0.014314948609363665 (< 0.01*R = 0.01792...), refined
+    // 0.09926437339620453, true nearest sampled distance 0.229 (13% of R).
+    const de = buildSurfaceDE(defaultTransforms());
+    const p: Vec3 = [
+      -0.03995422658712331, -0.12167598089345305, -0.1888897693966145,
+    ];
+    expect(estimateDistance(de, p)).toBeLessThan(0.01 * de.boundingRadius);
+    expect(estimateDistanceRefined(de, p)).toBeGreaterThan(0.05);
   });
 });
 

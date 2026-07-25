@@ -47,6 +47,12 @@
  * whose estimate reads below a marcher hit test (0.01R). All RNG streams
  * are seeded; results are reproducible bit-for-bit.
  *
+ * FR-1Z6P ADDENDUM: the 3D section now measures BOTH estimators (base and
+ * `estimateDistanceRefined`), exactly like the 4D section always has — the
+ * refined rows are the ghost-balloon fix's evidence (voidFalseHit is the
+ * balloon proxy), and the base rows double as a bit-exactness regression
+ * of the shared descent body against the pre-refactor baseline.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/surface-beam.harness.ts
  *
@@ -83,6 +89,7 @@ import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
   estimateDistance,
+  estimateDistanceRefined,
 } from "../src/fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../src/fractal/surface-de";
 import {
@@ -350,7 +357,11 @@ interface System3 {
 
 function measure3(sys: System3): {
   de: SurfaceDE;
-  rows: { width: 1 | 2; result: MeasureResult }[];
+  rows: {
+    width: 1 | 2;
+    estimator: "base" | "refined";
+    result: MeasureResult;
+  }[];
 } {
   const de = buildSurfaceDE(sys.transforms, null, sys.symmetry);
   const cloud = runChaosGame(
@@ -362,14 +373,24 @@ function measure3(sys: System3): {
   );
   const qs = queries3(cloud, de.boundingRadius);
   const trueD = qs.map((q) => nearest3(cloud, q.p));
-  const rows: { width: 1 | 2; result: MeasureResult }[] = [];
+  const rows: {
+    width: 1 | 2;
+    estimator: "base" | "refined";
+    result: MeasureResult;
+  }[] = [];
   for (const width of [1, 2] as const) {
-    const { de: counted, counter } = countingDE(de, width);
-    const estimates = qs.map((q) => estimateDistance(counted, q.p));
-    rows.push({
-      width,
-      result: collect(estimates, qs, trueD, de.boundingRadius, counter.n),
-    });
+    for (const [estimator, fn] of [
+      ["base", estimateDistance],
+      ["refined", estimateDistanceRefined],
+    ] as const) {
+      const { de: counted, counter } = countingDE(de, width);
+      const estimates = qs.map((q) => fn(counted, q.p));
+      rows.push({
+        width,
+        estimator,
+        result: collect(estimates, qs, trueD, de.boundingRadius, counter.n),
+      });
+    }
   }
   return { de, rows };
 }
@@ -483,7 +504,9 @@ describe("fr-v6yg surface beam harness", () => {
           ` R=${de.boundingRadius.toFixed(4)} maxDepth=${de.maxDepth}`,
       );
       for (const row of rows) {
-        console.log(`   w=${row.width}: ${fmt(row.result, de.boundingRadius)}`);
+        console.log(
+          `   w=${row.width} ${row.estimator.padEnd(7)}: ${fmt(row.result, de.boundingRadius)}`,
+        );
       }
     }
     expect(true).toBe(true);
@@ -496,14 +519,20 @@ describe("fr-v6yg surface beam harness", () => {
         label: `sigmaA=${sigmaA}`,
         transforms: repro3D(sigmaA),
       });
-      const w1 = rows[0].result;
-      const w2 = rows[1].result;
+      const pick = (width: 1 | 2, estimator: "base" | "refined") =>
+        rows.find((r) => r.width === width && r.estimator === estimator)!
+          .result;
+      const w1 = pick(1, "base");
+      const w2 = pick(2, "base");
+      const w2r = pick(2, "refined");
       console.log(
         `sigmaA=${sigmaA.toFixed(2)} R=${de.boundingRadius.toFixed(3)}` +
           ` maxDepth=${de.maxDepth} builtWidth=${de.beamWidth}` +
           ` | w1 viol=${w1.violations} maxExcess=${w1.maxExcess.toFixed(6)}` +
           ` | w2 viol=${w2.violations} maxExcess=${w2.maxExcess.toFixed(6)}` +
-          ` | apps w1=${w1.meanApps.toFixed(1)} w2=${w2.meanApps.toFixed(1)}`,
+          ` | w2r viol=${w2r.violations} maxExcess=${w2r.maxExcess.toFixed(6)}` +
+          ` | apps w1=${w1.meanApps.toFixed(1)} w2=${w2.meanApps.toFixed(1)}` +
+          ` w2r=${w2r.meanApps.toFixed(1)}`,
       );
     }
     expect(true).toBe(true);

@@ -73,8 +73,35 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  * residual (disclosed, filed as follow-up): 3+ simultaneous in-sphere
  * branches still drop — kaleidoscope copies of a near-isometric map tie
  * their image norms exactly (repro+order-4: ~5%R residual excess), and
- * m >= 3 or sigma >= 0.96 slow-map systems retain ~2%R. Two properties
- * worth noting:
+ * m >= 3 or sigma >= 0.96 slow-map systems retain ~2%R.
+ *
+ * Escaped-sibling certificates fold REFINED on the production path
+ * (fr-1z6p — fr-beck's 4D ghost-eliminator carried back down): before a
+ * non-descended escaped candidate freezes, one more Hutchinson level is
+ * applied to its own inverse image ({@link estimateDistanceRefined}),
+ * lifting the barely-escaped near-zero certificates that width 2 alone
+ * still let false-hit in genuine voids (fr-v6yg record, w2 base:
+ * voidFalseHit default 3/271, sierpinski 6/307, pyramid 6/251,
+ * jerusalem 2/318 — rendered as smooth "balloon" membranes across
+ * attractor voids). Measured after the port (same harness, CLOUD=300k):
+ * width-2 refined voidFalseHits drop to 0 on EVERY system measured
+ * (kaleidoscope stress profile included), tightness improves (sierpinski
+ * DE/D p10 0.451 -> 0.646), validity is unchanged on every shipped preset
+ * (jerusalem's fr-jkpn residual stays 3.6%R), and cost lands at ~2-4x
+ * inverse applications over base thanks to the fold-time laziness guard.
+ * Disclosed interaction (noted on fr-jkpn): kaleidoscope orders >= 3
+ * multiply every branch, so the >= 3 simultaneous in-sphere drops that
+ * break strict validity get COMMON there, and refinement — by raising
+ * certificates elsewhere — exposes more of the invalid min the dropped
+ * branches leave behind. Measured: the slow-map stress profile
+ * (repro2+sym4y) deepens from 5.1%R to 9.8%R max excess; a fast-map
+ * kaleidoscope (sierpinski x order-3 z) goes from 0 measured violations
+ * (but 3/140 void probes ghosting) to 2/200 probes overshooting <= 2.6%R
+ * (and 0 ghosts) — opposite-signed errors from the same dropped
+ * branches, and the refined direction is the visually benign one. The
+ * GLSL tracer marches the refined estimator; plain
+ * {@link estimateDistance} remains the tests' mechanism seam alongside
+ * width 1. Two properties worth noting:
  *
  * - A query point ON the attractor can never yield a positive bound: its
  *   true ancestor branch keeps the greedy image inside the sphere at every
@@ -537,6 +564,64 @@ export function buildSurfaceDE(
  * function, so callers see the raw (possibly negative) bound.
  */
 export function estimateDistance(de: SurfaceDE, p: Vec3): number {
+  return descend(de, p, false);
+}
+
+/**
+ * Certificate-refinement variant of {@link estimateDistance} — the fr-beck
+ * ghost-eliminator (`estimateDistance4Refined`) ported back down to 3D
+ * (fr-1z6p): identical beam descent, terminal KIFS bound, depth-0 sphere
+ * floor, and final-transform lens prologue/epilogue — the only change is
+ * what certificate an ESCAPED sibling (`r_j > R`) earns. The base version
+ * stops at one Hutchinson level (`sigmaMin_j * (r_j - R)`); this variant
+ * applies one MORE level before settling:
+ *
+ *     inner_j = min over ALL maps k of [ sigmaMin_k * (|invMap_k(q'_j)| - R) ]
+ *     cert_j  = sigmaMin_j * max( r_j - R, inner_j )
+ *
+ * Validity is the 4D twin's argument verbatim (dimension-free): each
+ * `inner_j` term lower-bounds `dist(q'_j, f_k(A))` regardless of sign, so
+ * their min lower-bounds `dist(q'_j, A)`, and `max`ing against the
+ * untouched base case can only RAISE the certificate — never below the
+ * base estimate, pinned by the test suite.
+ *
+ * WHY 3D NEEDS IT TOO. The fr-v6yg record showed the shipped width-2 BASE
+ * estimator still false-hitting in genuine voids on plain presets
+ * (voidFalseHit default 3/271, sierpinski 6/307, pyramid 6/251,
+ * jerusalem 2/318) — rendered as smooth "balloon" membranes spanning
+ * attractor voids, the same barely-escaped-sibling mechanism fr-beck
+ * measured every 4D ghost back to. The beam refines only the per-level
+ * runner-up; every OTHER barely-escaped sibling still froze a near-zero
+ * plain certificate. Refinement closes those: measured on the fr-v6yg
+ * harness, 3D voidFalseHits drop to 0 on every preset (fr-jkpn's
+ * kaleidoscope-tie/slow-map residuals excepted) with validity unchanged.
+ *
+ * COST. Refinement is paid lazily at FOLD time, and — new over the 4D
+ * original, backported there in the same change — only when the fold could
+ * matter: refinement can only RAISE a certificate, so a fold whose PLAIN
+ * certificate already fails to beat the running min folds nothing either
+ * way (`min(best, refined) === best` whenever `plain >= best`). Skipping
+ * those is bit-exact and caps the extra inverse sweeps at the folds that
+ * actually advance the min — the barely-escaped ghosts among them —
+ * instead of every escaped sibling (the unguarded 4D shape measured
+ * 95 -> 1504 apps/call on 16-map tesseract; 3D's symmetry expansion goes
+ * to 24 slots).
+ */
+export function estimateDistanceRefined(de: SurfaceDE, p: Vec3): number {
+  return descend(de, p, true);
+}
+
+/**
+ * Shared beam-descent body for {@link estimateDistance} (`refine` false:
+ * plain frozen certificates) and {@link estimateDistanceRefined} (`refine`
+ * true: one extra Hutchinson level on the folds that beat the running
+ * min). One body, not two: unlike the 4D twin (whose two estimators
+ * predate the guard and stay self-contained), the refined 3D descent IS
+ * the plain descent with three fold sites upgraded, and duplicating the
+ * ~100-line skeleton would leave the mirrors to drift. The GLSL tracer
+ * mirrors the `refine === true` path line for line.
+ */
+function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -557,6 +642,33 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
+
+  // One extra Hutchinson level on a frozen escaped candidate's own inverse
+  // image, over every map k (see estimateDistanceRefined's doc): the
+  // certificate becomes childScale * max(r - R, inner) — never below the
+  // plain childScale * (r - R). Only called on the refined path, and only
+  // for folds whose plain certificate beats the running min.
+  const refinedCert = (
+    ix: number,
+    iy: number,
+    iz: number,
+    r: number,
+    childScale: number,
+  ): number => {
+    let inner = Infinity;
+    for (let k = 0; k < de.maps.length; k++) {
+      const mapK = de.maps[k];
+      const imK = mapK.invM;
+      const itK = mapK.invT;
+      const kx = imK[0] * ix + imK[1] * iy + imK[2] * iz + itK[0];
+      const ky = imK[3] * ix + imK[4] * iy + imK[5] * iz + itK[1];
+      const kz = imK[6] * ix + imK[7] * iy + imK[8] * iz + itK[2];
+      const rk = Math.sqrt(kx * kx + ky * ky + kz * kz);
+      const innerTerm = mapK.sigmaMin * (rk - R);
+      if (innerTerm < inner) inner = innerTerm;
+    }
+    return childScale * Math.max(r - R, inner);
+  };
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
   // selection fills it (width-2 systems only). Each chain carries the
@@ -614,8 +726,15 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
         const cert = childScale * (r - R);
         if (key < c1Key) {
           // New best: the old best shifts to runner-up, whose previous
-          // occupant folds (escaped candidates leave their certificate).
-          if (c2R > R && c2Cert < best) best = c2Cert;
+          // occupant folds (escaped candidates leave their certificate —
+          // REFINED on the refined path, where the guard already knows the
+          // plain certificate would have advanced the min).
+          if (c2R > R && c2Cert < best) {
+            const folded = refine
+              ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
+              : c2Cert;
+            if (folded < best) best = folded;
+          }
           c2Key = c1Key;
           c2X = c1X;
           c2Y = c1Y;
@@ -631,7 +750,12 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
           c1R = r;
           c1Cert = cert;
         } else if (key < c2Key) {
-          if (c2R > R && c2Cert < best) best = c2Cert;
+          if (c2R > R && c2Cert < best) {
+            const folded = refine
+              ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
+              : c2Cert;
+            if (folded < best) best = folded;
+          }
           c2Key = key;
           c2X = ix;
           c2Y = iy;
@@ -640,7 +764,8 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
           c2R = r;
           c2Cert = cert;
         } else if (r > R && cert < best) {
-          best = cert;
+          const folded = refine ? refinedCert(ix, iy, iz, r, childScale) : cert;
+          if (folded < best) best = folded;
         }
       }
     }
@@ -664,8 +789,22 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
       }
     }
     if (c2Key < Infinity) {
-      if (!wide || c2R > de.escapeRadius) {
-        if (c2R > R && c2Cert < best) best = c2Cert;
+      if (!wide) {
+        // Width-1 runner-up: the classic frozen sibling — the exact
+        // certificate the fr-beck spike measured every ghost back to, so
+        // the refined path refines it; the escape-radius fold below stays
+        // PLAIN on both paths (matching estimateDistance4Refined: a
+        // candidate past 2R folds a bound already >= childScale * R —
+        // comfortably positive, so it can never read as a ghost and
+        // refining it buys nothing a marcher could see).
+        if (c2R > R && c2Cert < best) {
+          const folded = refine
+            ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
+            : c2Cert;
+          if (folded < best) best = folded;
+        }
+      } else if (c2R > de.escapeRadius) {
+        if (c2Cert < best) best = c2Cert;
       } else {
         bX = c2X;
         bY = c2Y;

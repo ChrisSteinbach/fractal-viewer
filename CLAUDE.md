@@ -87,8 +87,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     bounding-radius probe), `estimateDistance` (width-2 beam inverse-map
     descent + sibling certificates; width 1 = the old greedy descent, kept
     for tests — fr-v6yg measured it overshooting, tables in
-    `scripts/surface-beam.harness.ts`). Oracle for `surface-material.ts`,
-    the `flame.ts` <-> `flame-gpu.ts` discipline one render mode over.
+    `scripts/surface-beam.harness.ts`) + production
+    `estimateDistanceRefined` (fr-1z6p: fr-beck's extra Hutchinson level on
+    folded sibling certificates, ported down from 4D — kills the balloon
+    ghosts plain certificates rendered across voids; lazily guarded,
+    measured void-false-hits 0 everywhere). Oracle for
+    `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
+    render mode over.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
     fr-beck spike): Jacobi `singularValues4`, `analyzeSurfaceSystem4`,
     `buildSurfaceDE4` (final-transform lens included), beam
@@ -209,8 +214,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
-    `surface-de.ts`'s `estimateDistance` line for line, the same oracle
-    discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
+    `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
+    oracle discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
     fixed-size (24-slot) uniform arrays. Callers gate eligibility first, so
     an over-cap map count throws here rather than degrading silently.
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
