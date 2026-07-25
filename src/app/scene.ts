@@ -2081,6 +2081,7 @@ export class FractalScene {
         lightDirection(params.lightAzimuth, params.lightElevation),
       );
       u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
+      u.uColorSpeed.value = params.colorSpeed;
     }
   }
 

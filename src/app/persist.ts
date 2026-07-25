@@ -825,6 +825,7 @@ function decodeSurfaceParams(
     ambient: PARAM.surfaceAmbient.default,
     colorSource: "transform",
     paletteId: DEFAULT_SOLID_PALETTE,
+    colorSpeed: PARAM.surfaceColorSpeed.default,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
@@ -835,6 +836,7 @@ function decodeSurfaceParams(
     "lightAzimuth",
     "lightElevation",
     "ambient",
+    "colorSpeed",
   ];
   for (const key of numeric) {
     if (s[key] === undefined) continue;
@@ -871,6 +873,7 @@ function decodeSurfaceParams(
     ambient: clampToSpec(PARAM.surfaceAmbient, out.ambient),
     colorSource,
     paletteId,
+    colorSpeed: clampToSpec(PARAM.surfaceColorSpeed, out.colorSpeed),
   };
 }
 
@@ -1172,6 +1175,7 @@ export function encodeScene(s: SceneSnapshot): string {
       ambient: round4(s.surface.ambient),
       colorSource: s.surface.colorSource,
       paletteId: s.surface.paletteId,
+      colorSpeed: round4(s.surface.colorSpeed),
     },
     symmetry: {
       order: Math.round(s.symmetry.order),

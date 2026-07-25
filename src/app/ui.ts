@@ -844,10 +844,13 @@ export class Ui {
   // The surface render's own settings block (fr-7jlk v2): lighting sliders
   // plus the base-color source/palette selects, the same solidControls
   // pattern one render mode over. surfacePaletteRow additionally gates on
-  // colorSource === "palette" — the palette only means anything for that one
-  // source, like glowBrightnessRow's renderStyle gate.
+  // colorSource being "palette", "rings", or "escape" (fr-rl4b: all three
+  // sample the user-selected palette) — like glowBrightnessRow's renderStyle
+  // gate. surfaceColorSpeedRow (fr-rl4b) gates more narrowly, on exactly
+  // "palette": color speed shapes only that source's orbit-trap blend.
   private readonly surfaceControls: HTMLElement;
   private readonly surfacePaletteRow: HTMLElement;
+  private readonly surfaceColorSpeedRow: HTMLElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
@@ -1080,6 +1083,7 @@ export class Ui {
     this.solidProgress = this.byId("solidProgress");
     this.surfaceControls = this.byId("surfaceControls");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
+    this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceRow = this.byId("fourDSliceRow");
@@ -1585,10 +1589,20 @@ export class Ui {
       "hidden",
       state.renderMode !== "surface",
     );
-    // The surface palette select only means anything for the "palette"
-    // colorSource — like glowBrightnessRow, hidden whenever that source
-    // isn't the active one.
+    // The surface palette select means anything for "palette", "rings", and
+    // "escape" (fr-rl4b) — all three sample the user-selected palette —
+    // like glowBrightnessRow, hidden whenever none of those three is active.
     this.surfacePaletteRow.classList.toggle(
+      "hidden",
+      state.surface.colorSource !== "palette" &&
+        state.surface.colorSource !== "rings" &&
+        state.surface.colorSource !== "escape",
+    );
+    // The color-speed slider (fr-rl4b) only shapes the "palette" source's
+    // orbit-trap blend weight — inert for rings/escape (a different
+    // coordinate off the same descent) and every other source, so it hides
+    // unless "palette" is exactly the active one.
+    this.surfaceColorSpeedRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette",
     );
@@ -1794,7 +1808,8 @@ export class Ui {
    * only while their OWN render's palette select is on
    * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
-   * surface colorSource is the orbit-trap palette; `#rampPaletteRow`, the
+   * surface colorSource is one of the three that sample the user palette —
+   * `palette`/`rings`/`escape`, fr-rl4b; `#rampPaletteRow`, the
    * per-view ramp-mode gating — flat: `colorModeUsesRampPalette`; non-flat:
    * `fourDColor === "radius"`, fr-6ue), so {@link updateLabels}' container
    * gating composes on top of the isCustom gating handled here — both must
@@ -2546,7 +2561,10 @@ export class Ui {
         this.legend.classList.add("hidden");
         return;
       }
-      if (source === "palette") {
+      if (source === "palette" || source === "rings" || source === "escape") {
+        // rings/escape (fr-rl4b) ride the same descent hit-info as palette,
+        // just reading a different coordinate off it — same named-gradient
+        // legend.
         const name = paletteDisplayName(
           this.scalarSelect("surfacePalette"),
           state.surface.paletteId,

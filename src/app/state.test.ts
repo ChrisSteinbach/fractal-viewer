@@ -22,6 +22,7 @@ import {
   DEFAULT_SOLID_PALETTE,
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
+  DEFAULT_SURFACE_COLOR_SPEED,
   DEFAULT_SYMMETRY_AXIS,
   DEFAULT_SYMMETRY_ORDER,
   FLAME_ITERATION_DETENTS,
@@ -43,6 +44,7 @@ import {
   MAX_SOLID_LIGHT_ELEVATION,
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
+  MAX_SURFACE_COLOR_SPEED,
   MAX_SYMMETRY_ORDER,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_CURVE,
@@ -62,6 +64,7 @@ import {
   MIN_SOLID_LIGHT_ELEVATION,
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
+  MIN_SURFACE_COLOR_SPEED,
   MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
   nearestFlameIterationDetentIndex,
@@ -101,6 +104,7 @@ import {
   setSolidThreshold,
   setSurfaceAmbient,
   setSurfaceColorSource,
+  setSurfaceColorSpeed,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -180,6 +184,7 @@ describe("initialState", () => {
       ambient: DEFAULT_SOLID_AMBIENT,
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
+      colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     });
   });
 
@@ -1001,6 +1006,30 @@ describe("setSurfaceAmbient", () => {
     expect(setSurfaceAmbient(initialState(true), -5).surface.ambient).toBe(
       MIN_SOLID_AMBIENT,
     );
+  });
+});
+
+describe("setSurfaceColorSpeed", () => {
+  it("clamps above the maximum", () => {
+    expect(setSurfaceColorSpeed(initialState(true), 5).surface.colorSpeed).toBe(
+      MAX_SURFACE_COLOR_SPEED,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setSurfaceColorSpeed(initialState(true), -5).surface.colorSpeed,
+    ).toBe(MIN_SURFACE_COLOR_SPEED);
+  });
+
+  it("leaves the other surface params untouched", () => {
+    const state = initialState(true);
+    const next = setSurfaceColorSpeed(state, 0.9);
+    expect(next.surface.lightAzimuth).toBe(state.surface.lightAzimuth);
+    expect(next.surface.lightElevation).toBe(state.surface.lightElevation);
+    expect(next.surface.ambient).toBe(state.surface.ambient);
+    expect(next.surface.colorSource).toBe(state.surface.colorSource);
+    expect(next.surface.paletteId).toBe(state.surface.paletteId);
   });
 });
 

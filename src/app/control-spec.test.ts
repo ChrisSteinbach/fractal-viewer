@@ -591,6 +591,17 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
     });
 
+    it("surfaceColorSpeedSlider effect forwards the settled surface params to the scene", () => {
+      const spec = specById("surfaceColorSpeedSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.8");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+    });
+
     it("surfaceColorSource effect pushes the settled params and the new LUT", () => {
       const spec = specById("surfaceColorSource");
       const previous = initialState(true);
@@ -681,6 +692,56 @@ describe("surfaceColorLUT", () => {
     const lut = surfaceColorLUT(state);
     expect(lut).not.toBeNull();
     expect(lut).toEqual(buildPaletteLUT(DEFAULT_SOLID_PALETTE));
+  });
+
+  it('returns the identical LUT as "palette" for the "rings" colorSource (fr-rl4b, same paletteId)', () => {
+    // rings and palette read different coordinates off the same descent, but
+    // both sample the user's chosen gradient — they must share one LUT.
+    const base = initialState(true);
+    const paletteState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "palette" as const,
+        paletteId: "aurora" as const,
+      },
+    };
+    const ringsState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "rings" as const,
+        paletteId: "aurora" as const,
+      },
+    };
+    const lut = surfaceColorLUT(ringsState);
+    expect(lut).not.toBeNull();
+    expect(lut!.length).toBe(768);
+    expect(lut).toEqual(surfaceColorLUT(paletteState));
+  });
+
+  it('returns the identical LUT as "palette" for the "escape" colorSource (fr-rl4b, same paletteId)', () => {
+    const base = initialState(true);
+    const paletteState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "palette" as const,
+        paletteId: "aurora" as const,
+      },
+    };
+    const escapeState = {
+      ...base,
+      surface: {
+        ...base.surface,
+        colorSource: "escape" as const,
+        paletteId: "aurora" as const,
+      },
+    };
+    const lut = surfaceColorLUT(escapeState);
+    expect(lut).not.toBeNull();
+    expect(lut!.length).toBe(768);
+    expect(lut).toEqual(surfaceColorLUT(paletteState));
   });
 
   it('respects colorGamma for the "height" colorSource, matching a direct buildColorModeLUT call', () => {

@@ -112,14 +112,17 @@ morphs into place instead of snapping (see **Presets** below).
   warns that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its own
   **Surface Look** section holds the mode's live look: a **Color source**
-  select — By Transform, the orbit-trap Palette, a Height ramp, or a Radius
-  ramp — with a **Palette** select underneath (the same named gradients as
-  Flame/Solid) that only appears for the orbit-trap source, plus **Light
-  Angle**, **Light Height**, and **Ambient** sliders. Every one of them is a
-  plain shader input, so dragging any of them re-renders instantly with
-  nothing to restart. **Save PNG** captures it at the chosen **Capture
-  size** exactly like the solid render — a fresh, higher-resolution trace,
-  not an upscale — and ★ Save to collection / 📍 Add keyframe tag the saved
+  select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
+  ramp, Orbit rings, or Escape depth — with a **Palette** select underneath
+  (the same named gradients as Flame/Solid) that appears for the orbit-trap,
+  rings, and escape sources, plus a **Color speed** slider — orbit-trap
+  source only, fading how quickly deeper descent levels blend into the trap
+  color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
+  Every one of them is a plain shader input, so dragging any of them
+  re-renders instantly with nothing to restart. **Save PNG** captures it at
+  the chosen **Capture size** exactly like the solid render — a fresh,
+  higher-resolution trace, not an upscale — and ★ Save to collection /
+  📍 Add keyframe tag the saved
   entry with the Surface mode exactly like Flame/Solid, so loading it, or a
   timeline leg reaching it, re-enters the tracer. A Surface keyframe still
   HOLDS the timeline's schedule at launch like a Flame/Solid one, but

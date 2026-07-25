@@ -986,6 +986,8 @@
               <option value="palette">Palette (orbit trap)</option>
               <option value="height">Height ramp</option>
               <option value="radius">Radius ramp</option>
+              <option value="rings">Orbit rings</option>
+              <option value="escape">Escape depth</option>
             </select>
           </label>
           <div id="surfacePaletteRow" class="hidden">
@@ -1030,6 +1032,19 @@
                 </button>
               </div>
             </div>
+          </div>
+          <div id="surfaceColorSpeedRow" class="hidden">
+            <label class="select-label">
+              Color speed: <span id="surfaceColorSpeedLabel">50%</span>
+              <input
+                type="range"
+                id="surfaceColorSpeedSlider"
+                min="0"
+                max="1"
+                step="0.05"
+                value="0.5"
+              />
+            </label>
           </div>
           <label class="select-label">
             Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>

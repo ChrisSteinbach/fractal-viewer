@@ -12,6 +12,7 @@ import {
   setSolidPaletteId,
   setSurfaceColorSource,
   setSurfacePaletteId,
+  SURFACE_COLOR_SOURCES,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
 import { applyScalarControl, surfaceColorLUT } from "./control-spec";
@@ -185,6 +186,22 @@ describe("preset menu", () => {
       .map((o) => o.value)
       .filter((v) => v !== "");
     expect(values.sort()).toEqual([...PRESET_NAMES].sort());
+  });
+});
+
+describe("surface color source menu", () => {
+  // Guards against the <option> list and SURFACE_COLOR_SOURCES drifting
+  // apart — nothing previously pinned this select, so a new source added to
+  // one but not the other would go unnoticed. Order matters here (unlike the
+  // preset menu check above): surface-material.ts's GLSL uColorSource
+  // dispatch depends on SURFACE_COLOR_SOURCES' exact index order.
+  it("offers exactly the registered surface color sources, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>(
+        "#surfaceColorSource option",
+      ),
+    ).map((o) => o.value);
+    expect(values).toEqual([...SURFACE_COLOR_SOURCES]);
   });
 });
 
@@ -435,6 +452,54 @@ describe("Ui surface palette row (fr-7jlk)", () => {
     });
     expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
   });
+
+  it('is shown while the surface colorSource is "rings" (fr-rl4b)', () => {
+    // rings/escape ride the same user-selected palette as "palette" — just a
+    // different orbit-trap coordinate off the same descent — so the palette
+    // picker must stay reachable for all three.
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "rings" },
+    });
+    expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it('is shown while the surface colorSource is "escape" (fr-rl4b)', () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "escape" },
+    });
+    expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
+describe("Ui surface color speed row (fr-rl4b)", () => {
+  function surfaceColorSpeedRow(): HTMLElement {
+    return document.getElementById("surfaceColorSpeedRow") as HTMLElement;
+  }
+
+  it('is shown while the surface colorSource is "palette"', () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "palette" },
+    });
+    expect(surfaceColorSpeedRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it('is hidden while the surface colorSource is "rings"', () => {
+    // Unlike surfacePaletteRow, the color-speed slider shapes only the
+    // "palette" source's own orbit-trap blend weight — inert for rings/escape
+    // (a different coordinate off the same descent), so it hides for them.
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      surface: { ...initialState(true).surface, colorSource: "rings" },
+    });
+    expect(surfaceColorSpeedRow().classList.contains("hidden")).toBe(true);
+  });
 });
 
 describe("Ui color contrast slider", () => {
@@ -625,6 +690,57 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendLabelMid().textContent).toBe("Sunset palette");
     // Endpoints derived from the EXACT LUT the tracer samples
     // (surfaceColorLUT), so the key can never drift from the render.
+    const lut = surfaceColorLUT(state);
+    expect(lut).not.toBeNull();
+    const background = legendBar().style.backgroundImage;
+    expect(background).toContain(lutRgb(lut as Float32Array, 0));
+    expect(background).toContain(lutRgb(lut as Float32Array, 255));
+  });
+
+  it('renders the same gradient-bar legend shape as "palette" for the "rings" source (fr-rl4b)', () => {
+    // rings rides the same descent hit-info as palette, just reading a
+    // different coordinate off it — same named-gradient legend, not the
+    // swatch strip or a ramp.
+    const ui = new Ui(document);
+    const base = initialState(true);
+    const state = {
+      ...base,
+      renderMode: "surface" as const,
+      surface: {
+        ...base.surface,
+        colorSource: "rings" as const,
+        paletteId: "sunset" as const,
+      },
+    };
+    ui.updateLabels(state);
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendLabelMid().textContent).toBe("Sunset palette");
+    const lut = surfaceColorLUT(state);
+    expect(lut).not.toBeNull();
+    const background = legendBar().style.backgroundImage;
+    expect(background).toContain(lutRgb(lut as Float32Array, 0));
+    expect(background).toContain(lutRgb(lut as Float32Array, 255));
+  });
+
+  it('renders the same gradient-bar legend shape as "palette" for the "escape" source (fr-rl4b)', () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    const state = {
+      ...base,
+      renderMode: "surface" as const,
+      surface: {
+        ...base.surface,
+        colorSource: "escape" as const,
+        paletteId: "sunset" as const,
+      },
+    };
+    ui.updateLabels(state);
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendSwatches().classList.contains("hidden")).toBe(true);
+    expect(legendLabelMid().textContent).toBe("Sunset palette");
     const lut = surfaceColorLUT(state);
     expect(lut).not.toBeNull();
     const background = legendBar().style.backgroundImage;
@@ -3994,6 +4110,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["surfaceLightAzimuthSlider", PARAM.surfaceLightAzimuth],
     ["surfaceLightElevationSlider", PARAM.surfaceLightElevation],
     ["surfaceAmbientSlider", PARAM.surfaceAmbient],
+    ["surfaceColorSpeedSlider", PARAM.surfaceColorSpeed],
   ];
 
   it.each(DIRECT)("%s min/max match its ParamSpec", (id, spec) => {
