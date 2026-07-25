@@ -52,7 +52,11 @@ import {
   MIN_W_SHEAR,
   systemIsNonFlat,
 } from "./state";
-import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
+import {
+  formatIterationCount,
+  SCALAR_CONTROLS,
+  surfaceColorLUT,
+} from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
   MOBILE_BREAKPOINT,
@@ -1709,6 +1713,15 @@ export class Ui {
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
           : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
+    } else if (state.renderMode === "surface") {
+      // The surface DE is world-space like the solid volume — same live
+      // camera, same gesture lines.
+      this.helpTitle.textContent = "Surface Render";
+      this.setHelpLines(
+        this.mouse
+          ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
+          : ["1 finger: Rotate", "2 fingers: Pan/Zoom"],
+      );
     } else if (nonFlat) {
       // The 4D projection tumbles on its own (pause/speed in the panel); the
       // camera orbits the projected cloud exactly like camera mode, and Shift
@@ -2513,6 +2526,40 @@ export class Ui {
         return;
       }
       this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");
+      return;
+    }
+
+    if (state.renderMode === "surface") {
+      const source = state.surface.colorSource;
+      if (source === "transform") {
+        this.showLegendSwatchStrip(state.transforms.length);
+        return;
+      }
+      // The key samples the EXACT ramp the tracer samples: surfaceColorLUT
+      // is the one definition of what setSurfaceColorLUT uploads
+      // (control-spec.ts), so the legend can never drift from the rendered
+      // colors — the same no-second-definition discipline as the colorMode
+      // ramps below.
+      const lut = surfaceColorLUT(state);
+      if (lut === null) {
+        // Unreachable: every non-transform source builds a LUT.
+        this.legend.classList.add("hidden");
+        return;
+      }
+      if (source === "palette") {
+        const name = paletteDisplayName(
+          this.scalarSelect("surfacePalette"),
+          state.surface.paletteId,
+        );
+        this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");
+        return;
+      }
+      this.showLegendBar(
+        lutGradient(lut),
+        source === "height" ? "low" : "center",
+        "",
+        source === "height" ? "high" : "edge",
+      );
       return;
     }
 
