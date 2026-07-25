@@ -14,7 +14,7 @@ import {
   setSurfacePaletteId,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
-import { applyScalarControl } from "./control-spec";
+import { applyScalarControl, surfaceColorLUT } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import {
@@ -591,6 +591,84 @@ describe("Ui color legend (fr-dsz)", () => {
     const lut = buildColorModeLUT("height", 1);
     expect(gammaBackground).toContain(lutRgb(lut, 0));
     expect(gammaBackground).toContain(lutRgb(lut, 255));
+  });
+
+  it("keys the legend on the SURFACE colorSource while the surface render is active", () => {
+    // fr-7jlk follow-up: the legend must narrate the tracer's own coloring,
+    // not the explorer colorMode the panel left behind.
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      renderMode: "surface",
+      surface: { ...base.surface, colorSource: "transform" },
+    });
+    expect(legendSwatches().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the surface palette's own gradient and name for the orbit-trap source", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    const state = {
+      ...base,
+      renderMode: "surface" as const,
+      surface: {
+        ...base.surface,
+        colorSource: "palette" as const,
+        paletteId: "sunset" as const,
+      },
+    };
+    ui.updateLabels(state);
+
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelMid().textContent).toBe("Sunset palette");
+    // Endpoints derived from the EXACT LUT the tracer samples
+    // (surfaceColorLUT), so the key can never drift from the render.
+    const lut = surfaceColorLUT(state);
+    expect(lut).not.toBeNull();
+    const background = legendBar().style.backgroundImage;
+    expect(background).toContain(lutRgb(lut as Float32Array, 0));
+    expect(background).toContain(lutRgb(lut as Float32Array, 255));
+  });
+
+  it("labels the surface height ramp low/high like the explorer's height mode", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      renderMode: "surface",
+      surface: { ...base.surface, colorSource: "height" },
+    });
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelHigh().textContent).toBe("high");
+  });
+
+  it("reflects the user-authored custom gradient in the surface palette key", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    const state = {
+      ...base,
+      renderMode: "surface" as const,
+      surface: {
+        ...base.surface,
+        colorSource: "palette" as const,
+        paletteId: "custom" as const,
+      },
+      customPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ] as [number, number, number][],
+      },
+    };
+    ui.updateLabels(state);
+
+    expect(legendLabelMid().textContent).toBe("Custom palette");
+    const background = legendBar().style.backgroundImage;
+    expect(background).toContain("rgb(255, 0, 0)");
+    expect(background).toContain("rgb(0, 0, 255)");
   });
 
   it("shows X/Y/Z-labeled axis swatches for position mode", () => {
