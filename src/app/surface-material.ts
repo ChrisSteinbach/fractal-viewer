@@ -7,8 +7,8 @@ import { lightDirection } from "./voxel-material";
 /**
  * The surface render's GPU sphere-tracer (epic fr-7jlk): a full-screen-quad
  * ShaderMaterial that marches camera rays against an analytic distance
- * estimator for the IFS attractor — greedy inverse-map descent with
- * sibling-certificate bounds, precomputed by `buildSurfaceDE`
+ * estimator for the IFS attractor — width-2 beam inverse-map descent with
+ * sibling-certificate bounds (fr-v6yg), precomputed by `buildSurfaceDE`
  * (`src/fractal/surface-de.ts`) and packed into fixed-size uniform arrays
  * here. Hits are shaded in the solid raymarcher's vocabulary — DE-gradient
  * normals, Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow
@@ -124,135 +124,262 @@ const SURFACE_FRAGMENT = /* glsl */ `
   /**
    * Both surfaceDE overloads mirror estimateDistance in
    * src/fractal/surface-de.ts (the tested CPU oracle) — any change there
-   * must land in BOTH bodies here, and vice versa. Greedy inverse-map
-   * descent: each level folds in the min over the escaped NON-descended
-   * siblings' certified bounds sigma_min_j * (|image_j| - R) — so surfaces
-   * reachable through a shallower branch are never overshot — while the
-   * descended branch keeps refining down to its terminal last-value bound;
-   * see that module's doc for the validity argument. 1e30 stands in for
-   * Infinity: with sigma products <= 1 and real distances O(1..10) it can
-   * never be confused for a real bound. This plain overload is the
-   * workhorse (march, normals, shadow, occlusion); the out-param overload
-   * below adds hit-shading extras.
+   * must land in BOTH bodies here, and vice versa. Width-2 BEAM
+   * inverse-map descent (fr-v6yg; the CPU oracle's beamWidth is always 2
+   * in production builds, so the tracer hardcodes it): each level expands
+   * both live chains through every map, keeps the two candidates with the
+   * smallest selection key chainScale * (r - R) as the next chains, and
+   * folds every OTHER escaped candidate's certified bound
+   * chainScale * sigma_min_j * (r - R) into the running min — so surfaces
+   * reachable through a shallower or second-nearest branch are never
+   * overshot — while each kept chain keeps refining down to its terminal
+   * last-value bound (folded when it escapes past uEscapeRadius or the
+   * depth cap ends the loop). See the oracle module's doc for the validity
+   * argument and the measured overshoot the second chain repairs. 1e30
+   * stands in for Infinity (slot-occupancy tests use < 1e29): with sigma
+   * products <= 1 and real distances O(1..10) it can never be confused
+   * for a real bound. This plain overload is the workhorse (march,
+   * normals, shadow, occlusion); the out-param overload below adds
+   * hit-shading extras.
    */
   float surfaceDE(vec3 p) {
     vec3 q = uFinalInvM * p + uFinalInvT;
-    float sphereBound = length(q) - uBoundingRadius;
+    float startR = length(q);
+    float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
-    float scale = 1.0;
-    float lastR = length(q);
+    // Chain slot A starts at the (lensed) query; slot B idles until beam
+    // selection fills it. Each chain carries the contraction accumulated
+    // INCLUDING its own map and the radius it was selected at.
+    vec3 aQ = q;
+    float aScale = 1.0;
+    float aR = startR;
+    bool aLive = true;
+    vec3 bQ = vec3(0.0);
+    float bScale = 1.0;
+    float bR = 0.0;
+    bool bLive = false;
     for (int depth = 0; depth < uMaxDepth; depth++) {
-      float greedyR = 1e30;
-      vec3 g = vec3(0.0);
-      float gSigma = 1.0;
-      // Two smallest certificates this level + which map owns the smallest,
-      // so the descended (greedy) branch's own certificate can be dropped
-      // in favor of its deeper refinement without a second scan.
-      int greedyIndex = -1;
-      float cert1 = 1e30;
-      float cert2 = 1e30;
-      int cert1Index = -1;
-      for (int j = 0; j < uMapCount; j++) {
-        vec3 img = uInvM[j] * q + uInvT[j];
-        float r = length(img);
-        if (r < greedyR) {
-          greedyR = r;
-          g = img;
-          gSigma = uSigmaMin[j];
-          greedyIndex = j;
+      if (!aLive && !bLive) {
+        break;
+      }
+      // The two smallest-key candidates this level, key-ascending. The
+      // sentinel r = 0 keeps empty slots out of every escaped-candidate
+      // fold below.
+      float c1Key = 1e30;
+      vec3 c1Q = vec3(0.0);
+      float c1Scale = 1.0;
+      float c1R = 0.0;
+      float c1Cert = 0.0;
+      float c2Key = 1e30;
+      vec3 c2Q = vec3(0.0);
+      float c2Scale = 1.0;
+      float c2R = 0.0;
+      float c2Cert = 0.0;
+      for (int c = 0; c < 2; c++) {
+        bool isA = c == 0;
+        if (isA ? !aLive : !bLive) {
+          continue;
         }
-        if (r > uBoundingRadius) {
-          float bound = uSigmaMin[j] * (r - uBoundingRadius);
-          if (bound < cert1) {
-            cert2 = cert1;
-            cert1 = bound;
-            cert1Index = j;
-          } else if (bound < cert2) {
-            cert2 = bound;
+        vec3 pQ = isA ? aQ : bQ;
+        float pScale = isA ? aScale : bScale;
+        for (int j = 0; j < uMapCount; j++) {
+          vec3 img = uInvM[j] * pQ + uInvT[j];
+          float r = length(img);
+          float key = pScale * (r - uBoundingRadius);
+          float childScale = pScale * uSigmaMin[j];
+          float cert = childScale * (r - uBoundingRadius);
+          if (key < c1Key) {
+            // New best: the old best shifts to runner-up, whose previous
+            // occupant folds (escaped candidates leave their certificate).
+            if (c2R > uBoundingRadius) {
+              best = min(best, c2Cert);
+            }
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1Q = img;
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            if (c2R > uBoundingRadius) {
+              best = min(best, c2Cert);
+            }
+            c2Key = key;
+            c2Q = img;
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
+          } else if (r > uBoundingRadius) {
+            best = min(best, cert);
           }
         }
       }
-      float siblingCert = (cert1Index == greedyIndex) ? cert2 : cert1;
-      best = min(best, scale * siblingCert);
-      q = g;
-      lastR = greedyR;
-      scale *= gSigma;
-      if (greedyR > uEscapeRadius) {
-        break;
+      // Promote: the best candidate continues as chain A, the runner-up
+      // as chain B; past the escape radius a candidate folds its terminal
+      // and dies instead (deeper refinement cannot improve the min).
+      aLive = false;
+      bLive = false;
+      if (c1Key < 1e29) {
+        if (c1R > uEscapeRadius) {
+          best = min(best, c1Cert);
+        } else {
+          aQ = c1Q;
+          aScale = c1Scale;
+          aR = c1R;
+          aLive = true;
+        }
+      }
+      if (c2Key < 1e29) {
+        if (c2R > uEscapeRadius) {
+          best = min(best, c2Cert);
+        } else {
+          bQ = c2Q;
+          bScale = c2Scale;
+          bR = c2R;
+          bLive = true;
+        }
       }
     }
-    // Terminal bound of the descended branch (the KIFS last-value formula):
-    // non-positive when the point tracked the attractor to the depth cap.
-    float d = min(best, scale * (lastR - uBoundingRadius));
-    d = max(d, sphereBound);
+    // Terminal bound of chains alive at the depth cap (the KIFS last-value
+    // formula): non-positive when the chain tracked the attractor all the
+    // way down.
+    if (aLive) {
+      best = min(best, aScale * (aR - uBoundingRadius));
+    }
+    if (bLive) {
+      best = min(best, bScale * (bR - uBoundingRadius));
+    }
+    float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
 
   /**
-   * Hit-shading variant: the SAME descent as the plain overload — keep the
-   * two bodies in lockstep, both mirror estimateDistance — plus two
-   * tracer-side extras that are NOT part of the CPU oracle's distance
+   * Hit-shading variant: the SAME beam descent as the plain overload —
+   * keep the two bodies in lockstep, both mirror estimateDistance — plus
+   * two tracer-side extras that are NOT part of the CPU oracle's distance
    * contract (surface-de.ts mirrors distance only). firstChoice is the
-   * depth-0 greedy pick, keying by-transform color. trap is a flame-style
-   * running blend of the descent's palette coordinates — seeded at depth 0,
-   * then (trap + uTrapIndex[choice]) * 0.5 per deeper level, so the deepest
-   * choices weight the finest detail (flam3's structural-coordinate idea
-   * adapted to descent order); accumulation stops when the descent escapes.
-   * Called ONCE per hit; the march itself uses the plain overload.
+   * depth-0 winning candidate's map, keying by-transform color (identical
+   * to the old greedy pick: level 0 has one chain at scale 1, so the
+   * selection key ranks by radius alone). trap is a flame-style running
+   * blend of the winning candidates' palette coordinates — seeded at depth
+   * 0, then (trap + uTrapIndex[choice]) * 0.5 per deeper level, so the
+   * deepest choices weight the finest detail (flam3's
+   * structural-coordinate idea adapted to descent order); it follows chain
+   * A, the per-level best, and stops when every chain has escaped. Called
+   * ONCE per hit; the march itself uses the plain overload.
    */
   float surfaceDE(vec3 p, out int firstChoice, out float trap) {
     vec3 q = uFinalInvM * p + uFinalInvT;
-    float sphereBound = length(q) - uBoundingRadius;
+    float startR = length(q);
+    float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
-    float scale = 1.0;
-    float lastR = length(q);
+    vec3 aQ = q;
+    float aScale = 1.0;
+    float aR = startR;
+    bool aLive = true;
+    vec3 bQ = vec3(0.0);
+    float bScale = 1.0;
+    float bR = 0.0;
+    bool bLive = false;
     firstChoice = 0;
     trap = 0.0;
     for (int depth = 0; depth < uMaxDepth; depth++) {
-      float greedyR = 1e30;
-      vec3 g = vec3(0.0);
-      float gSigma = 1.0;
-      int greedyIndex = -1;
-      float cert1 = 1e30;
-      float cert2 = 1e30;
-      int cert1Index = -1;
-      for (int j = 0; j < uMapCount; j++) {
-        vec3 img = uInvM[j] * q + uInvT[j];
-        float r = length(img);
-        if (r < greedyR) {
-          greedyR = r;
-          g = img;
-          gSigma = uSigmaMin[j];
-          greedyIndex = j;
+      if (!aLive && !bLive) {
+        break;
+      }
+      float c1Key = 1e30;
+      vec3 c1Q = vec3(0.0);
+      float c1Scale = 1.0;
+      float c1R = 0.0;
+      float c1Cert = 0.0;
+      int c1Map = 0;
+      float c2Key = 1e30;
+      vec3 c2Q = vec3(0.0);
+      float c2Scale = 1.0;
+      float c2R = 0.0;
+      float c2Cert = 0.0;
+      for (int c = 0; c < 2; c++) {
+        bool isA = c == 0;
+        if (isA ? !aLive : !bLive) {
+          continue;
         }
-        if (r > uBoundingRadius) {
-          float bound = uSigmaMin[j] * (r - uBoundingRadius);
-          if (bound < cert1) {
-            cert2 = cert1;
-            cert1 = bound;
-            cert1Index = j;
-          } else if (bound < cert2) {
-            cert2 = bound;
+        vec3 pQ = isA ? aQ : bQ;
+        float pScale = isA ? aScale : bScale;
+        for (int j = 0; j < uMapCount; j++) {
+          vec3 img = uInvM[j] * pQ + uInvT[j];
+          float r = length(img);
+          float key = pScale * (r - uBoundingRadius);
+          float childScale = pScale * uSigmaMin[j];
+          float cert = childScale * (r - uBoundingRadius);
+          if (key < c1Key) {
+            if (c2R > uBoundingRadius) {
+              best = min(best, c2Cert);
+            }
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1Q = img;
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+            c1Map = j;
+          } else if (key < c2Key) {
+            if (c2R > uBoundingRadius) {
+              best = min(best, c2Cert);
+            }
+            c2Key = key;
+            c2Q = img;
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
+          } else if (r > uBoundingRadius) {
+            best = min(best, cert);
           }
         }
       }
-      float siblingCert = (cert1Index == greedyIndex) ? cert2 : cert1;
-      best = min(best, scale * siblingCert);
       if (depth == 0) {
-        firstChoice = greedyIndex;
-        trap = uTrapIndex[greedyIndex];
+        firstChoice = c1Map;
+        trap = uTrapIndex[c1Map];
       } else {
-        trap = (trap + uTrapIndex[greedyIndex]) * 0.5;
+        trap = (trap + uTrapIndex[c1Map]) * 0.5;
       }
-      q = g;
-      lastR = greedyR;
-      scale *= gSigma;
-      if (greedyR > uEscapeRadius) {
-        break;
+      aLive = false;
+      bLive = false;
+      if (c1Key < 1e29) {
+        if (c1R > uEscapeRadius) {
+          best = min(best, c1Cert);
+        } else {
+          aQ = c1Q;
+          aScale = c1Scale;
+          aR = c1R;
+          aLive = true;
+        }
+      }
+      if (c2Key < 1e29) {
+        if (c2R > uEscapeRadius) {
+          best = min(best, c2Cert);
+        } else {
+          bQ = c2Q;
+          bScale = c2Scale;
+          bR = c2R;
+          bLive = true;
+        }
       }
     }
-    float d = min(best, scale * (lastR - uBoundingRadius));
-    d = max(d, sphereBound);
+    if (aLive) {
+      best = min(best, aScale * (aR - uBoundingRadius));
+    }
+    if (bLive) {
+      best = min(best, bScale * (bR - uBoundingRadius));
+    }
+    float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
 

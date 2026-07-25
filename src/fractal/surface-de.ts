@@ -35,23 +35,45 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  *     dist(p, f_j(A)) >= sigma_min_j * (|f_j^-1(p)| - R)
  *
  * A FULL bound on `dist(p, A) = min_j dist(p, f_j(A))` would need the whole
- * exponential branch tree, so {@link estimateDistance} descends greedily
- * (always into the branch whose inverse image lands nearest the origin),
- * unrolling the recursion
+ * exponential branch tree, so {@link estimateDistance} descends a BEAM of
+ * {@link SurfaceDE.beamWidth} chains (width 1 = the classic greedy descent
+ * into the branch whose inverse image lands nearest the origin), unrolling
+ * the recursion
  *
  *     dist(q, A) >= min( certificates of the NON-descended siblings,
  *                        sigma_min_g * dist(inv_g(q), A) )
  *
- * into: the min over every level's escaped-sibling certificates, terminated
- * by the greedy branch's own final bound. The descended branch's shallow
- * certificates are deliberately NOT folded in — the recursion refines that
- * one branch deeper, which is what keeps the estimate tight near the
- * surface (the classic KIFS last-value formula, plus a sibling safety net
- * so surfaces reachable through a shallower branch are not overshot).
+ * into: the min over every level's non-descended escaped-sibling
+ * certificates, terminated by each descended chain's own final bound. A
+ * descended candidate's shallow certificate is deliberately NOT folded in —
+ * the next level refines that chain deeper, which is what keeps the
+ * estimate tight near the surface (the classic KIFS last-value formula,
+ * plus a sibling safety net so surfaces reachable through a shallower
+ * branch are not overshot). Every term folded into the min is a valid lower
+ * bound for ITS piece, so beam selection can never break validity — it only
+ * decides which branches get REFINED instead of frozen (or, for in-sphere
+ * branches, covered at all).
+ *
  * Branches whose images stay INSIDE the sphere carry no positive
- * certificate; descending only the nearest of them is the greedy heuristic,
- * and the residual risk of that choice is what the eligibility analysis'
- * `stepScale` fudge (and the marcher's hit epsilon) absorbs. Two properties
+ * certificate; a level with more simultaneous in-sphere branches than the
+ * beam has slots drops the excess uncounted, and the residual risk of that
+ * drop is what the eligibility analysis' `stepScale` fudge (and the
+ * marcher's hit epsilon) absorbs. Width 1 drops ANY second in-sphere
+ * branch, and the fr-v6yg harness (`scripts/surface-beam.harness.ts`)
+ * measured that overshooting for real across the board — worst on the
+ * doubleRotation profile (2 maps, sigma 0.93/0.22: max excess ~19% of R),
+ * but also on plain shipped presets (default 10.8%R, spiral 8.6%R,
+ * pyramid 6.2%R), with no per-map sigma threshold separating the clean
+ * systems from the overshooting ones. Production builds therefore always
+ * use width 2 (~1.7-1.8x the inverse applications, violations collapse to
+ * the fp-noise floor on every measured 2-map system AND every preset, and
+ * tightness IMPROVES since the second chain refines the barely-escaped
+ * sibling certificates fr-beck measured every ghost back to); width 1
+ * remains only as the tests' pin of the single-chain mechanism. Measured
+ * residual (disclosed, filed as follow-up): 3+ simultaneous in-sphere
+ * branches still drop — kaleidoscope copies of a near-isometric map tie
+ * their image norms exactly (repro+order-4: ~5%R residual excess), and
+ * m >= 3 or sigma >= 0.96 slow-map systems retain ~2%R. Two properties
  * worth noting:
  *
  * - A query point ON the attractor can never yield a positive bound: its
@@ -164,6 +186,12 @@ export interface SurfaceDE {
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
    * features below {@link DEPTH_RESOLUTION}. */
   maxDepth: number;
+  /** How many descent chains {@link estimateDistance} refines in parallel.
+   * Always 2 from {@link buildSurfaceDE} (fr-v6yg: the single greedy chain
+   * measurably overshoots — see the module doc); 1 exists so tests can pin
+   * the width-1 mechanism the beam repairs. The GLSL tracer hardcodes the
+   * production width. */
+  beamWidth: 1 | 2;
   /** March step multiplier from {@link analyzeSurfaceSystem}. */
   stepScale: number;
   /** Pre-inverted final-transform lens (the plotted set is `F(attractor)`),
@@ -477,25 +505,35 @@ export function buildSurfaceDE(
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
+    beamWidth: 2,
     stepScale: analysis.stepScale,
     final,
   };
 }
 
 /**
- * Reference DE the GLSL marcher mirrors: greedy inverse-map descent with
+ * Reference DE the GLSL marcher mirrors: beam inverse-map descent with
  * sibling-certificate tracking (see the module doc for the validity
- * argument).
+ * argument). Width 1 is the classic greedy descent, value-equivalent to
+ * the pre-fr-v6yg estimator; width 2 keeps a second chain alive so a
+ * second simultaneous in-sphere branch is refined instead of dropped.
  *
- * At each level every inverse image is computed anyway to pick the greedy
- * branch (nearest the origin); NON-descended images that escaped the
- * bounding sphere contribute `sigma_min_j · (|image_j| - R)` — a certified
- * lower bound on the distance to THAT piece — while the descended branch is
- * refined by the next level and finally bounded by its terminal
- * `(|q_K| - R)` value. The estimate is the min over all of these, un-scaled
- * by the accumulated contraction, and never beaten by the depth-0 sphere
- * bound `|p| - R`. A point tracking the attractor's occupied region the
- * whole way down ends `<= 0`; the MARCHER floors at its epsilon, not this
+ * At each level every live chain's inverse images are computed and ranked
+ * by the selection key `chainScale · (r - R)` — within one chain that is
+ * the classic nearest-the-origin greedy order, and across chains it weighs
+ * each branch by the contraction already accumulated, so the beam always
+ * refines the candidates whose pieces could still hide the nearest
+ * surface. The best candidate continues as chain A, the runner-up as chain
+ * B (width 2 only); every OTHER candidate that escaped the bounding sphere
+ * folds its frozen certificate `chainScale · sigma_min_j · (r - R)` — a
+ * certified lower bound on the distance to THAT piece — into the running
+ * min. A chain dies once its point escapes past `escapeRadius` (deeper
+ * refinement cannot improve the min), folding its terminal
+ * `chainScale' · (r - R)` bound; chains still alive at the depth cap fold
+ * the same terminal (the KIFS last-value formula). The estimate is the min
+ * over all folded terms, never beaten by the depth-0 sphere bound
+ * `|p| - R`. A point tracking the attractor's occupied region the whole
+ * way down ends `<= 0`; the MARCHER floors at its epsilon, not this
  * function, so callers see the raw (possibly negative) bound.
  */
 export function estimateDistance(de: SurfaceDE, p: Vec3): number {
@@ -515,67 +553,142 @@ export function estimateDistance(de: SurfaceDE, p: Vec3): number {
   }
 
   const R = de.boundingRadius;
-  const sphereBound = Math.sqrt(x * x + y * y + z * z) - R;
+  const startR = Math.sqrt(x * x + y * y + z * z);
+  const sphereBound = startR - R;
+  const wide = de.beamWidth > 1;
   let best = Infinity;
-  let scale = 1;
-  let lastR = Math.sqrt(x * x + y * y + z * z);
+
+  // Chain slot A starts at the (lensed) query; slot B idles until beam
+  // selection fills it (width-2 systems only). Each chain carries the
+  // contraction accumulated INCLUDING its own map and the radius its point
+  // was selected at — `scale · (r - R)` is its terminal bound.
+  let aX = x;
+  let aY = y;
+  let aZ = z;
+  let aScale = 1;
+  let aR = startR;
+  let aLive = true;
+  let bX = 0;
+  let bY = 0;
+  let bZ = 0;
+  let bScale = 1;
+  let bR = 0;
+  let bLive = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    let greedyR = Infinity;
-    let gx = 0;
-    let gy = 0;
-    let gz = 0;
-    let gSigma = 1;
-    // Two smallest certificates this level + which map owns the smallest,
-    // so the descended (greedy) branch's own certificate can be dropped in
-    // favor of its deeper refinement without a second scan.
-    let greedyIndex = -1;
-    let cert1 = Infinity;
-    let cert2 = Infinity;
-    let cert1Index = -1;
-    for (let j = 0; j < de.maps.length; j++) {
-      const map = de.maps[j];
-      const im = map.invM;
-      const it = map.invT;
-      const ix = im[0] * x + im[1] * y + im[2] * z + it[0];
-      const iy = im[3] * x + im[4] * y + im[5] * z + it[1];
-      const iz = im[6] * x + im[7] * y + im[8] * z + it[2];
-      const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
-      if (r < greedyR) {
-        greedyR = r;
-        gx = ix;
-        gy = iy;
-        gz = iz;
-        gSigma = map.sigmaMin;
-        greedyIndex = j;
-      }
-      if (r > R) {
-        const bound = map.sigmaMin * (r - R);
-        if (bound < cert1) {
-          cert2 = cert1;
-          cert1 = bound;
-          cert1Index = j;
-        } else if (bound < cert2) {
-          cert2 = bound;
+    if (!aLive && !bLive) break;
+    // The two smallest-key candidates this level, key-ascending. The
+    // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
+    // below (their certificates are meaningless until occupied).
+    let c1Key = Infinity;
+    let c1X = 0;
+    let c1Y = 0;
+    let c1Z = 0;
+    let c1Scale = 1;
+    let c1R = 0;
+    let c1Cert = 0;
+    let c2Key = Infinity;
+    let c2X = 0;
+    let c2Y = 0;
+    let c2Z = 0;
+    let c2Scale = 1;
+    let c2R = 0;
+    let c2Cert = 0;
+    for (let c = 0; c < 2; c++) {
+      const isA = c === 0;
+      if (isA ? !aLive : !bLive) continue;
+      const pX = isA ? aX : bX;
+      const pY = isA ? aY : bY;
+      const pZ = isA ? aZ : bZ;
+      const pScale = isA ? aScale : bScale;
+      for (let j = 0; j < de.maps.length; j++) {
+        const map = de.maps[j];
+        const im = map.invM;
+        const it = map.invT;
+        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + it[0];
+        const iy = im[3] * pX + im[4] * pY + im[5] * pZ + it[1];
+        const iz = im[6] * pX + im[7] * pY + im[8] * pZ + it[2];
+        const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
+        const key = pScale * (r - R);
+        const childScale = pScale * map.sigmaMin;
+        const cert = childScale * (r - R);
+        if (key < c1Key) {
+          // New best: the old best shifts to runner-up, whose previous
+          // occupant folds (escaped candidates leave their certificate).
+          if (c2R > R && c2Cert < best) best = c2Cert;
+          c2Key = c1Key;
+          c2X = c1X;
+          c2Y = c1Y;
+          c2Z = c1Z;
+          c2Scale = c1Scale;
+          c2R = c1R;
+          c2Cert = c1Cert;
+          c1Key = key;
+          c1X = ix;
+          c1Y = iy;
+          c1Z = iz;
+          c1Scale = childScale;
+          c1R = r;
+          c1Cert = cert;
+        } else if (key < c2Key) {
+          if (c2R > R && c2Cert < best) best = c2Cert;
+          c2Key = key;
+          c2X = ix;
+          c2Y = iy;
+          c2Z = iz;
+          c2Scale = childScale;
+          c2R = r;
+          c2Cert = cert;
+        } else if (r > R && cert < best) {
+          best = cert;
         }
       }
     }
-    const siblingCert = cert1Index === greedyIndex ? cert2 : cert1;
-    if (siblingCert < Infinity && scale * siblingCert < best) {
-      best = scale * siblingCert;
+    // Promote: the best candidate always continues as chain A (or, past
+    // the escape radius, folds its terminal and dies); the runner-up
+    // becomes chain B only on width-2 systems — width 1 folds it frozen,
+    // exactly the classic sibling certificate. An in-sphere runner-up on a
+    // width-1 system folds nothing: that is the documented residual drop.
+    aLive = false;
+    bLive = false;
+    if (c1Key < Infinity) {
+      if (c1R > de.escapeRadius) {
+        if (c1Cert < best) best = c1Cert;
+      } else {
+        aX = c1X;
+        aY = c1Y;
+        aZ = c1Z;
+        aScale = c1Scale;
+        aR = c1R;
+        aLive = true;
+      }
     }
-    x = gx;
-    y = gy;
-    z = gz;
-    lastR = greedyR;
-    scale *= gSigma;
-    if (greedyR > de.escapeRadius) break;
+    if (c2Key < Infinity) {
+      if (!wide || c2R > de.escapeRadius) {
+        if (c2R > R && c2Cert < best) best = c2Cert;
+      } else {
+        bX = c2X;
+        bY = c2Y;
+        bZ = c2Z;
+        bScale = c2Scale;
+        bR = c2R;
+        bLive = true;
+      }
+    }
   }
 
-  // Terminal bound of the descended branch (the KIFS last-value formula):
-  // non-positive when the point tracked the attractor to the depth cap.
-  const terminal = scale * (lastR - R);
-  let d = Math.min(best, terminal);
+  // Terminal bound of chains alive at the depth cap (the KIFS last-value
+  // formula): non-positive when the chain tracked the attractor all the
+  // way down.
+  if (aLive) {
+    const terminal = aScale * (aR - R);
+    if (terminal < best) best = terminal;
+  }
+  if (bLive) {
+    const terminal = bScale * (bR - R);
+    if (terminal < best) best = terminal;
+  }
+  let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;
 }
