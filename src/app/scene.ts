@@ -36,7 +36,13 @@ import {
   createSurfaceMaterial,
   setSurfaceSystem as packSurfaceSystem,
 } from "./surface-material";
+import {
+  createSurfaceMaterial4,
+  setSurfaceSystem4 as packSurfaceSystem4,
+  setSurfaceView4 as packSurfaceView4,
+} from "./surface-material-4d";
 import type { SurfaceDE } from "../fractal/surface-de";
+import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
 
@@ -504,7 +510,20 @@ export class FractalScene {
   // surface-material.ts / surface-de.ts). No volume, no worker — the whole
   // "session" is uniforms, so like the solid render the camera stays LIVE.
   private readonly surfaceMaterial: THREE.ShaderMaterial;
+  /** The 4D twin (fr-vxoj): same tracer one dimension up, marching the
+   * w = w0 slice of the rotor-posed 4D attractor (surface-material-4d.ts /
+   * surface-de-4d.ts). Shares {@link surfaceQuad}. */
+  private readonly surfaceMaterial4: THREE.ShaderMaterial;
+  /** The material {@link renderSurface} traces with — assigned by
+   * {@link setSurfaceSystem} (3D) / {@link setSurfaceSystem4} (4D), so the
+   * render/capture paths stay dimension-agnostic. */
+  private activeSurfaceMaterial: THREE.ShaderMaterial;
   private readonly surfaceQuad: FullScreenQuad;
+  /** Last rotor + w0 pushed to the 4D tracer — {@link setSurface4View} is
+   * called every 4D-surface frame (paused tumble included), so equality
+   * short-circuits the dirty flag exactly like {@link setRot4} (fr-py7z). */
+  private readonly surface4Rot = new Array<number>(16).fill(NaN);
+  private surface4W0 = NaN;
   /** Lazily allocated 256x1 ramp for the surface tracer's palette/height/
    * radius color sources — dimensions never change, so one texture is
    * mutated in place (see {@link setSurfaceColorLUT}). */
@@ -787,6 +806,8 @@ export class FractalScene {
 
     // Zero-map placeholder until the first setSurfaceSystem call.
     this.surfaceMaterial = createSurfaceMaterial();
+    this.surfaceMaterial4 = createSurfaceMaterial4();
+    this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad = new FullScreenQuad(this.surfaceMaterial);
   }
 
@@ -1940,6 +1961,46 @@ export class FractalScene {
   setSurfaceSystem(de: SurfaceDE, colors: Vec3[], trapIndices: number[]): void {
     this.renderNeeded = true;
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+  }
+
+  /**
+   * 4D twin of {@link setSurfaceSystem} (fr-vxoj): upload the 4D DE and
+   * point the shared quad at the 4D tracer. The rotor/slice VIEW state
+   * arrives separately ({@link setSurface4View}) — the DE is
+   * pose-independent, exactly as the 3D DE is camera-independent.
+   */
+  setSurfaceSystem4(
+    de: SurfaceDE4,
+    colors: Vec3[],
+    trapIndices: number[],
+  ): void {
+    this.renderNeeded = true;
+    packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
+    this.activeSurfaceMaterial = this.surfaceMaterial4;
+    this.surfaceQuad.material = this.surfaceMaterial4;
+  }
+
+  /**
+   * Per-frame rotor + w-slice for the 4D surface tracer — the live-pose
+   * analogue of {@link setRot4}, with the same "same matrix, don't dirty
+   * the frame" guard (fr-py7z): main.ts pushes every 4D-surface frame,
+   * paused tumble included, and equality keeps render-on-demand honest.
+   * `m` is the row-major world rotor from `fourDView.matrix()`; the packer
+   * transposes it into the tracer's inverse-rotor uniform.
+   */
+  setSurface4View(m: number[], w0: number): void {
+    const prev = this.surface4Rot;
+    let changed = this.surface4W0 !== w0;
+    for (let i = 0; i < 16 && !changed; i++) {
+      if (prev[i] !== m[i]) changed = true;
+    }
+    if (!changed) return;
+    for (let i = 0; i < 16; i++) prev[i] = m[i];
+    this.surface4W0 = w0;
+    this.renderNeeded = true;
+    packSurfaceView4(this.surfaceMaterial4, m, w0);
   }
 
   /**
@@ -1951,12 +2012,16 @@ export class FractalScene {
    */
   setSurfaceParams(params: SurfaceParams): void {
     this.renderNeeded = true;
-    const u = this.surfaceMaterial.uniforms;
-    u.uAmbient.value = params.ambient;
-    (u.uLightDir.value as THREE.Vector3).copy(
-      lightDirection(params.lightAzimuth, params.lightElevation),
-    );
-    u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
+    // Both tracers share the one SurfaceParams document — push to both so
+    // whichever the next session activates is already current.
+    for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
+      const u = material.uniforms;
+      u.uAmbient.value = params.ambient;
+      (u.uLightDir.value as THREE.Vector3).copy(
+        lightDirection(params.lightAzimuth, params.lightElevation),
+      );
+      u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
+    }
   }
 
   /**
@@ -1976,7 +2041,10 @@ export class FractalScene {
         1,
       );
       configureSurfaceLUTTexture(this.surfaceLUTTexture);
+      // One texture, both tracers — the ramp is a property of the document's
+      // SurfaceParams, not of the system's dimensionality.
       this.surfaceMaterial.uniforms.uColorLUT.value = this.surfaceLUTTexture;
+      this.surfaceMaterial4.uniforms.uColorLUT.value = this.surfaceLUTTexture;
     }
     const data = this.surfaceLUTTexture.image.data as Uint8Array;
     for (let i = 0; i < 256; i++) {
@@ -2001,7 +2069,7 @@ export class FractalScene {
   renderSurface(): void {
     this.renderNeeded = false;
     this.camera.updateMatrixWorld();
-    const u = this.surfaceMaterial.uniforms;
+    const u = this.activeSurfaceMaterial.uniforms;
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
     (u.uInvProjView.value as THREE.Matrix4)
       .multiplyMatrices(

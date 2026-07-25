@@ -487,9 +487,10 @@ step; conservative for anisotropic ones, so the tracer only backs off its
 step size rather than risk piercing the surface; and intractable for
 nonlinear variations, which have no closed-form inverse for any bound to be
 stated in terms of — so a system using variations is ineligible outright,
-alongside one extending into 4D (the DE is 3D-only) or one whose maps don't
-contract (Hutchinson's condition for the attractor to exist in the first
-place, and for the descent to terminate).
+alongside one whose maps don't contract (Hutchinson's condition for the
+attractor to exist in the first place, and for the descent to terminate). A
+system extending into 4D is not a disqualifier but a route: it gets the
+DE's 4D twin (two paragraphs down) instead of this 3D one.
 
 `src/app/surface-material.ts` is the GLSL sphere-tracer, and it mirrors
 `surface-de.ts`'s `estimateDistance` line for line — the same
@@ -506,6 +507,31 @@ against the live camera IS the first frame, and every orbit/zoom afterward
 just repeats that same call, exactly like the solid render's raymarcher
 re-running each frame against its density grid, only here against an
 analytic field that has no convergence to wait on.
+
+The same picture carries one dimension up (fr-vxoj, built on the fr-beck
+spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
+`surface-de.ts` with four coordinates: the sigma_min inequality is
+dimension-free, so the whole descent transfers verbatim; the singular values
+need a deterministic cyclic-Jacobi eigen-solve where 3D had a closed form;
+and there is no kaleidoscope to expand (the 4D pipeline has none by design),
+so slots are input maps 1:1 against a smaller, mat4-sized 16-slot uniform
+cap. What the app marches is never the full 4D attractor but its
+`w = sliceCenter` SLICE. A certified 4D DE lower-bounds slice distance for
+free — distance to a subset only grows — but the spike measured the plain
+bound reading as ghostly bulges near off-slice structure (structure close in
+4D but not on the slice), traced 100% to shallow, barely-escaped sibling
+certificates; `estimateDistance4Refined` spends one extra Hutchinson level
+on exactly those certificates at fold time, which measurably eliminated
+every ghost (0.0% ghost hits on all slices measured) while preserving
+validity. `src/app/surface-material-4d.ts` mirrors it under the same
+lockstep-oracle discipline, with one live-view difference from every other
+4D render: the SO(4) rotor and w-slice arrive as per-frame uniforms — a
+rotation is an isometry, so the marched field is just
+`DE4(rotorInv · (p, w0))` and step sizes, normals, and validity survive
+untouched — meaning the pose stays exactly as live as the camera (tumble,
+Shift-drag, and slice sweeps all keep working inside the mode), where
+flame/solid-4D freeze theirs at session start because a pose change would
+invalidate their accumulated content.
 
 ## Render workers & cross-origin isolation
 
