@@ -728,3 +728,163 @@ describe("estimateDistance4Refined does not repair width-1's branch-selection ov
     expect(violatesSomewhere).toBe(false);
   });
 });
+
+// -----------------------------------------------------------------------
+// Final-transform lens (fr-vxoj, landed post-verdict): a straight port of
+// 3D's `SurfaceDE.final` one dimension up — see the module doc's updated
+// "WHAT THIS SPIKE DELIBERATELY LEAVES OUT" section. Mirrors
+// `surface-de.test.ts`'s "buildSurfaceDE / estimateDistance with a final
+// transform" describe block and its neighbors.
+// -----------------------------------------------------------------------
+
+describe("analyzeSurfaceSystem4 with a final transform", () => {
+  it("flags a final transform with an active variation as ineligible", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ variations: [{ type: "swirl", weight: 1 }] }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toHaveLength(1);
+    expect(analysis.reasons[0]).toMatch(/final transform uses variations/);
+  });
+
+  it("flags a final transform with near-zero scale as ineligible", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ scale: [1e-5, 1e-5, 1e-5] }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toHaveLength(1);
+    expect(analysis.reasons[0]).toMatch(/final transform is nearly flat/);
+  });
+
+  it("does not gate a final transform that extends into 4D via its w block — unlike 3D's analyzeSurfaceSystem, which disqualifies a non-flat final transform", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ w: { position: 0.6, rotation: { xw: 0.4 } } }),
+    );
+    expect(analysis.status).toBe("eligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it('degrades status to "degraded" for a strongly anisotropic (but invertible) final transform', () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ scale: [0.9, 0.05, 0.05] }),
+    );
+    expect(analysis.status).toBe("degraded");
+    expect(analysis.reasons).toEqual([]);
+  });
+});
+
+describe("buildSurfaceDE4 with a final transform", () => {
+  it("has no lens and visibleBoundingRadius equal to boundingRadius when built without one", () => {
+    const de = buildSurfaceDE4(pentatope());
+    expect(de.final).toBeNull();
+    expect(de.visibleBoundingRadius).toBe(de.boundingRadius);
+  });
+
+  it("populates the lens and derives visibleBoundingRadius from the lifted final transform's sigma_max and translation norm", () => {
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0.2, -0.1, 0.05],
+      scale: [0.6, 0.6, 0.6],
+    });
+    const de = buildSurfaceDE4(transforms, finalTransform);
+    expect(de.final).not.toBeNull();
+    expect(de.final?.invM).toHaveLength(16);
+    expect(de.final?.sigmaMin).toBeGreaterThan(0);
+
+    const lifted = toTransform4(finalTransform);
+    const affine = composeAffine4(lifted);
+    const sigmas = transformSigmas4(lifted);
+    const expected =
+      sigmas.max * de.boundingRadius +
+      Math.hypot(affine.t[0], affine.t[1], affine.t[2], affine.t[3]);
+    expect(de.visibleBoundingRadius).toBeCloseTo(expected, 9);
+  });
+
+  it("throws when the final transform makes the system ineligible", () => {
+    const transforms = pentatope();
+    const ineligibleFinal = map4({
+      variations: [{ type: "swirl", weight: 1 }],
+    });
+    expect(() => buildSurfaceDE4(transforms, ineligibleFinal)).toThrow(
+      /final transform uses variations/,
+    );
+  });
+});
+
+describe("estimateDistance4 / estimateDistance4Refined with a final transform", () => {
+  it("an identity final (scale 1, no rotation/translation) leaves both estimators unchanged", () => {
+    const transforms = pentatope();
+    const identityFinal = map4({ position: [0, 0, 0], scale: [1, 1, 1] });
+    const withFinal = buildSurfaceDE4(transforms, identityFinal);
+    const withoutFinal = buildSurfaceDE4(transforms);
+    const points: Vec4[] = [
+      [0.3, -0.2, 0.1, 0.05],
+      [1.2, 0.4, -0.6, 0.2],
+      [0, 0, 0, 0],
+      [-0.5, 0.5, -0.5, 0.5],
+    ];
+    for (const p of points) {
+      expect(estimateDistance4(withFinal, p)).toBeCloseTo(
+        estimateDistance4(withoutFinal, p),
+        12,
+      );
+      expect(estimateDistance4Refined(withFinal, p)).toBeCloseTo(
+        estimateDistance4Refined(withoutFinal, p),
+        12,
+      );
+    }
+  });
+
+  it("a pure uniform-scale final F scales both estimators by sigma_min(F): DE(F(q)) ≈ sigma_min(F) * DE(q)", () => {
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    });
+    const withFinal = buildSurfaceDE4(transforms, finalTransform);
+    const withoutFinal = buildSurfaceDE4(transforms);
+    const forward = composeAffine4(toTransform4(finalTransform));
+    const points: Vec4[] = [
+      [0.3, -0.2, 0.1, 0.05],
+      [1.2, 0.4, -0.6, 0.2],
+      [-0.5, 0.5, -0.5, 0.5],
+    ];
+    for (const q of points) {
+      const fq = applyAffine4(forward, q[0], q[1], q[2], q[3]);
+      expect(estimateDistance4(withFinal, fq)).toBeCloseTo(
+        0.5 * estimateDistance4(withoutFinal, q),
+        9,
+      );
+      expect(estimateDistance4Refined(withFinal, fq)).toBeCloseTo(
+        0.5 * estimateDistance4Refined(withoutFinal, q),
+        9,
+      );
+    }
+  });
+});
+
+describe("estimateDistance4Refined never falls below the base estimate, with a final transform in play", () => {
+  it("holds for pentatope across the validityQueries mix", () => {
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0.15, -0.1, 0.2],
+      scale: [0.6, 0.4, 0.5],
+      rotation: [0.3, -0.2, 0.5],
+    });
+    const de = buildSurfaceDE4(transforms, finalTransform);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of validityQueries(cloud)) {
+      const base = estimateDistance4(de, q);
+      const refined = estimateDistance4Refined(de, q);
+      expect(refined).toBeGreaterThanOrEqual(base - 1e-9);
+    }
+  });
+});
