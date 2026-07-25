@@ -89,10 +89,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     for tests — fr-v6yg measured it overshooting, tables in
     `scripts/surface-beam.harness.ts`). Oracle for `surface-material.ts`,
     the `flame.ts` <-> `flame-gpu.ts` discipline one render mode over.
-  - `surface-de-4d.ts` — fr-beck spike: `surface-de.ts` one dimension up
-    (Jacobi `singularValues4`, `analyzeSurfaceSystem4`, `buildSurfaceDE4`,
-    beam `estimateDistance4` + ghost-free `estimateDistance4Refined`).
-    Measured verdict + numbers in the module doc; not wired to a render mode.
+  - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
+    fr-beck spike): Jacobi `singularValues4`, `analyzeSurfaceSystem4`,
+    `buildSurfaceDE4` (final-transform lens included), beam
+    `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
+    surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
+    Measured verdict + numbers in the module doc.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
@@ -106,7 +108,8 @@ and UI**, so the interesting math is unit-tested without a browser:
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
     boxes, fog). Three.js confined to this file, `interactions.ts`,
-    `voxel-material.ts`, and `surface-material.ts`. `setRightInset` aims
+    `voxel-material.ts`, `surface-material.ts`, and `surface-material-4d.ts`.
+    `setRightInset` aims
     projection clear of the desktop panel. Captures:
     `captureFrame`/`captureSolidFrame`/`captureSurfaceFrame` render at export
     scale (clamped to device limits + 8192px); flame accumulates at export size so
@@ -210,6 +213,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
     fixed-size (24-slot) uniform arrays. Callers gate eligibility first, so
     an over-cap map count throws here rather than degrading silently.
+  - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
+    `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
+    `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
+    certificates + width-2 beam — the fr-beck-measured ghost eliminator).
+    Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
+    unlike flame/solid-4D's frozen snapshot; 16-map cap (mat4-sized slots,
+    no kaleidoscope to expand).
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

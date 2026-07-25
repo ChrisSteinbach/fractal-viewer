@@ -13,8 +13,12 @@ import {
 } from "../fractal/color";
 import { effectiveSymmetryOrder } from "../fractal/chaos-game";
 import { analyzeSurfaceSystem, buildSurfaceDE } from "../fractal/surface-de";
-import type { SurfaceDE } from "../fractal/surface-de";
+import {
+  analyzeSurfaceSystem4,
+  buildSurfaceDE4,
+} from "../fractal/surface-de-4d";
 import { SURFACE_MAX_MAPS } from "./surface-material";
+import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 import {
   DEFAULT_GAMMA_THRESHOLD,
   tonemapFlame,
@@ -2542,7 +2546,10 @@ function main(): void {
   // Per-slot colors for the surface tracer: each symmetry-expanded slot
   // inherits its BASE map's "By Transform" color (transformColors), the same
   // `idx % baseTransformCount` keying the explorer's own coloring uses.
-  function surfaceSlotColors(de: SurfaceDE): Vec3[] {
+  // Slot inputs shared by the 3D and 4D tracers: both DE shapes carry
+  // per-slot baseIndex, which is all the coloring keys on (4D slots are
+  // base maps 1:1 — no symmetry expansion to fold).
+  function surfaceSlotColors(de: { maps: { baseIndex: number }[] }): Vec3[] {
     const palette = transformColors(state.transforms.length);
     return de.maps.map((m) => palette[m.baseIndex]);
   }
@@ -2550,7 +2557,7 @@ function main(): void {
   // Per-slot orbit-trap palette coordinates: base map i of n spreads evenly
   // over [0, 1] — the flame's `paletteIndex(i, n)` idea, keyed by baseIndex
   // so kaleidoscope copies share their base map's coordinate.
-  function surfaceTrapIndices(de: SurfaceDE): number[] {
+  function surfaceTrapIndices(de: { maps: { baseIndex: number }[] }): number[] {
     const denom = Math.max(1, state.transforms.length - 1);
     return de.maps.map((m) => m.baseIndex / denom);
   }
@@ -2564,19 +2571,51 @@ function main(): void {
   // exit-on-undo/redo (via applyDecodedSnapshot's switchRenderMode), error →
   // exit, and the repaint-on-leaving discipline (fr-w9wl). Like the solid
   // render the DE is world-space, so the camera stays LIVE.
+
+  // Whether the ACTIVE surface session traces the 4D DE — frozen at start()
+  // together with the DE itself (the session snapshots geometry at enter;
+  // the live document's flatness may drift until the next enter). Gates
+  // tickRender's per-frame rotor/slice push.
+  let surfaceSessionIs4D = false;
+
   const surfaceSession = new RenderSession<never>({
     start: () => {
       try {
-        const de = buildSurfaceDE(
-          state.transforms,
-          state.finalTransform ?? null,
-          state.symmetry,
-        );
-        scene.setSurfaceSystem(
-          de,
-          surfaceSlotColors(de),
-          surfaceTrapIndices(de),
-        );
+        if (
+          systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null)
+        ) {
+          // A 4D system: the slice-mode tracer (fr-vxoj), marching the
+          // w = sliceCenter cross-section of the rotor-posed attractor.
+          // Rotor + slice are LIVE view uniforms (tickRender pushes them
+          // per frame): unlike flame/solid-4D's frozen pose snapshot —
+          // frozen there because a pose change invalidates their whole
+          // accumulation — the tracer recomputes every pixel every frame,
+          // so the 4D pose stays exactly as live as the camera. No
+          // symmetry argument: the 4D pipeline has none by design.
+          const de = buildSurfaceDE4(
+            state.transforms,
+            state.finalTransform ?? null,
+          );
+          scene.setSurfaceSystem4(
+            de,
+            surfaceSlotColors(de),
+            surfaceTrapIndices(de),
+          );
+          scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
+          surfaceSessionIs4D = true;
+        } else {
+          surfaceSessionIs4D = false;
+          const de = buildSurfaceDE(
+            state.transforms,
+            state.finalTransform ?? null,
+            state.symmetry,
+          );
+          scene.setSurfaceSystem(
+            de,
+            surfaceSlotColors(de),
+            surfaceTrapIndices(de),
+          );
+        }
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
         // persisted SurfaceParams; the control-spec effects keep them live
@@ -2625,6 +2664,10 @@ function main(): void {
       if (surfaceSession.hasFirstFrame) noteRenderProgress("surface", 1, 1);
     },
     deactivate: () => {
+      // The 4D flag dies with the session (tickRender's surface branch is
+      // unreachable once the mode resets, but stale-true costs nothing to
+      // preclude).
+      surfaceSessionIs4D = false;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {
@@ -2763,13 +2806,51 @@ function main(): void {
   /**
    * Keep the Surface mode button's gate tracking the DOCUMENT (epic
    * fr-7jlk): the pure marchability analysis (cheap — no bounding probe)
-   * plus the material's uniform-array cap on the symmetry-EXPANDED map
-   * count. Rides refreshUi — the one chokepoint every document edit,
-   * snapshot load, and undo/redo already funnels through — so the button
-   * enables/disables live as variations, 4D blocks, scales, weights, or
-   * symmetry orders change.
+   * plus the material's uniform-array cap — on the symmetry-EXPANDED map
+   * count for a flat document, on the bare active-map count for a 4D one
+   * (fr-vxoj: 4D documents route to analyzeSurfaceSystem4 and the 4D
+   * tracer's own cap; no kaleidoscope in 4D). Rides refreshUi — the one
+   * chokepoint every document edit, snapshot load, and undo/redo already
+   * funnels through — so the button enables/disables live as variations,
+   * 4D blocks, scales, weights, or symmetry orders change.
    */
   function refreshSurfaceEligibility(): void {
+    // A 4D document routes to the 4D analysis (fr-vxoj) — what used to be
+    // this gate's blanket "extends into 4D" disqualifier is now the 4D
+    // tracer's admission ticket. Routed on the DOCUMENT's flatness (the
+    // same predicate cloudParams stamps on generation requests), never the
+    // async-cached viewIs4D flag: this gate must track edits synchronously.
+    if (systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null)) {
+      const analysis = analyzeSurfaceSystem4(
+        state.transforms,
+        state.finalTransform ?? null,
+      );
+      if (analysis.status === "ineligible") {
+        ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
+        return;
+      }
+      // The 4D tracer's uniform cap. No symmetry multiplier — the 4D
+      // pipeline has no kaleidoscope, so slots are active maps 1:1.
+      const activeMaps4 = state.transforms.filter(
+        (t) => (t.weight ?? 1) > 0,
+      ).length;
+      if (activeMaps4 > SURFACE4_MAX_MAPS) {
+        ui.setSurfaceEligibility(
+          "ineligible",
+          `${activeMaps4} maps (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
+        );
+        return;
+      }
+      if (analysis.status === "degraded") {
+        ui.setSurfaceEligibility(
+          "degraded",
+          `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
+        );
+        return;
+      }
+      ui.setSurfaceEligibility("eligible", null);
+      return;
+    }
     const analysis = analyzeSurfaceSystem(
       state.transforms,
       state.finalTransform ?? null,
@@ -4145,13 +4226,17 @@ function main(): void {
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
       if (!viewIs4D) return; // belt-and-braces, same as the ui handlers
-      // An active render froze the rotor into its worker snapshot
+      // Flame/solid froze the rotor into their worker snapshot
       // (fourDRenderSnapshot); a gesture mutating it mid-render would change
       // nothing on screen (animate() skips setRot4 while rendering) and then
       // surface as a surprise orientation jump on exit. `frozen` already
       // blocks all drags during the flame render; the solid render keeps its
-      // camera gestures live, so the w-plane gesture needs this gate.
-      if (state.renderMode !== "points") return;
+      // camera gestures live, so the w-plane gesture needs this gate. The 4D
+      // surface session's pose is LIVE (fr-vxoj — tickRender pushes it every
+      // frame), so the gesture stays live there; gate on the session flag,
+      // not the mode, so a 3D surface session (doc drifted 4D mid-session)
+      // still blocks the invisible mutation.
+      if (state.renderMode !== "points" && !surfaceSessionIs4D) return;
       // Grabbing the rotor cancels a pose glide / pending pose (fr-pnek) —
       // the user's hand wins, same as a camera grab cancelling cameraTween.
       releaseFourDPoseControl();
@@ -4436,6 +4521,32 @@ function main(): void {
    * export pinned the scale to 1, and "frame time" between virtual steps
    * measures nothing the ladder should react to).
    */
+  /**
+   * One step of automatic 4D pose motion. While a timeline leg's pose glide
+   * is in flight (fr-pnek) it owns the rotor — the tumble stands aside
+   * instead of composing on top and jittering the approach — and the slice
+   * uniforms follow the glide's per-frame center lerp; the tumble resumes
+   * on the frame after the glide lands (fourDView.tick is a no-op while
+   * paused). Shared by the explorer's 4D frame path and the 4D surface
+   * render's live-pose push (fr-vxoj) — the two per-frame consumers of the
+   * pose, each pushing to its own shader afterwards.
+   */
+  function advanceFourDPose(dt: number): void {
+    if (fourDTween.active) {
+      fourDTween.advance();
+      pushFourDSlice();
+      // The frame the glide lands on: reflect the arrived slice in the
+      // panel controls. The per-frame lerp above deliberately skips the
+      // UI (the panel is closed during playback), but the LANDING must
+      // not leave it stale for when the panel reopens — the arrival-side
+      // sync (applyFourDPose via pendingFourDPose) only covers legs whose
+      // cloud landed after the glide had already finished.
+      if (!fourDTween.active) syncFourDSliceUi();
+    } else {
+      fourDView.tick(dt);
+    }
+  }
+
   function tickRender(now: number, force: boolean): void {
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
@@ -4461,6 +4572,20 @@ function main(): void {
       // failed-build window — the uniforms are uploaded synchronously in
       // enter() — but keeping it preserves the sessions' shared contract.
       scene.applyCamera(orbit);
+      // A 4D session's rotor + w-slice stay LIVE too (fr-vxoj): advance the
+      // tumble/glide and push the pose every frame — the one funnel that
+      // keeps slice-slider drags, rotor gestures, and timeline pose glides
+      // live in-mode with zero per-control wiring (setSurface4View's
+      // equality guard keeps render-on-demand honest). The early return
+      // below skips the shared viewIs4D block, so this branch owns its own
+      // motion dt, exactly like that block's (clamped for the same
+      // backgrounded-tab reason).
+      if (surfaceSessionIs4D) {
+        const dt4 = Math.min((now - lastMotionTickMs) / 1000, 0.1);
+        lastMotionTickMs = now;
+        advanceFourDPose(dt4);
+        scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
+      }
       const renderedSurface = scene.needsRender || recorderActive || force;
       if (surfaceSession.hasFirstFrame) {
         if (renderedSurface) scene.renderSurface();
@@ -4535,29 +4660,13 @@ function main(): void {
     scene.applyCamera(orbit);
     scene.updateFog();
     if (viewIs4D) {
-      // Advance the tumble (fourDView.tick is a no-op while paused) and push
-      // the rotor every 4D frame, paused or not — 16 floats/frame is nothing
-      // and it keeps one code path. lastMotionTickMs (above) still advances
-      // while paused, so resuming doesn't replay the gap as a jump. The point
-      // color re-derives in-shader from the new rotation, so nothing else
-      // needs updating per frame. While a timeline leg's pose glide is in
-      // flight (fr-pnek) it owns the rotor — the tumble stands aside instead
-      // of composing on top and jittering the approach — and the slice
-      // uniforms follow the glide's per-frame center lerp; the tumble
-      // resumes on the frame after the glide lands.
-      if (fourDTween.active) {
-        fourDTween.advance();
-        pushFourDSlice();
-        // The frame the glide lands on: reflect the arrived slice in the
-        // panel controls. The per-frame lerp above deliberately skips the
-        // UI (the panel is closed during playback), but the LANDING must
-        // not leave it stale for when the panel reopens — the arrival-side
-        // sync (applyFourDPose via pendingFourDPose) only covers legs whose
-        // cloud landed after the glide had already finished.
-        if (!fourDTween.active) syncFourDSliceUi();
-      } else {
-        fourDView.tick(dt);
-      }
+      // Advance the pose and push the rotor every 4D frame, paused or not —
+      // 16 floats/frame is nothing and it keeps one code path.
+      // lastMotionTickMs (above) still advances while paused, so resuming
+      // doesn't replay the gap as a jump. The point color re-derives
+      // in-shader from the new rotation, so nothing else needs updating per
+      // frame.
+      advanceFourDPose(dt);
       scene.setRot4(fourDView.matrix());
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse

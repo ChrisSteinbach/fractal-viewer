@@ -96,10 +96,18 @@ morphs into place instead of snapping (see **Presets** below).
   resolving finer instead of showing the grain a still would at the same
   zoom. Not every system has a valid distance estimator, so the button
   disables itself — with the reason in its tooltip — whenever any active
-  map (or the final-transform lens) uses variations, extends into 4D, is
-  nearly flat (scale ≈ 0), or does not contract (scale ≥ 1), and also when
-  the kaleidoscope symmetry expansion would need more inverse maps than the
-  tracer's fixed 24-map limit. Anisotropic (non-uniformly scaled) maps are a
+  map (or the final-transform lens) uses variations, is nearly flat
+  (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
+  count exceeds the tracer's fixed uniform budget: the kaleidoscope
+  symmetry expansion against a 24-map limit for flat systems, the bare
+  active-map count against a 16-map limit for 4D ones. A system extending
+  into 4D is not a blocker but a different tracer: the mode marches the
+  **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
+  pose stays live inside the mode — the tumble keeps turning, Shift-drag
+  keeps rotating the hidden planes, and the **W slice** slider sweeps the
+  cut through the shape in real time. (The slice toggle's ghosting is a
+  point-cloud affair; the surface mode always marches the current slice
+  position.) Anisotropic (non-uniformly scaled) maps are a
   softer case: the button stays enabled, but the mode's own status note
   warns that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its own
