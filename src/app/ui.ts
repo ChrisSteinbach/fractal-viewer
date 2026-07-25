@@ -904,15 +904,16 @@ export class Ui {
     }
   >();
 
-  /** The gradient-stop editor rows shown under the flame/solid/ramp palette
-   * `<select>`s once set to Custom (fr-55k; the ramp row since fr-3b6): a
-   * live gradient strip preview, one `<input type="color">` per stop, and the
-   * add/remove-stop buttons. All three editors read/write the SAME shared
-   * `AppState.customPalette` slot (see {@link syncCustomPaletteEditors}) —
-   * only which row is visible differs, keyed on that palette select's own
-   * paletteId (flame/solid) or `rampPaletteId` (ramp). */
+  /** The gradient-stop editor rows shown under the flame/solid/surface/ramp
+   * palette `<select>`s once set to Custom (fr-55k; the ramp row since
+   * fr-3b6, the surface row since fr-ibcm): a live gradient strip preview,
+   * one `<input type="color">` per stop, and the add/remove-stop buttons.
+   * All four editors read/write the SAME shared `AppState.customPalette`
+   * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
+   * differs, keyed on that palette select's own paletteId
+   * (flame/solid/surface) or `rampPaletteId` (ramp). */
   private readonly customPaletteEditors: Record<
-    "flame" | "solid" | "ramp",
+    "flame" | "solid" | "surface" | "ramp",
     {
       row: HTMLElement;
       strip: HTMLElement;
@@ -1117,6 +1118,13 @@ export class Ui {
         stops: this.byId("solidCustomPaletteStops"),
         add: this.byId("solidCustomPaletteAdd"),
         remove: this.byId("solidCustomPaletteRemove"),
+      },
+      surface: {
+        row: this.byId("surfaceCustomPaletteRow"),
+        strip: this.byId("surfaceCustomPaletteStrip"),
+        stops: this.byId("surfaceCustomPaletteStops"),
+        add: this.byId("surfaceCustomPaletteAdd"),
+        remove: this.byId("surfaceCustomPaletteRemove"),
       },
       ramp: {
         row: this.byId("rampCustomPaletteRow"),
@@ -1408,12 +1416,13 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    // Custom palette gradient editor (fr-55k; the ramp row since fr-3b6): the
-    // flame/solid/ramp rows share this same wiring, each against its own DOM
-    // elements. The recolor listener is delegated on the `stops` container
-    // (rather than bound per input) so it survives syncCustomPaletteEditors
-    // rebuilding the inputs on an add/remove.
-    for (const kind of ["flame", "solid", "ramp"] as const) {
+    // Custom palette gradient editor (fr-55k; the ramp row since fr-3b6, the
+    // surface row since fr-ibcm): the flame/solid/surface/ramp rows share
+    // this same wiring, each against its own DOM elements. The recolor
+    // listener is delegated on the `stops` container (rather than bound per
+    // input) so it survives syncCustomPaletteEditors rebuilding the inputs
+    // on an add/remove.
+    for (const kind of ["flame", "solid", "surface", "ramp"] as const) {
       const editor = this.customPaletteEditors[kind];
       editor.stops.addEventListener("input", () => {
         const stops = this.readCustomPaletteStops(editor.stops);
@@ -1756,32 +1765,35 @@ export class Ui {
   }
 
   /**
-   * Sync the flame/solid/ramp gradient-stop editors (fr-55k; the ramp row
-   * since fr-3b6) to `state.customPalette`, called from {@link updateLabels}
-   * right after the table-driven scalar sync loop. Three rows now: the
-   * flame/solid rows show only while their OWN render's palette select is on
-   * {@link CUSTOM_PALETTE_ID}; the ramp row additionally sits INSIDE
-   * `#rampPaletteRow`, so the per-view ramp-mode gating {@link updateLabels}
-   * applies to that container (flat: `colorModeUsesRampPalette`; non-flat:
-   * `fourDColor === "radius"`, fr-6ue) composes on top of the isCustom
-   * gating handled here — both must hold for the ramp editor to actually
-   * show. All three edit the same shared slot (see
-   * `state.ts`'s `AppState.customPalette`), so switching which one is
-   * "custom" never loses an in-progress edit. The stop inputs are only
-   * rebuilt when their count changes (add/remove, or a fresh seed) — an
-   * ordinary recolor instead updates each input's value in place, so it
+   * Sync the flame/solid/surface/ramp gradient-stop editors (fr-55k; the
+   * ramp row since fr-3b6, the surface row since fr-ibcm) to
+   * `state.customPalette`, called from {@link updateLabels} right after the
+   * table-driven scalar sync loop. Four rows now: the flame/solid rows show
+   * only while their OWN render's palette select is on
+   * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
+   * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
+   * surface colorSource is the orbit-trap palette; `#rampPaletteRow`, the
+   * per-view ramp-mode gating — flat: `colorModeUsesRampPalette`; non-flat:
+   * `fourDColor === "radius"`, fr-6ue), so {@link updateLabels}' container
+   * gating composes on top of the isCustom gating handled here — both must
+   * hold for those editors to actually show. All four edit the same shared
+   * slot (see `state.ts`'s `AppState.customPalette`), so switching which
+   * one is "custom" never loses an in-progress edit. The stop inputs are
+   * only rebuilt when their count changes (add/remove, or a fresh seed) —
+   * an ordinary recolor instead updates each input's value in place, so it
    * never clobbers a color picker mid-drag with a redundant write.
    */
   private syncCustomPaletteEditors(state: AppState): void {
     const paletteIdByKind: Record<
-      "flame" | "solid" | "ramp",
+      "flame" | "solid" | "surface" | "ramp",
       PaletteSelection
     > = {
       flame: state.flame.paletteId,
       solid: state.solid.paletteId,
+      surface: state.surface.paletteId,
       ramp: state.rampPaletteId,
     };
-    for (const kind of ["flame", "solid", "ramp"] as const) {
+    for (const kind of ["flame", "solid", "surface", "ramp"] as const) {
       const editor = this.customPaletteEditors[kind];
       const isCustom = paletteIdByKind[kind] === CUSTOM_PALETTE_ID;
       editor.row.classList.toggle("hidden", !isCustom);
