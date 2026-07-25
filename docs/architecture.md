@@ -339,21 +339,26 @@ discovery, keep tweaking, and it's still there to load back.
 
 ## The flame still and the solid voxel render
 
-Beyond the live point cloud, a converged system can be committed to one of two
-heavier, on-demand renders. Both replay the identical chaos game — same
-transforms, variations, final-transform lens, symmetry — but accumulate its
-plotted points into a different structure and present the result differently.
-The three renderers are one **render mode** axis (fr-39y): a session-only
-`renderMode: "points" | "flame" | "solid"` in `AppState` (never persisted —
-the app always boots into the points explorer), switched from a single
-segmented control at the top of the panel, so flame ↔ solid is a direct
-switch rather than a round-trip through the explorer. A preset can declare
-the mode it was authored to showcase (`PRESET_RENDER_HINTS` — the "Flame"
-optgroup's Radiolarian/Swirl), which `main.ts` applies when the freshly
-loaded system's cloud lands, snapping the camera fit first so the flame's
-frozen projection frames the new attractor. Each render runs in its own Web
-Worker (see "Render workers" below) so its hundreds of millions of
-iterations never touch the main thread.
+Beyond the live point cloud, a converged system can be committed to one of
+three on-demand renders. Two of them — the flame still and the solid voxel
+render, this section's subject — accumulate their result from hundreds of
+millions of chaos-game iterations; the third, the surface distance
+estimator (below), needs no accumulation and completes instantly. All three
+replay the identical chaos game (or, for the surface render, its analytic
+equivalent) — same transforms, variations, final-transform lens, symmetry —
+and present the result differently. The four renderers are one **render
+mode** axis (fr-39y): a session-only `renderMode: "points" | "flame" |
+"solid" | "surface"` in `AppState` (never persisted — the app always boots
+into the points explorer), switched from a single segmented control at the
+top of the panel, so any pair of them is a direct switch, never a round-trip
+through the explorer. A preset can declare the mode it was authored to
+showcase (`PRESET_RENDER_HINTS` — the "Flame" optgroup's Radiolarian/Swirl),
+which `main.ts` applies when the freshly loaded system's cloud lands,
+snapping the camera fit first so the flame's frozen projection frames the
+new attractor. The flame and solid renders each run in their own Web Worker
+(see "Render workers" below) so their hundreds of millions of iterations
+never touch the main thread; the surface render, covered in its own section
+below, needs neither.
 
 `render-session.ts` factors out what the two modes share: a `RenderSession` owns
 the worker lifecycle (`enter` / `exit` / a defensive `terminate`) and a
@@ -413,9 +418,10 @@ explorer it was captured from — or a palette gradient, as in the flame.
 tone-maps with, so "solid enough to cross the isosurface" and "bright in a flame
 of the same system" line up.
 
-`voxel-material.ts` is the GPU side — a Three.js GLSL3 `ShaderMaterial` (the
-third place Three.js appears in the shipped app, alongside `scene.ts` and
-`interactions.ts`) that raymarches the volume behind a full-screen quad:
+`voxel-material.ts` is the GPU side — a Three.js GLSL3 `ShaderMaterial` (one
+of four places Three.js appears in the shipped app, alongside `scene.ts`,
+`interactions.ts`, and the surface render's own `surface-material.ts`, below)
+that raymarches the volume behind a full-screen quad:
 reconstruct each pixel's camera ray, intersect the grid's box, march from a
 dithered start until density crosses the threshold, bisect to localize the
 isosurface, then shade it from a central-difference density gradient with a hard
@@ -447,10 +453,65 @@ an out-of-slice voxel contributes nothing, because a solid isosurface has no
 translucency to fade a 6% pedestal into and would just fog the whole projection
 with dross nobody asked to see solidified.
 
+## The surface distance estimator
+
+A converged system can also be rendered a fourth way (epic fr-7jlk): as a
+true implicit surface, sphere-traced against an analytic **distance
+estimator** (DE) instead of accumulated from chaos-game samples. The chaos
+game applies every map FORWARD — pick `fᵢ` at random, plot `fᵢ(p)` — while a
+DE runs the maps BACKWARD from an arbitrary query point, descending whichever
+inverse image lands nearest the origin and tracking the accumulated
+contraction so the final distance can be un-scaled once the descent bottoms
+out: the classic KIFS `dr *= scale` bookkeeping, generalized from a set of
+maps that fold onto themselves to an arbitrary IFS. `src/fractal/
+surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active map
+— symmetry-expanded exactly like the chaos game's own kaleidoscope copies —
+plus a seeded probe of the attractor's bounding radius and a pre-inverted
+final-transform lens; `estimateDistance` is the descent itself, greedily
+following the nearest inverse image at each level while folding in a
+certified lower bound from every non-descended sibling that escaped the
+bounding sphere, so the march crosses voids quickly instead of stalling and
+the estimate stays tight near the surface without needing the full
+exponential branch tree. See that module's doc comment for the bound's
+derivation.
+
+Whether a valid DE exists at all — and how fast it can be marched — turns on
+**conformality**. For an invertible affine map with linear part `M`,
+`dist(p, f(A)) ≥ sigma_min(M) · dist(f⁻¹(p), A)`, where `sigma_min` is `M`'s
+smallest singular value: an EQUALITY for a conformal map (rotation/reflection
+plus uniform scale), and a genuine but progressively looser LOWER bound as a
+map's per-axis scales pull apart (anisotropy). That is exactly why
+`analyzeSurfaceSystem` gates eligibility the way it does — the sigma_min
+bound is exact for conformal maps, so an all-conformal system marches at full
+step; conservative for anisotropic ones, so the tracer only backs off its
+step size rather than risk piercing the surface; and intractable for
+nonlinear variations, which have no closed-form inverse for any bound to be
+stated in terms of — so a system using variations is ineligible outright,
+alongside one extending into 4D (the DE is 3D-only) or one whose maps don't
+contract (Hutchinson's condition for the attractor to exist in the first
+place, and for the descent to terminate).
+
+`src/app/surface-material.ts` is the GLSL sphere-tracer, and it mirrors
+`surface-de.ts`'s `estimateDistance` line for line — the same
+symmetry-expanded inverse maps, sigma_min values, and bounding radii packed
+into fixed-size uniform arrays (capped at 24 slots) instead of JS objects,
+running the identical greedy-descent loop per ray step. It is the same
+CPU-oracle-to-GPU mirror discipline as `flame.ts` <-> `flame-gpu.ts`: the
+tested, dependency-free module is the source of truth, and the shader is a
+hand-kept-in-lockstep port, not an independent implementation. Unlike the
+flame/solid renders, there is no accumulation to converge, so the mode reuses
+their `RenderSession` enter/exit/first-frame-gate machinery but with a
+no-op worker stub in place of a real one — the tracer's one render call
+against the live camera IS the first frame, and every orbit/zoom afterward
+just repeats that same call, exactly like the solid render's raymarcher
+re-running each frame against its density grid, only here against an
+analytic field that has no convergence to wait on.
+
 ## Render workers & cross-origin isolation
 
-The two on-demand renderers (the fractal-flame still and the solid voxel view)
-each run in a dedicated Web Worker (`flame-worker.ts` / `voxel-worker.ts`) so
+Two of the app's three on-demand renders — the fractal-flame still and the
+solid voxel view; the surface render, covered above, needs no worker — each
+run in a dedicated Web Worker (`flame-worker.ts` / `voxel-worker.ts`) so
 hundreds of millions of chaos-game iterations never touch the main thread. The
 workers are thin `postMessage` glue around plain-Vitest-testable session state
 machines (`flame-worker-core.ts` / `voxel-worker-core.ts`).

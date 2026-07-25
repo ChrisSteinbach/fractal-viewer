@@ -2072,7 +2072,13 @@ export class Ui {
     // with the segmented control's own glyphs, so a mixed gallery reads at a
     // glance which cards are flame/solid stills. Points entries stay bare.
     const modeCaption =
-      scene.mode === "flame" ? "✺ " : scene.mode === "solid" ? "◆ " : "";
+      scene.mode === "flame"
+        ? "✺ "
+        : scene.mode === "solid"
+          ? "◆ "
+          : scene.mode === "surface"
+            ? "◈ "
+            : "";
     const modeAria = scene.mode === undefined ? "" : ` (${scene.mode} render)`;
     const card = this.doc.createElement("div");
     card.className = "gallery-card";
@@ -2183,14 +2189,16 @@ export class Ui {
       row.appendChild(placeholder);
     }
 
-    if (step.mode === "flame" || step.mode === "solid") {
-      // A keyframe captured from a flame/solid render (fr-v3au) plays back
-      // in that renderer and holds until it converges — flagged with the
-      // same glyph vocabulary as galleryCard's mode caption (fr-75sq). A
-      // plain (points) step gets no element at all.
+    if (step.mode !== undefined) {
+      // A keyframe captured from a flame/solid/surface render (fr-v3au)
+      // plays back in that renderer and holds until it converges (the
+      // surface render converges instantly) — flagged with the same glyph
+      // vocabulary as galleryCard's mode caption (fr-75sq). A plain
+      // (points) step gets no element at all.
       const mode = this.doc.createElement("span");
       mode.className = "timeline-step-mode";
-      mode.textContent = step.mode === "flame" ? "✺" : "◆";
+      mode.textContent =
+        step.mode === "flame" ? "✺" : step.mode === "solid" ? "◆" : "◈";
       mode.title = `Plays as a ${step.mode} render — playback holds until it converges`;
       mode.setAttribute("role", "img");
       mode.setAttribute("aria-label", `${step.mode} render keyframe`);
