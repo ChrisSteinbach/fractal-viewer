@@ -28,12 +28,12 @@ import type { Transform, Transform4, Vec4 } from "./types";
  * holds for an invertible linear map `M` in ANY dimension: the proof only
  * needs `sigma_min` to be the worst-case contraction `M` applies to any unit
  * direction, never the dimension of the space `M` acts on. So everything 3D
- * builds on top of it — greedy descent into the branch whose inverse image
- * lands nearest the origin, escaped-sibling certificates folded in at every
- * level, the terminal KIFS bound closing off the descended branch — carries
- * over unchanged. {@link estimateDistance4} is a structural port of
- * `estimateDistance`: four coordinates instead of three, and nothing else
- * different in shape.
+ * builds on top of it — the width-2 descent beam (fr-v6yg) refining the
+ * branches whose inverse images land nearest the origin, escaped-sibling
+ * certificates folded in at every level, the terminal KIFS bound closing
+ * off each descended chain — carries over unchanged.
+ * {@link estimateDistance4} is a structural port of `estimateDistance`:
+ * four coordinates instead of three, and nothing else different in shape.
  *
  * WHY THE SINGULAR VALUES NEED AN EIGEN-SOLVE HERE. 3D's `singularValues3`
  * is closed-form because the characteristic CUBIC of the symmetric `M^T M`
@@ -102,8 +102,23 @@ import type { Transform, Transform4, Vec4 } from "./types";
  * which the certificate refinement never touches: its violations measurably
  * WORSEN under refinement (39 -> 49 over the same 700-query mix) and its
  * march stays majority-ghost even refined (91.5% -> 52.9% of hits). An
- * eligibility-side guard for that profile is follow-up work, not covered by
- * this spike. Full experiment tables live on the fr-beck bead.
+ * eligibility-side guard for that profile was filed as follow-up work
+ * (fr-v6yg). Full experiment tables live on the fr-beck bead.
+ *
+ * FR-V6YG RESOLUTION (measured 2026-07, after the verdict above): the
+ * exclusion is repaired — not by an eligibility guard but by the width-2
+ * descent BEAM both estimators now run (see `estimateDistance` in the 3D
+ * twin for the mechanics): the second chain refines the second-nearest
+ * in-sphere branch instead of dropping it, which is exactly the
+ * branch-selection risk doubleRotation exposed. Measured on the fr-v6yg
+ * harness (`scripts/surface-beam.harness.ts`): doubleRotation's jittered/
+ * uniform violations drop to 0 for BOTH estimators (max excess 19.4%R base
+ * / 20.8%R refined -> fp-noise ~3e-8), and the refined estimator's
+ * void-false-hit proxy reads 0/514 — the march-ghost mechanism and the
+ * overshoot mechanism are both closed, at ~1.5x inverse-application cost
+ * on this system. Residual (disclosed on the fr-v6yg bead): 3+
+ * simultaneous in-sphere branches still drop (m >= 3 slow-map systems,
+ * sigma_max >= 0.96, and kaleidoscope-tied copies in 3D) at ~2-5%R.
  */
 
 /** Fixed sweep order for {@link singularValues4}'s cyclic Jacobi: the six
@@ -435,6 +450,11 @@ export interface SurfaceDE4 {
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
    * features below `DEPTH_RESOLUTION`. */
   maxDepth: number;
+  /** How many descent chains {@link estimateDistance4} refines in
+   * parallel. Always 2 from {@link buildSurfaceDE4} (fr-v6yg, exactly like
+   * 3D's `SurfaceDE.beamWidth`); 1 exists so tests can pin the width-1
+   * mechanism the beam repairs. */
+  beamWidth: 1 | 2;
   /** March step multiplier from {@link analyzeSurfaceSystem4}. */
   stepScale: number;
 }
@@ -510,102 +530,166 @@ export function buildSurfaceDE4(transforms: Transform[]): SurfaceDE4 {
     boundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
+    beamWidth: 2,
     stepScale: analysis.stepScale,
   };
 }
 
 /**
- * Reference DE the module's validity argument certifies: greedy inverse-map
+ * Reference DE the module's validity argument certifies: beam inverse-map
  * descent with sibling-certificate tracking, a structural port of 3D's
  * `estimateDistance` (see the module doc for why the validity argument
  * transfers) with every coordinate step unrolled to four terms instead of
  * three, and no final-transform block (this spike does not build a lens —
- * see the module doc).
- *
- * At each depth every inverse image is computed to find the greedy branch
- * (nearest the origin) while also tracking the two smallest ESCAPED
- * certificates (`sigma_min_j * (r_j - R)`, only for images that landed
- * outside the bounding sphere); the smaller of the two survives as the
- * "sibling" certificate whenever the overall smallest belongs to the branch
- * about to be descended (its own certificate is about to be refined by the
- * next level instead, so folding it in here would double-count). The loop
- * breaks once the greedy branch escapes past `escapeRadius`; the final
- * `(lastR - R)` scaled by the accumulated contraction is the terminal KIFS
- * bound for whatever is left of the descended branch. The overall estimate
- * never beats the depth-0 sphere bound `|p| - R`.
+ * see the module doc). See the 3D twin's doc for the beam mechanics: the
+ * selection key `chainScale · (r - R)`, the frozen certificates every
+ * non-descended escaped candidate folds, the terminal bound a chain folds
+ * at escape or the depth cap, and the width-1 equivalence to the classic
+ * greedy descent. Width 2 is what repairs the fr-v6yg branch-selection
+ * overshoot (doubleRotation's profile) that certificate refinement
+ * provably cannot touch.
  */
 export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   const R = de.boundingRadius;
-  let x = p[0];
-  let y = p[1];
-  let z = p[2];
-  let w = p[3];
-  const sphereBound = Math.sqrt(x * x + y * y + z * z + w * w) - R;
-
+  const startR = Math.sqrt(
+    p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + p[3] * p[3],
+  );
+  const sphereBound = startR - R;
+  const wide = de.beamWidth > 1;
   let best = Infinity;
-  let scale = 1;
-  let lastR = Math.sqrt(x * x + y * y + z * z + w * w);
+
+  // Chain slot A starts at the query; slot B idles until beam selection
+  // fills it (width-2 systems only). Mirrors 3D's estimateDistance with a
+  // fourth coordinate on every chain and candidate slot.
+  let aX = p[0];
+  let aY = p[1];
+  let aZ = p[2];
+  let aW = p[3];
+  let aScale = 1;
+  let aR = startR;
+  let aLive = true;
+  let bX = 0;
+  let bY = 0;
+  let bZ = 0;
+  let bW = 0;
+  let bScale = 1;
+  let bR = 0;
+  let bLive = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    let greedyR = Infinity;
-    let gx = 0;
-    let gy = 0;
-    let gz = 0;
-    let gw = 0;
-    let gSigma = 1;
-    // Two smallest certificates this level + which map owns the smallest,
-    // so the descended (greedy) branch's own certificate can be dropped in
-    // favor of its deeper refinement without a second scan.
-    let greedyIndex = -1;
-    let cert1 = Infinity;
-    let cert2 = Infinity;
-    let cert1Index = -1;
-    for (let j = 0; j < de.maps.length; j++) {
-      const map = de.maps[j];
-      const im = map.invM;
-      const it = map.invT;
-      const ix = im[0] * x + im[1] * y + im[2] * z + im[3] * w + it[0];
-      const iy = im[4] * x + im[5] * y + im[6] * z + im[7] * w + it[1];
-      const iz = im[8] * x + im[9] * y + im[10] * z + im[11] * w + it[2];
-      const iw = im[12] * x + im[13] * y + im[14] * z + im[15] * w + it[3];
-      const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
-      if (r < greedyR) {
-        greedyR = r;
-        gx = ix;
-        gy = iy;
-        gz = iz;
-        gw = iw;
-        gSigma = map.sigmaMin;
-        greedyIndex = j;
-      }
-      if (r > R) {
-        const bound = map.sigmaMin * (r - R);
-        if (bound < cert1) {
-          cert2 = cert1;
-          cert1 = bound;
-          cert1Index = j;
-        } else if (bound < cert2) {
-          cert2 = bound;
+    if (!aLive && !bLive) break;
+    let c1Key = Infinity;
+    let c1X = 0;
+    let c1Y = 0;
+    let c1Z = 0;
+    let c1W = 0;
+    let c1Scale = 1;
+    let c1R = 0;
+    let c1Cert = 0;
+    let c2Key = Infinity;
+    let c2X = 0;
+    let c2Y = 0;
+    let c2Z = 0;
+    let c2W = 0;
+    let c2Scale = 1;
+    let c2R = 0;
+    let c2Cert = 0;
+    for (let c = 0; c < 2; c++) {
+      const isA = c === 0;
+      if (isA ? !aLive : !bLive) continue;
+      const pX = isA ? aX : bX;
+      const pY = isA ? aY : bY;
+      const pZ = isA ? aZ : bZ;
+      const pW = isA ? aW : bW;
+      const pScale = isA ? aScale : bScale;
+      for (let j = 0; j < de.maps.length; j++) {
+        const map = de.maps[j];
+        const im = map.invM;
+        const it = map.invT;
+        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+        const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
+        const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
+        const iw =
+          im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+        const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+        const key = pScale * (r - R);
+        const childScale = pScale * map.sigmaMin;
+        const cert = childScale * (r - R);
+        if (key < c1Key) {
+          if (c2R > R && c2Cert < best) best = c2Cert;
+          c2Key = c1Key;
+          c2X = c1X;
+          c2Y = c1Y;
+          c2Z = c1Z;
+          c2W = c1W;
+          c2Scale = c1Scale;
+          c2R = c1R;
+          c2Cert = c1Cert;
+          c1Key = key;
+          c1X = ix;
+          c1Y = iy;
+          c1Z = iz;
+          c1W = iw;
+          c1Scale = childScale;
+          c1R = r;
+          c1Cert = cert;
+        } else if (key < c2Key) {
+          if (c2R > R && c2Cert < best) best = c2Cert;
+          c2Key = key;
+          c2X = ix;
+          c2Y = iy;
+          c2Z = iz;
+          c2W = iw;
+          c2Scale = childScale;
+          c2R = r;
+          c2Cert = cert;
+        } else if (r > R && cert < best) {
+          best = cert;
         }
       }
     }
-    const siblingCert = cert1Index === greedyIndex ? cert2 : cert1;
-    if (siblingCert < Infinity && scale * siblingCert < best) {
-      best = scale * siblingCert;
+    aLive = false;
+    bLive = false;
+    if (c1Key < Infinity) {
+      if (c1R > de.escapeRadius) {
+        if (c1Cert < best) best = c1Cert;
+      } else {
+        aX = c1X;
+        aY = c1Y;
+        aZ = c1Z;
+        aW = c1W;
+        aScale = c1Scale;
+        aR = c1R;
+        aLive = true;
+      }
     }
-    x = gx;
-    y = gy;
-    z = gz;
-    w = gw;
-    lastR = greedyR;
-    scale *= gSigma;
-    if (greedyR > de.escapeRadius) break;
+    if (c2Key < Infinity) {
+      if (!wide || c2R > de.escapeRadius) {
+        if (c2R > R && c2Cert < best) best = c2Cert;
+      } else {
+        bX = c2X;
+        bY = c2Y;
+        bZ = c2Z;
+        bW = c2W;
+        bScale = c2Scale;
+        bR = c2R;
+        bLive = true;
+      }
+    }
   }
 
-  // Terminal bound of the descended branch (the KIFS last-value formula):
-  // non-positive when the point tracked the attractor to the depth cap.
-  const terminal = scale * (lastR - R);
-  let d = Math.min(best, terminal);
+  // Terminal bound of chains alive at the depth cap (the KIFS last-value
+  // formula): non-positive when the chain tracked the attractor all the
+  // way down.
+  if (aLive) {
+    const terminal = aScale * (aR - R);
+    if (terminal < best) best = terminal;
+  }
+  if (bLive) {
+    const terminal = bScale * (bR - R);
+    if (terminal < best) best = terminal;
+  }
+  let d = best;
   if (sphereBound > d) d = sphereBound;
   return d;
 }
@@ -646,103 +730,197 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
  * the module doc's SPIKE VERDICT section for the measured numbers this
  * conclusion rests on.
  *
- * COST. Refining EVERY escaped sibling at every level (what this function
- * does) is the measured quality CEILING, not a costed production path: on
- * pentatope it costs 5.65x {@link estimateDistance4}'s own inverse-affine-
- * application count per call (measured: 18.87 -> 106.57 mean applications
- * per call). A GPU port should refine only the tracked `cert1`/`cert2`
- * candidates (the two escaped siblings whose certificate could actually
- * become `best` at this level) rather than every escaped map — this
- * function intentionally pays the wasteful, exhaustive cost so the
- * measurement isolates the refinement's QUALITY, not an
- * already-cost-optimized implementation's.
+ * COST. Refinement is paid lazily, at FOLD time: only candidates actually
+ * frozen into the running min (evicted from or rejected by the beam, or
+ * the width-1 runner-up) run the extra inner level — beam-selected
+ * candidates are refined by their own deeper descent instead, and a
+ * chain's terminal fold (escape or depth cap) stays the plain KIFS bound,
+ * exactly like the base estimator's. That folds the same set of values the
+ * spike's exhaustive variant minimized (every escaped non-descended
+ * sibling), at strictly less work than the measured 5.65x exhaustive
+ * ceiling — the shape the SPIKE VERDICT's cost note said a GPU port
+ * should take.
  */
 export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   const R = de.boundingRadius;
-  let x = p[0];
-  let y = p[1];
-  let z = p[2];
-  let w = p[3];
-  const sphereBound = Math.sqrt(x * x + y * y + z * z + w * w) - R;
-
+  const startR = Math.sqrt(
+    p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + p[3] * p[3],
+  );
+  const sphereBound = startR - R;
+  const wide = de.beamWidth > 1;
   let best = Infinity;
-  let scale = 1;
-  let lastR = Math.sqrt(x * x + y * y + z * z + w * w);
+
+  // One extra Hutchinson level on a frozen escaped candidate's own inverse
+  // image, over every map k (see the doc comment's VALIDITY note): the
+  // certificate becomes childScale * max(r - R, inner) — never below the
+  // base estimator's childScale * (r - R).
+  const refinedCert = (
+    ix: number,
+    iy: number,
+    iz: number,
+    iw: number,
+    r: number,
+    childScale: number,
+  ): number => {
+    let inner = Infinity;
+    for (let k = 0; k < de.maps.length; k++) {
+      const mapK = de.maps[k];
+      const imK = mapK.invM;
+      const itK = mapK.invT;
+      const kx = imK[0] * ix + imK[1] * iy + imK[2] * iz + imK[3] * iw + itK[0];
+      const ky = imK[4] * ix + imK[5] * iy + imK[6] * iz + imK[7] * iw + itK[1];
+      const kz =
+        imK[8] * ix + imK[9] * iy + imK[10] * iz + imK[11] * iw + itK[2];
+      const kw =
+        imK[12] * ix + imK[13] * iy + imK[14] * iz + imK[15] * iw + itK[3];
+      const rk = Math.sqrt(kx * kx + ky * ky + kz * kz + kw * kw);
+      const innerTerm = mapK.sigmaMin * (rk - R);
+      if (innerTerm < inner) inner = innerTerm;
+    }
+    return childScale * Math.max(r - R, inner);
+  };
+
+  let aX = p[0];
+  let aY = p[1];
+  let aZ = p[2];
+  let aW = p[3];
+  let aScale = 1;
+  let aR = startR;
+  let aLive = true;
+  let bX = 0;
+  let bY = 0;
+  let bZ = 0;
+  let bW = 0;
+  let bScale = 1;
+  let bR = 0;
+  let bLive = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    let greedyR = Infinity;
-    let gx = 0;
-    let gy = 0;
-    let gz = 0;
-    let gw = 0;
-    let gSigma = 1;
-    let greedyIndex = -1;
-    let cert1 = Infinity;
-    let cert2 = Infinity;
-    let cert1Index = -1;
-    for (let j = 0; j < de.maps.length; j++) {
-      const map = de.maps[j];
-      const im = map.invM;
-      const it = map.invT;
-      const ix = im[0] * x + im[1] * y + im[2] * z + im[3] * w + it[0];
-      const iy = im[4] * x + im[5] * y + im[6] * z + im[7] * w + it[1];
-      const iz = im[8] * x + im[9] * y + im[10] * z + im[11] * w + it[2];
-      const iw = im[12] * x + im[13] * y + im[14] * z + im[15] * w + it[3];
-      const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
-      if (r < greedyR) {
-        greedyR = r;
-        gx = ix;
-        gy = iy;
-        gz = iz;
-        gw = iw;
-        gSigma = map.sigmaMin;
-        greedyIndex = j;
-      }
-      if (r > R) {
-        // One extra Hutchinson level on this escaped sibling's own inverse
-        // image, over every map k (see the doc comment's VALIDITY note).
-        let inner = Infinity;
-        for (let k = 0; k < de.maps.length; k++) {
-          const mapK = de.maps[k];
-          const imK = mapK.invM;
-          const itK = mapK.invT;
-          const kx =
-            imK[0] * ix + imK[1] * iy + imK[2] * iz + imK[3] * iw + itK[0];
-          const ky =
-            imK[4] * ix + imK[5] * iy + imK[6] * iz + imK[7] * iw + itK[1];
-          const kz =
-            imK[8] * ix + imK[9] * iy + imK[10] * iz + imK[11] * iw + itK[2];
-          const kw =
-            imK[12] * ix + imK[13] * iy + imK[14] * iz + imK[15] * iw + itK[3];
-          const rk = Math.sqrt(kx * kx + ky * ky + kz * kz + kw * kw);
-          const innerTerm = mapK.sigmaMin * (rk - R);
-          if (innerTerm < inner) inner = innerTerm;
-        }
-        const bound = map.sigmaMin * Math.max(r - R, inner);
-        if (bound < cert1) {
-          cert2 = cert1;
-          cert1 = bound;
-          cert1Index = j;
-        } else if (bound < cert2) {
-          cert2 = bound;
+    if (!aLive && !bLive) break;
+    let c1Key = Infinity;
+    let c1X = 0;
+    let c1Y = 0;
+    let c1Z = 0;
+    let c1W = 0;
+    let c1Scale = 1;
+    let c1R = 0;
+    let c1Cert = 0;
+    let c2Key = Infinity;
+    let c2X = 0;
+    let c2Y = 0;
+    let c2Z = 0;
+    let c2W = 0;
+    let c2Scale = 1;
+    let c2R = 0;
+    let c2Cert = 0;
+    for (let c = 0; c < 2; c++) {
+      const isA = c === 0;
+      if (isA ? !aLive : !bLive) continue;
+      const pX = isA ? aX : bX;
+      const pY = isA ? aY : bY;
+      const pZ = isA ? aZ : bZ;
+      const pW = isA ? aW : bW;
+      const pScale = isA ? aScale : bScale;
+      for (let j = 0; j < de.maps.length; j++) {
+        const map = de.maps[j];
+        const im = map.invM;
+        const it = map.invT;
+        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+        const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
+        const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
+        const iw =
+          im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+        const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+        const key = pScale * (r - R);
+        const childScale = pScale * map.sigmaMin;
+        const cert = childScale * (r - R);
+        if (key < c1Key) {
+          if (c2R > R) {
+            const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
+            if (rc < best) best = rc;
+          }
+          c2Key = c1Key;
+          c2X = c1X;
+          c2Y = c1Y;
+          c2Z = c1Z;
+          c2W = c1W;
+          c2Scale = c1Scale;
+          c2R = c1R;
+          c2Cert = c1Cert;
+          c1Key = key;
+          c1X = ix;
+          c1Y = iy;
+          c1Z = iz;
+          c1W = iw;
+          c1Scale = childScale;
+          c1R = r;
+          c1Cert = cert;
+        } else if (key < c2Key) {
+          if (c2R > R) {
+            const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
+            if (rc < best) best = rc;
+          }
+          c2Key = key;
+          c2X = ix;
+          c2Y = iy;
+          c2Z = iz;
+          c2W = iw;
+          c2Scale = childScale;
+          c2R = r;
+          c2Cert = cert;
+        } else if (r > R) {
+          const rc = refinedCert(ix, iy, iz, iw, r, childScale);
+          if (rc < best) best = rc;
         }
       }
     }
-    const siblingCert = cert1Index === greedyIndex ? cert2 : cert1;
-    if (siblingCert < Infinity && scale * siblingCert < best) {
-      best = scale * siblingCert;
+    // Promotion mirrors the base estimator; the one refinement-specific
+    // branch is the width-1 runner-up, the classic frozen sibling — the
+    // exact certificate the spike measured every ghost back to.
+    aLive = false;
+    bLive = false;
+    if (c1Key < Infinity) {
+      if (c1R > de.escapeRadius) {
+        if (c1Cert < best) best = c1Cert;
+      } else {
+        aX = c1X;
+        aY = c1Y;
+        aZ = c1Z;
+        aW = c1W;
+        aScale = c1Scale;
+        aR = c1R;
+        aLive = true;
+      }
     }
-    x = gx;
-    y = gy;
-    z = gz;
-    w = gw;
-    lastR = greedyR;
-    scale *= gSigma;
-    if (greedyR > de.escapeRadius) break;
+    if (c2Key < Infinity) {
+      if (!wide) {
+        if (c2R > R) {
+          const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
+          if (rc < best) best = rc;
+        }
+      } else if (c2R > de.escapeRadius) {
+        if (c2Cert < best) best = c2Cert;
+      } else {
+        bX = c2X;
+        bY = c2Y;
+        bZ = c2Z;
+        bW = c2W;
+        bScale = c2Scale;
+        bR = c2R;
+        bLive = true;
+      }
+    }
   }
 
-  const terminal = scale * (lastR - R);
-  let d = Math.min(best, terminal);
+  if (aLive) {
+    const terminal = aScale * (aR - R);
+    if (terminal < best) best = terminal;
+  }
+  if (bLive) {
+    const terminal = bScale * (bR - R);
+    if (terminal < best) best = terminal;
+  }
+  let d = best;
   if (sphereBound > d) d = sphereBound;
   return d;
 }
