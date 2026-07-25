@@ -609,6 +609,21 @@ body {
   outline-color: #fff;
 }
 
+/* A gated mode — the Surface segment while the system has no distance
+   estimator (ui.ts's setSurfaceEligibility) — must LOOK unavailable, not
+   just swallow clicks: dim it, drop the pointer affordance, and keep the
+   hover highlight off. The tooltip (and a tap's toast — see ui.ts) carries
+   the reason. */
+.segmented .segment:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.segmented .segment:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+
 /* `.btn` is `display: block; width: 100%` for the panel's stacked buttons —
    inside the flex #updateBanner the Reload button must size to its label
    instead of stretching. */
