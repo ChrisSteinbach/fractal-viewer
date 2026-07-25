@@ -467,13 +467,23 @@ maps that fold onto themselves to an arbitrary IFS. `src/fractal/
 surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active map
 — symmetry-expanded exactly like the chaos game's own kaleidoscope copies —
 plus a seeded probe of the attractor's bounding radius and a pre-inverted
-final-transform lens; `estimateDistance` is the descent itself, greedily
-following the nearest inverse image at each level while folding in a
-certified lower bound from every non-descended sibling that escaped the
-bounding sphere, so the march crosses voids quickly instead of stalling and
-the estimate stays tight near the surface without needing the full
-exponential branch tree. See that module's doc comment for the bound's
-derivation.
+final-transform lens; `estimateDistance` is the descent itself, following
+the two nearest inverse images at each level (the fr-v6yg width-2 beam)
+while folding in a certified lower bound from every non-descended sibling
+that escaped the bounding sphere, so the march crosses voids quickly
+instead of stalling and the estimate stays tight near the surface without
+needing the full exponential branch tree. The production estimator —
+`estimateDistanceRefined`, the one the GLSL tracer mirrors — additionally
+spends one extra Hutchinson level on each folded sibling certificate
+(fr-1z6p, fr-beck's 4D ghost-eliminator ported back down): a barely-escaped
+sibling otherwise freezes a near-zero bound the marcher false-hits,
+rendering smooth "balloon" membranes across attractor voids (measured on
+the default, sierpinski, pyramid, and jerusalem presets; refinement drives
+every measured void false-hit to zero, and a fold-time laziness guard —
+skip any fold whose plain certificate already fails to beat the running
+min, bit-exact since refinement only raises certificates — keeps the cost
+at ~2-4x inverse applications). See that module's doc comment for the
+bound's derivation and the measured tables.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,
@@ -493,10 +503,10 @@ system extending into 4D is not a disqualifier but a route: it gets the
 DE's 4D twin (two paragraphs down) instead of this 3D one.
 
 `src/app/surface-material.ts` is the GLSL sphere-tracer, and it mirrors
-`surface-de.ts`'s `estimateDistance` line for line — the same
+`surface-de.ts`'s `estimateDistanceRefined` line for line — the same
 symmetry-expanded inverse maps, sigma_min values, and bounding radii packed
 into fixed-size uniform arrays (capped at 24 slots) instead of JS objects,
-running the identical greedy-descent loop per ray step. It is the same
+running the identical refined beam-descent loop per ray step. It is the same
 CPU-oracle-to-GPU mirror discipline as `flame.ts` <-> `flame-gpu.ts`: the
 tested, dependency-free module is the source of truth, and the shader is a
 hand-kept-in-lockstep port, not an independent implementation. Unlike the

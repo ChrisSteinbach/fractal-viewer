@@ -7,10 +7,12 @@ import { lightDirection } from "./voxel-material";
 /**
  * The surface render's GPU sphere-tracer (epic fr-7jlk): a full-screen-quad
  * ShaderMaterial that marches camera rays against an analytic distance
- * estimator for the IFS attractor — width-2 beam inverse-map descent with
- * sibling-certificate bounds (fr-v6yg), precomputed by `buildSurfaceDE`
- * (`src/fractal/surface-de.ts`) and packed into fixed-size uniform arrays
- * here. Hits are shaded in the solid raymarcher's vocabulary — DE-gradient
+ * estimator for the IFS attractor — width-2 beam inverse-map descent
+ * (fr-v6yg) with REFINED sibling certificates (fr-1z6p: fr-beck's measured
+ * ghost-eliminator ported down from the 4D tracer, closing the smooth
+ * "balloon" membranes the plain certificates rendered across attractor
+ * voids), precomputed by `buildSurfaceDE` (`src/fractal/surface-de.ts`)
+ * and packed into fixed-size uniform arrays here. Hits are shaded in the solid raymarcher's vocabulary — DE-gradient
  * normals, Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow
  * ray toward the light, DE-probed ambient occlusion — with four base-color
  * sources (by-transform, orbit-trap palette, height ramp, radius ramp; the
@@ -19,8 +21,9 @@ import { lightDirection } from "./voxel-material";
  * paint the same dark gradient backdrop as the explorer, so the mode reads
  * as the same scene, surfaced.
  *
- * The GLSL `surfaceDE` mirrors `estimateDistance` in `surface-de.ts` line
- * for line — the tested CPU oracle, the same discipline as `flame.ts` <->
+ * The GLSL `surfaceDE` mirrors `estimateDistanceRefined` in `surface-de.ts`
+ * line for line (the `refine === true` path of its shared descent body) —
+ * the tested CPU oracle, the same discipline as `flame.ts` <->
  * `flame-gpu.ts`. Kept in its own module so `scene.ts` stays the wiring
  * layer: everything GLSL lives here, everything camera/frame lives there
  * (the scene sets `uCamPos`, `uInvProjView`, and `uPixelEps` per frame).
@@ -121,26 +124,47 @@ const SURFACE_FRAGMENT = /* glsl */ `
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
   }
 
+  /** One extra Hutchinson level on a frozen escaped candidate's own inverse
+   * image (the oracle's refinedCert): the certificate becomes
+   * childScale * max(r - R, min_k sigmaMin_k * (|invMap_k(img)| - R)) —
+   * never below the plain childScale * (r - R). fr-beck measured this
+   * exact refinement eliminating every march ghost; fr-1z6p ports it here
+   * from the 4D tracer, closing the balloon membranes the plain
+   * certificates painted across attractor voids. */
+  float refinedCert(vec3 img, float r, float childScale) {
+    float inner = 1e30;
+    for (int k = 0; k < uMapCount; k++) {
+      vec3 kImg = uInvM[k] * img + uInvT[k];
+      inner = min(inner, uSigmaMin[k] * (length(kImg) - uBoundingRadius));
+    }
+    return childScale * max(r - uBoundingRadius, inner);
+  }
+
   /**
-   * Both surfaceDE overloads mirror estimateDistance in
+   * Both surfaceDE overloads mirror estimateDistanceRefined in
    * src/fractal/surface-de.ts (the tested CPU oracle) — any change there
    * must land in BOTH bodies here, and vice versa. Width-2 BEAM
    * inverse-map descent (fr-v6yg; the CPU oracle's beamWidth is always 2
    * in production builds, so the tracer hardcodes it): each level expands
    * both live chains through every map, keeps the two candidates with the
    * smallest selection key chainScale * (r - R) as the next chains, and
-   * folds every OTHER escaped candidate's certified bound
-   * chainScale * sigma_min_j * (r - R) into the running min — so surfaces
-   * reachable through a shallower or second-nearest branch are never
-   * overshot — while each kept chain keeps refining down to its terminal
-   * last-value bound (folded when it escapes past uEscapeRadius or the
-   * depth cap ends the loop). See the oracle module's doc for the validity
-   * argument and the measured overshoot the second chain repairs. 1e30
-   * stands in for Infinity (slot-occupancy tests use < 1e29): with sigma
-   * products <= 1 and real distances O(1..10) it can never be confused
-   * for a real bound. This plain overload is the workhorse (march,
-   * normals, shadow, occlusion); the out-param overload below adds
-   * hit-shading extras.
+   * folds every OTHER escaped candidate's REFINED certificate (fr-1z6p:
+   * refinedCert above) into the running min — so surfaces reachable
+   * through a shallower or second-nearest branch are never overshot, and
+   * barely-escaped siblings no longer freeze the near-zero plain bounds
+   * that false-hit as balloons — while each kept chain keeps refining down
+   * to its terminal last-value bound (folded PLAIN when it escapes past
+   * uEscapeRadius or the depth cap ends the loop, exactly as the oracle
+   * keeps them). Every refined fold site carries the oracle's laziness
+   * guard: refinement can only RAISE a certificate, so a fold whose PLAIN
+   * certificate already fails to beat the running min is skipped whole —
+   * bit-exact, and it caps the inner sweeps at the folds that actually
+   * advance the min. See the oracle module's doc for the validity
+   * argument and the measured numbers. 1e30 stands in for Infinity
+   * (slot-occupancy tests use < 1e29): with sigma products <= 1 and real
+   * distances O(1..10) it can never be confused for a real bound. This
+   * plain overload is the workhorse (march, normals, shadow, occlusion);
+   * the out-param overload below adds hit-shading extras.
    */
   float surfaceDE(vec3 p) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -190,9 +214,12 @@ const SURFACE_FRAGMENT = /* glsl */ `
           float cert = childScale * (r - uBoundingRadius);
           if (key < c1Key) {
             // New best: the old best shifts to runner-up, whose previous
-            // occupant folds (escaped candidates leave their certificate).
-            if (c2R > uBoundingRadius) {
-              best = min(best, c2Cert);
+            // occupant folds its REFINED certificate (fr-1z6p: one extra
+            // Hutchinson level closes the barely-escaped-sibling balloon)
+            // — skipped whole when its plain certificate cannot beat the
+            // running min anyway (the oracle's laziness guard, bit-exact).
+            if (c2R > uBoundingRadius && c2Cert < best) {
+              best = min(best, refinedCert(c2Q, c2R, c2Scale));
             }
             c2Key = c1Key;
             c2Q = c1Q;
@@ -205,16 +232,16 @@ const SURFACE_FRAGMENT = /* glsl */ `
             c1R = r;
             c1Cert = cert;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius) {
-              best = min(best, c2Cert);
+            if (c2R > uBoundingRadius && c2Cert < best) {
+              best = min(best, refinedCert(c2Q, c2R, c2Scale));
             }
             c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius) {
-            best = min(best, cert);
+          } else if (r > uBoundingRadius && cert < best) {
+            best = min(best, refinedCert(img, r, childScale));
           }
         }
       }
@@ -258,19 +285,20 @@ const SURFACE_FRAGMENT = /* glsl */ `
   }
 
   /**
-   * Hit-shading variant: the SAME beam descent as the plain overload —
-   * keep the two bodies in lockstep, both mirror estimateDistance — plus
-   * two tracer-side extras that are NOT part of the CPU oracle's distance
-   * contract (surface-de.ts mirrors distance only). firstChoice is the
-   * depth-0 winning candidate's map, keying by-transform color (identical
-   * to the old greedy pick: level 0 has one chain at scale 1, so the
-   * selection key ranks by radius alone). trap is a flame-style running
-   * blend of the winning candidates' palette coordinates — seeded at depth
-   * 0, then (trap + uTrapIndex[choice]) * 0.5 per deeper level, so the
-   * deepest choices weight the finest detail (flam3's
-   * structural-coordinate idea adapted to descent order); it follows chain
-   * A, the per-level best, and stops when every chain has escaped. Called
-   * ONCE per hit; the march itself uses the plain overload.
+   * Hit-shading variant: the SAME refined beam descent as the plain
+   * overload — keep the two bodies in lockstep, both mirror
+   * estimateDistanceRefined — plus two tracer-side extras that are NOT
+   * part of the CPU oracle's distance contract (surface-de.ts mirrors
+   * distance only). firstChoice is the depth-0 winning candidate's map,
+   * keying by-transform color (identical to the old greedy pick: level 0
+   * has one chain at scale 1, so the selection key ranks by radius
+   * alone). trap is a flame-style running blend of the winning
+   * candidates' palette coordinates — seeded at depth 0, then
+   * (trap + uTrapIndex[choice]) * 0.5 per deeper level, so the deepest
+   * choices weight the finest detail (flam3's structural-coordinate idea
+   * adapted to descent order); it follows chain A, the per-level best,
+   * and stops when every chain has escaped. Called ONCE per hit; the
+   * march itself uses the plain overload.
    */
   float surfaceDE(vec3 p, out int firstChoice, out float trap) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -316,8 +344,8 @@ const SURFACE_FRAGMENT = /* glsl */ `
           float childScale = pScale * uSigmaMin[j];
           float cert = childScale * (r - uBoundingRadius);
           if (key < c1Key) {
-            if (c2R > uBoundingRadius) {
-              best = min(best, c2Cert);
+            if (c2R > uBoundingRadius && c2Cert < best) {
+              best = min(best, refinedCert(c2Q, c2R, c2Scale));
             }
             c2Key = c1Key;
             c2Q = c1Q;
@@ -331,16 +359,16 @@ const SURFACE_FRAGMENT = /* glsl */ `
             c1Cert = cert;
             c1Map = j;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius) {
-              best = min(best, c2Cert);
+            if (c2R > uBoundingRadius && c2Cert < best) {
+              best = min(best, refinedCert(c2Q, c2R, c2Scale));
             }
             c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius) {
-            best = min(best, cert);
+          } else if (r > uBoundingRadius && cert < best) {
+            best = min(best, refinedCert(img, r, childScale));
           }
         }
       }

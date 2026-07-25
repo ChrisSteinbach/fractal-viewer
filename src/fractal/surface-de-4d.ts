@@ -830,7 +830,14 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
  * spike's exhaustive variant minimized (every escaped non-descended
  * sibling), at strictly less work than the measured 5.65x exhaustive
  * ceiling — the shape the SPIKE VERDICT's cost note said a GPU port
- * should take.
+ * should take. On top of that, every refined fold site carries the
+ * fr-1z6p laziness guard (backported alongside the 3D
+ * `estimateDistanceRefined`): refinement can only RAISE a certificate, so
+ * a fold whose PLAIN certificate already fails to beat the running min
+ * folds nothing either way (`min(best, refined) === best` whenever
+ * `plain >= best`) and the inner sweep is skipped. Bit-exact — every
+ * number in the SPIKE VERDICT above is unchanged — while the extra
+ * sweeps collapse to the folds that actually advance the min.
  */
 export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   let x = p[0];
@@ -944,7 +951,7 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
         if (key < c1Key) {
-          if (c2R > R) {
+          if (c2R > R && c2Cert < best) {
             const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
             if (rc < best) best = rc;
           }
@@ -965,7 +972,7 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
           c1R = r;
           c1Cert = cert;
         } else if (key < c2Key) {
-          if (c2R > R) {
+          if (c2R > R && c2Cert < best) {
             const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
             if (rc < best) best = rc;
           }
@@ -977,7 +984,7 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
-        } else if (r > R) {
+        } else if (r > R && cert < best) {
           const rc = refinedCert(ix, iy, iz, iw, r, childScale);
           if (rc < best) best = rc;
         }
@@ -1003,7 +1010,7 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
     }
     if (c2Key < Infinity) {
       if (!wide) {
-        if (c2R > R) {
+        if (c2R > R && c2Cert < best) {
           const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
           if (rc < best) best = rc;
         }
