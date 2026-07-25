@@ -67,15 +67,17 @@ The panel's categories — **Capture**, **Share**, **Collection**,
 **Timeline**, **Transforms**, **Presets**, **Appearance**, **Symmetry**, and
 **3D View**/**4D View** — are collapsible sections, and opening one closes
 the previous (fr-zoi), so the whole panel stays about one phone-screen tall
-instead of demanding a long scroll. The Flame and Solid render modes get the same treatment (fr-99o) —
-**Tone** / **Blur** / **Quality** for Flame, **Surface** / **Lighting** /
-**Quality** for Solid, with the render's progress readout pinned above the
-sections — and the panel remembers which section was open in each mode, so
-switching Points ↔ Flame ↔ Solid restores where you were. Scroll swipes that
-happen to land on a slider scroll the panel without editing its value;
-horizontal drags (and taps) still adjust it as usual. Loading a whole new
-system — a preset, Surprise Me, or a gallery load — morphs into place instead
-of snapping (see **Presets** below).
+instead of demanding a long scroll. The Flame, Solid, and Surface render
+modes get the same treatment (fr-99o) — **Tone** / **Blur** / **Quality** for
+Flame, **Surface** / **Lighting** / **Quality** for Solid, and **Surface
+Look** for Surface itself (see **◈ Surface** below) — with a status block
+pinned above the sections (a progress readout for Flame/Solid, an instant
+hint for Surface), and the panel remembers which section was open in each
+mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
+Scroll swipes that happen to land on a slider scroll the panel without
+editing its value; horizontal drags (and taps) still adjust it as usual.
+Loading a whole new system — a preset, Surprise Me, or a gallery load —
+morphs into place instead of snapping (see **Presets** below).
 
 - **ⓘ What is this?** (fr-1zb) — right under the panel title: a short
   plain-language explanation of what an iterated function system is and how
@@ -84,6 +86,37 @@ of snapping (see **Presets** below).
   articles, plus Barnsley's _Fractals Everywhere_) and its own
   **▶ Watch it build** button (below). Escape, the backdrop, or the header ✕
   close it.
+- **◈ Surface** (fr-7jlk) — a fourth render alongside Flame and Solid: the
+  attractor as a true implicit surface, sphere-traced live against an
+  analytic distance estimator instead of accumulated from chaos-game
+  samples. It needs no worker and no accumulation, so it renders instantly,
+  and unlike the flame's frozen still the camera stays live exactly like the
+  solid render — orbit, pan, and zoom the tracer from any angle. Detail is
+  view-dependent rather than sample-dependent: zoom in and the surface keeps
+  resolving finer instead of showing the grain a still would at the same
+  zoom. Not every system has a valid distance estimator, so the button
+  disables itself — with the reason in its tooltip — whenever any active
+  map (or the final-transform lens) uses variations, extends into 4D, is
+  nearly flat (scale ≈ 0), or does not contract (scale ≥ 1), and also when
+  the kaleidoscope symmetry expansion would need more inverse maps than the
+  tracer's fixed 24-map limit. Anisotropic (non-uniformly scaled) maps are a
+  softer case: the button stays enabled, but the mode's own status note
+  warns that those maps are marched conservatively — a smaller step size
+  that trades some speed to stay a safe, non-overshooting bound. Its own
+  **Surface Look** section holds the mode's live look: a **Color source**
+  select — By Transform, the orbit-trap Palette, a Height ramp, or a Radius
+  ramp — with a **Palette** select underneath (the same named gradients as
+  Flame/Solid) that only appears for the orbit-trap source, plus **Light
+  Angle**, **Light Height**, and **Ambient** sliders. Every one of them is a
+  plain shader input, so dragging any of them re-renders instantly with
+  nothing to restart. **Save PNG** captures it at the chosen **Capture
+  size** exactly like the solid render — a fresh, higher-resolution trace,
+  not an upscale — and ★ Save to collection / 📍 Add keyframe tag the saved
+  entry with the Surface mode exactly like Flame/Solid, so loading it, or a
+  timeline leg reaching it, re-enters the tracer. A Surface keyframe still
+  HOLDS the timeline's schedule at launch like a Flame/Solid one, but
+  because the render is instant rather than accumulating, the hold resolves
+  the moment the tracer lands — there's no convergence wait to sit through.
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
   degrees), and scale (X/Y/Z) give exact per-axis control on every device. The

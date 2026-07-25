@@ -81,6 +81,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     optional kaleidoscope, 25% 4D), quality-gated by chaos-game probes,
     rerolls up to 40×. Injected `Rng`.
   - `rng.ts` — seedable mulberry32 PRNG.
+  - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
+    (eligibility gate: eligible/degraded/ineligible + reasons),
+    `buildSurfaceDE` (symmetry-expanded inverse maps + seeded
+    bounding-radius probe), `estimateDistance` (greedy inverse-map descent +
+    sibling certificates). Oracle for `surface-material.ts`, the `flame.ts`
+    <-> `flame-gpu.ts` discipline one render mode over.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
@@ -93,10 +99,11 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `voxel-4d.ts` — 4D twin; slices with `0` floor (not flame's `0.06`).
 - **`src/app/`** — Three.js + DOM glue. Vite root (`root: "src/app"`).
   - `scene.ts` — Three.js wrapper (scene, camera, renderer, point cloud, guide
-    boxes, fog). Three.js confined to this file, `interactions.ts`, and
-    `voxel-material.ts`. `setRightInset` aims projection clear of the desktop
-    panel. Captures: `captureFrame`/`captureSolidFrame` render at export scale
-    (clamped to device limits + 8192px); flame accumulates at export size so
+    boxes, fog). Three.js confined to this file, `interactions.ts`,
+    `voxel-material.ts`, and `surface-material.ts`. `setRightInset` aims
+    projection clear of the desktop panel. Captures:
+    `captureFrame`/`captureSolidFrame`/`captureSurfaceFrame` render at export
+    scale (clamped to device limits + 8192px); flame accumulates at export size so
     `captureFlameFrame` reads native. Renders on demand via `needsRender` flag.
   - `orbit.ts` — spherical orbit-camera math (pure, tested).
   - `camera-tween.ts` — three mutually exclusive camera motions (pure, tested,
@@ -192,8 +199,14 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
+  - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
+    `surface-de.ts`'s `estimateDistance` line for line, the same oracle
+    discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
+    fixed-size (24-slot) uniform arrays. Callers gate eligibility first, so
+    an over-cap map count throws here rather than degrading silently.
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
-    flame/solid controllers. `renderMode` is session-only, never persisted.
+    flame/solid/surface controllers. `renderMode` is session-only, never
+    persisted.
   - `four-d-view.ts` — session-only 4D view state (rotor, tumble, slice).
     `FourDPose` snapshots rotor + slice for persistence. `FourDTween` is the
     directed pose glide (rotor slerp + slice lerp).
@@ -207,8 +220,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     `nowMs()`), awaits `CloudGenerator.settle()` per frame for determinism.
     `video-encode.ts` = WebCodecs H.264 adapter; `mp4-mux.ts` = dependency-free
     faststart muxer (handles B-frame reordering). Render keyframes PARK the
-    clock while the flame/solid render converges (no frames captured), then
-    dwell the step's holdMs on the converged still — authored clip length.
+    clock while the flame/solid/surface render converges (no frames
+    captured), then dwell the step's holdMs on the converged still —
+    authored clip length.
   - `register-sw.ts` — service-worker registration + COOP/COEP bootstrap.
   - `sw/sw.ts` — Workbox precache + COOP/COEP headers (own TS program).
 
