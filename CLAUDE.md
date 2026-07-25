@@ -87,6 +87,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     bounding-radius probe), `estimateDistance` (greedy inverse-map descent +
     sibling certificates). Oracle for `surface-material.ts`, the `flame.ts`
     <-> `flame-gpu.ts` discipline one render mode over.
+  - `surface-de-4d.ts` — fr-beck spike: `surface-de.ts` one dimension up
+    (Jacobi `singularValues4`, `analyzeSurfaceSystem4`, `buildSurfaceDE4`,
+    greedy `estimateDistance4` + ghost-free `estimateDistance4Refined`).
+    Measured verdict + numbers in the module doc; not wired to a render mode.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
