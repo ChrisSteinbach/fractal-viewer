@@ -155,10 +155,20 @@ and UI**, so the interesting math is unit-tested without a browser:
     Session-only `adaptiveResolution` opt-out. Bypassed in surface mode
     (render-tier.ts owns that cost). Pure, tested.
   - `render-tier.ts` — surface-mode interaction tier (fr-5ne3): invalidated
-    frames trace a cheap preview (0.3-scale offscreen target, `uMaxDepth`
-    clamped — uniform writes only, shader bodies untouched); one full-quality
-    settle frame fires after `TIER_SETTLE_MS` of quiet. Capture/offline
-    `force` frames stay full. Pure, tested, injected clock.
+    frames trace a cheap preview (0.3-scale offscreen target; `uMaxDepth`
+    clamp + march/shadow/AO budgets + hit floor per tier — uniform writes
+    only, shader bodies untouched); after `TIER_SETTLE_MS` of quiet the
+    full-quality frame renders as an interruptible strip job (see
+    `strip-planner.ts`). Capture/offline `force` frames stay full. Pure,
+    tested, injected clock.
+  - `strip-planner.ts` — adaptive scissor-strip sizing for every
+    full-quality surface trace (fr-sjff): probe strip, then strips sized
+    to `STRIP_TARGET_MS` of measured GPU time each (forced-completion 1x1
+    readback — NOT `gl.finish()`, which some command-buffer paths return
+    from before execution), so no single GPU submission is ever unbounded
+    (the close-up watchdog wedge). scene.ts spreads them across frames
+    for the settle job and runs them to completion synchronously for
+    capture/offline export. Pure, tested.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and

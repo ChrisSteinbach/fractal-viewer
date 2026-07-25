@@ -1,7 +1,13 @@
 import * as THREE from "three";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
-import { configureSurfaceLUTTexture } from "./surface-material";
+import {
+  configureSurfaceLUTTexture,
+  SURFACE_FULL_AO_TAPS,
+  SURFACE_FULL_HIT_FLOOR,
+  SURFACE_FULL_MARCH_STEPS,
+  SURFACE_FULL_SHADOW_STEPS,
+} from "./surface-material";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
 
@@ -78,10 +84,17 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   precision highp float;
 
   const int MAX_MAPS = ${SURFACE4_MAX_MAPS};
-  /** Sphere-trace step budget per ray. */
-  const int MARCH_STEPS = 96;
-  /** Penumbra shadow-ray step budget per hit. */
-  const int SHADOW_STEPS = 32;
+  /** Sphere-trace step budget per ray — per-tier uniform (fr-sjff), in
+   * lockstep with the 3D tracer's. Tracer-side only, like the loop caps
+   * below — the DE bodies stay oracle-mirrored. */
+  uniform int uMarchSteps;
+  /** Penumbra shadow-ray step budget per hit (per-tier). */
+  uniform int uShadowSteps;
+  /** Ambient-occlusion probe count along the normal (per-tier). */
+  uniform int uAoTaps;
+  /** Absolute floor of the cone hit test, as a fraction of the bounding
+   * radius (per-tier). */
+  uniform float uHitFloor;
 
   /** Inverse linear part per map (uMapCount live slots; the rest are
    * stale/identity and never read). No symmetry expansion in 4D (see
@@ -502,12 +515,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // march runs the plain DE overload; the hit's coloring extras are
     // fetched once below.
     bool hit = false;
-    for (int i = 0; i < MARCH_STEPS; i++) {
+    for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
       float d = surfaceDE(ro + rd * t);
-      if (d < max(uPixelEps * t, uBoundingRadius * 1.0e-5)) {
+      if (d < max(uPixelEps * t, uBoundingRadius * uHitFloor)) {
         hit = true;
         break;
       }
@@ -572,7 +585,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // early.
     float shadow = 1.0;
     float ts = h * 2.0;
-    for (int i = 0; i < SHADOW_STEPS; i++) {
+    for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
       float d = surfaceDE(sp);
       shadow = min(shadow, 8.0 * d / ts);
@@ -589,7 +602,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float occ = 0.0;
     float wgt = 1.0;
     float norm = 0.0;
-    for (int i = 1; i <= 5; i++) {
+    for (int i = 1; i <= uAoTaps; i++) {
       float hh = uBoundingRadius * 0.02 * float(i);
       occ += wgt * clamp((hh - surfaceDE(pos + n * hh)) / hh, 0.0, 1.0);
       norm += wgt;
@@ -685,6 +698,12 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
+      // Full-tier defaults; the scene overwrites all four per tier
+      // (fr-sjff), same knobs as the 3D tracer.
+      uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
+      uShadowSteps: { value: SURFACE_FULL_SHADOW_STEPS },
+      uAoTaps: { value: SURFACE_FULL_AO_TAPS },
+      uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
     vertexShader: SURFACE4_VERTEX,
     fragmentShader: SURFACE4_FRAGMENT,

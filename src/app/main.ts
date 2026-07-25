@@ -386,6 +386,11 @@ function main(): void {
   // surface render's cost outright — the resolution governor takes its
   // flame-style restore path there (see governResolution).
   const surfaceRenderTier = createRenderTierScheduler();
+  // Whether the settle target holds a COMPLETED full-quality frame for the
+  // CURRENT (uninvalidated) view — the recorder's parked repaints re-present
+  // it instead of re-tracing seconds of identical pixels (fr-sjff). Any
+  // invalidation clears it.
+  let surfaceSettled = false;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
@@ -2660,8 +2665,9 @@ function main(): void {
       // raycast drag should orbit the camera (the solid session's reasoning).
       state = selectTransform(state, null);
       // A fresh session must not inherit the previous one's pending settle
-      // timer (fr-5ne3).
+      // timer (fr-5ne3) or a completed frame's validity (fr-sjff).
       surfaceRenderTier.reset();
+      surfaceSettled = false;
       state = setRenderMode(state, "surface");
       refreshGuides();
       refreshUi();
@@ -2675,7 +2681,10 @@ function main(): void {
     deactivate: () => {
       // The 4D flag dies with the session (tickRender's surface branch is
       // unreachable once the mode resets, but stale-true costs nothing to
-      // preclude).
+      // preclude). So does an in-flight settle job (fr-sjff) — nothing
+      // steps it outside this mode, and a stale planner must not greet the
+      // next session.
+      scene.abandonSurfaceSettle();
       surfaceSessionIs4D = false;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
@@ -4601,21 +4610,41 @@ function main(): void {
         scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
       }
       if (surfaceSession.hasFirstFrame) {
-        // The interaction tier split (fr-5ne3): an invalidated frame traces
-        // the cheap preview immediately — a drag's first tick can never
-        // hitch on a multi-second full trace — and the scheduler fires ONE
-        // full-quality settle frame once the view has been quiet for
-        // TIER_SETTLE_MS. Offline-export frames (force) bypass the
-        // scheduler: they run on the virtual clock and are keepsakes —
-        // always full. A recorder repaint of a PARKED view (no
-        // invalidation) also stays full, matching the pre-tier behavior of
-        // recording stills at quality; a recorded drag captures the
-        // preview frames the user actually saw.
-        const tier = force
-          ? "full"
-          : surfaceRenderTier.frame(now, scene.needsRender);
-        if (tier !== null) scene.renderSurface(tier);
-        else if (recorderActive) scene.renderSurface("full");
+        // The interaction tier split (fr-5ne3; strips fr-sjff): an
+        // invalidated frame traces the cheap preview immediately — a
+        // drag's first tick can never hitch on a full trace — and once the
+        // view has been quiet for TIER_SETTLE_MS the full-quality frame
+        // renders as an INTERRUPTIBLE strip job spread across animation
+        // frames, sharpening the parked preview progressively; any fresh
+        // invalidation abandons it and previews instead. Offline-export
+        // frames (force) bypass the scheduler — they run on the virtual
+        // clock and are keepsakes, always full (renderSurface's full tier
+        // strips synchronously, so even those submissions stay bounded).
+        // A recorder repaint of a PARKED view re-presents the settled
+        // image when one exists (a re-trace would spend seconds of GPU on
+        // an identical frame) and repaints the preview otherwise; a
+        // recorded drag captures the preview frames the user actually
+        // saw.
+        if (force) {
+          scene.abandonSurfaceSettle();
+          surfaceSettled = false;
+          scene.renderSurface("full");
+        } else {
+          const tier = surfaceRenderTier.frame(now, scene.needsRender);
+          if (tier === "preview") {
+            scene.abandonSurfaceSettle();
+            surfaceSettled = false;
+            scene.renderSurface("preview");
+          } else if (tier === "full") {
+            scene.beginSurfaceSettle();
+          }
+          if (scene.surfaceSettleActive) {
+            if (scene.stepSurfaceSettle()) surfaceSettled = true;
+          } else if (recorderActive) {
+            if (surfaceSettled) scene.presentSettledSurface();
+            else scene.renderSurface("preview");
+          }
+        }
       } else {
         scene.updateFog();
         if (scene.needsRender || recorderActive || force) scene.render();
