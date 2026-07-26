@@ -148,6 +148,11 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
   "bubble",
   "disc",
   "julia",
+  // fr-p7nu: a whole-attractor box fold as the final lens is bounded — it
+  // maps everything into/toward the unit box — so, unlike an inversion, it
+  // cannot blow up the system. spherefold/mandelbox stay out of this pool
+  // (see fr-p7nu.3).
+  "boxfold",
 ];
 
 /**

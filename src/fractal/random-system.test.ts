@@ -107,7 +107,9 @@ describe("randomSystem", () => {
       expect(finalTransform.scale).toEqual([1, 1, 1]);
       expect(finalTransform.variations).toHaveLength(1);
       const [v] = finalTransform.variations ?? [];
-      expect(["spherical", "bubble", "disc", "julia"]).toContain(v.type);
+      expect(["spherical", "bubble", "disc", "julia", "boxfold"]).toContain(
+        v.type,
+      );
       expect(v.weight).toBeGreaterThanOrEqual(0.6);
       expect(v.weight).toBeLessThanOrEqual(1.2);
     }
