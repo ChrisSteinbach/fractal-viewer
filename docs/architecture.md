@@ -528,8 +528,14 @@ spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
 dimension-free, so the whole descent transfers verbatim; the singular values
 need a deterministic cyclic-Jacobi eigen-solve where 3D had a closed form;
 and there is no kaleidoscope to expand (the 4D pipeline has none by design),
-so slots are input maps 1:1 against a smaller, mat4-sized 16-slot uniform
-cap. What the app marches is never the full 4D attractor but its
+so slots are input maps 1:1 against the same 24-slot cap 3D expands into.
+Those mat4-sized slots did start at 16, because in the DEFAULT uniform block
+24 of them would have claimed 192 of the 224 fragment uniform vectors WebGL2
+merely guarantees; fr-dqlq moved the per-map arrays into a std140 uniform
+BLOCK — 2688 bytes of a guaranteed 16KB, budgeted separately from the default
+block — which put the 24-map **24-cell** presets in reach and left the cap a
+question of per-ray descent cost rather than uniform space. What the app
+marches is never the full 4D attractor but its
 `w = sliceCenter` SLICE. A certified 4D DE lower-bounds slice distance for
 free — distance to a subset only grows — but the spike measured the plain
 bound reading as ghostly bulges near off-slice structure (structure close in

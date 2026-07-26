@@ -100,7 +100,9 @@ morphs into place instead of snapping (see **Presets** below).
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
   count exceeds the tracer's fixed uniform budget: the kaleidoscope
   symmetry expansion against a 24-map limit for flat systems, the bare
-  active-map count against a 16-map limit for 4D ones. A system extending
+  active-map count against the same 24-map limit for 4D ones (raised from
+  16 by fr-dqlq, which moved the 4D tracer's per-map arrays into a std140
+  uniform block — the 24-map **24-cell** presets surface now). A system extending
   into 4D is not a blocker but a different tracer: the mode marches the
   **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag
