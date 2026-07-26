@@ -273,7 +273,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     texture) before paying a descent (fr-55r5 part 2): a floor above the
     pixel epsilon is both a no-hit proof and a safe stride, damped by the
     same `uStepScale` as analytic steps; gridless marching stays the
-    always-correct fallback.
+    always-correct fallback. Skips drain their own whole-ray cap
+    (`SURFACE_GRID_SKIP_CAP`), never the analytic march budget, and the
+    full-tier budget is 160 — fr-z70m: charging cheap conservative skips
+    against 96 march steps starved rays that thread gaps or graze faces,
+    dissolving far/threaded geometry into view-dependent dropout speckle
+    (measured + healed in `scripts/erosion-repro.harness.ts`).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
