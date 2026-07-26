@@ -160,12 +160,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     Session-only `adaptiveResolution` opt-out. Bypassed in surface mode
     (render-tier.ts owns that cost). Pure, tested.
   - `render-tier.ts` — surface-mode interaction tier (fr-5ne3): invalidated
-    frames trace a cheap preview (0.3-scale offscreen target; `uMaxDepth`
-    clamp + march/shadow/AO budgets + hit floor per tier — uniform writes
-    only, shader bodies untouched); after `TIER_SETTLE_MS` of quiet the
-    full-quality frame renders as an interruptible strip job (see
-    `strip-planner.ts`). Capture/offline `force` frames stay full. Pure,
-    tested, injected clock.
+    frames trace a cheap preview into an offscreen target at an adaptive
+    (scale, depth) rung picked from measured trace cost (fr-hith:
+    `createPreviewGovernor`, EMA + hysteresis + a ≥250ms panic drop; starts
+    at the shipped 0.3, climbs to full scale on capable GPUs — 4D
+    auto-tumble sessions, which never settle, now sharpen instead of
+    staying pinned soft; depth couples to scale via `previewMaxDepth`, the
+    fr-ttg5 contraction-aware clamp, so finer rungs trace deeper and the
+    core-ball bug cannot return in adaptive form). March/shadow/AO budgets +
+    hit floor per tier — uniform writes only, shader bodies untouched; after
+    `TIER_SETTLE_MS` of quiet the full-quality frame renders as an
+    interruptible strip job (see `strip-planner.ts`). Capture/offline
+    `force` frames stay full. Pure, tested, injected clock.
   - `strip-planner.ts` — adaptive scissor-strip sizing for every
     full-quality surface trace (fr-sjff): probe strip, then strips sized
     to `STRIP_TARGET_MS` of measured GPU time each (forced-completion 1x1
