@@ -12,7 +12,10 @@ import { lightDirection } from "./voxel-material";
  * ghost-eliminator ported down from the 4D tracer, closing the smooth
  * "balloon" membranes the plain certificates rendered across attractor
  * voids), precomputed by `buildSurfaceDE` (`src/fractal/surface-de.ts`)
- * and packed into fixed-size uniform arrays here. fr-jkpn's validity slots
+ * and packed into fixed-size uniform arrays here — BASE maps only, with
+ * kaleidoscope copies swept as sectors around them rather than expanded
+ * into slots (fr-x029), so the array budget no longer caps symmetry order.
+ * fr-jkpn's validity slots
  * ride along too — rank-3/4 candidate chains that stay live only while
  * in-sphere, closing the multi-branch drops width 2 alone still had. Hits
  * are shaded in the solid raymarcher's vocabulary — DE-gradient
@@ -46,11 +49,24 @@ const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
 /** Compile-time size of the per-map uniform arrays: at ~7 vec4-equivalents
  * per slot (mat3 = 3, plus vec3 + float + vec3 + float), 24 maps stays
- * comfortably under WebGL2's guaranteed 224 fragment uniform vectors. The
- * app gates systems whose symmetry expansion exceeds it before entering the
- * mode, so {@link setSurfaceSystem} treats overflow as a bug, not a
- * degrade. */
+ * comfortably under WebGL2's guaranteed 224 fragment uniform vectors.
+ *
+ * Slots are BASE maps (fr-x029). Kaleidoscope copies used to be expanded
+ * into slots of their own, so this budget doubled as a cap on
+ * `order * baseMaps` and gated high orders out of the mode; the descent now
+ * sweeps sectors around the base maps instead (three scalar uniforms, no
+ * slots), so the budget is the bare active-map count at ANY order. The app
+ * gates on that count before entering the mode, so {@link setSurfaceSystem}
+ * treats overflow as a bug, not a degrade. */
 export const SURFACE_MAX_MAPS = 24;
+
+/** `SurfaceSymmetry.axis` as the shader's `uSymAxis` code. The GLSL sector
+ * step branches on an int, so the axis crosses the boundary as one. */
+const SYM_AXIS_CODE: Record<SurfaceDE["symmetry"]["axis"], number> = {
+  x: 0,
+  y: 1,
+  z: 2,
+};
 
 const SURFACE_VERTEX = /* glsl */ `
   out vec2 vUv;
@@ -78,8 +94,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * where uPixelEps * t degenerates. */
   uniform float uHitFloor;
 
-  /** Inverse linear part per symmetry-expanded map (uMapCount live slots;
-   * the rest are stale/identity and never read). */
+  /** Inverse linear part per BASE map (uMapCount live slots; the rest are
+   * stale/identity and never read). Kaleidoscope copies are swept, not
+   * stored — see uSymOrder. */
   uniform mat3 uInvM[MAX_MAPS];
   /** Inverse translation per map: -inv(M_i) . t_i. */
   uniform vec3 uInvT[MAX_MAPS];
@@ -92,6 +109,16 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * (CPU-precomputed from each slot's base-map index). */
   uniform float uTrapIndex[MAX_MAPS];
   uniform int uMapCount;
+  /** Kaleidoscope sectors swept around every base map (fr-x029; >= 1).
+   * 1 leaves the sweep a single pass with no rotation, which is what keeps
+   * non-symmetric systems bit-identical to the pre-sweep tracer. */
+  uniform int uSymOrder;
+  /** Symmetry axis: 0 = x, 1 = y, 2 = z. */
+  uniform int uSymAxis;
+  /** cos/sin of ONE forward sector step 2*PI/uSymOrder. Sectors are walked
+   * incrementally off this pair, so no per-sector transcendental — and no
+   * order-sized uniform table the budget could not carry. */
+  uniform vec2 uSymStep;
   /** Bounding-sphere radius R of the RAW attractor (pre final transform). */
   uniform float uBoundingRadius;
   /** Descent stops once the greedy image escapes this (2R): deeper
@@ -140,18 +167,44 @@ const SURFACE_FRAGMENT = /* glsl */ `
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
   }
 
+  /** One sector step of the kaleidoscope sweep (the oracle's stepSector):
+   * turn a point BACKWARD by 2*PI/uSymOrder about the symmetry axis. That
+   * is the transpose of the rotation copy k applies AFTER its base map, so
+   * descending through the copy un-rotates first; transposing a single-axis
+   * rotation flips the sign of sin alone, which is why one (cos, sin) pair
+   * of the FORWARD step drives every sector. */
+  vec3 stepSector(vec3 p) {
+    float c = uSymStep.x;
+    float s = uSymStep.y;
+    if (uSymAxis == 0) {
+      return vec3(p.x, c * p.y + s * p.z, -s * p.y + c * p.z);
+    }
+    if (uSymAxis == 1) {
+      return vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
+    }
+    return vec3(c * p.x + s * p.y, -s * p.x + c * p.y, p.z);
+  }
+
   /** One extra Hutchinson level on a frozen escaped candidate's own inverse
    * image (the oracle's refinedCert): the certificate becomes
-   * childScale * max(r - R, min_k sigmaMin_k * (|invMap_k(img)| - R)) —
+   * childScale * max(r - R, min_j sigmaMin_j * (|invMap_j(img)| - R)) —
    * never below the plain childScale * (r - R). fr-beck measured this
    * exact refinement eliminating every march ghost; fr-1z6p ports it here
    * from the 4D tracer, closing the balloon membranes the plain
-   * certificates painted across attractor voids. */
+   * certificates painted across attractor voids. "Every map" means every
+   * (sector, base map) pair, which the sweep spells out where the expanded
+   * slot list used to (fr-x029). */
   float refinedCert(vec3 img, float r, float childScale) {
     float inner = 1e30;
-    for (int k = 0; k < uMapCount; k++) {
-      vec3 kImg = uInvM[k] * img + uInvT[k];
-      inner = min(inner, uSigmaMin[k] * (length(kImg) - uBoundingRadius));
+    vec3 sImg = img;
+    for (int k = 0; k < uSymOrder; k++) {
+      if (k > 0) {
+        sImg = stepSector(sImg);
+      }
+      for (int j = 0; j < uMapCount; j++) {
+        vec3 jImg = uInvM[j] * sImg + uInvT[j];
+        inner = min(inner, uSigmaMin[j] * (length(jImg) - uBoundingRadius));
+      }
     }
     return childScale * max(r - uBoundingRadius, inner);
   }
@@ -163,8 +216,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * inverse-map descent (fr-v6yg's paired A/B chains, plus fr-jkpn's
    * rank-3/4 validity slots; the CPU oracle's beamWidth is always 4 in
    * production builds, so the tracer hardcodes it): each level expands
-   * every live chain through every map and ranks the four smallest-key
-   * candidates by chainScale * (r - R) — the best two continue as the
+   * every live chain through every map — every (kaleidoscope sector, base
+   * map) pair, swept rather than stored since fr-x029 — and ranks the four
+   * smallest-key candidates by chainScale * (r - R) — the best two continue as the
    * next A/B chains, and ranks 3/4 continue as extra chains ONLY while
    * their image stays in-sphere, folding the same REFINED certificate
    * below the moment they escape instead — and folds every OTHER escaped
@@ -293,104 +347,118 @@ const SURFACE_FRAGMENT = /* glsl */ `
           pQ = v2Q;
           pScale = v2Scale;
         }
-        for (int j = 0; j < uMapCount; j++) {
-          vec3 img = uInvM[j] * pQ + uInvT[j];
-          float r = length(img);
-          float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uSigmaMin[j];
-          float cert = childScale * (r - uBoundingRadius);
-          // Exactly one tuple leaves the top-2 ladder per candidate — the
-          // displaced runner-up, or the candidate itself. It spills into
-          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
-          // through both harmlessly (key 1e30 never inserts, r = 0 never
-          // folds).
-          float eKey = key;
-          vec3 eQ = img;
-          float eScale = childScale;
-          float eR = r;
-          float eCert = cert;
-          if (key < c1Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = c1Key;
-            c2Q = c1Q;
-            c2Scale = c1Scale;
-            c2R = c1R;
-            c2Cert = c1Cert;
-            c1Key = key;
-            c1Q = img;
-            c1Scale = childScale;
-            c1R = r;
-            c1Cert = cert;
-          } else if (key < c2Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = key;
-            c2Q = img;
-            c2Scale = childScale;
-            c2R = r;
-            c2Cert = cert;
+        // Sector sweep (fr-x029): the chain point turns one step per
+        // kaleidoscope sector and every BASE map is applied to it there, so
+        // the candidates — and their SECTOR-MAJOR enumeration order, the
+        // order the expanded slot list was built in — are exactly the ones
+        // the expansion produced. The ladders below therefore break ties
+        // the same way, and the beam, the validity slots and the cutoff
+        // exits see an unchanged stream. See the oracle module's symmetry
+        // section for why a single wedge FOLD would not be sound here.
+        vec3 sQ = pQ;
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector(sQ);
           }
-          // Spill into the rank-3/4 ladder (unconditional at width 4);
-          // what THAT evicts (or the spilled tuple itself, when it beats
-          // neither slot) falls through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive; width 4
-            // is hardcoded here, so there is no tKey.
-            vec3 tQ = c4Q;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = c3Key;
-            c4Q = c3Q;
-            c4Scale = c3Scale;
-            c4R = c3R;
-            c4Cert = c3Cert;
-            c3Key = eKey;
-            c3Q = eQ;
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eQ = tQ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (eKey < c4Key) {
-            vec3 tQ = c4Q;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = eKey;
-            c4Q = eQ;
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eQ = tQ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          }
-          // The tuple leaving the beam frontier: escaped candidates fold
-          // their REFINED certificate (fr-1z6p: one extra Hutchinson
-          // level closes the barely-escaped-sibling balloon) — skipped
-          // whole when its plain certificate cannot beat the running min
-          // anyway (the oracle's laziness guard, bit-exact); an in-sphere
-          // tuple carries no positive certificate — it can only get here
-          // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
-          if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert(eQ, eR, eScale));
-            // Cutoff exit: the folded certificate is FINALIZED (already
-            // refined), and best only falls from here, so the verdict is
-            // settled — the rest of the descent cannot lift it back.
-            if (best * uFinalSigmaMin < bailBelow) {
-              return max(best, sphereBound) * uFinalSigmaMin;
+          for (int j = 0; j < uMapCount; j++) {
+            vec3 img = uInvM[j] * sQ + uInvT[j];
+            float r = length(img);
+            float key = pScale * (r - uBoundingRadius);
+            float childScale = pScale * uSigmaMin[j];
+            float cert = childScale * (r - uBoundingRadius);
+            // Exactly one tuple leaves the top-2 ladder per candidate — the
+            // displaced runner-up, or the candidate itself. It spills into
+            // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+            // through both harmlessly (key 1e30 never inserts, r = 0 never
+            // folds).
+            float eKey = key;
+            vec3 eQ = img;
+            float eScale = childScale;
+            float eR = r;
+            float eCert = cert;
+            if (key < c1Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = c1Key;
+              c2Q = c1Q;
+              c2Scale = c1Scale;
+              c2R = c1R;
+              c2Cert = c1Cert;
+              c1Key = key;
+              c1Q = img;
+              c1Scale = childScale;
+              c1R = r;
+              c1Cert = cert;
+            } else if (key < c2Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = key;
+              c2Q = img;
+              c2Scale = childScale;
+              c2R = r;
+              c2Cert = cert;
+            }
+            // Spill into the rank-3/4 ladder (unconditional at width 4);
+            // what THAT evicts (or the spilled tuple itself, when it beats
+            // neither slot) falls through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, scale, radius, certificate) survive; width 4
+              // is hardcoded here, so there is no tKey.
+              vec3 tQ = c4Q;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = c3Key;
+              c4Q = c3Q;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+              c3Key = eKey;
+              c3Q = eQ;
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eQ = tQ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (eKey < c4Key) {
+              vec3 tQ = c4Q;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = eKey;
+              c4Q = eQ;
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eQ = tQ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+            // The tuple leaving the beam frontier: escaped candidates fold
+            // their REFINED certificate (fr-1z6p: one extra Hutchinson
+            // level closes the barely-escaped-sibling balloon) — skipped
+            // whole when its plain certificate cannot beat the running min
+            // anyway (the oracle's laziness guard, bit-exact); an in-sphere
+            // tuple carries no positive certificate — it can only get here
+            // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            if (eR > uBoundingRadius && eCert < best) {
+              best = min(best, refinedCert(eQ, eR, eScale));
+              // Cutoff exit: the folded certificate is FINALIZED (already
+              // refined), and best only falls from here, so the verdict is
+              // settled — the rest of the descent cannot lift it back.
+              if (best * uFinalSigmaMin < bailBelow) {
+                return max(best, sphereBound) * uFinalSigmaMin;
+              }
             }
           }
         }
@@ -622,100 +690,114 @@ const SURFACE_FRAGMENT = /* glsl */ `
           pQ = v2Q;
           pScale = v2Scale;
         }
-        for (int j = 0; j < uMapCount; j++) {
-          vec3 img = uInvM[j] * pQ + uInvT[j];
-          float r = length(img);
-          float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uSigmaMin[j];
-          float cert = childScale * (r - uBoundingRadius);
-          // Exactly one tuple leaves the top-2 ladder per candidate — the
-          // displaced runner-up, or the candidate itself. It spills into
-          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
-          // through both harmlessly (key 1e30 never inserts, r = 0 never
-          // folds).
-          float eKey = key;
-          vec3 eQ = img;
-          float eScale = childScale;
-          float eR = r;
-          float eCert = cert;
-          if (key < c1Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = c1Key;
-            c2Q = c1Q;
-            c2Scale = c1Scale;
-            c2R = c1R;
-            c2Cert = c1Cert;
-            c1Key = key;
-            c1Q = img;
-            c1Scale = childScale;
-            c1R = r;
-            c1Cert = cert;
-            c1Map = j;
-          } else if (key < c2Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = key;
-            c2Q = img;
-            c2Scale = childScale;
-            c2R = r;
-            c2Cert = cert;
+        // Sector sweep (fr-x029): the chain point turns one step per
+        // kaleidoscope sector and every BASE map is applied to it there, so
+        // the candidates — and their SECTOR-MAJOR enumeration order, the
+        // order the expanded slot list was built in — are exactly the ones
+        // the expansion produced. The ladders below therefore break ties
+        // the same way, and the beam, the validity slots and the cutoff
+        // exits see an unchanged stream. See the oracle module's symmetry
+        // section for why a single wedge FOLD would not be sound here.
+        vec3 sQ = pQ;
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector(sQ);
           }
-          // Spill into the rank-3/4 ladder (unconditional at width 4);
-          // what THAT evicts (or the spilled tuple itself, when it beats
-          // neither slot) falls through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive; width 4
-            // is hardcoded here, so there is no tKey.
-            vec3 tQ = c4Q;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = c3Key;
-            c4Q = c3Q;
-            c4Scale = c3Scale;
-            c4R = c3R;
-            c4Cert = c3Cert;
-            c3Key = eKey;
-            c3Q = eQ;
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eQ = tQ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (eKey < c4Key) {
-            vec3 tQ = c4Q;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = eKey;
-            c4Q = eQ;
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eQ = tQ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          }
-          // The tuple leaving the beam frontier: escaped candidates fold
-          // their REFINED certificate (fr-1z6p: one extra Hutchinson
-          // level closes the barely-escaped-sibling balloon) — skipped
-          // whole when its plain certificate cannot beat the running min
-          // anyway (the oracle's laziness guard, bit-exact); an in-sphere
-          // tuple carries no positive certificate — it can only get here
-          // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
-          if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert(eQ, eR, eScale));
+          for (int j = 0; j < uMapCount; j++) {
+            vec3 img = uInvM[j] * sQ + uInvT[j];
+            float r = length(img);
+            float key = pScale * (r - uBoundingRadius);
+            float childScale = pScale * uSigmaMin[j];
+            float cert = childScale * (r - uBoundingRadius);
+            // Exactly one tuple leaves the top-2 ladder per candidate — the
+            // displaced runner-up, or the candidate itself. It spills into
+            // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+            // through both harmlessly (key 1e30 never inserts, r = 0 never
+            // folds).
+            float eKey = key;
+            vec3 eQ = img;
+            float eScale = childScale;
+            float eR = r;
+            float eCert = cert;
+            if (key < c1Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = c1Key;
+              c2Q = c1Q;
+              c2Scale = c1Scale;
+              c2R = c1R;
+              c2Cert = c1Cert;
+              c1Key = key;
+              c1Q = img;
+              c1Scale = childScale;
+              c1R = r;
+              c1Cert = cert;
+              c1Map = j;
+            } else if (key < c2Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = key;
+              c2Q = img;
+              c2Scale = childScale;
+              c2R = r;
+              c2Cert = cert;
+            }
+            // Spill into the rank-3/4 ladder (unconditional at width 4);
+            // what THAT evicts (or the spilled tuple itself, when it beats
+            // neither slot) falls through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, scale, radius, certificate) survive; width 4
+              // is hardcoded here, so there is no tKey.
+              vec3 tQ = c4Q;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = c3Key;
+              c4Q = c3Q;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+              c3Key = eKey;
+              c3Q = eQ;
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eQ = tQ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (eKey < c4Key) {
+              vec3 tQ = c4Q;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = eKey;
+              c4Q = eQ;
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eQ = tQ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+            // The tuple leaving the beam frontier: escaped candidates fold
+            // their REFINED certificate (fr-1z6p: one extra Hutchinson
+            // level closes the barely-escaped-sibling balloon) — skipped
+            // whole when its plain certificate cannot beat the running min
+            // anyway (the oracle's laziness guard, bit-exact); an in-sphere
+            // tuple carries no positive certificate — it can only get here
+            // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            if (eR > uBoundingRadius && eCert < best) {
+              best = min(best, refinedCert(eQ, eR, eScale));
+            }
           }
         }
       }
@@ -988,7 +1070,8 @@ export const SURFACE_PREVIEW_SCALE = 0.3;
 
 /**
  * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
- * flat maps, kaleidoscope expansions) pay their cost per DE CALL, which the
+ * flat maps, high-order kaleidoscopes — whose sectors cost no slots since
+ * fr-x029 but still cost inverse applications) pay per DE CALL, which the
  * preview depth clamp can't reduce — so the preview also trims how many DE
  * calls a pixel can spend. All tracer-side (march loop, shadow loop, AO
  * taps, hit-test floor): none of these appear in the CPU oracle's distance
@@ -1093,6 +1176,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       },
       uTrapIndex: { value: new Array<number>(SURFACE_MAX_MAPS).fill(0) },
       uMapCount: { value: 0 },
+      uSymOrder: { value: 1 },
+      uSymAxis: { value: 1 },
+      uSymStep: { value: new THREE.Vector2(1, 0) },
       uBoundingRadius: { value: 1 },
       uEscapeRadius: { value: 2 },
       uMaxDepth: { value: 0 },
@@ -1135,8 +1221,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
  * omitting it zero-fills the live slots — an explicit reset, like the final
  * lens, so a previous system's traps never leak. Slots past the live count
  * keep stale values by design — `uMapCount` guards every shader loop.
- * Throws RangeError if `de.maps.length > SURFACE_MAX_MAPS`: callers gate
- * eligibility first, so reaching it is a bug. */
+ * `de.maps` is BASE maps (fr-x029), so the kaleidoscope rides the three
+ * `uSym*` scalars below rather than costing slots. Throws RangeError if
+ * `de.maps.length > SURFACE_MAX_MAPS`: callers gate eligibility first, so
+ * reaching it is a bug. */
 export function setSurfaceSystem(
   material: THREE.ShaderMaterial,
   de: SurfaceDE,
@@ -1166,6 +1254,14 @@ export function setSurfaceSystem(
     trapIndex[j] = trapIndices ? trapIndices[j] : 0;
   });
   u.uMapCount.value = de.maps.length;
+  // The kaleidoscope the descent sweeps instead of expanding (fr-x029):
+  // three scalars where every extra order used to cost `maps.length` slots.
+  u.uSymOrder.value = de.symmetry.order;
+  u.uSymAxis.value = SYM_AXIS_CODE[de.symmetry.axis];
+  (u.uSymStep.value as THREE.Vector2).set(
+    de.symmetry.stepCos,
+    de.symmetry.stepSin,
+  );
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;

@@ -83,7 +83,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `rng.ts` — seedable mulberry32 PRNG.
   - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
     (eligibility gate: eligible/degraded/ineligible + reasons),
-    `buildSurfaceDE` (symmetry-expanded inverse maps + seeded
+    `buildSurfaceDE` (BASE inverse maps + the kaleidoscope the descent
+    SWEEPS around them — fr-x029 replaced the old symmetry expansion, so
+    slots are base maps at any order; the module doc carries the validity
+    argument and why a single wedge FOLD is unsound here — + seeded
     bounding-radius probe), `estimateDistance` (width-4 beam inverse-map
     descent + sibling certificates: the fr-v6yg chain pair — width 1 = the
     old greedy descent, measured overshooting, kept for tests — plus
@@ -233,9 +236,12 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
-    oracle discipline as `flame-gpu.ts`; symmetry-expanded maps packed into
-    fixed-size (24-slot) uniform arrays. Callers gate eligibility first, so
-    an over-cap map count throws here rather than degrading silently.
+    oracle discipline as `flame-gpu.ts`; BASE maps packed into fixed-size
+    (24-slot) uniform arrays, with kaleidoscope sectors swept from three
+    scalar uniforms rather than expanded into slots (fr-x029), so symmetry
+    order no longer counts against the cap. Callers gate eligibility on the
+    bare active-map count first, so an over-cap count throws here rather
+    than degrading silently.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
