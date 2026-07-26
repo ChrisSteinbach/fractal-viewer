@@ -98,6 +98,11 @@ async function main() {
       console.error("[erosion] grid worker BLOCKED (gridless marching)");
     }
     await page.goto(args.url, { waitUntil: "load", timeout: 30_000 });
+    // Production first visit reloads once for cross-origin isolation
+    // (register-sw.ts); renderMode is session-only, so wait the dance out
+    // before driving the UI. A second goto is a no-op on the dev server.
+    await page.waitForTimeout(3000);
+    await page.goto(args.url, { waitUntil: "load", timeout: 30_000 });
     await page.waitForFunction(
       () => {
         const el = document.getElementById("pointCount");
