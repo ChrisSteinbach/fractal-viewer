@@ -1,6 +1,9 @@
 import {
+  createPreviewGovernor,
   createRenderTierScheduler,
   previewMaxDepth,
+  PREVIEW_SCALE_RUNGS,
+  PREVIEW_START_SCALE,
   TIER_SETTLE_MS,
 } from "./render-tier";
 
@@ -27,6 +30,194 @@ describe("previewMaxDepth", () => {
 
   it("floors the shallowest full-quality depth up to the 4-level minimum", () => {
     expect(previewMaxDepth(4)).toBe(4);
+  });
+
+  it("reproduces the fr-ttg5 half-depth anchor exactly at the 0.3 rung", () => {
+    // The scale-aware form must agree with the fixed one it generalizes,
+    // rung for rung, or the shipped mid-ladder behavior has changed.
+    expect(previewMaxDepth(20, PREVIEW_START_SCALE)).toBe(10);
+    expect(previewMaxDepth(127, PREVIEW_START_SCALE)).toBe(64);
+    expect(previewMaxDepth(9, PREVIEW_START_SCALE)).toBe(5);
+  });
+
+  it("traces the system's whole depth at the full-scale rung", () => {
+    // At scale 1 the preview resolves the same pixels the settle frame
+    // does, so a shallower descent would pop when the settle frame lands.
+    expect(previewMaxDepth(20, 1)).toBe(20);
+    expect(previewMaxDepth(127, 1)).toBe(127);
+  });
+
+  it("traces deeper at a finer rung than at a coarser one", () => {
+    expect(previewMaxDepth(20, 0.55)).toBeGreaterThan(
+      previewMaxDepth(20, PREVIEW_START_SCALE),
+    );
+    expect(previewMaxDepth(20, 0.15)).toBeLessThan(
+      previewMaxDepth(20, PREVIEW_START_SCALE),
+    );
+  });
+
+  it("never trades depth back as the ladder climbs, rung by rung", () => {
+    // PREVIEW_SCALE_RUNGS is ordered finest first, so depth must fall
+    // monotonically along it — a rung that resolved smaller pixels while
+    // descending fewer levels would put an unresolved core blob on screen.
+    const depths = PREVIEW_SCALE_RUNGS.map((scale) =>
+      previewMaxDepth(20, scale),
+    );
+    expect(depths).toEqual([20, 18, 16, 13, 10, 10, 9]);
+  });
+
+  it("keeps the 4-level floor even at the coarsest rung", () => {
+    expect(previewMaxDepth(6, 0.15)).toBe(4);
+  });
+});
+
+describe("createPreviewGovernor", () => {
+  it("starts on the shipped fixed preview scale", () => {
+    // Mid-ladder by design: an unmeasured device gets exactly fr-5ne3's
+    // behavior, and measurement only moves it from there.
+    expect(createPreviewGovernor().scale).toBe(0.3);
+  });
+
+  it("ignores the very first trace, which carries shader compile cost", () => {
+    const governor = createPreviewGovernor();
+    // Catastrophic on paper, but a session's first trace also links the
+    // program and allocates the target — panicking here would drop a
+    // perfectly capable GPU to the floor on every entry to surface mode.
+    expect(governor.sample(400)).toBeNull();
+    expect(governor.scale).toBe(0.3);
+  });
+
+  it("does not step on a single slow trace after warm-up", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(50);
+    expect(governor.sample(200)).toBeNull();
+    expect(governor.scale).toBe(0.3);
+  });
+
+  it("steps down a rung once slow traces sustain the down window", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(60);
+    // 600ms of down-sustain at 60ms a trace = 10 qualifying samples; 12
+    // is past that and still inside the hold-off that follows the step,
+    // so exactly one rung is given up.
+    for (let i = 0; i < 12; i++) governor.sample(60);
+    expect(governor.scale).toBe(0.22);
+  });
+
+  it("reports the new scale from the sample that tips a step down", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(60);
+    const steps = Array.from({ length: 12 }, () => governor.sample(60)).filter(
+      (s) => s !== null,
+    );
+    expect(steps).toEqual([0.22]);
+  });
+
+  it("keeps stepping down while the device stays too slow to hold a rung", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(60);
+    for (let i = 0; i < 60; i++) governor.sample(60);
+    expect(governor.scale).toBeLessThan(0.22);
+  });
+
+  it("steps up a rung once fast traces sustain the longer up window", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(5);
+    for (let i = 0; i < 200; i++) governor.sample(5);
+    expect(governor.scale).toBe(0.4);
+  });
+
+  it("climbs to full scale when the device keeps tracing comfortably", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(3);
+    for (let i = 0; i < 2000; i++) governor.sample(3);
+    expect(governor.scale).toBe(1);
+  });
+
+  it("makes a fast device wait far longer to climb than a slow one waits to drop", () => {
+    const slow = createPreviewGovernor();
+    slow.sample(40);
+    let slowSamples = 0;
+    while (slow.scale === 0.3) {
+      slow.sample(40);
+      slowSamples++;
+    }
+
+    const fast = createPreviewGovernor();
+    fast.sample(5);
+    let fastSamples = 0;
+    while (fast.scale === 0.3) {
+      fast.sample(5);
+      fastSamples++;
+    }
+
+    expect(fastSamples).toBeGreaterThan(slowSamples * 4);
+  });
+
+  it("never moves while trace cost sits in the dead band between the thresholds", () => {
+    const governor = createPreviewGovernor();
+    // 20ms is comfortably under the 33ms budget but nowhere near the
+    // margin a step up needs — the band that stops the ladder flapping
+    // between two rungs when cost hovers near a single threshold.
+    governor.sample(20);
+    for (let i = 0; i < 1000; i++) {
+      expect(governor.sample(20)).toBeNull();
+    }
+    expect(governor.scale).toBe(0.3);
+  });
+
+  it("does not step up for a device that only just beats the frame budget", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(32);
+    for (let i = 0; i < 1000; i++) governor.sample(32);
+    expect(governor.scale).toBe(0.3);
+  });
+
+  it("drops straight to the floor rung on one catastrophic trace", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(10);
+    expect(governor.sample(300)).toBe(0.15);
+    expect(governor.scale).toBe(0.15);
+  });
+
+  it("panics from the top of the ladder without walking down it", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(3);
+    for (let i = 0; i < 2000; i++) governor.sample(3);
+    expect(governor.scale).toBe(1);
+
+    // A close-up that suddenly costs a quarter second is the last warning
+    // before the GPU watchdog, not a data point to average.
+    expect(governor.sample(300)).toBe(0.15);
+  });
+
+  it("panics even while the hold-off from a previous step is still running", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(60);
+    for (let i = 0; i < 12; i++) governor.sample(60);
+    expect(governor.scale).toBe(0.22);
+    expect(governor.sample(400)).toBe(0.15);
+  });
+
+  it("ignores a nonsensical measurement entirely", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(20);
+    expect(governor.sample(Number.NaN)).toBeNull();
+    expect(governor.sample(-5)).toBeNull();
+    expect(governor.scale).toBe(0.3);
+  });
+
+  it("reset() returns to the starting rung and forgets the measurements", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(10);
+    governor.sample(300);
+    expect(governor.scale).toBe(0.15);
+
+    governor.reset();
+    expect(governor.scale).toBe(PREVIEW_START_SCALE);
+    // Warm-up applies again: the first trace on the new system cannot step.
+    expect(governor.sample(400)).toBeNull();
+    expect(governor.scale).toBe(PREVIEW_START_SCALE);
   });
 });
 

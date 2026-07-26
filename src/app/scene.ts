@@ -43,10 +43,13 @@ import {
   SURFACE_PREVIEW_AO_TAPS,
   SURFACE_PREVIEW_HIT_FLOOR,
   SURFACE_PREVIEW_MARCH_STEPS,
-  SURFACE_PREVIEW_SCALE,
   SURFACE_PREVIEW_SHADOW_STEPS,
 } from "./surface-material";
-import { previewMaxDepth, type RenderTier } from "./render-tier";
+import {
+  createPreviewGovernor,
+  previewMaxDepth,
+  type RenderTier,
+} from "./render-tier";
 import { createStripPlanner, type StripPlanner } from "./strip-planner";
 import {
   createSurfaceMaterial4,
@@ -541,10 +544,11 @@ export class FractalScene {
    * mutated in place (see {@link setSurfaceColorLUT}). */
   private surfaceLUTTexture: THREE.DataTexture | null = null;
   /** Preview-tier target (fr-5ne3): while the view moves, the tracer
-   * renders here at {@link SURFACE_PREVIEW_SCALE} of the drawing buffer and
-   * {@link surfaceBlitQuad} stretches it over the canvas. Lazily sized in
-   * {@link renderSurface} so resizes/DPR changes are absorbed without a
-   * per-frame reallocation. */
+   * renders here at {@link surfacePreviewGovernor}'s current rung of the
+   * drawing buffer and {@link surfaceBlitQuad} stretches it over the
+   * canvas. Lazily sized in {@link renderSurface} so resizes/DPR changes —
+   * and rung changes (fr-hith) — are absorbed without a per-frame
+   * reallocation. */
   private readonly surfacePreviewTarget: THREE.WebGLRenderTarget;
   private readonly surfaceBlitMaterial: THREE.ShaderMaterial;
   private readonly surfaceBlitQuad: FullScreenQuad;
@@ -553,13 +557,15 @@ export class FractalScene {
    * clamps `uMaxDepth` below it and the full tier restores it, so the two
    * tiers can interleave freely (fr-5ne3). */
   private surfaceFullMaxDepth = 0;
-  /** {@link previewMaxDepth} of {@link surfaceFullMaxDepth}, recorded
-   * alongside it by the same two setters (fr-ttg5): contraction-aware, so
-   * a slow-map system's preview clamp scales with its OWN full depth
-   * instead of a fixed ceiling that left slow chains' giant unresolved
-   * core ball on screen for as long as the view kept moving — permanently,
-   * under 4D auto-tumble. */
-  private surfacePreviewMaxDepth = 0;
+  /** Which (scale, depth) rung preview traces currently cost (fr-hith),
+   * driven by the measured cost of the traces themselves. Reset by
+   * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: a new DE is a new
+   * cost profile, so the ladder re-adapts from the shipped 0.3 rung rather
+   * than inheriting a verdict measured on the previous system. The rung's
+   * depth is derived per frame in {@link setSurfaceFrameUniforms} rather
+   * than cached, so it always matches both the live rung and the active
+   * DE's own full depth (fr-ttg5). */
+  private readonly surfacePreviewGovernor = createPreviewGovernor();
   /** Full-resolution target every FULL-quality trace renders into as
    * adaptive scissored strips (fr-sjff): a forced-completion readback
    * between strips keeps every GPU submission bounded, so a pathological
@@ -2028,7 +2034,7 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
-    this.surfacePreviewMaxDepth = previewMaxDepth(de.maxDepth);
+    this.surfacePreviewGovernor.reset();
   }
 
   /**
@@ -2047,7 +2053,7 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
     this.surfaceFullMaxDepth = de.maxDepth;
-    this.surfacePreviewMaxDepth = previewMaxDepth(de.maxDepth);
+    this.surfacePreviewGovernor.reset();
   }
 
   /**
@@ -2141,12 +2147,16 @@ export class FractalScene {
    * settle job uses (fr-sjff: a `gl.finish()` between strips bounds every
    * GPU submission, so even a pathological close-up export cannot wedge
    * the GPU process), then presents the completed frame; "preview" traces
-   * {@link surfacePreviewTarget} at {@link SURFACE_PREVIEW_SCALE} with the
-   * preview-tier quality knobs (depth clamp, march/shadow/AO budgets, hit
-   * floor) and stretches it over the canvas — the cheap frames that keep a
-   * drag/tumble fluid while the settle frame carries the quality. Every
-   * knob is a plain uniform write restored by the next full-tier call, so
-   * the shader bodies (and their CPU-oracle discipline) are untouched.
+   * {@link surfacePreviewTarget} at {@link surfacePreviewGovernor}'s
+   * measured rung with the preview-tier quality knobs (depth clamp,
+   * march/shadow/AO budgets, hit floor) and stretches it over the canvas —
+   * the cheap frames that keep a drag/tumble fluid while the settle frame
+   * carries the quality. Every knob is a plain uniform write restored by
+   * the next full-tier call, so the shader bodies (and their CPU-oracle
+   * discipline) are untouched. Each preview trace also feeds its own
+   * measured cost back to the governor (fr-hith), so the rung tracks what
+   * this device actually manages on this system — and only preview frames
+   * are sampled, never the settle or capture paths.
    */
   renderSurface(tier: RenderTier = "full"): void {
     this.renderNeeded = false;
@@ -2155,12 +2165,29 @@ export class FractalScene {
       // uPixelEps derives from the TARGET's height: the cone-style hit
       // test coarsens to match the preview pixels (fewer march steps) with
       // no extra fudge factor.
-      const w = Math.max(1, Math.round(size.x * SURFACE_PREVIEW_SCALE));
-      const h = Math.max(1, Math.round(size.y * SURFACE_PREVIEW_SCALE));
+      const scale = this.surfacePreviewGovernor.scale;
+      const w = Math.max(1, Math.round(size.x * scale));
+      const h = Math.max(1, Math.round(size.y * scale));
       sizeTarget(this.surfacePreviewTarget, w, h);
       this.setSurfaceFrameUniforms("preview", h);
       this.renderer.setRenderTarget(this.surfacePreviewTarget);
+      const gl = this.renderer.getContext();
+      const t0 = performance.now();
       this.surfaceQuad.render(this.renderer);
+      // Forced-completion measurement of THIS trace, by exactly the
+      // mechanism (and for one of the same reasons) as the strip loop's:
+      // reading a freshly rendered pixel is a DATA DEPENDENCY the driver
+      // cannot reorder around, so the elapsed time is the trace's own
+      // GPU cost rather than the time to queue it. The governor needs it
+      // that way (fr-hith): preview frames are event-driven, so a
+      // wall-clock delta between them would read a paused finger as a slow
+      // device, and the panic path can only act on a cost it can attribute
+      // to the frame that incurred it. The sync also stops preview draws
+      // from queueing up unbounded ahead of the GPU — the same watchdog
+      // argument fr-sjff made for the full tier, which the preview's
+      // single unbounded draw otherwise has no answer for.
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+      this.surfacePreviewGovernor.sample(performance.now() - t0);
       this.renderer.setRenderTarget(null);
       this.blitSurface(this.surfacePreviewTarget.texture, null);
       return;
@@ -2269,8 +2296,16 @@ export class FractalScene {
     u.uPixelEps.value =
       (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(height, 1);
     const preview = tier === "preview";
+    // Derived per frame, never cached: the clamp depends on BOTH the
+    // active DE's own full depth (fr-ttg5) and the live rung (fr-hith),
+    // and the two change independently. A finer rung resolves smaller
+    // pixels, so it must trace deeper or its unresolved core becomes a
+    // visible blob — see previewMaxDepth.
     u.uMaxDepth.value = preview
-      ? this.surfacePreviewMaxDepth
+      ? previewMaxDepth(
+          this.surfaceFullMaxDepth,
+          this.surfacePreviewGovernor.scale,
+        )
       : this.surfaceFullMaxDepth;
     u.uMarchSteps.value = preview
       ? SURFACE_PREVIEW_MARCH_STEPS
