@@ -83,20 +83,20 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  * negative and escaped keys positive, so the four slots hold EVERY
  * in-sphere branch until they run out — exhaustive coverage for m <= 2
  * (at most 4 candidates a level). Measured (fr-jkpn harness rerun,
- * CLOUD=300k, refined estimator): jerusalem 38 violations @3.6%R -> 4
- * @0.003%R, default/spiral/pyramid/dodecahedron -> 0, sigma-0.96 sweep 23
- * @2.0%R -> 1 @0.0, repro3 98 @2.1%R -> 57 @1.2%R (its sigma-0.93 map
- * clamps at the 48-level depth cap, so coverage stays partial there, and
- * chains legitimately surviving to that CLAMPED cap tick its void false
- * hits 0 -> 2/435 — a cap-sizing residual, not a selection one), preset
- * void false hits stay 0 everywhere, and cost lands within +/-5% of
- * width 2 on clean presets (validity slots only occupy when a 3rd
- * in-sphere branch EXISTS at a level) and +28% worst (menger). The one
- * profile no finite width can repair stays disclosed: kaleidoscope
- * copies of a ZERO-TRANSLATION near-isometric map tie their image norms
- * exactly, every chain re-spawns all `order` tied copies each level (an
- * order^depth tie tree), and rank selection cannot split exact ties —
- * repro2+sym4y holds ~9.8%R refined.
+ * CLOUD=300k, refined estimator, at the fr-xok8 depth ceiling): jerusalem
+ * 38 violations @3.6%R -> 4 @0.003%R, default/spiral/pyramid/dodecahedron
+ * -> 0, sigma-0.96 sweep real excess 2.3e-2 -> 0 (the surviving counts
+ * are sub-5e-7 deep-descent fp noise), repro3 109 @2.1%R -> 85 @1.2%R
+ * (m = 3 keeps dropping past four slots at its 127-level depth, and
+ * wanderer terminals tick its void false hits 0 -> 2/435 — see descend's
+ * terminal note), preset void false hits stay 0 everywhere, and cost
+ * lands within +/-5% of width 2 on clean presets (validity slots only
+ * occupy when a 3rd in-sphere branch EXISTS at a level) and +28% worst
+ * (menger). The one profile no finite width can repair stays disclosed:
+ * kaleidoscope copies of a ZERO-TRANSLATION near-isometric map tie their
+ * image norms exactly, every chain re-spawns all `order` tied copies each
+ * level (an order^depth tie tree), and rank selection cannot split exact
+ * ties — repro2+sym4y holds ~9.8%R refined.
  *
  * Escaped-sibling certificates fold REFINED on the production path
  * (fr-1z6p — fr-beck's 4D ghost-eliminator carried back down): before a
@@ -169,6 +169,25 @@ export const ESCAPE_FACTOR = 2;
 /** Accumulated-contraction floor that sizes {@link SurfaceDE.maxDepth}:
  * descend until the slowest map chain has shrunk features below ~1e-4. */
 export const DEPTH_RESOLUTION = 1e-4;
+
+/** Hard ceiling on {@link SurfaceDE.maxDepth}. Sized so every shipped
+ * preset reaches {@link DEPTH_RESOLUTION} in full: the slowest preset map
+ * (doubleRotation's sigma 0.93) needs ceil(ln 1e-4 / ln 0.93) = 127
+ * levels. The previous ceiling of 48 clamped that to 0.93^48 ~ 0.031 —
+ * rendered as a smooth SOLID BALL of radius ~0.047R at the slow map's
+ * fixed point, the unresolved image of the bounding sphere under the
+ * all-slow-map chain (fr-xok8: doubleRotation's surface render grew a fat
+ * featureless ball at the spiral core; measured est = |p| - 0.0466 along
+ * a ray into the origin at cap 48, properly resolved at 127). Maps with
+ * sigma above 10^(-4/128) ~ 0.931 still clamp — their residual blobs
+ * shrink 26x against the old ceiling (0.96: 0.141R -> 0.0054R) and stay
+ * disclosed. Cost: the descent loop only runs deep while chains survive
+ * (near the attractor, slow maps only — sigma below 0.825 never reaches
+ * the old ceiling, let alone this one), the GLSL loop bound is already
+ * the uMaxDepth uniform, and the render tier's march budgets + adaptive
+ * strips bound every GPU submission regardless. Shared with the 4D twin
+ * like the eligibility constants above. */
+export const MAX_DESCENT_DEPTH = 128;
 
 /** `prepareChaosGame`'s no-symmetry default, duplicated here because it is
  * private there; order 1 is the identity expansion for any axis. */
@@ -531,10 +550,10 @@ export function buildSurfaceDE(
 
   // Depth cap from the SLOWEST contraction: the largest per-level shrink
   // factor bounds how many levels matter before features drop below
-  // resolution.
+  // resolution (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note).
   const slowest = bases.reduce((acc, b) => Math.max(acc, b.sigmaMin), 0);
   const maxDepth = Math.min(
-    48,
+    MAX_DESCENT_DEPTH,
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
   );
 
@@ -1043,9 +1062,10 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
   // branch whose terminal already dominates — so the fold is omitted on
   // principle, not cost. (The disclosed repro3 void-false-hit uptick,
   // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-  // branches the validity slots legitimately keep alive to the CLAMPED
-  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
-  // not a fold-site choice.)
+  // wanderer branches the validity slots keep alive in-sphere to the
+  // depth cap — and in-sphere is not near-attractor, so the KIFS
+  // last-value bound is vacuous for them at ANY cap size: re-measured
+  // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;

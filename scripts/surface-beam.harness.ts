@@ -69,6 +69,19 @@
  * rank selection cannot split them). The w1/w2 rows remain the
  * bit-exactness regression of the pre-fr-jkpn beam.
  *
+ * FR-XOK8 ADDENDUM: the depth-cap ceiling rose 48 -> 128
+ * (MAX_DESCENT_DEPTH — the old ceiling clamped sigma-0.93 systems at
+ * 0.93^48 ~ 0.031R of unresolved feature size, rendering doubleRotation's
+ * core as a smooth solid ball). Slow-map rows re-baselined at their new
+ * formula depths (repro2/doubleRotation 127; sweep 0.85 -> 57, 0.90 -> 88,
+ * 0.96 -> clamped 128): deep-descent fp-noise "violations" (sub-5e-7
+ * excess, counted at the 1e-9 threshold) grow with depth and now dominate
+ * the slow rows' viol counts — read maxExcess, not viol, on those rows.
+ * Rows for systems below sigma 0.825 (every shipped 3D preset) are
+ * bit-identical to the fr-jkpn baseline; repro3's disclosed width
+ * residual (1.2%R) and wanderer-terminal void false hits (2/435) persist
+ * unchanged at depth 127, confirming they were never cap artifacts.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/surface-beam.harness.ts
  *

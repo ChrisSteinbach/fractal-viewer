@@ -499,11 +499,15 @@ describe("estimateDistance4 void positivity", () => {
   });
 });
 
-describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth capped at 48)", () => {
-  it("holds validity for exact cloud-sample queries despite the capped depth", () => {
+describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth 127)", () => {
+  it("holds validity for exact cloud-sample queries despite the deep descent", () => {
     const transforms = doubleRotation();
     const de = buildSurfaceDE4(transforms);
-    expect(de.maxDepth).toBe(48);
+    // 127 = ceil(ln 1e-4 / ln 0.93): sigma 0.93 needs the full formula
+    // depth, comfortably under the MAX_DESCENT_DEPTH ceiling of 128 that
+    // fr-xok8 raised it to (the old 48 ceiling clamped this preset and
+    // rendered its unresolved core as a solid ball).
+    expect(de.maxDepth).toBe(127);
     const cloud = runChaosGame4(
       transforms.map(toTransform4),
       20000,
@@ -513,10 +517,10 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
     // presets' validity tests use above — see the "known limitation" test
     // below for why. These stay governed by the terminal KIFS bound, which
     // is unconditionally valid at any depth (see the module doc), so this
-    // still meaningfully exercises the 48-level-capped descent itself. The
-    // epsilon is looser than the other validity tests' 1e-9: up to 48
+    // still meaningfully exercises the 127-level descent itself. The
+    // epsilon is looser than the other validity tests' 1e-9: up to 127
     // levels of accumulated 4x4 matrix-multiply rounding widens the
-    // floating-point noise floor (empirically ~1e-7 here).
+    // floating-point noise floor.
     for (let i = 0; i < cloud.count; i += 400) {
       const q: Vec4 = [
         cloud.positions[i * 3],
@@ -542,10 +546,9 @@ describe("estimateDistance4 descent depth stress (doubleRotation, maxDepth cappe
     // (see this module's FR-V6YG RESOLUTION doc section): a second
     // simultaneous in-sphere branch, dropped uncounted at width 1, is
     // refined by the second chain instead of lost. Tolerance is 1e-6, not
-    // the validity tests' 1e-9 above: this system still descends the full
-    // 48-level cap, and the "holds validity for exact cloud-sample queries"
-    // test above already documents an accumulated fp-noise floor of ~1e-7 at
-    // that depth.
+    // the validity tests' 1e-9 above: this system descends 127 levels, and
+    // the "holds validity for exact cloud-sample queries" test above
+    // already documents the accumulated fp-noise floor at that depth.
     const transforms = doubleRotation();
     const de = buildSurfaceDE4(transforms);
     const cloud = runChaosGame4(
@@ -708,11 +711,12 @@ describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
   it("covers every exact on-attractor query at the built width", () => {
     // Exact (unjittered) on-cloud queries — the "descent depth stress"
     // convention above: the query IS an attractor sample, so its true
-    // distance is 0 and any estimate past the 48-level fp-noise floor
-    // (~1e-7, tolerance 1e-6) is fr-jkpn's dropped-branch overshoot
+    // distance is 0 and any estimate past the deep-descent fp-noise floor
+    // (tolerance 1e-6; sigma 0.96 clamps at the 128-level
+    // MAX_DESCENT_DEPTH ceiling) is fr-jkpn's dropped-branch overshoot
     // surfacing as clipped-away surface. Measured (this build): forced
-    // width 2 reads positive on 13/50 of these, max 4.6e-3 (~0.4%R); the
-    // built width's validity slots cover all 50 (max estimate 0).
+    // width 2 reads positive on 17/50 of these, max 4.6e-3 (~0.4%R); the
+    // built width's validity slots cover all 50 (max estimate 2.5e-8).
     const transforms = sigma096Profile();
     const de = buildSurfaceDE4(transforms);
     const cloud = runChaosGame4(
