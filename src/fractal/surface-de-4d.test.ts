@@ -1248,3 +1248,166 @@ describe("estimateDistance4Refined early-out cutoff", () => {
     expect(estimateDistance4Refined(de, p, 0.1)).toBeGreaterThan(0.1);
   });
 });
+
+// The depth-0 sphere floor's own unconditional exit (fr-zkt2), the 3D
+// twin's contract one dimension up: once `best` falls to or below
+// `sphereBound`, descentValue's `max(best, sphereBound)` clamp is already
+// pinned there, and `best` only ever falls further — so the descent may
+// return the instant that happens, no cutoff required. Value-exact for
+// EVERY caller (unlike the fr-55r5 cutoff exit, exact only at or above the
+// cutoff), but also value-INVISIBLE: the returned number is identical
+// whether or not the exit fired, so there is no "did it fire" counter
+// below — the tests instead pin the invariant the exit leans on (the
+// return never drops below the floor) and re-run the fr-55r5 cutoff
+// contract over probe corpora biased into the region where the new exit
+// actually triggers.
+describe("estimateDistance4Refined sphere-floor pin (fr-zkt2)", () => {
+  it("never returns below the depth-0 sphere floor on pentatope (no lens), for both estimateDistance4 and estimateDistance4Refined", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(7331);
+    const probes: Vec4[] = [];
+    // On-surface, jittered — the part-1 cloud+jitter pattern.
+    for (let i = 0; i < 20; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    // Uniform hyper-box probes.
+    for (let i = 0; i < 15; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    // Outside the bounding hypersphere, 1.05-3x its radius, random
+    // directions.
+    for (let i = 0; i < 25; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const dw = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz, dw) || 1;
+      const radius = (1.05 + rng() * 1.95) * de.boundingRadius;
+      probes.push([
+        (dx / n) * radius,
+        (dy / n) * radius,
+        (dz / n) * radius,
+        (dw / n) * radius,
+      ]);
+    }
+    for (const p of probes) {
+      // The exact prologue formula (both estimators' `startR`), not
+      // Math.hypot — the assertion below is bit-exact, so it must match
+      // the arithmetic the descent itself runs, not a merely-equivalent one.
+      const floor =
+        Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2] + p[3] * p[3]) -
+        de.boundingRadius;
+      expect(estimateDistance4(de, p)).toBeGreaterThanOrEqual(floor);
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("computes the floor in lensed units when a final transform is present", () => {
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0.15, -0.1, 0.2],
+      scale: [0.6, 0.4, 0.5],
+      rotation: [0.3, -0.2, 0.5],
+    });
+    const de = buildSurfaceDE4(transforms, finalTransform);
+    const f = de.final;
+    if (!f) throw new Error("expected a final-transform lens");
+    const rng = mulberry32(24601);
+    for (let i = 0; i < 12; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const dw = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz, dw) || 1;
+      const radius = (1.2 + rng() * 1.8) * de.visibleBoundingRadius;
+      const p: Vec4 = [
+        (dx / n) * radius,
+        (dy / n) * radius,
+        (dz / n) * radius,
+        (dw / n) * radius,
+      ];
+      // The descend prologue's lens step, verbatim: row-major 4x4 invM
+      // then invT, THEN the norm — matching order matters for bit-exactness.
+      const im = f.invM;
+      const it = f.invT;
+      const qx =
+        im[0] * p[0] + im[1] * p[1] + im[2] * p[2] + im[3] * p[3] + it[0];
+      const qy =
+        im[4] * p[0] + im[5] * p[1] + im[6] * p[2] + im[7] * p[3] + it[1];
+      const qz =
+        im[8] * p[0] + im[9] * p[1] + im[10] * p[2] + im[11] * p[3] + it[2];
+      const qw =
+        im[12] * p[0] + im[13] * p[1] + im[14] * p[2] + im[15] * p[3] + it[3];
+      const lensedR = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
+      const floor = (lensedR - de.boundingRadius) * f.sigmaMin;
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("keeps both cutoff properties on doubleRotation when probes are biased outside the bounding sphere", () => {
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(2718);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 24; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const dw = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz, dw) || 1;
+      const radius = (1.0 + rng() * 1.5) * de.boundingRadius;
+      probes.push([
+        (dx / n) * radius,
+        (dy / n) * radius,
+        (dz / n) * radius,
+        (dw / n) * radius,
+      ]);
+    }
+    for (let i = 0; i < 8; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+});

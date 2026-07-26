@@ -1082,6 +1082,23 @@ function descentValue(
  * instead would re-open the exact ghost class refinement exists to kill —
  * a barely-escaped sibling dips under the cutoff, the full descent lifts it
  * back above, and the march paints a membrane across a void.
+ *
+ * SPHERE FLOOR (fr-zkt2), the 3D twin's contract one dimension up (see
+ * estimateDistanceRefined's paragraph for where the exit pays — live on
+ * anisotropic maps, provably dead on isotropic invariant-ball ones, since
+ * `|p - t| - sigma R >= |p| - R` inducts down every chain). Once `best`
+ * falls to or below the depth-0 sphere bound, the eventual return is
+ * already pinned: `descentValue` clamps through `max(best, sphereBound)`,
+ * and `best` is a monotone min, so no later fold can lift the clamp back
+ * off `sphereBound`. The descent therefore exits the instant
+ * `best <= sphereBound`, unconditionally — no cutoff involved — and the
+ * value it returns equals the full descent's, bit-for-bit, always, unlike
+ * the fr-55r5 exit above which is exact only at or above a cutoff. Plain
+ * `estimateDistance4` does NOT carry this exit: unlike 3D, where both
+ * estimators share `descend` and the plain one picks the exit up
+ * structurally, the two 4D estimators predate the cutoff machinery and
+ * stay self-contained (see the module doc) — the bead scopes this exit to
+ * the refined estimator only.
  */
 export function estimateDistance4Refined(
   de: SurfaceDE4,
@@ -1120,7 +1137,9 @@ export function estimateDistance4Refined(
   // depth-0 sphere floor that already holds the answer at or above the
   // cutoff no matter how far `best` falls, since the floor is what the
   // return would clamp to. Both exits below test `best * finalScale`
-  // against it AFTER a fold, never a raw pre-refinement key.
+  // against it AFTER a fold, never a raw pre-refinement key. (That sphere
+  // floor case now has its own unconditional exit — fr-zkt2, below — that
+  // fires the moment `best` reaches it, cutoff or not.)
   const bailBelow =
     cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
 
@@ -1410,12 +1429,16 @@ export function estimateDistance4Refined(
           const rc = refinedCert(eX, eY, eZ, eW, eR, eScale);
           if (rc < best) {
             best = rc;
-            // Cutoff exit (fr-55r5). `rc` is FINALIZED — already refined,
-            // so no later level can lift it — and `best` only falls from
-            // here, so once the value this would return sits under the
-            // caller's acceptance epsilon the remaining descent cannot
-            // change its verdict.
-            if (best * finalScale < bailBelow) {
+            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
+            // `rc` is FINALIZED — already refined — and `best` only
+            // falls from here. Once `best` sits at or below the depth-0
+            // sphere bound the return is pinned at `sphereBound *
+            // finalScale` no matter how much further `best` still
+            // falls, so that case exits unconditionally; short of it,
+            // once the value this would return sits under the caller's
+            // acceptance epsilon the remaining descent cannot change
+            // its verdict either.
+            if (best <= sphereBound || best * finalScale < bailBelow) {
               return descentValue(best, sphereBound, finalScale);
             }
           }
@@ -1494,16 +1517,19 @@ export function estimateDistance4Refined(
         v2Live = true;
       }
     }
-    // Cutoff exit (fr-55r5), covering the four promote folds above in one
-    // test: each of them either wrote a settled certificate into `best` (a
-    // refined one at the two validity-slot sites and the width-1 runner-up,
-    // the deliberately plain escape-radius bound at the other two) or
-    // continued a chain, and neither the rest of this level nor any deeper
-    // one can raise the running min back. Deliberately NOT a `break`: the
-    // terminal bounds past the loop are folds the FULL descent only makes
-    // at the depth cap, and folding one here could drop `best` below a
-    // value the full computation never reaches.
-    if (best * finalScale < bailBelow) {
+    // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2), covering
+    // the four promote folds above in one test: each of them either wrote
+    // a settled certificate into `best` (a refined one at the two
+    // validity-slot sites and the width-1 runner-up, the deliberately
+    // plain escape-radius bound at the other two) or continued a chain,
+    // and neither the rest of this level nor any deeper one can raise the
+    // running min back. Once `best` is at or below the depth-0 sphere
+    // bound the eventual return is already pinned at `sphereBound *
+    // finalScale`, so that case exits unconditionally. Deliberately NOT a
+    // `break`: the terminal bounds past the loop are folds the FULL
+    // descent only makes at the depth cap, and folding one here could
+    // drop `best` below a value the full computation never reaches.
+    if (best <= sphereBound || best * finalScale < bailBelow) {
       return descentValue(best, sphereBound, finalScale);
     }
   }
