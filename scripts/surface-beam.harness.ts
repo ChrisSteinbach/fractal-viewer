@@ -53,6 +53,22 @@
  * balloon proxy), and the base rows double as a bit-exactness regression
  * of the shared descent body against the pre-refactor baseline.
  *
+ * FR-JKPN ADDENDUM: every width loop now spans 1-4. Widths 3/4 are the
+ * validity slots (rank-3/4 chains, live only while in-sphere) that closed
+ * the width-2 residual above; `buildSurfaceDE`/`buildSurfaceDE4` now
+ * always build width 4. Measured verdict (recorded on the fr-jkpn bead,
+ * CLOUD=300k, refined estimator, w2 -> w4): jerusalem 38 viol @3.6%R ->
+ * 4 @0.003%R, default/spiral/pyramid/dodecahedron -> 0, sigma-0.96 sweep
+ * 23 @2.0%R -> 1 @0.0 (width 4 is exhaustive for m = 2), repro3 98
+ * @2.1%R -> 57 @1.2%R (48-level cap clamps sigma-0.93 coverage; void
+ * false hits tick 0 -> 2/435 there from chains legitimately surviving to
+ * the clamped cap), preset voidFalseHits stay 0 everywhere, cost within
+ * +/-5% of width 2 on clean presets and +28% worst (menger, refined).
+ * The zero-translation kaleidoscope tie tree stays disclosed: repro2+sym4y
+ * holds ~9.8%R refined at any finite width (order^depth exact ties;
+ * rank selection cannot split them). The w1/w2 rows remain the
+ * bit-exactness regression of the pre-fr-jkpn beam.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/surface-beam.harness.ts
  *
@@ -240,7 +256,7 @@ function nearest3(cloud: ChaosGameResult, p: Vec3): number {
  * SHIPPED estimator, not a copy. */
 function countingDE(
   de: SurfaceDE,
-  beamWidth: 1 | 2,
+  beamWidth: 1 | 2 | 3 | 4,
 ): {
   de: SurfaceDE;
   counter: { n: number };
@@ -260,7 +276,7 @@ function countingDE(
 
 function countingDE4(
   de: SurfaceDE4,
-  beamWidth: 1 | 2,
+  beamWidth: 1 | 2 | 3 | 4,
 ): {
   de: SurfaceDE4;
   counter: { n: number };
@@ -358,7 +374,7 @@ interface System3 {
 function measure3(sys: System3): {
   de: SurfaceDE;
   rows: {
-    width: 1 | 2;
+    width: 1 | 2 | 3 | 4;
     estimator: "base" | "refined";
     result: MeasureResult;
   }[];
@@ -374,11 +390,11 @@ function measure3(sys: System3): {
   const qs = queries3(cloud, de.boundingRadius);
   const trueD = qs.map((q) => nearest3(cloud, q.p));
   const rows: {
-    width: 1 | 2;
+    width: 1 | 2 | 3 | 4;
     estimator: "base" | "refined";
     result: MeasureResult;
   }[] = [];
-  for (const width of [1, 2] as const) {
+  for (const width of [1, 2, 3, 4] as const) {
     for (const [estimator, fn] of [
       ["base", estimateDistance],
       ["refined", estimateDistanceRefined],
@@ -519,20 +535,24 @@ describe("fr-v6yg surface beam harness", () => {
         label: `sigmaA=${sigmaA}`,
         transforms: repro3D(sigmaA),
       });
-      const pick = (width: 1 | 2, estimator: "base" | "refined") =>
+      const pick = (width: 1 | 2 | 3 | 4, estimator: "base" | "refined") =>
         rows.find((r) => r.width === width && r.estimator === estimator)!
           .result;
       const w1 = pick(1, "base");
       const w2 = pick(2, "base");
       const w2r = pick(2, "refined");
+      const w3r = pick(3, "refined");
+      const w4r = pick(4, "refined");
       console.log(
         `sigmaA=${sigmaA.toFixed(2)} R=${de.boundingRadius.toFixed(3)}` +
           ` maxDepth=${de.maxDepth} builtWidth=${de.beamWidth}` +
           ` | w1 viol=${w1.violations} maxExcess=${w1.maxExcess.toFixed(6)}` +
           ` | w2 viol=${w2.violations} maxExcess=${w2.maxExcess.toFixed(6)}` +
           ` | w2r viol=${w2r.violations} maxExcess=${w2r.maxExcess.toFixed(6)}` +
-          ` | apps w1=${w1.meanApps.toFixed(1)} w2=${w2.meanApps.toFixed(1)}` +
-          ` w2r=${w2r.meanApps.toFixed(1)}`,
+          ` | w3r viol=${w3r.violations} maxExcess=${w3r.maxExcess.toFixed(6)}` +
+          ` | w4r viol=${w4r.violations} maxExcess=${w4r.maxExcess.toFixed(6)}` +
+          ` | apps w2r=${w2r.meanApps.toFixed(1)}` +
+          ` w3r=${w3r.meanApps.toFixed(1)} w4r=${w4r.meanApps.toFixed(1)}`,
       );
     }
     expect(true).toBe(true);
@@ -559,7 +579,7 @@ describe("fr-v6yg surface beam harness", () => {
         `-- ${sys.label}: maps=${de.maps.length} builtWidth=${de.beamWidth}` +
           ` R=${de.boundingRadius.toFixed(4)} maxDepth=${de.maxDepth}`,
       );
-      for (const width of [1, 2] as const) {
+      for (const width of [1, 2, 3, 4] as const) {
         for (const [name, fn] of [
           ["base", estimateDistance4],
           ["refined", estimateDistance4Refined],

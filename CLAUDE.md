@@ -84,14 +84,16 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
     (eligibility gate: eligible/degraded/ineligible + reasons),
     `buildSurfaceDE` (symmetry-expanded inverse maps + seeded
-    bounding-radius probe), `estimateDistance` (width-2 beam inverse-map
-    descent + sibling certificates; width 1 = the old greedy descent, kept
-    for tests — fr-v6yg measured it overshooting, tables in
+    bounding-radius probe), `estimateDistance` (width-4 beam inverse-map
+    descent + sibling certificates: the fr-v6yg chain pair — width 1 = the
+    old greedy descent, measured overshooting, kept for tests — plus
+    fr-jkpn's two validity slots, rank-3/4 chains live only while
+    in-sphere, closing the 3+-simultaneous-branch drops; tables in
     `scripts/surface-beam.harness.ts`) + production
     `estimateDistanceRefined` (fr-1z6p: fr-beck's extra Hutchinson level on
     folded sibling certificates, ported down from 4D — kills the balloon
     ghosts plain certificates rendered across voids; lazily guarded,
-    measured void-false-hits 0 everywhere). Oracle for
+    measured void-false-hits 0 on every preset). Oracle for
     `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
     render mode over.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
@@ -242,7 +244,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
-    certificates + width-2 beam — the fr-beck-measured ghost eliminator).
+    certificates + width-4 beam — the fr-beck-measured ghost eliminator
+    plus fr-jkpn's validity slots).
     Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
     unlike flame/solid-4D's frozen snapshot; 16-map cap (mat4-sized slots,
     no kaleidoscope to expand).

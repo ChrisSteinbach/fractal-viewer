@@ -64,16 +64,39 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  * doubleRotation profile (2 maps, sigma 0.93/0.22: max excess ~19% of R),
  * but also on plain shipped presets (default 10.8%R, spiral 8.6%R,
  * pyramid 6.2%R), with no per-map sigma threshold separating the clean
- * systems from the overshooting ones. Production builds therefore always
- * use width 2 (~1.7-1.8x the inverse applications, violations collapse to
- * the fp-noise floor on every measured 2-map system AND every preset, and
- * tightness IMPROVES since the second chain refines the barely-escaped
- * sibling certificates fr-beck measured every ghost back to); width 1
- * remains only as the tests' pin of the single-chain mechanism. Measured
- * residual (disclosed, filed as follow-up): 3+ simultaneous in-sphere
- * branches still drop — kaleidoscope copies of a near-isometric map tie
- * their image norms exactly (repro+order-4: ~5%R residual excess), and
- * m >= 3 or sigma >= 0.96 slow-map systems retain ~2%R.
+ * systems from the overshooting ones — so the paired chains are
+ * unconditional (~1.7-1.8x width 1's inverse applications, violations
+ * collapse to the fp-noise floor on every measured 2-map system AND every
+ * preset, and tightness IMPROVES since the second chain refines the
+ * barely-escaped sibling certificates fr-beck measured every ghost back
+ * to); width 1 remains only as the tests' pin of the single-chain
+ * mechanism. Width 2's own measured residual — levels with 3+
+ * SIMULTANEOUS in-sphere branches still dropped the excess (jerusalem
+ * 3.6%R, m >= 3 slow maps ~2%R, sigma >= 0.96 ~2%R) — was fr-jkpn,
+ * closed by the two VALIDITY SLOTS production builds add (width 4): a
+ * second insert-shift ladder tracks each level's rank-3/4 candidates
+ * exactly (fed by everything the top-2 ladder evicts), and those continue
+ * as extra chains ONLY while in-sphere — the branches that carry no
+ * positive certificate, whose silent drop was the invalidity — folding
+ * the ordinary guarded certificate the moment they escape and no cap
+ * terminal at all (see descend's terminal note). In-sphere keys are
+ * negative and escaped keys positive, so the four slots hold EVERY
+ * in-sphere branch until they run out — exhaustive coverage for m <= 2
+ * (at most 4 candidates a level). Measured (fr-jkpn harness rerun,
+ * CLOUD=300k, refined estimator): jerusalem 38 violations @3.6%R -> 4
+ * @0.003%R, default/spiral/pyramid/dodecahedron -> 0, sigma-0.96 sweep 23
+ * @2.0%R -> 1 @0.0, repro3 98 @2.1%R -> 57 @1.2%R (its sigma-0.93 map
+ * clamps at the 48-level depth cap, so coverage stays partial there, and
+ * chains legitimately surviving to that CLAMPED cap tick its void false
+ * hits 0 -> 2/435 — a cap-sizing residual, not a selection one), preset
+ * void false hits stay 0 everywhere, and cost lands within +/-5% of
+ * width 2 on clean presets (validity slots only occupy when a 3rd
+ * in-sphere branch EXISTS at a level) and +28% worst (menger). The one
+ * profile no finite width can repair stays disclosed: kaleidoscope
+ * copies of a ZERO-TRANSLATION near-isometric map tie their image norms
+ * exactly, every chain re-spawns all `order` tied copies each level (an
+ * order^depth tie tree), and rank selection cannot split exact ties —
+ * repro2+sym4y holds ~9.8%R refined.
  *
  * Escaped-sibling certificates fold REFINED on the production path
  * (fr-1z6p — fr-beck's 4D ghost-eliminator carried back down): before a
@@ -87,8 +110,9 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  * width-2 refined voidFalseHits drop to 0 on EVERY system measured
  * (kaleidoscope stress profile included), tightness improves (sierpinski
  * DE/D p10 0.451 -> 0.646), validity is unchanged on every shipped preset
- * (jerusalem's fr-jkpn residual stays 3.6%R), and cost lands at ~2-4x
- * inverse applications over base thanks to the fold-time laziness guard.
+ * (jerusalem's fr-jkpn residual stayed 3.6%R until the width-4 validity
+ * slots above closed it), and cost lands at ~2-4x inverse applications
+ * over base thanks to the fold-time laziness guard.
  * Disclosed interaction (noted on fr-jkpn): kaleidoscope orders >= 3
  * multiply every branch, so the >= 3 simultaneous in-sphere drops that
  * break strict validity get COMMON there, and refinement — by raising
@@ -214,11 +238,16 @@ export interface SurfaceDE {
    * features below {@link DEPTH_RESOLUTION}. */
   maxDepth: number;
   /** How many descent chains {@link estimateDistance} refines in parallel.
-   * Always 2 from {@link buildSurfaceDE} (fr-v6yg: the single greedy chain
-   * measurably overshoots — see the module doc); 1 exists so tests can pin
-   * the width-1 mechanism the beam repairs. The GLSL tracer hardcodes the
-   * production width. */
-  beamWidth: 1 | 2;
+   * Widths 1/2 are the classic greedy chain and the fr-v6yg pair; widths
+   * 3/4 add the fr-jkpn VALIDITY slots — extra chains that hold the level's
+   * rank-3/4 candidates ONLY while their points are in-sphere (an escaped
+   * rank-3/4 candidate folds its refined certificate instead, exactly as it
+   * would without the slots), so levels with three or four simultaneous
+   * in-sphere branches no longer drop the excess uncounted.
+   * {@link buildSurfaceDE} always emits 4 (see the module doc for the
+   * measured verdict); 1 and 2 exist so tests can pin each mechanism. The
+   * GLSL tracer hardcodes the production width. */
+  beamWidth: 1 | 2 | 3 | 4;
   /** March step multiplier from {@link analyzeSurfaceSystem}. */
   stepScale: number;
   /** Pre-inverted final-transform lens (the plotted set is `F(attractor)`),
@@ -532,7 +561,7 @@ export function buildSurfaceDE(
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
-    beamWidth: 2,
+    beamWidth: 4,
     stepScale: analysis.stepScale,
     final,
   };
@@ -543,7 +572,9 @@ export function buildSurfaceDE(
  * sibling-certificate tracking (see the module doc for the validity
  * argument). Width 1 is the classic greedy descent, value-equivalent to
  * the pre-fr-v6yg estimator; width 2 keeps a second chain alive so a
- * second simultaneous in-sphere branch is refined instead of dropped.
+ * second simultaneous in-sphere branch is refined instead of dropped;
+ * widths 3/4 add the fr-jkpn validity slots — rank-3/4 chains that live
+ * only while in-sphere, closing the 3-and-4-simultaneous drops.
  *
  * At each level every live chain's inverse images are computed and ranked
  * by the selection key `chainScale · (r - R)` — within one chain that is
@@ -551,13 +582,15 @@ export function buildSurfaceDE(
  * each branch by the contraction already accumulated, so the beam always
  * refines the candidates whose pieces could still hide the nearest
  * surface. The best candidate continues as chain A, the runner-up as chain
- * B (width 2 only); every OTHER candidate that escaped the bounding sphere
- * folds its frozen certificate `chainScale · sigma_min_j · (r - R)` — a
- * certified lower bound on the distance to THAT piece — into the running
- * min. A chain dies once its point escapes past `escapeRadius` (deeper
- * refinement cannot improve the min), folding its terminal
- * `chainScale' · (r - R)` bound; chains still alive at the depth cap fold
- * the same terminal (the KIFS last-value formula). The estimate is the min
+ * B (width 2 up); ranks 3/4 continue as validity chains V1/V2 while
+ * in-sphere (widths 3/4); every OTHER candidate that escaped the bounding
+ * sphere folds its frozen certificate `chainScale · sigma_min_j · (r - R)`
+ * — a certified lower bound on the distance to THAT piece — into the
+ * running min. A chain dies once its point escapes past `escapeRadius`
+ * (deeper refinement cannot improve the min), folding its terminal
+ * `chainScale' · (r - R)` bound; chains A/B still alive at the depth cap
+ * fold the same terminal (the KIFS last-value formula; validity chains
+ * fold none — see the terminal note in descend). The estimate is the min
  * over all folded terms, never beaten by the depth-0 sphere bound
  * `|p| - R`. A point tracking the attractor's occupied region the whole
  * way down ends `<= 0`; the MARCHER floors at its epsilon, not this
@@ -673,7 +706,12 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
   // Chain slot A starts at the (lensed) query; slot B idles until beam
   // selection fills it (width-2 systems only). Each chain carries the
   // contraction accumulated INCLUDING its own map and the radius its point
-  // was selected at — `scale · (r - R)` is its terminal bound.
+  // was selected at — `scale · (r - R)` is its terminal bound. V1/V2 are
+  // the fr-jkpn validity slots (widths 3/4): they hold the level's rank-3/4
+  // candidates ONLY while those are in-sphere — branches that carry no
+  // positive certificate, so dropping them was the measured invalidity —
+  // and fold the ordinary refined certificate the moment they escape.
+  const extra = de.beamWidth - 2;
   let aX = x;
   let aY = y;
   let aZ = z;
@@ -686,9 +724,23 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
   let bScale = 1;
   let bR = 0;
   let bLive = false;
+  // Validity chains carry no R field: unlike A/B they never fold a
+  // terminal (see the note past the loop), and expansion re-derives every
+  // child radius, so the selection radius is dead weight once occupancy
+  // is decided.
+  let v1X = 0;
+  let v1Y = 0;
+  let v1Z = 0;
+  let v1Scale = 1;
+  let v1Live = false;
+  let v2X = 0;
+  let v2Y = 0;
+  let v2Z = 0;
+  let v2Scale = 1;
+  let v2Live = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    if (!aLive && !bLive) break;
+    if (!aLive && !bLive && !v1Live && !v2Live) break;
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -706,13 +758,53 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
     let c2Scale = 1;
     let c2R = 0;
     let c2Cert = 0;
-    for (let c = 0; c < 2; c++) {
-      const isA = c === 0;
-      if (isA ? !aLive : !bLive) continue;
-      const pX = isA ? aX : bX;
-      const pY = isA ? aY : bY;
-      const pZ = isA ? aZ : bZ;
-      const pScale = isA ? aScale : bScale;
+    // Ranks 3/4, tracked the same way on widths 3/4 (a second insert-shift
+    // ladder fed by everything the top-2 ladder evicts, so the pair holds
+    // exactly the level's third- and fourth-smallest keys).
+    let c3Key = Infinity;
+    let c3X = 0;
+    let c3Y = 0;
+    let c3Z = 0;
+    let c3Scale = 1;
+    let c3R = 0;
+    let c3Cert = 0;
+    let c4Key = Infinity;
+    let c4X = 0;
+    let c4Y = 0;
+    let c4Z = 0;
+    let c4Scale = 1;
+    let c4R = 0;
+    let c4Cert = 0;
+    for (let c = 0; c < 4; c++) {
+      let pX: number;
+      let pY: number;
+      let pZ: number;
+      let pScale: number;
+      if (c === 0) {
+        if (!aLive) continue;
+        pX = aX;
+        pY = aY;
+        pZ = aZ;
+        pScale = aScale;
+      } else if (c === 1) {
+        if (!bLive) continue;
+        pX = bX;
+        pY = bY;
+        pZ = bZ;
+        pScale = bScale;
+      } else if (c === 2) {
+        if (!v1Live) continue;
+        pX = v1X;
+        pY = v1Y;
+        pZ = v1Z;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) continue;
+        pX = v2X;
+        pY = v2Y;
+        pZ = v2Z;
+        pScale = v2Scale;
+      }
       for (let j = 0; j < de.maps.length; j++) {
         const map = de.maps[j];
         const im = map.invM;
@@ -724,17 +816,26 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
         const key = pScale * (r - R);
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
+        // Exactly one tuple leaves the top-2 ladder per candidate — the
+        // displaced runner-up, or the candidate itself. It spills to the
+        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+        // sentinels flow through both harmlessly (key Infinity never
+        // inserts, r = 0 never folds).
+        let eKey = key;
+        let eX = ix;
+        let eY = iy;
+        let eZ = iz;
+        let eScale = childScale;
+        let eR = r;
+        let eCert = cert;
         if (key < c1Key) {
-          // New best: the old best shifts to runner-up, whose previous
-          // occupant folds (escaped candidates leave their certificate —
-          // REFINED on the refined path, where the guard already knows the
-          // plain certificate would have advanced the min).
-          if (c2R > R && c2Cert < best) {
-            const folded = refine
-              ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
-              : c2Cert;
-            if (folded < best) best = folded;
-          }
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = c1Key;
           c2X = c1X;
           c2Y = c1Y;
@@ -750,12 +851,13 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
           c1R = r;
           c1Cert = cert;
         } else if (key < c2Key) {
-          if (c2R > R && c2Cert < best) {
-            const folded = refine
-              ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
-              : c2Cert;
-            if (folded < best) best = folded;
-          }
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = key;
           c2X = ix;
           c2Y = iy;
@@ -763,19 +865,88 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
-        } else if (r > R && cert < best) {
-          const folded = refine ? refinedCert(ix, iy, iz, r, childScale) : cert;
+        }
+        if (extra > 0) {
+          // Spill into the rank-3/4 ladder; what THAT evicts (or the
+          // spilled tuple itself, when it beats neither slot) falls
+          // through to the fold below.
+          if (eKey < c3Key) {
+            // The evicted key is dead past this point — only the folded
+            // fields (point, scale, radius, certificate) survive.
+            const tX = extra > 1 ? c4X : c3X;
+            const tY = extra > 1 ? c4Y : c3Y;
+            const tZ = extra > 1 ? c4Z : c3Z;
+            const tScale = extra > 1 ? c4Scale : c3Scale;
+            const tR = extra > 1 ? c4R : c3R;
+            const tCert = extra > 1 ? c4Cert : c3Cert;
+            if (extra > 1) {
+              c4Key = c3Key;
+              c4X = c3X;
+              c4Y = c3Y;
+              c4Z = c3Z;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+            }
+            c3Key = eKey;
+            c3X = eX;
+            c3Y = eY;
+            c3Z = eZ;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eX = tX;
+            eY = tY;
+            eZ = tZ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (extra > 1 && eKey < c4Key) {
+            const tX = c4X;
+            const tY = c4Y;
+            const tZ = c4Z;
+            const tScale = c4Scale;
+            const tR = c4R;
+            const tCert = c4Cert;
+            c4Key = eKey;
+            c4X = eX;
+            c4Y = eY;
+            c4Z = eZ;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eX = tX;
+            eY = tY;
+            eZ = tZ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+        }
+        // The tuple leaving the beam frontier: escaped candidates fold
+        // their certificate (REFINED on the refined path, where the guard
+        // already knows the plain certificate would have advanced the
+        // min); an in-sphere tuple carries no positive certificate — on
+        // widths 3/4 it can only get here past FOUR smaller keys, the
+        // (shrunken) fr-jkpn residual drop.
+        if (eR > R && eCert < best) {
+          const folded = refine ? refinedCert(eX, eY, eZ, eR, eScale) : eCert;
           if (folded < best) best = folded;
         }
       }
     }
     // Promote: the best candidate always continues as chain A (or, past
     // the escape radius, folds its terminal and dies); the runner-up
-    // becomes chain B only on width-2 systems — width 1 folds it frozen,
+    // becomes chain B only on width-2+ systems — width 1 folds it frozen,
     // exactly the classic sibling certificate. An in-sphere runner-up on a
     // width-1 system folds nothing: that is the documented residual drop.
+    // Ranks 3/4 (widths 3/4) continue as validity chains ONLY while
+    // in-sphere; escaped they fold the same refined certificate they would
+    // have folded without the slots.
     aLive = false;
     bLive = false;
+    v1Live = false;
+    v2Live = false;
     if (c1Key < Infinity) {
       if (c1R > de.escapeRadius) {
         if (c1Cert < best) best = c1Cert;
@@ -814,6 +985,38 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
         bLive = true;
       }
     }
+    if (extra > 0 && c3Key < Infinity) {
+      if (c3R > R) {
+        if (c3Cert < best) {
+          const folded = refine
+            ? refinedCert(c3X, c3Y, c3Z, c3R, c3Scale)
+            : c3Cert;
+          if (folded < best) best = folded;
+        }
+      } else {
+        v1X = c3X;
+        v1Y = c3Y;
+        v1Z = c3Z;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (extra > 1 && c4Key < Infinity) {
+      if (c4R > R) {
+        if (c4Cert < best) {
+          const folded = refine
+            ? refinedCert(c4X, c4Y, c4Z, c4R, c4Scale)
+            : c4Cert;
+          if (folded < best) best = folded;
+        }
+      } else {
+        v2X = c4X;
+        v2Y = c4Y;
+        v2Z = c4Z;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
   }
 
   // Terminal bound of chains alive at the depth cap (the KIFS last-value
@@ -827,6 +1030,22 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean): number {
     const terminal = bScale * (bR - R);
     if (terminal < best) best = terminal;
   }
+  // Validity chains fold NO cap terminal — deliberately asymmetric with
+  // A/B. In-sphere means inside the bounding SPHERE, not near the
+  // attractor, so a validity chain's cap terminal is a vacuous negative
+  // bound that can only ever pull the estimate toward a fabricated hit
+  // (the membrane direction fr-jkpn's record calls the visually harmful
+  // one), never fix a real one — the piece it tracks sits within
+  // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
+  // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+  // estimators, widths 3/4): folding them changes NOTHING — whenever a
+  // validity chain survives to the cap, chain A holds an equal-or-deeper
+  // branch whose terminal already dominates — so the fold is omitted on
+  // principle, not cost. (The disclosed repro3 void-false-hit uptick,
+  // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
+  // branches the validity slots legitimately keep alive to the CLAMPED
+  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
+  // not a fold-site choice.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;

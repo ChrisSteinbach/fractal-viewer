@@ -647,6 +647,112 @@ describe("estimateDistance4Refined validity (never exceeds the true distance to 
   });
 });
 
+// -----------------------------------------------------------------------
+// fr-jkpn validity slots (widths 3/4) — the 4D mirror of
+// `surface-de.test.ts`'s "fr-jkpn validity slots on the sigma-0.96
+// slow-map profile" describe block; see that file for the mechanism (a
+// second insert-shift ladder holds each level's rank-3/4 candidates, which
+// continue as extra chains ONLY while in-sphere). Same 2-map profile as the
+// 3D test (sigma 0.96/0.22, weight 6:1) — one notch faster than this
+// module's own `doubleRotation` preset (sigma 0.93/0.22), the notch where
+// the 3D harness measured width 2 retaining a residual.
+// -----------------------------------------------------------------------
+
+describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
+  function sigma096Profile(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.96, 0.96, 0.96],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+  }
+
+  it("holds at the built width: no jittered query exceeds the cloud-distance bound", () => {
+    // Same construction as the 3D mirror test (same profile, same cloud
+    // seed/size); `jitteredQueries(cloud, 500)` reproduces that test's
+    // inline stride-40 loop exactly (500 = 20000/40 points, same jitter RNG
+    // and +-0.15/coord magnitude), plus a jittered w here.
+    //
+    // Measured (this build): UNLIKE 3D, forcing beamWidth 2 on this
+    // jittered construction does NOT reveal a violation in 4D (0/500 at
+    // tol 1e-9, vs 3D's reliable overshoot on the same construction) — in
+    // 4D the drop surfaces on EXACT on-attractor queries instead, which is
+    // what the width pair below pins. This test keeps the standard
+    // jittered probe valid at the built width.
+    const transforms = sigma096Profile();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of jitteredQueries(cloud, 500)) {
+      const nearest = nearestDistance4(cloud, q);
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("covers every exact on-attractor query at the built width", () => {
+    // Exact (unjittered) on-cloud queries — the "descent depth stress"
+    // convention above: the query IS an attractor sample, so its true
+    // distance is 0 and any estimate past the 48-level fp-noise floor
+    // (~1e-7, tolerance 1e-6) is fr-jkpn's dropped-branch overshoot
+    // surfacing as clipped-away surface. Measured (this build): forced
+    // width 2 reads positive on 13/50 of these, max 4.6e-3 (~0.4%R); the
+    // built width's validity slots cover all 50 (max estimate 0).
+    const transforms = sigma096Profile();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (let i = 0; i < cloud.count; i += 400) {
+      const q: Vec4 = [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+        cloud.w[i],
+      ];
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(1e-6);
+    }
+  });
+
+  it("overshoots some of those exact queries when forced back to beamWidth 2 — the fr-jkpn drop the validity slots repair", () => {
+    const transforms = sigma096Profile();
+    const de = { ...buildSurfaceDE4(transforms), beamWidth: 2 as const };
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    let violates = false;
+    for (let i = 0; i < cloud.count; i += 400) {
+      const q: Vec4 = [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+        cloud.w[i],
+      ];
+      if (estimateDistance4Refined(de, q) > 1e-6) violates = true;
+    }
+    expect(violates).toBe(true);
+  });
+});
+
 describe("estimateDistance4 beam and estimateDistance4Refined both collapse a measured ghost point", () => {
   it("clears a pentatope void probe that would false-hit a slice march at eps_hit=0.01R — width-1 alone still ghosts", () => {
     // Pinned from the fr-beck spike's (g2) run (`surface-de-4d.spike.test.ts`,

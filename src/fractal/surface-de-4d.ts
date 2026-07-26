@@ -483,10 +483,16 @@ export interface SurfaceDE4 {
    * features below `DEPTH_RESOLUTION`. */
   maxDepth: number;
   /** How many descent chains {@link estimateDistance4} refines in
-   * parallel. Always 2 from {@link buildSurfaceDE4} (fr-v6yg, exactly like
-   * 3D's `SurfaceDE.beamWidth`); 1 exists so tests can pin the width-1
-   * mechanism the beam repairs. */
-  beamWidth: 1 | 2;
+   * parallel. Widths 1/2 are the classic greedy chain and the fr-v6yg pair;
+   * widths 3/4 add the fr-jkpn VALIDITY slots — extra chains that hold the
+   * level's rank-3/4 candidates ONLY while their points are in-sphere (an
+   * escaped rank-3/4 candidate folds its refined certificate instead,
+   * exactly as it would without the slots), so levels with three or four
+   * simultaneous in-sphere branches no longer drop the excess uncounted.
+   * {@link buildSurfaceDE4} always emits 4 (see the 3D twin's module doc
+   * for the measured verdict); 1 and 2 exist so tests can pin each
+   * mechanism. */
+  beamWidth: 1 | 2 | 3 | 4;
   /** March step multiplier from {@link analyzeSurfaceSystem4}. */
   stepScale: number;
   /** Pre-inverted final-transform lens (the plotted set is `F(attractor)`),
@@ -598,7 +604,7 @@ export function buildSurfaceDE4(
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
-    beamWidth: 2,
+    beamWidth: 4,
     stepScale: analysis.stepScale,
     final,
   };
@@ -618,7 +624,8 @@ export function buildSurfaceDE4(
  * the depth cap, and the width-1 equivalence to the classic greedy descent.
  * Width 2 is what repairs the fr-v6yg branch-selection overshoot
  * (doubleRotation's profile) that certificate refinement provably cannot
- * touch.
+ * touch; widths 3/4 add the fr-jkpn validity slots — rank-3/4 chains that
+ * live only while in-sphere, closing the 3-and-4-simultaneous drops.
  */
 export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   let x = p[0];
@@ -648,9 +655,13 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   let best = Infinity;
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
-  // selection fills it (width-2 systems only). Mirrors 3D's
-  // estimateDistance with a fourth coordinate on every chain and candidate
-  // slot.
+  // selection fills it (width-2 up). V1/V2 are the fr-jkpn validity slots
+  // (widths 3/4): they hold the level's rank-3/4 candidates ONLY while
+  // those are in-sphere — branches that carry no positive certificate, so
+  // dropping them was the measured invalidity — and fold the ordinary
+  // certificate the moment they escape. Mirrors 3D's estimateDistance with
+  // a fourth coordinate on every chain and candidate slot.
+  const extra = de.beamWidth - 2;
   let aX = x;
   let aY = y;
   let aZ = z;
@@ -665,9 +676,28 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   let bScale = 1;
   let bR = 0;
   let bLive = false;
+  // Validity chains carry no R field: unlike A/B they never fold a
+  // terminal (see the note past the loop), and expansion re-derives every
+  // child radius, so the selection radius is dead weight once occupancy
+  // is decided.
+  let v1X = 0;
+  let v1Y = 0;
+  let v1Z = 0;
+  let v1W = 0;
+  let v1Scale = 1;
+  let v1Live = false;
+  let v2X = 0;
+  let v2Y = 0;
+  let v2Z = 0;
+  let v2W = 0;
+  let v2Scale = 1;
+  let v2Live = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    if (!aLive && !bLive) break;
+    if (!aLive && !bLive && !v1Live && !v2Live) break;
+    // The two smallest-key candidates this level, key-ascending. The
+    // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
+    // below (their certificates are meaningless until occupied).
     let c1Key = Infinity;
     let c1X = 0;
     let c1Y = 0;
@@ -684,14 +714,60 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
     let c2Scale = 1;
     let c2R = 0;
     let c2Cert = 0;
-    for (let c = 0; c < 2; c++) {
-      const isA = c === 0;
-      if (isA ? !aLive : !bLive) continue;
-      const pX = isA ? aX : bX;
-      const pY = isA ? aY : bY;
-      const pZ = isA ? aZ : bZ;
-      const pW = isA ? aW : bW;
-      const pScale = isA ? aScale : bScale;
+    // Ranks 3/4, tracked the same way on widths 3/4 (a second insert-shift
+    // ladder fed by everything the top-2 ladder evicts, so the pair holds
+    // exactly the level's third- and fourth-smallest keys).
+    let c3Key = Infinity;
+    let c3X = 0;
+    let c3Y = 0;
+    let c3Z = 0;
+    let c3W = 0;
+    let c3Scale = 1;
+    let c3R = 0;
+    let c3Cert = 0;
+    let c4Key = Infinity;
+    let c4X = 0;
+    let c4Y = 0;
+    let c4Z = 0;
+    let c4W = 0;
+    let c4Scale = 1;
+    let c4R = 0;
+    let c4Cert = 0;
+    for (let c = 0; c < 4; c++) {
+      let pX: number;
+      let pY: number;
+      let pZ: number;
+      let pW: number;
+      let pScale: number;
+      if (c === 0) {
+        if (!aLive) continue;
+        pX = aX;
+        pY = aY;
+        pZ = aZ;
+        pW = aW;
+        pScale = aScale;
+      } else if (c === 1) {
+        if (!bLive) continue;
+        pX = bX;
+        pY = bY;
+        pZ = bZ;
+        pW = bW;
+        pScale = bScale;
+      } else if (c === 2) {
+        if (!v1Live) continue;
+        pX = v1X;
+        pY = v1Y;
+        pZ = v1Z;
+        pW = v1W;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) continue;
+        pX = v2X;
+        pY = v2Y;
+        pZ = v2Z;
+        pW = v2W;
+        pScale = v2Scale;
+      }
       for (let j = 0; j < de.maps.length; j++) {
         const map = de.maps[j];
         const im = map.invM;
@@ -705,8 +781,28 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         const key = pScale * (r - R);
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
+        // Exactly one tuple leaves the top-2 ladder per candidate — the
+        // displaced runner-up, or the candidate itself. It spills to the
+        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+        // sentinels flow through both harmlessly (key Infinity never
+        // inserts, r = 0 never folds).
+        let eKey = key;
+        let eX = ix;
+        let eY = iy;
+        let eZ = iz;
+        let eW = iw;
+        let eScale = childScale;
+        let eR = r;
+        let eCert = cert;
         if (key < c1Key) {
-          if (c2R > R && c2Cert < best) best = c2Cert;
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eW = c2W;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = c1Key;
           c2X = c1X;
           c2Y = c1Y;
@@ -724,7 +820,14 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           c1R = r;
           c1Cert = cert;
         } else if (key < c2Key) {
-          if (c2R > R && c2Cert < best) best = c2Cert;
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eW = c2W;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = key;
           c2X = ix;
           c2Y = iy;
@@ -733,13 +836,67 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
-        } else if (r > R && cert < best) {
-          best = cert;
         }
+        if (extra > 0) {
+          // Spill into the rank-3/4 ladder; what THAT evicts (or the
+          // spilled tuple itself, when it beats neither slot) falls
+          // through to the fold below — which reads radius + certificate
+          // only, so evictions narrow to that pair.
+          if (eKey < c3Key) {
+            const tR = extra > 1 ? c4R : c3R;
+            const tCert = extra > 1 ? c4Cert : c3Cert;
+            if (extra > 1) {
+              c4Key = c3Key;
+              c4X = c3X;
+              c4Y = c3Y;
+              c4Z = c3Z;
+              c4W = c3W;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+            }
+            c3Key = eKey;
+            c3X = eX;
+            c3Y = eY;
+            c3Z = eZ;
+            c3W = eW;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eR = tR;
+            eCert = tCert;
+          } else if (extra > 1 && eKey < c4Key) {
+            const tR = c4R;
+            const tCert = c4Cert;
+            c4Key = eKey;
+            c4X = eX;
+            c4Y = eY;
+            c4Z = eZ;
+            c4W = eW;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eR = tR;
+            eCert = tCert;
+          }
+        }
+        // The tuple leaving the beam frontier: escaped candidates fold
+        // their plain certificate; an in-sphere tuple carries no positive
+        // certificate — on widths 3/4 it can only get here past FOUR
+        // smaller keys, the (shrunken) fr-jkpn residual drop.
+        if (eR > R && eCert < best) best = eCert;
       }
     }
+    // Promote: the best candidate always continues as chain A (or, past
+    // the escape radius, folds its terminal and dies); the runner-up
+    // becomes chain B only on width-2+ systems — width 1 folds it frozen,
+    // exactly the classic sibling certificate. Ranks 3/4 (widths 3/4)
+    // continue as validity chains ONLY while in-sphere; escaped they fold
+    // the same certificate they would have folded without the slots.
     aLive = false;
     bLive = false;
+    v1Live = false;
+    v2Live = false;
     if (c1Key < Infinity) {
       if (c1R > de.escapeRadius) {
         if (c1Cert < best) best = c1Cert;
@@ -766,6 +923,30 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         bLive = true;
       }
     }
+    if (extra > 0 && c3Key < Infinity) {
+      if (c3R > R) {
+        if (c3Cert < best) best = c3Cert;
+      } else {
+        v1X = c3X;
+        v1Y = c3Y;
+        v1Z = c3Z;
+        v1W = c3W;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (extra > 1 && c4Key < Infinity) {
+      if (c4R > R) {
+        if (c4Cert < best) best = c4Cert;
+      } else {
+        v2X = c4X;
+        v2Y = c4Y;
+        v2Z = c4Z;
+        v2W = c4W;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
   }
 
   // Terminal bound of chains alive at the depth cap (the KIFS last-value
@@ -779,6 +960,22 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
     const terminal = bScale * (bR - R);
     if (terminal < best) best = terminal;
   }
+  // Validity chains fold NO cap terminal — deliberately asymmetric with
+  // A/B. In-sphere means inside the bounding SPHERE, not near the
+  // attractor, so a validity chain's cap terminal is a vacuous negative
+  // bound that can only ever pull the estimate toward a fabricated hit
+  // (the membrane direction fr-jkpn's record calls the visually harmful
+  // one), never fix a real one — the piece it tracks sits within
+  // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
+  // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+  // estimators, widths 3/4): folding them changes NOTHING — whenever a
+  // validity chain survives to the cap, chain A holds an equal-or-deeper
+  // branch whose terminal already dominates — so the fold is omitted on
+  // principle, not cost. (The disclosed repro3 void-false-hit uptick,
+  // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
+  // branches the validity slots legitimately keep alive to the CLAMPED
+  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
+  // not a fold-site choice.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;
@@ -795,6 +992,12 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
  *
  *     inner_j = min over ALL maps k of [ sigmaMin_k * (|invMap_k(q'_j)| - R) ]
  *     cert_j  = sigmaMin_j * max( r_j - R, inner_j )
+ *
+ * Widths 3/4 add the fr-jkpn validity slots exactly as the base estimator
+ * does (rank-3/4 chains that live only while in-sphere, closing the
+ * 3-and-4-simultaneous drops); their escaped rank-3/4 candidates fold
+ * through this same guarded refined path, indistinguishable from the
+ * width-2 runner-up's fold site.
  *
  * VALIDITY. Each `inner_j` term lower-bounds `dist(q'_j, f_k(A))` regardless
  * of sign — an inner image landing inside the bounding sphere gives a `<= 0`
@@ -896,6 +1099,13 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
     return childScale * Math.max(r - R, inner);
   };
 
+  // Chain slot A starts at the (lensed) query; slot B idles until beam
+  // selection fills it (width-2 up). V1/V2 are the fr-jkpn validity slots
+  // (widths 3/4): they hold the level's rank-3/4 candidates ONLY while
+  // those are in-sphere — branches that carry no positive certificate, so
+  // dropping them was the measured invalidity — and fold the ordinary
+  // refined certificate the moment they escape.
+  const extra = de.beamWidth - 2;
   let aX = x;
   let aY = y;
   let aZ = z;
@@ -910,9 +1120,28 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   let bScale = 1;
   let bR = 0;
   let bLive = false;
+  // Validity chains carry no R field: unlike A/B they never fold a
+  // terminal (see the note past the loop), and expansion re-derives every
+  // child radius, so the selection radius is dead weight once occupancy
+  // is decided.
+  let v1X = 0;
+  let v1Y = 0;
+  let v1Z = 0;
+  let v1W = 0;
+  let v1Scale = 1;
+  let v1Live = false;
+  let v2X = 0;
+  let v2Y = 0;
+  let v2Z = 0;
+  let v2W = 0;
+  let v2Scale = 1;
+  let v2Live = false;
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
-    if (!aLive && !bLive) break;
+    if (!aLive && !bLive && !v1Live && !v2Live) break;
+    // The two smallest-key candidates this level, key-ascending. The
+    // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
+    // below (their certificates are meaningless until occupied).
     let c1Key = Infinity;
     let c1X = 0;
     let c1Y = 0;
@@ -929,14 +1158,60 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
     let c2Scale = 1;
     let c2R = 0;
     let c2Cert = 0;
-    for (let c = 0; c < 2; c++) {
-      const isA = c === 0;
-      if (isA ? !aLive : !bLive) continue;
-      const pX = isA ? aX : bX;
-      const pY = isA ? aY : bY;
-      const pZ = isA ? aZ : bZ;
-      const pW = isA ? aW : bW;
-      const pScale = isA ? aScale : bScale;
+    // Ranks 3/4, tracked the same way on widths 3/4 (a second insert-shift
+    // ladder fed by everything the top-2 ladder evicts, so the pair holds
+    // exactly the level's third- and fourth-smallest keys).
+    let c3Key = Infinity;
+    let c3X = 0;
+    let c3Y = 0;
+    let c3Z = 0;
+    let c3W = 0;
+    let c3Scale = 1;
+    let c3R = 0;
+    let c3Cert = 0;
+    let c4Key = Infinity;
+    let c4X = 0;
+    let c4Y = 0;
+    let c4Z = 0;
+    let c4W = 0;
+    let c4Scale = 1;
+    let c4R = 0;
+    let c4Cert = 0;
+    for (let c = 0; c < 4; c++) {
+      let pX: number;
+      let pY: number;
+      let pZ: number;
+      let pW: number;
+      let pScale: number;
+      if (c === 0) {
+        if (!aLive) continue;
+        pX = aX;
+        pY = aY;
+        pZ = aZ;
+        pW = aW;
+        pScale = aScale;
+      } else if (c === 1) {
+        if (!bLive) continue;
+        pX = bX;
+        pY = bY;
+        pZ = bZ;
+        pW = bW;
+        pScale = bScale;
+      } else if (c === 2) {
+        if (!v1Live) continue;
+        pX = v1X;
+        pY = v1Y;
+        pZ = v1Z;
+        pW = v1W;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) continue;
+        pX = v2X;
+        pY = v2Y;
+        pZ = v2Z;
+        pW = v2W;
+        pScale = v2Scale;
+      }
       for (let j = 0; j < de.maps.length; j++) {
         const map = de.maps[j];
         const im = map.invM;
@@ -950,11 +1225,28 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
         const key = pScale * (r - R);
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
+        // Exactly one tuple leaves the top-2 ladder per candidate — the
+        // displaced runner-up, or the candidate itself. It spills to the
+        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+        // sentinels flow through both harmlessly (key Infinity never
+        // inserts, r = 0 never folds).
+        let eKey = key;
+        let eX = ix;
+        let eY = iy;
+        let eZ = iz;
+        let eW = iw;
+        let eScale = childScale;
+        let eR = r;
+        let eCert = cert;
         if (key < c1Key) {
-          if (c2R > R && c2Cert < best) {
-            const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
-            if (rc < best) best = rc;
-          }
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eW = c2W;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = c1Key;
           c2X = c1X;
           c2Y = c1Y;
@@ -972,10 +1264,14 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
           c1R = r;
           c1Cert = cert;
         } else if (key < c2Key) {
-          if (c2R > R && c2Cert < best) {
-            const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
-            if (rc < best) best = rc;
-          }
+          eKey = c2Key;
+          eX = c2X;
+          eY = c2Y;
+          eZ = c2Z;
+          eW = c2W;
+          eScale = c2Scale;
+          eR = c2R;
+          eCert = c2Cert;
           c2Key = key;
           c2X = ix;
           c2Y = iy;
@@ -984,17 +1280,94 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
-        } else if (r > R && cert < best) {
-          const rc = refinedCert(ix, iy, iz, iw, r, childScale);
+        }
+        if (extra > 0) {
+          // Spill into the rank-3/4 ladder; what THAT evicts (or the
+          // spilled tuple itself, when it beats neither slot) falls
+          // through to the fold below.
+          if (eKey < c3Key) {
+            // The evicted key is dead past this point — only the folded
+            // fields (point, scale, radius, certificate) survive.
+            const tX = extra > 1 ? c4X : c3X;
+            const tY = extra > 1 ? c4Y : c3Y;
+            const tZ = extra > 1 ? c4Z : c3Z;
+            const tW = extra > 1 ? c4W : c3W;
+            const tScale = extra > 1 ? c4Scale : c3Scale;
+            const tR = extra > 1 ? c4R : c3R;
+            const tCert = extra > 1 ? c4Cert : c3Cert;
+            if (extra > 1) {
+              c4Key = c3Key;
+              c4X = c3X;
+              c4Y = c3Y;
+              c4Z = c3Z;
+              c4W = c3W;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+            }
+            c3Key = eKey;
+            c3X = eX;
+            c3Y = eY;
+            c3Z = eZ;
+            c3W = eW;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eX = tX;
+            eY = tY;
+            eZ = tZ;
+            eW = tW;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (extra > 1 && eKey < c4Key) {
+            const tX = c4X;
+            const tY = c4Y;
+            const tZ = c4Z;
+            const tW = c4W;
+            const tScale = c4Scale;
+            const tR = c4R;
+            const tCert = c4Cert;
+            c4Key = eKey;
+            c4X = eX;
+            c4Y = eY;
+            c4Z = eZ;
+            c4W = eW;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eX = tX;
+            eY = tY;
+            eZ = tZ;
+            eW = tW;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+        }
+        // The tuple leaving the beam frontier: escaped candidates fold
+        // their certificate through the guarded refined path (the guard
+        // already knows the plain certificate would have advanced the
+        // min); an in-sphere tuple carries no positive certificate — on
+        // widths 3/4 it can only get here past FOUR smaller keys, the
+        // (shrunken) fr-jkpn residual drop.
+        if (eR > R && eCert < best) {
+          const rc = refinedCert(eX, eY, eZ, eW, eR, eScale);
           if (rc < best) best = rc;
         }
       }
     }
-    // Promotion mirrors the base estimator; the one refinement-specific
-    // branch is the width-1 runner-up, the classic frozen sibling — the
-    // exact certificate the spike measured every ghost back to.
+    // Promote: the best candidate always continues as chain A (or, past
+    // the escape radius, folds its terminal and dies); the runner-up
+    // becomes chain B only on width-2+ systems — width 1 folds it frozen,
+    // the classic frozen sibling refined path measures every ghost back
+    // to. Ranks 3/4 (widths 3/4) continue as validity chains ONLY while
+    // in-sphere; escaped they fold the same refined certificate they would
+    // have folded without the slots.
     aLive = false;
     bLive = false;
+    v1Live = false;
+    v2Live = false;
     if (c1Key < Infinity) {
       if (c1R > de.escapeRadius) {
         if (c1Cert < best) best = c1Cert;
@@ -1026,6 +1399,36 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
         bLive = true;
       }
     }
+    if (extra > 0 && c3Key < Infinity) {
+      if (c3R > R) {
+        if (c3Cert < best) {
+          const rc = refinedCert(c3X, c3Y, c3Z, c3W, c3R, c3Scale);
+          if (rc < best) best = rc;
+        }
+      } else {
+        v1X = c3X;
+        v1Y = c3Y;
+        v1Z = c3Z;
+        v1W = c3W;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (extra > 1 && c4Key < Infinity) {
+      if (c4R > R) {
+        if (c4Cert < best) {
+          const rc = refinedCert(c4X, c4Y, c4Z, c4W, c4R, c4Scale);
+          if (rc < best) best = rc;
+        }
+      } else {
+        v2X = c4X;
+        v2Y = c4Y;
+        v2Z = c4Z;
+        v2W = c4W;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
   }
 
   if (aLive) {
@@ -1036,6 +1439,22 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
     const terminal = bScale * (bR - R);
     if (terminal < best) best = terminal;
   }
+  // Validity chains fold NO cap terminal — deliberately asymmetric with
+  // A/B. In-sphere means inside the bounding SPHERE, not near the
+  // attractor, so a validity chain's cap terminal is a vacuous negative
+  // bound that can only ever pull the estimate toward a fabricated hit
+  // (the membrane direction fr-jkpn's record calls the visually harmful
+  // one), never fix a real one — the piece it tracks sits within
+  // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
+  // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+  // estimators, widths 3/4): folding them changes NOTHING — whenever a
+  // validity chain survives to the cap, chain A holds an equal-or-deeper
+  // branch whose terminal already dominates — so the fold is omitted on
+  // principle, not cost. (The disclosed repro3 void-false-hit uptick,
+  // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
+  // branches the validity slots legitimately keep alive to the CLAMPED
+  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
+  // not a fold-site choice.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;

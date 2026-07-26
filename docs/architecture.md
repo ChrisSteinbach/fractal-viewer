@@ -469,6 +469,10 @@ surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active map
 plus a seeded probe of the attractor's bounding radius and a pre-inverted
 final-transform lens; `estimateDistance` is the descent itself, following
 the two nearest inverse images at each level (the fr-v6yg width-2 beam)
+plus up to two more that hold the rank-3/4 candidates while they stay
+in-sphere (fr-jkpn's validity slots — in-sphere branches carry no positive
+certificate, so before the slots a level with three or more simultaneous
+in-sphere branches silently dropped the excess and measurably overshot),
 while folding in a certified lower bound from every non-descended sibling
 that escaped the bounding sphere, so the march crosses voids quickly
 instead of stalling and the estimate stays tight near the surface without

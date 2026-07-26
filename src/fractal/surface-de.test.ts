@@ -340,9 +340,9 @@ describe("estimateDistance on an anisotropic system", () => {
 });
 
 describe("estimateDistance beam descent (fr-v6yg)", () => {
-  it("buildSurfaceDE always builds beamWidth 2", () => {
+  it("buildSurfaceDE always builds beamWidth 4 — the fr-v6yg pair plus the fr-jkpn validity slots", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
-    expect(de.beamWidth).toBe(2);
+    expect(de.beamWidth).toBe(4);
   });
 
   it("holds for the 3D mirror of doubleRotation's profile: no jittered query exceeds the cloud-distance bound", () => {
@@ -522,22 +522,24 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     }
   });
 
-  it("on a kaleidoscope system, trades the base estimator's balloons for the disclosed fr-jkpn overshoot envelope", () => {
+  it("on a kaleidoscope system, keeps strict validity at the built width while eliminating the base estimator's balloons", () => {
     // 3D-specific coverage the 4D suite has no analogue for: the refined
     // inner sweep runs over the symmetry-EXPANDED map list (12 slots here),
     // whose rotated inverses only exist in this module. Order 3 triples
-    // every branch, so >= 3 simultaneous in-sphere branches drop uncounted
-    // (fr-jkpn) — which breaks STRICT validity for the refined estimator:
-    // raising certificates elsewhere exposes the invalid min the dropped
-    // branches leave behind. Measured on this exact cloud/probe stream:
-    //   base:    0 violations, but 3/140 genuine-void probes read under
-    //            the 0.01R marcher proxy — balloons on the symmetric
-    //            render (probe #76: est 0.0009 vs true distance 0.0564)
-    //   refined: 0 ghosts, 2/200 probes overshoot by <= 0.0465 (2.6%R) —
-    //            the disclosed fr-jkpn class (~2-5%R)
-    // So this pins the TRADE, not strict validity: refined stays inside
-    // the disclosed envelope and eliminates every balloon, while the base
-    // estimator (checked by the same sweep) still fabricates them.
+    // every branch, so levels with >= 3 simultaneous in-sphere branches are
+    // common — the fr-jkpn drop class. Before the width-4 validity slots
+    // this construction measured the disclosed TRADE (refined: 0 ghosts but
+    // 2/200 probes overshooting <= 0.0465 = 2.6%R); with them it measures
+    // CLEAN — sierpinski's maps all translate, so no branch norms tie
+    // exactly and rank-3/4 coverage repairs every drop (the tie-tree
+    // residual needs zero-translation copies; see the module doc). Measured
+    // on this exact cloud/probe stream at the built width:
+    //   base:    4/140 genuine-void probes read under the 0.01R marcher
+    //            proxy — balloons on the symmetric render
+    //   refined: 0 overshoots (was 2/200 at width 2), 0 ghosts, min void
+    //            estimate 0.0431 vs the 0.0176 hit floor
+    // The 1e-6 tolerance is the deep-descent fp-noise allowance the beam
+    // tests above document.
     const transforms = sierpinskiTetrahedron();
     const symmetry = { order: 3, axis: "z" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
@@ -555,7 +557,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
       const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
       const nearest = nearestDistance(cloud, p);
       const refined = estimateDistanceRefined(de, p);
-      expect(refined).toBeLessThanOrEqual(nearest + 0.05 * R);
+      expect(refined).toBeLessThanOrEqual(nearest + 1e-6);
       if (nearest > 0.05 * R) {
         if (estimateDistance(de, p) < 0.01 * R) baseGhosts++;
         expect(refined).toBeGreaterThanOrEqual(0.01 * R);
@@ -602,6 +604,81 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
         nearest + 1e-6,
       );
     }
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-jkpn validity slots (widths 3/4): a second insert-shift ladder holds
+// each level's rank-3/4 candidates, which continue as extra chains ONLY
+// while in-sphere — the branches that carry no positive certificate, whose
+// silent drop was width 2's measured invalidity (3+ simultaneous in-sphere
+// branches: jerusalem 3.6%R, sigma >= 0.96 ~2%R). The sigma-0.96 2-map
+// profile pins the mechanism at its sharpest: with m = 2 a level exposes at
+// most 4 candidates, so width 4's coverage is EXHAUSTIVE — nothing in-sphere
+// can ever drop — while width 2 measurably overshoots on the same queries.
+// -----------------------------------------------------------------------
+
+describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
+  function sigma096Profile(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.96, 0.96, 0.96],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+  }
+
+  it("holds at the built width: no jittered query exceeds the cloud-distance bound", () => {
+    // Same construction and 1e-6 48-level fp-noise tolerance as the
+    // fr-v6yg beam tests above, one sigma notch up (0.93 -> 0.96) — the
+    // notch where the harness measured width 2 retaining ~2%R violations
+    // (23 refined) and width 4 collapsing them to the noise floor
+    // (1 @ <5e-7, CLOUD=300k).
+    const transforms = sigma096Profile();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const jitterRng = mulberry32(2);
+    for (let i = 0; i < cloud.count; i += 40) {
+      const q: Vec3 = [
+        cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3,
+      ];
+      const nearest = nearestDistance(cloud, q);
+      expect(estimateDistanceRefined(de, q)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("overshoots somewhere on the same queries when forced back to beamWidth 2 — the fr-jkpn drop the validity slots repair", () => {
+    const transforms = sigma096Profile();
+    const de = { ...buildSurfaceDE(transforms), beamWidth: 2 as const };
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const jitterRng = mulberry32(2);
+    const queries: Vec3[] = [];
+    for (let i = 0; i < cloud.count; i += 40) {
+      queries.push([
+        cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3,
+        cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3,
+      ]);
+    }
+    const violatesSomewhere = queries.some((q) => {
+      const nearest = nearestDistance(cloud, q);
+      return estimateDistanceRefined(de, q) > nearest + 1e-9;
+    });
+    expect(violatesSomewhere).toBe(true);
   });
 });
 
