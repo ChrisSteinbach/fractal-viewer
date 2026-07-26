@@ -1641,12 +1641,12 @@ describe("decodeScene surface params", () => {
     expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("rings");
   });
 
-  it('round-trips the "escape" colorSource (fr-rl4b)', () => {
+  it('round-trips the "sheets" colorSource (fr-rl4b)', () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
-      surface: { ...baseSnapshot().surface, colorSource: "escape" },
+      surface: { ...baseSnapshot().surface, colorSource: "sheets" },
     };
-    expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("escape");
+    expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("sheets");
   });
 
   it('falls back to "transform" for an unrecognized colorSource instead of rejecting the scene', () => {

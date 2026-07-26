@@ -237,7 +237,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
-    rings/escape-depth color sources ride the same hit-info descent
+    rings/sheets orbit-trap color sources ride the same hit-info descent
     (fr-rl4b).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring

@@ -454,7 +454,7 @@ describe("Ui surface palette row (fr-7jlk)", () => {
   });
 
   it('is shown while the surface colorSource is "rings" (fr-rl4b)', () => {
-    // rings/escape ride the same user-selected palette as "palette" — just a
+    // rings/sheets ride the same user-selected palette as "palette" — just a
     // different orbit-trap coordinate off the same descent — so the palette
     // picker must stay reachable for all three.
     const ui = new Ui(document);
@@ -465,11 +465,11 @@ describe("Ui surface palette row (fr-7jlk)", () => {
     expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
   });
 
-  it('is shown while the surface colorSource is "escape" (fr-rl4b)', () => {
+  it('is shown while the surface colorSource is "sheets" (fr-rl4b)', () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      surface: { ...initialState(true).surface, colorSource: "escape" },
+      surface: { ...initialState(true).surface, colorSource: "sheets" },
     });
     expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
   });
@@ -491,7 +491,7 @@ describe("Ui surface color speed row (fr-rl4b)", () => {
 
   it('is hidden while the surface colorSource is "rings"', () => {
     // Unlike surfacePaletteRow, the color-speed slider shapes only the
-    // "palette" source's own orbit-trap blend weight — inert for rings/escape
+    // "palette" source's own orbit-trap blend weight — inert for rings/sheets
     // (a different coordinate off the same descent), so it hides for them.
     const ui = new Ui(document);
     ui.updateLabels({
@@ -724,7 +724,7 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(background).toContain(lutRgb(lut as Float32Array, 255));
   });
 
-  it('renders the same gradient-bar legend shape as "palette" for the "escape" source (fr-rl4b)', () => {
+  it('renders the same gradient-bar legend shape as "palette" for the "sheets" source (fr-rl4b)', () => {
     const ui = new Ui(document);
     const base = initialState(true);
     const state = {
@@ -732,7 +732,7 @@ describe("Ui color legend (fr-dsz)", () => {
       renderMode: "surface" as const,
       surface: {
         ...base.surface,
-        colorSource: "escape" as const,
+        colorSource: "sheets" as const,
         paletteId: "sunset" as const,
       },
     };

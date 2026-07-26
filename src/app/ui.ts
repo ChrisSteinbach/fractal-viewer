@@ -844,7 +844,7 @@ export class Ui {
   // The surface render's own settings block (fr-7jlk v2): lighting sliders
   // plus the base-color source/palette selects, the same solidControls
   // pattern one render mode over. surfacePaletteRow additionally gates on
-  // colorSource being "palette", "rings", or "escape" (fr-rl4b: all three
+  // colorSource being "palette", "rings", or "sheets" (fr-rl4b: all three
   // sample the user-selected palette) — like glowBrightnessRow's renderStyle
   // gate. surfaceColorSpeedRow (fr-rl4b) gates more narrowly, on exactly
   // "palette": color speed shapes only that source's orbit-trap blend.
@@ -1590,16 +1590,16 @@ export class Ui {
       state.renderMode !== "surface",
     );
     // The surface palette select means anything for "palette", "rings", and
-    // "escape" (fr-rl4b) — all three sample the user-selected palette —
+    // "sheets" (fr-rl4b) — all three sample the user-selected palette —
     // like glowBrightnessRow, hidden whenever none of those three is active.
     this.surfacePaletteRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette" &&
         state.surface.colorSource !== "rings" &&
-        state.surface.colorSource !== "escape",
+        state.surface.colorSource !== "sheets",
     );
     // The color-speed slider (fr-rl4b) only shapes the "palette" source's
-    // orbit-trap blend weight — inert for rings/escape (a different
+    // orbit-trap blend weight — inert for rings/sheets (a different
     // coordinate off the same descent) and every other source, so it hides
     // unless "palette" is exactly the active one.
     this.surfaceColorSpeedRow.classList.toggle(
@@ -1809,7 +1809,7 @@ export class Ui {
    * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
    * surface colorSource is one of the three that sample the user palette —
-   * `palette`/`rings`/`escape`, fr-rl4b; `#rampPaletteRow`, the
+   * `palette`/`rings`/`sheets`, fr-rl4b; `#rampPaletteRow`, the
    * per-view ramp-mode gating — flat: `colorModeUsesRampPalette`; non-flat:
    * `fourDColor === "radius"`, fr-6ue), so {@link updateLabels}' container
    * gating composes on top of the isCustom gating handled here — both must
@@ -2561,8 +2561,8 @@ export class Ui {
         this.legend.classList.add("hidden");
         return;
       }
-      if (source === "palette" || source === "rings" || source === "escape") {
-        // rings/escape (fr-rl4b) ride the same descent hit-info as palette,
+      if (source === "palette" || source === "rings" || source === "sheets") {
+        // rings/sheets (fr-rl4b) ride the same descent hit-info as palette,
         // just reading a different coordinate off it — same named-gradient
         // legend.
         const name = paletteDisplayName(

@@ -113,9 +113,9 @@ morphs into place instead of snapping (see **Presets** below).
   that trades some speed to stay a safe, non-overshooting bound. Its own
   **Surface Look** section holds the mode's live look: a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
-  ramp, Orbit rings, or Escape depth — with a **Palette** select underneath
+  ramp, Orbit rings, or Orbit sheets — with a **Palette** select underneath
   (the same named gradients as Flame/Solid) that appears for the orbit-trap,
-  rings, and escape sources, plus a **Color speed** slider — orbit-trap
+  rings, and sheets sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
   color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
   Every one of them is a plain shader input, so dragging any of them

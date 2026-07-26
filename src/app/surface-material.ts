@@ -108,18 +108,13 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform vec3 uFinalInvT;
   uniform float uFinalSigmaMin;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
-   * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = escape
-   * depth. Sources 1-5 sample uColorLUT. */
+   * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
+   * sheets. Sources 1-5 sample uColorLUT. */
   uniform int uColorSource;
   /** Per-level decay of the orbit-trap blend weight (flam3's color speed,
    * fr-rl4b): 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
    * every level weighs the same. Read by the "palette" source only. */
   uniform float uColorSpeed;
-  /** The system's FULL descent depth (setSurfaceSystem's de.maxDepth) — the
-   * escape-depth color normalizer. Deliberately NOT uMaxDepth: the preview
-   * tier clamps that per frame (fr-5ne3), and normalizing by a tier-varying
-   * depth would pop every escape-depth color on settle. */
-  uniform float uColorMaxDepth;
   /** 256x1 RGBA ramp for sources 1-5, built CPU-side by color.ts's ONE
    * ramp definition and uploaded by the scene — no ramp math lands here. */
   uniform sampler2D uColorLUT;
@@ -326,20 +321,22 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * winning chain's closest radial approach |image|/R across the
    * descent, min-tracked exactly where the trap blend samples — radial
    * shells in raw attractor space that follow the fractal's own
-   * structure. esc is the escaped-depth fraction: how many descent
-   * levels ran (the loop breaks once every chain has escaped) over the
-   * system's FULL depth uColorMaxDepth, so deep local structure paints
-   * hot iteration-count-style bands and the value is tier-stable. It
-   * follows the per-level best candidate and stops when every chain has
-   * escaped. Called ONCE per hit; the march itself uses the plain
-   * overload.
+   * structure. sheets is rings' plane-trap sibling: the winning chain's
+   * closest approach |image.y|/R to the attractor frame's y = 0 plane,
+   * min-tracked the same way — nested laminar bands cutting across the
+   * structure. (An escape-depth extra was tried in this slot first and
+   * swapped out pre-release: on uniform-contraction systems the escape
+   * level is pinned by the hit epsilon, not local structure, and it
+   * rendered one flat hue.) It follows the per-level best candidate and
+   * stops when every chain has escaped. Called ONCE per hit; the march
+   * itself uses the plain overload.
    */
   float surfaceDE(
     vec3 p,
     out int firstChoice,
     out float trap,
     out float rings,
-    out float esc
+    out float sheets
   ) {
     vec3 q = uFinalInvM * p + uFinalInvT;
     float startR = length(q);
@@ -356,11 +353,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
     firstChoice = 0;
     trap = 0.0;
     rings = 1.0;
-    esc = 0.0;
+    sheets = 1.0;
     float trapAcc = 0.0;
     float trapNorm = 0.0;
     float trapW = 1.0;
-    float escLevels = 0.0;
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive) {
         break;
@@ -425,7 +421,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, c1R / uBoundingRadius);
-      escLevels += 1.0;
+      sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
       aLive = false;
       bLive = false;
       if (c1Key < 1e29) {
@@ -460,7 +456,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // guard just keeps a zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
     rings = clamp(rings, 0.0, 1.0);
-    esc = clamp(escLevels / max(uColorMaxDepth, 1.0), 0.0, 1.0);
+    sheets = clamp(sheets, 0.0, 1.0);
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -526,14 +522,14 @@ const SURFACE_FRAGMENT = /* glsl */ `
     vec3 pos = ro + rd * t;
 
     // One hit-info evaluation for the coloring extras: the hit point's
-    // depth-0 greedy map, orbit-trap coordinate, rings trap, and escape
-    // depth (the distance itself is discarded — the march already accepted
-    // this point).
+    // depth-0 greedy map, orbit-trap coordinate, and rings/sheets traps
+    // (the distance itself is discarded — the march already accepted this
+    // point).
     int firstChoice;
     float trap;
     float rings;
-    float esc;
-    surfaceDE(pos, firstChoice, trap, rings, esc);
+    float sheets;
+    surfaceDE(pos, firstChoice, trap, rings, sheets);
 
     // --- shade --------------------------------------------------------------
     // Normal from the DE gradient (tetrahedron offsets: four samples instead
@@ -551,7 +547,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // Base color by source. Sources 1-5 sample the LUT built CPU-side by
     // color.ts's ONE ramp definition — no ramp math lands here; height and
     // radius normalize against the visible bounding sphere, the world-space
-    // frame the tracer already lives in; rings and escape depth arrive
+    // frame the tracer already lives in; rings and sheets arrive
     // pre-normalized from the descent.
     vec3 base;
     if (uColorSource == 0) {
@@ -567,7 +563,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
       } else if (uColorSource == 4) {
         u = rings;
       } else {
-        u = esc;
+        u = sheets;
       }
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
@@ -771,7 +767,6 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uFinalSigmaMin: { value: 1 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
-      uColorMaxDepth: { value: 1 },
       uColorLUT: { value: placeholderLUT },
       uLightDir: { value: lightDirection(135, 50) },
       uAmbient: { value: 0.25 },
@@ -838,9 +833,6 @@ export function setSurfaceSystem(
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
-  // The escape-depth color source normalizes by the FULL depth even while
-  // the preview tier clamps uMaxDepth (fr-5ne3) — tier-stable colors.
-  u.uColorMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may have
