@@ -1060,15 +1060,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
 `;
 
 /**
- * Preview-tier knobs (fr-5ne3): while the view is moving, the scene traces
- * into an offscreen target this fraction of the drawing buffer per side
- * (~11x fewer rays at 0.3) and upscales — deriving `uPixelEps` from the
- * SMALLER target's height, so the cone-style hit test coarsens to match the
- * preview pixels (fewer march steps) with no extra fudge factor.
- */
-export const SURFACE_PREVIEW_SCALE = 0.3;
-
-/**
  * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
  * flat maps, high-order kaleidoscopes — whose sectors cost no slots since
  * fr-x029 but still cost inverse applications) pay per DE CALL, which the
