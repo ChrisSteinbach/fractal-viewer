@@ -167,30 +167,6 @@ async function main() {
       await mkdir(path.dirname(outPath), { recursive: true });
       await page.screenshot({ path: outPath });
       console.error(`[erosion] wrote ${outPath}`);
-      const sfLog = await page.evaluate(() => {
-        const log = window.__sfLog ?? [];
-        // Compress runs of identical (tier, height, scale, maxDepth) frames.
-        const out = [];
-        for (const e of log) {
-          const prev = out[out.length - 1];
-          if (
-            prev &&
-            !e.event &&
-            !prev.event &&
-            prev.tier === e.tier &&
-            prev.height === e.height &&
-            prev.scale === e.scale &&
-            prev.maxDepth === e.maxDepth
-          ) {
-            prev.n = (prev.n ?? 1) + 1;
-            prev.tEnd = e.t;
-          } else {
-            out.push({ ...e });
-          }
-        }
-        return out;
-      });
-      console.log("SFLOG " + JSON.stringify(sfLog, null, 1));
       if (args.shareUrl) {
         await page.click("#shareSection > summary");
         await page.click("#copyLinkBtn");
