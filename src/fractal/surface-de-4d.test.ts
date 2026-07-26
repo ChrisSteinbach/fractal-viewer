@@ -12,7 +12,12 @@ import { composeAffine } from "./affine";
 import { applyAffine4, composeAffine4, toTransform4 } from "./affine4";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGame4Result } from "./chaos-game-4d";
-import { doubleRotation, pentatope, sixteenCellFlake } from "./presets";
+import {
+  doubleRotation,
+  pentatope,
+  sixteenCellFlake,
+  twentyFourCellFlake,
+} from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Transform4, Vec4 } from "./types";
 
@@ -272,6 +277,14 @@ describe("analyzeSurfaceSystem4 on presets", () => {
 
   it("classifies doubleRotation as eligible", () => {
     const analysis = analyzeSurfaceSystem4(doubleRotation());
+    expect(analysis.status).toBe("eligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("classifies the 24-map twentyFourCellFlake as eligible — the map count the tracer's raised cap admits (fr-dqlq)", () => {
+    const transforms = twentyFourCellFlake();
+    expect(transforms).toHaveLength(24);
+    const analysis = analyzeSurfaceSystem4(transforms);
     expect(analysis.status).toBe("eligible");
     expect(analysis.reasons).toEqual([]);
   });

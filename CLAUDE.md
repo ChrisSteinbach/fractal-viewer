@@ -247,8 +247,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     certificates + width-4 beam — the fr-beck-measured ghost eliminator
     plus fr-jkpn's validity slots).
     Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
-    unlike flame/solid-4D's frozen snapshot; 16-map cap (mat4-sized slots,
-    no kaleidoscope to expand).
+    unlike flame/solid-4D's frozen snapshot; 24-map cap, matching 3D's — the
+    per-map arrays ride a std140 uniform BLOCK (fr-dqlq: 2688 bytes of the
+    guaranteed 16KB, where default-block arrays would have taken 192 of the
+    guaranteed 224 fragment uniform vectors), and there is no kaleidoscope to
+    expand, so 24 slots means 24 transforms.
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

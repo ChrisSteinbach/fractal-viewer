@@ -17,11 +17,12 @@ import { lightDirection } from "./voxel-material";
  * marches camera rays against an analytic distance estimator for the
  * `w = w0` SLICE of a 4D IFS attractor — width-4 beam inverse-map descent
  * with REFINED sibling certificates, precomputed by `buildSurfaceDE4`
- * (`src/fractal/surface-de-4d.ts`) and packed into fixed-size uniform
- * arrays here. The refined certificate — one extra Hutchinson level applied
- * to every escaped, non-descended sibling before it freezes into the
- * running min — was the fr-beck spike's measured ghost-eliminator (0.0%
- * ghost-of-hits on every slice measured, down from a 4.7-84.6% range
+ * (`src/fractal/surface-de-4d.ts`) and packed here into the fixed-size
+ * arrays of a std140 uniform BLOCK (fr-dqlq — that block is what lets the
+ * cap match 3D's 24 maps). The refined certificate — one extra Hutchinson
+ * level applied to every escaped, non-descended sibling before it freezes
+ * into the running min — was the fr-beck spike's measured ghost-eliminator
+ * (0.0% ghost-of-hits on every slice measured, down from a 4.7-84.6% range
  * unrefined); beam width 4 is hardcoded here exactly as in the 3D shader.
  * fr-jkpn's rank-3/4 validity slots ride along too — extra chains that
  * stay live only while their image is in-sphere.
@@ -61,18 +62,27 @@ import { lightDirection } from "./voxel-material";
 const BG_TOP = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.top));
 const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
-/** Compile-time size of the per-map uniform arrays: ~8 vec4-equivalents per
- * slot (mat4 = 4, plus vec4 + float + vec3 + float), so 16 maps cost 128
- * vec4s for the map arrays alone; add the ~25 misc uniforms below (three
- * more mat4s among them: uFinalInvM, uInvRotor, uInvProjView) and the total
- * stays comfortably under WebGL2's guaranteed 224 fragment uniform
- * vectors. 24 slots — 3D's cap — would land around 217, too close to a
- * link failure on minimum-spec devices to risk. With no kaleidoscope
- * symmetry in 4D (see surface-de-4d.ts's module doc), 16 slots means 16
- * transforms, no expansion. The app gates systems whose map count exceeds
- * it before entering the mode, so {@link setSurfaceSystem4} treats
- * overflow as a bug, not a degrade. */
-export const SURFACE4_MAX_MAPS = 16;
+/** Compile-time size of the per-map arrays — 24, matching the 3D tracer's
+ * `SURFACE_MAX_MAPS`, so the 24-map presets (`twentyFourCell`, i.e.
+ * `twentyFourCellFlake`) can be surfaced (fr-dqlq).
+ *
+ * The cap sat at 16 while the arrays lived in the DEFAULT uniform block,
+ * where they cost ~8 of WebGL2's guaranteed 224 fragment uniform VECTORS per
+ * slot (a mat4 array element takes 4 rows; a float or vec3 element takes a
+ * whole row each — 4 + 1 + 1 + 1 + 1) — 24 slots would have been 192 rows,
+ * plus the ~33 misc uniforms below, close enough to a link failure on
+ * minimum-spec devices to be worth avoiding. fr-dqlq moved them into the
+ * std140 uniform BLOCK declared in the fragment shader below, which is
+ * budgeted separately: 24 slots of mat4 + 3 vec4 = 24 * (64 + 16 + 16 + 16)
+ * = 2688 bytes of the 16 KB block size (and 1 of the 12 fragment blocks)
+ * every WebGL2 device guarantees. Raising the cap further is now a matter of
+ * how much per-ray DESCENT cost the tracer can afford, not of uniform space.
+ *
+ * With no kaleidoscope symmetry in 4D (see surface-de-4d.ts's module doc),
+ * 24 slots means 24 transforms, no expansion. The app gates systems whose
+ * map count exceeds it before entering the mode, so {@link setSurfaceSystem4}
+ * treats overflow as a bug, not a degrade. */
+export const SURFACE4_MAX_MAPS = 24;
 
 const SURFACE4_VERTEX = /* glsl */ `
   out vec2 vUv;
@@ -98,20 +108,37 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * radius (per-tier). */
   uniform float uHitFloor;
 
-  /** Inverse linear part per map (uMapCount live slots; the rest are
-   * stale/identity and never read). No symmetry expansion in 4D (see
-   * surface-de-4d.ts's module doc) — one slot per INPUT transform. */
-  uniform mat4 uInvM[MAX_MAPS];
-  /** Inverse translation per map: -inv(M_i) . t_i. */
-  uniform vec4 uInvT[MAX_MAPS];
-  /** Smallest singular value of each FORWARD map — the certified
-   * contraction factor multiplied into the running scale product. */
-  uniform float uSigmaMin[MAX_MAPS];
-  /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
-  uniform vec3 uMapColor[MAX_MAPS];
-  /** Per-slot palette coordinate in [0, 1] for the orbit trap
-   * (CPU-precomputed from each slot's base-map index). */
-  uniform float uTrapIndex[MAX_MAPS];
+  /** Everything per-map, in a std140 uniform BLOCK rather than the default
+   * block (fr-dqlq): 24 slots cost 2688 bytes of the 16 KB every WebGL2
+   * device guarantees per block, where the same arrays as default-block
+   * uniforms would have eaten 192 of the guaranteed 224 fragment uniform
+   * vectors. Only the first uMapCount slots are meaningful; the rest are
+   * stale/identity and never read. No symmetry expansion in 4D (see
+   * surface-de-4d.ts's module doc) — one slot per INPUT transform.
+   *
+   * This member list IS the layout contract with the THREE.UniformsGroup in
+   * createSurfaceMaterial4 below: the renderer uploads that group's backing
+   * Float32Arrays at std140 offsets it derives from their ORDER and byte
+   * lengths, so a member added, reordered, or resized here must move there
+   * too. Scalars are folded into vec4 lanes rather than declared as
+   * float[MAX_MAPS] because std140 strides a scalar array element a full
+   * 16 bytes: two half-used lanes are cheaper than four rows of padding, and
+   * far harder to get subtly wrong. Integers stay OUT of the block entirely
+   * (three's UBO writer is float-only) — hence uMapCount below. */
+  layout(std140) uniform SurfaceMaps4 {
+    /** Inverse linear part per map, column-major as std140 stores a mat4. */
+    mat4 uInvM[MAX_MAPS];
+    /** Inverse translation per map: -inv(M_i) . t_i. */
+    vec4 uInvT[MAX_MAPS];
+    /** xyz = sRGB 0..1 base color per map slot (keyed to base maps
+     * caller-side); w = smallest singular value of the FORWARD map, the
+     * certified contraction factor multiplied into the running scale
+     * product. */
+    vec4 uMapColorSigma[MAX_MAPS];
+    /** x = per-slot palette coordinate in [0, 1] for the orbit trap
+     * (CPU-precomputed from each slot's base-map index); yzw unused. */
+    vec4 uMapTrap[MAX_MAPS];
+  };
   uniform int uMapCount;
   /** Bounding-hypersphere radius R of the RAW attractor (pre final
    * transform), in 4D. */
@@ -141,7 +168,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** The marched w-slice — the same w0 the cloud/flame/voxel renderers
    * slice at. */
   uniform float uW0;
-  /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
+  /** Base-color source: 0 = by-transform (uMapColorSigma.xyz), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
   uniform int uColorSource;
@@ -181,7 +208,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float inner = 1e30;
     for (int k = 0; k < uMapCount; k++) {
       vec4 kImg = uInvM[k] * img + uInvT[k];
-      inner = min(inner, uSigmaMin[k] * (length(kImg) - uBoundingRadius));
+      inner = min(inner, uMapColorSigma[k].w * (length(kImg) - uBoundingRadius));
     }
     return childScale * max(r - uBoundingRadius, inner);
   }
@@ -312,7 +339,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           vec4 img = uInvM[j] * pQ + uInvT[j];
           float r = length(img);
           float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uSigmaMin[j];
+          float childScale = pScale * uMapColorSigma[j].w;
           float cert = childScale * (r - uBoundingRadius);
           // Exactly one tuple leaves the top-2 ladder per candidate — the
           // displaced runner-up, or the candidate itself. It spills into
@@ -617,7 +644,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           vec4 img = uInvM[j] * pQ + uInvT[j];
           float r = length(img);
           float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uSigmaMin[j];
+          float childScale = pScale * uMapColorSigma[j].w;
           float cert = childScale * (r - uBoundingRadius);
           // Exactly one tuple leaves the top-2 ladder per candidate — the
           // displaced runner-up, or the candidate itself. It spills into
@@ -713,7 +740,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (depth == 0) {
         firstChoice = c1Map;
       }
-      trapAcc += trapW * uTrapIndex[c1Map];
+      trapAcc += trapW * uMapTrap[c1Map].x;
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, c1R / uBoundingRadius);
@@ -891,7 +918,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // sheets arrive pre-normalized from the descent.
     vec3 base;
     if (uColorSource == 0) {
-      base = uMapColor[clamp(firstChoice, 0, uMapCount - 1)];
+      base = uMapColorSigma[clamp(firstChoice, 0, uMapCount - 1)].xyz;
     } else {
       float u;
       if (uColorSource == 1) {
@@ -976,12 +1003,35 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   }
 `;
 
+/** CPU mirror of the `SurfaceMaps4` std140 block (fr-dqlq) — the four
+ * Float32Arrays the renderer uploads verbatim, in the SAME ORDER as the
+ * block's members in `SURFACE4_FRAGMENT`. Held per material rather than
+ * module-wide so a second tracer would get its own buffer. */
+interface Surface4MapBuffers {
+  /** MAX_MAPS * 16 floats: `inv(M_i)` COLUMN-major, std140's mat4 layout. */
+  readonly invM: Float32Array;
+  /** MAX_MAPS * 4 floats: `-inv(M_i) . t_i`. */
+  readonly invT: Float32Array;
+  /** MAX_MAPS * 4 floats: (r, g, b, sigmaMin). */
+  readonly colorSigma: Float32Array;
+  /** MAX_MAPS * 4 floats: (trapIndex, unused, unused, unused). */
+  readonly trap: Float32Array;
+}
+
+/** Which buffers back which material's map block. A WeakMap rather than
+ * `material.uniforms` entries because block members must NOT appear as
+ * default-block uniforms, and rather than `userData` because nothing outside
+ * this module has any business reaching them: {@link setSurfaceSystem4} is
+ * the only writer, and it only ever sees materials this module built. */
+const mapBuffers = new WeakMap<THREE.ShaderMaterial, Surface4MapBuffers>();
+
 /** Build the surface material with placeholder uniforms (zero maps, unit
  * hypersphere): complete and compilable before the first system arrives,
  * painting only the backdrop until {@link setSurfaceSystem4} and
- * {@link setSurfaceView4} run. The per-map arrays are allocated ONCE at the
- * compile-time cap and mutated in place — Three binds uniform values by
- * object identity, so replacing them would orphan the binding. */
+ * {@link setSurfaceView4} run. The per-map block and the remaining uniform
+ * values are allocated ONCE at the compile-time cap and mutated in place —
+ * Three binds uniform values by object identity, so replacing them would
+ * orphan the binding. */
 export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   // A 1x1 white placeholder LUT so the material is complete (and compiled)
   // before the scene uploads a real 256x1 ramp — the ramps themselves are
@@ -992,29 +1042,36 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     1,
   );
   configureSurfaceLUTTexture(placeholderLUT);
-  return new THREE.ShaderMaterial({
+  const buffers: Surface4MapBuffers = {
+    invM: new Float32Array(SURFACE4_MAX_MAPS * 16),
+    invT: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    colorSigma: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    trap: new Float32Array(SURFACE4_MAX_MAPS * 4),
+  };
+  // Placeholder slots: identity inverse, unit contraction — the same "no
+  // system yet" values the pre-block uniform arrays held. Nothing reads them
+  // (uMapCount is 0), but a stray zero matrix / zero sigma is the kind of
+  // thing that turns a wiring bug into a silent black frame.
+  for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
+    for (let d = 0; d < 4; d++) buffers.invM[j * 16 + d * 4 + d] = 1;
+    buffers.colorSigma[j * 4 + 3] = 1;
+  }
+  const maps = new THREE.UniformsGroup();
+  // The name is how the renderer finds the block in the linked program
+  // (gl.getUniformBlockIndex), so it must match the GLSL block name exactly.
+  maps.setName("SurfaceMaps4");
+  // Rewritten whole on every system change, and three re-uploads typed-array
+  // uniforms every frame it draws with them (it cannot diff them cheaply).
+  maps.setUsage(THREE.DynamicDrawUsage);
+  // ORDER IS THE LAYOUT: three walks this list to compute std140 offsets, so
+  // it must match the block's member order in SURFACE4_FRAGMENT exactly.
+  maps.add(new THREE.Uniform(buffers.invM));
+  maps.add(new THREE.Uniform(buffers.invT));
+  maps.add(new THREE.Uniform(buffers.colorSigma));
+  maps.add(new THREE.Uniform(buffers.trap));
+  const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
-      uInvM: {
-        value: Array.from(
-          { length: SURFACE4_MAX_MAPS },
-          () => new THREE.Matrix4(),
-        ),
-      },
-      uInvT: {
-        value: Array.from(
-          { length: SURFACE4_MAX_MAPS },
-          () => new THREE.Vector4(),
-        ),
-      },
-      uSigmaMin: { value: new Array<number>(SURFACE4_MAX_MAPS).fill(1) },
-      uMapColor: {
-        value: Array.from(
-          { length: SURFACE4_MAX_MAPS },
-          () => new THREE.Vector3(),
-        ),
-      },
-      uTrapIndex: { value: new Array<number>(SURFACE4_MAX_MAPS).fill(0) },
       uMapCount: { value: 0 },
       uBoundingRadius: { value: 1 },
       uEscapeRadius: { value: 2 },
@@ -1050,6 +1107,12 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     depthTest: false,
     depthWrite: false,
   });
+  material.uniformsGroups = [maps];
+  // The group owns a GL buffer of its own, which the renderer frees only when
+  // the group is disposed — so freeing the material has to free the block too.
+  material.addEventListener("dispose", () => maps.dispose());
+  mapBuffers.set(material, buffers);
+  return material;
 }
 
 /** Pack a {@link SurfaceDE4} + per-slot shading inputs into the material's
@@ -1073,40 +1136,33 @@ export function setSurfaceSystem4(
       `surface DE has ${de.maps.length} maps, but the material carries at most ${SURFACE4_MAX_MAPS}`,
     );
   }
+  const maps = mapBuffers.get(material);
+  if (!maps) {
+    throw new TypeError(
+      "surface material 4D has no map block — build it with createSurfaceMaterial4",
+    );
+  }
   const u = material.uniforms;
-  const invM = u.uInvM.value as THREE.Matrix4[];
-  const invT = u.uInvT.value as THREE.Vector4[];
-  const sigmaMin = u.uSigmaMin.value as number[];
-  const mapColor = u.uMapColor.value as THREE.Vector3[];
-  const trapIndex = u.uTrapIndex.value as number[];
   de.maps.forEach((map, j) => {
     const m = map.invM;
-    // SurfaceDE4Map.invM is ROW-major; Matrix4.set takes row-major
-    // arguments and stores column-major internally — exactly the layout
-    // the GLSL `mat4 * vec4` product expects, so this is a straight
-    // pass-through.
-    invM[j].set(
-      m[0],
-      m[1],
-      m[2],
-      m[3],
-      m[4],
-      m[5],
-      m[6],
-      m[7],
-      m[8],
-      m[9],
-      m[10],
-      m[11],
-      m[12],
-      m[13],
-      m[14],
-      m[15],
-    );
-    invT[j].set(...map.invT);
-    sigmaMin[j] = map.sigmaMin;
-    mapColor[j].set(...colors[j]);
-    trapIndex[j] = trapIndices ? trapIndices[j] : 0;
+    // SurfaceDE4Map.invM is ROW-major (m[row * 4 + col]); a std140 mat4 is
+    // four COLUMN vec4s, which is also what the GLSL `mat4 * vec4` product
+    // expects — so the write transposes: column c, row r lands at
+    // c * 4 + r. These are the same 16 numbers in the same order the old
+    // THREE.Matrix4 path uploaded (Matrix4.set takes row-major arguments and
+    // stores column-major internally).
+    const base = j * 16;
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) {
+        maps.invM[base + c * 4 + r] = m[r * 4 + c];
+      }
+    }
+    maps.invT.set(map.invT, j * 4);
+    // Lane w of the color slot, not an array of its own: see the std140
+    // block's member list in SURFACE4_FRAGMENT.
+    maps.colorSigma.set(colors[j], j * 4);
+    maps.colorSigma[j * 4 + 3] = map.sigmaMin;
+    maps.trap[j * 4] = trapIndices ? trapIndices[j] : 0;
   });
   u.uMapCount.value = de.maps.length;
   u.uBoundingRadius.value = de.boundingRadius;
