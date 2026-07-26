@@ -54,21 +54,21 @@ function baseSpec4(
 // flame-gpu-4d.ts's byte-layout doc comment (byte offset / 4) — independent
 // of that module's own (private) offset constants, so a mistake in the
 // implementation could not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 48
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 56
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
 const ROW_W = 12; // byte 48
 const TRANS = 16; // byte 64
-const VAR_WEIGHTS = 20; // byte 80, array<vec4f, 3>
-const VAR_TYPES = 32; // byte 128, array<vec4u, 3>
-const VAR_COUNT = 44; // byte 176
-const CUM_WEIGHT = 45; // byte 180
+const VAR_WEIGHTS = 20; // byte 80, array<vec4f, 4>
+const VAR_TYPES = 36; // byte 144, array<vec4u, 4>
+const VAR_COUNT = 52; // byte 208
+const CUM_WEIGHT = 53; // byte 212
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(208);
-    expect(SLOT4_STRIDE_BYTES).toBe(192);
+    expect(SLOT4_STRIDE_BYTES).toBe(224);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(140);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
@@ -169,7 +169,10 @@ describe("packGpuSystem4 slot layout (byte-layout pinning)", () => {
     const f32 = new Float32Array(packed.slots);
     const u32 = new Uint32Array(packed.slots);
     expect(u32[VAR_COUNT]).toBe(0);
-    for (let v = 0; v < 12; v++) {
+    // All 16 storage lanes (15 used variation types + 1 spare), not just the
+    // old 12 — a zero-fill regression in the unused 16th lane, or in lanes
+    // 12-14 (the fr-p7nu fold family), must fail here.
+    for (let v = 0; v < 16; v++) {
       expect(f32[VAR_WEIGHTS + v]).toBe(0);
       expect(u32[VAR_TYPES + v]).toBe(0);
     }

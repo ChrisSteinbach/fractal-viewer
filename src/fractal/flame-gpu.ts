@@ -40,10 +40,12 @@
  *   is exact regardless of scheduling). A bucket is 8 u32s — 32 bytes,
  *   exactly `flame-worker-core.ts`'s `BYTES_PER_ACCUM_BUCKET`, so the
  *   device-aware accumulation budget transfers to VRAM unchanged.
- * - **All 12 variation lanes.** The editor lets a transform enable every
+ * - **All variation lanes.** The editor lets a transform enable every
  *   variation type at once; the spike's 4 lanes would have forced a silent
  *   CPU fallback for variation-heavy systems. Slots now carry
- *   {@link MAX_SLOT_VARIATIONS} = 12 (type, weight) lanes.
+ *   {@link MAX_SLOT_VARIATIONS} (type, weight) lanes — one per
+ *   {@link VariationType} (fr-p7nu added the Mandelbox fold family —
+ *   `boxfold`/`spherefold`/`mandelbox` — bringing the count to 15).
  */
 import type { Rng } from "./rng";
 import type { SymmetryParams, Transform, VariationType } from "./types";
@@ -72,9 +74,10 @@ export const WORKGROUP_SIZE = 128;
  * log-density tonemap (measured: bias ≤ 0.065/255 in fr-53k). */
 export const COLOR_FIXED_POINT_SCALE = 256;
 
-/** Variation (type, weight) lanes per slot — every {@link VariationType}
- * at once, so no system's variation list can force a CPU fallback. */
-export const MAX_SLOT_VARIATIONS = 12;
+/** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
+ * (`types.ts`), so a single transform can carry every {@link VariationType}
+ * at once and no system's variation list can force a CPU fallback. */
+export const MAX_SLOT_VARIATIONS = 15;
 
 /** u32 words per histogram bucket: four emulated-u64 channels —
  * [hitsLo, hitsHi, rLo, rHi, gLo, gHi, bLo, bHi]. */
@@ -104,6 +107,9 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
   spiral: 9,
   bubble: 10,
   julia: 11,
+  boxfold: 12,
+  spherefold: 13,
+  mandelbox: 14,
 };
 
 /**
@@ -116,13 +122,14 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   64 itersPerInvocation u32 | 68 colorMode u32 (0 legacy, 1 LUT) | 72 weighted u32 | 76 hasFinal u32
  *   80 totalWeight f32 | 84 colorDenom f32 | 88 numChains u32 | 92 pad
  *
- * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 208 stride);
+ * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 240 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
  * (read only when hasFinal = 1, never drawn by the transform pick):
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
- *   96 varWeights array<vec4f, 3> | 144 varTypes array<vec4u, 3>
- *   192 varCount u32 | 196 hasPost u32 | 200 cumWeight f32 | 204 pad
+ *   96 varWeights array<vec4f, 4> | 160 varTypes array<vec4u, 4> (16 lanes of
+ *   storage, 15 used — one per {@link VariationType} — the 16th left zeroed)
+ *   224 varCount u32 | 228 hasPost u32 | 232 cumWeight f32 | 236 pad
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -136,7 +143,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 96;
-export const SLOT_STRIDE_BYTES = 208;
+export const SLOT_STRIDE_BYTES = 240;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
@@ -179,8 +186,8 @@ struct Slot {
   postX: vec4f,
   postY: vec4f,
   postZ: vec4f,
-  varWeights: array<vec4f, 3>,
-  varTypes: array<vec4u, 3>,
+  varWeights: array<vec4f, 4>,
+  varTypes: array<vec4u, 4>,
   varCount: u32,
   hasPost: u32,
   cumWeight: f32,
@@ -297,6 +304,16 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
         th += PI;
       }
       return vec3f(rq * cos(th), rq * sin(th), p.z);
+    }
+    case 12u: { // boxfold — per-axis reflection off the |t| = 1 planes.
+      return 2.0 * clamp(p, vec3f(-1.0), vec3f(1.0)) - p;
+    }
+    case 13u: { // spherefold — Mandelbox ball fold, mR2 = 0.25, fR2 = 1.
+      return p * (1.0 / clamp(dot(p, p), 0.25, 1.0));
+    }
+    case 14u: { // mandelbox — spherefold after boxfold, one variation.
+      let b = 2.0 * clamp(p, vec3f(-1.0), vec3f(1.0)) - p;
+      return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
     }
     default: {
       return p;
@@ -444,7 +461,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 52.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 60.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -452,20 +469,22 @@ const SLOT_POST_X = 12;
 const SLOT_POST_Y = 16;
 const SLOT_POST_Z = 20;
 /**
- * `varWeights: array<vec4f, 3>`. A storage-buffer `array<vec4, N>` has no
- * inter-element padding (each `vec4` is already 16-byte aligned, exactly its
- * own size), so 3 consecutive vec4s are 12 CONTIGUOUS elements and lane `v`
- * sits at `SLOT_VAR_WEIGHTS + v` directly — matching the WGSL side's
- * `varWeights[v >> 2u][v & 3u]` (vec4 index `v / 4`, component `v % 4`,
- * which is exactly linear index `v` again once the array is flattened).
+ * `varWeights: array<vec4f, 4>` — 16 lanes of storage, 15 used (one per
+ * {@link VariationType}; the 16th stays zeroed). A storage-buffer
+ * `array<vec4, N>` has no inter-element padding (each `vec4` is already
+ * 16-byte aligned, exactly its own size), so 4 consecutive vec4s are 16
+ * CONTIGUOUS elements and lane `v` sits at `SLOT_VAR_WEIGHTS + v` directly —
+ * matching the WGSL side's `varWeights[v >> 2u][v & 3u]` (vec4 index `v / 4`,
+ * component `v % 4`, which is exactly linear index `v` again once the array
+ * is flattened).
  */
 const SLOT_VAR_WEIGHTS = 24;
-/** `varTypes: array<vec4u, 3>` — same contiguous-lane reasoning as {@link SLOT_VAR_WEIGHTS}. */
-const SLOT_VAR_TYPES = 36;
-const SLOT_VAR_COUNT = 48;
-const SLOT_HAS_POST = 49;
-const SLOT_CUM_WEIGHT = 50;
-// Element 51 is Slot's trailing pad, left at the ArrayBuffer's zero default.
+/** `varTypes: array<vec4u, 4>` — same contiguous-lane reasoning as {@link SLOT_VAR_WEIGHTS}. */
+const SLOT_VAR_TYPES = 40;
+const SLOT_VAR_COUNT = 56;
+const SLOT_HAS_POST = 57;
+const SLOT_CUM_WEIGHT = 58;
+// Element 59 is Slot's trailing pad, left at the ArrayBuffer's zero default.
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
@@ -699,8 +718,8 @@ export interface PackedGpuSystem {
  * 256-entry colors buffer — the flat-buffer restatement of `chaos-game.ts`'s
  * `prepareChaosGame` expansion and `flame.ts`'s `accumulateFlame` weight/
  * color handling (fr-53k's spike packing, ported to this module's
- * 12-variation-lane, 64-bit-histogram Slot layout — see the module doc for
- * what changed and why).
+ * {@link MAX_SLOT_VARIATIONS}-variation-lane, 64-bit-histogram Slot layout —
+ * see the module doc for what changed and why).
  *
  * Throws `RangeError` if `transforms.length` exceeds `MAX_TRANSFORMS` — same
  * check and message shape as `prepareChaosGame`.

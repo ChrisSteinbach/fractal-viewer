@@ -54,18 +54,18 @@ function baseSpec(
 // byte-layout doc comment (byte offset / 4) — independent of that module's
 // own (private) offset constants, so a mistake in the implementation could
 // not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 52
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 60
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
 const POST_X = 12; // byte 48
 const POST_Y = 16; // byte 64
 const POST_Z = 20; // byte 80
-const VAR_WEIGHTS = 24; // byte 96, array<vec4f, 3>
-const VAR_TYPES = 36; // byte 144, array<vec4u, 3>
-const VAR_COUNT = 48; // byte 192
-const HAS_POST = 49; // byte 196
-const CUM_WEIGHT = 50; // byte 200
+const VAR_WEIGHTS = 24; // byte 96, array<vec4f, 4>
+const VAR_TYPES = 40; // byte 160, array<vec4u, 4>
+const VAR_COUNT = 56; // byte 224
+const HAS_POST = 57; // byte 228
+const CUM_WEIGHT = 58; // byte 232
 
 describe("packGpuSystem validation", () => {
   it("rejects systems with more than MAX_TRANSFORMS transforms, matching prepareChaosGame's message", () => {
@@ -920,6 +920,9 @@ describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
       spiral: 9,
       bubble: 10,
       julia: 11,
+      boxfold: 12,
+      spherefold: 13,
+      mandelbox: 14,
     });
   });
 

@@ -10,8 +10,9 @@
  *
  * Structurally this is fr-53k's spike driver (`git show
  * spike/fr-53k-gpu-flame-accum:src/app/gpu-spike/engine.ts`), restated
- * against this module's COMMITTED layout/API: 208 B slots (12 variation
- * lanes) and 8-word (emulated-u64) histogram buckets instead of the spike's
+ * against this module's COMMITTED layout/API: 240 B slots (15 variation
+ * lanes, fr-p7nu's Mandelbox fold family bringing the original 12 to 15) and
+ * 8-word (emulated-u64) histogram buckets instead of the spike's
  * 144 B/4-lane/single-u32 shapes, and `flame-gpu.ts`'s exported
  * `packGpuSystem`/`packGpuChains`/`packGpuParams`/`planGpuDispatches`/
  * `convertGpuHistogram` instead of the spike's local (unexported) packing

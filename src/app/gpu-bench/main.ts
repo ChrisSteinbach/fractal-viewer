@@ -386,6 +386,66 @@ function variationZoo4(): Transform[] {
   ];
 }
 
+/**
+ * fr-p7nu: the "fold zoo" — three contractive maps, each pairing one of the
+ * Mandelbox fold family (`boxfold`/`spherefold`/`mandelbox`) with a small
+ * `linear` component, so this scenario pins the three hand-written WGSL fold
+ * formulas against the CPU oracle's `variations.ts` — the same role
+ * `variationZoo` plays for the original 12 types. Affine parts are
+ * contractive (per-axis scales 0.45-0.55, translations within ±0.35, mild
+ * rotations) so the folds compound into a bounded, non-degenerate attractor
+ * rather than an escape-dominated haze (probed at 400k points: bounds roughly
+ * x ∈ [-2.8, 2.9], y ∈ [-3.0, 2.9], z ∈ [-2.7, 3.1], well inside the 50
+ * escape limit).
+ */
+function foldZoo(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, 0.2, -0.15],
+      rotation: [0.2, 0.35, 0.1],
+      scale: [0.55, 0.5, 0.45],
+      variations: [
+        { type: "boxfold", weight: 1.0 },
+        { type: "linear", weight: 0.35 },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.35, 0.15, 0.25],
+      rotation: [0.4, 0.1, -0.25],
+      scale: [0.5, 0.45, 0.55],
+      variations: [
+        { type: "spherefold", weight: 0.9 },
+        { type: "linear", weight: 0.3 },
+      ],
+    },
+    {
+      id: 2,
+      position: [0.1, -0.3, 0.2],
+      rotation: [0.15, -0.2, 0.3],
+      scale: [0.45, 0.55, 0.5],
+      variations: [
+        { type: "mandelbox", weight: 1.4 },
+        { type: "linear", weight: 0.2 },
+      ],
+    },
+  ];
+}
+
+/** fr-p7nu: the fold zoo lifted to 4D — the same three maps with w-mixing
+ * blocks (a w rotation, a w offset + rotation, an independent w scale),
+ * mirroring `variationZoo4`'s pattern exactly, so the 4D kernel's fold cases
+ * run over genuinely 4D orbits (the full 4D radius/box, not a w = 0 slice). */
+function foldZoo4(): Transform[] {
+  const [t0, t1, t2] = foldZoo();
+  return [
+    { ...t0, w: { rotation: { xw: 0.4 } } },
+    { ...t1, w: { position: 0.25, rotation: { yw: 0.3 } } },
+    { ...t2, w: { scale: 0.55 } },
+  ];
+}
+
 const SCENARIOS: ScenarioDef[] = [
   {
     kind: "3d",
@@ -457,6 +517,26 @@ const SCENARIOS: ScenarioDef[] = [
     // (sierpinski/fern/swirl/kaleido above are all uniform-weight systems),
     // and the 3D final-transform lens slot — none of which any other 3D
     // scenario here exercises.
+  },
+  {
+    kind: "3d",
+    name: "fold-zoo",
+    transforms: foldZoo(),
+    finalTransform: null,
+    symmetry: { order: 1, axis: "y" },
+    paletteId: "legacy",
+    // Frames the fold zoo's mass (probed at 400k points: x ∈ [-1.23, 2.34],
+    // y ∈ [-1.74, 1.83], z ∈ [-0.85, 2.04] at the 1%-99% percentiles).
+    cameraPos: [4.3, 2.2, 5.0],
+    lookAt: [0.6, 0, 0.6],
+    // Measured equal-N noise floor (fr-p7nu): CPU-vs-GPU maeRGB on SwiftShader
+    // is 1.469, stable bit-for-bit across repeated runs (integer atomic
+    // accumulation has no run-to-run float-order variance). 3.0 = roughly 2x
+    // that measured value, per the bead's threshold procedure.
+    maeThreshold: 3.0,
+    // Uniquely pins (fr-p7nu): the three Mandelbox fold variations
+    // (boxfold/spherefold/mandelbox) in the 3D WGSL kernel — see foldZoo's
+    // doc — which no other 3D scenario here exercises.
   },
   // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
@@ -543,6 +623,28 @@ const SCENARIOS: ScenarioDef[] = [
     // kernel, run over genuinely 4D orbits via variationZoo4's w-mixing
     // blocks (see its doc), and the 4D kernel's final-transform lens slot —
     // neither exercised by the four 4D scenarios above.
+  },
+  {
+    kind: "4d",
+    name: "fold-zoo-4d",
+    system: foldZoo4,
+    finalTransform: null,
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // Measured equal-N noise floor (fr-p7nu): CPU-vs-GPU maeRGB on SwiftShader
+    // is 0.225, stable bit-for-bit across repeated runs (see fold-zoo's own
+    // comment for why). 2x that (0.45) is below the bead's 1.0 floor, so
+    // maeThreshold stays at the default-equivalent 1.0 rather than tightening
+    // below it.
+    maeThreshold: 1.0,
+    // Uniquely pins (fr-p7nu): the three Mandelbox fold variations in the 4D
+    // WGSL kernel, run over genuinely 4D orbits via foldZoo4's w-mixing
+    // blocks (see its doc) — the full 4D radius/box fold, not a w = 0 slice.
   },
 ];
 
