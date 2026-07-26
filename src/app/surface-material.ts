@@ -78,6 +78,7 @@ const SURFACE_VERTEX = /* glsl */ `
 
 const SURFACE_FRAGMENT = /* glsl */ `
   precision highp float;
+  precision highp sampler3D;
 
   const int MAX_MAPS = ${SURFACE_MAX_MAPS};
   /** Sphere-trace step budget per ray — a per-tier uniform (fr-sjff): the
@@ -158,6 +159,23 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * accepts once the DE drops below uPixelEps * t, so surface resolution
    * scales with distance. */
   uniform float uPixelEps;
+
+  /** Empty-space-skipping grid (fr-55r5 part 2), the CPU-built
+   * surface-grid.ts cube uploaded as a 3D texture: each texel is a
+   * conservative distance floor good for EVERY point of its cell (DE at
+   * the cell center minus the cell's half-diagonal, f32-floored — see
+   * that module's validity chain), 0 where no positive floor could be
+   * certified. NEAREST-sampled so a lookup reads exactly the cell the
+   * point is in — interpolated floors of NEIGHBOR cells would not be
+   * valid here. 0 while no grid has arrived (uGridEnabled 0 keeps the
+   * march off the placeholder anyway). */
+  uniform sampler3D uGridTex;
+  /** 1 / (2 * halfExtent) of the grid cube: world point -> texture
+   * coordinate is p * uGridInvSpan + 0.5 (the cube is origin-centered,
+   * like the traced sphere it covers). */
+  uniform float uGridInvSpan;
+  /** 1 once a grid for the ACTIVE system is uploaded, else 0. */
+  uniform float uGridEnabled;
 
   in vec2 vUv;
   out vec4 outColor;
@@ -966,6 +984,23 @@ const SURFACE_FRAGMENT = /* glsl */ `
         break;
       }
       float eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+      // Empty-space skip (fr-55r5 part 2): one texture read against the
+      // precomputed grid before paying a descent. The stored floor bounds
+      // the distance from ANYWHERE in the sample's cell (surface-grid.ts's
+      // validity chain), so a step of g cannot cross the surface — and a
+      // floor above eps also proves this sample is no hit, so the analytic
+      // DE has nothing to add. Cells outside the grid's certified sphere
+      // store 0 and fall through; uStepScale damps the step exactly as the
+      // analytic path damps its own, since the floors inherit the same
+      // probed-bounding-radius margins the damping exists for.
+      if (uGridEnabled > 0.5) {
+        float g =
+          texture(uGridTex, (ro + rd * t) * uGridInvSpan + 0.5).r;
+        if (g > eps) {
+          t += g * uStepScale;
+          continue;
+        }
+      }
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
         hit = true;
@@ -1158,6 +1193,73 @@ export function configureSurfaceLUTTexture(texture: THREE.DataTexture): void {
  * are allocated ONCE at the compile-time cap and mutated in place — Three
  * binds uniform values by object identity, so replacing them would orphan
  * the binding. */
+/** The sampler state every uploaded empty-space grid needs: NEAREST both
+ * ways (a texel's floor is valid only for its OWN cell — interpolating
+ * neighbors' floors is not a bound, see surface-grid.ts), edge clamping
+ * (the march never leaves the cube, but a clamped read of a border cell is
+ * at worst that cell's own valid floor), single-channel float. */
+export function configureSurfaceGridTexture(
+  texture: THREE.Data3DTexture,
+): void {
+  texture.format = THREE.RedFormat;
+  texture.type = THREE.FloatType;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.wrapR = THREE.ClampToEdgeWrapping;
+  texture.unpackAlignment = 1;
+  texture.needsUpdate = true;
+}
+
+/** A 1x1x1 zero-floor placeholder so the material compiles complete before
+ * (and independently of) any real grid upload — a zero floor never skips,
+ * so even a stray enabled read would fall through to the analytic DE. */
+export function emptySurfaceGridTexture(): THREE.Data3DTexture {
+  const texture = new THREE.Data3DTexture(new Float32Array(1), 1, 1, 1);
+  configureSurfaceGridTexture(texture);
+  return texture;
+}
+
+/** The grid uniform trio {@link createSurfaceMaterial} seeds and
+ * {@link setSurfaceGrid} / {@link setSurfaceSystem} maintain. */
+function surfaceGridUniforms(): Record<string, THREE.IUniform> {
+  return {
+    uGridTex: { value: emptySurfaceGridTexture() },
+    uGridInvSpan: { value: 1 },
+    uGridEnabled: { value: 0 },
+  };
+}
+
+/**
+ * Point the march at a freshly uploaded empty-space grid (fr-55r5 part 2) —
+ * or back at nothing (`null`, the {@link setSurfaceSystem} reset: a new
+ * system's DE invalidates every floor of the old one's grid, so the march
+ * must run gridless until the new build lands). `halfExtent` is the grid
+ * cube's half side (surface-grid.ts's `SurfaceGridSpec`); the caller owns
+ * the texture's lifecycle, this only wires uniforms.
+ */
+export function setSurfaceGrid(
+  material: THREE.ShaderMaterial,
+  texture: THREE.Data3DTexture | null,
+  halfExtent = 1,
+): void {
+  const u = material.uniforms;
+  if (texture) {
+    u.uGridTex.value = texture;
+    u.uGridInvSpan.value = 1 / (2 * halfExtent);
+    u.uGridEnabled.value = 1;
+  } else {
+    // Back to a fresh zero placeholder rather than leaving the old texture
+    // referenced: the sampler binds whatever the uniform holds even with
+    // the enable flag down, and a disposed texture would be silently
+    // re-uploaded on the next bind.
+    u.uGridTex.value = emptySurfaceGridTexture();
+    u.uGridInvSpan.value = 1;
+    u.uGridEnabled.value = 0;
+  }
+}
+
 export function createSurfaceMaterial(): THREE.ShaderMaterial {
   // A 1x1 white placeholder LUT so the material is complete (and compiled)
   // before the scene uploads a real 256x1 ramp — the ramps themselves are
@@ -1171,6 +1273,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
+      ...surfaceGridUniforms(),
       uInvM: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
@@ -1252,6 +1355,10 @@ export function setSurfaceSystem(
       `surface DE has ${de.maps.length} maps, but the material carries at most ${SURFACE_MAX_MAPS}`,
     );
   }
+  // A new system invalidates every floor of the old system's grid — march
+  // gridless until the fresh build lands (fr-55r5 part 2). The caller owns
+  // the old texture's disposal.
+  setSurfaceGrid(material, null);
   const u = material.uniforms;
   const invM = u.uInvM.value as THREE.Matrix3[];
   const invT = u.uInvT.value as THREE.Vector3[];

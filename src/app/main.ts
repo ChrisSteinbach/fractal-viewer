@@ -30,6 +30,11 @@ import type { RenderSessionHandle } from "./render-session";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
+import { SurfaceGridClient } from "./surface-grid-client";
+import type {
+  SurfaceGridRequest,
+  SurfaceGridResult,
+} from "./surface-grid-worker-core";
 import type { CloudParams } from "./cloud-generator";
 import { generateCloud } from "./cloud-worker-core";
 import type {
@@ -1169,6 +1174,13 @@ function main(): void {
           virtualNowMs = frameNowMs;
           tickLogic(frameNowMs);
           await cloudGenerator.settle();
+          // Frame-exactness for surface keyframes (fr-55r5 part 2): the
+          // empty-space grid arrives on a REAL-time worker against this
+          // VIRTUAL clock, so whether a frame traces with or without it
+          // would otherwise depend on machine speed. Waiting out the build
+          // pins every exported surface frame to the same (grid-assisted,
+          // deterministically built) march.
+          if (state.renderMode === "surface") await surfaceGrid.settle();
         },
         running: () => timelinePlayer.active,
         // Parked while a render keyframe converges (fr-6jic): the player is
@@ -1769,6 +1781,53 @@ function main(): void {
       // is already sized for this device (morph-budget.ts, fr-a5gu).
       morphBudget.note(elapsedMs, request.numPoints);
       applyCloudResult(result, request);
+    },
+  });
+
+  // The surface render's empty-space-skipping grid builder (fr-55r5 part 2):
+  // a worker-side buildSurfaceGrid whose result the sphere tracer samples to
+  // skip provably empty space. One request per 3D surface-session enter
+  // (the session freezes its DE at start, so nothing invalidates a grid
+  // mid-session); every session boundary re-stamps or cancels the
+  // outstanding id, so a late build can never land on the wrong system.
+  // Unlike the cloud there is NO sync fallback — a lost worker just means
+  // gridless (correct, slower) marching, and the client stays quiet.
+  const surfaceGrid = new SurfaceGridClient({
+    createWorker: (onResult, onError) => {
+      if (typeof Worker === "undefined") return null;
+      const worker = new Worker(
+        new URL("./surface-grid-worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      worker.onmessage = (e: MessageEvent<SurfaceGridResult>) =>
+        onResult(e.data);
+      worker.onerror = (e) => onError(e);
+      worker.onmessageerror = (e) => onError(e);
+      return {
+        post: (request: SurfaceGridRequest) => worker.postMessage(request),
+        terminate: () => {
+          // Detach before terminating so an already-queued reply can't
+          // reach a client that has moved on (the cloud handle's gap).
+          worker.onmessage = null;
+          worker.onerror = null;
+          worker.onmessageerror = null;
+          worker.terminate();
+        },
+      };
+    },
+    onGrid: (grid) => {
+      scene.setSurfaceGrid(grid);
+      // The tier loop treats this like any other invalidation: re-preview,
+      // then re-settle — now with the faster march. An in-flight settle
+      // job is superseded the same frame, so its gridless strips never mix
+      // with grid-assisted ones on screen.
+      scene.invalidate();
+    },
+    onError: (error) => {
+      console.warn(
+        "Surface-grid worker failed; marching without empty-space skipping.",
+        error,
+      );
     },
   });
 
@@ -2614,6 +2673,10 @@ function main(): void {
           );
           scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
           surfaceSessionIs4D = true;
+          // No grid for the 4D tracer (the live rotor/slice would
+          // invalidate one per frame) — and a still-building 3D grid from
+          // a previous session must not land mid-4D-session.
+          surfaceGrid.cancel();
         } else {
           surfaceSessionIs4D = false;
           const de = buildSurfaceDE(
@@ -2626,6 +2689,10 @@ function main(): void {
             surfaceSlotColors(de),
             surfaceTrapIndices(de),
           );
+          // Kick the empty-space grid build (fr-55r5 part 2). Async and
+          // optional: the session renders gridless until it lands, and a
+          // superseding session boundary drops it by id.
+          surfaceGrid.request(de);
         }
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
@@ -2685,6 +2752,12 @@ function main(): void {
       // steps it outside this mode, and a stale planner must not greet the
       // next session.
       scene.abandonSurfaceSettle();
+      // A grid still building for this session is nobody's business once
+      // the session ends — drop it so its late arrival can't touch the
+      // next mode's frame (fr-55r5 part 2). The next 3D session's request
+      // supersedes by id anyway; this just keeps settle() honest for the
+      // offline exporter.
+      surfaceGrid.cancel();
       surfaceSessionIs4D = false;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
