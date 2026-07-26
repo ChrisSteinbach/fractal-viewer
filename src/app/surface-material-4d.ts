@@ -245,8 +245,23 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * distances O(1..10) it can never be confused for a real bound. This
    * plain overload is the workhorse (march, normals, shadow, occlusion);
    * the out-param overload below adds hit-shading extras.
+   *
+   * EARLY-OUT CUTOFF (fr-55r5), mirroring the oracle's cutoff parameter.
+   * The march needs a HIT DECISION, not a distance, so it passes its own
+   * acceptance epsilon and the descent stops as soon as the value it would
+   * return is already below it. A cutoff of 0.0 — the zero-argument
+   * overload below, every tap that needs the DISTANCE — is the full
+   * descent. Above the cutoff the value is the full-descent one (early
+   * exits only ever return BELOW it, so step lengths never drift); below
+   * it, the full descent would have landed below too, so the hit verdict
+   * is identical. Both rest on best only ever FALLING, and on the exits
+   * testing it only after a fold has SETTLED it — refined, here — never on
+   * the raw plain certificate that gates the fold. Exiting on the latter
+   * would re-open the ghost class refinement exists to kill: a
+   * barely-escaped sibling dips under the epsilon, the full descent lifts
+   * it back above.
    */
-  float surfaceDE(vec3 p) {
+  float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
     // distances and gradients survive the lift untouched; then the final
     // lens, exactly as the oracle's prologue.
@@ -255,6 +270,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float startR = length(q);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
+    // The value below which this descent may stop (the oracle bailBelow).
+    // -1e30 disables the test: a cutoff of 0.0, and a depth-0 sphere floor
+    // that already holds the answer at or above the cutoff no matter how
+    // far best falls, since the floor is what the return clamps to.
+    float bailBelow =
+      (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // Chain slot A starts at the (lensed) query; slot B idles until beam
     // selection fills it. Each chain carries the contraction accumulated
     // INCLUDING its own map and the radius it was selected at.
@@ -428,6 +449,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
           if (eR > uBoundingRadius && eCert < best) {
             best = min(best, refinedCert4(eQ, eR, eScale));
+            // Cutoff exit: the folded certificate is FINALIZED (already
+            // refined), and best only falls from here, so the verdict is
+            // settled — the rest of the descent cannot lift it back.
+            if (best * uFinalSigmaMin < bailBelow) {
+              return max(best, sphereBound) * uFinalSigmaMin;
+            }
           }
         }
       }
@@ -484,6 +511,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           v2Live = true;
         }
       }
+      // Cutoff exit covering the four promote folds above in one test: each
+      // either wrote a settled certificate into best (refined at the two
+      // validity-slot sites, the deliberately plain escape-radius bound at
+      // the other two) or continued a chain, and best only falls from here.
+      // Deliberately NOT a break: the terminal bounds past the loop are
+      // folds the FULL descent only makes at the depth cap, and folding one
+      // here could drop best below a value that descent never reaches.
+      if (best * uFinalSigmaMin < bailBelow) {
+        return max(best, sphereBound) * uFinalSigmaMin;
+      }
     }
     // Terminal bound of chains alive at the depth cap (the KIFS last-value
     // formula, PLAIN — not refined): non-positive when the chain tracked
@@ -513,6 +550,14 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
+  }
+
+  /** Value form: the full descent, no early-out — every caller that needs
+   * the DISTANCE rather than a hit decision (normal taps, shadow rays,
+   * occlusion probes) goes through here, exactly as they pass the oracle
+   * its default cutoff of 0. */
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
   }
 
   /**
@@ -869,16 +914,21 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // --- sphere trace -------------------------------------------------------
     // Cone-style hit test: accept once the bound drops below the pixel's
     // angular footprint at that depth (uPixelEps * t — resolution scales
-    // with distance), floored so the test can't degenerate at t ~ 0. The
-    // march runs the plain DE overload; the hit's coloring extras are
-    // fetched once below.
+    // with distance), floored so the test can't degenerate at t ~ 0. That
+    // same epsilon is handed to the DE as its early-out cutoff (fr-55r5):
+    // this test is all the step asks of the descent, so the descent may
+    // stop as soon as its bound is provably under it. A returned value at
+    // or above the epsilon is the full-descent distance bit for bit, so the
+    // step length below never drifts. The march runs the plain DE overload;
+    // the hit's coloring extras are fetched once below.
     bool hit = false;
     for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
-      float d = surfaceDE(ro + rd * t);
-      if (d < max(uPixelEps * t, uBoundingRadius * uHitFloor)) {
+      float eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+      float d = surfaceDE(ro + rd * t, eps);
+      if (d < eps) {
         hit = true;
         break;
       }

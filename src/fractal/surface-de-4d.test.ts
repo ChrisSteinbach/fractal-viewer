@@ -1011,3 +1011,240 @@ describe("estimateDistance4Refined never falls below the base estimate, with a f
     }
   });
 });
+
+// estimateDistance4Refined's early-out cutoff (fr-55r5), the 3D twin's
+// contract one dimension up. The slice march needs a HIT DECISION, not a
+// distance, so it hands the DE its acceptance epsilon and the descent may
+// stop once the value it would return is already below it. Two properties
+// carry the contract, and every test below asserts both across a spread of
+// probe distances:
+//   (A) a returned value >= cutoff EQUALS the cutoff-0 result bit-for-bit
+//       — step sizes above the hit threshold never drift;
+//   (B) a returned value < cutoff implies the cutoff-0 result is < cutoff
+//       — the hit verdict is identical: no false hit, no lost hit.
+// The trap the exits are placed against: `best` must only ever be tested
+// AFTER a fold settles it (refined, on this path). Exiting on a raw
+// pre-refinement certificate would re-open the fr-beck ghost class, which
+// the directed void test at the end of this section pins.
+describe("estimateDistance4Refined early-out cutoff", () => {
+  it("returns the full-descent value bit-for-bit when the cutoff is 0", () => {
+    const de = buildSurfaceDE4(pentatope());
+    const rng = mulberry32(11);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ];
+      expect(estimateDistance4Refined(de, p, 0)).toBe(
+        estimateDistance4Refined(de, p),
+      );
+    }
+  });
+
+  it("holds both properties on pentatope across on-surface, near and far probes", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(4242);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 40; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 20; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff);
+        // An early exit can only stop the running min from falling further,
+        // so it never reports LESS distance than the full descent.
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    // Pins the mechanism as live: a cutoff that never fires would satisfy
+    // both properties vacuously.
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties on sixteenCellFlake, whose 16 maps make every level's fold sweep wide", () => {
+    const transforms = sixteenCellFlake();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(909);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties on doubleRotation, the profile whose branch selection the beam exists for", () => {
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(77);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties through a final-transform lens, where the cutoff is compared in lensed units", () => {
+    // The lens is the one place the exit test is not just `best < cutoff`:
+    // the descent works in RAW attractor units and the caller's epsilon is
+    // in VISIBLE ones, so both the running min and the depth-0 sphere floor
+    // have to be scaled by the lens before either is compared.
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0.15, -0.1, 0.2],
+      scale: [0.6, 0.4, 0.5],
+      rotation: [0.3, -0.2, 0.5],
+    });
+    const de = buildSurfaceDE4(transforms, finalTransform);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const rng = mulberry32(5150);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("does not false-hit the pentatope void probe at a cutoff above its plain-certificate dip", () => {
+    // The ghost class fr-beck killed, aimed straight at the early-out: at
+    // this void point (the fixture pinned earlier in this file) the plain
+    // estimator reads 0.0686 while the refined descent settles at 0.1520. A
+    // cutoff of 0.1 sits between them, so an exit that fired on a raw
+    // pre-refinement certificate would return under 0.1 — a ghost membrane
+    // in the slice march. Fully refined, the value is above the cutoff and
+    // property (A) demands it be the full result, bit for bit.
+    const de = buildSurfaceDE4(pentatope());
+    const p: Vec4 = [
+      0.2012058828743044, -0.22083853166311757, 0.28312175332393863,
+      -0.24930457323789598,
+    ];
+    expect(estimateDistance4(de, p)).toBeLessThan(0.1);
+    expect(estimateDistance4Refined(de, p, 0.1)).toBe(
+      estimateDistance4Refined(de, p),
+    );
+    expect(estimateDistance4Refined(de, p, 0.1)).toBeGreaterThan(0.1);
+  });
+});
