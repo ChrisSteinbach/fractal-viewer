@@ -9,7 +9,11 @@ import {
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { runChaosGame } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
-import { defaultTransforms, sierpinskiTetrahedron } from "./presets";
+import {
+  defaultTransforms,
+  mengerSponge,
+  sierpinskiTetrahedron,
+} from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
@@ -713,6 +717,274 @@ describe("estimateDistanceRefined collapses a measured balloon point the base es
     ];
     expect(estimateDistance(de, p)).toBeLessThan(0.01 * de.boundingRadius);
     expect(estimateDistanceRefined(de, p)).toBeGreaterThan(0.05);
+  });
+});
+
+// estimateDistanceRefined's early-out cutoff (fr-55r5). The march needs a
+// HIT DECISION, not a distance, so it hands the DE its acceptance epsilon
+// and the descent may stop once the value it would return is already below
+// it. Two properties carry the whole contract, and every test below asserts
+// both over a spread of probe distances:
+//   (A) a returned value >= cutoff EQUALS the cutoff-0 result bit-for-bit
+//       — step sizes above the hit threshold never drift;
+//   (B) a returned value < cutoff implies the cutoff-0 result is < cutoff
+//       — the hit verdict is identical: no false hit, no lost hit.
+// The trap the exits are placed against: `best` must only ever be tested
+// AFTER a fold settles it (refined, on this path). Exiting on a raw
+// pre-refinement certificate would re-open fr-1z6p's balloon ghosts, which
+// the directed void tests at the end of this section pin.
+describe("estimateDistanceRefined early-out cutoff", () => {
+  it("returns the full-descent value bit-for-bit when the cutoff is 0", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const rng = mulberry32(11);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
+      expect(estimateDistanceRefined(de, p, 0)).toBe(
+        estimateDistanceRefined(de, p),
+      );
+    }
+  });
+
+  it("holds both properties on sierpinskiTetrahedron across on-surface, near and far probes", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const rng = mulberry32(4242);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 40; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 20; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        // An early exit can only stop the running min from falling further,
+        // so it never reports LESS distance than the full descent.
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    // Pins the mechanism as live: a cutoff that never fires would satisfy
+    // both properties vacuously.
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties on mengerSponge, whose 20 maps make every level's fold sweep wide", () => {
+    const transforms = mengerSponge();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const rng = mulberry32(909);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties on the doubleRotation-mirror profile, whose slow map descends all 127 levels", () => {
+    // The profile the early-out is FOR: sigma 0.93 pushes the depth cap to
+    // 127 levels, so a probe that settles its min early otherwise pays the
+    // whole descent. Same two maps as the refined-beam test above.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const rng = mulberry32(77);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties on a kaleidoscope-expanded sierpinski, where every level folds rotated copies too", () => {
+    const transforms = sierpinskiTetrahedron();
+    const symmetry = { order: 3, axis: "z" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(1),
+      null,
+      symmetry,
+    );
+    const rng = mulberry32(31337);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("holds both properties through a final-transform lens, where the cutoff is compared in lensed units", () => {
+    // The lens is the one place the exit test is not just `best < cutoff`:
+    // the descent works in RAW attractor units and the caller's epsilon is
+    // in VISIBLE ones, so both the running min and the depth-0 sphere floor
+    // have to be scaled by the lens before either is compared.
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 99,
+      position: [0.3, -0.2, 0.1],
+      rotation: [0.4, 0.2, -0.3],
+      scale: [0.8, 0.8, 0.8],
+    };
+    const de = buildSurfaceDE(transforms, finalTransform);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(1),
+      finalTransform,
+    );
+    const rng = mulberry32(5150);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 15; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("does not false-hit the sierpinski void probe at a cutoff above its plain-certificate dip", () => {
+    // The ghost class fr-1z6p killed, aimed straight at the early-out: at
+    // this void point the PLAIN certificates dip to 0.0103 while the refined
+    // descent settles at 0.2739 (the fixture two describes up). A cutoff of
+    // 0.05 sits between them, so an exit that fired on a raw pre-refinement
+    // certificate would return under 0.05 — a balloon membrane across the
+    // cavity. Fully refined, the value is above the cutoff and property (A)
+    // demands it be the full result, bit for bit.
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const p: Vec3 = [
+      0.20299153421451924, -0.2487552135097045, -0.019194388149953938,
+    ];
+    expect(estimateDistance(de, p)).toBeLessThan(0.05);
+    expect(estimateDistanceRefined(de, p, 0.05)).toBe(
+      estimateDistanceRefined(de, p),
+    );
+    expect(estimateDistanceRefined(de, p, 0.05)).toBeGreaterThan(0.1);
+  });
+
+  it("does not false-hit the default-preset void probe at a cutoff above its plain-certificate dip", () => {
+    // Same shape on the default preset: plain certificates dip to 0.0143,
+    // refined settles at 0.0993, so a cutoff of 0.03 separates them.
+    const de = buildSurfaceDE(defaultTransforms());
+    const p: Vec3 = [
+      -0.03995422658712331, -0.12167598089345305, -0.1888897693966145,
+    ];
+    expect(estimateDistance(de, p)).toBeLessThan(0.03);
+    expect(estimateDistanceRefined(de, p, 0.03)).toBe(
+      estimateDistanceRefined(de, p),
+    );
+    expect(estimateDistanceRefined(de, p, 0.03)).toBeGreaterThan(0.05);
   });
 });
 
