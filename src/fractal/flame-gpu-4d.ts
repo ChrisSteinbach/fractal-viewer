@@ -115,14 +115,15 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   `sliceColorRemap`'s (shift, invScale); identity (0, 1) when off) |
  *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment)
  *
- * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 192 stride);
+ * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 224 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
  * (read only when hasFinal = 1, never drawn by the transform pick). NO
  * symmetry post-rotation rows — kaleidoscope symmetry is 3D-only:
  *   0 rowX vec4f (m0..m3) | 16 rowY (m4..m7) | 32 rowZ (m8..m11) | 48 rowW (m12..m15)
  *   64 trans vec4f (t0..t3)
- *   80 varWeights array<vec4f, 3> | 128 varTypes array<vec4u, 3>
- *   176 varCount u32 | 180 cumWeight f32 | 184 pad | 188 pad
+ *   80 varWeights array<vec4f, 4> | 144 varTypes array<vec4u, 4> (16 lanes of
+ *   storage, 15 used — one per `VariationType` — the 16th left zeroed)
+ *   208 varCount u32 | 212 cumWeight f32 | 216 pad | 220 pad
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -144,7 +145,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * `convertGpuHistogram`.
  */
 export const PARAMS4_BYTES = 208;
-export const SLOT4_STRIDE_BYTES = 192;
+export const SLOT4_STRIDE_BYTES = 224;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -194,8 +195,8 @@ struct Slot {
   rowZ: vec4f,
   rowW: vec4f,
   trans: vec4f,
-  varWeights: array<vec4f, 3>,
-  varTypes: array<vec4u, 3>,
+  varWeights: array<vec4f, 4>,
+  varTypes: array<vec4u, 4>,
   varCount: u32,
   cumWeight: f32,
   _pad0: u32,
@@ -306,6 +307,16 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
         th += PI;
       }
       return vec4f(rq * cos(th), rq * sin(th), p.z, p.w);
+    }
+    case 12u: { // boxfold — per-axis reflection off the |t| = 1 planes.
+      return 2.0 * clamp(p, vec4f(-1.0), vec4f(1.0)) - p;
+    }
+    case 13u: { // spherefold — Mandelbox ball fold, mR2 = 0.25, fR2 = 1.
+      return p * (1.0 / clamp(dot(p, p), 0.25, 1.0));
+    }
+    case 14u: { // mandelbox — spherefold after boxfold, one variation.
+      let b = 2.0 * clamp(p, vec4f(-1.0), vec4f(1.0)) - p;
+      return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
     }
     default: {
       return p;
@@ -507,19 +518,20 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 48.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 56.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
 const SLOT4_ROW_W = 12;
 const SLOT4_TRANS = 16;
-/** `varWeights: array<vec4f, 3>` — contiguous lanes, same flattening
- * argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
+/** `varWeights: array<vec4f, 4>` — 16 lanes of storage, 15 used (one per
+ * `VariationType`; the 16th stays zeroed) — contiguous lanes, same
+ * flattening argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
 const SLOT4_VAR_WEIGHTS = 20;
-const SLOT4_VAR_TYPES = 32;
-const SLOT4_VAR_COUNT = 44;
-const SLOT4_CUM_WEIGHT = 45;
-// Elements 46-47 are Slot's trailing pads, left at the ArrayBuffer's zero
+const SLOT4_VAR_TYPES = 36;
+const SLOT4_VAR_COUNT = 52;
+const SLOT4_CUM_WEIGHT = 53;
+// Elements 54-55 are Slot's trailing pads, left at the ArrayBuffer's zero
 // default.
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
