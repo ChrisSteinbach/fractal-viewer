@@ -1,8 +1,9 @@
 import type { Rng } from "./rng";
 import type { Variation, VariationType, Vec4 } from "./types";
+import { clamp } from "./vec";
 
 /**
- * The 4D lift of the twelve nonlinear variation functions (fr-hy8), the fourth
+ * The 4D lift of the fifteen nonlinear variation functions (fr-hy8), the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
@@ -13,6 +14,9 @@ import type { Variation, VariationType, Vec4 } from "./types";
  *   - **Radial warps** (`spherical`, `bubble`) and `swirl` use the full 4-D
  *     radius `x²+y²+z²+w²`, so `w` genuinely participates; where the 3D code
  *     scales `z` by a radial factor, the 4D code scales `w` by that same factor.
+ *   - **Fold warps** (`boxfold`, `spherefold`, `mandelbox` — fr-p7nu) treat `w`
+ *     exactly like the spatial axes: the box fold reflects all four axes and
+ *     the sphere fold inverts through the full 4-D radius.
  *   - `sinusoidal` folds each of the four axes through a sine; `linear` is the
  *     identity.
  *
@@ -24,9 +28,10 @@ import type { Variation, VariationType, Vec4 } from "./types";
  * squared radius left-associated ending in `+ w*w` (`x*x + y*y + z*z + w*w`),
  * so at `w = 0` the final `+ 0` leaves the floating-point value BIT-identical to
  * the 3D expression `x*x + y*y + z*z` — hence identical `c`, identical x/y/z, and
- * `w' = w·c = 0`. The equality is exact (not merely close) for all twelve; the
- * tests pin `toEqual`. That is what makes an embedded 3D system's `w = 0` slice
- * warp bit-for-bit like the native 3D path.
+ * `w' = w·c = 0`. Fold warps anchor the same way: `foldAxis(0) = 0` exactly, and
+ * the sphere-fold radius ends in `+ w*w`. The equality is exact (not merely
+ * close) for all fifteen; the tests pin `toEqual`. That is what makes an
+ * embedded 3D system's `w = 0` slice warp bit-for-bit like the native 3D path.
  */
 export type VariationFn4 = (
   x: number,
@@ -45,6 +50,22 @@ export type VariationFn4 = (
  * which the chaos game's escape check then reseeds — far better than a NaN).
  */
 const EPS = 1e-12;
+
+/**
+ * One axis of the Mandelbox box fold — identical arithmetic to
+ * `variations.ts`'s `foldAxis` (duplicated under the twin-file convention, like
+ * `EPS`), so the anchor property stays exact: `foldAxis(0) = 0` bit-exactly.
+ */
+const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
+
+/**
+ * The Mandelbox sphere-fold scale factor — identical arithmetic to
+ * `variations.ts`'s `sphereFoldFactor` (classic `mR² = 0.25`, `fR² = 1`; the
+ * clamp floor doubles as the EPS guard). Fed the 4-D squared radius written
+ * left-associated ending in `+ w*w`, so at `w = 0` the factor is bit-identical
+ * to the 3D one.
+ */
+const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
 
 /**
  * The 4D variation registry: every {@link VariationType} mapped to its lifted
@@ -144,6 +165,28 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
     const rq = Math.sqrt(Math.hypot(x, y));
     const t = Math.atan2(y, x) / 2 + (rng() < 0.5 ? 0 : Math.PI);
     return [rq * Math.cos(t), rq * Math.sin(t), z, w];
+  },
+
+  // The Mandelbox box fold with `w` folded like every spatial axis; at w = 0
+  // the fourth output is foldAxis(0) = 0 exactly.
+  boxfold: (x, y, z, w) => [foldAxis(x), foldAxis(y), foldAxis(z), foldAxis(w)],
+
+  // The Mandelbox sphere fold through the full 4-D radius (`… + w*w` so the
+  // w = 0 factor is bit-identical to 3D).
+  spherefold: (x, y, z, w) => {
+    const c = sphereFoldFactor(x * x + y * y + z * z + w * w);
+    return [x * c, y * c, z * c, w * c];
+  },
+
+  // The full Mandelbox step `sphereFold(boxFold(p))` — see `variations.ts` for
+  // why the composite must be its own variation (blending is a weighted sum).
+  mandelbox: (x, y, z, w) => {
+    const bx = foldAxis(x);
+    const by = foldAxis(y);
+    const bz = foldAxis(z);
+    const bw = foldAxis(w);
+    const c = sphereFoldFactor(bx * bx + by * by + bz * bz + bw * bw);
+    return [bx * c, by * c, bz * c, bw * c];
   },
 };
 

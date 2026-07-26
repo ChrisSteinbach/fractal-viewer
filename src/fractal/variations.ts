@@ -1,5 +1,6 @@
 import type { Rng } from "./rng";
 import type { Variation, VariationType, Vec3 } from "./types";
+import { clamp } from "./vec";
 
 /**
  * A nonlinear variation: it maps the point produced by a transform's affine
@@ -13,7 +14,10 @@ import type { Variation, VariationType, Vec3 } from "./types";
  * the full 3-D radius `x²+y²+z²`, so depth genuinely participates; the *angular*
  * warps (`polar`, `handkerchief`, `heart`, `disc`, `spiral`, `julia`) act in the
  * xy-plane — angle `θ = atan2(y, x)`, planar radius `√(x²+y²)` — and carry `z`
- * through unchanged, warping every z-slice the same way.
+ * through unchanged, warping every z-slice the same way. The *fold* warps
+ * (`boxfold`, `spherefold`, `mandelbox` — fr-p7nu) are natively 3-D: per-axis
+ * plane reflections and a full-3D-radius ball inversion, the Mandelbox's two
+ * moves.
  */
 export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
 
@@ -25,6 +29,25 @@ export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
  * whole orbit.
  */
 const EPS = 1e-12;
+
+/**
+ * One axis of the Mandelbox box fold: reflect `t` back off the `|t| = 1`
+ * planes. `2·clamp(t, −1, 1) − t` is the branchless closed form — inside the
+ * box it is the identity (`2t − t`), outside it mirrors inward (`±2 − t`),
+ * continuous at the fold planes. Shared by `boxfold` and `mandelbox`;
+ * `variations4.ts` duplicates it under the twin-file convention.
+ */
+const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
+
+/**
+ * The Mandelbox sphere-fold scale factor for a squared radius: `fR²/clamp(r²,
+ * mR², fR²)` with the classic minimum radius `mR² = 0.25` and fixed radius
+ * `fR² = 1`. Points inside the small ball inflate ×4, the mid shell inverts
+ * (`1/r²`), everything at or beyond the unit sphere passes through unchanged.
+ * The clamp floor doubles as the EPS guard (the divisor is never below 0.25),
+ * so the fold is total with no explicit epsilon.
+ */
+const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
 
 /**
  * The variation registry: every {@link VariationType} mapped to its warp. Typed
@@ -115,6 +138,31 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
     const rq = Math.sqrt(Math.hypot(x, y));
     const t = Math.atan2(y, x) / 2 + (rng() < 0.5 ? 0 : Math.PI);
     return [rq * Math.cos(t), rq * Math.sin(t), z];
+  },
+
+  // The Mandelbox box fold: reflect each axis off the |t| = 1 planes. The
+  // interior of the unit box passes through untouched; outside, points mirror
+  // inward — the crease that grows box-lattice structure.
+  boxfold: (x, y, z) => [foldAxis(x), foldAxis(y), foldAxis(z)],
+
+  // The Mandelbox sphere fold (ball inversion) — see `sphereFoldFactor`.
+  spherefold: (x, y, z) => {
+    const c = sphereFoldFactor(x * x + y * y + z * z);
+    return [x * c, y * c, z * c];
+  },
+
+  // The full Mandelbox step, `sphereFold(boxFold(p))`, as ONE variation:
+  // blending is a weighted SUM, so no combination of `boxfold` and
+  // `spherefold` entries can express the composition — it has to be its own
+  // function. The variation weight is the classic scale `s` in
+  // `s·sphereFold(boxFold(p))` (weight 2 = the canonical Mandelbox step), and
+  // the transform's affine part supplies the rotation/translation.
+  mandelbox: (x, y, z) => {
+    const bx = foldAxis(x);
+    const by = foldAxis(y);
+    const bz = foldAxis(z);
+    const c = sphereFoldFactor(bx * bx + by * by + bz * bz);
+    return [bx * c, by * c, bz * c];
   },
 };
 

@@ -30,6 +30,12 @@ export const VARIATION_TYPES = [
   "spiral",
   "bubble",
   "julia",
+  // The Mandelbox fold family (fr-p7nu) — append-only from here: the GPU
+  // kernels' numeric ids (`KERNEL_VARIATION_INDEX` in `flame-gpu.ts`) follow
+  // this order, so new types go at the END and existing entries never move.
+  "boxfold",
+  "spherefold",
+  "mandelbox",
 ] as const;
 
 /** One nonlinear warp a transform can apply after its affine part. */

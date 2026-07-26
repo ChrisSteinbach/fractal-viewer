@@ -98,6 +98,32 @@ describe("4D variation radius and carry-through", () => {
     expect(z).toBe(0.2);
     expect(w).toBe(-0.9);
   });
+
+  it("boxfold folds w like the spatial axes", () => {
+    // fold(1.5) = 2 − 1.5 = 0.5 on w, while the in-box axes pass through.
+    const [x, y, z, w] = warp4("boxfold", 0.2, -0.4, 0.9, 1.5);
+    expect([x, y, z]).toEqual([0.2, -0.4, 0.9]);
+    expect(w).toBeCloseTo(0.5, 12);
+  });
+
+  it("spherefold uses the full 4D radius (so w genuinely participates)", () => {
+    // The spatial radius alone (r² = 0.16) sits in the inner ball (×4), but w
+    // pushes the FULL radius into the inversion band: r² = 0.16 + 0.81 = 0.97,
+    // so every coordinate divides by 0.97 instead. This pins that w is really
+    // in the radius, not just carried through.
+    const [x, y, z, w] = warp4("spherefold", 0.4, 0, 0, 0.9);
+    expect(x).toBeCloseTo(0.4 / 0.97, 12);
+    expect(y).toBeCloseTo(0, 12);
+    expect(z).toBeCloseTo(0, 12);
+    expect(w).toBeCloseTo(0.9 / 0.97, 12);
+  });
+
+  it("mandelbox is exactly spherefold composed after boxfold in 4D", () => {
+    const [bx, by, bz, bw] = warp4("boxfold", 1.3, -0.2, 0.4, -1.7);
+    expect(warp4("mandelbox", 1.3, -0.2, 0.4, -1.7)).toEqual(
+      warp4("spherefold", bx, by, bz, bw),
+    );
+  });
 });
 
 describe("composeVariations4", () => {

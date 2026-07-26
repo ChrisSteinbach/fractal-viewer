@@ -64,6 +64,60 @@ describe("variation functions", () => {
     expect(high[0]).toBeCloseTo(-1);
   });
 
+  it("boxfold passes the unit-box interior through untouched", () => {
+    // 2·clamp(t,−1,1) − t = 2t − t = t exactly inside the box (Sterbenz).
+    expect(warp("boxfold", 0.5, -0.9, 0)).toEqual([0.5, -0.9, 0]);
+  });
+
+  it("boxfold reflects each axis back off the |t| = 1 planes", () => {
+    // fold(1.5) = 2 − 1.5 = 0.5; fold(−1.5) = −2 + 1.5 = −0.5; fold(3) = −1.
+    const [x, y, z] = warp("boxfold", 1.5, -1.5, 3);
+    expect(x).toBeCloseTo(0.5);
+    expect(y).toBeCloseTo(-0.5);
+    expect(z).toBeCloseTo(-1);
+  });
+
+  it("boxfold is continuous at the fold plane", () => {
+    // At the plane itself the fold is the identity: 2·1 − 1 = 1 exactly.
+    expect(warp("boxfold", 1, -1, 1)).toEqual([1, -1, 1]);
+  });
+
+  it("spherefold inflates the inner ball, inverts the mid shell, and passes the exterior", () => {
+    // r² = 0.01 < 0.25 ⇒ ×4 (fR²/mR²): (0.1, 0, 0) → (0.4, 0, 0).
+    const [inner] = warp("spherefold", 0.1, 0, 0);
+    expect(inner).toBeCloseTo(0.4);
+    // 0.25 ≤ r² = 0.64 < 1 ⇒ inversion ÷r²: 0.8 → 0.8/0.64 = 1.25.
+    const [mid] = warp("spherefold", 0.8, 0, 0);
+    expect(mid).toBeCloseTo(1.25);
+    // r² ≥ 1 ⇒ untouched (×1 is exact).
+    expect(warp("spherefold", 1.5, -2, 0.5)).toEqual([1.5, -2, 0.5]);
+  });
+
+  it("mandelbox is exactly spherefold composed after boxfold", () => {
+    // The composite exists because blending is a weighted SUM — no boxfold +
+    // spherefold list can express the composition. Pin it against the two
+    // primitives chained by hand, bit-exactly.
+    for (const [x, y, z] of [
+      [1.3, -0.2, 0.4],
+      [0.1, 0.05, -0.02],
+      [2.5, -2.5, 0],
+    ]) {
+      const [bx, by, bz] = warp("boxfold", x, y, z);
+      expect(warp("mandelbox", x, y, z)).toEqual(
+        warp("spherefold", bx, by, bz),
+      );
+    }
+  });
+
+  it("mandelbox at weight 2 is the classic scale-2 Mandelbox step", () => {
+    // (1.2, 0, 0): box fold → 0.8; r² = 0.64 ⇒ ÷0.64 = 1.25; ×2 ⇒ 2.5.
+    const blend = composeVariations([{ type: "mandelbox", weight: 2 }]);
+    const [x, y, z] = blend!(1.2, 0, 0, Math.random);
+    expect(x).toBeCloseTo(2.5);
+    expect(y).toBe(0);
+    expect(z).toBe(0);
+  });
+
   // The load-bearing safety property: a variation must never emit NaN/Inf, or a
   // single bad landing poisons the whole chaos-game orbit. Includes the origin,
   // where several warps would divide by zero without their EPS floor.
