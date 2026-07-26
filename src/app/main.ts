@@ -11,7 +11,6 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import { effectiveSymmetryOrder } from "../fractal/chaos-game";
 import { analyzeSurfaceSystem, buildSurfaceDE } from "../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
@@ -2554,12 +2553,13 @@ function main(): void {
     },
   });
 
-  // Per-slot colors for the surface tracer: each symmetry-expanded slot
-  // inherits its BASE map's "By Transform" color (transformColors), the same
-  // `idx % baseTransformCount` keying the explorer's own coloring uses.
-  // Slot inputs shared by the 3D and 4D tracers: both DE shapes carry
-  // per-slot baseIndex, which is all the coloring keys on (4D slots are
-  // base maps 1:1 — no symmetry expansion to fold).
+  // Per-slot colors for the surface tracer: each slot takes its BASE map's
+  // "By Transform" color (transformColors), the same keying the explorer's
+  // own coloring uses. Slot inputs shared by the 3D and 4D tracers: both DE
+  // shapes carry per-slot baseIndex, which is all the coloring keys on. Both
+  // are base maps 1:1 now — 4D has no kaleidoscope, and 3D sweeps its
+  // sectors rather than expanding them into slots (fr-x029), so a
+  // kaleidoscope copy is shaded by the base map it sweeps around.
   function surfaceSlotColors(de: { maps: { baseIndex: number }[] }): Vec3[] {
     const palette = transformColors(state.transforms.length);
     return de.maps.map((m) => palette[m.baseIndex]);
@@ -2567,7 +2567,7 @@ function main(): void {
 
   // Per-slot orbit-trap palette coordinates: base map i of n spreads evenly
   // over [0, 1] — the flame's `paletteIndex(i, n)` idea, keyed by baseIndex
-  // so kaleidoscope copies share their base map's coordinate.
+  // so every sector shares its base map's coordinate.
   function surfaceTrapIndices(de: { maps: { baseIndex: number }[] }): number[] {
     const denom = Math.max(1, state.transforms.length - 1);
     return de.maps.map((m) => m.baseIndex / denom);
@@ -2877,16 +2877,18 @@ function main(): void {
       ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
       return;
     }
+    // The tracer's uniform cap, on the BARE active-map count (fr-x029).
+    // Kaleidoscope copies used to be expanded into slots of their own, so
+    // this gate multiplied by the symmetry order and refused high orders
+    // outright; the descent sweeps sectors around the base maps now, so
+    // order costs no slots and every order is admissible.
     const activeMaps = state.transforms.filter(
       (t) => (t.weight ?? 1) > 0,
     ).length;
-    const expanded =
-      effectiveSymmetryOrder(state.symmetry.order, state.transforms.length) *
-      activeMaps;
-    if (expanded > SURFACE_MAX_MAPS) {
+    if (activeMaps > SURFACE_MAX_MAPS) {
       ui.setSurfaceEligibility(
         "ineligible",
-        `symmetry expands to ${expanded} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
+        `${activeMaps} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
       );
       return;
     }

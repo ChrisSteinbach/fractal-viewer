@@ -6,8 +6,9 @@ import {
   singularValues3,
   transformSigmas,
 } from "./surface-de";
+import type { SurfaceDE, SurfaceDEMap } from "./surface-de";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
-import { runChaosGame } from "./chaos-game";
+import { runChaosGame, symmetryRotation } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
 import {
   defaultTransforms,
@@ -15,7 +16,7 @@ import {
   sierpinskiTetrahedron,
 } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Transform, Vec3 } from "./types";
+import type { SymmetryAxis, Transform, Vec3 } from "./types";
 
 /** Minimal contracting map for the eligibility-table tests below, merged
  * with each test's own overrides. */
@@ -58,6 +59,69 @@ function nearestDistance(cloud: ChaosGameResult, p: Vec3): number {
  * nearest-rank, matching how the tightness thresholds below were measured. */
 function percentile(sortedAscending: number[], frac: number): number {
   return sortedAscending[Math.floor(frac * (sortedAscending.length - 1))];
+}
+
+/** Row-major 3x3 transpose. */
+function transpose3(m: number[]): number[] {
+  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+}
+
+/** Row-major 3x3 product `a · b`. */
+function mulMat3(a: number[], b: number[]): number[] {
+  const out = new Array<number>(9);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      out[row * 3 + col] =
+        a[row * 3] * b[col] +
+        a[row * 3 + 1] * b[3 + col] +
+        a[row * 3 + 2] * b[6 + col];
+    }
+  }
+  return out;
+}
+
+/**
+ * The pre-fr-x029 symmetry EXPANSION, preserved here and only here as the
+ * reference oracle the sector sweep is measured against: materialise every
+ * kaleidoscope copy `Rot_k . f_i` into its own composed inverse slot
+ * (`inv(M_i) . Rot_k^T`, sector-major, copy 0 unrotated first — the exact
+ * lines `buildSurfaceDE` used to run) and hand back a symmetry-FREE
+ * `SurfaceDE`. Order 1 leaves the descent no sectors to sweep, so the
+ * returned descriptor reproduces exactly what production computed before
+ * the sweep landed.
+ */
+function expandedReference(de: SurfaceDE): SurfaceDE {
+  const { order, axis } = de.symmetry;
+  const maps: SurfaceDEMap[] = [];
+  for (let k = 0; k < order; k++) {
+    const rotT = transpose3(symmetryRotation(axis, (2 * Math.PI * k) / order));
+    for (const base of de.maps) {
+      maps.push({
+        invM: mulMat3(base.invM, rotT),
+        invT: base.invT,
+        sigmaMin: base.sigmaMin,
+        baseIndex: base.baseIndex,
+      });
+    }
+  }
+  return {
+    ...de,
+    maps,
+    symmetry: { order: 1, axis, stepCos: 1, stepSin: 0 },
+  };
+}
+
+/** Walk `p` through `k` sector steps exactly as the descent's sweep does. */
+function sectorPoint(de: SurfaceDE, k: number, p: Vec3): Vec3 {
+  const { axis, stepCos: c, stepSin: s } = de.symmetry;
+  let out: Vec3 = [p[0], p[1], p[2]];
+  for (let n = 0; n < k; n++) {
+    const [x, y, z] = out;
+    if (axis === "x") out = [x, c * y + s * z, -s * y + c * z];
+    else if (axis === "y") out = [c * x - s * z, y, s * x + c * z];
+    else out = [c * x + s * y, -s * x + c * y, z];
+  }
+  return out;
 }
 
 describe("singularValues3", () => {
@@ -434,13 +498,38 @@ describe("estimateDistance beam descent (fr-v6yg)", () => {
 });
 
 describe("buildSurfaceDE with kaleidoscope symmetry", () => {
-  it("expands to order * baseCount maps, cycling baseIndex through the base maps", () => {
+  it("keeps one map slot per base transform instead of expanding by order", () => {
     const transforms = sierpinskiTetrahedron();
     const de = buildSurfaceDE(transforms, null, { order: 3, axis: "z" });
-    expect(de.maps).toHaveLength(12);
-    expect(de.maps.map((m) => m.baseIndex)).toEqual([
-      0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
-    ]);
+    expect(de.maps).toHaveLength(4);
+    expect(de.maps.map((m) => m.baseIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("carries the kaleidoscope as sector data the descent sweeps", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 3,
+      axis: "z",
+    });
+    expect(de.symmetry.order).toBe(3);
+    expect(de.symmetry.axis).toBe("z");
+    expect(de.symmetry.stepCos).toBeCloseTo(Math.cos((2 * Math.PI) / 3), 12);
+    expect(de.symmetry.stepSin).toBeCloseTo(Math.sin((2 * Math.PI) / 3), 12);
+  });
+
+  it("reports a single sector for a system without symmetry", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    expect(de.symmetry.order).toBe(1);
+  });
+
+  it("clamps the sector count exactly as the chaos game does", () => {
+    // effectiveSymmetryOrder caps order * transforms.length at MAX_TRANSFORMS
+    // (256), so 4 base maps can never sweep more than 64 sectors — the DE's
+    // swept set has to be the plotted set.
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 200,
+      axis: "y",
+    });
+    expect(de.symmetry.order).toBe(64);
   });
 });
 
@@ -465,6 +554,465 @@ describe("estimateDistance with kaleidoscope symmetry", () => {
       ];
       expect(estimateDistance(de, p)).toBeLessThanOrEqual(0.08);
     }
+  });
+});
+
+// ——— fr-x029: the sector sweep that replaced the symmetry expansion ———
+//
+// The sweep re-associates `inv(M_i) . Rot_k^T . q` into
+// `inv(M_i) . (Rot_k^T . q)` and walks the sectors incrementally, so it is
+// the SAME candidate set in the SAME order — only the floating-point
+// association differs. These tests hold it to that: agreement with the
+// expansion it replaced (which lives above as `expandedReference`), with
+// the strict lower-bound direction asserted separately, because an estimate
+// that came out ABOVE the reference's would be a march that steps through
+// surfaces. The measured deviation on every case below is ~1e-16 absolute
+// — deep-descent fp noise, orders of magnitude under the 1e-9 the
+// assertions allow.
+const SWEEP_FP_TOLERANCE = 1e-9;
+
+describe("sector sweep agreement with the symmetry expansion", () => {
+  it("reproduces the expansion's estimate for an order-3 z kaleidoscope", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 3,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    expect(de.maps).toHaveLength(4);
+    expect(reference.maps).toHaveLength(12);
+    const rng = mulberry32(1234);
+    for (let i = 0; i < 400; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+        estimateDistanceRefined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("reproduces the expansion's estimate for an order-5 y kaleidoscope", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 5,
+      axis: "y",
+    });
+    const reference = expandedReference(de);
+    const rng = mulberry32(99);
+    for (let i = 0; i < 400; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+        estimateDistanceRefined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("reproduces the expansion's estimate for an order-6 x kaleidoscope", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 6,
+      axis: "x",
+    });
+    const reference = expandedReference(de);
+    const rng = mulberry32(2024);
+    for (let i = 0; i < 400; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+        estimateDistanceRefined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("keeps the width-1 greedy descent on the expansion's numbers too", () => {
+    // The legacy estimator shares the descent body, so it sweeps sectors on
+    // exactly the same code path — pinned separately because its single
+    // chain reaches different branches than the production beam does.
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 5,
+      axis: "z",
+    });
+    const narrow = { ...de, beamWidth: 1 } as const;
+    const reference = { ...expandedReference(de), beamWidth: 1 } as const;
+    const rng = mulberry32(555);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
+      expect(estimateDistance(narrow, p)).toBeCloseTo(
+        estimateDistance(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("never over-estimates the expansion's bound on any supported axis", () => {
+    // The direction that matters: an estimate ABOVE the reference's is a
+    // march that steps through a surface. Asserted one-sided across every
+    // axis and a spread of orders, on both estimators.
+    const table: { order: number; axis: SymmetryAxis }[] = [
+      { order: 2, axis: "x" },
+      { order: 3, axis: "y" },
+      { order: 4, axis: "z" },
+      { order: 5, axis: "x" },
+      { order: 6, axis: "y" },
+    ];
+    for (const symmetry of table) {
+      const de = buildSurfaceDE(sierpinskiTetrahedron(), null, symmetry);
+      const reference = expandedReference(de);
+      const rng = mulberry32(17);
+      for (let i = 0; i < 200; i++) {
+        const p: Vec3 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+          estimateDistanceRefined(reference, p) + SWEEP_FP_TOLERANCE,
+        );
+        expect(estimateDistance(de, p)).toBeLessThanOrEqual(
+          estimateDistance(reference, p) + SWEEP_FP_TOLERANCE,
+        );
+      }
+    }
+  });
+
+  it("agrees with the expansion on hit decisions at march epsilons", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 5,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    const rng = mulberry32(808);
+    for (const epsilon of [0.001, 0.01, 0.05]) {
+      for (let i = 0; i < 200; i++) {
+        const p: Vec3 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        expect(estimateDistanceRefined(de, p) < epsilon).toBe(
+          estimateDistanceRefined(reference, p) < epsilon,
+        );
+      }
+    }
+  });
+
+  it("sweeps every sector at any blend, exactly as the expansion included every copy", () => {
+    // SymmetryParams.blend fades the rotated copies' SELECTION WEIGHTS, not
+    // their geometry, and the expansion never read it when choosing which
+    // copies to materialise — so a DE built at blend 0 still describes the
+    // full kaleidoscope, not the bare base system.
+    const transforms = sierpinskiTetrahedron();
+    for (const blend of [0, 0.35, 1]) {
+      const de = buildSurfaceDE(transforms, null, {
+        order: 4,
+        axis: "y",
+        blend,
+      });
+      expect(de.symmetry.order).toBe(4);
+      const reference = expandedReference(de);
+      expect(reference.maps).toHaveLength(16);
+      const rng = mulberry32(1010);
+      for (let i = 0; i < 150; i++) {
+        const p: Vec3 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+          estimateDistanceRefined(reference, p),
+          9,
+        );
+      }
+    }
+  });
+
+  it("still lets blend move the probed bounding radius, exactly as before", () => {
+    // Not a symmetry-support question: blend reaches the DE only through the
+    // seeded chaos-game probe that sizes `boundingRadius` (a faded copy is
+    // drawn less often, so the sampled extent shifts). The expansion fed
+    // that same probe the same params, so this is unchanged behavior —
+    // pinned here so the "blend never moves the swept geometry" claim above
+    // cannot be misread as "blend is inert".
+    const transforms = sierpinskiTetrahedron();
+    const full = buildSurfaceDE(transforms, null, { order: 4, axis: "y" });
+    const faded = buildSurfaceDE(transforms, null, {
+      order: 4,
+      axis: "y",
+      blend: 0,
+    });
+    expect(faded.boundingRadius).not.toBeCloseTo(full.boundingRadius, 3);
+  });
+});
+
+describe("sector sweep at the wedge boundaries", () => {
+  // Where a naive KIFS fold breaks: a fold picks ONE group element from the
+  // query's own angle, and near a sector boundary the certificate-minimising
+  // element can be a NEIGHBOUR — so the fold minimises over a subset and
+  // comes out too high. The sweep has no such seam (it keeps every sector),
+  // and these probes sit exactly where the seam would have been.
+
+  /** A probe at cylindrical `(radius, angle)` about the z axis. */
+  function aboutZ(radius: number, angle: number, z: number): Vec3 {
+    return [radius * Math.cos(angle), radius * Math.sin(angle), z];
+  }
+
+  it("matches the expansion for probes lying exactly on a sector boundary", () => {
+    const order = 6;
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    for (let k = 0; k < order; k++) {
+      const angle = (2 * Math.PI * k) / order;
+      for (const radius of [0.2, 0.6, 1.1]) {
+        for (const z of [-0.4, 0, 0.5]) {
+          const p = aboutZ(radius, angle, z);
+          expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+            estimateDistanceRefined(reference, p),
+            9,
+          );
+        }
+      }
+    }
+  });
+
+  it("matches the expansion just either side of a sector boundary", () => {
+    const order = 6;
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    for (let k = 0; k < order; k++) {
+      const boundary = (2 * Math.PI * k) / order;
+      for (const nudge of [-1e-3, -1e-7, 1e-7, 1e-3]) {
+        for (const radius of [0.3, 0.9]) {
+          const p = aboutZ(radius, boundary + nudge, 0.25);
+          expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+            estimateDistanceRefined(reference, p),
+            9,
+          );
+        }
+      }
+    }
+  });
+
+  it("matches the expansion near the axis where every sector converges", () => {
+    const order = 8;
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    const rng = mulberry32(4242);
+    for (let i = 0; i < 200; i++) {
+      // Radii collapsing onto the axis, where the sectors are within
+      // fp-noise of each other and a fold's choice is arbitrary.
+      const radius = 10 ** (-1 - 6 * rng());
+      const p = aboutZ(radius, rng() * 2 * Math.PI, (rng() - 0.5) * 1.5);
+      expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+        estimateDistanceRefined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("stays a valid bound for probes exactly ON the symmetry axis", () => {
+    // The axis is the sweep's one genuinely degenerate configuration: every
+    // sector rotation FIXES it, so all `order` sector points are bit-equal
+    // and the candidate ladder sees exact ties. Validity is what has to
+    // hold there — never a bound above the true distance — and it does.
+    const transforms = sierpinskiTetrahedron();
+    const symmetry = { order: 7, axis: "z" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      200000,
+      mulberry32(7),
+      null,
+      symmetry,
+    );
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [0, 0, -2 + (4 * i) / 59];
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearestDistance(cloud, p) + 1e-6,
+      );
+    }
+  });
+
+  it("splits exact sector ties deterministically where the expansion split them by rounding", () => {
+    // The one place the sweep is not a pure repacking, pinned rather than
+    // papered over. On the axis every sector's image is bit-identical under
+    // the sweep, while the expansion's COMPOSED matrices carried per-copy
+    // rounding that scattered the tie — so the two fill the beam with
+    // different (equally certified) branches and their estimates part
+    // company. Measured at order 5: 21 of 400 axis probes differ, by up to
+    // 1.25e-2 in either direction, with both estimators valid against the
+    // attractor throughout. Off the axis, where nothing ties, the two agree
+    // to 1e-15 (the suites above).
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 5,
+      axis: "z",
+    });
+    const reference = expandedReference(de);
+    let differing = 0;
+    for (let i = 0; i < 400; i++) {
+      const p: Vec3 = [0, 0, -2 + (4 * i) / 399];
+      const gap = Math.abs(
+        estimateDistanceRefined(de, p) - estimateDistanceRefined(reference, p),
+      );
+      if (gap > SWEEP_FP_TOLERANCE) differing++;
+      expect(gap).toBeLessThan(0.02);
+    }
+    expect(differing).toBeGreaterThan(0);
+  });
+});
+
+describe("kaleidoscope orders the symmetry expansion could not carry", () => {
+  // 4 base maps x order 8 = 32 expanded slots, past the tracer's 24-slot
+  // budget: the class the mode used to refuse outright. The sweep carries it
+  // in 4 slots, so the only question left is whether the estimate is any
+  // good.
+  const beyondCap = { order: 8, axis: "z" } as const;
+
+  it("builds in base-sized slots where the expansion would have overflowed", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, beyondCap);
+    expect(de.maps).toHaveLength(4);
+    expect(de.symmetry.order).toBe(8);
+    expect(de.maps.length * de.symmetry.order).toBeGreaterThan(24);
+  });
+
+  it("reads as a hit on points sampled from the beyond-cap attractor", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms, null, beyondCap);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(42),
+      null,
+      beyondCap,
+    );
+    for (let i = 0; i < 300; i++) {
+      const idx = (i * 61) % cloud.count;
+      const p: Vec3 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ];
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        0.02 * de.boundingRadius,
+      );
+    }
+  });
+
+  it("computes exactly what the expansion would have, 32 slots and all", () => {
+    // The decisive one for the newly-admitted class: the estimate the mode
+    // now serves is the estimate the old code would have produced if its
+    // uniform arrays had been big enough. Measured over 3000 probes,
+    // maxAbs = 8.9e-16.
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, beyondCap);
+    const reference = expandedReference(de);
+    expect(reference.maps).toHaveLength(32);
+    const rng = mulberry32(31337);
+    for (let i = 0; i < 600; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistanceRefined(de, p)).toBeCloseTo(
+        estimateDistanceRefined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("never over-estimates the distance to the beyond-cap attractor", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms, null, beyondCap);
+    const cloud = runChaosGame(
+      transforms,
+      200000,
+      mulberry32(7),
+      null,
+      beyondCap,
+    );
+    const rng = mulberry32(1234);
+    for (let i = 0; i < 200; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearestDistance(cloud, p) + 1e-6,
+      );
+    }
+  });
+
+  it("ghosts in voids at high order exactly as much as the expansion does", () => {
+    // The feature's honest limitation, pinned to the ORDER rather than to
+    // the sweep. The module doc's disclosed interaction — order >= 3
+    // multiplies every branch, so levels with more simultaneous in-sphere
+    // branches than the beam has slots get common — bites hard at order 8:
+    // 11 of 101 genuine-void probes read under the marcher's 0.01R floor,
+    // and the minimum void estimate goes slightly negative. The expansion
+    // scores IDENTICALLY on the same probes, so lifting the cap exposes a
+    // pre-existing high-order weakness rather than introducing one; the
+    // beam width, not the map packing, is what would close it.
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms, null, beyondCap);
+    const reference = expandedReference(de);
+    const R = de.boundingRadius;
+    const cloud = runChaosGame(
+      transforms,
+      200000,
+      mulberry32(7),
+      null,
+      beyondCap,
+    );
+    const rng = mulberry32(1234);
+    let voidProbes = 0;
+    let sweepGhosts = 0;
+    let referenceGhosts = 0;
+    for (let i = 0; i < 200; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      if (nearestDistance(cloud, p) <= 0.05 * R) continue;
+      voidProbes++;
+      if (estimateDistanceRefined(de, p) < 0.01 * R) sweepGhosts++;
+      if (estimateDistanceRefined(reference, p) < 0.01 * R) referenceGhosts++;
+    }
+    expect(voidProbes).toBeGreaterThan(20);
+    expect(sweepGhosts).toBe(referenceGhosts);
+    expect(sweepGhosts).toBeGreaterThan(0);
+  });
+});
+
+describe("estimateDistanceRefined cutoff on a swept kaleidoscope", () => {
+  // fr-55r5's contract has to survive the sweep: the early-out exits sit
+  // inside the loop the sector sweep now wraps.
+  const symmetry = { order: 8, axis: "z" } as const;
+
+  it("returns the full-descent value whenever the result clears the cutoff", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, symmetry);
+    const rng = mulberry32(31337);
+    let cleared = 0;
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      const cutoff = 0.02 * de.boundingRadius;
+      const early = estimateDistanceRefined(de, p, cutoff);
+      if (early < cutoff) continue;
+      cleared++;
+      expect(early).toBe(estimateDistanceRefined(de, p));
+    }
+    expect(cleared).toBeGreaterThan(50);
+  });
+
+  it("agrees with the full descent whenever the result falls under the cutoff", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, symmetry);
+    const rng = mulberry32(31337);
+    let dipped = 0;
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      const cutoff = 0.02 * de.boundingRadius;
+      const early = estimateDistanceRefined(de, p, cutoff);
+      if (early >= cutoff) continue;
+      dipped++;
+      // The hit VERDICT is what the cutoff preserves, not the value.
+      expect(estimateDistanceRefined(de, p)).toBeLessThan(cutoff);
+    }
+    expect(dipped).toBeGreaterThan(20);
   });
 });
 
@@ -528,8 +1076,9 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
 
   it("on a kaleidoscope system, keeps strict validity at the built width while eliminating the base estimator's balloons", () => {
     // 3D-specific coverage the 4D suite has no analogue for: the refined
-    // inner sweep runs over the symmetry-EXPANDED map list (12 slots here),
-    // whose rotated inverses only exist in this module. Order 3 triples
+    // inner sweep runs over every (sector, base map) pair — 3 x 4 = 12
+    // branches here — and kaleidoscope sectors only exist in this module.
+    // Order 3 triples
     // every branch, so levels with >= 3 simultaneous in-sphere branches are
     // common — the fr-jkpn drop class. Before the width-4 validity slots
     // this construction measured the disclosed TRADE (refined: 0 ghosts but
@@ -1021,15 +1570,20 @@ describe("buildSurfaceDE / estimateDistance with a final transform", () => {
 });
 
 describe("SurfaceDEMap inverse contract", () => {
-  it("un-rotates then un-maps a kaleidoscope slot back to the original point", () => {
+  it("un-rotates a sector then un-maps the base map back to the original point", () => {
+    // The kaleidoscope copy (k, i) is p -> Rot_k . f_i(p). Descending
+    // through it must therefore turn the point BACK by k sectors and then
+    // apply base map i's inverse — the two halves the sweep does in that
+    // order, where the expansion baked them into one composed matrix.
     const transforms = sierpinskiTetrahedron();
     const order = 3;
     const de = buildSurfaceDE(transforms, null, { order, axis: "z" });
     const point: Vec3 = [0.3, -0.2, 0.5];
 
-    for (const slot of [0, 6]) {
-      const baseIndex = slot % 4;
-      const k = Math.floor(slot / 4);
+    for (const [baseIndex, k] of [
+      [0, 0],
+      [2, 1],
+    ]) {
       const forward = applyAffine(
         composeAffine(transforms[baseIndex]),
         point[0],
@@ -1043,12 +1597,13 @@ describe("SurfaceDEMap inverse contract", () => {
         rot[6] * forward[0] + rot[7] * forward[1] + rot[8] * forward[2],
       ];
 
-      const slotMap = de.maps[slot];
+      const unrotated = sectorPoint(de, k, rotated);
+      const baseMap = de.maps[baseIndex];
       const back = applyAffine(
-        { m: slotMap.invM, t: slotMap.invT },
-        rotated[0],
-        rotated[1],
-        rotated[2],
+        { m: baseMap.invM, t: baseMap.invT },
+        unrotated[0],
+        unrotated[1],
+        unrotated[2],
       );
 
       expect(back[0]).toBeCloseTo(point[0], 10);

@@ -505,7 +505,7 @@ describe("fr-v6yg surface beam harness", () => {
     const systems: System3[] = [
       { label: "repro2 (0.93/0.22 w6:1)", transforms: repro3D() },
       {
-        label: "repro2+sym4y (8 slots)",
+        label: "repro2+sym4y (2 maps x order 4)",
         transforms: repro3D(),
         symmetry: { order: 4, axis: "y" },
       },
@@ -528,7 +528,11 @@ describe("fr-v6yg surface beam harness", () => {
         0,
       );
       console.log(
-        `-- ${sys.label}: slots=${de.maps.length} maxSigmaMax=${maxSigma.toFixed(3)}` +
+        // baseMaps x symOrder is the branching factor per level — the map
+        // array is BASE maps and the kaleidoscope is swept (fr-x029), so
+        // neither number alone is the old "slots" count.
+        `-- ${sys.label}: baseMaps=${de.maps.length}x${de.symmetry.order}` +
+          ` maxSigmaMax=${maxSigma.toFixed(3)}` +
           ` builtWidth=${de.beamWidth} status=${analysis.status}` +
           ` R=${de.boundingRadius.toFixed(4)} maxDepth=${de.maxDepth}`,
       );
