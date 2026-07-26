@@ -32,9 +32,11 @@ import {
   marchStepsForGrid,
 } from "./voxel-material";
 import {
+  configureSurfaceGridTexture,
   configureSurfaceLUTTexture,
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
+  setSurfaceGrid as packSurfaceGrid,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -58,6 +60,7 @@ import {
 } from "./surface-material-4d";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
 
@@ -539,6 +542,12 @@ export class FractalScene {
    * short-circuits the dirty flag exactly like {@link setRot4} (fr-py7z). */
   private readonly surface4Rot = new Array<number>(16).fill(NaN);
   private surface4W0 = NaN;
+  /** The 3D empty-space-skipping grid texture (fr-55r5 part 2) the march
+   * samples before paying a descent, or null while none is uploaded —
+   * gridless marching is always correct, just slower. Owned here (created
+   * in {@link setSurfaceGrid}, disposed on every system change and on the
+   * next upload); the material only holds uniforms into it. */
+  private surfaceGridTexture: THREE.Data3DTexture | null = null;
   /** Lazily allocated 256x1 ramp for the surface tracer's palette/height/
    * radius color sources — dimensions never change, so one texture is
    * mutated in place (see {@link setSurfaceColorLUT}). */
@@ -2030,11 +2039,45 @@ export class FractalScene {
    */
   setSurfaceSystem(de: SurfaceDE, colors: Vec3[], trapIndices: number[]): void {
     this.renderNeeded = true;
+    // packSurfaceSystem resets the material's grid uniforms; the texture
+    // itself is ours to free (fr-55r5 part 2).
+    this.dropSurfaceGridTexture();
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
+  }
+
+  /**
+   * Upload a finished empty-space-skipping grid (fr-55r5 part 2) for the
+   * CURRENT 3D surface system — the async worker build main.ts kicked off
+   * alongside {@link setSurfaceSystem}. Marks the frame dirty so the tier
+   * loop re-previews and re-settles with the faster march; an in-flight
+   * settle job keeps tracing gridless strips until that invalidation lands
+   * (the uniforms flip here, but main.ts's invalidate supersedes the job
+   * the same frame, so no mixed-grid seam survives to the screen).
+   */
+  setSurfaceGrid(grid: SurfaceGrid): void {
+    this.dropSurfaceGridTexture();
+    const texture = new THREE.Data3DTexture(
+      grid.values,
+      grid.resolution,
+      grid.resolution,
+      grid.resolution,
+    );
+    configureSurfaceGridTexture(texture);
+    this.surfaceGridTexture = texture;
+    packSurfaceGrid(this.surfaceMaterial, texture, grid.halfExtent);
+    this.renderNeeded = true;
+  }
+
+  /** Dispose and forget the grid texture, and unhook the 3D material's grid
+   * uniforms — every system change lands here before new state goes up. */
+  private dropSurfaceGridTexture(): void {
+    packSurfaceGrid(this.surfaceMaterial, null);
+    this.surfaceGridTexture?.dispose();
+    this.surfaceGridTexture = null;
   }
 
   /**
@@ -2049,6 +2092,10 @@ export class FractalScene {
     trapIndices: number[],
   ): void {
     this.renderNeeded = true;
+    // A stale 3D grid must not outlive its system just because the next
+    // session is 4D (no grid there — the live rotor/slice would invalidate
+    // one every frame).
+    this.dropSurfaceGridTexture();
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
