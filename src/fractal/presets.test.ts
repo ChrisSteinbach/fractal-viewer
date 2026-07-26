@@ -15,6 +15,7 @@ import {
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
+  mandelboxLattice,
   mengerSponge,
   nextId,
   octahedronFlake,
@@ -308,12 +309,48 @@ describe("variation flame presets", () => {
     }
   });
 
+  it("mandelboxLattice is eight box-symmetry conjugates of one fold map", () => {
+    const transforms = mandelboxLattice();
+    expect(transforms).toHaveLength(8);
+    for (const t of transforms) {
+      // Conjugating by a quarter-turn about y (or the y-mirror) leaves scale
+      // and variations untouched — the box fold commutes with both, the
+      // sphere fold with every rotation/reflection.
+      expect(t.scale).toEqual(transforms[0].scale);
+      expect(t.variations).toEqual([
+        { type: "mandelbox", weight: 1.2 },
+        { type: "linear", weight: 0.25 },
+      ]);
+    }
+    // Each ring of four is a y-quarter-turn cycle of translations.
+    for (const ring of [0, 4]) {
+      for (let k = 0; k < 4; k++) {
+        const [x, y, z] = transforms[ring + k].position;
+        const next = transforms[ring + ((k + 1) % 4)].position;
+        expect(next[0]).toBeCloseTo(z, 12);
+        expect(next[1]).toBeCloseTo(y, 12);
+        expect(next[2]).toBeCloseTo(-x, 12);
+      }
+    }
+    // The lower ring is the y-mirror conjugate of the upper: translation's y
+    // negated, and the y-twist's sign reversed (a mirror reverses the turn).
+    for (let k = 0; k < 4; k++) {
+      const upper = transforms[k];
+      const lower = transforms[k + 4];
+      expect(lower.position[0]).toBeCloseTo(upper.position[0], 12);
+      expect(lower.position[1]).toBeCloseTo(-upper.position[1], 12);
+      expect(lower.position[2]).toBeCloseTo(upper.position[2], 12);
+      expect(lower.rotation[1]).toBeCloseTo(-upper.rotation[1], 12);
+    }
+  });
+
   // Nonlinear maps can diverge at singularities; the point of the test is that
   // the chaos game's guard keeps the whole cloud finite (never NaN/Inf) and the
   // attractor has real extent rather than collapsing to a point.
   for (const [name, transforms] of Object.entries({
     radiolarian: radiolarian(),
     swirlFlame: swirlFlame(),
+    mandelboxLattice: mandelboxLattice(),
   })) {
     it(`${name} renders a finite, non-degenerate cloud`, () => {
       const { bounds } = runChaosGame(transforms, 3000, mulberry32(1));
@@ -723,12 +760,14 @@ describe("PRESET_SCAFFOLDS", () => {
 });
 
 describe("PRESET_RENDER_HINTS", () => {
-  // radiolarian and swirlFlame are fractal-flame compositions whose payoff
-  // lives in the flame render, not the live point cloud (see their own docs)
-  // — loading either switches the app into that renderer (fr-39y).
-  it("hints radiolarian and swirl as flame showcases", () => {
+  // radiolarian, swirlFlame, and mandelboxLattice are fractal-flame
+  // compositions whose payoff lives in the flame render, not the live point
+  // cloud (see their own docs) — loading one switches the app into that
+  // renderer (fr-39y).
+  it("hints radiolarian, swirl, and mandelbox as flame showcases", () => {
     expect(PRESET_RENDER_HINTS.radiolarian).toBe("flame");
     expect(PRESET_RENDER_HINTS.swirl).toBe("flame");
+    expect(PRESET_RENDER_HINTS.mandelbox).toBe("flame");
   });
 
   // Guards against a typo'd key silently falling out of the Preset union.
