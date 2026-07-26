@@ -1537,6 +1537,194 @@ describe("estimateDistanceRefined early-out cutoff", () => {
   });
 });
 
+// The depth-0 sphere floor's own unconditional exit (fr-zkt2): once `best`
+// falls to or below `sphereBound`, descentValue's `max(best, sphereBound)`
+// clamp is already pinned there, and `best` only ever falls further from a
+// fold — so the descent may return the instant that happens, no cutoff
+// required. That makes the exit value-exact for EVERY caller, unlike the
+// fr-55r5 cutoff exit above (exact only at or above the cutoff), but it
+// also makes it value-INVISIBLE: the returned number is identical whether
+// or not the exit fired. There is deliberately no "did it fire" counter
+// below — the tests instead pin the invariant the exit leans on (the
+// return never drops below the floor) and re-run the fr-55r5 cutoff
+// contract over probe corpora biased into the region where the new exit
+// actually triggers.
+describe("estimateDistanceRefined sphere-floor pin (fr-zkt2)", () => {
+  it("never returns below the depth-0 sphere floor, for probes inside, near and beyond the bounding sphere", () => {
+    const transforms = sierpinskiTetrahedron();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const rng = mulberry32(7331);
+    const probes: Vec3[] = [];
+    // On-surface, jittered — the part-1 cloud+jitter pattern.
+    for (let i = 0; i < 20; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    // Uniform box probes.
+    for (let i = 0; i < 15; i++) {
+      probes.push([(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4]);
+    }
+    // Outside the bounding sphere, 1.05-3x its radius, random directions.
+    for (let i = 0; i < 25; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz) || 1;
+      const radius = (1.05 + rng() * 1.95) * de.boundingRadius;
+      probes.push([(dx / n) * radius, (dy / n) * radius, (dz / n) * radius]);
+    }
+    for (const p of probes) {
+      // The exact prologue formula (`descend`'s `startR`), not Math.hypot —
+      // the assertion below is bit-exact, so it must match the arithmetic
+      // the descent itself runs, not a merely-equivalent one.
+      const floor =
+        Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) - de.boundingRadius;
+      expect(estimateDistance(de, p)).toBeGreaterThanOrEqual(floor);
+      expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("computes the floor in lensed units when a final transform is present", () => {
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 99,
+      position: [0.3, -0.2, 0.1],
+      rotation: [0.4, 0.2, -0.3],
+      scale: [0.8, 0.8, 0.8],
+    };
+    const de = buildSurfaceDE(transforms, finalTransform);
+    const f = de.final;
+    if (!f) throw new Error("expected a final-transform lens");
+    const rng = mulberry32(24601);
+    for (let i = 0; i < 12; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz) || 1;
+      const radius = (1.2 + rng() * 1.8) * de.visibleBoundingRadius;
+      const p: Vec3 = [(dx / n) * radius, (dy / n) * radius, (dz / n) * radius];
+      // The descend prologue's lens step, verbatim: row-major 3x3 invM
+      // then invT, THEN the norm — matching order matters for bit-exactness.
+      const qx =
+        f.invM[0] * p[0] + f.invM[1] * p[1] + f.invM[2] * p[2] + f.invT[0];
+      const qy =
+        f.invM[3] * p[0] + f.invM[4] * p[1] + f.invM[5] * p[2] + f.invT[1];
+      const qz =
+        f.invM[6] * p[0] + f.invM[7] * p[1] + f.invM[8] * p[2] + f.invT[2];
+      const lensedR = Math.sqrt(qx * qx + qy * qy + qz * qz);
+      const floor = (lensedR - de.boundingRadius) * f.sigmaMin;
+      expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("keeps both cutoff properties on the slow-descending two-map profile when probes are biased outside the bounding sphere", () => {
+    // Same two maps as the fr-55r5 doubleRotation-mirror test above: sigma
+    // 0.93 pushes the depth cap to 127 levels, so this is where an exit
+    // that fires early skips the most descent.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const rng = mulberry32(2718);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 24; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz) || 1;
+      const radius = (1.0 + rng() * 1.5) * de.boundingRadius;
+      probes.push([(dx / n) * radius, (dy / n) * radius, (dz / n) * radius]);
+    }
+    for (let i = 0; i < 8; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+
+  it("keeps both cutoff properties on a kaleidoscope-swept sierpinski when probes are biased outside the bounding sphere", () => {
+    const transforms = sierpinskiTetrahedron();
+    const symmetry = { order: 3, axis: "z" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(1),
+      null,
+      symmetry,
+    );
+    const rng = mulberry32(31415);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 24; i++) {
+      const dx = rng() - 0.5;
+      const dy = rng() - 0.5;
+      const dz = rng() - 0.5;
+      const n = Math.hypot(dx, dy, dz) || 1;
+      const radius = (1.0 + rng() * 1.5) * de.boundingRadius;
+      probes.push([(dx / n) * radius, (dy / n) * radius, (dz / n) * radius]);
+    }
+    for (let i = 0; i < 8; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistanceRefined(de, p);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistanceRefined(de, p, cutoff);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+});
+
 describe("buildSurfaceDE / estimateDistance with a final transform", () => {
   function finalT(): Transform {
     return {

@@ -260,6 +260,20 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * would re-open the ghost class refinement exists to kill: a
    * barely-escaped sibling dips under the epsilon, the full descent lifts
    * it back above.
+   *
+   * SPHERE FLOOR (fr-zkt2), mirroring the oracle's own unconditional exit.
+   * Once best falls to or below sphereBound the return is already pinned
+   * at sphereBound * uFinalSigmaMin — the epilogue clamps through
+   * max(best, sphereBound), and best only ever falls, so no later fold
+   * can lift the clamp back off sphereBound. The descent therefore exits
+   * the instant best <= sphereBound, unconditionally — no cutoff
+   * involved. Unlike the fr-55r5 exit above, this one is value-exact for
+   * EVERY caller, including a cutoff of 0.0 (the zero-argument overload
+   * below): it returns the full-descent value bit-for-bit, always.
+   * Live on anisotropic maps (certificates lose a sigmaMin/sigmaMax
+   * factor per level and dip under the floor); provably dead on
+   * isotropic invariant-ball maps, where certificates never dip (see
+   * the oracle's paragraph).
    */
   float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
@@ -273,7 +287,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // The value below which this descent may stop (the oracle bailBelow).
     // -1e30 disables the test: a cutoff of 0.0, and a depth-0 sphere floor
     // that already holds the answer at or above the cutoff no matter how
-    // far best falls, since the floor is what the return clamps to.
+    // far best falls, since the floor is what the return clamps to. (That
+    // sphere floor case now has its own unconditional exit — fr-zkt2,
+    // below — that fires the moment best reaches it, cutoff or not.)
     float bailBelow =
       (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // Chain slot A starts at the (lensed) query; slot B idles until beam
@@ -449,10 +465,15 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
           if (eR > uBoundingRadius && eCert < best) {
             best = min(best, refinedCert4(eQ, eR, eScale));
-            // Cutoff exit: the folded certificate is FINALIZED (already
-            // refined), and best only falls from here, so the verdict is
-            // settled — the rest of the descent cannot lift it back.
-            if (best * uFinalSigmaMin < bailBelow) {
+            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
+            // the folded certificate is FINALIZED (already refined), and
+            // best only falls from here. Once best is at or below
+            // sphereBound the return is already pinned at sphereBound *
+            // uFinalSigmaMin no matter how much further best still
+            // falls, so that case exits unconditionally; short of it,
+            // the settled verdict against the caller's cutoff means the
+            // rest of the descent cannot lift it back either.
+            if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
               return max(best, sphereBound) * uFinalSigmaMin;
             }
           }
@@ -511,14 +532,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           v2Live = true;
         }
       }
-      // Cutoff exit covering the four promote folds above in one test: each
-      // either wrote a settled certificate into best (refined at the two
-      // validity-slot sites, the deliberately plain escape-radius bound at
-      // the other two) or continued a chain, and best only falls from here.
-      // Deliberately NOT a break: the terminal bounds past the loop are
-      // folds the FULL descent only makes at the depth cap, and folding one
-      // here could drop best below a value that descent never reaches.
-      if (best * uFinalSigmaMin < bailBelow) {
+      // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2), covering
+      // the four promote folds above in one test: each either wrote a
+      // settled certificate into best (refined at the two validity-slot
+      // sites, the deliberately plain escape-radius bound at the other
+      // two) or continued a chain, and best only falls from here. Once
+      // best is at or below sphereBound the eventual return is already
+      // pinned at sphereBound * uFinalSigmaMin, so that case exits
+      // unconditionally. Deliberately NOT a break: the terminal bounds
+      // past the loop are folds the FULL descent only makes at the depth
+      // cap, and folding one here could drop best below a value that
+      // descent never reaches.
+      if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
     }
