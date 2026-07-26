@@ -43,11 +43,10 @@ import {
   SURFACE_PREVIEW_AO_TAPS,
   SURFACE_PREVIEW_HIT_FLOOR,
   SURFACE_PREVIEW_MARCH_STEPS,
-  SURFACE_PREVIEW_MAX_DEPTH,
   SURFACE_PREVIEW_SCALE,
   SURFACE_PREVIEW_SHADOW_STEPS,
 } from "./surface-material";
-import type { RenderTier } from "./render-tier";
+import { previewMaxDepth, type RenderTier } from "./render-tier";
 import { createStripPlanner, type StripPlanner } from "./strip-planner";
 import {
   createSurfaceMaterial4,
@@ -554,6 +553,13 @@ export class FractalScene {
    * clamps `uMaxDepth` below it and the full tier restores it, so the two
    * tiers can interleave freely (fr-5ne3). */
   private surfaceFullMaxDepth = 0;
+  /** {@link previewMaxDepth} of {@link surfaceFullMaxDepth}, recorded
+   * alongside it by the same two setters (fr-ttg5): contraction-aware, so
+   * a slow-map system's preview clamp scales with its OWN full depth
+   * instead of a fixed ceiling that left slow chains' giant unresolved
+   * core ball on screen for as long as the view kept moving — permanently,
+   * under 4D auto-tumble. */
+  private surfacePreviewMaxDepth = 0;
   /** Full-resolution target every FULL-quality trace renders into as
    * adaptive scissored strips (fr-sjff): a forced-completion readback
    * between strips keeps every GPU submission bounded, so a pathological
@@ -2022,6 +2028,7 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
+    this.surfacePreviewMaxDepth = previewMaxDepth(de.maxDepth);
   }
 
   /**
@@ -2040,6 +2047,7 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
     this.surfaceFullMaxDepth = de.maxDepth;
+    this.surfacePreviewMaxDepth = previewMaxDepth(de.maxDepth);
   }
 
   /**
@@ -2262,7 +2270,7 @@ export class FractalScene {
       (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(height, 1);
     const preview = tier === "preview";
     u.uMaxDepth.value = preview
-      ? Math.min(this.surfaceFullMaxDepth, SURFACE_PREVIEW_MAX_DEPTH)
+      ? this.surfacePreviewMaxDepth
       : this.surfaceFullMaxDepth;
     u.uMarchSteps.value = preview
       ? SURFACE_PREVIEW_MARCH_STEPS

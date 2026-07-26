@@ -937,21 +937,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
 export const SURFACE_PREVIEW_SCALE = 0.3;
 
 /**
- * Preview-tier descent-depth clamp on `uMaxDepth` (fr-5ne3). `buildSurfaceDE`
- * sizes the full depth so the SLOWEST contraction chain resolves features
- * below ~1e-4 — up to 48 levels, and it is exactly those slowly-contracting
- * systems whose per-level beam + certificate sweeps make interaction
- * unusable. Clamping the cap (a plain uniform write — the shader bodies and
- * the CPU oracle are untouched) leaves fast-contracting systems' 8-12 levels
- * alone and flattens only that tail. The artifact profile is safe by
- * construction: a chain still alive at the cap contributes the same valid
- * terminal lower bound, so fine detail renders slightly inflated/smoothed —
- * no balloon ghosts (those come from dropping certificate refinement, which
- * the preview deliberately keeps).
- */
-export const SURFACE_PREVIEW_MAX_DEPTH = 12;
-
-/**
  * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
  * flat maps, kaleidoscope expansions) pay their cost per DE CALL, which the
  * preview depth clamp can't reduce — so the preview also trims how many DE

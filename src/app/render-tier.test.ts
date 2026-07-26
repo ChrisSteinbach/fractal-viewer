@@ -1,4 +1,34 @@
-import { createRenderTierScheduler, TIER_SETTLE_MS } from "./render-tier";
+import {
+  createRenderTierScheduler,
+  previewMaxDepth,
+  TIER_SETTLE_MS,
+} from "./render-tier";
+
+describe("previewMaxDepth", () => {
+  it("halves a deep full-quality depth, rounding the odd remainder up", () => {
+    expect(previewMaxDepth(127)).toBe(64);
+  });
+
+  it("rounds a small odd depth up before halving", () => {
+    expect(previewMaxDepth(9)).toBe(5);
+  });
+
+  it("halves an even depth exactly", () => {
+    expect(previewMaxDepth(14)).toBe(7);
+  });
+
+  it("lands exactly on the 4-level floor when halving an 8-level depth", () => {
+    expect(previewMaxDepth(8)).toBe(4);
+  });
+
+  it("floors a 6-level depth up to the 4-level minimum", () => {
+    expect(previewMaxDepth(6)).toBe(4);
+  });
+
+  it("floors the shallowest full-quality depth up to the 4-level minimum", () => {
+    expect(previewMaxDepth(4)).toBe(4);
+  });
+});
 
 describe("createRenderTierScheduler", () => {
   it("returns preview for an invalidated frame", () => {
