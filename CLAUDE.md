@@ -118,8 +118,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
-  - `variations.ts` — dozen nonlinear flame variations as pure functions;
-    `composeVariations` blends a transform's weighted list.
+  - `variations.ts` — fifteen nonlinear flame variations as pure functions: a
+    dozen classics plus the Mandelbox fold family (`boxfold`/`spherefold`/
+    `mandelbox`, fr-p7nu); `composeVariations` blends a transform's weighted
+    list.
   - `variations4.ts` — same variations lifted to 4D, bit-exact at `w = 0`.
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →

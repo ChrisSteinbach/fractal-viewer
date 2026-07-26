@@ -57,7 +57,10 @@ documents the exact convention used to lift Draves' planar flame formulas to
 3D: radial warps (`spherical`, `bubble`, `swirl`'s radius) use the full
 radius, angular warps act in the xy-plane and carry z through unchanged. The
 identical convention carries w through unchanged. We committed to the
-generalization scheme once already.
+generalization scheme once already. (A later third family, fr-p7nu's
+Mandelbox folds, needed no new convention either — natively 3-D to begin
+with, lifting them just means folding w like any other axis, anchor property
+intact.)
 
 **Mechanical bits.** The escape check gains `|w|`; reseeding draws four
 coordinates; `Bounds` gains `minW`/`maxW` and the radial extent becomes the 4D
@@ -134,7 +137,7 @@ _is_ the demo.
 | `fractal/affine.ts`        | parallel `Affine4` path: 4×4 from six plane angles, scale, translation       | keep the 3D path byte-identical; shear later                                                                                                              |
 | `fractal/chaos-game.ts`    | 4D step/escape/bounds/plot                                                   | house style is hand-unrolled hot loops (flame inlines `stepOrbit`), so a dedicated Vec4 path beats an n-generic abstraction                               |
 | `fractal/types.ts`         | `Vec4`, rotation/shear arity, `Bounds` + w                                   | a v2 of the `Transform` shape                                                                                                                             |
-| `fractal/variations.ts`    | apply the documented scheme with w carried through                           | radial warps use the full 4D radius                                                                                                                       |
+| `fractal/variations.ts`    | apply the documented scheme with w carried through                           | radial warps use the full 4D radius — a later third family (fr-p7nu's Mandelbox folds) needed no scheme change: w just folds like any other axis          |
 | `fractal/color.ts`         | `"w"` color mode                                                             | shader-side when the rotation is shader-side                                                                                                              |
 | `fractal/presets.ts`       | pentatope gasket, tesseract flake, double-rotation spiral                    | 3D presets embed at w = 0                                                                                                                                 |
 | `fractal/random-system.ts` | 4D "surprise" with the same contraction heuristics                           | later                                                                                                                                                     |
