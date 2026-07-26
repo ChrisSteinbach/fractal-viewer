@@ -47,6 +47,23 @@ import { lightDirection } from "./voxel-material";
 const BG_TOP = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.top));
 const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
+/** Whole-ray cap on empty-space-grid cell skips, SEPARATE from the
+ * march-step budget (fr-z70m). A skip is one NEAREST texel read — orders of
+ * magnitude cheaper than the beam descent `uMarchSteps` exists to bound —
+ * and the floors it steps by are deliberately conservative
+ * (`surface-grid.ts`: DE at the cell center minus the cell half-diagonal),
+ * so a ray threading gaps or grazing a face takes MANY of them where the
+ * analytic march would take one large step. fr-55r5 originally charged
+ * every skip against `uMarchSteps`, which SHRANK the march's reach exactly
+ * on those rays — far or occlusion-threaded geometry dissolved into
+ * per-pixel dropout speckle, worst wherever a view lined grazing faces up
+ * (the fr-z70m screenshots' one-sided erosion). Exhausting this cap only
+ * falls through to the analytic step — never wrong, just slower.
+ * 256 clears the worst whole-ray skip count measured across the fr-z70m
+ * pose sweeps (189, `scripts/erosion-repro.harness.ts`); doubling it
+ * changed nothing measured. */
+export const SURFACE_GRID_SKIP_CAP = 256;
+
 /** Compile-time size of the per-map uniform arrays: at ~7 vec4-equivalents
  * per slot (mat3 = 3, plus vec3 + float + vec3 + float), 24 maps stays
  * comfortably under WebGL2's guaranteed 224 fragment uniform vectors.
@@ -81,6 +98,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
   precision highp sampler3D;
 
   const int MAX_MAPS = ${SURFACE_MAX_MAPS};
+  const int GRID_SKIP_CAP = ${SURFACE_GRID_SKIP_CAP};
   /** Sphere-trace step budget per ray — a per-tier uniform (fr-sjff): the
    * preview tier trades steps for frame rate on map-heavy systems whose DE
    * cost the depth clamp can't touch. Tracer-side only, like the loop caps
@@ -979,12 +997,20 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // step length below never drifts. The march runs the plain DE overload;
     // the hit's coloring extras are fetched once below.
     bool hit = false;
+    // Whole-ray budget for grid cell skips, SEPARATE from uMarchSteps
+    // (fr-z70m): a skip is one texel read, orders of magnitude cheaper
+    // than the descent uMarchSteps exists to bound, and its conservative
+    // floor advances far less than the analytic step it stands in for —
+    // charging skips against the march budget shrank the ray's REACH,
+    // dissolving far/threaded geometry into dropout speckle. Running dry
+    // here only falls through to the analytic step: slower, never wrong.
+    int gridSkips = GRID_SKIP_CAP;
     for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
       float eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
-      // Empty-space skip (fr-55r5 part 2): one texture read against the
+      // Empty-space skip (fr-55r5 part 2): texture reads against the
       // precomputed grid before paying a descent. The stored floor bounds
       // the distance from ANYWHERE in the sample's cell (surface-grid.ts's
       // validity chain), so a step of g cannot cross the surface — and a
@@ -992,13 +1018,25 @@ const SURFACE_FRAGMENT = /* glsl */ `
       // DE has nothing to add. Cells outside the grid's certified sphere
       // store 0 and fall through; uStepScale damps the step exactly as the
       // analytic path damps its own, since the floors inherit the same
-      // probed-bounding-radius margins the damping exists for.
+      // probed-bounding-radius margins the damping exists for. Consecutive
+      // skips drain in this inner walk — the same read/compare/step
+      // sequence the outer \`continue\` used to produce, bit for bit — so
+      // they spend gridSkips, not analytic march steps (fr-z70m).
       if (uGridEnabled > 0.5) {
-        float g =
-          texture(uGridTex, (ro + rd * t) * uGridInvSpan + 0.5).r;
-        if (g > eps) {
+        for (; gridSkips > 0; gridSkips--) {
+          float g =
+            texture(uGridTex, (ro + rd * t) * uGridInvSpan + 0.5).r;
+          if (g <= eps) {
+            break;
+          }
           t += g * uStepScale;
-          continue;
+          if (t > tFar) {
+            break;
+          }
+          eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+        }
+        if (t > tFar) {
+          break;
         }
       }
       float d = surfaceDE(ro + rd * t, eps);
@@ -1126,10 +1164,19 @@ const SURFACE_FRAGMENT = /* glsl */ `
  * preview depth clamp can't reduce — so the preview also trims how many DE
  * calls a pixel can spend. All tracer-side (march loop, shadow loop, AO
  * taps, hit-test floor): none of these appear in the CPU oracle's distance
- * contract, so the oracle-mirrored DE bodies are untouched. The FULL tier
- * values are exactly the constants the shaders were born with.
+ * contract, so the oracle-mirrored DE bodies are untouched.
+ *
+ * The full-tier march budget was born at 96 and moved to 160 by fr-z70m:
+ * rays that thread gaps in near geometry or graze a face at a shallow
+ * angle legitimately need well over 96 analytic steps at close-up eps, and
+ * exhaustion painted background through whole regions of standing geometry
+ * (view-dependent dropout speckle — the measured tail: 0.80% of one worst
+ * pose's true hits lost at 96, 0.00% at 160 on sierpinski; menger 0.27% ->
+ * 0.02%). Cost is bounded where it matters: every full-tier submission is
+ * already sliced to measured GPU time by the strip planner, and ordinary
+ * rays exit on hit or sphere-exit long before either cap.
  */
-export const SURFACE_FULL_MARCH_STEPS = 96;
+export const SURFACE_FULL_MARCH_STEPS = 160;
 export const SURFACE_PREVIEW_MARCH_STEPS = 40;
 export const SURFACE_FULL_SHADOW_STEPS = 32;
 export const SURFACE_PREVIEW_SHADOW_STEPS = 12;
