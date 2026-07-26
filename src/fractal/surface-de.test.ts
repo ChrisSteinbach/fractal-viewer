@@ -100,6 +100,9 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
         invM: mulMat3(base.invM, rotT),
         invT: base.invT,
         sigmaMin: base.sigmaMin,
+        foldKind: base.foldKind,
+        foldInvW: base.foldInvW,
+        foldSigma: base.foldSigma,
         baseIndex: base.baseIndex,
       });
     }

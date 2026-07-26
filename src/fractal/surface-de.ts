@@ -2,7 +2,13 @@ import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
 import { effectiveSymmetryOrder, runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
-import type { SymmetryAxis, SymmetryParams, Transform, Vec3 } from "./types";
+import type {
+  SymmetryAxis,
+  SymmetryParams,
+  Transform,
+  Variation,
+  Vec3,
+} from "./types";
 
 /**
  * Surface distance estimation for an affine IFS (epic fr-7jlk).
@@ -190,6 +196,89 @@ import type { SymmetryAxis, SymmetryParams, Transform, Vec3 } from "./types";
  * sweep matches that inclusion rule exactly — `order` is the only symmetry
  * field it reads — so no blend value moves the estimated surface, just as
  * none did before.
+ *
+ * PURE-FOLD MAPS: THE FOLD-BRANCH SWEEP (fr-5rvk). Maps whose variation
+ * list is exactly ONE active fold-family entry (`boxfold`, `spherefold`,
+ * `mandelbox` — fr-p7nu) are the one variation class with a sound descent
+ * extension: `T = w·V(M p + t)` is a genuine COMPOSITION (a blended list
+ * is a weighted SUM of maps — no branch decomposition exists, so blends
+ * stay ineligible forever), and each fold `V` is piecewise
+ * affine-or-conformal, so `V(Y) = union over cells c of B_c(Y ∩ cell_c)`
+ * and
+ *
+ *     dist(u, V(Y)) = min_c dist(u, B_c(Y ∩ cell_c))
+ *                  >= min_c sigma_c · dist(B_c^-1(u), Y)
+ *
+ * — dropping each cell intersection only SHRINKS a term (distance to a
+ * subset is >= distance to the set), so enumerating every branch
+ * UNCONDITIONALLY — no validity-region tests; a branch whose cell the
+ * attractor never occupies just contributes a loose-but-true term — keeps
+ * the whole estimate a lower bound. `dist(q, w·X) = |w|·dist(q/w, X)`
+ * absorbs the weight (negative `w` included: both folds are odd). Every
+ * branch child enters the SAME candidate stream as an affine map's single
+ * child — same key `pScale·(r − R)`, same certificate, same ladders,
+ * validity slots, refinement and cutoff exits — so the beam's validity
+ * argument above is branch-source agnostic and carries over verbatim.
+ * The branches, in enumeration order (`b` ascending; the GLSL mirrors the
+ * order exactly):
+ *
+ * - `boxfold` (27 = 3^3): per axis, output `u_a` has affine preimages
+ *   `u_a` (in-box), `2 − u_a` (folded from above), `−2 − u_a` (folded
+ *   from below) — each branch a reflection + translation ISOMETRY,
+ *   sigma_c = 1 exactly. Axis selectors nest x-fastest:
+ *   `b = selX + 3·selY + 9·selZ`.
+ * - `spherefold` (3): with `mR² = 0.25`, `fR² = 1` fixed
+ *   (`variations.ts`'s `sphereFoldFactor`): OUTER identity `v = u`
+ *   (sigma 1), INNER `v = u/4` (the forward ×4 inflation is conformal,
+ *   sigma exactly 4), MID unit-sphere inversion `v = u/|u|²` (an
+ *   involution). The mid branch is conformal with LOCAL scale, not one
+ *   sigma; for cell points `|x| <= 1`,
+ *   `|u − Inv(x)| = |u' − x| / (|u'||x|) >= |u|·|u' − x|`, so the branch
+ *   descends with the query-dependent certified factor `|u|`. Below
+ *   `|u| = SPHEREFOLD_MID_MIN_R` the inversion image would overflow the
+ *   GLSL mirror's f32, so the descent folds the shell bound
+ *   `pScale·|w|·(1 − |u|)` instead — the mid piece lives in the u-space
+ *   shell `1 <= |·| <= 2`, so that bound is ~`pScale·|w|`, never a
+ *   near-zero ghost term.
+ * - `mandelbox` (81 = 3·27): `V = sphereFold ∘ boxFold`, so the inverse
+ *   chains each spherefold branch (order as above) through the box
+ *   expansion of ITS output: `b = boxIndex + 27·sphereIndex`.
+ *
+ * Unconditional enumeration alone is VALID but measurably useless for the
+ * spherefold family: the mid branch's inversion is the one inverse map
+ * that DEFEATS the "inverse maps expand, so wanderers escape" dichotomy
+ * the affine descent's terminals rest on, and spurious never-escaping
+ * chains fold vacuous negative cap terminals across genuine voids
+ * (measured: ~2/3 of void probes false-hitting). The repair is the REGION
+ * FLOOR: every branch's OUTPUT region is known exactly (box id [−1,1]
+ * per axis, up/down half-lines; spherefold outer outside the unit ball,
+ * inner inside radius 2, mid the shell between — composites max the two
+ * transported bounds), `regionDist(u)` is a certified lower bound on the
+ * distance to that branch's piece, and each chain carries the strongest
+ * `scale·|w|·regionDist` certificate its branch history ever earned.
+ * Selection keys, folded certificates and cap terminals are all raised
+ * to the chain's floor; a chain whose floor is still 0 took an exact
+ * preimage at every level and is therefore ON the attractor up to the
+ * telescoped contraction — the full mechanism, its measured numbers and
+ * the width-{@link SURFACE_FOLD_BEAM_WIDTH} frontier that replaces the
+ * four ladder slots live on {@link descendFold}.
+ *
+ * Bookkeeping: the child is `inv(M)·(branch preimage of q/w) + invT` —
+ * the SAME `invM`/`invT` an affine map descends through — and the
+ * branch's certified factor is `|w|·sigma_c·sigma_min(M)`, i.e.
+ * {@link SurfaceDEMap.foldSigma} (`|w|·sigma_min`) times the branch's own
+ * conformal sigma. ELIGIBILITY gates the composite's contraction on the
+ * Lipschitz bound `|w|·L_V·sigma_max(M) < CONTRACTION_LIMIT` with
+ * `L_boxfold = 1` and `L_spherefold = L_mandelbox = 4` (the ×4 inner
+ * region is the worst branch) — which also caps every certified branch
+ * factor below 1, since `|w|·L_V·sigma_min <= 0.999·sigma_min/sigma_max`.
+ * Anisotropy stays `sigma_max/sigma_min` of `M` alone: every branch is
+ * conformal, so the fold contributes ratio 1. Consequences worth naming:
+ * the shipped Mandelbox preset (`mandelbox 1.2` blended with
+ * `linear 0.25`) still reads "uses variations", and a pure-fold FINAL
+ * transform stays ineligible too — the lens is applied ONCE to the query
+ * point, and a multi-branch lens would need one root descent per branch
+ * (beam seeding), which is out of scope rather than unsound.
  */
 
 /** Per-map anisotropy ratio `sigma_max / sigma_min` at or below which the
@@ -246,6 +335,35 @@ export const DEPTH_RESOLUTION = 1e-4;
  * like the eligibility constants above. */
 export const MAX_DESCENT_DEPTH = 128;
 
+/** Forward Lipschitz bound of the spherefold's worst branch: the ×4
+ * inflation inside the minimum-radius ball (the mid inversion's local scale
+ * also peaks at 4, at `|x| = 0.5`). The boxfold's branches are isometries
+ * (L = 1). Multiplied into the pure-fold contraction gate and the depth-cap
+ * sizing (fold-branch sweep, module doc). */
+export const SPHEREFOLD_LIPSCHITZ = 4;
+
+/** u-space query radius below which the spherefold MID branch folds the
+ * unit-shell bound instead of descending: inverting a point this close to
+ * the origin would overflow the GLSL mirror's f32 arithmetic (`|u|⁻¹` up to
+ * 1e3 here — comfortably finite — but unbounded without the floor). */
+export const SPHEREFOLD_MID_MIN_R = 1e-3;
+
+/** {@link SurfaceDEMap.foldKind} vocabulary. Numeric, not a string union:
+ * the GLSL mirror carries the kind inside a packed per-map `vec4` uniform,
+ * and the descent's hot loop dispatches on it per candidate. */
+export const SURFACE_FOLD_NONE = 0;
+export const SURFACE_FOLD_BOXFOLD = 1;
+export const SURFACE_FOLD_SPHEREFOLD = 2;
+export const SURFACE_FOLD_MANDELBOX = 3;
+export type SurfaceFoldKind = 0 | 1 | 2 | 3;
+
+/** The variation types the fold-branch sweep can decompose (fr-5rvk). */
+const FOLD_VARIATION_TYPES: ReadonlySet<string> = new Set([
+  "boxfold",
+  "spherefold",
+  "mandelbox",
+]);
+
 /** `prepareChaosGame`'s no-symmetry default, duplicated here because it is
  * private there; order 1 is the identity expansion for any axis. */
 const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
@@ -294,6 +412,19 @@ export interface SurfaceDEMap {
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
+  /** Which fold family (if any) the map's single pure-fold variation
+   * applies after its affine part — {@link SURFACE_FOLD_NONE} for a plain
+   * affine map. Non-none maps expand into the fold's inverse BRANCHES
+   * (27/3/81 candidates; fold-branch sweep, module doc). */
+  foldKind: SurfaceFoldKind;
+  /** `1/w` — signed reciprocal of the pure-fold weight (`1` at foldKind 0).
+   * The descent divides the chain point into u-space with it. */
+  foldInvW: number;
+  /** `|w| · sigmaMin` — the certified contraction of the fold's ISOMETRIC
+   * branches (box reflections, spherefold outer); the spherefold inner/mid
+   * branches multiply their own conformal sigma on top. Equal to `sigmaMin`
+   * (and unused) at foldKind 0. */
+  foldSigma: number;
   /** Which input transform this slot inverts — the index into the caller's
    * `transforms`, for per-transform coloring. */
   baseIndex: number;
@@ -363,6 +494,28 @@ function hasActiveVariations(t: Transform): boolean {
     t.variations?.some((v) => Number.isFinite(v.weight) && v.weight !== 0) ??
     false
   );
+}
+
+/** The single fold-family entry of a PURE-FOLD map — a variation list whose
+ * ACTIVE entries (`composeVariations`' filter again) are exactly one
+ * fold-family variation — or `null` for everything else. Blended lists are
+ * deliberately excluded: a weighted SUM of maps is not a composition and
+ * has no branch decomposition (fold-branch sweep, module doc). */
+function pureFoldVariation(t: Transform): Variation | null {
+  const active = (t.variations ?? []).filter(
+    (v) => Number.isFinite(v.weight) && v.weight !== 0,
+  );
+  if (active.length !== 1) return null;
+  const v = active[0];
+  return FOLD_VARIATION_TYPES.has(v.type) ? v : null;
+}
+
+/** Forward Lipschitz bound of a pure-fold variation, weight folded in:
+ * `|w| · L_V`, with L = 1 for the boxfold's reflection isometries and
+ * {@link SPHEREFOLD_LIPSCHITZ} for the families containing the spherefold's
+ * ×4 inner branch. */
+function foldLipschitz(v: Variation): number {
+  return Math.abs(v.weight) * (v.type === "boxfold" ? 1 : SPHEREFOLD_LIPSCHITZ);
 }
 
 /** `transform.weight ?? 1 > 0` — the maps that can ever be selected, i.e.
@@ -463,16 +616,25 @@ export function analyzeSurfaceSystem(
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
     const label = `map ${i + 1}`;
-    if (hasActiveVariations(t)) {
+    // Pure-fold maps (exactly one active fold-family variation) descend via
+    // the fold-branch sweep (module doc, fr-5rvk); every other active
+    // variation list has no tractable inverse and gates the mode out.
+    const fold = pureFoldVariation(t);
+    if (!fold && hasActiveVariations(t)) {
       reasons.push(`${label} uses variations`);
     }
     if (!isFlatTransform(t)) {
       reasons.push(`${label} extends into 4D`);
     }
     const s = sigmas[i];
+    // A pure-fold map iterates w·V(Mp + t), so contraction is gated on the
+    // composite Lipschitz bound |w|·L_V·sigma_max — the affine part alone
+    // may even expand when the fold weight compensates. Invertibility
+    // (near-flat) stays on M: every fold branch descends through inv(M).
+    const lip = fold ? foldLipschitz(fold) * s.max : s.max;
     if (s.min < NEAR_SINGULAR_SIGMA) {
       reasons.push(`${label} is nearly flat (scale ≈ 0)`);
-    } else if (s.max >= CONTRACTION_LIMIT) {
+    } else if (lip >= CONTRACTION_LIMIT) {
       reasons.push(`${label} does not contract`);
     } else {
       anisotropy = Math.max(anisotropy, s.max / s.min);
@@ -480,6 +642,9 @@ export function analyzeSurfaceSystem(
   });
 
   if (finalTransform) {
+    // A pure-fold FINAL stays ineligible, unlike an iterated map: the lens
+    // is applied ONCE to the query point, and a multi-branch lens would
+    // need one root descent per branch (module doc's fold section).
     if (hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
     }
@@ -605,7 +770,27 @@ export function buildSurfaceDE(
       -(invM[3] * tx + invM[4] * ty + invM[5] * tz),
       -(invM[6] * tx + invM[7] * ty + invM[8] * tz),
     ];
-    maps.push({ invM, invT, sigmaMin: analysis.sigmas[i].min, baseIndex: i });
+    const sigmaMin = analysis.sigmas[i].min;
+    // Pure-fold maps carry their fold family + weight into the descent's
+    // branch expansion (fold-branch sweep, module doc); plain affine maps
+    // get the inert defaults the GLSL packs the same way.
+    const fold = pureFoldVariation(t);
+    const foldKind: SurfaceFoldKind = !fold
+      ? SURFACE_FOLD_NONE
+      : fold.type === "boxfold"
+        ? SURFACE_FOLD_BOXFOLD
+        : fold.type === "spherefold"
+          ? SURFACE_FOLD_SPHEREFOLD
+          : SURFACE_FOLD_MANDELBOX;
+    maps.push({
+      invM,
+      invT,
+      sigmaMin,
+      foldKind,
+      foldInvW: fold ? 1 / fold.weight : 1,
+      foldSigma: fold ? Math.abs(fold.weight) * sigmaMin : sigmaMin,
+      baseIndex: i,
+    });
   });
 
   // Sector count mirroring prepareChaosGame: the effective order is clamped
@@ -630,8 +815,19 @@ export function buildSurfaceDE(
 
   // Depth cap from the SLOWEST contraction: the largest per-level shrink
   // factor bounds how many levels matter before features drop below
-  // resolution (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note).
-  const slowest = maps.reduce((acc, b) => Math.max(acc, b.sigmaMin), 0);
+  // resolution (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note). For
+  // fold maps the slowest certified branch is |w|·L_V·sigma_min — the
+  // spherefold's ×4 branches shrink features slowest — and eligibility
+  // keeps even that below CONTRACTION_LIMIT.
+  const slowest = maps.reduce((acc, b) => {
+    const factor =
+      b.foldKind === SURFACE_FOLD_NONE
+        ? b.sigmaMin
+        : b.foldKind === SURFACE_FOLD_BOXFOLD
+          ? b.foldSigma
+          : b.foldSigma * SPHEREFOLD_LIPSCHITZ;
+    return Math.max(acc, factor);
+  }, 0);
   const maxDepth = Math.min(
     MAX_DESCENT_DEPTH,
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
@@ -705,7 +901,18 @@ export function buildSurfaceDE(
  * function, so callers see the raw (possibly negative) bound.
  */
 export function estimateDistance(de: SurfaceDE, p: Vec3): number {
-  return descend(de, p, false);
+  return deHasFolds(de) ? descendFold(de, p, false) : descend(de, p, false);
+}
+
+/** Whether any map expands into fold branches — such systems descend via
+ * {@link descendFold}'s wide frontier instead of the affine ladder body
+ * (which `beamWidth` parameterizes; the fold frontier has one measured
+ * width, {@link SURFACE_FOLD_BEAM_WIDTH}). */
+function deHasFolds(de: SurfaceDE): boolean {
+  for (const m of de.maps) {
+    if (m.foldKind !== SURFACE_FOLD_NONE) return true;
+  }
+  return false;
 }
 
 /**
@@ -798,7 +1005,9 @@ export function estimateDistanceRefined(
   p: Vec3,
   cutoff = 0,
 ): number {
-  return descend(de, p, true, cutoff);
+  return deHasFolds(de)
+    ? descendFold(de, p, true, cutoff)
+    : descend(de, p, true, cutoff);
 }
 
 /** The descent's return value for a running min: the folded terms' min
@@ -816,15 +1025,255 @@ function descentValue(
   return d * finalScale;
 }
 
+/** Scratch triple for {@link refinedCertValue}'s sector sweep — module
+ * scope so the hot path never allocates. Distinct from the descent
+ * bodies' own sweep scratch: refinement sweeps from inside their
+ * candidate loops. Single-threaded by construction (each worker owns its
+ * module instance). */
+const CERT_SWEEP = [0, 0, 0];
+
 /**
- * Shared beam-descent body for {@link estimateDistance} (`refine` false:
- * plain frozen certificates) and {@link estimateDistanceRefined} (`refine`
- * true: one extra Hutchinson level on the folds that beat the running
- * min). One body, not two: unlike the 4D twin (whose two estimators
- * predate the guard and stay self-contained), the refined 3D descent IS
- * the plain descent with three fold sites upgraded, and duplicating the
- * ~100-line skeleton would leave the mirrors to drift. The GLSL tracer
- * mirrors the `refine === true` path line for line.
+ * One extra Hutchinson level on a frozen escaped candidate's own inverse
+ * image, over every (sector, base map, fold branch) triple (see
+ * {@link estimateDistanceRefined}'s doc): the certificate becomes
+ * `childScale * max(r - R, inner)` — never below the plain
+ * `childScale * (r - R)`. Only called on the refined paths, and only for
+ * folds whose plain certificate beats the running min. Shared by the
+ * affine descent and the fold frontier ({@link descendFold}); fold-free
+ * systems run the pre-fr-5rvk arithmetic bit for bit (every branch loop
+ * below collapses to the single affine child).
+ */
+function refinedCertValue(
+  de: SurfaceDE,
+  ix: number,
+  iy: number,
+  iz: number,
+  r: number,
+  childScale: number,
+): number {
+  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const R = de.boundingRadius;
+  let inner = Infinity;
+  let sx = ix;
+  let sy = iy;
+  let sz = iz;
+  for (let k = 0; k < order; k++) {
+    if (k > 0) {
+      stepSector(axis, stepCos, stepSin, sx, sy, sz, CERT_SWEEP);
+      sx = CERT_SWEEP[0];
+      sy = CERT_SWEEP[1];
+      sz = CERT_SWEEP[2];
+    }
+    for (let j = 0; j < de.maps.length; j++) {
+      const mapJ = de.maps[j];
+      const imJ = mapJ.invM;
+      const itJ = mapJ.invT;
+      // Fold-branch sweep, one Hutchinson level deep: the inner min must
+      // cover the same candidate set the fold frontier expands, or a fold
+      // map's certificate would skip pieces. Each term carries the same
+      // REGION strengthening the frontier's certificates do:
+      // max(branchSigma·(r − R), |w|·regionDist).
+      const kindJ = mapJ.foldKind;
+      const branchCountJ =
+        kindJ === SURFACE_FOLD_NONE
+          ? 1
+          : kindJ === SURFACE_FOLD_BOXFOLD
+            ? 27
+            : kindJ === SURFACE_FOLD_SPHEREFOLD
+              ? 3
+              : 81;
+      const absWJ = mapJ.foldSigma / mapJ.sigmaMin;
+      let ux = 0;
+      let uy = 0;
+      let uz = 0;
+      let ru = 0;
+      let px0 = 0;
+      let px1 = 0;
+      let px2 = 0;
+      let py0 = 0;
+      let py1 = 0;
+      let py2 = 0;
+      let pz0 = 0;
+      let pz1 = 0;
+      let pz2 = 0;
+      let dxUp = 0;
+      let dxDn = 0;
+      let dyUp = 0;
+      let dyDn = 0;
+      let dzUp = 0;
+      let dzDn = 0;
+      let vx = 0;
+      let vy = 0;
+      let vz = 0;
+      let sfSigma = 1;
+      let sfRd = 0;
+      if (kindJ !== SURFACE_FOLD_NONE) {
+        ux = sx * mapJ.foldInvW;
+        uy = sy * mapJ.foldInvW;
+        uz = sz * mapJ.foldInvW;
+        if (kindJ === SURFACE_FOLD_BOXFOLD) {
+          px0 = ux;
+          px1 = 2 - ux;
+          px2 = -2 - ux;
+          py0 = uy;
+          py1 = 2 - uy;
+          py2 = -2 - uy;
+          pz0 = uz;
+          pz1 = 2 - uz;
+          pz2 = -2 - uz;
+          dxUp = ux > 1 ? ux - 1 : 0;
+          dxDn = ux < -1 ? -1 - ux : 0;
+          dyUp = uy > 1 ? uy - 1 : 0;
+          dyDn = uy < -1 ? -1 - uy : 0;
+          dzUp = uz > 1 ? uz - 1 : 0;
+          dzDn = uz < -1 ? -1 - uz : 0;
+        } else {
+          ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
+        }
+      }
+      for (let b = 0; b < branchCountJ; b++) {
+        let jx: number;
+        let jy: number;
+        let jz: number;
+        let branchSigma: number;
+        let branchRd = 0;
+        if (kindJ === SURFACE_FOLD_NONE) {
+          jx = imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + itJ[0];
+          jy = imJ[3] * sx + imJ[4] * sy + imJ[5] * sz + itJ[1];
+          jz = imJ[6] * sx + imJ[7] * sy + imJ[8] * sz + itJ[2];
+          branchSigma = mapJ.sigmaMin;
+        } else {
+          if (
+            kindJ === SURFACE_FOLD_SPHEREFOLD ||
+            (kindJ === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
+          ) {
+            const s = kindJ === SURFACE_FOLD_SPHEREFOLD ? b : b / 27;
+            if (s === 0) {
+              vx = ux;
+              vy = uy;
+              vz = uz;
+              sfSigma = 1;
+              sfRd = ru < 1 ? 1 - ru : 0;
+            } else if (s === 1) {
+              vx = 0.25 * ux;
+              vy = 0.25 * uy;
+              vz = 0.25 * uz;
+              sfSigma = 4;
+              sfRd = ru > 2 ? ru - 2 : 0;
+            } else {
+              if (ru < SPHEREFOLD_MID_MIN_R) {
+                // Same shell stand-in the frontier folds, in the frozen
+                // child's own frame.
+                const shellTerm = absWJ * (1 - ru);
+                if (shellTerm < inner) inner = shellTerm;
+                if (kindJ === SURFACE_FOLD_MANDELBOX) b += 26;
+                continue;
+              }
+              const invR2 = 1 / (ru * ru);
+              vx = ux * invR2;
+              vy = uy * invR2;
+              vz = uz * invR2;
+              sfSigma = ru;
+              sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+            }
+            if (kindJ === SURFACE_FOLD_MANDELBOX) {
+              px0 = vx;
+              px1 = 2 - vx;
+              px2 = -2 - vx;
+              py0 = vy;
+              py1 = 2 - vy;
+              py2 = -2 - vy;
+              pz0 = vz;
+              pz1 = 2 - vz;
+              pz2 = -2 - vz;
+              dxUp = vx > 1 ? vx - 1 : 0;
+              dxDn = vx < -1 ? -1 - vx : 0;
+              dyUp = vy > 1 ? vy - 1 : 0;
+              dyDn = vy < -1 ? -1 - vy : 0;
+              dzUp = vz > 1 ? vz - 1 : 0;
+              dzDn = vz < -1 ? -1 - vz : 0;
+            }
+          }
+          let cx: number;
+          let cy: number;
+          let cz: number;
+          if (kindJ === SURFACE_FOLD_SPHEREFOLD) {
+            cx = vx;
+            cy = vy;
+            cz = vz;
+            branchRd = sfRd;
+          } else {
+            const bb = kindJ === SURFACE_FOLD_BOXFOLD ? b : b % 27;
+            const selX = bb % 3;
+            const selY = ((bb / 3) | 0) % 3;
+            const selZ = (bb / 9) | 0;
+            cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+            cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+            cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+            const ddx =
+              selX === 0
+                ? dxUp > dxDn
+                  ? dxUp
+                  : dxDn
+                : selX === 1
+                  ? dxUp
+                  : dxDn;
+            const ddy =
+              selY === 0
+                ? dyUp > dyDn
+                  ? dyUp
+                  : dyDn
+                : selY === 1
+                  ? dyUp
+                  : dyDn;
+            const ddz =
+              selZ === 0
+                ? dzUp > dzDn
+                  ? dzUp
+                  : dzDn
+                : selZ === 1
+                  ? dzUp
+                  : dzDn;
+            const boxRd2 = ddx * ddx + ddy * ddy + ddz * ddz;
+            const boxRd = boxRd2 > 0 ? Math.sqrt(boxRd2) : 0;
+            branchRd =
+              kindJ === SURFACE_FOLD_BOXFOLD
+                ? boxRd
+                : sfRd > sfSigma * boxRd
+                  ? sfRd
+                  : sfSigma * boxRd;
+          }
+          jx = imJ[0] * cx + imJ[1] * cy + imJ[2] * cz + itJ[0];
+          jy = imJ[3] * cx + imJ[4] * cy + imJ[5] * cz + itJ[1];
+          jz = imJ[6] * cx + imJ[7] * cy + imJ[8] * cz + itJ[2];
+          branchSigma = mapJ.foldSigma * sfSigma;
+        }
+        const rj = Math.sqrt(jx * jx + jy * jy + jz * jz);
+        let innerTerm = branchSigma * (rj - R);
+        if (branchRd > 0) {
+          const regionTerm = absWJ * branchRd;
+          if (regionTerm > innerTerm) innerTerm = regionTerm;
+        }
+        if (innerTerm < inner) inner = innerTerm;
+      }
+    }
+  }
+  return childScale * Math.max(r - R, inner);
+}
+
+/**
+ * Shared beam-descent body for the FOLD-FREE {@link estimateDistance}
+ * (`refine` false: plain frozen certificates) and
+ * {@link estimateDistanceRefined} (`refine` true: one extra Hutchinson
+ * level on the folds that beat the running min). One body, not two:
+ * unlike the 4D twin (whose two estimators predate the guard and stay
+ * self-contained), the refined 3D descent IS the plain descent with three
+ * fold sites upgraded, and duplicating the ~100-line skeleton would leave
+ * the mirrors to drift. The GLSL tracer mirrors the `refine === true`
+ * path line for line. Systems with pure-fold maps route to
+ * {@link descendFold} instead — a different frontier structure entirely
+ * (see its doc) — so this body stays the affine mode's arithmetic,
+ * untouched by fr-5rvk.
  *
  * `cutoff` is {@link estimateDistanceRefined}'s early-out threshold (see its
  * doc for the contract and why the exits sit where they sit); `0` — what
@@ -848,11 +1297,9 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
 
   // Kaleidoscope sectors swept around the base maps (fr-x029) — `order` 1
   // leaves every `k > 0` branch below dead, so a system without symmetry
-  // runs the pre-sweep arithmetic unchanged. Two scratch triples, never one:
-  // `refinedCert` sweeps from inside the candidate loop's own sweep.
+  // runs the pre-sweep arithmetic unchanged.
   const { order, axis, stepCos, stepSin } = de.symmetry;
   const sweep = [0, 0, 0];
-  const certSweep = [0, 0, 0];
 
   const R = de.boundingRadius;
   const startR = Math.sqrt(x * x + y * y + z * z);
@@ -871,47 +1318,6 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
   // fires the moment `best` reaches it, cutoff or not.)
   const bailBelow =
     cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
-
-  // One extra Hutchinson level on a frozen escaped candidate's own inverse
-  // image, over every map k (see estimateDistanceRefined's doc): the
-  // certificate becomes childScale * max(r - R, inner) — never below the
-  // plain childScale * (r - R). Only called on the refined path, and only
-  // for folds whose plain certificate beats the running min.
-  const refinedCert = (
-    ix: number,
-    iy: number,
-    iz: number,
-    r: number,
-    childScale: number,
-  ): number => {
-    let inner = Infinity;
-    // The inner Hutchinson level sweeps the same sectors the candidate loop
-    // does — "over every map" means every (sector, base map) pair, which is
-    // what the expanded list used to spell out.
-    let sx = ix;
-    let sy = iy;
-    let sz = iz;
-    for (let k = 0; k < order; k++) {
-      if (k > 0) {
-        stepSector(axis, stepCos, stepSin, sx, sy, sz, certSweep);
-        sx = certSweep[0];
-        sy = certSweep[1];
-        sz = certSweep[2];
-      }
-      for (let j = 0; j < de.maps.length; j++) {
-        const mapJ = de.maps[j];
-        const imJ = mapJ.invM;
-        const itJ = mapJ.invT;
-        const jx = imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + itJ[0];
-        const jy = imJ[3] * sx + imJ[4] * sy + imJ[5] * sz + itJ[1];
-        const jz = imJ[6] * sx + imJ[7] * sy + imJ[8] * sz + itJ[2];
-        const rj = Math.sqrt(jx * jx + jy * jy + jz * jz);
-        const innerTerm = mapJ.sigmaMin * (rj - R);
-        if (innerTerm < inner) inner = innerTerm;
-      }
-    }
-    return childScale * Math.max(r - R, inner);
-  };
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
   // selection fills it (width-2 systems only). Each chain carries the
@@ -1157,7 +1563,9 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
           // widths 3/4 it can only get here past FOUR smaller keys, the
           // (shrunken) fr-jkpn residual drop.
           if (eR > R && eCert < best) {
-            const folded = refine ? refinedCert(eX, eY, eZ, eR, eScale) : eCert;
+            const folded = refine
+              ? refinedCertValue(de, eX, eY, eZ, eR, eScale)
+              : eCert;
             if (folded < best) {
               best = folded;
               // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
@@ -1213,7 +1621,7 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
         // refining it buys nothing a marcher could see).
         if (c2R > R && c2Cert < best) {
           const folded = refine
-            ? refinedCert(c2X, c2Y, c2Z, c2R, c2Scale)
+            ? refinedCertValue(de, c2X, c2Y, c2Z, c2R, c2Scale)
             : c2Cert;
           if (folded < best) best = folded;
         }
@@ -1232,7 +1640,7 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
       if (c3R > R) {
         if (c3Cert < best) {
           const folded = refine
-            ? refinedCert(c3X, c3Y, c3Z, c3R, c3Scale)
+            ? refinedCertValue(de, c3X, c3Y, c3Z, c3R, c3Scale)
             : c3Cert;
           if (folded < best) best = folded;
         }
@@ -1248,7 +1656,7 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
       if (c4R > R) {
         if (c4Cert < best) {
           const folded = refine
-            ? refinedCert(c4X, c4Y, c4Z, c4R, c4Scale)
+            ? refinedCertValue(de, c4X, c4Y, c4Z, c4R, c4Scale)
             : c4Cert;
           if (folded < best) best = folded;
         }
@@ -1306,5 +1714,501 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
   // depth cap — and in-sphere is not near-attractor, so the KIFS
   // last-value bound is vacuous for them at ANY cap size: re-measured
   // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
+  return descentValue(best, sphereBound, finalScale);
+}
+
+/** How many chains the fold frontier ({@link descendFold}) keeps alive.
+ * Sized by measurement (fr-5rvk fold probe, exhaustive-reference sweep):
+ * with region floors, floored keys, the drop-fold rule and the
+ * floor-vs-best prune, the exhaustive frontier peaks at 10 (mandelbox
+ * stress pair) to 33 (spherefold stress pair) live chains, and width 12
+ * already reproduces the exhaustive values on every probe class
+ * (on-attractor max 1.7e-8R vs width 8's 1.5e-3R erosion); widths past 12
+ * buy nothing measurable. Fixed — the GLSL mirror sizes its arrays with
+ * the same constant. */
+export const SURFACE_FOLD_BEAM_WIDTH = 12;
+
+// Module-scope scratch for descendFold — the current frontier, the
+// next-level kept tuples (key-ascending), and the sector-sweep triple.
+// Zero-allocation hot path; single-threaded by construction (each worker
+// owns its module instance, and refinedCertValue never re-enters
+// descendFold).
+const FOLD_W = SURFACE_FOLD_BEAM_WIDTH;
+const fcX = new Float64Array(FOLD_W);
+const fcY = new Float64Array(FOLD_W);
+const fcZ = new Float64Array(FOLD_W);
+const fcScale = new Float64Array(FOLD_W);
+const fcFloor = new Float64Array(FOLD_W);
+const fcR = new Float64Array(FOLD_W);
+const fnKey = new Float64Array(FOLD_W);
+const fnX = new Float64Array(FOLD_W);
+const fnY = new Float64Array(FOLD_W);
+const fnZ = new Float64Array(FOLD_W);
+const fnScale = new Float64Array(FOLD_W);
+const fnFloor = new Float64Array(FOLD_W);
+const fnR = new Float64Array(FOLD_W);
+const fnCert = new Float64Array(FOLD_W);
+const FOLD_SWEEP = [0, 0, 0];
+
+/**
+ * Fold-system descent (fr-5rvk): a width-{@link SURFACE_FOLD_BEAM_WIDTH}
+ * FRONTIER of chains replaces {@link descend}'s two-plus-two ladder
+ * slots. The shape is forced by measurement, not preference: fold maps
+ * spawn up to 81 branch candidates each, whole SETS of them stay
+ * in-sphere simultaneously (exhaustive reference peaks of 30-50 live
+ * chains against the affine mode's at-most-m), and a four-slot beam
+ * measurably erodes the surface (exact on-attractor queries read up to
+ * ~2e-2R positive). Three mechanisms make the wide frontier both correct
+ * and affordable:
+ *
+ * - REGION FLOORS. Every candidate inherits its chain's floor — the
+ *   strongest `scale · |w| · regionDist` certificate collected along its
+ *   branch history (module doc, fold section) — and every value the
+ *   candidate ever folds (escape certificate, drop, cap terminal) is
+ *   raised to it. A chain whose floor is still 0 at the cap took every
+ *   fold branch inside that branch's output region, so an exact preimage
+ *   exists at every level (affine steps always are one): the query is
+ *   within the chain's telescoped Lipschitz product of the attractor,
+ *   and its negative cap terminal is the legitimate hit signal — while a
+ *   spurious "wanderer" (the inversion-riding chains that otherwise
+ *   never escape) strays by construction, earns a positive floor, and
+ *   can no longer fabricate a hit. This is what turns the mid branch's
+ *   escape-defeating inversion from unsound to merely expensive.
+ * - FLOORED KEYS + THE DROP-FOLD RULE. Selection ranks by
+ *   `max(pScale·(r − R), floor)`, so strayed branches never outrank a
+ *   floor-0 (possibly true) tracker, and a tuple dropped off the
+ *   frontier folds its floor when it has one — the subtree's every fold
+ *   is >= its floor (floors only grow), so the drop loses tightness,
+ *   never validity. Measured: violations are 0 at EVERY width with the
+ *   rule active, width included only buys tracking accuracy.
+ * - FLOOR-VS-BEST PRUNE. A candidate whose floor already reaches the
+ *   running min cannot advance it (every deeper fold is >= the floor),
+ *   so it is skipped outright — this is what collapses the frontier from
+ *   branch-count blowup to the measured 10-33 peak.
+ *
+ * Everything else mirrors {@link descend}: same prologue/lens, same
+ * selection-key semantics otherwise, same escape-radius folds (plain on
+ * both paths), same guarded refinement of escaped folds
+ * ({@link refinedCertValue} — the certificate keeps its floor via max:
+ * refinement examines the child's own neighbourhood, the floor its
+ * branch history, so the pair's max is the strongest settled term), same
+ * cutoff/sphere-floor exits after every settled fold (the fr-55r5 /
+ * fr-zkt2 contract carries verbatim: `best` is monotone and every folded
+ * term is finalized), and the same KIFS cap terminals — floor-raised,
+ * for every live chain alike (the affine body's A/B-vs-validity-slot
+ * asymmetry exists to starve affine wanderers, which floors handle
+ * better here). In-sphere floor-0 drops past the frontier width remain
+ * the one silent residual, overshoot-direction only — measured zero at
+ * this width on the probe set.
+ */
+function descendFold(
+  de: SurfaceDE,
+  p: Vec3,
+  refine: boolean,
+  cutoff = 0,
+): number {
+  let x = p[0];
+  let y = p[1];
+  let z = p[2];
+  let finalScale = 1;
+  if (de.final) {
+    const f = de.final;
+    const qx = f.invM[0] * x + f.invM[1] * y + f.invM[2] * z + f.invT[0];
+    const qy = f.invM[3] * x + f.invM[4] * y + f.invM[5] * z + f.invT[1];
+    const qz = f.invM[6] * x + f.invM[7] * y + f.invM[8] * z + f.invT[2];
+    x = qx;
+    y = qy;
+    z = qz;
+    finalScale = f.sigmaMin;
+  }
+
+  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const R = de.boundingRadius;
+  const startR = Math.sqrt(x * x + y * y + z * z);
+  const sphereBound = startR - R;
+  let best = Infinity;
+  const bailBelow =
+    cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
+
+  let chainCount = 1;
+  fcX[0] = x;
+  fcY[0] = y;
+  fcZ[0] = z;
+  fcScale[0] = 1;
+  fcFloor[0] = 0;
+  fcR[0] = startR;
+
+  for (let depth = 0; depth < de.maxDepth && chainCount > 0; depth++) {
+    let keptCount = 0;
+    for (let c = 0; c < chainCount; c++) {
+      const pScale = fcScale[c];
+      const pFloor = fcFloor[c];
+      let sX = fcX[c];
+      let sY = fcY[c];
+      let sZ = fcZ[c];
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector(axis, stepCos, stepSin, sX, sY, sZ, FOLD_SWEEP);
+          sX = FOLD_SWEEP[0];
+          sY = FOLD_SWEEP[1];
+          sZ = FOLD_SWEEP[2];
+        }
+        for (let j = 0; j < de.maps.length; j++) {
+          const map = de.maps[j];
+          const im = map.invM;
+          const it = map.invT;
+          // Fold-branch sweep (module doc): one candidate per inverse
+          // BRANCH — 27 (boxfold), 3 (spherefold), 81 (mandelbox), 1
+          // (affine map in a mixed system) — enumerated unconditionally;
+          // validity never depends on which fold cell the attractor
+          // actually occupies.
+          const kind = map.foldKind;
+          const branchCount =
+            kind === SURFACE_FOLD_NONE
+              ? 1
+              : kind === SURFACE_FOLD_BOXFOLD
+                ? 27
+                : kind === SURFACE_FOLD_SPHEREFOLD
+                  ? 3
+                  : 81;
+          const absW = map.foldSigma / map.sigmaMin;
+          // u-space chain point (q/w), the per-axis box preimage triple
+          // {u, 2−u, −2−u} with the matching per-axis output-interval
+          // distances (boxfold reads them off u once; mandelbox refreshes
+          // them from each spherefold branch output), and the current
+          // spherefold branch output + conformal sigma + region distance.
+          let ux = 0;
+          let uy = 0;
+          let uz = 0;
+          let ru = 0;
+          let px0 = 0;
+          let px1 = 0;
+          let px2 = 0;
+          let py0 = 0;
+          let py1 = 0;
+          let py2 = 0;
+          let pz0 = 0;
+          let pz1 = 0;
+          let pz2 = 0;
+          let dxUp = 0;
+          let dxDn = 0;
+          let dyUp = 0;
+          let dyDn = 0;
+          let dzUp = 0;
+          let dzDn = 0;
+          let vx = 0;
+          let vy = 0;
+          let vz = 0;
+          let sfSigma = 1;
+          let sfRd = 0;
+          if (kind !== SURFACE_FOLD_NONE) {
+            ux = sX * map.foldInvW;
+            uy = sY * map.foldInvW;
+            uz = sZ * map.foldInvW;
+            if (kind === SURFACE_FOLD_BOXFOLD) {
+              px0 = ux;
+              px1 = 2 - ux;
+              px2 = -2 - ux;
+              py0 = uy;
+              py1 = 2 - uy;
+              py2 = -2 - uy;
+              pz0 = uz;
+              pz1 = 2 - uz;
+              pz2 = -2 - uz;
+              dxUp = ux > 1 ? ux - 1 : 0;
+              dxDn = ux < -1 ? -1 - ux : 0;
+              dyUp = uy > 1 ? uy - 1 : 0;
+              dyDn = uy < -1 ? -1 - uy : 0;
+              dzUp = uz > 1 ? uz - 1 : 0;
+              dzDn = uz < -1 ? -1 - uz : 0;
+            } else {
+              ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
+            }
+          }
+          for (let b = 0; b < branchCount; b++) {
+            let ix: number;
+            let iy: number;
+            let iz: number;
+            let branchSigma: number;
+            let branchRd = 0;
+            if (kind === SURFACE_FOLD_NONE) {
+              ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
+              iy = im[3] * sX + im[4] * sY + im[5] * sZ + it[1];
+              iz = im[6] * sX + im[7] * sY + im[8] * sZ + it[2];
+              branchSigma = map.sigmaMin;
+            } else {
+              if (
+                kind === SURFACE_FOLD_SPHEREFOLD ||
+                (kind === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
+              ) {
+                // (Re)compute the spherefold branch this b enters: outer
+                // identity, inner /4 (conformal sigma 4), mid unit-sphere
+                // inversion (query-dependent sigma |u| — module doc),
+                // each with its distance to the branch's OUTPUT region
+                // (outer outside the unit ball, inner inside radius 2,
+                // mid the shell between).
+                const s = kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 27;
+                if (s === 0) {
+                  vx = ux;
+                  vy = uy;
+                  vz = uz;
+                  sfSigma = 1;
+                  sfRd = ru < 1 ? 1 - ru : 0;
+                } else if (s === 1) {
+                  vx = 0.25 * ux;
+                  vy = 0.25 * uy;
+                  vz = 0.25 * uz;
+                  sfSigma = 4;
+                  sfRd = ru > 2 ? ru - 2 : 0;
+                } else {
+                  if (ru < SPHEREFOLD_MID_MIN_R) {
+                    // Inverting a chain point this close to the sector
+                    // origin would overflow the GLSL mirror's f32; the
+                    // mid piece lives in the u-space shell 1 <= |·| <= 2,
+                    // so fold the shell bound |w|·(1 − |u|) — ~pScale·|w|,
+                    // never a near-zero ghost term — and skip the branch
+                    // (box expansion included). A settled fold, so the
+                    // standard exits apply.
+                    let shellCert = pScale * absW * (1 - ru);
+                    if (pFloor > shellCert) shellCert = pFloor;
+                    if (shellCert < best) {
+                      best = shellCert;
+                      if (
+                        best <= sphereBound ||
+                        best * finalScale < bailBelow
+                      ) {
+                        return descentValue(best, sphereBound, finalScale);
+                      }
+                    }
+                    if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
+                    continue;
+                  }
+                  const invR2 = 1 / (ru * ru);
+                  vx = ux * invR2;
+                  vy = uy * invR2;
+                  vz = uz * invR2;
+                  sfSigma = ru;
+                  sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+                }
+                if (kind === SURFACE_FOLD_MANDELBOX) {
+                  px0 = vx;
+                  px1 = 2 - vx;
+                  px2 = -2 - vx;
+                  py0 = vy;
+                  py1 = 2 - vy;
+                  py2 = -2 - vy;
+                  pz0 = vz;
+                  pz1 = 2 - vz;
+                  pz2 = -2 - vz;
+                  dxUp = vx > 1 ? vx - 1 : 0;
+                  dxDn = vx < -1 ? -1 - vx : 0;
+                  dyUp = vy > 1 ? vy - 1 : 0;
+                  dyDn = vy < -1 ? -1 - vy : 0;
+                  dzUp = vz > 1 ? vz - 1 : 0;
+                  dzDn = vz < -1 ? -1 - vz : 0;
+                }
+              }
+              let cx: number;
+              let cy: number;
+              let cz: number;
+              if (kind === SURFACE_FOLD_SPHEREFOLD) {
+                cx = vx;
+                cy = vy;
+                cz = vz;
+                branchRd = sfRd;
+              } else {
+                // Box branch decode: per-axis preimage selectors, x
+                // fastest (b = selX + 3·selY + 9·selZ), each selector
+                // paired with the distance from the source point to that
+                // branch's output interval (id [−1,1], up (−inf,1],
+                // down [−1,inf)).
+                const bb = kind === SURFACE_FOLD_BOXFOLD ? b : b % 27;
+                const selX = bb % 3;
+                const selY = ((bb / 3) | 0) % 3;
+                const selZ = (bb / 9) | 0;
+                cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+                cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+                cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+                const ddx =
+                  selX === 0
+                    ? dxUp > dxDn
+                      ? dxUp
+                      : dxDn
+                    : selX === 1
+                      ? dxUp
+                      : dxDn;
+                const ddy =
+                  selY === 0
+                    ? dyUp > dyDn
+                      ? dyUp
+                      : dyDn
+                    : selY === 1
+                      ? dyUp
+                      : dyDn;
+                const ddz =
+                  selZ === 0
+                    ? dzUp > dzDn
+                      ? dzUp
+                      : dzDn
+                    : selZ === 1
+                      ? dzUp
+                      : dzDn;
+                const boxRd2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                const boxRd = boxRd2 > 0 ? Math.sqrt(boxRd2) : 0;
+                branchRd =
+                  kind === SURFACE_FOLD_BOXFOLD
+                    ? boxRd
+                    : sfRd > sfSigma * boxRd
+                      ? sfRd
+                      : sfSigma * boxRd;
+              }
+              ix = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
+              iy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
+              iz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
+              branchSigma = map.foldSigma * sfSigma;
+            }
+            const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
+            const childScale = pScale * branchSigma;
+            // Floor first: the chain's floor raised by this branch's own
+            // region certificate.
+            let candFloor = pFloor;
+            if (branchRd > 0) {
+              const flr = pScale * absW * branchRd;
+              if (flr > candFloor) candFloor = flr;
+            }
+            // Floor-vs-best prune: every fold the candidate's subtree
+            // could ever contribute is >= its floor, which already
+            // cannot advance the min.
+            if (candFloor > 0 && candFloor >= best) continue;
+            let key = pScale * (r - R);
+            if (candFloor > 0 && candFloor > key) key = candFloor;
+            let cert = childScale * (r - R);
+            if (candFloor > 0 && candFloor > cert) cert = candFloor;
+            // Past the escape radius deeper refinement cannot improve the
+            // min: fold the (floor-raised) certificate plain, exactly as
+            // the affine body's escape-radius folds stay plain.
+            if (r > de.escapeRadius) {
+              if (cert < best) {
+                best = cert;
+                if (best <= sphereBound || best * finalScale < bailBelow) {
+                  return descentValue(best, sphereBound, finalScale);
+                }
+              }
+              continue;
+            }
+            // Frontier insertion by floored key, first-seen wins ties.
+            // Whatever leaves the kept set — this candidate, or the
+            // displaced worst slot — folds: escaped tuples the guarded
+            // refined certificate, in-sphere tuples their floor (the
+            // drop-fold rule; a floor-0 in-sphere drop stays the silent
+            // overshoot-direction residual, measured zero at this width).
+            let evX = 0;
+            let evY = 0;
+            let evZ = 0;
+            let evScale = 0;
+            let evR = 0;
+            let evCert = 0;
+            let evFloor = 0;
+            let evHas = false;
+            if (keptCount === FOLD_W && key >= fnKey[FOLD_W - 1]) {
+              evX = ix;
+              evY = iy;
+              evZ = iz;
+              evScale = childScale;
+              evR = r;
+              evCert = cert;
+              evFloor = candFloor;
+              evHas = true;
+            } else {
+              let i: number;
+              if (keptCount === FOLD_W) {
+                const last = FOLD_W - 1;
+                evX = fnX[last];
+                evY = fnY[last];
+                evZ = fnZ[last];
+                evScale = fnScale[last];
+                evR = fnR[last];
+                evCert = fnCert[last];
+                evFloor = fnFloor[last];
+                evHas = true;
+                i = last;
+              } else {
+                i = keptCount;
+                keptCount++;
+              }
+              while (i > 0 && key < fnKey[i - 1]) {
+                fnKey[i] = fnKey[i - 1];
+                fnX[i] = fnX[i - 1];
+                fnY[i] = fnY[i - 1];
+                fnZ[i] = fnZ[i - 1];
+                fnScale[i] = fnScale[i - 1];
+                fnFloor[i] = fnFloor[i - 1];
+                fnR[i] = fnR[i - 1];
+                fnCert[i] = fnCert[i - 1];
+                i--;
+              }
+              fnKey[i] = key;
+              fnX[i] = ix;
+              fnY[i] = iy;
+              fnZ[i] = iz;
+              fnScale[i] = childScale;
+              fnFloor[i] = candFloor;
+              fnR[i] = r;
+              fnCert[i] = cert;
+            }
+            if (evHas) {
+              if (evR > R) {
+                if (evCert < best) {
+                  let folded = evCert;
+                  if (refine) {
+                    const rc = refinedCertValue(
+                      de,
+                      evX,
+                      evY,
+                      evZ,
+                      evR,
+                      evScale,
+                    );
+                    if (rc > folded) folded = rc;
+                  }
+                  if (folded < best) {
+                    best = folded;
+                    if (best <= sphereBound || best * finalScale < bailBelow) {
+                      return descentValue(best, sphereBound, finalScale);
+                    }
+                  }
+                }
+              } else if (evFloor > 0 && evFloor < best) {
+                best = evFloor;
+                if (best <= sphereBound || best * finalScale < bailBelow) {
+                  return descentValue(best, sphereBound, finalScale);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    // The kept tuples become the next frontier (key/cert are selection
+    // artifacts; the chains carry point, scale, floor and radius).
+    for (let i = 0; i < keptCount; i++) {
+      fcX[i] = fnX[i];
+      fcY[i] = fnY[i];
+      fcZ[i] = fnZ[i];
+      fcScale[i] = fnScale[i];
+      fcFloor[i] = fnFloor[i];
+      fcR[i] = fnR[i];
+    }
+    chainCount = keptCount;
+  }
+
+  // Floor-raised KIFS terminals for every chain alive at the depth cap: a
+  // floor-0 chain is a true preimage orbit (its negative terminal is the
+  // hit signal), a strayed chain folds its certified positive floor.
+  for (let c = 0; c < chainCount; c++) {
+    let terminal = fcScale[c] * (fcR[c] - R);
+    if (fcFloor[c] > 0 && fcFloor[c] > terminal) terminal = fcFloor[c];
+    if (terminal < best) best = terminal;
+  }
   return descentValue(best, sphereBound, finalScale);
 }

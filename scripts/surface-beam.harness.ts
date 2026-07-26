@@ -278,6 +278,9 @@ function countingDE(
   const maps = de.maps.map((m): SurfaceDEMap => ({
     invT: m.invT,
     sigmaMin: m.sigmaMin,
+    foldKind: m.foldKind,
+    foldInvW: m.foldInvW,
+    foldSigma: m.foldSigma,
     baseIndex: m.baseIndex,
     get invM() {
       counter.n++;
