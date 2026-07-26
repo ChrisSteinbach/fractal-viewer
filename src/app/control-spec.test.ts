@@ -720,7 +720,7 @@ describe("surfaceColorLUT", () => {
     expect(lut).toEqual(surfaceColorLUT(paletteState));
   });
 
-  it('returns the identical LUT as "palette" for the "escape" colorSource (fr-rl4b, same paletteId)', () => {
+  it('returns the identical LUT as "palette" for the "sheets" colorSource (fr-rl4b, same paletteId)', () => {
     const base = initialState(true);
     const paletteState = {
       ...base,
@@ -730,15 +730,15 @@ describe("surfaceColorLUT", () => {
         paletteId: "aurora" as const,
       },
     };
-    const escapeState = {
+    const sheetsState = {
       ...base,
       surface: {
         ...base.surface,
-        colorSource: "escape" as const,
+        colorSource: "sheets" as const,
         paletteId: "aurora" as const,
       },
     };
-    const lut = surfaceColorLUT(escapeState);
+    const lut = surfaceColorLUT(sheetsState);
     expect(lut).not.toBeNull();
     expect(lut!.length).toBe(768);
     expect(lut).toEqual(surfaceColorLUT(paletteState));

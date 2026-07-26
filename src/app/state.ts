@@ -215,9 +215,12 @@ export interface SolidParams {
  * `"rings"` is the classic geometric orbit trap (fr-rl4b) — the descent's
  * closest radial approach to the attractor's center, painted through the
  * same palette as `"palette"`, reading as concentric structure-following
- * shells; `"escape"` paints the descent depth at which the hit point's
- * last candidate chain escaped — iteration-count-style bands showing how
- * deep the local structure runs, through the same palette.
+ * shells; `"sheets"` is its plane-trap sibling — the descent's closest
+ * approach to the attractor frame's y = 0 plane, through the same palette,
+ * reading as nested laminar bands cutting across the structure. (An
+ * escape-depth source was tried here first and swapped out pre-release:
+ * on uniform-contraction systems the escape level is pinned by the hit
+ * epsilon, not local structure, and it rendered one flat hue.)
  *
  * This array is the single source of truth for the {@link SurfaceColorSource}
  * type and the persistence validator (`VALID_SURFACE_COLOR_SOURCES` in
@@ -232,7 +235,7 @@ export const SURFACE_COLOR_SOURCES = [
   "height",
   "radius",
   "rings",
-  "escape",
+  "sheets",
 ] as const;
 
 export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];

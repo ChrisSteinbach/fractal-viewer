@@ -335,7 +335,7 @@ const surfaceParamsEffect: ControlEffect = (state, fx) => {
  * tracer reads each slot's own `uMapColor` instead (see
  * `surface-material.ts`).
  *
- * `"palette"`, `"rings"`, and `"escape"` (fr-rl4b — the latter two are
+ * `"palette"`, `"rings"`, and `"sheets"` (fr-rl4b — the latter two are
  * orbit-trap-derived sources that read a different coordinate off the same
  * descent hit-info `"palette"` already reads) all resolve
  * `state.surface.paletteId` through the shared fr-55k custom-palette bridge
@@ -363,7 +363,7 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
       resolvePalette(state.rampPaletteId, state.customPalette),
     );
   }
-  // "palette" / "rings" / "escape" (fr-rl4b): an orbit-trap-derived
+  // "palette" / "rings" / "sheets" (fr-rl4b): an orbit-trap-derived
   // coordinate through the surface's own user-selected palette.
   const lut =
     buildPaletteLUT(
