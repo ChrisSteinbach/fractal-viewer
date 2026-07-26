@@ -538,6 +538,50 @@ export function swirlFlame(): Transform[] {
 }
 
 /**
+ * "Mandelbox" — an eight-map fold lattice built on the `mandelbox` variation
+ * (fr-p7nu), the box-fold + sphere-fold composite behind the escape-time
+ * Mandelbox, here driving an IFS. Each map runs the classic step
+ * `s·sphereFold(boxFold(p̃))` at `s = 1.2` over a contracted, slightly
+ * twisted copy of space, with a whisper of `linear` keeping the creases
+ * connected. Rendered: a hollow cube of folded plates over vaulted interior
+ * arches, wrapped in the sphere fold's inversion glow — flame is its
+ * showcase ({@link PRESET_RENDER_HINTS}).
+ *
+ * The eight maps are exact conjugates under the box's own symmetries —
+ * quarter-turns about y and the y-mirror. Both commute with the folds (a
+ * quarter-turn/mirror only permutes/negates the folded axes; the sphere fold
+ * is rotation- and reflection-invariant), so conjugating one map moves ONLY
+ * its translation (rotated / y-negated) and its y-twist's sign (mirror
+ * conjugation reverses the turn). Two y-mirrored rings of four y-rotated
+ * translations therefore make the IFS genuinely symmetric under the full
+ * 4-fold prism group: the boxy Mandelbox facade owned by the transforms
+ * themselves rather than the kaleidoscope setting.
+ */
+export function mandelboxLattice(): Transform[] {
+  const twist = 0.08;
+  const scale: Vec3 = [0.5, 0.5, 0.5];
+  const t: Vec3 = [0.78, 0.42, 0.22];
+  const ring = (y: number): Vec3[] => [
+    [t[0], y, t[2]],
+    [t[2], y, -t[0]],
+    [-t[0], y, -t[2]],
+    [-t[2], y, t[0]],
+  ];
+  // Conjugating by the y-mirror flips the y-twist's sign along with the
+  // translation's y, so the lower ring twists the other way.
+  return [...ring(t[1]), ...ring(-t[1])].map((position, id): Transform => ({
+    id,
+    position,
+    rotation: [0, id < 4 ? twist : -twist, 0],
+    scale,
+    variations: [
+      { type: "mandelbox", weight: 1.2 },
+      { type: "linear", weight: 0.25 },
+    ],
+  }));
+}
+
+/**
  * Circumradius-1 vertices of the regular 4-simplex (5-cell / pentatope): an
  * alternated-cube tetrahedron sitting in the `w = −1/4` hyperplane plus the
  * apex on the `+w` axis. With `s = √5/4` each vertex is a unit vector and
@@ -893,6 +937,7 @@ const PRESETS = {
   curling: curlingFern,
   radiolarian,
   swirl: swirlFlame,
+  mandelbox: mandelboxLattice,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
@@ -943,6 +988,7 @@ export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
 export const PRESET_RENDER_HINTS: Partial<Record<Preset, "flame" | "solid">> = {
   radiolarian: "flame",
   swirl: "flame",
+  mandelbox: "flame",
 };
 
 /** Build the transform set for a named preset. */
