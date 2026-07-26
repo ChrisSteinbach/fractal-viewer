@@ -985,6 +985,21 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   return d * finalScale;
 }
 
+/** The descent's return value for a running min: the folded terms' min
+ * floored by the depth-0 sphere bound, then un-scaled by the final lens.
+ * {@link estimateDistance4Refined}'s tail and each of its cutoff exits land
+ * here, so an early exit cannot drift from the full result it stands in for.
+ * A private copy of the 3D twin's helper, like `isActive` above. */
+function descentValue(
+  best: number,
+  sphereBound: number,
+  finalScale: number,
+): number {
+  let d = best;
+  if (sphereBound > d) d = sphereBound;
+  return d * finalScale;
+}
+
 /**
  * Certificate-refinement variant of {@link estimateDistance4}: identical
  * greedy descent, terminal KIFS bound, depth-0 sphere floor, and
@@ -1045,8 +1060,34 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
  * `plain >= best`) and the inner sweep is skipped. Bit-exact — every
  * number in the SPIKE VERDICT above is unchanged — while the extra
  * sweeps collapse to the folds that actually advance the min.
+ *
+ * EARLY-OUT CUTOFF (fr-55r5), the 3D twin's `estimateDistanceRefined`
+ * contract verbatim. A sphere-tracing march needs a hit DECISION, not a
+ * distance: `cutoff` is its acceptance epsilon at the query point, and the
+ * descent may stop the moment the value it would return is already below
+ * it. `cutoff <= 0` (the default) is the full descent, bit-for-bit — what
+ * normal probes, occlusion taps, shadow rays and every test pass. For
+ * `cutoff > 0`: a returned value `>= cutoff` EQUALS the `cutoff = 0` result
+ * bit-for-bit (early exits only ever return below the cutoff, so march
+ * steps above the hit threshold never drift), and a returned value
+ * `< cutoff` guarantees the `cutoff = 0` result is `< cutoff` too.
+ *
+ * Both rest on the descent being MONOTONE — the returned value is
+ * `max(best, sphereBound) * finalScale`, and `best` only ever falls while
+ * the other two are fixed by the prologue — and on the exits reading only
+ * FINALIZED terms: `best` is only ever ASSIGNED a settled bound (the
+ * REFINED certificate at every refined fold site, never the plain key that
+ * gates it), so the running min is at all times a min over terms the full
+ * computation also contains. Exiting on a raw pre-refinement certificate
+ * instead would re-open the exact ghost class refinement exists to kill —
+ * a barely-escaped sibling dips under the cutoff, the full descent lifts it
+ * back above, and the march paints a membrane across a void.
  */
-export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
+export function estimateDistance4Refined(
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff = 0,
+): number {
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -1072,6 +1113,16 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
+
+  // Early-out threshold (fr-55r5): the value below which the descent may
+  // stop and hand the caller what it has. `-Infinity` disables the test —
+  // for `cutoff <= 0` (callers that need the distance itself), and for a
+  // depth-0 sphere floor that already holds the answer at or above the
+  // cutoff no matter how far `best` falls, since the floor is what the
+  // return would clamp to. Both exits below test `best * finalScale`
+  // against it AFTER a fold, never a raw pre-refinement key.
+  const bailBelow =
+    cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
 
   // One extra Hutchinson level on a frozen escaped candidate's own inverse
   // image, over every map k (see the doc comment's VALIDITY note): the
@@ -1357,7 +1408,17 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
         // (shrunken) fr-jkpn residual drop.
         if (eR > R && eCert < best) {
           const rc = refinedCert(eX, eY, eZ, eW, eR, eScale);
-          if (rc < best) best = rc;
+          if (rc < best) {
+            best = rc;
+            // Cutoff exit (fr-55r5). `rc` is FINALIZED — already refined,
+            // so no later level can lift it — and `best` only falls from
+            // here, so once the value this would return sits under the
+            // caller's acceptance epsilon the remaining descent cannot
+            // change its verdict.
+            if (best * finalScale < bailBelow) {
+              return descentValue(best, sphereBound, finalScale);
+            }
+          }
         }
       }
     }
@@ -1433,6 +1494,18 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
         v2Live = true;
       }
     }
+    // Cutoff exit (fr-55r5), covering the four promote folds above in one
+    // test: each of them either wrote a settled certificate into `best` (a
+    // refined one at the two validity-slot sites and the width-1 runner-up,
+    // the deliberately plain escape-radius bound at the other two) or
+    // continued a chain, and neither the rest of this level nor any deeper
+    // one can raise the running min back. Deliberately NOT a `break`: the
+    // terminal bounds past the loop are folds the FULL descent only makes
+    // at the depth cap, and folding one here could drop `best` below a
+    // value the full computation never reaches.
+    if (best * finalScale < bailBelow) {
+      return descentValue(best, sphereBound, finalScale);
+    }
   }
 
   if (aLive) {
@@ -1460,7 +1533,5 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   // depth cap — and in-sphere is not near-attractor, so the KIFS
   // last-value bound is vacuous for them at ANY cap size: re-measured
   // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
-  let d = best;
-  if (sphereBound > d) d = sphereBound;
-  return d * finalScale;
+  return descentValue(best, sphereBound, finalScale);
 }
