@@ -96,7 +96,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     `estimateDistanceRefined` (fr-1z6p: fr-beck's extra Hutchinson level on
     folded sibling certificates, ported down from 4D — kills the balloon
     ghosts plain certificates rendered across voids; lazily guarded,
-    measured void-false-hits 0 on every preset). Oracle for
+    measured void-false-hits 0 on every preset; fr-55r5's march-epsilon
+    cutoff + fr-zkt2's value-exact sphere-floor pin exit the descent
+    early, both mirrored in the GLSL bodies). Oracle for
     `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
     render mode over.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
@@ -105,6 +107,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
     Measured verdict + numbers in the module doc.
+  - `surface-grid.ts` — empty-space-skipping grid (fr-55r5 part 2): cube of
+    conservative distance floors (`estimateDistanceRefined` at cell
+    centers, cutoff `cellRadius` — at/above the cutoff the return is the
+    exact full-descent value, below it 0 is the only safe store —
+    f32-FLOORED so quantization never rounds a bound up). The 3D march
+    samples it before paying a descent. Module doc carries the validity
+    chain; 3D only (4D's live rotor/slice would invalidate a grid per
+    frame).
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
@@ -239,6 +249,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     device -> CPU fallback.
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
+  - `surface-grid-worker.ts` / `surface-grid-worker-core.ts` /
+    `surface-grid-client.ts` — empty-space-grid build worker (fr-55r5
+    part 2): one-shot `buildSurfaceGrid` request/response (transfer),
+    latest-wins-by-id client with `settle()` for the offline exporter. One
+    request per 3D surface-session enter (the session freezes its DE), NO
+    sync fallback — a lost worker degrades to gridless (correct, slower)
+    marching.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
@@ -252,7 +269,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
     rings/sheets orbit-trap color sources ride the same hit-info descent
-    (fr-rl4b).
+    (fr-rl4b). The march samples `surface-grid.ts`'s floors (NEAREST 3D
+    texture) before paying a descent (fr-55r5 part 2): a floor above the
+    pixel epsilon is both a no-hit proof and a safe stride, damped by the
+    same `uStepScale` as analytic steps; gridless marching stays the
+    always-correct fallback.
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined

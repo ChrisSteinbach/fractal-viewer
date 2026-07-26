@@ -522,6 +522,31 @@ just repeats that same call, exactly like the solid render's raymarcher
 re-running each frame against its density grid, only here against an
 analytic field that has no convergence to wait on.
 
+Two fr-55r5 speedups shave that per-ray cost without touching the oracle
+discipline. The march hands its own acceptance epsilon to the DE as an
+early-out **cutoff** (part 1): the descent stops the moment its bound is
+provably below the hit threshold — at or above the cutoff the returned value
+is the full-descent result bit for bit, so step sizes never drift, and
+fr-zkt2 added the value-exact twin exit that fires unconditionally once the
+running min reaches the depth-0 sphere floor. And an **empty-space-skipping
+grid** (part 2): on every 3D surface-session enter, a dedicated worker runs
+`src/fractal/surface-grid.ts` — `estimateDistanceRefined` at the centers of a
+64-cube over the traced sphere, cutoff `cellRadius`, each cell storing the
+descent value minus the cell half-diagonal, floored into f32 so quantization
+can never round a bound upward. Because distance fields are 1-Lipschitz, that
+stored floor is valid from ANYWHERE in the cell, so the march samples the
+uploaded 3D texture (NEAREST — interpolating neighbors' floors would not be a
+bound) before paying a descent: a floor above the pixel epsilon is
+simultaneously a no-hit proof and a safe stride. The grid is a session-scoped
+pure enhancement — latest-wins by request id across session boundaries, no
+sync fallback (a lost worker just means gridless, correct, slower marching),
+no 4D twin (the live rotor/slice would invalidate a precomputed cube every
+frame) — and the offline exporter awaits the build per surface keyframe so
+frame-exact clips never depend on how fast the worker finished. Measured on
+SwiftShader at identical poses: settled-frame trace time -13% on the default
+system, -8% on the void-poor Menger sponge, with grid-vs-gridless frame
+diffs statistically identical to run-to-run noise.
+
 The same picture carries one dimension up (fr-vxoj, built on the fr-beck
 spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
 `surface-de.ts` with four coordinates: the sigma_min inequality is
@@ -560,11 +585,13 @@ invalidate their accumulated content.
 ## Render workers & cross-origin isolation
 
 Two of the app's three on-demand renders — the fractal-flame still and the
-solid voxel view; the surface render, covered above, needs no worker — each
-run in a dedicated Web Worker (`flame-worker.ts` / `voxel-worker.ts`) so
-hundreds of millions of chaos-game iterations never touch the main thread. The
-workers are thin `postMessage` glue around plain-Vitest-testable session state
-machines (`flame-worker-core.ts` / `voxel-worker-core.ts`).
+solid voxel view; the surface render, covered above, traces its frames
+workerless and only borrows one for the optional empty-space grid
+(`surface-grid-worker.ts`) — each run in a dedicated Web Worker
+(`flame-worker.ts` / `voxel-worker.ts`) so hundreds of millions of
+chaos-game iterations never touch the main thread. The workers are thin
+`postMessage` glue around plain-Vitest-testable session state machines
+(`flame-worker-core.ts` / `voxel-worker-core.ts`).
 
 A third worker, `cloud-worker.ts` (fr-5kx), generates the live point cloud
 itself — the PRIMARY interactive view, not an on-demand still, so it runs from
