@@ -50,6 +50,37 @@ export interface RenderTierScheduler {
 }
 
 /**
+ * Preview-tier descent-depth clamp on the surface tracer's `uMaxDepth`
+ * (fr-ttg5), sized relative to the system's OWN full-quality depth instead
+ * of a fixed ceiling. `buildSurfaceDE`/`buildSurfaceDE4` size
+ * `fullMaxDepth` so the SLOWEST contraction chain resolves features below
+ * `DEPTH_RESOLUTION` (1e-4) — a formula logarithmic in that resolution,
+ * `ceil(log(DEPTH_RESOLUTION) / log(sigma))`. Halving the level count
+ * therefore resolves the same chain only to `sqrt(1e-4) = 1e-2` — coarser,
+ * but still below the preview tier's own pixel coarseness (`uPixelEps * t`,
+ * ~0.0125 at a typical hit distance under `SURFACE_PREVIEW_SCALE`'s
+ * 0.3-scale target), so no unresolved core blob can outsize a preview
+ * pixel on any depth-formula-sized system.
+ *
+ * A fixed clamp (the previous fr-5ne3 design, 12 levels) left slow-map
+ * systems' unresolved core UNCHANGED whenever the full depth exceeded it —
+ * for a sigma-0.93 chain that is `0.93^12 * R` = 0.42R, a giant smooth
+ * ball, and permanently on screen under 4D auto-tumble (the rotor never
+ * settles, so the view is never NOT moving). Scaling with the system's own
+ * depth instead means fast-contracting systems (whose full depth was often
+ * already under the old fixed 12) now get CHEAPER previews too. Systems
+ * pinned at `MAX_DESCENT_DEPTH` (sigma above ~0.931, deeper than any
+ * shipped preset needs) still show a coarse preview blob — the same
+ * disclosure class as their full-tier render, not a regression.
+ *
+ * The `4`-level floor keeps the fastest-contracting systems from tracing
+ * an unusably shallow preview.
+ */
+export function previewMaxDepth(fullMaxDepth: number): number {
+  return Math.max(4, Math.ceil(fullMaxDepth / 2));
+}
+
+/**
  * Create a scheduler with no pending settle — the same state {@link
  * RenderTierScheduler.reset} returns to.
  */
