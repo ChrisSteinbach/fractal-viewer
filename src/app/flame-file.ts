@@ -17,10 +17,12 @@
  *    `scale.z = 0` (and every z field to 0), so the orbit lives in the
  *    `z = 0` plane where our 3D variation lifts reproduce flam3's planar
  *    formulas bit-for-bit.
- *  - Our twelve {@link VARIATION_TYPES} ARE flam3 variation names, with
- *    matching formulas at `z = 0` and the same unnormalized weighted-sum
- *    blend (`variations.ts`'s `composeVariations` ≡ flam3's variation sum),
- *    so variation lists pass through by name in both directions.
+ *  - Twelve of our fifteen {@link VARIATION_TYPES} ARE flam3 variation
+ *    names, with matching formulas at `z = 0` and the same unnormalized
+ *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
+ *    variation sum), so those pass through by name in both directions. The
+ *    other three — the Mandelbox fold family (fr-p7nu) — are ours, not
+ *    flam3's; see `docs/flame-interop.md` for the round-trip consequences.
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
  *    the orbit — exactly our `finalTransform`.
  *
@@ -105,7 +107,8 @@ export interface FlameFileExport {
 // Shared constants
 // ---------------------------------------------------------------------------
 
-/** Our variation names — which are exactly flam3's attribute names. */
+/** Our variation names — flam3's attribute names for the twelve classics,
+ * plus our own fold family (see the header + docs/flame-interop.md). */
 const VARIATION_NAMES = new Set<string>(VARIATION_TYPES);
 
 /**

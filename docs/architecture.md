@@ -53,11 +53,12 @@ translation, and a composed case against hand-computed values.
 ## Nonlinear variations
 
 Strict affine maps only ever produce self-similar, straight-edged attractors.
-**Variations** — borrowed from Draves & Reckase's _fractal flame_ algorithm —
-are nonlinear functions applied to a transform's point _after_ its affine part,
-warping space into flowing, organic, "impossible" shapes. `variations.ts` holds
-a dozen classics (`spherical`, `swirl`, `bubble`, `julia`, …) as pure
-`(x, y, z, rng) → [x, y, z]` functions.
+**Variations** are nonlinear functions applied to a transform's point _after_
+its affine part, warping space into flowing, organic, "impossible" shapes.
+`variations.ts` holds fifteen as pure `(x, y, z, rng) → [x, y, z]` functions: a
+dozen classics borrowed from Draves & Reckase's _fractal flame_ algorithm
+(`spherical`, `swirl`, `bubble`, `julia`, …), plus a third family — the
+Mandelbox folds — covered below.
 
 A transform carries an optional `variations: { type, weight }[]`. Its post-affine
 point is the **weighted blend** `Σ weight · V(type)` — flame semantics, so the
@@ -77,8 +78,20 @@ poison the rest of the orbit with `NaN`. `variations.test.ts` covers the math an
 the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
 (including the stochastic `julia`), and that a variation actually moves points.
 
-The `radiolarian` and `swirl` presets showcase the feature; the transform editor's
-**Variations** group adds/removes/weights them live.
+A third family, the **Mandelbox folds** (`boxfold`/`spherefold`/`mandelbox`,
+fr-p7nu), is natively 3-D rather than a lift of a planar formula: `boxfold`
+reflects each axis back off the `|t| = 1` planes (`2·clamp(t, −1, 1) − t`,
+continuous at the fold), `spherefold` is the classic Mandelbox ball fold —
+scaling by `1/clamp(r², 0.25, 1)`, the clamp floor doing double duty as the
+totality guard — and `mandelbox` composes the two as `sphereFold(boxFold(p))`,
+its own variation because blending is a weighted **sum**: no combination of
+`boxfold` and `spherefold` weights can express a composition. The variation's
+`weight` plays the classic Mandelbox scale `s` (`s·sphereFold(boxFold(p))`;
+weight 2 reproduces the canonical step).
+
+The `radiolarian` and `swirl` presets showcase the feature (`mandelbox` showcases
+the fold family); the transform editor's **Variations** group adds/removes/weights
+them live.
 
 ## Final transform
 
@@ -233,9 +246,11 @@ hand-unrolled DUPLICATE rather than an n-generic abstraction over the 3D path �
 the hot loop rewards branch-predictable, register-friendly, unrolled coordinates
 over a dimension-generic one — sharing only the genuinely-common constants
 (`WARMUP_ITERATIONS`, `ESCAPE_LIMIT`, `MAX_TRANSFORMS`). `variations4.ts` lifts the
-same twelve variation functions `variations.ts` documents, by the identical
+same fifteen variation functions `variations.ts` documents, by the identical
 convention one dimension up (angular warps carry `z` AND `w` through unchanged;
-radial warps and `swirl` use the full 4D radius `x²+y²+z²+w²`), with an anchor
+radial warps and `swirl` use the full 4D radius `x²+y²+z²+w²`; the fold family
+treats `w` exactly like a spatial axis, so `boxfold` reflects all four axes and
+`spherefold`/`mandelbox` invert through the full 4D radius), with an anchor
 property stronger than the rotation embed's: at `w = 0` every lifted function
 reproduces its 3D counterpart bit-for-bit (not just to rounding), so an embedded
 3D system's `w = 0` slice warps exactly like the native 3D path.
@@ -690,11 +705,13 @@ on every push/PR (fr-jnu): the `gpu-agreement` job executes the real WGSL
 kernels on SwiftShader (Chromium's bundled software Vulkan, so no GPU runner
 is needed), with the runner treating a skipped comparison (no WebGPU
 adapter) as a failure rather than a pass. The scenario list includes a
-"variation zoo" (3D and 4D) that enables all twelve variation types across
-three maps plus a final-transform lens, so every hand-written WGSL variation
-formula — not just the handful the showcase presets use — is compared
-against `variations.ts`/`variations4.ts` on every CI run; vitest separately
-pins the WGSL switch's case numbering to `KERNEL_VARIATION_INDEX`
+"variation zoo" (3D and 4D) that enables all twelve classic variation types
+across three maps plus a final-transform lens, so every hand-written WGSL
+variation formula — not just the handful the showcase presets use — is
+compared against `variations.ts`/`variations4.ts` on every CI run; a separate
+"fold zoo" (3D and 4D, fr-p7nu) pins the three-member Mandelbox fold family
+(`boxfold`/`spherefold`/`mandelbox`) against the same oracles. vitest
+separately pins the WGSL switch's case numbering to `KERNEL_VARIATION_INDEX`
 statically. See `docs/spike-fr-53k-gpu-flame-accum.md` for the original
 spike's go/no-go decision and measured numbers.
 
