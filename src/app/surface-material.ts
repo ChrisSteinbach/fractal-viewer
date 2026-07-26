@@ -443,9 +443,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // branch whose terminal already dominates — so the fold is omitted on
     // principle, not cost. (The disclosed repro3 void-false-hit uptick,
     // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // branches the validity slots legitimately keep alive to the CLAMPED
-    // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
-    // not a fold-site choice.)
+    // wanderer branches the validity slots keep alive in-sphere to the
+    // depth cap — and in-sphere is not near-attractor, so the KIFS
+    // last-value bound is vacuous for them at ANY cap size: re-measured
+    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -747,9 +748,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
     // branch whose terminal already dominates — so the fold is omitted on
     // principle, not cost. (The disclosed repro3 void-false-hit uptick,
     // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // branches the validity slots legitimately keep alive to the CLAMPED
-    // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
-    // not a fold-site choice.)
+    // wanderer branches the validity slots keep alive in-sphere to the
+    // depth cap — and in-sphere is not near-attractor, so the KIFS
+    // last-value bound is vacuous for them at ANY cap size: re-measured
+    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
     // Normalize the top-down blend. Every call that can reach a hit runs
     // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
     // guard just keeps a zero-map placeholder call from dividing by zero.

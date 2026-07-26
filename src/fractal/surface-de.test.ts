@@ -349,11 +349,11 @@ describe("estimateDistance beam descent (fr-v6yg)", () => {
     // The 3D mirror of the 4D `doubleRotation` preset's profile (2 maps,
     // weight 6:1, sigma 0.93 vs 0.22 — see `surface-de-4d.test.ts`'s
     // doubleRotation descent-depth-stress tests for the 4D original this
-    // mirrors). Its slowest map (sigma 0.93) drives maxDepth to the
-    // 48-level cap, same as that 4D twin's depth-stress test — so this uses
+    // mirrors). Its slowest map (sigma 0.93) drives maxDepth to 127
+    // levels (the full formula depth under fr-xok8's MAX_DESCENT_DEPTH
+    // ceiling), same as that 4D twin's depth-stress test — so this uses
     // the same 1e-6 tolerance that test documents an accumulated fp-noise
-    // floor for (~1e-7 at 48 levels), looser than the other estimateDistance
-    // tests above.
+    // floor for, looser than the other estimateDistance tests above.
     const transforms: Transform[] = [
       {
         id: 0,
@@ -570,10 +570,11 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     // The scary interaction, pinned: refinement RAISES certificates, and on
     // profiles where descent drops in-sphere branches (fr-jkpn) a raised min
     // can expose more of the drop's invalidity — fr-beck measured exactly
-    // that at width 1 in 4D. At the BUILT width 2 the beam keeps this
-    // profile clean, refined or not (harness: viol=4 exact-class @5.2e-9 fp
-    // noise, maxExcess 0.0%R). Same 48-level depth cap and 1e-6 tolerance
-    // as the base estimator's beam tests above.
+    // that at width 1 in 4D. At the BUILT width the beam keeps this
+    // profile clean, refined or not (harness at width 4, depth 127:
+    // viol=66 exact-class @3.2e-8 fp noise, maxExcess 0.0%R). Same
+    // 127-level depth and 1e-6 tolerance as the base estimator's beam
+    // tests above.
     const transforms: Transform[] = [
       {
         id: 0,
@@ -639,11 +640,12 @@ describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
   }
 
   it("holds at the built width: no jittered query exceeds the cloud-distance bound", () => {
-    // Same construction and 1e-6 48-level fp-noise tolerance as the
+    // Same construction and 1e-6 deep-descent fp-noise tolerance as the
     // fr-v6yg beam tests above, one sigma notch up (0.93 -> 0.96) — the
-    // notch where the harness measured width 2 retaining ~2%R violations
-    // (23 refined) and width 4 collapsing them to the noise floor
-    // (1 @ <5e-7, CLOUD=300k).
+    // notch where sigma clamps at the MAX_DESCENT_DEPTH ceiling (128) and
+    // the harness measured width 2 retaining ~2%R real excess (55 refined
+    // violations @2.3e-2) while width 4 collapses the real excess to 0
+    // (31 surviving counts, all sub-5e-7 fp noise; CLOUD=300k).
     const transforms = sigma096Profile();
     const de = buildSurfaceDE(transforms);
     const cloud = runChaosGame(transforms, 20000, mulberry32(1));

@@ -6,6 +6,7 @@ import {
   CONTRACTION_LIMIT,
   DEPTH_RESOLUTION,
   ESCAPE_FACTOR,
+  MAX_DESCENT_DEPTH,
   NEAR_SINGULAR_SIGMA,
   PROBE_POINTS,
   PROBE_SEED,
@@ -566,10 +567,12 @@ export function buildSurfaceDE4(
   }
   const boundingRadius = maxR * RADIUS_PAD + 1e-3;
 
-  // Depth cap from the SLOWEST contraction, identical formula to 3D.
+  // Depth cap from the SLOWEST contraction, identical formula to 3D
+  // (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note — doubleRotation
+  // is the preset the old 48 ceiling clamped into a solid core ball).
   const slowest = maps.reduce((acc, map) => Math.max(acc, map.sigmaMin), 0);
   const maxDepth = Math.min(
-    48,
+    MAX_DESCENT_DEPTH,
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
   );
 
@@ -973,9 +976,10 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   // branch whose terminal already dominates — so the fold is omitted on
   // principle, not cost. (The disclosed repro3 void-false-hit uptick,
   // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-  // branches the validity slots legitimately keep alive to the CLAMPED
-  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
-  // not a fold-site choice.)
+  // wanderer branches the validity slots keep alive in-sphere to the
+  // depth cap — and in-sphere is not near-attractor, so the KIFS
+  // last-value bound is vacuous for them at ANY cap size: re-measured
+  // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;
@@ -1452,9 +1456,10 @@ export function estimateDistance4Refined(de: SurfaceDE4, p: Vec4): number {
   // branch whose terminal already dominates — so the fold is omitted on
   // principle, not cost. (The disclosed repro3 void-false-hit uptick,
   // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-  // branches the validity slots legitimately keep alive to the CLAMPED
-  // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
-  // not a fold-site choice.)
+  // wanderer branches the validity slots keep alive in-sphere to the
+  // depth cap — and in-sphere is not near-attractor, so the KIFS
+  // last-value bound is vacuous for them at ANY cap size: re-measured
+  // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;
