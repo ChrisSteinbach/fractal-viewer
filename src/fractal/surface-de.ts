@@ -1,12 +1,8 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
-import {
-  effectiveSymmetryOrder,
-  runChaosGame,
-  symmetryRotation,
-} from "./chaos-game";
+import { effectiveSymmetryOrder, runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
-import type { SymmetryParams, Transform, Vec3 } from "./types";
+import type { SymmetryAxis, SymmetryParams, Transform, Vec3 } from "./types";
 
 /**
  * Surface distance estimation for an affine IFS (epic fr-7jlk).
@@ -133,6 +129,67 @@ import type { SymmetryParams, Transform, Vec3 } from "./types";
  * - Deep in a VOID, every image escapes within a few levels and the positive
  *   certificates measure the void's depth — the march crosses voids instead
  *   of stalling on the (useless, negative) bounding-sphere bound.
+ *
+ * SYMMETRY: SECTOR SWEEP, NOT A WEDGE FOLD (fr-x029). A kaleidoscope of
+ * order `n` replicates every base map `f_i` into `n` copies `g_k . f_i`,
+ * where `g_k` is the rotation by `2*pi*k/n` about `symmetry.axis` applied
+ * AFTER the base map (`chaos-game.ts`'s `postRotations`). Those copies used
+ * to be MATERIALISED: {@link buildSurfaceDE} emitted `n * m` composed
+ * inverse maps and the GLSL mirror carried them in fixed 24-slot uniform
+ * arrays, so high orders on multi-map systems were gated out of the mode
+ * entirely by a slot budget. {@link SurfaceDE.maps} now holds the `m` BASE
+ * inverses only, and the descent walks the `n` sectors by rotating each
+ * chain point ONE step (`Rot_axis(-2*pi/n)`, the copy rotation's transpose)
+ * per sector — `inv(M_i) . Rot_k^T . q` re-associated as
+ * `inv(M_i) . (Rot_k^T . q)`. The uniform arrays are base-sized for ANY
+ * order, while the candidate set, its enumeration ORDER (sector-major,
+ * exactly the old slot order, so the insert-shift ladders break ties
+ * identically), every key, every certificate and every terminal are the
+ * ones the expansion produced. The beam, fr-jkpn's validity slots and
+ * fr-55r5's cutoff exits are therefore untouched — this is a repacking, and
+ * the validity argument above carries over verbatim instead of needing a
+ * new one. Order 1 skips the rotation entirely, so every non-kaleidoscope
+ * system (every shipped preset) stays bit-for-bit on its old numbers.
+ *
+ * WHY NOT THE KIFS FOLD. The tempting move is to fold the query into the
+ * fundamental wedge by its own angle and scan the base maps once — O(m)
+ * instead of O(n*m). It is UNSOUND here, and not marginally. The DE must
+ * LOWER-bound the true distance, and `dist(p, A) = min over group
+ * elements g of dist(g^-1 p, .)`; a fold commits to ONE `g` chosen by `p`'s
+ * angle, so it minimises over a SUBSET and can only come out too HIGH — the
+ * march steps through the surface. The argument that makes classic KIFS
+ * mirror folds legitimate does not transfer: for a reflection across a
+ * plane bounding a half-space `H` that CONTAINS the piece `S`,
+ * `|q' - s|^2 - |q - s|^2 = 4 (q.n)(s.n) >= 0` for every `q, s` in `H`, so
+ * folding provably cannot lose the argmin. Rotations admit no such
+ * inequality, and this composition's pieces `f_i(A)` are not wedge-contained
+ * in the first place — `g_k` is applied AFTER `f_i`, so a base map may land
+ * its image at any angle whatsoever. Concretely at order 4 with `f_i(A)` a
+ * blob at angle 5 deg: a query at 85 deg already sits INSIDE the fold's own
+ * wedge [0, 90), so the fold keeps `k = 0` and certifies `2 sin 40 = 1.29`,
+ * while the copy at 95 deg is `2 sin 5 = 0.17` away — a 7x over-estimate at
+ * a point the fold does not even treat as a boundary case. Scanning the
+ * fold's sector plus its two NEIGHBOURS repairs exactly what the inequality
+ * `cos(wrap(d - k*alpha)) <= cos(wrap(d))` covers — with `q` and the piece
+ * both inside ONE closed wedge, `|d| <= alpha` forces every `|k| >= 2`
+ * sector to be no closer, so three sectors suffice — but its hypothesis is
+ * precisely the wedge containment this composition does not give. A per-map
+ * fold (choose `k` from the angle of `t_i` rather than of `p`) does recover
+ * the exact per-map certificate MINIMUM in O(1), because the key and the
+ * certificate are both monotone in the image radius — but only for
+ * CONFORMAL maps, and the mode deliberately admits anisotropic ("degraded")
+ * systems where that argmin has no closed form. It would be a fold that
+ * stops being a lower bound exactly where the eligibility ladder is already
+ * weakest. The sweep keeps the whole candidate set and pays O(n*m) inverse
+ * applications, the same count the expansion paid; the SLOT budget, which
+ * is what actually gated the mode, is what this change removes.
+ *
+ * BLEND. `SymmetryParams.blend` fades the rotated copies' SELECTION WEIGHTS
+ * (`prepareChaosGame`), never their geometry, and the expansion never read
+ * it: every copy sat in the DE's support at any blend, `0` included. The
+ * sweep matches that inclusion rule exactly — `order` is the only symmetry
+ * field it reads — so no blend value moves the estimated surface, just as
+ * none did before.
  */
 
 /** Per-map anisotropy ratio `sigma_max / sigma_min` at or below which the
@@ -223,28 +280,51 @@ export interface SurfaceEligibility {
   sigmas: MapSigmas[];
 }
 
-/** One symmetry-expanded inverse map of the DE. */
+/** One BASE (un-rotated) inverse map of the DE. Kaleidoscope copies are not
+ * slots any more — the descent sweeps sectors around these (fr-x029; see the
+ * module doc's symmetry section). */
 export interface SurfaceDEMap {
-  /** Row-major 3x3 `inv(M_i) . Rot_k^T` — the slot's inverse linear part
-   * (kaleidoscope copies rotate AFTER the base map, so their inverses
-   * un-rotate FIRST). */
+  /** Row-major 3x3 `inv(M_i)` — the base map's inverse linear part. The
+   * sector sweep un-rotates the chain point by `Rot_k^T` BEFORE applying
+   * this (kaleidoscope copies rotate AFTER the base map, so their inverses
+   * un-rotate first). */
   invM: number[];
-  /** `-inv(M_i) . t_i` — shared by every rotated copy of base map `i`. */
+  /** `-inv(M_i) . t_i` — shared by every sector of base map `i`. */
   invT: Vec3;
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
-  /** Which base (un-rotated) map this slot inverts — the analogue of
-   * `idx % baseTransformCount`, for per-transform coloring. */
+  /** Which input transform this slot inverts — the index into the caller's
+   * `transforms`, for per-transform coloring. */
   baseIndex: number;
+}
+
+/** The kaleidoscope the descent sweeps instead of expanding (fr-x029). */
+export interface SurfaceSymmetry {
+  /** Effective sector count — `effectiveSymmetryOrder` against the FULL
+   * transform list, exactly as `prepareChaosGame` clamps it. `1` = no
+   * kaleidoscope, and the descent then skips sector rotation entirely. */
+  order: number;
+  /** Axis the sectors turn about. */
+  axis: SymmetryAxis;
+  /** `cos`/`sin` of ONE forward sector step `2*pi/order`. The descent walks
+   * sectors incrementally off these — no per-sector transcendental, and the
+   * GLSL mirror gets the pair as a single `vec2` uniform instead of an
+   * order-sized table it could not afford. `1`/`0` at order 1. */
+  stepCos: number;
+  stepSin: number;
 }
 
 /** Everything the marcher needs, precomputed: the wire format the GLSL
  * uniforms are packed from. */
 export interface SurfaceDE {
-  /** Symmetry-expanded inverse maps (weight-0 base maps contribute no
-   * slots — they are never selected, so they add nothing to the attractor). */
+  /** BASE inverse maps — weight-0 maps contribute no slots (they are never
+   * selected, so they add nothing to the attractor), and kaleidoscope copies
+   * contribute none either: {@link symmetry} replaces the old expansion, so
+   * this array is base-sized at any order (fr-x029). */
   maps: SurfaceDEMap[];
+  /** Kaleidoscope sectors swept around every {@link maps} entry. */
+  symmetry: SurfaceSymmetry;
   /** Bounding-sphere radius of the RAW attractor (pre-final-transform),
    * probed by a seeded chaos game and padded. */
   boundingRadius: number;
@@ -448,31 +528,49 @@ function inverse3(m: number[]): number[] {
   ];
 }
 
-/** Row-major 3x3 product `a · b`. */
-function mulMat3(a: number[], b: number[]): number[] {
-  const out = new Array<number>(9);
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 3; col++) {
-      out[row * 3 + col] =
-        a[row * 3] * b[col] +
-        a[row * 3 + 1] * b[3 + col] +
-        a[row * 3 + 2] * b[6 + col];
-    }
+/**
+ * One sector step of the kaleidoscope sweep (fr-x029): turn `(x, y, z)`
+ * BACKWARD by `2*pi/order` about `axis`, writing into `out` so the descent's
+ * hot loop never allocates.
+ *
+ * This is the TRANSPOSE of `chaos-game.ts`'s `symmetryRotation(axis, +step)`
+ * — copy `k` rotates forward after its base map, so descending through that
+ * copy un-rotates first — and `symmetryRotation` is `rotationMatrixXYZ` with
+ * a single nonzero Euler angle, i.e. the plain right-handed rotation about
+ * that axis. Transposing flips the sign of `sin` alone, which is why one
+ * `(cos, sin)` pair of the FORWARD step drives every sector.
+ */
+function stepSector(
+  axis: SymmetryAxis,
+  c: number,
+  s: number,
+  x: number,
+  y: number,
+  z: number,
+  out: number[],
+): void {
+  if (axis === "x") {
+    out[0] = x;
+    out[1] = c * y + s * z;
+    out[2] = -s * y + c * z;
+  } else if (axis === "y") {
+    out[0] = c * x - s * z;
+    out[1] = y;
+    out[2] = s * x + c * z;
+  } else {
+    out[0] = c * x + s * y;
+    out[1] = -s * x + c * y;
+    out[2] = z;
   }
-  return out;
-}
-
-/** Row-major 3x3 transpose. */
-function transpose3(m: number[]): number[] {
-  return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
 }
 
 /**
- * Precompute the {@link SurfaceDE} for a system: analytically inverted maps
- * (symmetry-expanded exactly like `prepareChaosGame` — same
- * `effectiveSymmetryOrder` clamp against the FULL transform list, same
- * per-copy rotation matrices), per-map `sigma_min`, a probed bounding
- * radius, and the pre-inverted final-transform lens.
+ * Precompute the {@link SurfaceDE} for a system: analytically inverted BASE
+ * maps, the kaleidoscope the descent sweeps around them (same
+ * `effectiveSymmetryOrder` clamp against the FULL transform list
+ * `prepareChaosGame` applies, so the swept set is the plotted set),
+ * per-map `sigma_min`, a probed bounding radius, and the pre-inverted
+ * final-transform lens.
  *
  * Throws when the system is ineligible ({@link analyzeSurfaceSystem}) — the
  * app gates on the analysis first, so reaching the throw is a bug.
@@ -489,18 +587,14 @@ export function buildSurfaceDE(
     );
   }
 
-  // Base inverses, computed once per ACTIVE base map. The kaleidoscope copy
-  // k applies its rotation AFTER the base map (chaos-game.ts postRotations),
-  // so slot (k, i) is p -> Rot_k · (M_i p + t_i), whose inverse is
-  // q -> inv(M_i) · Rot_k^T · q - inv(M_i) · t_i: the translation part is
-  // shared by every copy of map i.
-  interface BaseInverse {
-    invM: number[];
-    invT: Vec3;
-    sigmaMin: number;
-    baseIndex: number;
-  }
-  const bases: BaseInverse[] = [];
+  // Base inverses, one per ACTIVE map — the whole array, at any symmetry
+  // order (fr-x029). The kaleidoscope copy k applies its rotation AFTER the
+  // base map (chaos-game.ts postRotations), so copy (k, i) is
+  // p -> Rot_k · (M_i p + t_i), whose inverse is
+  // q -> inv(M_i) · (Rot_k^T · q) - inv(M_i) · t_i — a base inverse applied
+  // to the point ALREADY turned into sector k, which is exactly what the
+  // descent's sector sweep feeds it. Nothing per-copy is left to store.
+  const maps: SurfaceDEMap[] = [];
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
     const affine = composeAffine(t);
@@ -511,30 +605,16 @@ export function buildSurfaceDE(
       -(invM[3] * tx + invM[4] * ty + invM[5] * tz),
       -(invM[6] * tx + invM[7] * ty + invM[8] * tz),
     ];
-    bases.push({ invM, invT, sigmaMin: analysis.sigmas[i].min, baseIndex: i });
+    maps.push({ invM, invT, sigmaMin: analysis.sigmas[i].min, baseIndex: i });
   });
 
-  // Symmetry expansion mirroring prepareChaosGame: the effective order is
-  // clamped against the FULL list length (weight-0 slots included), copy 0
-  // unrotated first.
+  // Sector count mirroring prepareChaosGame: the effective order is clamped
+  // against the FULL list length (weight-0 slots included), so the swept set
+  // is the plotted set. `blend` is deliberately not read — it fades copy
+  // WEIGHTS, never geometry, and the expansion this replaces ignored it too
+  // (module doc, BLEND).
   const order = effectiveSymmetryOrder(symmetry.order, transforms.length);
-  const maps: SurfaceDEMap[] = [];
-  for (let k = 0; k < order; k++) {
-    const rotT =
-      k === 0
-        ? null
-        : transpose3(
-            symmetryRotation(symmetry.axis, (2 * Math.PI * k) / order),
-          );
-    for (const base of bases) {
-      maps.push({
-        invM: rotT ? mulMat3(base.invM, rotT) : base.invM,
-        invT: base.invT,
-        sigmaMin: base.sigmaMin,
-        baseIndex: base.baseIndex,
-      });
-    }
-  }
+  const step = (2 * Math.PI) / order;
 
   // Bounding radius of the RAW attractor: seeded probe of the exact plotted
   // set (full transform list + symmetry, but NO final transform — the DE
@@ -551,7 +631,7 @@ export function buildSurfaceDE(
   // Depth cap from the SLOWEST contraction: the largest per-level shrink
   // factor bounds how many levels matter before features drop below
   // resolution (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note).
-  const slowest = bases.reduce((acc, b) => Math.max(acc, b.sigmaMin), 0);
+  const slowest = maps.reduce((acc, b) => Math.max(acc, b.sigmaMin), 0);
   const maxDepth = Math.min(
     MAX_DESCENT_DEPTH,
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
@@ -576,6 +656,15 @@ export function buildSurfaceDE(
 
   return {
     maps,
+    symmetry: {
+      order,
+      axis: symmetry.axis,
+      // Exact at order 1 (cos 2pi = 1, sin 2pi = 0 only up to rounding), so
+      // the descent's order-1 short circuit is what actually guarantees
+      // bit-identical non-kaleidoscope behavior, not these two numbers.
+      stepCos: Math.cos(step),
+      stepSin: Math.sin(step),
+    },
     boundingRadius,
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
@@ -740,6 +829,14 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
     finalScale = f.sigmaMin;
   }
 
+  // Kaleidoscope sectors swept around the base maps (fr-x029) — `order` 1
+  // leaves every `k > 0` branch below dead, so a system without symmetry
+  // runs the pre-sweep arithmetic unchanged. Two scratch triples, never one:
+  // `refinedCert` sweeps from inside the candidate loop's own sweep.
+  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const sweep = [0, 0, 0];
+  const certSweep = [0, 0, 0];
+
   const R = de.boundingRadius;
   const startR = Math.sqrt(x * x + y * y + z * z);
   const sphereBound = startR - R;
@@ -769,16 +866,30 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
     childScale: number,
   ): number => {
     let inner = Infinity;
-    for (let k = 0; k < de.maps.length; k++) {
-      const mapK = de.maps[k];
-      const imK = mapK.invM;
-      const itK = mapK.invT;
-      const kx = imK[0] * ix + imK[1] * iy + imK[2] * iz + itK[0];
-      const ky = imK[3] * ix + imK[4] * iy + imK[5] * iz + itK[1];
-      const kz = imK[6] * ix + imK[7] * iy + imK[8] * iz + itK[2];
-      const rk = Math.sqrt(kx * kx + ky * ky + kz * kz);
-      const innerTerm = mapK.sigmaMin * (rk - R);
-      if (innerTerm < inner) inner = innerTerm;
+    // The inner Hutchinson level sweeps the same sectors the candidate loop
+    // does — "over every map" means every (sector, base map) pair, which is
+    // what the expanded list used to spell out.
+    let sx = ix;
+    let sy = iy;
+    let sz = iz;
+    for (let k = 0; k < order; k++) {
+      if (k > 0) {
+        stepSector(axis, stepCos, stepSin, sx, sy, sz, certSweep);
+        sx = certSweep[0];
+        sy = certSweep[1];
+        sz = certSweep[2];
+      }
+      for (let j = 0; j < de.maps.length; j++) {
+        const mapJ = de.maps[j];
+        const imJ = mapJ.invM;
+        const itJ = mapJ.invT;
+        const jx = imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + itJ[0];
+        const jy = imJ[3] * sx + imJ[4] * sy + imJ[5] * sz + itJ[1];
+        const jz = imJ[6] * sx + imJ[7] * sy + imJ[8] * sz + itJ[2];
+        const rj = Math.sqrt(jx * jx + jy * jy + jz * jz);
+        const innerTerm = mapJ.sigmaMin * (rj - R);
+        if (innerTerm < inner) inner = innerTerm;
+      }
     }
     return childScale * Math.max(r - R, inner);
   };
@@ -885,141 +996,159 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
         pZ = v2Z;
         pScale = v2Scale;
       }
-      for (let j = 0; j < de.maps.length; j++) {
-        const map = de.maps[j];
-        const im = map.invM;
-        const it = map.invT;
-        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + it[0];
-        const iy = im[3] * pX + im[4] * pY + im[5] * pZ + it[1];
-        const iz = im[6] * pX + im[7] * pY + im[8] * pZ + it[2];
-        const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
-        const key = pScale * (r - R);
-        const childScale = pScale * map.sigmaMin;
-        const cert = childScale * (r - R);
-        // Exactly one tuple leaves the top-2 ladder per candidate — the
-        // displaced runner-up, or the candidate itself. It spills to the
-        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
-        // sentinels flow through both harmlessly (key Infinity never
-        // inserts, r = 0 never folds).
-        let eKey = key;
-        let eX = ix;
-        let eY = iy;
-        let eZ = iz;
-        let eScale = childScale;
-        let eR = r;
-        let eCert = cert;
-        if (key < c1Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = c1Key;
-          c2X = c1X;
-          c2Y = c1Y;
-          c2Z = c1Z;
-          c2Scale = c1Scale;
-          c2R = c1R;
-          c2Cert = c1Cert;
-          c1Key = key;
-          c1X = ix;
-          c1Y = iy;
-          c1Z = iz;
-          c1Scale = childScale;
-          c1R = r;
-          c1Cert = cert;
-        } else if (key < c2Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = key;
-          c2X = ix;
-          c2Y = iy;
-          c2Z = iz;
-          c2Scale = childScale;
-          c2R = r;
-          c2Cert = cert;
+      // Sector sweep (fr-x029): the chain point turns one step per
+      // kaleidoscope sector and every BASE map is applied to it there, so
+      // the candidates — and their SECTOR-MAJOR enumeration order, which is
+      // exactly the order the expanded map list was built in — are the ones
+      // the expansion produced. The ladders below therefore break ties the
+      // same way, and the beam, the validity slots and the cutoff exits see
+      // an unchanged stream.
+      let sX = pX;
+      let sY = pY;
+      let sZ = pZ;
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector(axis, stepCos, stepSin, sX, sY, sZ, sweep);
+          sX = sweep[0];
+          sY = sweep[1];
+          sZ = sweep[2];
         }
-        if (extra > 0) {
-          // Spill into the rank-3/4 ladder; what THAT evicts (or the
-          // spilled tuple itself, when it beats neither slot) falls
-          // through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive.
-            const tX = extra > 1 ? c4X : c3X;
-            const tY = extra > 1 ? c4Y : c3Y;
-            const tZ = extra > 1 ? c4Z : c3Z;
-            const tScale = extra > 1 ? c4Scale : c3Scale;
-            const tR = extra > 1 ? c4R : c3R;
-            const tCert = extra > 1 ? c4Cert : c3Cert;
-            if (extra > 1) {
-              c4Key = c3Key;
-              c4X = c3X;
-              c4Y = c3Y;
-              c4Z = c3Z;
-              c4Scale = c3Scale;
-              c4R = c3R;
-              c4Cert = c3Cert;
-            }
-            c3Key = eKey;
-            c3X = eX;
-            c3Y = eY;
-            c3Z = eZ;
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eX = tX;
-            eY = tY;
-            eZ = tZ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (extra > 1 && eKey < c4Key) {
-            const tX = c4X;
-            const tY = c4Y;
-            const tZ = c4Z;
-            const tScale = c4Scale;
-            const tR = c4R;
-            const tCert = c4Cert;
-            c4Key = eKey;
-            c4X = eX;
-            c4Y = eY;
-            c4Z = eZ;
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eX = tX;
-            eY = tY;
-            eZ = tZ;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
+        for (let j = 0; j < de.maps.length; j++) {
+          const map = de.maps[j];
+          const im = map.invM;
+          const it = map.invT;
+          const ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
+          const iy = im[3] * sX + im[4] * sY + im[5] * sZ + it[1];
+          const iz = im[6] * sX + im[7] * sY + im[8] * sZ + it[2];
+          const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
+          const key = pScale * (r - R);
+          const childScale = pScale * map.sigmaMin;
+          const cert = childScale * (r - R);
+          // Exactly one tuple leaves the top-2 ladder per candidate — the
+          // displaced runner-up, or the candidate itself. It spills to the
+          // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+          // sentinels flow through both harmlessly (key Infinity never
+          // inserts, r = 0 never folds).
+          let eKey = key;
+          let eX = ix;
+          let eY = iy;
+          let eZ = iz;
+          let eScale = childScale;
+          let eR = r;
+          let eCert = cert;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = c1Key;
+            c2X = c1X;
+            c2Y = c1Y;
+            c2Z = c1Z;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1X = ix;
+            c1Y = iy;
+            c1Z = iz;
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = key;
+            c2X = ix;
+            c2Y = iy;
+            c2Z = iz;
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
           }
-        }
-        // The tuple leaving the beam frontier: escaped candidates fold
-        // their certificate (REFINED on the refined path, where the guard
-        // already knows the plain certificate would have advanced the
-        // min); an in-sphere tuple carries no positive certificate — on
-        // widths 3/4 it can only get here past FOUR smaller keys, the
-        // (shrunken) fr-jkpn residual drop.
-        if (eR > R && eCert < best) {
-          const folded = refine ? refinedCert(eX, eY, eZ, eR, eScale) : eCert;
-          if (folded < best) {
-            best = folded;
-            // Cutoff exit (fr-55r5). `folded` is FINALIZED — already
-            // refined on the refined path, so no later level can lift it —
-            // and `best` only falls from here, so once the value this
-            // would return sits under the caller's acceptance epsilon the
-            // remaining descent cannot change its verdict.
-            if (best * finalScale < bailBelow) {
-              return descentValue(best, sphereBound, finalScale);
+          if (extra > 0) {
+            // Spill into the rank-3/4 ladder; what THAT evicts (or the
+            // spilled tuple itself, when it beats neither slot) falls
+            // through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, scale, radius, certificate) survive.
+              const tX = extra > 1 ? c4X : c3X;
+              const tY = extra > 1 ? c4Y : c3Y;
+              const tZ = extra > 1 ? c4Z : c3Z;
+              const tScale = extra > 1 ? c4Scale : c3Scale;
+              const tR = extra > 1 ? c4R : c3R;
+              const tCert = extra > 1 ? c4Cert : c3Cert;
+              if (extra > 1) {
+                c4Key = c3Key;
+                c4X = c3X;
+                c4Y = c3Y;
+                c4Z = c3Z;
+                c4Scale = c3Scale;
+                c4R = c3R;
+                c4Cert = c3Cert;
+              }
+              c3Key = eKey;
+              c3X = eX;
+              c3Y = eY;
+              c3Z = eZ;
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eX = tX;
+              eY = tY;
+              eZ = tZ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (extra > 1 && eKey < c4Key) {
+              const tX = c4X;
+              const tY = c4Y;
+              const tZ = c4Z;
+              const tScale = c4Scale;
+              const tR = c4R;
+              const tCert = c4Cert;
+              c4Key = eKey;
+              c4X = eX;
+              c4Y = eY;
+              c4Z = eZ;
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eX = tX;
+              eY = tY;
+              eZ = tZ;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+          }
+          // The tuple leaving the beam frontier: escaped candidates fold
+          // their certificate (REFINED on the refined path, where the guard
+          // already knows the plain certificate would have advanced the
+          // min); an in-sphere tuple carries no positive certificate — on
+          // widths 3/4 it can only get here past FOUR smaller keys, the
+          // (shrunken) fr-jkpn residual drop.
+          if (eR > R && eCert < best) {
+            const folded = refine ? refinedCert(eX, eY, eZ, eR, eScale) : eCert;
+            if (folded < best) {
+              best = folded;
+              // Cutoff exit (fr-55r5). `folded` is FINALIZED — already
+              // refined on the refined path, so no later level can lift it —
+              // and `best` only falls from here, so once the value this
+              // would return sits under the caller's acceptance epsilon the
+              // remaining descent cannot change its verdict.
+              if (best * finalScale < bailBelow) {
+                return descentValue(best, sphereBound, finalScale);
+              }
             }
           }
         }

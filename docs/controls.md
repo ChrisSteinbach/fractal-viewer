@@ -98,11 +98,19 @@ morphs into place instead of snapping (see **Presets** below).
   disables itself — with the reason in its tooltip — whenever any active
   map (or the final-transform lens) uses variations, is nearly flat
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
-  count exceeds the tracer's fixed uniform budget: the kaleidoscope
-  symmetry expansion against a 24-map limit for flat systems, the bare
-  active-map count against the same 24-map limit for 4D ones (raised from
-  16 by fr-dqlq, which moved the 4D tracer's per-map arrays into a std140
-  uniform block — the 24-map **24-cell** presets surface now). A system extending
+  count exceeds the tracer's fixed uniform budget: the bare active-map
+  count against a 24-map limit, for flat and 4D systems alike (the 4D
+  limit was raised from 16 by fr-dqlq, which moved that tracer's per-map
+  arrays into a std140 uniform block — the 24-map **24-cell** presets
+  surface now). **Symmetry** no longer counts against that budget: the flat
+  tracer used to expand each kaleidoscope copy into a map slot of its own,
+  so a 4-map system was capped at 6-fold and higher orders disabled the
+  button, but fr-x029 made the distance estimator sweep the symmetry
+  sectors around the base maps instead — any order is admissible now, at a
+  proportional cost in trace time rather than in slots. High orders do
+  soften the estimate (more branches per level than the tracer's beam can
+  follow), which can show as faint membranes across the shape's voids. A
+  system extending
   into 4D is not a blocker but a different tracer: the mode marches the
   **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag

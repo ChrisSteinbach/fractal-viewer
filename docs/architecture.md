@@ -528,7 +528,11 @@ spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
 dimension-free, so the whole descent transfers verbatim; the singular values
 need a deterministic cyclic-Jacobi eigen-solve where 3D had a closed form;
 and there is no kaleidoscope to expand (the 4D pipeline has none by design),
-so slots are input maps 1:1 against the same 24-slot cap 3D expands into.
+so slots are input maps 1:1 against the same 24-slot cap 3D uses — a cap 3D
+also reads as bare base maps since fr-x029 swapped its symmetry EXPANSION
+for a sector sweep (the descent turns each chain point through the
+kaleidoscope's sectors instead of storing a composed matrix per copy, so
+symmetry order costs descent time rather than slots).
 Those mat4-sized slots did start at 16, because in the DEFAULT uniform block
 24 of them would have claimed 192 of the 224 fragment uniform vectors WebGL2
 merely guarantees; fr-dqlq moved the per-map arrays into a std140 uniform
