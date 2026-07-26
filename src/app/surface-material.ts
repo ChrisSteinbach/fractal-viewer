@@ -7,13 +7,15 @@ import { lightDirection } from "./voxel-material";
 /**
  * The surface render's GPU sphere-tracer (epic fr-7jlk): a full-screen-quad
  * ShaderMaterial that marches camera rays against an analytic distance
- * estimator for the IFS attractor — width-2 beam inverse-map descent
+ * estimator for the IFS attractor — width-4 beam inverse-map descent
  * (fr-v6yg) with REFINED sibling certificates (fr-1z6p: fr-beck's measured
  * ghost-eliminator ported down from the 4D tracer, closing the smooth
  * "balloon" membranes the plain certificates rendered across attractor
  * voids), precomputed by `buildSurfaceDE` (`src/fractal/surface-de.ts`)
- * and packed into fixed-size uniform arrays here. Hits are shaded in the
- * solid raymarcher's vocabulary — DE-gradient
+ * and packed into fixed-size uniform arrays here. fr-jkpn's validity slots
+ * ride along too — rank-3/4 candidate chains that stay live only while
+ * in-sphere, closing the multi-branch drops width 2 alone still had. Hits
+ * are shaded in the solid raymarcher's vocabulary — DE-gradient
  * normals, Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow
  * ray toward the light, DE-probed ambient occlusion — with four base-color
  * sources (by-transform, orbit-trap palette, height ramp, radius ramp; the
@@ -157,28 +159,33 @@ const SURFACE_FRAGMENT = /* glsl */ `
   /**
    * Both surfaceDE overloads mirror estimateDistanceRefined in
    * src/fractal/surface-de.ts (the tested CPU oracle) — any change there
-   * must land in BOTH bodies here, and vice versa. Width-2 BEAM
-   * inverse-map descent (fr-v6yg; the CPU oracle's beamWidth is always 2
-   * in production builds, so the tracer hardcodes it): each level expands
-   * both live chains through every map, keeps the two candidates with the
-   * smallest selection key chainScale * (r - R) as the next chains, and
-   * folds every OTHER escaped candidate's REFINED certificate (fr-1z6p:
-   * refinedCert above) into the running min — so surfaces reachable
-   * through a shallower or second-nearest branch are never overshot, and
-   * barely-escaped siblings no longer freeze the near-zero plain bounds
-   * that false-hit as balloons — while each kept chain keeps refining down
-   * to its terminal last-value bound (folded PLAIN when it escapes past
+   * must land in BOTH bodies here, and vice versa. Width-4 BEAM
+   * inverse-map descent (fr-v6yg's paired A/B chains, plus fr-jkpn's
+   * rank-3/4 validity slots; the CPU oracle's beamWidth is always 4 in
+   * production builds, so the tracer hardcodes it): each level expands
+   * every live chain through every map and ranks the four smallest-key
+   * candidates by chainScale * (r - R) — the best two continue as the
+   * next A/B chains, and ranks 3/4 continue as extra chains ONLY while
+   * their image stays in-sphere, folding the same REFINED certificate
+   * below the moment they escape instead — and folds every OTHER escaped
+   * candidate's REFINED certificate (fr-1z6p: refinedCert above) into the
+   * running min — so surfaces reachable through a shallower or
+   * second-nearest branch are never overshot, and barely-escaped siblings
+   * no longer freeze the near-zero plain bounds that false-hit as
+   * balloons — while chains A/B keep refining down to their terminal
+   * last-value bound (folded PLAIN when a chain escapes past
    * uEscapeRadius or the depth cap ends the loop, exactly as the oracle
-   * keeps them). Every refined fold site carries the oracle's laziness
-   * guard: refinement can only RAISE a certificate, so a fold whose PLAIN
-   * certificate already fails to beat the running min is skipped whole —
-   * bit-exact, and it caps the inner sweeps at the folds that actually
-   * advance the min. See the oracle module's doc for the validity
-   * argument and the measured numbers. 1e30 stands in for Infinity
-   * (slot-occupancy tests use < 1e29): with sigma products <= 1 and real
-   * distances O(1..10) it can never be confused for a real bound. This
-   * plain overload is the workhorse (march, normals, shadow, occlusion);
-   * the out-param overload below adds hit-shading extras.
+   * keeps them; validity chains fold no cap terminal at all — see the
+   * promote comment below). Every refined fold site carries the oracle's
+   * laziness guard: refinement can only RAISE a certificate, so a fold
+   * whose PLAIN certificate already fails to beat the running min is
+   * skipped whole — bit-exact, and it caps the inner sweeps at the folds
+   * that actually advance the min. See the oracle module's doc for the
+   * validity argument and the measured numbers. 1e30 stands in for
+   * Infinity (slot-occupancy tests use < 1e29): with sigma products <= 1
+   * and real distances O(1..10) it can never be confused for a real
+   * bound. This plain overload is the workhorse (march, normals, shadow,
+   * occlusion); the out-param overload below adds hit-shading extras.
    */
   float surfaceDE(vec3 p) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -196,11 +203,22 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
+    // Validity chains (fr-jkpn): they hold the level's rank-3/4
+    // candidates ONLY while their points are in-sphere, and carry no R
+    // field — unlike A/B they never fold a terminal (see past the loop),
+    // and expansion re-derives every child radius, so the selection
+    // radius is dead weight once occupancy is decided.
+    vec3 v1Q = vec3(0.0);
+    float v1Scale = 1.0;
+    bool v1Live = false;
+    vec3 v2Q = vec3(0.0);
+    float v2Scale = 1.0;
+    bool v2Live = false;
     for (int depth = 0; depth < uMaxDepth; depth++) {
-      if (!aLive && !bLive) {
+      if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
-      // The two smallest-key candidates this level, key-ascending. The
+      // The four smallest-key candidates this level, key-ascending. The
       // sentinel r = 0 keeps empty slots out of every escaped-candidate
       // fold below.
       float c1Key = 1e30;
@@ -213,28 +231,69 @@ const SURFACE_FRAGMENT = /* glsl */ `
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
-      for (int c = 0; c < 2; c++) {
-        bool isA = c == 0;
-        if (isA ? !aLive : !bLive) {
-          continue;
+      // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
+      // by everything the top-2 ladder evicts, so the pair holds exactly
+      // the level's third- and fourth-smallest keys.
+      float c3Key = 1e30;
+      vec3 c3Q = vec3(0.0);
+      float c3Scale = 1.0;
+      float c3R = 0.0;
+      float c3Cert = 0.0;
+      float c4Key = 1e30;
+      vec3 c4Q = vec3(0.0);
+      float c4Scale = 1.0;
+      float c4R = 0.0;
+      float c4Cert = 0.0;
+      for (int c = 0; c < 4; c++) {
+        vec3 pQ = vec3(0.0);
+        float pScale = 1.0;
+        if (c == 0) {
+          if (!aLive) {
+            continue;
+          }
+          pQ = aQ;
+          pScale = aScale;
+        } else if (c == 1) {
+          if (!bLive) {
+            continue;
+          }
+          pQ = bQ;
+          pScale = bScale;
+        } else if (c == 2) {
+          if (!v1Live) {
+            continue;
+          }
+          pQ = v1Q;
+          pScale = v1Scale;
+        } else {
+          if (!v2Live) {
+            continue;
+          }
+          pQ = v2Q;
+          pScale = v2Scale;
         }
-        vec3 pQ = isA ? aQ : bQ;
-        float pScale = isA ? aScale : bScale;
         for (int j = 0; j < uMapCount; j++) {
           vec3 img = uInvM[j] * pQ + uInvT[j];
           float r = length(img);
           float key = pScale * (r - uBoundingRadius);
           float childScale = pScale * uSigmaMin[j];
           float cert = childScale * (r - uBoundingRadius);
+          // Exactly one tuple leaves the top-2 ladder per candidate — the
+          // displaced runner-up, or the candidate itself. It spills into
+          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+          // through both harmlessly (key 1e30 never inserts, r = 0 never
+          // folds).
+          float eKey = key;
+          vec3 eQ = img;
+          float eScale = childScale;
+          float eR = r;
+          float eCert = cert;
           if (key < c1Key) {
-            // New best: the old best shifts to runner-up, whose previous
-            // occupant folds its REFINED certificate (fr-1z6p: one extra
-            // Hutchinson level closes the barely-escaped-sibling balloon)
-            // — skipped whole when its plain certificate cannot beat the
-            // running min anyway (the oracle's laziness guard, bit-exact).
-            if (c2R > uBoundingRadius && c2Cert < best) {
-              best = min(best, refinedCert(c2Q, c2R, c2Scale));
-            }
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
             c2Key = c1Key;
             c2Q = c1Q;
             c2Scale = c1Scale;
@@ -246,24 +305,79 @@ const SURFACE_FRAGMENT = /* glsl */ `
             c1R = r;
             c1Cert = cert;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius && c2Cert < best) {
-              best = min(best, refinedCert(c2Q, c2R, c2Scale));
-            }
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
             c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius && cert < best) {
-            best = min(best, refinedCert(img, r, childScale));
+          }
+          // Spill into the rank-3/4 ladder (unconditional at width 4);
+          // what THAT evicts (or the spilled tuple itself, when it beats
+          // neither slot) falls through to the fold below.
+          if (eKey < c3Key) {
+            // The evicted key is dead past this point — only the folded
+            // fields (point, scale, radius, certificate) survive; width 4
+            // is hardcoded here, so there is no tKey.
+            vec3 tQ = c4Q;
+            float tScale = c4Scale;
+            float tR = c4R;
+            float tCert = c4Cert;
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c4Cert = c3Cert;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (eKey < c4Key) {
+            vec3 tQ = c4Q;
+            float tScale = c4Scale;
+            float tR = c4R;
+            float tCert = c4Cert;
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+          // The tuple leaving the beam frontier: escaped candidates fold
+          // their REFINED certificate (fr-1z6p: one extra Hutchinson
+          // level closes the barely-escaped-sibling balloon) — skipped
+          // whole when its plain certificate cannot beat the running min
+          // anyway (the oracle's laziness guard, bit-exact); an in-sphere
+          // tuple carries no positive certificate — it can only get here
+          // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+          if (eR > uBoundingRadius && eCert < best) {
+            best = min(best, refinedCert(eQ, eR, eScale));
           }
         }
       }
       // Promote: the best candidate continues as chain A, the runner-up
       // as chain B; past the escape radius a candidate folds its terminal
       // and dies instead (deeper refinement cannot improve the min).
+      // Ranks 3/4 continue as validity chains ONLY while in-sphere;
+      // escaped, they fold the same refined certificate they would have
+      // folded without the slots.
       aLive = false;
       bLive = false;
+      v1Live = false;
+      v2Live = false;
       if (c1Key < 1e29) {
         if (c1R > uEscapeRadius) {
           best = min(best, c1Cert);
@@ -284,6 +398,28 @@ const SURFACE_FRAGMENT = /* glsl */ `
           bLive = true;
         }
       }
+      if (c3Key < 1e29) {
+        if (c3R > uBoundingRadius) {
+          if (c3Cert < best) {
+            best = min(best, refinedCert(c3Q, c3R, c3Scale));
+          }
+        } else {
+          v1Q = c3Q;
+          v1Scale = c3Scale;
+          v1Live = true;
+        }
+      }
+      if (c4Key < 1e29) {
+        if (c4R > uBoundingRadius) {
+          if (c4Cert < best) {
+            best = min(best, refinedCert(c4Q, c4R, c4Scale));
+          }
+        } else {
+          v2Q = c4Q;
+          v2Scale = c4Scale;
+          v2Live = true;
+        }
+      }
     }
     // Terminal bound of chains alive at the depth cap (the KIFS last-value
     // formula): non-positive when the chain tracked the attractor all the
@@ -294,6 +430,22 @@ const SURFACE_FRAGMENT = /* glsl */ `
     if (bLive) {
       best = min(best, bScale * (bR - uBoundingRadius));
     }
+    // Validity chains fold NO cap terminal — deliberately asymmetric with
+    // A/B. In-sphere means inside the bounding SPHERE, not near the
+    // attractor, so a validity chain's cap terminal is a vacuous negative
+    // bound that can only ever pull the estimate toward a fabricated hit
+    // (the membrane direction fr-jkpn's record calls the visually harmful
+    // one), never fix a real one — the piece it tracks sits within
+    // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
+    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // estimators, widths 3/4): folding them changes NOTHING — whenever a
+    // validity chain survives to the cap, chain A holds an equal-or-deeper
+    // branch whose terminal already dominates — so the fold is omitted on
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
+    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
+    // branches the validity slots legitimately keep alive to the CLAMPED
+    // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
+    // not a fold-site choice.)
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -350,6 +502,17 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
+    // Validity chains (fr-jkpn): they hold the level's rank-3/4
+    // candidates ONLY while their points are in-sphere, and carry no R
+    // field — unlike A/B they never fold a terminal (see past the loop),
+    // and expansion re-derives every child radius, so the selection
+    // radius is dead weight once occupancy is decided.
+    vec3 v1Q = vec3(0.0);
+    float v1Scale = 1.0;
+    bool v1Live = false;
+    vec3 v2Q = vec3(0.0);
+    float v2Scale = 1.0;
+    bool v2Live = false;
     firstChoice = 0;
     trap = 0.0;
     rings = 1.0;
@@ -358,7 +521,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float trapNorm = 0.0;
     float trapW = 1.0;
     for (int depth = 0; depth < uMaxDepth; depth++) {
-      if (!aLive && !bLive) {
+      if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
       float c1Key = 1e30;
@@ -372,23 +535,69 @@ const SURFACE_FRAGMENT = /* glsl */ `
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
-      for (int c = 0; c < 2; c++) {
-        bool isA = c == 0;
-        if (isA ? !aLive : !bLive) {
-          continue;
+      // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
+      // by everything the top-2 ladder evicts, so the pair holds exactly
+      // the level's third- and fourth-smallest keys.
+      float c3Key = 1e30;
+      vec3 c3Q = vec3(0.0);
+      float c3Scale = 1.0;
+      float c3R = 0.0;
+      float c3Cert = 0.0;
+      float c4Key = 1e30;
+      vec3 c4Q = vec3(0.0);
+      float c4Scale = 1.0;
+      float c4R = 0.0;
+      float c4Cert = 0.0;
+      for (int c = 0; c < 4; c++) {
+        vec3 pQ = vec3(0.0);
+        float pScale = 1.0;
+        if (c == 0) {
+          if (!aLive) {
+            continue;
+          }
+          pQ = aQ;
+          pScale = aScale;
+        } else if (c == 1) {
+          if (!bLive) {
+            continue;
+          }
+          pQ = bQ;
+          pScale = bScale;
+        } else if (c == 2) {
+          if (!v1Live) {
+            continue;
+          }
+          pQ = v1Q;
+          pScale = v1Scale;
+        } else {
+          if (!v2Live) {
+            continue;
+          }
+          pQ = v2Q;
+          pScale = v2Scale;
         }
-        vec3 pQ = isA ? aQ : bQ;
-        float pScale = isA ? aScale : bScale;
         for (int j = 0; j < uMapCount; j++) {
           vec3 img = uInvM[j] * pQ + uInvT[j];
           float r = length(img);
           float key = pScale * (r - uBoundingRadius);
           float childScale = pScale * uSigmaMin[j];
           float cert = childScale * (r - uBoundingRadius);
+          // Exactly one tuple leaves the top-2 ladder per candidate — the
+          // displaced runner-up, or the candidate itself. It spills into
+          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+          // through both harmlessly (key 1e30 never inserts, r = 0 never
+          // folds).
+          float eKey = key;
+          vec3 eQ = img;
+          float eScale = childScale;
+          float eR = r;
+          float eCert = cert;
           if (key < c1Key) {
-            if (c2R > uBoundingRadius && c2Cert < best) {
-              best = min(best, refinedCert(c2Q, c2R, c2Scale));
-            }
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
             c2Key = c1Key;
             c2Q = c1Q;
             c2Scale = c1Scale;
@@ -401,16 +610,66 @@ const SURFACE_FRAGMENT = /* glsl */ `
             c1Cert = cert;
             c1Map = j;
           } else if (key < c2Key) {
-            if (c2R > uBoundingRadius && c2Cert < best) {
-              best = min(best, refinedCert(c2Q, c2R, c2Scale));
-            }
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
             c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
-          } else if (r > uBoundingRadius && cert < best) {
-            best = min(best, refinedCert(img, r, childScale));
+          }
+          // Spill into the rank-3/4 ladder (unconditional at width 4);
+          // what THAT evicts (or the spilled tuple itself, when it beats
+          // neither slot) falls through to the fold below.
+          if (eKey < c3Key) {
+            // The evicted key is dead past this point — only the folded
+            // fields (point, scale, radius, certificate) survive; width 4
+            // is hardcoded here, so there is no tKey.
+            vec3 tQ = c4Q;
+            float tScale = c4Scale;
+            float tR = c4R;
+            float tCert = c4Cert;
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c4Cert = c3Cert;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (eKey < c4Key) {
+            vec3 tQ = c4Q;
+            float tScale = c4Scale;
+            float tR = c4R;
+            float tCert = c4Cert;
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+          // The tuple leaving the beam frontier: escaped candidates fold
+          // their REFINED certificate (fr-1z6p: one extra Hutchinson
+          // level closes the barely-escaped-sibling balloon) — skipped
+          // whole when its plain certificate cannot beat the running min
+          // anyway (the oracle's laziness guard, bit-exact); an in-sphere
+          // tuple carries no positive certificate — it can only get here
+          // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+          if (eR > uBoundingRadius && eCert < best) {
+            best = min(best, refinedCert(eQ, eR, eScale));
           }
         }
       }
@@ -424,6 +683,8 @@ const SURFACE_FRAGMENT = /* glsl */ `
       sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
       aLive = false;
       bLive = false;
+      v1Live = false;
+      v2Live = false;
       if (c1Key < 1e29) {
         if (c1R > uEscapeRadius) {
           best = min(best, c1Cert);
@@ -444,6 +705,28 @@ const SURFACE_FRAGMENT = /* glsl */ `
           bLive = true;
         }
       }
+      if (c3Key < 1e29) {
+        if (c3R > uBoundingRadius) {
+          if (c3Cert < best) {
+            best = min(best, refinedCert(c3Q, c3R, c3Scale));
+          }
+        } else {
+          v1Q = c3Q;
+          v1Scale = c3Scale;
+          v1Live = true;
+        }
+      }
+      if (c4Key < 1e29) {
+        if (c4R > uBoundingRadius) {
+          if (c4Cert < best) {
+            best = min(best, refinedCert(c4Q, c4R, c4Scale));
+          }
+        } else {
+          v2Q = c4Q;
+          v2Scale = c4Scale;
+          v2Live = true;
+        }
+      }
     }
     if (aLive) {
       best = min(best, aScale * (aR - uBoundingRadius));
@@ -451,6 +734,22 @@ const SURFACE_FRAGMENT = /* glsl */ `
     if (bLive) {
       best = min(best, bScale * (bR - uBoundingRadius));
     }
+    // Validity chains fold NO cap terminal — deliberately asymmetric with
+    // A/B. In-sphere means inside the bounding SPHERE, not near the
+    // attractor, so a validity chain's cap terminal is a vacuous negative
+    // bound that can only ever pull the estimate toward a fabricated hit
+    // (the membrane direction fr-jkpn's record calls the visually harmful
+    // one), never fix a real one — the piece it tracks sits within
+    // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
+    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // estimators, widths 3/4): folding them changes NOTHING — whenever a
+    // validity chain survives to the cap, chain A holds an equal-or-deeper
+    // branch whose terminal already dominates — so the fold is omitted on
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
+    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
+    // branches the validity slots legitimately keep alive to the CLAMPED
+    // cap — 0.93^48 ~ 0.03 >> DEPTH_RESOLUTION — a cap-sizing residual,
+    // not a fold-site choice.)
     // Normalize the top-down blend. Every call that can reach a hit runs
     // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
     // guard just keeps a zero-map placeholder call from dividing by zero.
