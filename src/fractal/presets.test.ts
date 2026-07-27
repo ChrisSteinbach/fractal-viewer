@@ -352,10 +352,12 @@ describe("variation flame presets", () => {
     const corners = transforms.slice(0, 8);
     for (const t of corners) {
       expect(t.variations).toEqual([{ type: "mandelbox", weight: 1.2 }]);
-      // 4 * 1.2 * 0.202 = 0.9696: 97% of the contraction the surface DE's
-      // fold gate allows a mandelbox map (the sphere fold's inner branch
-      // multiplies by 4), so the fold's structure is as large as it can be.
-      expect(t.scale).toEqual([0.202, 0.202, 0.202]);
+      // 4 * 1.2 * 0.19 = 0.912: well inside the fold gate (the sphere
+      // fold's inner branch multiplies by 4), sized so the composite
+      // resolves 1e-4 features in exactly 100 descent levels — under
+      // MAX_DESCENT_DEPTH's 128 ceiling, whose clamp otherwise erodes
+      // exact on-attractor estimates (~0.23%R measured at scale 0.202).
+      expect(t.scale).toEqual([0.19, 0.19, 0.19]);
       expect(t.rotation).toEqual([0, 0, 0]);
       expect(t.position.map((v) => Math.abs(v))).toEqual([0.7, 0.7, 0.7]);
     }
