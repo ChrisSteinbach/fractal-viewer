@@ -59,11 +59,25 @@ import type { Vec3 } from "./types";
  * "compaction every N steps", which is also what keeps every submission
  * bounded (the i915 preemption-timeout lesson from fr-096u).
  *
+ * IMAGE MODE (`marchShadeRays`, fr-tzdg) is march mode + terminal
+ * shading: the march arithmetic is `marchRays`' verbatim, but the ray
+ * direction comes from the GLSL tracer's unproject — near/far clip
+ * points through `shade.invProjView`, with `params.ro` doubling as
+ * uCamPos and the pose basis fields (right/up/fwd/tanHalf/aspect)
+ * IGNORED — plus the tracer's march-start hash dither (flags bit0; off
+ * for agreement runs). A ray that turns terminal in-dispatch writes its
+ * pixel: misses and exhausted rays the background gradient, hits the
+ * full `surface-material.ts` `main()` shade — greedy width-1 hit-info
+ * descent (the fold shading overload's colors), tetrahedron normal,
+ * soft shadow, AO, linear-space lighting, depth fog — term for term.
+ *
  * Scope: BASE fold/affine maps + kaleidoscope sector sweep + affine
  * final lens. `foldFinal` lenses (descendLens) and the refined estimator
- * are out of spike scope — {@link packSurfaceGpuParams} throws on
- * `foldFinal`. Not wired into the app; `src/app/gpu-bench/` is the only
- * consumer until the spike's verdict lands (fr-q1f8).
+ * remain out of scope — {@link packSurfaceGpuParams} throws on
+ * `foldFinal`. Modes "eval" and "march" are the fr-q1f8 bench baselines
+ * (`src/app/gpu-bench/` pins them) and their generated source is
+ * unchanged by the image work; mode "image" is the GLSL tracer's SHADING
+ * mirror for the app integration program (fr-tzdg).
  *
  * BYTE LAYOUT CONTRACT (pinned by surface-de-gpu.test.ts):
  *
@@ -99,6 +113,34 @@ import type { Vec3 } from "./types";
  * initialized to `(-1, 0, 0, 0)`; `t < 0` means the sphere gate has not
  * run yet. Status vocabulary: {@link SURFACE_GPU_RAY_ACTIVE} /
  * `_HIT` / `_MISS` / `_EXHAUSTED`.
+ *
+ * Shade uniform (mode "image") — {@link SURFACE_GPU_SHADE_BYTES} = 128
+ * bytes, WGSL `struct ShadeParams`:
+ *   offset 0..63 mat4x4f invProjView (column-major, the exact
+ *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
+ *          64  vec3f lightDir          76  f32 ambient
+ *          80  vec3f bgTop             92  f32 colorSpeed
+ *          96  vec3f bgBottom         108  f32 tracePixelEps
+ *         112  u32  colorSource       116  u32 shadowSteps
+ *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
+ *
+ * Shade maps storage (mode "image") — one vec4f per map slot:
+ * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
+ * like {@link packSurfaceGpuMaps}.
+ *
+ * Image bindings = march bindings plus:
+ *   @binding(4) var<uniform> shade: ShadeParams
+ *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
+ *   @binding(6) var<storage, read_write> colorOut: array<u32> — one RGBA8
+ *               pixel per ray via pack4x8unorm (x lands in byte 0, so a
+ *               readback Uint8Array is RGBA order). The HOST MUST PRE-FILL
+ *               the buffer with the background: a ray still ACTIVE at
+ *               frame abort writes nothing and keeps the prefill.
+ *   @binding(7) var lutTex: texture_2d<f32> — the 256x1 rgba8unorm LUT
+ *   @binding(8) var lutSamp: sampler — FILTERING, linear + clamp-to-edge,
+ *               so textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0)
+ *               is exact parity with GLSL texture(uColorLUT, vec2(u, 0.5))
+ *               on the same Uint8-quantized texture.
  */
 
 /** Mirror of `surface-material.ts`'s `SURFACE_FULL_HIT_FLOOR` (1e-5) —
@@ -109,6 +151,9 @@ export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 export const SURFACE_GPU_PARAMS_BYTES = 208;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
+/** Byte size of mode "image"'s ShadeParams uniform (layout contract in
+ * the module doc). */
+export const SURFACE_GPU_SHADE_BYTES = 128;
 
 /** Ray-state status codes (the `y` component of a march state vec4). */
 export const SURFACE_GPU_RAY_ACTIVE = 0;
@@ -122,7 +167,7 @@ export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 
 export interface SurfaceGpuKernelOptions {
   /** Which entry point (and binding interface) to generate. */
-  mode: "eval" | "march";
+  mode: "eval" | "march" | "image";
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
    * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. */
   width: number;
@@ -177,6 +222,13 @@ export interface SurfaceGpuRunParams {
   footprint?: number;
   /** march: whole-ray analytic step budget (SURFACE_FULL_MARCH_STEPS). */
   marchSteps?: number;
+  /** Overrides the packed maxDepth (offset 52). Default `de.maxDepth`.
+   * The app passes render-tier.ts's previewMaxDepth for preview frames. */
+  maxDepth?: number;
+  /** Overrides the hit-floor fraction in the offset-80 derivation
+   * (`boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR)`).
+   * The app passes the preview tier's coarser floor. */
+  hitFloor?: number;
   pose?: SurfaceGpuPose;
 }
 
@@ -215,7 +267,7 @@ export function packSurfaceGpuParams(
     true,
   );
   view.setUint32(48, de.maps.length, true);
-  view.setUint32(52, de.maxDepth, true);
+  view.setUint32(52, run.maxDepth ?? de.maxDepth, true);
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
   view.setFloat32(64, run.cutoff ?? 0, true);
@@ -223,7 +275,11 @@ export function packSurfaceGpuParams(
   view.setUint32(72, run.marchSteps ?? 0, true);
   const pose = run.pose;
   view.setFloat32(76, pose?.pixelEps ?? 0, true);
-  view.setFloat32(80, de.boundingRadius * SURFACE_GPU_HIT_FLOOR, true);
+  view.setFloat32(
+    80,
+    de.boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    true,
+  );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
   view.setUint32(88, pose?.rasterHeight ?? 0, true);
   const f = de.final;
@@ -278,6 +334,66 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   return out;
 }
 
+/** Shading inputs for mode "image" — the GLSL tracer's shading uniforms.
+ * `invProjView` is column-major (THREE.Matrix4.elements order), the exact
+ * matrix scene.ts uploads as uInvProjView. */
+export interface SurfaceGpuShadeParams {
+  invProjView: ArrayLike<number>; // 16 floats, column-major
+  lightDir: Vec3; // unit, toward the light (uLightDir)
+  ambient: number; // uAmbient
+  bgTop: Vec3; // uBgTop
+  bgBottom: Vec3; // uBgBottom
+  colorSpeed: number; // uColorSpeed (hit-info per-level decay)
+  /** TRACE-resolution cone slope: dither + normal h (uPixelEps analog) —
+   * distinct from the pose's pixelEps, which is the ACCEPTANCE slope
+   * (uAcceptPixelEps semantics). */
+  tracePixelEps: number;
+  /** 0 transform, 1 palette/trap, 2 height, 3 radius, 4 rings, 5 sheets. */
+  colorSource: number;
+  shadowSteps: number; // uShadowSteps (per tier)
+  aoTaps: number; // uAoTaps (per tier)
+  dither: boolean; // march-start hash dither (off for bench agreement)
+}
+
+/** Pack the mode-"image" ShadeParams uniform (layout contract in the
+ * module doc). flags = dither ? 1 : 0. */
+export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
+  const buf = new ArrayBuffer(SURFACE_GPU_SHADE_BYTES);
+  const view = new DataView(buf);
+  for (let k = 0; k < 16; k++) {
+    view.setFloat32(k * 4, shade.invProjView[k], true);
+  }
+  writeVec3(view, 64, shade.lightDir);
+  view.setFloat32(76, shade.ambient, true);
+  writeVec3(view, 80, shade.bgTop);
+  view.setFloat32(92, shade.colorSpeed, true);
+  writeVec3(view, 96, shade.bgBottom);
+  view.setFloat32(108, shade.tracePixelEps, true);
+  view.setUint32(112, shade.colorSource, true);
+  view.setUint32(116, shade.shadowSteps, true);
+  view.setUint32(120, shade.aoTaps, true);
+  view.setUint32(124, shade.dither ? 1 : 0, true);
+  return buf;
+}
+
+/** Per-map shading storage for mode "image": one vec4f per map slot,
+ * (color.r, color.g, color.b, trapIndex) — uMapColor + the uFoldParams .w
+ * trap component, which GpuMap does not carry. Pads to one zero stride
+ * when empty, like packSurfaceGpuMaps. */
+export function packSurfaceGpuShadeMaps(
+  colors: Vec3[],
+  trapIndices: number[],
+): Float32Array {
+  const out = new Float32Array(Math.max(colors.length, 1) * 4);
+  colors.forEach((c, j) => {
+    out[j * 4 + 0] = c[0];
+    out[j * 4 + 1] = c[1];
+    out[j * 4 + 2] = c[2];
+    out[j * 4 + 3] = trapIndices[j] ?? 0;
+  });
+  return out;
+}
+
 /**
  * Generate the WGSL source for one kernel configuration. The descent body
  * is `descendFold`'s refine=false path term for term (surface-de.ts) in
@@ -328,14 +444,40 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     ? `return slot * ${workgroupSize}u + li;`
     : `return slot;`;
 
+  // march and image share the ray-state I/O; image adds the shading
+  // interface on top (ShadeParams block + bindings 4-8, module doc).
+  const rayIo = `
+@group(0) @binding(2) var<storage, read> activeList: array<u32>;
+@group(0) @binding(3) var<storage, read_write> states: array<vec4f>;`;
+  const imageIo = `${rayIo}
+
+struct ShadeParams {
+  invProjView: mat4x4f,
+  lightDir: vec3f,
+  ambient: f32,
+  bgTop: vec3f,
+  colorSpeed: f32,
+  bgBottom: vec3f,
+  tracePixelEps: f32,
+  colorSource: u32,
+  shadowSteps: u32,
+  aoTaps: u32,
+  flags: u32,
+}
+
+@group(0) @binding(4) var<uniform> shade: ShadeParams;
+@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
+@group(0) @binding(7) var lutTex: texture_2d<f32>;
+@group(0) @binding(8) var lutSamp: sampler;`;
   const io =
     mode === "eval"
       ? `
 @group(0) @binding(2) var<storage, read> queries: array<vec4f>;
 @group(0) @binding(3) var<storage, read_write> results: array<f32>;`
-      : `
-@group(0) @binding(2) var<storage, read> activeList: array<u32>;
-@group(0) @binding(3) var<storage, read_write> states: array<vec4f>;`;
+      : mode === "march"
+        ? rayIo
+        : imageIo;
 
   const entry =
     mode === "eval"
@@ -351,7 +493,8 @@ fn evalQueries(
   }
   results[i] = surfaceDE(queries[i].xyz, params.cutoff, li);
 }`
-      : `
+      : mode === "march"
+        ? `
 @compute @workgroup_size(${workgroupSize})
 fn marchRays(
   @builtin(global_invocation_id) gid: vec3u,
@@ -423,6 +566,396 @@ fn marchRays(
   st.x = t;
   st.z = f32(steps);
   states[ray] = st;
+}`
+        : `
+// Per-pixel march-start dither — surface-material.ts's hash(), fed
+// gl_FragCoord.xy parity inputs (pixel centers).
+fn hash2(p: vec2f) -> f32 {
+  return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}
+
+struct SurfaceHitInfo {
+  firstChoice: i32,
+  trap: f32,
+  rings: f32,
+  sheets: f32,
+}
+
+// Fold hit-info descent (surface-material.ts's SURFACE_FOLDS shading
+// overload, term for term): a GREEDY width-1 chain — at each level the
+// smallest floored-key candidate over every (sector, map, branch) triple
+// — feeding colors only, so no frontier arrays and no prunes. Plain
+// params.maxDepth on purpose: the GLSL reads uMaxDepth, never the
+// footprint cap.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let q = vec3f(
+    dot(params.finalM0, p) + params.finalT0,
+    dot(params.finalM1, p) + params.finalT1,
+    dot(params.finalM2, p) + params.finalT2,
+  );
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var trapAcc = 0.0;
+  var trapNorm = 0.0;
+  var trapW = 1.0;
+  var chQ = q;
+  var chScale = 1.0;
+  var chFloor = 0.0;
+  var live = true;
+  let R = params.boundingRadius;
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (!live) {
+      break;
+    }
+    var lbKey = 1e30;
+    var lbMap = 0u;
+    var lbR = 0.0;
+    var lbAbsY = 0.0;
+    var lbQ = vec3f(0.0);
+    var lbScale = 1.0;
+    var lbFloor = 0.0;
+    let pScale = chScale;
+    let pFloor = chFloor;
+    var sQ = chQ;
+    for (var k = 0u; k < params.symOrder; k++) {
+      if (k > 0u) {
+        sQ = stepSector(sQ);
+      }
+      for (var j = 0u; j < params.mapCount; j++) {
+        let m = maps[j];
+        let kind = u32(m.p0.w);
+        var branchCount = 1u;
+        if (kind == 1u) {
+          branchCount = 27u;
+        } else if (kind == 2u) {
+          branchCount = 3u;
+        } else if (kind == 3u) {
+          branchCount = 81u;
+        }
+        let mapSigma = m.p0.x;
+        let absW = m.p0.z / mapSigma;
+        var u = vec3f(0.0);
+        var ru = 0.0;
+        var pre0 = vec3f(0.0);
+        var pre1 = vec3f(0.0);
+        var pre2 = vec3f(0.0);
+        var dUp = vec3f(0.0);
+        var dDn = vec3f(0.0);
+        var v = vec3f(0.0);
+        var sfSigma = 1.0;
+        var sfRd = 0.0;
+        if (kind != 0u) {
+          u = sQ * m.p0.y;
+          if (kind == 1u) {
+            pre0 = u;
+            pre1 = 2.0 - u;
+            pre2 = -2.0 - u;
+            dUp = max(u - 1.0, vec3f(0.0));
+            dDn = max(-1.0 - u, vec3f(0.0));
+          } else {
+            ru = length(u);
+          }
+        }
+        for (var b = 0u; b < branchCount; b++) {
+          var img: vec3f;
+          var branchSigma: f32;
+          var branchRd = 0.0;
+          if (kind == 0u) {
+            img = mapApply(m, sQ);
+            branchSigma = mapSigma;
+          } else {
+            if (kind == 2u || (kind == 3u && (b % 27u) == 0u)) {
+              var s = b;
+              if (kind == 3u) {
+                s = b / 27u;
+              }
+              if (s == 0u) {
+                v = u;
+                sfSigma = 1.0;
+                sfRd = max(1.0 - ru, 0.0);
+              } else if (s == 1u) {
+                v = 0.25 * u;
+                sfSigma = 4.0;
+                sfRd = max(ru - 2.0, 0.0);
+              } else {
+                if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  // GLSL parity: plain skip — the shading chain folds no
+                  // shell certificate (there is no best to fold it into).
+                  if (kind == 3u) {
+                    b += 26u;
+                  }
+                  continue;
+                }
+                let invR2 = 1.0 / (ru * ru);
+                v = u * invR2;
+                sfSigma = ru;
+                sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+              }
+              if (kind == 3u) {
+                pre0 = v;
+                pre1 = 2.0 - v;
+                pre2 = -2.0 - v;
+                dUp = max(v - 1.0, vec3f(0.0));
+                dDn = max(-1.0 - v, vec3f(0.0));
+              }
+            }
+            var pre: vec3f;
+            if (kind == 2u) {
+              pre = v;
+              branchRd = sfRd;
+            } else {
+              var bb = b;
+              if (kind == 3u) {
+                bb = b % 27u;
+              }
+              let selX = bb % 3u;
+              let selY = (bb / 3u) % 3u;
+              let selZ = bb / 9u;
+              pre = vec3f(
+                select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+                select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+                select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+              );
+              let dd = vec3f(
+                select(
+                  select(dDn.x, dUp.x, selX == 1u),
+                  max(dUp.x, dDn.x),
+                  selX == 0u,
+                ),
+                select(
+                  select(dDn.y, dUp.y, selY == 1u),
+                  max(dUp.y, dDn.y),
+                  selY == 0u,
+                ),
+                select(
+                  select(dDn.z, dUp.z, selZ == 1u),
+                  max(dUp.z, dDn.z),
+                  selZ == 0u,
+                ),
+              );
+              let boxRd = length(dd);
+              if (kind == 1u) {
+                branchRd = boxRd;
+              } else {
+                branchRd = max(sfRd, sfSigma * boxRd);
+              }
+            }
+            img = mapApply(m, pre);
+            branchSigma = m.p0.z * sfSigma;
+          }
+          let r = length(img - params.boundCenter);
+          var candFloor = pFloor;
+          if (branchRd > 0.0) {
+            candFloor = max(candFloor, pScale * absW * branchRd);
+          }
+          var key = pScale * (r - R);
+          if (candFloor > 0.0 && candFloor > key) {
+            key = candFloor;
+          }
+          if (key < lbKey) {
+            lbKey = key;
+            lbMap = j;
+            lbR = r;
+            lbAbsY = abs(img.y);
+            lbQ = img;
+            lbScale = pScale * branchSigma;
+            lbFloor = candFloor;
+          }
+        }
+      }
+    }
+    if (lbKey >= 1e29) {
+      break;
+    }
+    if (depth == 0u) {
+      info.firstChoice = i32(lbMap);
+    }
+    trapAcc += trapW * shadeMaps[lbMap].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;
+    info.rings = min(info.rings, lbR / R);
+    info.sheets = min(info.sheets, lbAbsY / R);
+    if (lbR > params.escapeRadius) {
+      live = false;
+    } else {
+      chQ = lbQ;
+      chScale = lbScale;
+      chFloor = lbFloor;
+    }
+  }
+  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}
+
+@compute @workgroup_size(${workgroupSize})
+fn marchShadeRays(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let slotI = gid.x;
+  if (slotI >= params.itemCount) {
+    return;
+  }
+  let ray = activeList[slotI];
+  var st = states[ray];
+  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {
+    return;
+  }
+  let px = ray % params.rasterWidth;
+  let py = ray / params.rasterWidth;
+  // main()'s background gradient at this pixel's vUv.y (pixel center).
+  let bg = mix(
+    shade.bgBottom,
+    shade.bgTop,
+    clamp((f32(py) + 0.5) / f32(params.rasterHeight), 0.0, 1.0),
+  );
+  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  // The GLSL tracer's unproject (main(): near/far clip points through
+  // uInvProjView); params.ro doubles as uCamPos, and the pose basis
+  // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
+  let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
+  let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
+  let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+  let ro = params.ro;
+  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
+  // exact arithmetic; recomputed per pass — cheaper than persisting).
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    return;
+  }
+  let sq = sqrt(disc);
+  let tFar = -bq + sq;
+  if (tFar <= 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    return;
+  }
+  var t = st.x;
+  if (t < 0.0) {
+    t = max(-bq - sq, 0.0);
+    // Tiny dithered start (main()'s hash line), flag-gated so agreement
+    // runs stay deterministic against the CPU emulator.
+    if ((shade.flags & 1u) != 0u) {
+      t += hash2(vec2f(f32(px) + 0.5, f32(py) + 0.5)) *
+        shade.tracePixelEps * max(t, 1.0);
+    }
+  }
+  var steps = u32(st.z);
+  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
+    if (t > tFar) {
+      st.y = ${SURFACE_GPU_RAY_MISS}.0;
+      break;
+    }
+    if (steps >= params.marchSteps) {
+      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+      break;
+    }
+    let eps = max(params.pixelEps * t, params.hitFloorEps);
+    let d = surfaceDE(ro + rd * t, eps, li);
+    steps++;
+    if (d < eps) {
+      st.y = ${SURFACE_GPU_RAY_HIT}.0;
+      break;
+    }
+    t += d * params.stepScale;
+    st.w = d;
+  }
+  st.x = t;
+  st.z = f32(steps);
+  states[ray] = st;
+  if (st.y == ${SURFACE_GPU_RAY_ACTIVE}.0) {
+    // Out of pass budget: write nothing — the host prefilled colorOut
+    // with the background, and a later pass finishes this ray.
+    return;
+  }
+  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    return;
+  }
+  // --- shade: surface-material.ts main()'s hit path, term for term ---
+  let pos = ro + rd * t;
+  // The PRE-dither sphere entry — exactly main()'s tEnter fog origin.
+  let tEnter = max(-bq - sq, 0.0);
+  let R = params.boundingRadius;
+  let visR = params.visibleRadius;
+  let hi = surfaceDEHitInfo(pos, li);
+  // Base color by source; sources 1-5 sample the CPU-built LUT.
+  var base: vec3f;
+  if (shade.colorSource == 0u) {
+    base = shadeMaps[clamp(hi.firstChoice, 0, i32(params.mapCount) - 1)].rgb;
+  } else {
+    var u: f32;
+    if (shade.colorSource == 1u) {
+      u = hi.trap;
+    } else if (shade.colorSource == 2u) {
+      u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);
+    } else if (shade.colorSource == 3u) {
+      u = clamp(length(pos) / visR, 0.0, 1.0);
+    } else if (shade.colorSource == 4u) {
+      u = hi.rings;
+    } else {
+      u = hi.sheets;
+    }
+    base = textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0).rgb;
+  }
+  // Normal from the DE gradient (tetrahedron taps), probed at the hit's
+  // own resolution scale; a vanishing gradient faces the camera instead
+  // of dividing by ~zero.
+  let h = max(shade.tracePixelEps * t, R * 2.0e-4);
+  let e = vec2f(1.0, -1.0) * 0.5773;
+  let grad = e.xyy * surfaceDE(pos + e.xyy * h, 0.0, li) +
+    e.yyx * surfaceDE(pos + e.yyx * h, 0.0, li) +
+    e.yxy * surfaceDE(pos + e.yxy * h, 0.0, li) +
+    e.xxx * surfaceDE(pos + e.xxx * h, 0.0, li);
+  let n = select(-rd, normalize(grad), dot(grad, grad) > 1e-12);
+  // Soft shadow: DE penumbra toward the light, started just off the
+  // surface; near-black penumbras and leaving the sphere end early.
+  var shadow = 1.0;
+  var ts = h * 2.0;
+  for (var i = 0u; i < shade.shadowSteps; i++) {
+    let sp = pos + n * h * 2.0 + shade.lightDir * ts;
+    let d = surfaceDE(sp, 0.0, li);
+    shadow = min(shadow, 8.0 * d / ts);
+    ts += clamp(d, R * 2.0e-4, visR * 0.1);
+    if (shadow < 0.02 || length(sp) > visR * 1.05) {
+      break;
+    }
+  }
+  shadow = clamp(shadow, 0.0, 1.0);
+  // Ambient occlusion: short DE probes along the normal, geometrically
+  // down-weighted (1-based inclusive taps, the GLSL loop verbatim).
+  var occ = 0.0;
+  var wgt = 1.0;
+  var norm = 0.0;
+  for (var i = 1u; i <= shade.aoTaps; i++) {
+    let hh = R * 0.02 * f32(i);
+    occ += wgt * clamp((hh - surfaceDE(pos + n * hh, 0.0, li)) / hh, 0.0, 1.0);
+    norm += wgt;
+    wgt *= 0.6;
+  }
+  let ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+  let diffuse = max(dot(n, shade.lightDir), 0.0);
+  let halfVec = normalize(shade.lightDir - rd);
+  let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
+  let lit = shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow;
+  // Light in linear space (fr-8id): decode the sRGB base, apply the
+  // light/specular product there, re-encode for the canvas.
+  let linBase = pow(base, vec3f(2.2));
+  var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));
+  // Depth fog toward the backdrop: squared-exponential in the distance
+  // traveled inside the bounding sphere.
+  let fog = 1.0 - exp(-0.12 * pow((t - tEnter) / max(visR, 1.0e-6), 2.0));
+  col = mix(col, bg, clamp(fog, 0.0, 1.0));
+  colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
 }`;
 
   // fr-kidj stage-2 branch-and-bound (surface-de.ts descendFold, the

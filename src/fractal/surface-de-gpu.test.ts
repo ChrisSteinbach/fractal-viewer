@@ -1,6 +1,8 @@
 import {
   packSurfaceGpuMaps,
   packSurfaceGpuParams,
+  packSurfaceGpuShade,
+  packSurfaceGpuShadeMaps,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS_BYTES,
@@ -8,10 +10,15 @@ import {
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_SHADE_BYTES,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
-import type { SurfaceGpuKernelOptions, SurfaceGpuPose } from "./surface-de-gpu";
+import type {
+  SurfaceGpuKernelOptions,
+  SurfaceGpuPose,
+  SurfaceGpuShadeParams,
+} from "./surface-de-gpu";
 import { buildSurfaceDE, SURFACE_FOLD_BOXFOLD } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
 import type { Transform } from "./types";
@@ -273,6 +280,35 @@ describe("packSurfaceGpuParams pose", () => {
   });
 });
 
+describe("packSurfaceGpuParams run overrides", () => {
+  it("packs run.maxDepth at offset 52 in place of de.maxDepth", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(
+      packSurfaceGpuParams(de, { itemCount: 1, maxDepth: de.maxDepth + 3 }),
+    );
+    expect(view.getUint32(52, true)).toBe(de.maxDepth + 3);
+  });
+
+  it("derives offset 80 from run.hitFloor when given (fround(R * hitFloor))", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(
+      packSurfaceGpuParams(de, { itemCount: 1, hitFloor: 0.02 }),
+    );
+    expect(view.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * 0.02),
+    );
+  });
+
+  it("keeps the documented defaults (de.maxDepth, SURFACE_GPU_HIT_FLOOR) when both overrides are omitted", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
+    expect(view.getUint32(52, true)).toBe(de.maxDepth);
+    expect(view.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR),
+    );
+  });
+});
+
 describe("packSurfaceGpuMaps", () => {
   it("packs each map's invM/invT/sigmaMin/foldInvW/foldSigma/foldKind/bnbDir/invTNorm/invMSigmaMin at the documented word offsets", () => {
     expect(SURFACE_GPU_MAP_VEC4).toBe(6);
@@ -325,6 +361,111 @@ describe("packSurfaceGpuMaps", () => {
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
     expect(out.length).toBe(stride);
     expect(Array.from(out)).toEqual(new Array(stride).fill(0));
+  });
+});
+
+/** Full mode-"image" shading params, overridable per test — distinct
+ * exactly-representable values per field so any offset mixup shows up as
+ * the wrong value, not a coincidental match. */
+function shadeParams(
+  overrides: Partial<SurfaceGpuShadeParams> = {},
+): SurfaceGpuShadeParams {
+  return {
+    invProjView: Array.from({ length: 16 }, (_, k) => k + 0.5),
+    lightDir: [0.25, 0.5, -0.75],
+    ambient: 0.22,
+    bgTop: [0.05, 0.075, 0.125],
+    bgBottom: [0.01, 0.02, 0.03],
+    colorSpeed: 0.5,
+    tracePixelEps: 0.0019,
+    colorSource: 3,
+    shadowSteps: 24,
+    aoTaps: 5,
+    dither: true,
+    ...overrides,
+  };
+}
+
+describe("packSurfaceGpuShade", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (128 bytes, per the module doc)", () => {
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(128);
+    const buf = packSurfaceGpuShade(shadeParams());
+    expect(buf).toBeInstanceOf(ArrayBuffer);
+    expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
+  });
+
+  it("round-trips the invProjView matrix column-major: element k at byte k*4", () => {
+    const shade = shadeParams();
+    const view = new DataView(packSurfaceGpuShade(shade));
+    for (let k = 0; k < 16; k++) {
+      expect(view.getFloat32(k * 4, true)).toBe(
+        Math.fround(shade.invProjView[k]),
+      );
+    }
+  });
+
+  it("round-trips lightDir/ambient/bgTop/colorSpeed/bgBottom/tracePixelEps/colorSource/shadowSteps/aoTaps at their documented offsets", () => {
+    const shade = shadeParams();
+    const view = new DataView(packSurfaceGpuShade(shade));
+    expect(view.getFloat32(64, true)).toBe(Math.fround(shade.lightDir[0]));
+    expect(view.getFloat32(68, true)).toBe(Math.fround(shade.lightDir[1]));
+    expect(view.getFloat32(72, true)).toBe(Math.fround(shade.lightDir[2]));
+    expect(view.getFloat32(76, true)).toBe(Math.fround(shade.ambient));
+    expect(view.getFloat32(80, true)).toBe(Math.fround(shade.bgTop[0]));
+    expect(view.getFloat32(84, true)).toBe(Math.fround(shade.bgTop[1]));
+    expect(view.getFloat32(88, true)).toBe(Math.fround(shade.bgTop[2]));
+    expect(view.getFloat32(92, true)).toBe(Math.fround(shade.colorSpeed));
+    expect(view.getFloat32(96, true)).toBe(Math.fround(shade.bgBottom[0]));
+    expect(view.getFloat32(100, true)).toBe(Math.fround(shade.bgBottom[1]));
+    expect(view.getFloat32(104, true)).toBe(Math.fround(shade.bgBottom[2]));
+    expect(view.getFloat32(108, true)).toBe(Math.fround(shade.tracePixelEps));
+    expect(view.getUint32(112, true)).toBe(shade.colorSource);
+    expect(view.getUint32(116, true)).toBe(shade.shadowSteps);
+    expect(view.getUint32(120, true)).toBe(shade.aoTaps);
+  });
+
+  it("sets flags bit0 at offset 124 when dither is true and clears it when false", () => {
+    const on = new DataView(packSurfaceGpuShade(shadeParams({ dither: true })));
+    expect(on.getUint32(124, true)).toBe(1);
+    const off = new DataView(
+      packSurfaceGpuShade(shadeParams({ dither: false })),
+    );
+    expect(off.getUint32(124, true)).toBe(0);
+  });
+});
+
+describe("packSurfaceGpuShadeMaps", () => {
+  it("packs (color.r, color.g, color.b, trapIndex) per map slot", () => {
+    const out = packSurfaceGpuShadeMaps(
+      [
+        [0.125, 0.25, 0.375],
+        [0.5, 0.625, 0.75],
+      ],
+      [0.25, 0.75],
+    );
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(8);
+    expect(Array.from(out)).toEqual([
+      0.125, 0.25, 0.375, 0.25, 0.5, 0.625, 0.75, 0.75,
+    ]);
+  });
+
+  it("zero-fills trapIndex for slots beyond a shorter trapIndices array", () => {
+    const out = packSurfaceGpuShadeMaps(
+      [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+      [0.5],
+    );
+    expect(out[3]).toBe(0.5);
+    expect(out[7]).toBe(0);
+  });
+
+  it("returns one zero stride when there are no colors", () => {
+    const out = packSurfaceGpuShadeMaps([], []);
+    expect(out.length).toBe(4);
+    expect(Array.from(out)).toEqual([0, 0, 0, 0]);
   });
 });
 
@@ -388,6 +529,63 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     expect(wgsl).toContain("var<storage, read> activeList: array<u32>;");
     expect(wgsl).toContain("var<storage, read_write> states: array<vec4f>;");
     expect(wgsl).not.toContain("fn evalQueries");
+  });
+
+  it("mode 'image' generates fn marchShadeRays on top of the march ray-state bindings and no evalQueries", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+    expect(wgsl).toContain("fn marchShadeRays");
+    expect(wgsl).toContain("var<storage, read> activeList: array<u32>;");
+    expect(wgsl).toContain("var<storage, read_write> states: array<vec4f>;");
+    expect(wgsl).not.toContain("fn evalQueries");
+  });
+
+  it("mode 'image' declares the shading interface at bindings 4-8 (shade/shadeMaps/colorOut/lutTex/lutSamp)", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+    expect(wgsl).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(7) var lutTex: texture_2d<f32>;",
+    );
+    expect(wgsl).toContain("@group(0) @binding(8) var lutSamp: sampler;");
+  });
+
+  it("mode 'image' emits the greedy hit-info descent and packs pixels with pack4x8unorm", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+    expect(wgsl).toContain("fn surfaceDEHitInfo");
+    expect(wgsl).toContain("pack4x8unorm");
+  });
+
+  it("mode 'image' gates the march-start hash dither behind the flags bit", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+    expect(wgsl).toContain("(shade.flags & 1u) != 0u");
+    expect(wgsl).toContain("hash2(");
+  });
+});
+
+describe("surfaceDeKernelWgsl image-mode isolation (eval/march output unchanged)", () => {
+  it("mode 'eval' output contains none of the image-only markers", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "eval" }));
+    expect(wgsl).not.toContain("ShadeParams");
+    expect(wgsl).not.toContain("binding(4)");
+    expect(wgsl).not.toContain("marchShadeRays");
+    expect(wgsl).not.toContain("shade");
+  });
+
+  it("mode 'march' output contains none of the image-only markers — not even the 'shade' substring", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", sharedFrontier: true, bnbStage2: true }),
+    );
+    expect(wgsl).not.toContain("ShadeParams");
+    expect(wgsl).not.toContain("binding(4)");
+    expect(wgsl).not.toContain("marchShadeRays");
+    expect(wgsl).not.toContain("shade");
   });
 });
 
