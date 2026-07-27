@@ -2672,7 +2672,16 @@ export class FractalScene {
     const job = this.surfaceStripJob;
     if (!job) return true;
     const done = this.pumpStrips(job, this.surfaceSettleTarget, budgetMs);
-    if (done) this.surfaceStripJob = null;
+    if (done) {
+      if (SURFPERF) {
+        const t = this.surfaceSettleTarget;
+        console.log(
+          `[surfperf] settle complete ${t.width}x${t.height}` +
+            ` spentMs=${job.spentMs.toFixed(1)}`,
+        );
+      }
+      this.surfaceStripJob = null;
+    }
     return done;
   }
 
@@ -2871,6 +2880,16 @@ interface SurfaceStripJob {
 }
 /** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
 const SYNC_PIXEL = new Uint8Array(4);
+
+/** `?surfperf` (fr-ck0w): diagnostics-only opt-in, the surface twin of
+ * main.ts's `?flameperf`. When present, every completed surface strip job
+ * logs its accumulated MEASURED GPU cost (`spentMs` — per-strip
+ * forced-completion/fence timings, the planner's own bookkeeping), which
+ * lets external sweeps (the fold beam-width spill probe) read
+ * settled-frame trace cost from the console without new plumbing. */
+const SURFPERF =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).has("surfperf");
 
 /** Resize a render target only when the wanted size differs — `setSize`
  * reallocates, so per-frame calls must be no-ops at steady state. */
