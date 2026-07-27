@@ -582,6 +582,92 @@ export function mandelboxLattice(): Transform[] {
 }
 
 /**
+ * "Mandelbox KIFS" — the fold family's SURFACE-render showcase (fr-5rvk):
+ * twelve maps whose variation lists are each exactly ONE fold entry, so the
+ * surface DE can descend them. Its sibling {@link mandelboxLattice} never
+ * can: a `mandelbox` + `linear` BLEND is a weighted sum, not a composition,
+ * and has no inverse branches to descend (see `surface-de.ts`'s fold
+ * section) — this preset is that lattice's pure-fold twin, kept as its own
+ * system rather than a derived variant because the pure-fold contraction
+ * budget forces every other number to move with it.
+ *
+ * THE BUDGET. A pure-fold map iterates `w·V(Mp + t)`, so eligibility gates
+ * the composite Lipschitz bound `|w|·L_V·sigma_max < 1`. The sphere fold's
+ * inner branch multiplies by 4 (`L = 4` for `mandelbox`/`spherefold`), so at
+ * the lattice's own fold weight `1.2` the affine scale can be at most
+ * `1/(4·1.2) ≈ 0.208`: `0.202` spends 97% of that (`4·1.2·0.202 = 0.9696`),
+ * keeping the fold's structure as large as the gate allows with margin to
+ * spare. The box fold's branches are plane REFLECTIONS (`L = 1`), so a
+ * `boxfold` map's whole budget is `|w|·sigma_max` — which is why the four
+ * binder maps below contract at `0.66` where the eight Mandelbox maps must
+ * sit at `0.202`.
+ *
+ * THE SHAPE. Eight `mandelbox` maps sit on the cube's corners (`±0.7`), one
+ * per corner: at ratio `0.242` those eight alone are a dust (similarity
+ * dimension `log 8 / log 4.1 ≈ 1.5`), so a `boxfold` tetrahedron — the four
+ * EVEN corners at `0.62`, contracting at `0.66` — knits them into a
+ * connected body. Rendered: a cubic core of rounded, crease-carved blocks
+ * with eight corner lobes repeating the whole at every scale, hollow enough
+ * (measured 74% empty cells inside its own p90 ball) that the surface tracer
+ * sees real interior.
+ *
+ * THE SYMMETRY. Every element of the tetrahedral group `T_d` is a signed
+ * permutation matrix; the box fold acts per axis and is odd, so it commutes
+ * with signed permutations, and the sphere fold is radius-only, so it
+ * commutes with every orthogonal map. Conjugating a map by a `T_d` element
+ * therefore moves ONLY its translation (rotation is identity throughout,
+ * scale and variation untouched), and both translation orbits — all eight
+ * cube corners, the four even corners — are closed under `T_d`. The
+ * attractor carries the full 24-element tetrahedral symmetry with not one
+ * rotated map, and the chaos-game cloud lands a `±1.11` cube (max radius
+ * `1.92`, octants even to 14%).
+ *
+ * WHY TWELVE. A fold map expands into 81 (`mandelbox`) or 27 (`boxfold`)
+ * inverse branches per descent level, so map count is a direct cost on the
+ * tracer, not just on the 24-slot uniform arrays: the 20-cell Menger
+ * arrangement of the same maps measured ~14x this system's descent cost for
+ * no more structure.
+ */
+export function mandelboxKifs(): Transform[] {
+  const foldWeight = 1.2;
+  const foldScale = 0.202;
+  const binderScale = 0.66;
+  const corner = 0.7;
+  const binder = 0.62;
+  const transforms: Transform[] = [];
+  for (const x of [1, -1]) {
+    for (const y of [1, -1]) {
+      for (const z of [1, -1]) {
+        transforms.push({
+          id: transforms.length,
+          position: [x * corner, y * corner, z * corner],
+          rotation: [0, 0, 0],
+          scale: [foldScale, foldScale, foldScale],
+          variations: [{ type: "mandelbox", weight: foldWeight }],
+        });
+      }
+    }
+  }
+  // The even corners (an even number of minus signs) are one of the cube's
+  // two inscribed tetrahedra — the orbit `T_d` preserves.
+  for (const corners of [
+    [1, 1, 1],
+    [1, -1, -1],
+    [-1, 1, -1],
+    [-1, -1, 1],
+  ] as Vec3[]) {
+    transforms.push({
+      id: transforms.length,
+      position: [corners[0] * binder, corners[1] * binder, corners[2] * binder],
+      rotation: [0, 0, 0],
+      scale: [binderScale, binderScale, binderScale],
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+  }
+  return transforms;
+}
+
+/**
  * Circumradius-1 vertices of the regular 4-simplex (5-cell / pentatope): an
  * alternated-cube tetrahedron sitting in the `w = −1/4` hyperplane plus the
  * apex on the `+w` axis. With `s = √5/4` each vertex is a unit vector and
@@ -938,6 +1024,7 @@ const PRESETS = {
   radiolarian,
   swirl: swirlFlame,
   mandelbox: mandelboxLattice,
+  mandelboxKifs,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
@@ -985,10 +1072,16 @@ export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
  * `RenderMode` type) so this module stays dependency-free; `main.ts`'s
  * preset handler consumes it when the freshly loaded system's cloud lands.
  */
-export const PRESET_RENDER_HINTS: Partial<Record<Preset, "flame" | "solid">> = {
+export const PRESET_RENDER_HINTS: Partial<
+  Record<Preset, "flame" | "solid" | "surface">
+> = {
   radiolarian: "flame",
   swirl: "flame",
   mandelbox: "flame",
+  // The pure-fold twin exists to showcase the fold-branch surface descent
+  // (fr-5rvk) — as a point cloud it under-delivers the same way the flame
+  // presets do.
+  mandelboxKifs: "surface",
 };
 
 /** Build the transform set for a named preset. */

@@ -15,6 +15,7 @@ import {
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
+  mandelboxKifs,
   mandelboxLattice,
   mengerSponge,
   nextId,
@@ -38,6 +39,7 @@ import {
   twentyFourCellWireframe,
 } from "./presets";
 import { mulberry32 } from "./rng";
+import { analyzeSurfaceSystem } from "./surface-de";
 import type { Transform, Vec4 } from "./types";
 
 describe("presets", () => {
@@ -344,6 +346,65 @@ describe("variation flame presets", () => {
     }
   });
 
+  it("mandelboxKifs is eight Mandelbox corners bound by a box-fold tetrahedron", () => {
+    const transforms = mandelboxKifs();
+    expect(transforms).toHaveLength(12);
+    const corners = transforms.slice(0, 8);
+    for (const t of corners) {
+      expect(t.variations).toEqual([{ type: "mandelbox", weight: 1.2 }]);
+      // 4 * 1.2 * 0.202 = 0.9696: 97% of the contraction the surface DE's
+      // fold gate allows a mandelbox map (the sphere fold's inner branch
+      // multiplies by 4), so the fold's structure is as large as it can be.
+      expect(t.scale).toEqual([0.202, 0.202, 0.202]);
+      expect(t.rotation).toEqual([0, 0, 0]);
+      expect(t.position.map((v) => Math.abs(v))).toEqual([0.7, 0.7, 0.7]);
+    }
+    // Every sign combination once: the whole cube-corner orbit.
+    expect(new Set(corners.map((t) => t.position.join(","))).size).toBe(8);
+    // The binder sits on the EVEN corners — one of the cube's two inscribed
+    // tetrahedra, the orbit the tetrahedral group preserves — and contracts
+    // at 0.66, three times the Mandelbox maps' 0.202, because a box fold's
+    // branches are isometries and its budget is the whole |w| * sigma.
+    const binder = transforms.slice(8);
+    expect(binder).toHaveLength(4);
+    for (const t of binder) {
+      expect(t.variations).toEqual([{ type: "boxfold", weight: 1 }]);
+      expect(t.scale).toEqual([0.66, 0.66, 0.66]);
+      expect(t.position.map((v) => Math.abs(v))).toEqual([0.62, 0.62, 0.62]);
+      expect(t.position.filter((v) => v < 0).length % 2).toBe(0);
+    }
+  });
+
+  it("every mandelboxKifs map is a single fold variation, never a blend", () => {
+    for (const t of mandelboxKifs()) {
+      // A blend is a weighted SUM of maps, not a composition, so it has no
+      // inverse branches for the surface DE to descend (surface-de.ts's fold
+      // section): one active fold entry per map is the whole eligibility.
+      expect(t.variations).toHaveLength(1);
+      expect(["boxfold", "spherefold", "mandelbox"]).toContain(
+        t.variations?.[0].type,
+      );
+      expect(t.variations?.[0].weight).not.toBe(0);
+    }
+  });
+
+  it("mandelboxKifs is surface-eligible at full step scale", () => {
+    const analysis = analyzeSurfaceSystem(mandelboxKifs());
+    expect(analysis.reasons).toEqual([]);
+    expect(analysis.status).toBe("eligible");
+    // Uniform per-map scale, so the descent never has to shorten its steps.
+    expect(analysis.stepScale).toBe(1);
+  });
+
+  // The pair is the point (fr-5rvk): mandelboxLattice blends `mandelbox` with
+  // `linear` for the flame, which no surface DE can descend, so the KIFS
+  // exists as its own pure-fold system rather than a tweak of that one.
+  it("mandelboxLattice's blend keeps it out of the surface render", () => {
+    const analysis = analyzeSurfaceSystem(mandelboxLattice());
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons[0]).toContain("uses variations");
+  });
+
   // Nonlinear maps can diverge at singularities; the point of the test is that
   // the chaos game's guard keeps the whole cloud finite (never NaN/Inf) and the
   // attractor has real extent rather than collapsing to a point.
@@ -351,6 +412,7 @@ describe("variation flame presets", () => {
     radiolarian: radiolarian(),
     swirlFlame: swirlFlame(),
     mandelboxLattice: mandelboxLattice(),
+    mandelboxKifs: mandelboxKifs(),
   })) {
     it(`${name} renders a finite, non-degenerate cloud`, () => {
       const { bounds } = runChaosGame(transforms, 3000, mulberry32(1));
