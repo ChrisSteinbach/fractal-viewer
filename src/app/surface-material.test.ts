@@ -31,6 +31,9 @@ function map3(overrides: Partial<SurfaceDEMap> = {}): SurfaceDEMap {
     foldInvW: 1,
     foldSigma: 0.5,
     baseIndex: 0,
+    invMSigmaMin: 1,
+    invTNorm: 0,
+    bnbDir: [0, 0, 0],
     ...overrides,
   };
 }

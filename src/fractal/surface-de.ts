@@ -454,6 +454,21 @@ export interface SurfaceDEMap {
   /** Which input transform this slot inverts — the index into the caller's
    * `transforms`, for per-transform coloring. */
   baseIndex: number;
+  /** Smallest singular value of `invM` — exactly `1 / sigma_max(M)`. With
+   * {@link invTNorm} it gives the branch-and-bound's separable child-radius
+   * lower bound `|invM·pre + invT| >= invMSigmaMin·|pre| − invTNorm`
+   * (fr-kidj stage 2), knowable from `|pre|` alone, BEFORE the transform. */
+  invMSigmaMin: number;
+  /** `|invT|` — the subtracted slack of the sigma-form bound above, and
+   * the ADDED term of the directional bound below. */
+  invTNorm: number;
+  /** `invM^T · invT / |invT|` (zero vector when `invT` is): for unit
+   * `d = invT/|invT|`, `|invM·pre + invT| >= dot(d, invM·pre) + |invT| =
+   * dot(bnbDir, pre) + invTNorm` — the fr-kidj stage-2 bound that stays
+   * TIGHT when the inverse translation dominates the child radius (the
+   * common fold case; the sigma-form above loses 2·|invT| of range there,
+   * but survives `invT = 0` where this one is vacuous). */
+  bnbDir: Vec3;
 }
 
 /** The kaleidoscope the descent sweeps instead of expanding (fr-x029). */
@@ -832,6 +847,7 @@ export function buildSurfaceDE(
         : fold.type === "spherefold"
           ? SURFACE_FOLD_SPHEREFOLD
           : SURFACE_FOLD_MANDELBOX;
+    const invTNorm = Math.hypot(invT[0], invT[1], invT[2]);
     maps.push({
       invM,
       invT,
@@ -840,6 +856,22 @@ export function buildSurfaceDE(
       foldInvW: fold ? 1 / fold.weight : 1,
       foldSigma: fold ? Math.abs(fold.weight) * sigmaMin : sigmaMin,
       baseIndex: i,
+      // Reciprocal singular values: sigma(inv(M)) = 1/sigma(M), so the
+      // smallest of the inverse is exactly one over the largest of the
+      // forward map (fr-kidj stage 2's bound data).
+      invMSigmaMin: 1 / analysis.sigmas[i].max,
+      invTNorm,
+      bnbDir:
+        invTNorm > 0
+          ? [
+              (invM[0] * invT[0] + invM[3] * invT[1] + invM[6] * invT[2]) /
+                invTNorm,
+              (invM[1] * invT[0] + invM[4] * invT[1] + invM[7] * invT[2]) /
+                invTNorm,
+              (invM[2] * invT[0] + invM[5] * invT[1] + invM[8] * invT[2]) /
+                invTNorm,
+            ]
+          : [0, 0, 0],
     });
   });
 
@@ -1934,6 +1966,15 @@ const FOLD_SWEEP = [0, 0, 0];
  *   running min cannot advance it (every deeper fold is >= the floor),
  *   so it is skipped outright — this is what collapses the frontier from
  *   branch-count blowup to the measured 10-33 peak.
+ * - BRANCH-AND-BOUND SKIP (fr-kidj stage 2). Both the floor prune and
+ *   the transform reorder above it still pay the branch decode; this
+ *   skip prices the CHILD before the inverse application, from
+ *   `r >= invMSigmaMin·|pre| − invTNorm`. A candidate provably past the
+ *   escape radius with certificate >= best, or — frontier full — provably
+ *   both non-displacing (key >= worst kept) and fold-no-op, is a state
+ *   no-op and is skipped BIT-IDENTICALLY (the in-loop comment carries
+ *   the case analysis; measured byte-identical on the harness's full
+ *   probe gauntlet, transforms/call sharply down).
  *
  * Everything else mirrors {@link descend}: same prologue/lens, same
  * selection-key semantics otherwise, same escape-radius folds (plain on
@@ -2009,6 +2050,12 @@ function descendFold(
       let sX = fcX[c];
       let sY = fcY[c];
       let sZ = fcZ[c];
+      // fr-kidj stage-2 hoists: the chain-point norm is sector-invariant
+      // (sectors rotate about an axis through the origin), so the affine
+      // arm's |pre|² is one number per chain; 1/pScale prices the skip's
+      // frontier-key condition.
+      const chainNormSq = sX * sX + sY * sY + sZ * sZ;
+      const invPScale = 1 / pScale;
       for (let k = 0; k < order; k++) {
         if (k > 0) {
           stepSector(axis, stepCos, stepSin, sX, sY, sZ, FOLD_SWEEP);
@@ -2035,6 +2082,59 @@ function descendFold(
                   ? 3
                   : 81;
           const absW = map.foldSigma / map.sigmaMin;
+          // fr-kidj stage 2 (branch-and-bound skip): a candidate whose
+          // processing is provably a STATE no-op — nothing folded below
+          // best, nothing displaced in the frontier — can be skipped
+          // bit-identically, not merely validly. The child radius is
+          // lower-bounded from `pre` alone, by the LARGER of two forms:
+          //
+          //     r = |invM·pre + invT| >= invMSigmaMin·|pre| − invTNorm
+          //     r                     >= dot(bnbDir, pre) + invTNorm
+          //
+          // (the sigma form; and the directional form — project onto the
+          // unit direction of invT: |x| >= dot(d, x) for unit d, so
+          // r >= dot(d, invM·pre) + |invT|. The first survives invT = 0,
+          // the second stays tight when the inverse translation
+          // dominates the child radius — the measured fold case, where
+          // the sigma form's −|invT| slack made it fire never.) The
+          // directional form is radical-free and tested directly; the
+          // sigma form is tested squared (both sides nonnegative by
+          // construction). Two no-op classes:
+          //
+          // - ESCAPE skip: rLower STRICTLY > escapeRadius forces the
+          //   plain escape fold, which is a no-op when also
+          //   childScale·(rLower − R) >= best (the folded certificate is
+          //   >= its own lower bound; a cert >= best never updates best,
+          //   so the early exits cannot fire either). No frontier state
+          //   involved, so this arm works at ANY keptCount.
+          // - FRONTIER skip, only with the frontier FULL: (a)
+          //   rLower >= R and childScale·(rLower − R) >= best — the
+          //   eviction fold cannot advance the min (refinement only
+          //   raises folded certificates, and at rLower = R exactly,
+          //   possible only with best <= 0, the in-sphere eviction folds
+          //   a positive floor or nothing — either way a no-op) — AND
+          //   (b) pScale·(rLower − R) >= fnWorstKey, so key >= fnWorstKey
+          //   and ties-evict-the-newcomer takes the eviction path for
+          //   certain. Encoded via qReq = R + max(0, best/childScale,
+          //   fnWorstKey/pScale): skip iff
+          //   |pre|²·invMSigmaMin² >= (qReq + invTNorm)².
+          //
+          // best/fnWorstKey only DECREASE within a level, so a skip
+          // decided now would also be decided at any later state;
+          // enumeration order (and thus every tie-break) is untouched.
+          const bnbSigma = map.invMSigmaMin;
+          const bnbSigmaSq = bnbSigma * bnbSigma;
+          const bnbT = map.invTNorm;
+          const needE = de.escapeRadius + bnbT;
+          const needESq = needE * needE;
+          const bnbDir = map.bnbDir;
+          const gX = bnbDir[0];
+          const gY = bnbDir[1];
+          const gZ = bnbDir[2];
+          let invChildScale =
+            1 /
+            (pScale *
+              (kind === SURFACE_FOLD_NONE ? map.sigmaMin : map.foldSigma));
           // u-space chain point (q/w), the per-axis box preimage triple
           // {u, 2−u, −2−u} with the matching per-axis output-interval
           // distances (boxfold reads them off u once; mandelbox refreshes
@@ -2101,6 +2201,26 @@ function descendFold(
             let candFloor = pFloor;
             if (kind === SURFACE_FOLD_NONE) {
               if (candFloor > 0 && candFloor >= best) continue;
+              // Stage-2 B&B skips (see the hoist comment above).
+              const rDir = gX * sX + gY * sY + gZ * sZ + bnbT;
+              const rEsc = R + best * invChildScale;
+              if (rDir > de.escapeRadius && rDir >= rEsc) continue;
+              const sTerm = chainNormSq * bnbSigmaSq;
+              if (sTerm > needESq) {
+                const needC = rEsc + bnbT;
+                if (needC <= 0 || sTerm >= needC * needC) continue;
+              }
+              if (keptCount === FOLD_W) {
+                const qReq =
+                  R +
+                  Math.max(
+                    0,
+                    Math.max(best * invChildScale, fnWorstKey * invPScale),
+                  );
+                if (rDir >= qReq) continue;
+                const need = qReq + bnbT;
+                if (sTerm >= need * need) continue;
+              }
               ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
               iy = im[3] * sX + im[4] * sY + im[5] * sZ + it[1];
               iz = im[6] * sX + im[7] * sY + im[8] * sZ + it[2];
@@ -2160,6 +2280,9 @@ function descendFold(
                   sfSigma = ru;
                   sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
                 }
+                // This sphere branch's childScale reciprocal for the
+                // stage-2 skip (sfSigma just changed).
+                invChildScale = 1 / (pScale * map.foldSigma * sfSigma);
                 if (kind === SURFACE_FOLD_MANDELBOX) {
                   px0 = vx;
                   px1 = 2 - vx;
@@ -2241,6 +2364,28 @@ function descendFold(
               // cannot advance the min. Pruned branches never reach the
               // inverse application below.
               if (candFloor > 0 && candFloor >= best) continue;
+              // Stage-2 B&B skips (see the hoist comment above); the
+              // bounds read the branch preimage exactly, after the shell
+              // guard.
+              const rDir = gX * cx + gY * cy + gZ * cz + bnbT;
+              const rEsc = R + best * invChildScale;
+              if (rDir > de.escapeRadius && rDir >= rEsc) continue;
+              const sTerm = (cx * cx + cy * cy + cz * cz) * bnbSigmaSq;
+              if (sTerm > needESq) {
+                const needC = rEsc + bnbT;
+                if (needC <= 0 || sTerm >= needC * needC) continue;
+              }
+              if (keptCount === FOLD_W) {
+                const qReq =
+                  R +
+                  Math.max(
+                    0,
+                    Math.max(best * invChildScale, fnWorstKey * invPScale),
+                  );
+                if (rDir >= qReq) continue;
+                const need = qReq + bnbT;
+                if (sTerm >= need * need) continue;
+              }
               ix = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
               iy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
               iz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];

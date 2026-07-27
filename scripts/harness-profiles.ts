@@ -34,13 +34,14 @@ export function countingDE(
   counter: { n: number };
 } {
   const counter = { n: 0 };
+  // Spread first, then re-define invM as the counting getter (later
+  // literal members win): every data field — INCLUDING ones added to
+  // SurfaceDEMap after this file was written — passes through untouched.
+  // An explicit field list here once silently dropped fr-kidj's new
+  // bound fields (scripts/ sits outside the root tsconfig's include, so
+  // tsc never caught it) and fed `undefined` into the descent.
   const maps = de.maps.map((m): SurfaceDEMap => ({
-    invT: m.invT,
-    sigmaMin: m.sigmaMin,
-    foldKind: m.foldKind,
-    foldInvW: m.foldInvW,
-    foldSigma: m.foldSigma,
-    baseIndex: m.baseIndex,
+    ...m,
     get invM() {
       counter.n++;
       return m.invM;
@@ -113,15 +114,13 @@ export function countingDEFine(
 } {
   const counter = { n: 0 };
   const fineCounter = { n: 0 };
+  // Spread-then-override, exactly like countingDE above (and for the same
+  // hard-won reason — see its comment): only invM is replaced, every
+  // other field flows through as the production build made it.
   const maps = de.maps.map((m): SurfaceDEMap => {
     const proxiedInvM = wrapInvMElementCounter(m.invM, fineCounter);
     return {
-      invT: m.invT,
-      sigmaMin: m.sigmaMin,
-      foldKind: m.foldKind,
-      foldInvW: m.foldInvW,
-      foldSigma: m.foldSigma,
-      baseIndex: m.baseIndex,
+      ...m,
       get invM() {
         counter.n++;
         return proxiedInvM;
