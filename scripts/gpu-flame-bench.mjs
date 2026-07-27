@@ -15,6 +15,29 @@
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
  *     [--url=https://host:port] [--headed] [--chrome=/path/to/chrome]
  *     [--swiftshader] [--out=bench-results]
+ *     [--surface | --surface-only] [--display=:0]
+ *     [--surface-widths=12,4] [--surface-timing-widths=12,8,6,4]
+ *     [--surface-variants=shared,private] [--surface-wg=32]
+ *     [--surface-size=320x180] [--surface-cap-ms=120000]
+ *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
+ *     [--surface-force=1]
+ *
+ * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
+ * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
+ * (`?surface=only`). The `--surface-*` passthrough flags map 1:1 onto the
+ * page's URL params (see `parseSurfaceConfig` in src/app/gpu-bench/main.ts
+ * for defaults/semantics). With either flag the exit code additionally
+ * gates on `results.surfaceDe.verdict` (1 on "fail", 2 on "skipped"); the
+ * flame agreement gate below applies exactly as before, but only when the
+ * flame scenarios actually ran (i.e. not under --surface-only). Without
+ * any surface flag, behavior is bit-for-bit unchanged — CI unaffected.
+ *
+ * `--display=<d>` launches HEADED Chrome against a real X display (the
+ * fold-width-sweep.mjs x11 recipe: DISPLAY in the env, no --headless=new,
+ * --no-sandbox) so the WebGPU adapter is the real driver instead of
+ * SwiftShader — the mode the surface timing sweep is meant to run in. The
+ * WebGL --use-gl/--use-angle flags are deliberately NOT added: WebGPU goes
+ * through Vulkan independently of ANGLE.
  *
  * `--chrome=bundled` launches the Playwright-BUNDLED Chromium (the same
  * hermetic browser the WebGL smoke test uses) instead of a system Chrome —
@@ -53,7 +76,25 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_TIMEOUT_MS = 60_000;
 const BENCH_TIMEOUT_MS = 10 * 60_000;
+/** Wait cap when a surface flag is present — the surface timing matrix
+ * (many kernel configs, multi-pass marches, a per-config wall cap of its
+ * own) can legitimately run far past the flame sweep's 10 minutes. */
+const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CHROME = "/usr/bin/google-chrome";
+
+/** `--surface-*` passthrough flags → the page's URL params (defaults and
+ * semantics live in src/app/gpu-bench/main.ts's parseSurfaceConfig). */
+const SURFACE_PASSTHROUGH_FLAGS = {
+  "surface-widths": "surfaceWidths",
+  "surface-timing-widths": "surfaceTimingWidths",
+  "surface-variants": "surfaceVariants",
+  "surface-size": "surfaceSize",
+  "surface-cap-ms": "surfaceCapMs",
+  "surface-systems": "surfaceSystems",
+  "surface-timing": "surfaceTiming",
+  "surface-wg": "surfaceWg",
+  "surface-force": "surfaceForce",
+};
 
 function parseArgs(argv) {
   const args = {
@@ -64,6 +105,10 @@ function parseArgs(argv) {
     chrome: DEFAULT_CHROME,
     swiftshader: false,
     out: "bench-results",
+    surface: false,
+    surfaceOnly: false,
+    display: undefined,
+    surfaceParams: {},
   };
   for (const raw of argv) {
     if (!raw.startsWith("--")) {
@@ -96,11 +141,81 @@ function parseArgs(argv) {
       case "out":
         args.out = value;
         break;
+      case "surface":
+        args.surface = true;
+        break;
+      case "surface-only":
+        args.surfaceOnly = true;
+        break;
+      case "display":
+        args.display = value;
+        break;
       default:
+        if (key in SURFACE_PASSTHROUGH_FLAGS) {
+          args.surfaceParams[SURFACE_PASSTHROUGH_FLAGS[key]] = value;
+          break;
+        }
         throw new Error(`Unknown flag: --${key}`);
     }
   }
   return args;
+}
+
+/** One line per agreement row and per timing config — the compact stdout
+ * view of results.surfaceDe (the full JSON still lands in results.json). */
+function printSurfaceSummary(surfaceDe) {
+  if (!surfaceDe) {
+    console.log("surfaceDe: (no results — section never published)");
+    return;
+  }
+  const reason = surfaceDe.reason ? ` reason="${surfaceDe.reason}"` : "";
+  console.log(`surfaceDe: verdict=${surfaceDe.verdict}${reason}`);
+  for (const r of surfaceDe.agreement ?? []) {
+    const cls = r.failuresByClass;
+    const failureDetail =
+      r.failures > 0 && cls
+        ? ` over=${r.failuresOver} cls=j${cls.jittered}/u${cls.uniform}/e${cls.exact}`
+        : "";
+    // Non-gating rows (width ≠ the CPU oracle's fixed frontier width)
+    // measure expected narrow-width erosion — labeled so a nonzero
+    // "fail=" count there is not misread as kernel disagreement.
+    const tag = r.gating === false ? "info " : "agree";
+    console.log(
+      `  ${tag} ${r.system} ${r.variant} w${r.width} s2=${r.stage2 ? "on" : "off"} wg${r.wg}: ` +
+        `n=${r.n} fail=${r.failures} maxAbs=${r.maxAbsErr.toExponential(2)} ` +
+        `maxRel=${r.maxRelErr.toExponential(2)} p99Abs=${r.p99AbsErr.toExponential(2)} ` +
+        `signed=[${r.minGpuMinusCpu.toExponential(2)}, ${r.maxGpuMinusCpu.toExponential(2)}]` +
+        failureDetail,
+    );
+  }
+  for (const c of surfaceDe.crossChecks ?? []) {
+    console.log(
+      `  cross ${c.kind} ${c.system} w${c.width}: mismatches=${c.mismatches} ` +
+        `maxDelta=${c.maxDelta.toExponential(2)} (${c.note})`,
+    );
+  }
+  for (const t of surfaceDe.timing ?? []) {
+    const truncated = t.truncated
+      ? ` TRUNCATED active=${t.activeRemaining}` +
+        (t.completedFraction !== undefined
+          ? ` done=${(t.completedFraction * 100).toFixed(1)}%`
+          : "") +
+        (t.extrapolatedMs !== undefined
+          ? ` extrapolated≈${t.extrapolatedMs.toFixed(0)}ms`
+          : "")
+      : "";
+    console.log(
+      `  time ${t.variant} w${t.width} s2=${t.stage2 ? "on" : "off"} wg${t.wg}: ` +
+        `compile=${t.compileMs.toFixed(0)}ms gpu=${t.gpuMs.toFixed(0)}ms ` +
+        `wall=${t.wallMs.toFixed(0)}ms passes=${t.passes} hits=${t.hits} ` +
+        `miss=${t.miss} exh=${t.exhausted} meanSteps=${t.meanSteps.toFixed(1)}` +
+        (t.sanity ? ` sanity=${t.sanity}` : "") +
+        truncated,
+    );
+  }
+  for (const note of surfaceDe.notes ?? []) {
+    console.log(`  note: ${note}`);
+  }
 }
 
 /** Poll `url` (ignoring the dev server's self-signed cert) until it responds
@@ -200,6 +315,10 @@ async function screenshotBestEffort(page, filePath) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const surfaceRequested = args.surface || args.surfaceOnly;
+  const benchTimeoutMs = surfaceRequested
+    ? SURFACE_BENCH_TIMEOUT_MS
+    : BENCH_TIMEOUT_MS;
   const outDir = path.resolve(REPO_ROOT, args.out);
   await mkdir(outDir, { recursive: true });
 
@@ -265,11 +384,23 @@ async function main() {
         "--use-vulkan=swiftshader",
       );
     }
-    if (!args.headed) launchFlags.push("--headless=new");
+    if (args.display !== undefined) {
+      // Real-driver mode (the fold-width-sweep.mjs x11 recipe): headed
+      // against the given X display, --no-sandbox, and NO --headless=new.
+      // The three WebGPU flags above stay as-is — WebGPU reaches the real
+      // GPU through Vulkan, independent of the ANGLE/WebGL flags the WebGL
+      // sweeps need.
+      launchFlags.push("--no-sandbox");
+    } else if (!args.headed) {
+      launchFlags.push("--headless=new");
+    }
     browser = await chromium.launch({
       executablePath,
       headless: false,
       args: launchFlags,
+      ...(args.display !== undefined
+        ? { env: { ...process.env, DISPLAY: args.display } }
+        : {}),
     });
     // Wide enough that a scenario's three 960px canvases sit un-clipped in
     // one row — page.png would otherwise cut off the GPU/diff canvases.
@@ -289,6 +420,11 @@ async function main() {
       duration: args.duration,
     });
     if (args.scenarios) query.set("scenarios", args.scenarios);
+    if (args.surfaceOnly) query.set("surface", "only");
+    else if (args.surface) query.set("surface", "1");
+    for (const [param, value] of Object.entries(args.surfaceParams)) {
+      query.set(param, value);
+    }
     const targetUrl = `${base}/gpu-bench/index.html?${query.toString()}`;
     console.error(`[gpu-flame-bench] navigating to ${targetUrl}`);
     await page.goto(targetUrl, { waitUntil: "load" });
@@ -305,13 +441,13 @@ async function main() {
     await screenshotBestEffort(page, path.join(outDir, "progress-2.png"));
 
     console.error(
-      `[gpu-flame-bench] waiting up to ${BENCH_TIMEOUT_MS}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
+      `[gpu-flame-bench] waiting up to ${benchTimeoutMs}ms for __BENCH_DONE__/__BENCH_ERROR__...`,
     );
     await page.waitForFunction(
       () =>
         window.__BENCH_DONE__ === true || window.__BENCH_ERROR__ !== undefined,
       undefined,
-      { timeout: BENCH_TIMEOUT_MS, polling: 250 },
+      { timeout: benchTimeoutMs, polling: 250 },
     );
 
     const results = await page.evaluate(() => window.__BENCH_RESULTS__ ?? null);
@@ -348,7 +484,11 @@ async function main() {
       );
       exitCode = 1;
     }
-    if (results && results.agreement === "fail") {
+    // The flame agreement gate applies exactly as before, but only when the
+    // flame scenarios actually ran — under --surface-only the page skips
+    // them by design, so their vacuous "skipped" must not fail the run.
+    const flameRan = !args.surfaceOnly;
+    if (flameRan && results && results.agreement === "fail") {
       console.error(
         "[gpu-flame-bench] agreement check FAILED — see each scenario's comparison.pass in results.json",
       );
@@ -357,11 +497,28 @@ async function main() {
     // "skipped" means no comparison ran at all (no WebGPU adapter) — a
     // check that verified nothing must not exit green, or a CI box that
     // silently loses WebGPU keeps passing while pinning nothing.
-    if (results && results.agreement === "skipped") {
+    if (flameRan && results && results.agreement === "skipped") {
       console.error(
         "[gpu-flame-bench] agreement check SKIPPED — no GPU comparison ran (no WebGPU adapter?); refusing to report success",
       );
       exitCode = 2;
+    }
+    if (surfaceRequested) {
+      const surfaceDe = results ? results.surfaceDe : undefined;
+      printSurfaceSummary(surfaceDe);
+      if (surfaceDe && surfaceDe.verdict === "fail") {
+        console.error(
+          "[gpu-flame-bench] surface DE check FAILED — see results.surfaceDe in results.json",
+        );
+        exitCode = 1;
+      } else if (!surfaceDe || surfaceDe.verdict === "skipped") {
+        // Same refusal as the flame gate: a surface section that verified
+        // nothing must not exit green.
+        console.error(
+          "[gpu-flame-bench] surface DE section SKIPPED — no surface agreement ran; refusing to report success",
+        );
+        if (exitCode === 0) exitCode = 2;
+      }
     }
   } finally {
     if (browser) await browser.close();

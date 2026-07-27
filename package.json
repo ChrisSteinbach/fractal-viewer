@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "smoke": "node scripts/webgl-smoke.mjs",
     "bench:gpu": "node scripts/gpu-flame-bench.mjs",
+    "bench:surface": "node scripts/gpu-flame-bench.mjs --surface-only",
     "test": "npm run lint && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
