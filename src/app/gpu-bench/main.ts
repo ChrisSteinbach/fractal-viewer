@@ -29,7 +29,7 @@
  */
 import * as THREE from "three";
 import { rotationMatrix4, toTransform4 } from "../../fractal/affine4";
-import { prepareChaosGame } from "../../fractal/chaos-game";
+import { prepareChaosGame, runChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../../fractal/chaos-game-4d";
@@ -54,6 +54,7 @@ import {
   barnsleyFern,
   doubleRotation,
   hyperfern,
+  mandelboxKifs,
   sierpinskiTetrahedron,
   swirlFlame,
 } from "../../fractal/presets";
@@ -63,6 +64,26 @@ import {
 } from "../../fractal/project4";
 import type { FourDView } from "../../fractal/project4";
 import { mulberry32 } from "../../fractal/rng";
+import {
+  buildSurfaceDE,
+  deHasFolds,
+  estimateDistance,
+  SURFACE_FOLD_BEAM_WIDTH,
+} from "../../fractal/surface-de";
+import type { SurfaceDE } from "../../fractal/surface-de";
+import {
+  SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_PARAMS_BYTES,
+  SURFACE_GPU_RAY_ACTIVE,
+  SURFACE_GPU_RAY_EXHAUSTED,
+  SURFACE_GPU_RAY_HIT,
+  SURFACE_GPU_RAY_MISS,
+  packSurfaceGpuMaps,
+  packSurfaceGpuParams,
+  surfaceDeKernelWgsl,
+  surfaceGpuWorkgroupBytes,
+} from "../../fractal/surface-de-gpu";
+import type { SurfaceGpuPose } from "../../fractal/surface-de-gpu";
 import type {
   FourDColorMode,
   Rotation4,
@@ -217,6 +238,14 @@ interface BenchResults {
    * was skipped (no WebGPU in this browser: see `computeAgreement`'s doc for
    * why that is deliberately NOT a failure). */
   agreement: "pass" | "fail" | "skipped";
+  /** fr-q1f8: the surface-DE WGSL kernel section (`runSurfaceDeSection`) —
+   * present only once that section has run (`?surface=1|only` or its
+   * button), ABSENT otherwise so a run without the new flags produces a
+   * bit-for-bit unchanged results.json. Its verdict is deliberately
+   * independent of {@link agreement} (`computeAgreement` is untouched);
+   * `scripts/gpu-flame-bench.mjs` gates on it only when a surface flag was
+   * given. */
+  surfaceDe?: SurfaceDeResults;
 }
 
 declare global {
@@ -1753,6 +1782,1540 @@ async function runSs1DisplayDownsampleCheck(): Promise<
   }
 }
 
+// ---------------------------------------------------------------------------
+// Surface-DE WGSL kernel section (fr-q1f8)
+// ---------------------------------------------------------------------------
+//
+// Pins `src/fractal/surface-de-gpu.ts`'s fold-DE compute kernel against
+// `estimateDistance` (surface-de.ts, refine=false — the exact estimator the
+// kernel mirrors) on real query points, then times the march kernel on
+// mandelboxKifs — the brief §3.7 measurement. Runs only when `?surface=1`
+// (after the flame scenarios) or `?surface=only` (instead of them), or via
+// its own button; with the param absent the flame pipeline above and
+// `computeAgreement` behave bit-for-bit as before.
+
+type SurfaceVariant = "shared" | "private";
+
+interface SurfaceSectionConfig {
+  agreementWidths: number[];
+  timingWidths: number[];
+  variants: SurfaceVariant[];
+  sharedWg: number;
+  privateWg: number;
+  rasterWidth: number;
+  rasterHeight: number;
+  capMs: number;
+  systems: "all" | "synthetic";
+  timing: boolean;
+  force: boolean;
+}
+
+interface SurfaceKernelConfig {
+  variant: SurfaceVariant;
+  width: number;
+  stage2: boolean;
+  wg: number;
+}
+
+interface SurfaceAgreementRow {
+  system: string;
+  variant: SurfaceVariant;
+  width: number;
+  stage2: boolean;
+  wg: number;
+  n: number;
+  maxAbsErr: number;
+  /** Max of `absErr / max(|cpu|, 0.05·R)` — the tolerance's own scale. */
+  maxRelErr: number;
+  p99AbsErr: number;
+  /** Whether this row gates the section verdict. The CPU oracle's fold
+   * frontier width is the FIXED module constant
+   * `SURFACE_FOLD_BEAM_WIDTH` (12) — `estimateDistance` cannot be built
+   * narrower (the fr-ck0w sweep rewrote the source to change it) — so
+   * only rows at exactly that width compare like against like. Narrower
+   * kernel widths are still run as an INFORMATIONAL measurement of the
+   * fr-5rvk narrow-width erosion (a real, expected estimator difference,
+   * not kernel disagreement). */
+  gating: boolean;
+  /** Queries whose error exceeded
+   * `max(2e-4·R, 2e-3·max(|cpu|, 0.05·R))` — any nonzero count on a
+   * GATING row fails the section verdict; on non-gating rows it counts
+   * the expected width-erosion excursions. */
+  failures: number;
+  /** Error-distribution report (diagnosis, not gating): the most positive
+   * and most negative `gpu − cpu`. At a width NARROWER than the oracle's
+   * both signs are pure width effects, per the descendFold doc: silent
+   * in-sphere floor-0 drops lose the true ancestor chain and OVERSHOOT
+   * (gpu > cpu — fr-5rvk measured exactly this on-attractor), while
+   * drop-folded escaped certificates freeze shallow and UNDER-estimate
+   * ("loses tightness, never validity"). At the production width both
+   * must vanish into f32 noise. */
+  maxGpuMinusCpu: number;
+  minGpuMinusCpu: number;
+  /** Failures where the GPU OVER-estimated (gpu > cpu) — the dangerous
+   * direction for a distance bound. */
+  failuresOver: number;
+  /** Failures split by the query mix's deterministic layout: first 400
+   * jittered, next 200 uniform, last 100 exact on-attractor. */
+  failuresByClass: { jittered: number; uniform: number; exact: number };
+}
+
+interface SurfaceCrossCheckRow {
+  /** "shared-vs-private": identical (width, stage2) must be EXACTLY equal
+   * (same arithmetic, different frontier storage) — mismatches fail the
+   * verdict. "stage2-on-vs-off": informational only — the fr-kidj stage-2
+   * skips are value no-ops in exact arithmetic, but f32 rounding may flip
+   * marginal frontier insertions, so deltas are reported, never gated. */
+  kind: "shared-vs-private" | "stage2-on-vs-off";
+  system: string;
+  width: number;
+  n: number;
+  mismatches: number;
+  maxDelta: number;
+  note: string;
+}
+
+interface SurfaceTimingRow {
+  variant: SurfaceVariant;
+  width: number;
+  stage2: boolean;
+  wg: number;
+  rays: number;
+  hits: number;
+  miss: number;
+  exhausted: number;
+  activeRemaining: number;
+  meanSteps: number;
+  /** Σ per-pass performance.now() span submit → onSubmittedWorkDone. */
+  gpuMs: number;
+  wallMs: number;
+  /** Shader-module + pipeline creation time — the headline number against
+   * the WebGL fold tracer's ~25s links. */
+  compileMs: number;
+  passes: number;
+  truncated: boolean;
+  completedFraction?: number;
+  /** `gpuMs / fractionOfRayStepsDone` where the fraction assumes every
+   * still-active ray runs to the full step budget — an EXTRAPOLATION, not a
+   * measurement. */
+  extrapolatedMs?: number;
+  gpuHitRate?: number;
+  cpuHitRate?: number;
+  /** "suspect" when |gpuHitRate − cpuHitRate| > 0.15 on the sampled pixels
+   * — informational (f32 trajectories legitimately diverge; only a gross
+   * mismatch matters). */
+  sanity?: "ok" | "suspect" | "skipped (truncated)";
+}
+
+interface SurfaceDeResults {
+  verdict: "pass" | "fail" | "skipped";
+  reason?: string;
+  adapter: BenchAdapterInfo | null;
+  limits: Record<string, number>;
+  agreement: SurfaceAgreementRow[];
+  crossChecks: SurfaceCrossCheckRow[];
+  timing: SurfaceTimingRow[];
+  /** Skipped configs/systems, WGSL compile errors (verbatim), and other
+   * per-run context — never silent. */
+  notes: string[];
+}
+
+/** Chaos-cloud size behind the agreement query set — the surface-beam
+ * harness's CLOUD default is 300k; 100k keeps the page budget while the
+ * query MECHANICS stay the harness's verbatim. */
+const SURFACE_CLOUD_POINTS = 100_000;
+
+/** `SURFACE_FULL_MARCH_STEPS` mirror (`src/app/surface-material.ts`) — the
+ * full-tier whole-ray analytic budget the timing march replays. Duplicated
+ * like the harness emulators do (fold-cost-split.harness.ts's convention)
+ * rather than importing the three-laden material module. */
+const SURFACE_MARCH_STEPS = 160;
+
+/** poseRays pose (scripts/fold-cost-split.harness.ts): off-axis orbit
+ * angles deliberately not aligned to any coordinate plane or mandelboxKifs's
+ * T_d symmetry, distance as a multiple of the visible bounding radius. */
+const SURFACE_POSE_THETA = 0.9;
+const SURFACE_POSE_PHI = 1.2;
+const SURFACE_POSE_DIST_FACTOR = 2.4;
+const SURFACE_POSE_FOV_DEG = 60;
+
+/** Cone-eps slope `2·tan(fov/2) / 720` — 720 is the fr-ck0w width sweep's
+ * viewport HEIGHT (scripts/fold-width-sweep.mjs), deliberately DECOUPLED
+ * from the bench raster exactly like erosion-repro.harness.ts's
+ * APP_PIXEL_EPS: the raster only decides how many rays we trace, not how
+ * fine the hit test is. */
+const SURFACE_PIXEL_EPS =
+  (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / 720;
+
+/** Adaptive stepsThisPass: start at 1, double while the last pass came in
+ * under the target, capped — every submission stays bounded (the fr-096u
+ * i915 preemption-timeout lesson, host-side). */
+const SURFACE_PASS_TARGET_MS = 250;
+const SURFACE_MAX_STEPS_PER_PASS = 32;
+
+/** The CPU sanity march samples every Nth pixel in both raster axes. */
+const SURFACE_SANITY_STRIDE = 8;
+/** Hit-rate gap beyond which a timing config's sanity reads "suspect". */
+const SURFACE_SANITY_HIT_RATE_TOL = 0.15;
+
+/** WebGPU's default `maxComputeWorkgroupStorageSize` — above this the
+ * device must be asked for more at acquisition (surface-de-gpu.ts doc). */
+const SURFACE_DEFAULT_WORKGROUP_STORAGE = 16_384;
+
+/** Both maps pure `spherefold` — the hardest void-false-hit profile in the
+ * fr-5rvk set. Mirrors scripts/harness-profiles.ts — keep in sync
+ * (importing from scripts/ into the Vite page is off-limits). */
+function surfaceFoldSpherefoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.5, 0.2, -0.1],
+      rotation: [0.4, 0.1, 0.2],
+      scale: [0.24, 0.24, 0.24],
+      variations: [{ type: "spherefold", weight: 0.9 }],
+    },
+    {
+      id: 1,
+      position: [-0.3, -0.4, 0.25],
+      rotation: [0, 0.6, 0.3],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "spherefold", weight: 1.1 }],
+    },
+  ];
+}
+
+/** A NEGATIVE-weight boxfold map beside a plain affine map: sign absorption
+ * plus the mixed frontier where fold branches and affine children compete.
+ * Mirrors scripts/harness-profiles.ts — keep in sync. */
+function surfaceFoldBoxfoldNegPlusAffine(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, 0, 0.2],
+      rotation: [0.1, 0, 0.4],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: -0.8 }],
+    },
+    {
+      id: 1,
+      position: [-0.4, 0.3, -0.1],
+      rotation: [0.2, 0.3, 0],
+      scale: [0.4, 0.4, 0.4],
+    },
+  ];
+}
+
+function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
+  if (raw === null) return fallback;
+  const parsed = raw
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 1);
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+/** URL-param surface config, all optional: `surfaceWidths` (agreement,
+ * default 12,4), `surfaceTimingWidths` (default 12,8,6,4),
+ * `surfaceVariants` (default shared,private), `surfaceWg` (shared default
+ * 32; private uses 64 unless the param is given, in which case both use
+ * it), `surfaceSize` (march raster, default 320x180), `surfaceCapMs`
+ * (per-timing-config wall cap, default 120000), `surfaceSystems`
+ * (all|synthetic — synthetic skips the mandelboxKifs preset),
+ * `surfaceTiming` (0 skips timing), `surfaceForce` (1 runs timing even on
+ * a software adapter). */
+function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
+  const variants = (params.get("surfaceVariants") ?? "shared,private")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is SurfaceVariant => s === "shared" || s === "private");
+  const wgRaw = params.get("surfaceWg");
+  const wgParsed = wgRaw === null ? NaN : Number.parseInt(wgRaw, 10);
+  const wgGiven = Number.isInteger(wgParsed) && wgParsed >= 1;
+  const sizeMatch = /^(\d+)x(\d+)$/.exec(params.get("surfaceSize") ?? "");
+  const capParsed = Number.parseInt(params.get("surfaceCapMs") ?? "", 10);
+  return {
+    agreementWidths: parseSurfaceIntList(params.get("surfaceWidths"), [12, 4]),
+    timingWidths: parseSurfaceIntList(
+      params.get("surfaceTimingWidths"),
+      [12, 8, 6, 4],
+    ),
+    variants: variants.length > 0 ? variants : ["shared", "private"],
+    sharedWg: wgGiven ? wgParsed : 32,
+    privateWg: wgGiven ? wgParsed : 64,
+    rasterWidth: sizeMatch ? Number.parseInt(sizeMatch[1], 10) : 320,
+    rasterHeight: sizeMatch ? Number.parseInt(sizeMatch[2], 10) : 180,
+    capMs: Number.isFinite(capParsed) && capParsed > 0 ? capParsed : 120_000,
+    systems: params.get("surfaceSystems") === "synthetic" ? "synthetic" : "all",
+    timing: params.get("surfaceTiming") !== "0",
+    force: params.get("surfaceForce") === "1",
+  };
+}
+
+function surfaceWgFor(
+  config: SurfaceSectionConfig,
+  variant: SurfaceVariant,
+): number {
+  return variant === "shared" ? config.sharedWg : config.privateWg;
+}
+
+/**
+ * The surface-beam harness's spike-shaped query mix — `queries3` plus
+ * `probe3`'s cloud call, mechanics copied verbatim (seeds included) at the
+ * page-budget cloud size: 400 jittered cloud samples (mulberry32(2),
+ * ±0.15/axis), 200 uniform cube points (mulberry32(3), half-extent 1.2·R),
+ * 100 exact cloud samples — 700 queries.
+ *
+ * Every component is `Math.fround`ed: the kernel unavoidably receives f32
+ * query points (`array<vec4f>`), so rounding BEFORE the CPU oracle makes
+ * both sides evaluate the IDENTICAL point — any disagreement is then kernel
+ * arithmetic, not query quantization. (≤1 f32 ulp off the harness's f64
+ * points; cloud samples are already f32.)
+ */
+function surfaceQueries(transforms: Transform[], radius: number): Vec3[] {
+  const cloud = runChaosGame(
+    transforms,
+    SURFACE_CLOUD_POINTS,
+    mulberry32(101),
+    null,
+    { order: 1, axis: "y" },
+  );
+  const out: Vec3[] = [];
+  const jitterRng = mulberry32(2);
+  const stride = Math.max(1, Math.floor(cloud.count / 400));
+  for (let i = 0; i < cloud.count && out.length < 400; i += stride) {
+    out.push([
+      Math.fround(cloud.positions[i * 3] + (jitterRng() - 0.5) * 0.3),
+      Math.fround(cloud.positions[i * 3 + 1] + (jitterRng() - 0.5) * 0.3),
+      Math.fround(cloud.positions[i * 3 + 2] + (jitterRng() - 0.5) * 0.3),
+    ]);
+  }
+  const uniformRng = mulberry32(3);
+  const half = 1.2 * radius;
+  for (let i = 0; i < 200; i++) {
+    out.push([
+      Math.fround((uniformRng() - 0.5) * 2 * half),
+      Math.fround((uniformRng() - 0.5) * 2 * half),
+      Math.fround((uniformRng() - 0.5) * 2 * half),
+    ]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const j = Math.floor((cloud.count * (i + 0.5)) / 100);
+    out.push([
+      cloud.positions[j * 3],
+      cloud.positions[j * 3 + 1],
+      cloud.positions[j * 3 + 2],
+    ]);
+  }
+  return out;
+}
+
+function surfaceNormalize(v: Vec3): Vec3 {
+  const l = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+function surfaceCross(a: Vec3, b: Vec3): Vec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+/** `poseRays`'s camera math (scripts/fold-cost-split.harness.ts) verbatim —
+ * target origin, orbit angles (0.9, 1.2), distance
+ * 2.4 × visibleBoundingRadius, vertical fov 60° — packed into the kernel's
+ * {@link SurfaceGpuPose}. */
+function buildSurfacePose(
+  de: SurfaceDE,
+  rasterWidth: number,
+  rasterHeight: number,
+): SurfaceGpuPose {
+  const target: Vec3 = [0, 0, 0];
+  const radius = SURFACE_POSE_DIST_FACTOR * de.visibleBoundingRadius;
+  const ro: Vec3 = [
+    target[0] +
+      radius * Math.sin(SURFACE_POSE_PHI) * Math.sin(SURFACE_POSE_THETA),
+    target[1] + radius * Math.cos(SURFACE_POSE_PHI),
+    target[2] +
+      radius * Math.sin(SURFACE_POSE_PHI) * Math.cos(SURFACE_POSE_THETA),
+  ];
+  const fwd = surfaceNormalize([
+    target[0] - ro[0],
+    target[1] - ro[1],
+    target[2] - ro[2],
+  ]);
+  const right = surfaceNormalize(surfaceCross(fwd, [0, 1, 0]));
+  const up = surfaceCross(right, fwd);
+  const fov = (SURFACE_POSE_FOV_DEG * Math.PI) / 180;
+  return {
+    ro,
+    right,
+    up,
+    fwd,
+    tanHalf: Math.tan(fov / 2),
+    aspect: rasterWidth / rasterHeight,
+    rasterWidth,
+    rasterHeight,
+    pixelEps: SURFACE_PIXEL_EPS,
+  };
+}
+
+/** The KERNEL's own pixel→ray mapping (marchRays' NDC lines) — used by the
+ * CPU sanity march so "the same pixels" is literal. Note the kernel's ndcY
+ * is poseRays' NEGATED (no vertical flip); the pose vectors are identical,
+ * so this only re-indexes rows, but a per-pixel comparison must use the
+ * kernel's convention. */
+function surfaceRayDir(pose: SurfaceGpuPose, px: number, py: number): Vec3 {
+  const ndcX = ((px + 0.5) / pose.rasterWidth) * 2 - 1;
+  const ndcY = ((py + 0.5) / pose.rasterHeight) * 2 - 1;
+  const dx = ndcX * pose.tanHalf * pose.aspect;
+  const dy = ndcY * pose.tanHalf;
+  return surfaceNormalize([
+    pose.fwd[0] + pose.right[0] * dx + pose.up[0] * dy,
+    pose.fwd[1] + pose.right[1] * dx + pose.up[1] * dy,
+    pose.fwd[2] + pose.right[2] * dx + pose.up[2] * dy,
+  ]);
+}
+
+/** The GLSL march minus shading, ported from erosion-repro.harness.ts's
+ * `march()` WITHOUT the grid branches (gridless) and on the PLAIN
+ * `estimateDistance` — the same sphere gate, cone-eps hit test, budget and
+ * stepScale the kernel's marchRays runs, with the DE's eps passed as the
+ * cutoff exactly like both of them. */
+function surfaceCpuMarch(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  pixelEps: number,
+  maxSteps: number,
+): boolean {
+  const radius = de.visibleBoundingRadius * 1.02;
+  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return false;
+  const sq = Math.sqrt(disc);
+  const tFar = -b + sq;
+  if (tFar <= 0) return false;
+  let t = Math.max(-b - sq, 0);
+  for (let i = 0; i < maxSteps; i++) {
+    if (t > tFar) break;
+    const eps = Math.max(
+      pixelEps * t,
+      de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
+    );
+    const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
+    const d = estimateDistance(de, p, eps);
+    if (d < eps) return true;
+    t += d * de.stepScale;
+  }
+  return false;
+}
+
+/** Every SURFACE_SANITY_STRIDE-th pixel in both axes, as ray indices. */
+function surfaceSanityPixels(width: number, height: number): number[] {
+  const out: number[] = [];
+  for (let py = 0; py < height; py += SURFACE_SANITY_STRIDE) {
+    for (let px = 0; px < width; px += SURFACE_SANITY_STRIDE) {
+      out.push(py * width + px);
+    }
+  }
+  return out;
+}
+
+interface SurfaceDeviceHandle {
+  device: GPUDevice;
+  adapterInfo: BenchAdapterInfo;
+  software: boolean;
+  limits: Record<string, number>;
+}
+
+/**
+ * One device for the whole section, per flame-gpu-backend.ts's acquisition
+ * discipline: high-performance adapter; requiredLimits passing the
+ * adapter's real maxStorageBufferBindingSize/maxBufferSize ceilings through
+ * (devices otherwise silently default to WebGPU's spec minimums — see the
+ * comment there); PLUS `maxComputeWorkgroupStorageSize` when any
+ * shared-frontier config needs more than the 16384-byte default (clamped to
+ * what the adapter offers — configs the grant still can't cover are skipped
+ * per config, with a note, never silently).
+ */
+async function acquireSurfaceDevice(
+  neededWorkgroupBytes: number,
+): Promise<SurfaceDeviceHandle | { skipped: string }> {
+  if (!navigator.gpu) {
+    return { skipped: "WebGPU unavailable (navigator.gpu is undefined)" };
+  }
+  let adapter: GPUAdapter | null;
+  try {
+    adapter = await navigator.gpu.requestAdapter({
+      powerPreference: "high-performance",
+    });
+  } catch (e) {
+    return { skipped: `requestAdapter threw: ${describeError(e)}` };
+  }
+  if (!adapter) {
+    return { skipped: "requestAdapter() returned null — no WebGPU adapter" };
+  }
+  const requiredLimits: Record<string, number> = {
+    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+    maxBufferSize: adapter.limits.maxBufferSize,
+  };
+  if (neededWorkgroupBytes > SURFACE_DEFAULT_WORKGROUP_STORAGE) {
+    requiredLimits.maxComputeWorkgroupStorageSize = Math.min(
+      adapter.limits.maxComputeWorkgroupStorageSize,
+      neededWorkgroupBytes,
+    );
+  }
+  let device: GPUDevice;
+  try {
+    device = await adapter.requestDevice({ requiredLimits });
+  } catch (e) {
+    return { skipped: `requestDevice failed: ${describeError(e)}` };
+  }
+  const info = adapter.info;
+  const adapterInfo: BenchAdapterInfo = {
+    vendor: info.vendor,
+    architecture: info.architecture,
+    device: info.device,
+    description: info.description,
+  };
+  return {
+    device,
+    adapterInfo,
+    software: isSoftwareAdapter(adapterInfo),
+    limits: {
+      maxComputeWorkgroupStorageSize:
+        device.limits.maxComputeWorkgroupStorageSize,
+      maxComputeInvocationsPerWorkgroup:
+        device.limits.maxComputeInvocationsPerWorkgroup,
+      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+      maxBufferSize: device.limits.maxBufferSize,
+      adapterMaxComputeWorkgroupStorageSize:
+        adapter.limits.maxComputeWorkgroupStorageSize,
+      requestedWorkgroupStorage: neededWorkgroupBytes,
+    },
+  };
+}
+
+/**
+ * Shader module + compute pipeline for one kernel config, under the
+ * out-of-memory + validation error-scope pair (flame-gpu-backend.ts's
+ * resource-creation discipline) and an explicit pipeline layout (never
+ * "auto"). WGSL diagnostics surface as `line:col: message` VERBATIM (plus
+ * the offending source line) — the lead needs them untouched to fix the
+ * kernel. `compileMs` spans module + pipeline creation.
+ */
+async function buildSurfacePipeline(
+  device: GPUDevice,
+  layout: GPUPipelineLayout,
+  code: string,
+  entryPoint: "evalQueries" | "marchRays",
+  label: string,
+): Promise<{ pipeline: GPUComputePipeline; compileMs: number }> {
+  const t0 = performance.now();
+  device.pushErrorScope("out-of-memory");
+  device.pushErrorScope("validation");
+  const module = device.createShaderModule({ label, code });
+  const info = await module.getCompilationInfo();
+  const errors = info.messages.filter((m) => m.type === "error");
+  if (errors.length > 0) {
+    await device.popErrorScope();
+    await device.popErrorScope();
+    const lines = code.split("\n");
+    throw new Error(
+      `WGSL compile errors (${label}):\n` +
+        errors
+          .map(
+            (m) =>
+              `${m.lineNum}:${m.linePos}: ${m.message}\n  > ${(lines[m.lineNum - 1] ?? "").trim()}`,
+          )
+          .join("\n"),
+    );
+  }
+  let pipeline: GPUComputePipeline;
+  try {
+    pipeline = await device.createComputePipelineAsync({
+      label,
+      layout,
+      compute: { module, entryPoint },
+    });
+  } catch (e) {
+    await device.popErrorScope();
+    await device.popErrorScope();
+    throw new Error(
+      `pipeline creation failed (${label}): ${describeError(e)}`,
+      { cause: e },
+    );
+  }
+  const validation = await device.popErrorScope();
+  const oom = await device.popErrorScope();
+  if (oom) {
+    throw new Error(
+      `pipeline creation (${label}): out-of-memory: ${oom.message}`,
+    );
+  }
+  if (validation) {
+    throw new Error(
+      `pipeline creation (${label}): validation: ${validation.message}`,
+    );
+  }
+  return { pipeline, compileMs: performance.now() - t0 };
+}
+
+/** `createBuffer` under the same error-scope pair — WebGPU's createBuffer
+ * never throws on allocation failure (see flame-gpu-backend.ts's doc), so
+ * the scopes convert that into a create-time failure here. */
+async function createSurfaceBuffer(
+  device: GPUDevice,
+  label: string,
+  size: number,
+  usage: GPUBufferUsageFlags,
+): Promise<GPUBuffer> {
+  device.pushErrorScope("out-of-memory");
+  device.pushErrorScope("validation");
+  const buffer = device.createBuffer({ label, size, usage });
+  const validation = await device.popErrorScope();
+  const oom = await device.popErrorScope();
+  if (oom || validation) {
+    buffer.destroy();
+    throw new Error(
+      `createBuffer(${label}): ${(oom ?? validation)?.message ?? "error"}`,
+    );
+  }
+  return buffer;
+}
+
+/** One agreement system's frozen state: DE, query set, CPU-oracle values,
+ * and (once created) its GPU-side buffers + bind group. */
+interface SurfaceSystemState {
+  name: string;
+  de: SurfaceDE;
+  queries: Vec3[];
+  cpu: number[];
+  buffers?: {
+    params: GPUBuffer;
+    maps: GPUBuffer;
+    input: GPUBuffer;
+    output: GPUBuffer;
+    staging: GPUBuffer;
+    bindGroup: GPUBindGroup;
+  };
+}
+
+/** The section's fixed 4-binding interface (surface-de-gpu.ts's contract):
+ * 0 = params uniform, 1 = maps storage read, 2 = input storage read,
+ * 3 = output storage read_write. Shared by eval and march. */
+function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
+  return device.createBindGroupLayout({
+    label: "surface-de bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+    ],
+  });
+}
+
+async function ensureSurfaceEvalBuffers(
+  device: GPUDevice,
+  layout: GPUBindGroupLayout,
+  sys: SurfaceSystemState,
+): Promise<NonNullable<SurfaceSystemState["buffers"]>> {
+  if (sys.buffers) return sys.buffers;
+  const n = sys.queries.length;
+  // eval params are config-independent: itemCount = query count, cutoff 0,
+  // footprint 0 — the oracle's estimateDistance(de, q, 0) call, mirrored.
+  const paramsData = packSurfaceGpuParams(sys.de, {
+    itemCount: n,
+    cutoff: 0,
+    footprint: 0,
+  });
+  // Re-wrapped copy: packSurfaceGpuMaps' bare Float32Array type
+  // (ArrayBufferLike-backed) doesn't satisfy writeBuffer's non-shared
+  // buffer requirement, and the kernel module stays untouched.
+  const mapsData = new Float32Array(packSurfaceGpuMaps(sys.de));
+  const inputData = new Float32Array(n * 4);
+  sys.queries.forEach((q, i) => {
+    inputData[i * 4] = q[0];
+    inputData[i * 4 + 1] = q[1];
+    inputData[i * 4 + 2] = q[2];
+  });
+  const params = await createSurfaceBuffer(
+    device,
+    `surface-de params ${sys.name}`,
+    paramsData.byteLength,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(params, 0, paramsData);
+  const maps = await createSurfaceBuffer(
+    device,
+    `surface-de maps ${sys.name}`,
+    mapsData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(maps, 0, mapsData);
+  const input = await createSurfaceBuffer(
+    device,
+    `surface-de queries ${sys.name}`,
+    inputData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(input, 0, inputData);
+  const output = await createSurfaceBuffer(
+    device,
+    `surface-de results ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  );
+  const staging = await createSurfaceBuffer(
+    device,
+    `surface-de staging ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  );
+  const bindGroup = device.createBindGroup({
+    label: `surface-de bind group ${sys.name}`,
+    layout,
+    entries: [
+      { binding: 0, resource: { buffer: params } },
+      { binding: 1, resource: { buffer: maps } },
+      { binding: 2, resource: { buffer: input } },
+      { binding: 3, resource: { buffer: output } },
+    ],
+  });
+  sys.buffers = { params, maps, input, output, staging, bindGroup };
+  return sys.buffers;
+}
+
+function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
+  if (!sys.buffers) return;
+  sys.buffers.params.destroy();
+  sys.buffers.maps.destroy();
+  sys.buffers.input.destroy();
+  sys.buffers.output.destroy();
+  sys.buffers.staging.destroy();
+  sys.buffers = undefined;
+}
+
+async function runSurfaceEvalDispatch(
+  device: GPUDevice,
+  pipeline: GPUComputePipeline,
+  sys: SurfaceSystemState,
+  wg: number,
+): Promise<Float32Array> {
+  const bufs = sys.buffers;
+  if (!bufs) throw new Error("eval buffers not created");
+  const n = sys.queries.length;
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bufs.bindGroup);
+  pass.dispatchWorkgroups(Math.ceil(n / wg));
+  pass.end();
+  encoder.copyBufferToBuffer(bufs.output, 0, bufs.staging, 0, n * 4);
+  device.queue.submit([encoder.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  await bufs.staging.mapAsync(GPUMapMode.READ);
+  const out = new Float32Array(bufs.staging.getMappedRange().slice(0));
+  bufs.staging.unmap();
+  return out;
+}
+
+function compareSurfaceAgreement(
+  sys: SurfaceSystemState,
+  cfg: SurfaceKernelConfig,
+  gpu: Float32Array,
+): SurfaceAgreementRow {
+  const R = sys.de.boundingRadius;
+  const absErrs: number[] = [];
+  let maxAbsErr = 0;
+  let maxRelErr = 0;
+  let failures = 0;
+  let maxGpuMinusCpu = -Infinity;
+  let minGpuMinusCpu = Infinity;
+  let failuresOver = 0;
+  const failuresByClass = { jittered: 0, uniform: 0, exact: 0 };
+  for (let i = 0; i < sys.cpu.length; i++) {
+    const cpu = sys.cpu[i];
+    const signed = gpu[i] - cpu;
+    const err = Math.abs(signed);
+    absErrs.push(err);
+    if (err > maxAbsErr) maxAbsErr = err;
+    if (signed > maxGpuMinusCpu) maxGpuMinusCpu = signed;
+    if (signed < minGpuMinusCpu) minGpuMinusCpu = signed;
+    const rel = err / Math.max(Math.abs(cpu), 0.05 * R);
+    if (rel > maxRelErr) maxRelErr = rel;
+    const tol = Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
+    if (err > tol) {
+      failures++;
+      if (signed > 0) failuresOver++;
+      // The query mix's deterministic layout — see surfaceQueries.
+      if (i < 400) failuresByClass.jittered++;
+      else if (i < 600) failuresByClass.uniform++;
+      else failuresByClass.exact++;
+    }
+  }
+  absErrs.sort((a, b) => a - b);
+  const p99AbsErr =
+    absErrs.length > 0
+      ? absErrs[Math.min(absErrs.length - 1, Math.floor(0.99 * absErrs.length))]
+      : 0;
+  return {
+    system: sys.name,
+    variant: cfg.variant,
+    width: cfg.width,
+    stage2: cfg.stage2,
+    wg: cfg.wg,
+    n: sys.cpu.length,
+    maxAbsErr,
+    maxRelErr,
+    p99AbsErr,
+    gating: cfg.width === SURFACE_FOLD_BEAM_WIDTH,
+    failures,
+    maxGpuMinusCpu: Number.isFinite(maxGpuMinusCpu) ? maxGpuMinusCpu : 0,
+    minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
+    failuresOver,
+    failuresByClass,
+  };
+}
+
+interface SurfaceMarchOutcome {
+  states: Float32Array;
+  gpuMs: number;
+  wallMs: number;
+  passes: number;
+  truncated: boolean;
+  activeRemaining: number;
+}
+
+/**
+ * Drive one march config to completion (or the wall cap): bounded passes of
+ * `stepsThisPass` DE steps each, gpuMs summed over the submit →
+ * onSubmittedWorkDone span of each COMPUTE submission (the readback is its
+ * own untimed submission), states read back and the active list
+ * host-compacted between passes — brief §3.7's "compaction every N steps".
+ */
+async function runSurfaceMarchConfig(
+  device: GPUDevice,
+  pipeline: GPUComputePipeline,
+  bindGroup: GPUBindGroup,
+  buffers: {
+    params: GPUBuffer;
+    states: GPUBuffer;
+    active: GPUBuffer;
+    staging: GPUBuffer;
+  },
+  de: SurfaceDE,
+  pose: SurfaceGpuPose,
+  wg: number,
+  capMs: number,
+  onProgress: (text: string) => void,
+): Promise<SurfaceMarchOutcome> {
+  const rays = pose.rasterWidth * pose.rasterHeight;
+  const stateBytes = rays * 16;
+  // Host-initialized ray states: (-1, 0, 0, 0) — t < 0 means the sphere
+  // gate has not run yet (surface-de-gpu.ts's contract).
+  const init = new Float32Array(rays * 4);
+  for (let i = 0; i < rays; i++) init[i * 4] = -1;
+  device.queue.writeBuffer(buffers.states, 0, init);
+  let active = new Uint32Array(rays);
+  for (let i = 0; i < rays; i++) active[i] = i;
+  let states = init;
+  let stepsThisPass = 1;
+  let gpuMs = 0;
+  let passes = 0;
+  let truncated = false;
+  const wallStart = performance.now();
+  while (active.length > 0) {
+    if (performance.now() - wallStart > capMs) {
+      truncated = true;
+      break;
+    }
+    const params = packSurfaceGpuParams(de, {
+      itemCount: active.length,
+      stepsThisPass,
+      marchSteps: SURFACE_MARCH_STEPS,
+      pose,
+      cutoff: 0,
+      footprint: 0,
+    });
+    device.queue.writeBuffer(buffers.params, 0, params);
+    device.queue.writeBuffer(buffers.active, 0, active);
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(active.length / wg));
+    pass.end();
+    const t0 = performance.now();
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const passMs = performance.now() - t0;
+    gpuMs += passMs;
+    passes++;
+    const copyEncoder = device.createCommandEncoder();
+    copyEncoder.copyBufferToBuffer(
+      buffers.states,
+      0,
+      buffers.staging,
+      0,
+      stateBytes,
+    );
+    device.queue.submit([copyEncoder.finish()]);
+    await buffers.staging.mapAsync(GPUMapMode.READ);
+    states = new Float32Array(buffers.staging.getMappedRange().slice(0));
+    buffers.staging.unmap();
+    const next: number[] = [];
+    for (let i = 0; i < active.length; i++) {
+      const ray = active[i];
+      if (states[ray * 4 + 1] === SURFACE_GPU_RAY_ACTIVE) next.push(ray);
+    }
+    active = Uint32Array.from(next);
+    onProgress(
+      `pass ${passes} (${stepsThisPass} steps): ${active.length}/${rays} active, ${passMs.toFixed(0)}ms`,
+    );
+    if (
+      passMs < SURFACE_PASS_TARGET_MS &&
+      stepsThisPass < SURFACE_MAX_STEPS_PER_PASS
+    ) {
+      stepsThisPass = Math.min(stepsThisPass * 2, SURFACE_MAX_STEPS_PER_PASS);
+    }
+  }
+  return {
+    states,
+    gpuMs,
+    wallMs: performance.now() - wallStart,
+    passes,
+    truncated,
+    activeRemaining: active.length,
+  };
+}
+
+function summarizeSurfaceMarch(
+  states: Float32Array,
+  rays: number,
+): {
+  hits: number;
+  miss: number;
+  exhausted: number;
+  activeRemaining: number;
+  meanSteps: number;
+  stepsDone: number;
+  activeSteps: number;
+} {
+  let hits = 0;
+  let miss = 0;
+  let exhausted = 0;
+  let activeRemaining = 0;
+  let stepsDone = 0;
+  let activeSteps = 0;
+  for (let i = 0; i < rays; i++) {
+    const status = states[i * 4 + 1];
+    const steps = states[i * 4 + 2];
+    stepsDone += steps;
+    if (status === SURFACE_GPU_RAY_HIT) hits++;
+    else if (status === SURFACE_GPU_RAY_MISS) miss++;
+    else if (status === SURFACE_GPU_RAY_EXHAUSTED) exhausted++;
+    else {
+      activeRemaining++;
+      activeSteps += steps;
+    }
+  }
+  return {
+    hits,
+    miss,
+    exhausted,
+    activeRemaining,
+    meanSteps: rays > 0 ? stepsDone / rays : 0,
+    stepsDone,
+    activeSteps,
+  };
+}
+
+interface SurfaceSectionDom {
+  status: HTMLElement;
+  pre: HTMLPreElement;
+}
+
+function buildSurfaceSectionDom(container: HTMLElement): SurfaceSectionDom {
+  const root = document.createElement("div");
+  root.className = "scenario";
+  const heading = document.createElement("h2");
+  heading.textContent = "surface-de (fr-q1f8) — ";
+  const status = document.createElement("span");
+  status.className = "status";
+  status.textContent = "idle";
+  heading.appendChild(status);
+  root.appendChild(heading);
+  const pre = document.createElement("pre");
+  root.appendChild(pre);
+  container.appendChild(root);
+  return { status, pre };
+}
+
+/**
+ * The section driver: CPU oracles first (no GPU needed), then one device
+ * for every GPU leg — the agreement protocol (always), the cross-checks,
+ * and the march timing protocol (mandelboxKifs only; auto-skipped on
+ * software adapters unless forced). Never throws: unavailable WebGPU is a
+ * "skipped" verdict, anything after device acquisition that breaks is a
+ * "fail" with the error in `reason`/`notes`.
+ */
+async function runSurfaceDeSection(
+  config: SurfaceSectionConfig,
+  dom: SurfaceSectionDom,
+  activity: ActivityBadge,
+  onUpdate: (results: SurfaceDeResults) => void,
+): Promise<SurfaceDeResults> {
+  const results: SurfaceDeResults = {
+    verdict: "skipped",
+    adapter: null,
+    limits: {},
+    agreement: [],
+    crossChecks: [],
+    timing: [],
+    notes: [],
+  };
+  const render = (): void => {
+    dom.pre.textContent = JSON.stringify(results, null, 2);
+    onUpdate(results);
+  };
+  const status = (text: string): void => {
+    dom.status.textContent = text;
+  };
+
+  // ----- Systems + CPU oracle (pure CPU, before any GPU acquisition) -----
+  const systemDefs: { name: string; transforms: Transform[] }[] = [];
+  if (config.systems !== "synthetic") {
+    systemDefs.push({ name: "mandelboxKifs", transforms: mandelboxKifs() });
+  }
+  systemDefs.push(
+    { name: "foldSpherefoldPair", transforms: surfaceFoldSpherefoldPair() },
+    {
+      name: "foldBoxfoldNegPlusAffine",
+      transforms: surfaceFoldBoxfoldNegPlusAffine(),
+    },
+  );
+  const systems: SurfaceSystemState[] = [];
+  for (const def of systemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const de = buildSurfaceDE(def.transforms, null);
+      if (!deHasFolds(de)) {
+        results.notes.push(
+          `${def.name}: skipped — no fold maps (this section pins the fold frontier)`,
+        );
+        continue;
+      }
+      const queries = surfaceQueries(def.transforms, de.boundingRadius);
+      // CPU oracle: PLAIN estimateDistance (refine=false), cutoff 0 — the
+      // estimator the kernel mirrors term for term. NOT
+      // estimateDistanceRefined.
+      const cpu = queries.map((q) => estimateDistance(de, q, 0));
+      systems.push({ name: def.name, de, queries, cpu });
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+  if (systems.length === 0) {
+    results.reason = "no eligible fold systems (see notes)";
+    status(`skipped — ${results.reason}`);
+    activity.setState("idle", "Done");
+    render();
+    return results;
+  }
+
+  // ----- Config matrices -----
+  const evalConfigs: SurfaceKernelConfig[] = [];
+  for (const variant of config.variants) {
+    for (const width of config.agreementWidths) {
+      evalConfigs.push({
+        variant,
+        width,
+        stage2: true,
+        wg: surfaceWgFor(config, variant),
+      });
+    }
+  }
+  // The stage2=false control: shared width 12 by the brief; when the width
+  // list is overridden the FIRST agreement width stands in so the on-vs-off
+  // comparison always has its stage2=true twin.
+  const stage2OffVariant: SurfaceVariant = config.variants.includes("shared")
+    ? "shared"
+    : config.variants[0];
+  const stage2OffWidth = config.agreementWidths[0];
+  evalConfigs.push({
+    variant: stage2OffVariant,
+    width: stage2OffWidth,
+    stage2: false,
+    wg: surfaceWgFor(config, stage2OffVariant),
+  });
+
+  const timingConfigs: SurfaceKernelConfig[] = [];
+  if (config.timing) {
+    for (const variant of config.variants) {
+      for (const width of config.timingWidths) {
+        timingConfigs.push({
+          variant,
+          width,
+          stage2: true,
+          wg: surfaceWgFor(config, variant),
+        });
+      }
+    }
+    const timingS2OffWidth = config.timingWidths.includes(12)
+      ? 12
+      : config.timingWidths[0];
+    for (const variant of config.variants) {
+      timingConfigs.push({
+        variant,
+        width: timingS2OffWidth,
+        stage2: false,
+        wg: surfaceWgFor(config, variant),
+      });
+    }
+  }
+
+  // ----- Device -----
+  let neededWorkgroupBytes = 0;
+  for (const cfg of [...evalConfigs, ...timingConfigs]) {
+    if (cfg.variant === "shared") {
+      neededWorkgroupBytes = Math.max(
+        neededWorkgroupBytes,
+        surfaceGpuWorkgroupBytes({
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: true,
+        }),
+      );
+    }
+  }
+  status("acquiring WebGPU device…");
+  const acquired = await acquireSurfaceDevice(neededWorkgroupBytes);
+  if ("skipped" in acquired) {
+    results.reason = acquired.skipped;
+    status(`skipped — ${acquired.skipped}`);
+    activity.setState("idle", "Done");
+    render();
+    return results;
+  }
+  const { device } = acquired;
+  results.adapter = acquired.adapterInfo;
+  results.limits = acquired.limits;
+  let compileFailed = false;
+
+  const configLabel = (cfg: SurfaceKernelConfig): string =>
+    `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+  const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
+    cfg.variant === "shared"
+      ? surfaceGpuWorkgroupBytes({
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: true,
+        })
+      : 0;
+
+  try {
+    const bindGroupLayout = surfaceBindGroupLayout(device);
+    const pipelineLayout = device.createPipelineLayout({
+      label: "surface-de pipeline layout",
+      bindGroupLayouts: [bindGroupLayout],
+    });
+
+    // ----- Agreement protocol (the correctness pin — always runs) -----
+    const gpuByKey = new Map<string, Float32Array>();
+    for (const cfg of evalConfigs) {
+      const label = configLabel(cfg);
+      const bytes = workgroupBytesFor(cfg);
+      if (bytes > device.limits.maxComputeWorkgroupStorageSize) {
+        results.notes.push(
+          `agreement ${label}: skipped — needs ${bytes} workgroup bytes, ` +
+            `device grants ${device.limits.maxComputeWorkgroupStorageSize}`,
+        );
+        render();
+        continue;
+      }
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      let pipeline: GPUComputePipeline;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: cfg.variant === "shared",
+          bnbStage2: cfg.stage2,
+        });
+        ({ pipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        render();
+        continue;
+      }
+      for (const sys of systems) {
+        status(`agreement: ${label} × ${sys.name}…`);
+        await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
+        const gpu = await runSurfaceEvalDispatch(device, pipeline, sys, cfg.wg);
+        gpuByKey.set(
+          `${sys.name}|${cfg.variant}|${cfg.width}|${String(cfg.stage2)}`,
+          gpu,
+        );
+        results.agreement.push(compareSurfaceAgreement(sys, cfg, gpu));
+        render();
+        await new Promise<void>((resolve) => setTimeout(resolve));
+      }
+    }
+
+    // ----- Cross-checks -----
+    if (
+      config.variants.includes("shared") &&
+      config.variants.includes("private")
+    ) {
+      for (const sys of systems) {
+        for (const width of config.agreementWidths) {
+          const a = gpuByKey.get(`${sys.name}|shared|${width}|true`);
+          const b = gpuByKey.get(`${sys.name}|private|${width}|true`);
+          if (!a || !b) continue;
+          let mismatches = 0;
+          let maxDelta = 0;
+          for (let i = 0; i < a.length; i++) {
+            if (!Object.is(a[i], b[i])) {
+              mismatches++;
+              maxDelta = Math.max(maxDelta, Math.abs(a[i] - b[i]));
+            }
+          }
+          results.crossChecks.push({
+            kind: "shared-vs-private",
+            system: sys.name,
+            width,
+            n: a.length,
+            mismatches,
+            maxDelta,
+            note:
+              mismatches === 0
+                ? "exact — same arithmetic, different frontier storage"
+                : "MISMATCH — shared and private must be bit-equal at identical (width, stage2)",
+          });
+        }
+      }
+    }
+    for (const sys of systems) {
+      const on = gpuByKey.get(
+        `${sys.name}|${stage2OffVariant}|${stage2OffWidth}|true`,
+      );
+      const off = gpuByKey.get(
+        `${sys.name}|${stage2OffVariant}|${stage2OffWidth}|false`,
+      );
+      if (!on || !off) continue;
+      let mismatches = 0;
+      let maxDelta = 0;
+      for (let i = 0; i < on.length; i++) {
+        if (!Object.is(on[i], off[i])) {
+          mismatches++;
+          maxDelta = Math.max(maxDelta, Math.abs(on[i] - off[i]));
+        }
+      }
+      results.crossChecks.push({
+        kind: "stage2-on-vs-off",
+        system: sys.name,
+        width: stage2OffWidth,
+        n: on.length,
+        mismatches,
+        maxDelta,
+        note: "informational — the skips are value no-ops, but f32 rounding may flip marginal skips; not verdict-affecting",
+      });
+    }
+    render();
+
+    // ----- Timing protocol (march — the §3.7 measurement) -----
+    if (!config.timing) {
+      results.notes.push("timing: skipped (surfaceTiming=0)");
+    } else if (config.systems === "synthetic") {
+      results.notes.push(
+        "timing: skipped — mandelboxKifs excluded (surfaceSystems=synthetic)",
+      );
+    } else if (acquired.software && !config.force) {
+      results.notes.push(
+        "timing: skipped — software WebGPU adapter (timings would not be representative; pass surfaceForce=1 to run anyway)",
+      );
+    } else {
+      const mbox = systems.find((s) => s.name === "mandelboxKifs");
+      if (!mbox) {
+        results.notes.push(
+          "timing: skipped — mandelboxKifs did not build (see notes)",
+        );
+      } else {
+        const pose = buildSurfacePose(
+          mbox.de,
+          config.rasterWidth,
+          config.rasterHeight,
+        );
+        const rays = config.rasterWidth * config.rasterHeight;
+
+        // CPU sanity reference — ONCE, not per config: gridless plain-DE
+        // march of every 8th pixel in both axes at the same pose/eps/budget.
+        activity.setState("cpu", "Surface CPU sanity march");
+        const sanityPixels = surfaceSanityPixels(
+          config.rasterWidth,
+          config.rasterHeight,
+        );
+        const cpuHit = new Set<number>();
+        for (let i = 0; i < sanityPixels.length; i++) {
+          const ray = sanityPixels[i];
+          const px = ray % config.rasterWidth;
+          const py = Math.floor(ray / config.rasterWidth);
+          if (
+            surfaceCpuMarch(
+              mbox.de,
+              pose.ro,
+              surfaceRayDir(pose, px, py),
+              pose.pixelEps,
+              SURFACE_MARCH_STEPS,
+            )
+          ) {
+            cpuHit.add(ray);
+          }
+          if (i % 32 === 31) {
+            status(`timing: cpu sanity march ${i + 1}/${sanityPixels.length}…`);
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        const cpuHitRate = cpuHit.size / sanityPixels.length;
+        results.notes.push(
+          `cpu sanity march: ${cpuHit.size}/${sanityPixels.length} sampled pixels hit (rate ${cpuHitRate.toFixed(3)})`,
+        );
+        render();
+
+        const marchParams = await createSurfaceBuffer(
+          device,
+          "surface-de march params",
+          SURFACE_GPU_PARAMS_BYTES,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        );
+        // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
+        const mapsData = new Float32Array(packSurfaceGpuMaps(mbox.de));
+        const marchMaps = await createSurfaceBuffer(
+          device,
+          "surface-de march maps",
+          mapsData.byteLength,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        );
+        device.queue.writeBuffer(marchMaps, 0, mapsData);
+        const marchActive = await createSurfaceBuffer(
+          device,
+          "surface-de march active list",
+          rays * 4,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        );
+        const marchStates = await createSurfaceBuffer(
+          device,
+          "surface-de march states",
+          rays * 16,
+          GPUBufferUsage.STORAGE |
+            GPUBufferUsage.COPY_DST |
+            GPUBufferUsage.COPY_SRC,
+        );
+        const marchStaging = await createSurfaceBuffer(
+          device,
+          "surface-de march staging",
+          rays * 16,
+          GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        );
+        const marchBindGroup = device.createBindGroup({
+          label: "surface-de march bind group",
+          layout: bindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: marchParams } },
+            { binding: 1, resource: { buffer: marchMaps } },
+            { binding: 2, resource: { buffer: marchActive } },
+            { binding: 3, resource: { buffer: marchStates } },
+          ],
+        });
+        try {
+          for (const cfg of timingConfigs) {
+            const label = configLabel(cfg);
+            const bytes = workgroupBytesFor(cfg);
+            if (bytes > device.limits.maxComputeWorkgroupStorageSize) {
+              results.notes.push(
+                `timing ${label}: skipped — needs ${bytes} workgroup bytes, ` +
+                  `device grants ${device.limits.maxComputeWorkgroupStorageSize}`,
+              );
+              render();
+              continue;
+            }
+            status(`timing: compiling ${label}…`);
+            activity.setState("gpu", `Surface DE march — ${label}`);
+            let pipeline: GPUComputePipeline;
+            let compileMs: number;
+            try {
+              const code = surfaceDeKernelWgsl({
+                mode: "march",
+                width: cfg.width,
+                workgroupSize: cfg.wg,
+                sharedFrontier: cfg.variant === "shared",
+                bnbStage2: cfg.stage2,
+              });
+              ({ pipeline, compileMs } = await buildSurfacePipeline(
+                device,
+                pipelineLayout,
+                code,
+                "marchRays",
+                `surface-de march ${label}`,
+              ));
+            } catch (e) {
+              compileFailed = true;
+              results.notes.push(`timing ${label}: ${describeError(e)}`);
+              render();
+              continue;
+            }
+            const outcome = await runSurfaceMarchConfig(
+              device,
+              pipeline,
+              marchBindGroup,
+              {
+                params: marchParams,
+                states: marchStates,
+                active: marchActive,
+                staging: marchStaging,
+              },
+              mbox.de,
+              pose,
+              cfg.wg,
+              config.capMs,
+              (text) => status(`timing ${label}: ${text}`),
+            );
+            const summary = summarizeSurfaceMarch(outcome.states, rays);
+            const row: SurfaceTimingRow = {
+              variant: cfg.variant,
+              width: cfg.width,
+              stage2: cfg.stage2,
+              wg: cfg.wg,
+              rays,
+              hits: summary.hits,
+              miss: summary.miss,
+              exhausted: summary.exhausted,
+              activeRemaining: summary.activeRemaining,
+              meanSteps: summary.meanSteps,
+              gpuMs: outcome.gpuMs,
+              wallMs: outcome.wallMs,
+              compileMs,
+              passes: outcome.passes,
+              truncated: outcome.truncated,
+            };
+            let sampledHits = 0;
+            for (const ray of sanityPixels) {
+              if (outcome.states[ray * 4 + 1] === SURFACE_GPU_RAY_HIT) {
+                sampledHits++;
+              }
+            }
+            row.gpuHitRate = sampledHits / sanityPixels.length;
+            row.cpuHitRate = cpuHitRate;
+            if (outcome.truncated) {
+              row.completedFraction =
+                rays > 0 ? (rays - summary.activeRemaining) / rays : 1;
+              // Fraction of projected ray-steps done, assuming every
+              // still-active ray runs to the full budget — an
+              // EXTRAPOLATION (upper-bound completion), labeled as such.
+              const projected =
+                summary.stepsDone +
+                summary.activeRemaining * SURFACE_MARCH_STEPS -
+                summary.activeSteps;
+              const fraction =
+                projected > 0 ? summary.stepsDone / projected : 0;
+              if (fraction > 0 && Number.isFinite(outcome.gpuMs / fraction)) {
+                row.extrapolatedMs = outcome.gpuMs / fraction;
+              }
+              row.sanity = "skipped (truncated)";
+            } else {
+              row.sanity =
+                Math.abs(row.gpuHitRate - cpuHitRate) >
+                SURFACE_SANITY_HIT_RATE_TOL
+                  ? "suspect"
+                  : "ok";
+            }
+            results.timing.push(row);
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        } finally {
+          marchParams.destroy();
+          marchMaps.destroy();
+          marchActive.destroy();
+          marchStates.destroy();
+          marchStaging.destroy();
+        }
+      }
+    }
+
+    // ----- Verdict -----
+    // Only production-width rows gate: the CPU oracle's fold frontier is
+    // the fixed SURFACE_FOLD_BEAM_WIDTH scratch, so narrower-width rows
+    // measure the expected fr-5rvk erosion, not kernel disagreement (see
+    // SurfaceAgreementRow.gating).
+    const anyAgreementFail = results.agreement.some(
+      (r) => r.gating && r.failures > 0,
+    );
+    const anyCrossFail = results.crossChecks.some(
+      (c) => c.kind === "shared-vs-private" && c.mismatches > 0,
+    );
+    const gatingRows = results.agreement.filter((r) => r.gating);
+    if (gatingRows.length === 0 && !compileFailed) {
+      // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH)
+      // verify nothing against a like-for-like oracle — refuse to certify.
+      results.verdict = "skipped";
+      results.reason = `no agreement row ran at the oracle width ${SURFACE_FOLD_BEAM_WIDTH} (see notes)`;
+    } else if (compileFailed || anyAgreementFail || anyCrossFail) {
+      results.verdict = "fail";
+      results.reason = compileFailed
+        ? "kernel compile/pipeline failure — WGSL errors verbatim in notes"
+        : anyAgreementFail
+          ? "agreement tolerance failures — see agreement rows"
+          : "shared-vs-private exact-equality mismatch — see crossChecks";
+    } else {
+      results.verdict = "pass";
+    }
+  } catch (e) {
+    results.verdict = "fail";
+    results.reason = `section error: ${describeError(e)}`;
+  } finally {
+    for (const sys of systems) destroySurfaceEvalBuffers(sys);
+    device.destroy();
+  }
+  status(results.verdict + (results.reason ? ` — ${results.reason}` : ""));
+  activity.setState("idle", "Done");
+  render();
+  return results;
+}
+
 async function probeAdapter(): Promise<BenchAdapterInfo | null> {
   if (!navigator.gpu) return null;
   try {
@@ -1822,6 +3385,11 @@ async function main(): Promise<void> {
 
   const params = new URLSearchParams(window.location.search);
   const autorun = params.get("autorun") === "1";
+  // fr-q1f8: `surface=1` runs the surface-DE section AFTER the flame
+  // scenarios; `surface=only` runs it INSTEAD of them. Absent (the CI
+  // case), the flame pipeline below is bit-for-bit unchanged.
+  const surfaceMode = params.get("surface");
+  const surfaceConfig = parseSurfaceConfig(params);
   const durationParam = params.get("duration");
   if (durationParam) durationInput.value = durationParam;
   const scenariosParam = params.get("scenarios");
@@ -1874,6 +3442,9 @@ async function main(): Promise<void> {
   for (const def of activeScenarios) {
     domByName.set(def.name, buildScenarioDom(def, scenariosContainer));
   }
+  const surfaceDom = buildSurfaceSectionDom(
+    requireElement<HTMLDivElement>("surfaceSection"),
+  );
 
   function currentDuration(): number {
     const v = Number(durationInput.value);
@@ -1903,27 +3474,60 @@ async function main(): Promise<void> {
     }
   }
 
+  async function runSurfaceSection(): Promise<void> {
+    // Incremental publishing: partial surface results are visible on
+    // __BENCH_RESULTS__ while the (potentially long) section runs.
+    await runSurfaceDeSection(surfaceConfig, surfaceDom, activity, (r) => {
+      benchResults.surfaceDe = r;
+      renderResults();
+    });
+  }
+
   async function runAll(): Promise<void> {
     if (running) return;
     running = true;
     setButtonsDisabled(true);
     try {
-      for (const def of activeScenarios) {
-        const dom = domByName.get(def.name);
-        if (!dom) continue;
-        recordResult(await runScenario(def, dom, currentDuration(), activity));
+      // fr-q1f8: `?surface=only` replaces the flame sweep with the
+      // surface-DE section; without the param this branch is the unchanged
+      // CI path.
+      if (surfaceMode !== "only") {
+        for (const def of activeScenarios) {
+          const dom = domByName.get(def.name);
+          if (!dom) continue;
+          recordResult(
+            await runScenario(def, dom, currentDuration(), activity),
+          );
+        }
+        // fr-ee9: the standalone ss=1 display-downsample check — always run
+        // as part of a full sweep (independent of any ?scenarios= filter
+        // above), since it is the only leg that exercises the scale-1
+        // pass-through path at all (see runSs1DisplayDownsampleCheck's doc),
+        // and the headless runner's agreement verdict is meant to certify
+        // the WHOLE kernel, not just whichever named scenarios were
+        // requested.
+        activity.setState("gpu", "GPU ss=1 check…");
+        benchResults.ss1DisplayDownsample =
+          await runSs1DisplayDownsampleCheck();
+        activity.setState("idle", "Done");
+        recomputeAgreement();
+        renderResults();
       }
-      // fr-ee9: the standalone ss=1 display-downsample check — always run as
-      // part of a full sweep (independent of any ?scenarios= filter above),
-      // since it is the only leg that exercises the scale-1 pass-through
-      // path at all (see runSs1DisplayDownsampleCheck's doc), and the
-      // headless runner's agreement verdict is meant to certify the WHOLE
-      // kernel, not just whichever named scenarios were requested.
-      activity.setState("gpu", "GPU ss=1 check…");
-      benchResults.ss1DisplayDownsample = await runSs1DisplayDownsampleCheck();
-      activity.setState("idle", "Done");
-      recomputeAgreement();
-      renderResults();
+      if (surfaceMode !== null) {
+        await runSurfaceSection();
+      }
+    } finally {
+      running = false;
+      setButtonsDisabled(false);
+    }
+  }
+
+  async function runSurfaceOnly(): Promise<void> {
+    if (running) return;
+    running = true;
+    setButtonsDisabled(true);
+    try {
+      await runSurfaceSection();
     } finally {
       running = false;
       setButtonsDisabled(false);
@@ -1939,6 +3543,13 @@ async function main(): Promise<void> {
     });
     scenarioButtons.appendChild(btn);
   }
+  const surfaceBtn = document.createElement("button");
+  surfaceBtn.type = "button";
+  surfaceBtn.textContent = "Run surface DE";
+  surfaceBtn.addEventListener("click", () => {
+    void runSurfaceOnly();
+  });
+  scenarioButtons.appendChild(surfaceBtn);
   runAllBtn.addEventListener("click", () => {
     void runAll();
   });
