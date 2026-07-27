@@ -55,6 +55,32 @@
  *    factor explicitly so the reported numbers still answer the brief's
  *    original "~10^5 branch evaluations per march step" framing.
  *
+ * TRANSFORMS APPLIED (fr-ck0w EXPERIMENT 2 follow-up, for fr-kidj). The
+ * visit counter above is too COARSE for the upcoming branch-and-bound work:
+ * `descendFold` hoists `const im = map.invM` once per visit and then
+ * indexes `im[0]..im[8]` once per BRANCH TRANSFORM inside that visit (up to
+ * 81 times for mandelbox) — fr-kidj's planned prune moves the floor-vs-best
+ * test AHEAD of that indexing, skipping transforms WITHIN a visit, which a
+ * per-visit counter cannot see move at all. `countingDEFine` (added to
+ * `harness-profiles.ts` alongside, not instead of, `countingDE` — every
+ * existing caller's numbers are unaffected, reverified below) wraps each
+ * map's `invM` ARRAY itself in a `get`-trapped Proxy, so every numeric-index
+ * element read bumps a second, finer counter. Every full inverse-affine
+ * application reads all nine `im[i]` elements exactly once (confirmed
+ * against `descend`'s and `descendFold`'s own bodies, not assumed), so
+ * `fineCounter.n / 9` is "transforms applied" — directly comparable across
+ * the affine and fold paths, and a strict refinement of "apps": today (pre-
+ * fr-kidj, every branch's transform still runs unconditionally — the prune
+ * only decides whether the RESULT is kept for the next frontier level, not
+ * whether the transform itself executes), transforms/call should closely
+ * track apps/call times each system's mean branch fan-out, i.e. this
+ * harness's own EXPERIMENT 2 "branch evaluations" reconstruction — the
+ * per-system narrative below cross-checks the two directly, which is also a
+ * correctness check on the new counter itself. After fr-kidj ships,
+ * transforms/call is exactly the number expected to drop sharply while
+ * apps/call (visit count) stays roughly flat — the numbers this file
+ * records now are that BEFORE baseline.
+ *
  * WHICH ESTIMATOR. `estimateDistance` (refine = FALSE), not
  * `estimateDistanceRefined`. Two independent citations pin this down: (1)
  * `surface-de.ts`'s `descendFold` doc, "MIRROR NOTE: the GLSL fold tracer
@@ -137,7 +163,7 @@ import type { SurfaceDE } from "../src/fractal/surface-de";
 import { mandelboxKifs } from "../src/fractal/presets";
 import type { Transform, Vec3 } from "../src/fractal/types";
 import {
-  countingDE,
+  countingDEFine,
   foldBoxfoldNegPlusAffine,
   foldBoxfoldPair,
   foldMandelboxPair,
@@ -266,12 +292,19 @@ interface RayMarchStats {
    * average conditioned on `entered`, isolating the sparse-attractor
    * void-traversal cost from background dilution). */
   entered: boolean;
-  /** Total inverse-map applications (invM reads) across this ray's whole
-   * march — the sum of every step's DE-call apps. */
+  /** Total inverse-map applications (invM VISIT reads) across this ray's
+   * whole march — the sum of every step's DE-call apps. */
   appsThisRay: number;
   /** Apps for each individual `estimateDistance` call along this ray, in
    * march order — one entry per step actually taken. */
   callApps: number[];
+  /** Total invM ELEMENT reads (raw, pre-/9) across this ray's whole march —
+   * the fine-granularity twin of `appsThisRay`; see the module doc's
+   * TRANSFORMS APPLIED section. */
+  fineAppsThisRay: number;
+  /** Element reads for each individual `estimateDistance` call along this
+   * ray, parallel to `callApps` (same length, same march order). */
+  fineCallApps: number[];
 }
 
 /** CPU emulator of `surface-material.ts`'s main() march loop (confirmed
@@ -280,16 +313,17 @@ interface RayMarchStats {
  * uHitFloor)`, `d = surfaceDE(p, eps)`, `t += d * uStepScale`), GRIDLESS
  * (no `uGridEnabled` branch — isolates the DE's own cost) and calling the
  * PLAIN `estimateDistance` overload (the fold GLSL's refine=false mirror —
- * see the module doc). `de` must already be `countingDE`-wrapped; `counter`
- * is read/diffed around each call, never reset here, so callers can attribute
- * apps to whichever span they need (this function attributes them per-call
- * and sums them per-ray; the caller sums further, per-system). Dither
- * (`hash(gl_FragCoord.xy) * uPixelEps * max(t,1)`) is omitted, matching
- * `erosion-repro.harness.ts`'s `march()`: sub-epsilon, no effect on step
- * counts at this budget. */
+ * see the module doc). `de` must already be `countingDEFine`-wrapped;
+ * `counter`/`fineCounter` are read/diffed around each call, never reset
+ * here, so callers can attribute apps to whichever span they need (this
+ * function attributes them per-call and sums them per-ray; the caller sums
+ * further, per-system). Dither (`hash(gl_FragCoord.xy) * uPixelEps *
+ * max(t,1)`) is omitted, matching `erosion-repro.harness.ts`'s `march()`:
+ * sub-epsilon, no effect on step counts at this budget. */
 function marchCounted(
   de: SurfaceDE,
   counter: { n: number },
+  fineCounter: { n: number },
   ro: Vec3,
   rd: Vec3,
   pixelEps: number,
@@ -306,6 +340,8 @@ function marchCounted(
       entered: false,
       appsThisRay: 0,
       callApps: [],
+      fineAppsThisRay: 0,
+      fineCallApps: [],
     };
   }
   const sq = Math.sqrt(disc);
@@ -317,12 +353,16 @@ function marchCounted(
       entered: false,
       appsThisRay: 0,
       callApps: [],
+      fineAppsThisRay: 0,
+      fineCallApps: [],
     };
   }
   let t = Math.max(-b - sq, 0);
   const p: Vec3 = [0, 0, 0];
   const callApps: number[] = [];
+  const fineCallApps: number[] = [];
   let appsThisRay = 0;
+  let fineAppsThisRay = 0;
   let i = 0;
   for (; i < maxSteps; i++) {
     if (t > tFar) break;
@@ -334,16 +374,36 @@ function marchCounted(
     p[1] = ro[1] + rd[1] * t;
     p[2] = ro[2] + rd[2] * t;
     const before = counter.n;
+    const fineBefore = fineCounter.n;
     const d = estimateDistance(de, p, eps);
     const callCost = counter.n - before;
+    const fineCallCost = fineCounter.n - fineBefore;
     callApps.push(callCost);
+    fineCallApps.push(fineCallCost);
     appsThisRay += callCost;
+    fineAppsThisRay += fineCallCost;
     if (d < eps) {
-      return { hit: true, steps: i + 1, entered: true, appsThisRay, callApps };
+      return {
+        hit: true,
+        steps: i + 1,
+        entered: true,
+        appsThisRay,
+        callApps,
+        fineAppsThisRay,
+        fineCallApps,
+      };
     }
     t += d * de.stepScale;
   }
-  return { hit: false, steps: i, entered: true, appsThisRay, callApps };
+  return {
+    hit: false,
+    steps: i,
+    entered: true,
+    appsThisRay,
+    callApps,
+    fineAppsThisRay,
+    fineCallApps,
+  };
 }
 
 // ---------------------------------------------------------------------
@@ -372,12 +432,47 @@ function fmtInt(n: number): string {
 // Adaptive grid sizing: a cheap gridless pilot projects ms/ray, then picks
 // the largest square grid (capped at TARGET_SIDE) that fits PER_SYSTEM_
 // BUDGET_MS. See the module doc's GRID SIZE paragraph.
+//
+// HARD WALL-CLOCK CAPS (added after the fine-counter follow-up measured
+// Proxy overhead empirically: ~86x per call on mandelboxKifs, 0.61ms ->
+// 52.5ms at a representative near-object point — see the module doc's
+// TRANSFORMS APPLIED section). The ORIGINAL sizing here was projection-only
+// (pilot ms/ray -> budget -> side), with `MIN_SIDE` as a soft floor that
+// `Math.max`ed OVER the budget-computed value whenever a system was so
+// expensive the budget alone would pick something smaller — meaning a
+// pathological system's `MIN_SIDE^2` rays could still blow arbitrarily past
+// `PER_SYSTEM_BUDGET_MS`, which is exactly what happened: the first fine-
+// counter run of this file hung past 3 minutes of 100% CPU with the ORIGINAL
+// `MIN_SIDE=16` (a forced 256-ray floor) before being killed. Two
+// independent fixes, both required (a soft floor plus a projection is not
+// enough when the projection itself can be wrong by an order of magnitude
+// on high-variance per-ray cost): `MIN_SIDE` drops to a true bare minimum
+// (16 rays, not 256), and BOTH the pilot and main loops below now check a
+// hard wall-clock cap periodically and break early on whatever they
+// completed — `rays` in the returned {@link SystemResult} is always the
+// ACTUAL count marched, not the originally intended grid size, so downstream
+// stats stay honest about a shrunk sample.
 // ---------------------------------------------------------------------
 
 const TARGET_SIDE = 48;
-const MIN_SIDE = 16;
-const PILOT_SIDE = 6;
-const PER_SYSTEM_BUDGET_MS = 90_000;
+const MIN_SIDE = 4;
+const PILOT_SIDE = 4;
+/** Wall-clock ceiling on the pilot loop itself — if even this few rays run
+ * long, stop and project from whatever completed rather than let the pilot
+ * (whose whole JOB is to be cheap) become the runaway. */
+const PILOT_HARD_CAP_MS = 15_000;
+const PER_SYSTEM_BUDGET_MS = 30_000;
+/** Absolute wall-clock ceiling on the MAIN ray loop, independent of the
+ * budget projection above — the real safety net against per-ray cost
+ * variance the pilot's average can't see coming (a handful of rays that
+ * graze the surface and need many small-eps, near-full-descent steps can
+ * cost orders of magnitude more than the pilot's mean ray — measured up to
+ * 52.5ms for a single near-object call on mandelboxKifs, so even a coarse
+ * every-N-rays check could overshoot by seconds). Checked after EVERY ray:
+ * a `performance.now()` call costs nanoseconds next to a march, so there is
+ * no reason to batch it and every batch-size widens the worst-case overshoot
+ * by one ray's full cost. */
+const MAIN_HARD_CAP_MS = 45_000;
 
 const FOLD_KIND_NAMES: Record<number, string> = {
   [SURFACE_FOLD_NONE]: "affine",
@@ -414,6 +509,18 @@ interface SystemResult {
   callP95: number;
   appsPerRayMean: number;
   totalApps: number;
+  /** Element-granularity twin of `callMean`/`callMedian`/`callP95`, in
+   * TRANSFORMS applied (`fineCounter.n / 9`) — see the module doc's
+   * TRANSFORMS APPLIED section. Today (pre-fr-kidj) every branch's
+   * transform runs unconditionally, so these should track `callMean *
+   * meanBranchFanout` etc. closely; the per-system narrative cross-checks
+   * that directly. */
+  xformCallMean: number;
+  xformCallMedian: number;
+  xformCallP95: number;
+  /** Element-granularity twin of `appsPerRayMean`/`totalApps`. */
+  xformPerRayMean: number;
+  totalTransforms: number;
   wallMs: number;
   /** Mean branch fan-out per map visit, weighted by each map's own branch
    * count (27/3/81/1) — restores the brief's original "branch evaluations"
@@ -447,10 +554,15 @@ function measureSystem(
 
   // Pilot: tiny gridless march at the production budget, same pose family,
   // to measure real ms/ray on THIS machine before committing to a grid size.
-  const { de: pilotDe, counter: pilotCounter } = countingDE(
-    rawDe,
-    rawDe.beamWidth,
-  );
+  // Uses countingDEFine (not the plain countingDE) so the pilot pays the
+  // SAME Proxy element-counting overhead the main run below pays — the
+  // fine counter's per-branch trap firing is real cost the budget must see,
+  // or the projected grid size would be too optimistic.
+  const {
+    de: pilotDe,
+    counter: pilotCounter,
+    fineCounter: pilotFineCounter,
+  } = countingDEFine(rawDe, rawDe.beamWidth);
   const pilot = poseRays(
     POSE_TARGET,
     dist,
@@ -460,18 +572,25 @@ function measureSystem(
     PILOT_SIDE,
   );
   const pilotT0 = performance.now();
+  let pilotRaysRun = 0;
   for (const rd of pilot.rays) {
     marchCounted(
       pilotDe,
       pilotCounter,
+      pilotFineCounter,
       pilot.ro,
       rd,
       FULL_PIXEL_EPS,
       SURFACE_FULL_MARCH_STEPS,
     );
+    pilotRaysRun++;
+    // Hard cap: even the pilot's job is to be cheap, so if IT runs long,
+    // stop and project off whatever completed rather than let it become
+    // the runaway (see the constants block's HARD WALL-CLOCK CAPS note).
+    if (performance.now() - pilotT0 > PILOT_HARD_CAP_MS) break;
   }
   const pilotMs = performance.now() - pilotT0;
-  const msPerRay = pilotMs / pilot.rays.length;
+  const msPerRay = pilotMs / Math.max(1, pilotRaysRun);
   const maxRaysByBudget = Math.max(
     MIN_SIDE * MIN_SIDE,
     Math.floor(PER_SYSTEM_BUDGET_MS / Math.max(msPerRay, 1e-6)),
@@ -484,27 +603,38 @@ function measureSystem(
   console.log(
     `-- ${label}: maps=${rawDe.maps.length} folds=[${kinds.join(",")}] ` +
       `R=${rawDe.boundingRadius.toFixed(4)} maxDepth=${rawDe.maxDepth} ` +
-      `pilot=${msPerRay.toFixed(3)}ms/ray -> side=${side} (target ${TARGET_SIDE})`,
+      `pilot=${msPerRay.toFixed(3)}ms/ray (${pilotRaysRun}/${pilot.rays.length} pilot rays run) ` +
+      `-> side=${side} (target ${TARGET_SIDE})`,
   );
 
-  const { de: countedDe, counter } = countingDE(rawDe, rawDe.beamWidth);
+  const {
+    de: countedDe,
+    counter,
+    fineCounter,
+  } = countingDEFine(rawDe, rawDe.beamWidth);
   const grid = poseRays(POSE_TARGET, dist, POSE_THETA, POSE_PHI, side, side);
   const stepsArr: number[] = [];
   const stepsEnteredArr: number[] = [];
   const callAppsArr: number[] = [];
+  const fineCallAppsArr: number[] = [];
   let hits = 0;
   let entered = 0;
   let totalApps = 0;
+  let totalFineApps = 0;
+  let raysRun = 0;
+  let hitCap = false;
   const t0 = performance.now();
   for (const rd of grid.rays) {
     const r = marchCounted(
       countedDe,
       counter,
+      fineCounter,
       grid.ro,
       rd,
       FULL_PIXEL_EPS,
       SURFACE_FULL_MARCH_STEPS,
     );
+    raysRun++;
     stepsArr.push(r.steps);
     if (r.entered) {
       entered++;
@@ -512,14 +642,37 @@ function measureSystem(
     }
     if (r.hit) hits++;
     totalApps += r.appsThisRay;
+    totalFineApps += r.fineAppsThisRay;
     for (const a of r.callApps) callAppsArr.push(a);
+    for (const a of r.fineCallApps) fineCallAppsArr.push(a);
+    // Hard cap, checked after every ray (see the constants block's HARD
+    // WALL-CLOCK CAPS note): break and report on whatever actually ran
+    // rather than trust the budget projection blindly.
+    if (performance.now() - t0 > MAIN_HARD_CAP_MS) {
+      hitCap = true;
+      break;
+    }
   }
   const wallMs = performance.now() - t0;
+  if (hitCap) {
+    console.log(
+      `   [${label}] MAIN_HARD_CAP_MS (${MAIN_HARD_CAP_MS}ms) hit — ` +
+        `stopped at ${raysRun}/${grid.rays.length} rays, stats below are ` +
+        `over the completed subset only`,
+    );
+  }
 
   stepsArr.sort((a, b) => a - b);
   stepsEnteredArr.sort((a, b) => a - b);
   callAppsArr.sort((a, b) => a - b);
-  const rays = grid.rays.length;
+  fineCallAppsArr.sort((a, b) => a - b);
+  const rays = raysRun;
+  // "Transforms applied" = element reads / 9 (see the module doc's
+  // TRANSFORMS APPLIED section) — division by a positive constant commutes
+  // with mean/median/percentile, so dividing the raw fine numbers here
+  // (rather than every individual sample before sorting) is exact, not an
+  // approximation.
+  const ELEMENTS_PER_TRANSFORM = 9;
 
   return {
     label,
@@ -538,6 +691,11 @@ function measureSystem(
     callP95: percentile(callAppsArr, 0.95),
     appsPerRayMean: totalApps / rays,
     totalApps,
+    xformCallMean: mean(fineCallAppsArr) / ELEMENTS_PER_TRANSFORM,
+    xformCallMedian: percentile(fineCallAppsArr, 0.5) / ELEMENTS_PER_TRANSFORM,
+    xformCallP95: percentile(fineCallAppsArr, 0.95) / ELEMENTS_PER_TRANSFORM,
+    xformPerRayMean: totalFineApps / ELEMENTS_PER_TRANSFORM / rays,
+    totalTransforms: totalFineApps / ELEMENTS_PER_TRANSFORM,
     wallMs,
     meanBranchFanout,
   };
@@ -578,6 +736,25 @@ function fmtRow2(r: SystemResult): string {
     `${r.label.padEnd(24)}${(r.enteredFrac * 100).toFixed(1).padStart(8)}%` +
     `${r.stepsMeanEntered.toFixed(1).padStart(13)}${fmtInt(r.stepsMedianEntered).padStart(13)}` +
     `${fmtInt(r.stepsP95Entered).padStart(14)}`
+  );
+}
+
+/** Third table: TRANSFORMS APPLIED (element-granularity twin of table 1's
+ * apps columns — see the module doc's TRANSFORMS APPLIED section and
+ * fr-kidj's pre-optimization baseline ask). Same row order/labels as
+ * tables 1-2 so a reader can align columns across all three by eye. */
+function fmtHeader3(): string {
+  return (
+    `${"system".padEnd(24)}${"xformMu".padStart(11)}${"xformMd".padStart(10)}` +
+    `${"xformP95".padStart(11)}${"xform/ray".padStart(14)}${"totalXforms".padStart(16)}`
+  );
+}
+
+function fmtRow3(r: SystemResult): string {
+  return (
+    `${r.label.padEnd(24)}${r.xformCallMean.toFixed(1).padStart(11)}` +
+    `${fmtInt(r.xformCallMedian).padStart(10)}${fmtInt(r.xformCallP95).padStart(11)}` +
+    `${r.xformPerRayMean.toFixed(1).padStart(14)}${fmtInt(r.totalTransforms).padStart(16)}`
   );
 }
 
@@ -639,16 +816,32 @@ describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
       console.log(fmtRow2(r));
     }
 
+    console.log(
+      `\n-- transforms applied (element-granularity twin of table 1's apps ` +
+        `columns, fineCounter.n / 9 — see the module doc's TRANSFORMS ` +
+        `APPLIED section; this is fr-kidj's pre-optimization baseline) --`,
+    );
+    console.log(fmtHeader3());
+    for (const r of results) {
+      console.log(fmtRow3(r));
+    }
+
     console.log(`\n-- factor A vs factor B, per system --`);
     for (const r of results) {
       const affineBaselineApps = 90; // surface-beam.harness.ts's low end for affine presets.
+      const reconstructedXformPerCall = r.callMean * r.meanBranchFanout;
+      const xformCheckRatio = r.xformCallMean / reconstructedXformPerCall;
       console.log(
         `${r.label}: ${r.stepsMean.toFixed(1)} steps/ray x ${r.callMean.toFixed(1)} ` +
           `apps/call = ${r.appsPerRayMean.toFixed(1)} apps/ray ` +
           `(~${(r.callMean / affineBaselineApps).toFixed(2)}x an affine preset's apps/call baseline; ` +
           `mean branch fan-out/visit=${r.meanBranchFanout.toFixed(1)} => ` +
-          `~${fmtInt(r.callMean * r.meanBranchFanout)} branch evaluations/call, ` +
-          `~${fmtInt(r.appsPerRayMean * r.meanBranchFanout)} branch evaluations/ray; ` +
+          `~${fmtInt(reconstructedXformPerCall)} branch evaluations/call (reconstructed), ` +
+          `~${fmtInt(r.appsPerRayMean * r.meanBranchFanout)} branch evaluations/ray (reconstructed); ` +
+          `DIRECTLY MEASURED (fine counter): ${r.xformCallMean.toFixed(1)} transforms/call, ` +
+          `${r.xformPerRayMean.toFixed(1)} transforms/ray ` +
+          `(${xformCheckRatio.toFixed(3)}x the reconstruction — expect ~1.0x pre-fr-kidj, since every ` +
+          `branch's transform still runs unconditionally today); ` +
           `wall=${(r.wallMs / 1000).toFixed(2)}s for ${r.rays} rays (side=${r.side})`,
       );
     }
