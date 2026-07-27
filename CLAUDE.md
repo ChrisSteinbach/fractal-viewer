@@ -98,7 +98,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     ghosts plain certificates rendered across voids; lazily guarded,
     measured void-false-hits 0 on every preset; fr-55r5's march-epsilon
     cutoff + fr-zkt2's value-exact sphere-floor pin exit the descent
-    early, both mirrored in the GLSL bodies). A pure-fold FINAL transform
+    early, both mirrored in the GLSL bodies; fr-kidj branch-and-bounds
+    the fold branch enumeration with dual bit-identical no-op skips —
+    floor prune moved ahead of the child transform, then sigma-form +
+    directional child-radius lower bounds — measured 75x fewer
+    transforms/call on mandelboxKifs; fr-pjqw descends a probe-fit
+    centered bounding ball where it beats the origin ball, axis-projected
+    under kaleidoscope; fr-3c0k caps descent depth per query from an
+    optional cone-footprint parameter, previewMaxDepth's argument
+    per-step). A pure-fold FINAL transform
     is eligible via `descendLens` (fr-g58b): the fr-5rvk branch
     vocabulary lifted one level — each lens branch seeds a root descent
     through the UNTOUCHED cores (`final` stays null when `foldFinal` is

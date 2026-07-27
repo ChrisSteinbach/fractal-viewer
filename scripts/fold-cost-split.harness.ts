@@ -862,7 +862,8 @@ describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
     console.log(
       `\n-- transforms applied (element-granularity twin of table 1's apps ` +
         `columns, fineCounter.n / 9 — see the module doc's TRANSFORMS ` +
-        `APPLIED section; this is fr-kidj's pre-optimization baseline) --`,
+        `APPLIED section; the pre-fr-kidj baselines live in that doc and ` +
+        `on the fr-ck0w/fr-kidj beads) --`,
     );
     console.log(fmtHeader3());
     for (const r of results) {
