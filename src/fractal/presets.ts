@@ -594,13 +594,19 @@ export function mandelboxLattice(): Transform[] {
  * THE BUDGET. A pure-fold map iterates `w·V(Mp + t)`, so eligibility gates
  * the composite Lipschitz bound `|w|·L_V·sigma_max < 1`. The sphere fold's
  * inner branch multiplies by 4 (`L = 4` for `mandelbox`/`spherefold`), so at
- * the lattice's own fold weight `1.2` the affine scale can be at most
- * `1/(4·1.2) ≈ 0.208`: `0.202` spends 97% of that (`4·1.2·0.202 = 0.9696`),
- * keeping the fold's structure as large as the gate allows with margin to
- * spare. The box fold's branches are plane REFLECTIONS (`L = 1`), so a
- * `boxfold` map's whole budget is `|w|·sigma_max` — which is why the four
- * binder maps below contract at `0.66` where the eight Mandelbox maps must
- * sit at `0.202`.
+ * the lattice's own fold weight `1.2` the affine scale could go as high as
+ * `1/(4·1.2) ≈ 0.208` — but the BINDING constraint is the descent's depth
+ * ceiling, not the gate: `buildSurfaceDE` sizes `maxDepth` so the slowest
+ * branch factor resolves features below `1e-4`, and a composite of `0.97`
+ * would need ~300 levels against `MAX_DESCENT_DEPTH`'s 128 — the clamp
+ * measured as ~0.23%R of erosion on exact on-attractor probes (the
+ * fr-xok8 residual class, fold edition). `0.19` puts the composite at
+ * `4·1.2·0.19 = 0.912`, which resolves in exactly 100 levels — under the
+ * ceiling with margin — at a barely-visible cost in fold-structure size.
+ * The box fold's branches are plane REFLECTIONS (`L = 1`), so a `boxfold`
+ * map's whole budget is `|w|·sigma_max` — which is why the four binder
+ * maps below contract at `0.66` where the eight Mandelbox maps must sit
+ * at `0.19`.
  *
  * THE SHAPE. Eight `mandelbox` maps sit on the cube's corners (`±0.7`), one
  * per corner: at ratio `0.242` those eight alone are a dust (similarity
@@ -630,7 +636,7 @@ export function mandelboxLattice(): Transform[] {
  */
 export function mandelboxKifs(): Transform[] {
   const foldWeight = 1.2;
-  const foldScale = 0.202;
+  const foldScale = 0.19;
   const binderScale = 0.66;
   const corner = 0.7;
   const binder = 0.62;
