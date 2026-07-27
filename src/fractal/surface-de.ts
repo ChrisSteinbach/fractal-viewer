@@ -305,6 +305,27 @@ import type {
  * LOOSENESS (median DE/D 0.13-0.20 vs the affine presets' 0.61-0.84),
  * not fabricated hits; the harness's DEEP_VOID_FACTOR doc carries the
  * argument.
+ *
+ * FR-KIDJ / FR-PJQW ADDENDUM (same harness, re-measured): the
+ * branch-and-bound skip cut the per-branch transforms behind those visit
+ * counts ~75x on the preset (fine counter, fold-cost-split harness:
+ * 18,252 -> 243.5 transforms/call) at byte-identical estimates, and the
+ * probe-fit ball then moved every fold pair's R (boxfold 0.78 -> 0.69,
+ * boxfold-w+affine 0.84 -> 0.48, spherefold 2.31 -> 1.71, mandelbox
+ * 2.30 -> 1.88; the preset's near-origin-symmetric attractor keeps
+ * ~R 1.98), lifting DE/D medians (boxfold pair 0.630 -> 0.701,
+ * -w+affine 0.613 -> 0.777) and dropping visit counts (spherefold pair
+ * 182 -> 135). Values on centered systems are unchanged (origin ball
+ * kept). One disclosure moved WITH the probe set, not the estimator: the
+ * mandelbox pair's smaller ball re-scales the R-relative uniform probe
+ * cloud, which now samples a pre-existing weak spot at
+ * p ~ [0.99, 1.93, 0.05] — trueD 0.646 (0.34R) but estimate 0.0123,
+ * reading 1/200 in the deep-void column. Verified BIT-IDENTICAL under
+ * the origin ball at the old radius (the old probe set just never landed
+ * there), and above the marcher's real acceptance epsilon at typical hit
+ * distances (~0.006) — a slow-march spot of the known in-sphere
+ * floor-0-drop residual class, not a rendered ghost and not a pjqw
+ * regression.
  */
 
 /** Per-map anisotropy ratio `sigma_max / sigma_min` at or below which the
@@ -333,6 +354,73 @@ export const PROBE_SEED = 0x5eedf00d;
 /** Pad factor applied to the probe's sampled `maxR` — the probe sees a
  * finite sample of the attractor, whose true supremum sits slightly beyond. */
 export const RADIUS_PAD = 1.05;
+
+/**
+ * Near-smallest enclosing ball of an interleaved-xyz point cloud —
+ * Ritter's construction (pick a point, walk to its farthest, walk to
+ * THAT one's farthest, seed the ball on that diameter, then grow through
+ * every outlier). Each growth step moves the center by exactly the
+ * radius gain, so previously-enclosed points stay enclosed
+ * (`|p − c'| <= r + |c − c'| = r'`) and ONE pass already encloses the
+ * whole sample; the two extra passes only mop up float rounding at the
+ * boundary. Deterministic: fixed iteration order over the seeded probe,
+ * no randomness. Padding the result outward keeps the same
+ * sample-vs-attractor safety convention as the origin ball (fr-pjqw).
+ */
+function fitEnclosingBall(positions: Float32Array): {
+  center: Vec3;
+  radius: number;
+} {
+  const n = positions.length / 3;
+  if (n === 0) return { center: [0, 0, 0], radius: 0 };
+  const farthestFrom = (x: number, y: number, z: number): number => {
+    let bestD = -1;
+    let bestI = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - x;
+      const dy = positions[i * 3 + 1] - y;
+      const dz = positions[i * 3 + 2] - z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d > bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    return bestI;
+  };
+  const a = farthestFrom(positions[0], positions[1], positions[2]);
+  const b = farthestFrom(
+    positions[a * 3],
+    positions[a * 3 + 1],
+    positions[a * 3 + 2],
+  );
+  let cx = (positions[a * 3] + positions[b * 3]) / 2;
+  let cy = (positions[a * 3 + 1] + positions[b * 3 + 1]) / 2;
+  let cz = (positions[a * 3 + 2] + positions[b * 3 + 2]) / 2;
+  let r =
+    Math.hypot(
+      positions[a * 3] - positions[b * 3],
+      positions[a * 3 + 1] - positions[b * 3 + 1],
+      positions[a * 3 + 2] - positions[b * 3 + 2],
+    ) / 2;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > r) {
+        const grown = (r + d) / 2;
+        const t = (d - grown) / d;
+        cx += dx * t;
+        cy += dy * t;
+        cz += dz * t;
+        r = grown;
+      }
+    }
+  }
+  return { center: [cx, cy, cz], radius: r };
+}
 
 /** Descent stops once the tracked point escapes this multiple of `R`:
  * beyond it, deeper certificates cannot improve the min. */
@@ -455,19 +543,22 @@ export interface SurfaceDEMap {
    * `transforms`, for per-transform coloring. */
   baseIndex: number;
   /** Smallest singular value of `invM` — exactly `1 / sigma_max(M)`. With
-   * {@link invTNorm} it gives the branch-and-bound's separable child-radius
-   * lower bound `|invM·pre + invT| >= invMSigmaMin·|pre| − invTNorm`
-   * (fr-kidj stage 2), knowable from `|pre|` alone, BEFORE the transform. */
+   * {@link invTNorm} it gives the branch-and-bound's child-radius lower
+   * bound `|invM·pre + t'| >= invMSigmaMin·|pre| − invTNorm` (fr-kidj
+   * stage 2), knowable from `|pre|` alone, BEFORE the transform. `t'` is
+   * `invT − boundCenter` throughout: the skips price the CENTERED child
+   * radius the descent actually compares (fr-pjqw). */
   invMSigmaMin: number;
-  /** `|invT|` — the subtracted slack of the sigma-form bound above, and
-   * the ADDED term of the directional bound below. */
+  /** `|invT − boundCenter|` — the subtracted slack of the sigma-form
+   * bound above, and the ADDED term of the directional bound below. */
   invTNorm: number;
-  /** `invM^T · invT / |invT|` (zero vector when `invT` is): for unit
-   * `d = invT/|invT|`, `|invM·pre + invT| >= dot(d, invM·pre) + |invT| =
-   * dot(bnbDir, pre) + invTNorm` — the fr-kidj stage-2 bound that stays
-   * TIGHT when the inverse translation dominates the child radius (the
-   * common fold case; the sigma-form above loses 2·|invT| of range there,
-   * but survives `invT = 0` where this one is vacuous). */
+  /** `invM^T · t' / |t'|` for `t' = invT − boundCenter` (zero vector when
+   * `t'` is): for unit `d = t'/|t'|`, `|invM·pre + t'| >=
+   * dot(d, invM·pre) + |t'| = dot(bnbDir, pre) + invTNorm` — the fr-kidj
+   * stage-2 bound that stays TIGHT when the inverse translation dominates
+   * the child radius (the common fold case; the sigma-form above loses
+   * 2·|t'| of range there, but survives `t' = 0` where this one is
+   * vacuous). */
   bnbDir: Vec3;
 }
 
@@ -500,6 +591,16 @@ export interface SurfaceDE {
   /** Bounding-sphere radius of the RAW attractor (pre-final-transform),
    * probed by a seeded chaos game and padded. */
   boundingRadius: number;
+  /** Center of that bounding sphere (fr-pjqw): a Ritter-fit near-smallest
+   * enclosing ball of the probe cloud, kept only when its padded radius
+   * beats the origin ball's — `[0, 0, 0]` otherwise, which reproduces the
+   * historical origin-centered bound exactly. Every descent sphere term
+   * (`|q| − R` keys/certs/terminals, the escape test, the depth-0 sphere
+   * floor) reads `|q − boundCenter| − boundingRadius` instead; a tighter
+   * enclosing ball is still an enclosing ball, so the validity argument
+   * is unchanged while off-center attractors stop paying their offset as
+   * slack through every level (brief §3.2, factor B). */
+  boundCenter: Vec3;
   /** Radius bounding the VISIBLE set `F(attractor)` — equals
    * `boundingRadius` when there is no final transform. */
   visibleBoundingRadius: number;
@@ -847,7 +948,6 @@ export function buildSurfaceDE(
         : fold.type === "spherefold"
           ? SURFACE_FOLD_SPHEREFOLD
           : SURFACE_FOLD_MANDELBOX;
-    const invTNorm = Math.hypot(invT[0], invT[1], invT[2]);
     maps.push({
       invM,
       invT,
@@ -860,18 +960,10 @@ export function buildSurfaceDE(
       // smallest of the inverse is exactly one over the largest of the
       // forward map (fr-kidj stage 2's bound data).
       invMSigmaMin: 1 / analysis.sigmas[i].max,
-      invTNorm,
-      bnbDir:
-        invTNorm > 0
-          ? [
-              (invM[0] * invT[0] + invM[3] * invT[1] + invM[6] * invT[2]) /
-                invTNorm,
-              (invM[1] * invT[0] + invM[4] * invT[1] + invM[7] * invT[2]) /
-                invTNorm,
-              (invM[2] * invT[0] + invM[5] * invT[1] + invM[8] * invT[2]) /
-                invTNorm,
-            ]
-          : [0, 0, 0],
+      // Filled below, once the bounding ball's center is known — the
+      // stage-2 bounds must price the CENTERED child radius (fr-pjqw).
+      invTNorm: 0,
+      bnbDir: [0, 0, 0],
     });
   });
 
@@ -893,7 +985,65 @@ export function buildSurfaceDE(
     null,
     symmetry,
   );
-  const boundingRadius = probe.bounds.maxR * RADIUS_PAD + 1e-3;
+  const originRadius = probe.bounds.maxR * RADIUS_PAD + 1e-3;
+  // fr-pjqw: fit a near-smallest enclosing ball to the same probe cloud
+  // (Ritter's deterministic two-pass construction + growth repasses) and
+  // adopt it only when its PADDED radius strictly beats the origin
+  // ball's — both candidates are enclosing balls of the sample, padded by
+  // the same convention, so the choice is a pure tightness win and no
+  // system can regress to a looser bound than it shipped with.
+  const fit = fitEnclosingBall(probe.positions);
+  // A kaleidoscope attractor is exactly n-fold symmetric about the axis,
+  // so its true smallest enclosing ball is CENTERED ON the axis — but the
+  // raw fit of a finite sample lands epsilon off it, and that epsilon
+  // breaks the descent's exact on-axis sector ties (the sweep tests pin
+  // that tie behavior). Project the center onto the axis and re-measure
+  // the enclosing radius with one exact pass over the cloud.
+  if (order > 1) {
+    if (symmetry.axis === "x") {
+      fit.center[1] = 0;
+      fit.center[2] = 0;
+    } else if (symmetry.axis === "y") {
+      fit.center[0] = 0;
+      fit.center[2] = 0;
+    } else {
+      fit.center[0] = 0;
+      fit.center[1] = 0;
+    }
+    let maxSq = 0;
+    for (let i = 0; i < probe.positions.length; i += 3) {
+      const dx = probe.positions[i] - fit.center[0];
+      const dy = probe.positions[i + 1] - fit.center[1];
+      const dz = probe.positions[i + 2] - fit.center[2];
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d > maxSq) maxSq = d;
+    }
+    fit.radius = Math.sqrt(maxSq);
+  }
+  const fitRadius = fit.radius * RADIUS_PAD + 1e-3;
+  const centered = fitRadius < originRadius;
+  const boundingRadius = centered ? fitRadius : originRadius;
+  const boundCenter: Vec3 = centered ? fit.center : [0, 0, 0];
+
+  // fr-kidj stage-2 bound data, centered per fr-pjqw: the skips must
+  // lower-bound `|invM·pre + invT − boundCenter|`, i.e. the sigma and
+  // directional forms with `t' = invT − boundCenter`. With the origin
+  // center this computes the plain `invT` forms exactly.
+  for (const m of maps) {
+    const tpx = m.invT[0] - boundCenter[0];
+    const tpy = m.invT[1] - boundCenter[1];
+    const tpz = m.invT[2] - boundCenter[2];
+    const tn = Math.hypot(tpx, tpy, tpz);
+    m.invTNorm = tn;
+    m.bnbDir =
+      tn > 0
+        ? [
+            (m.invM[0] * tpx + m.invM[3] * tpy + m.invM[6] * tpz) / tn,
+            (m.invM[1] * tpx + m.invM[4] * tpy + m.invM[7] * tpz) / tn,
+            (m.invM[2] * tpx + m.invM[5] * tpy + m.invM[8] * tpz) / tn,
+          ]
+        : [0, 0, 0];
+  }
 
   // Depth cap from the SLOWEST contraction: the largest per-level shrink
   // factor bounds how many levels matter before features drop below
@@ -929,8 +1079,18 @@ export function buildSurfaceDE(
     ];
     const s = transformSigmas(finalTransform);
     const fold = pureFoldVariation(finalTransform);
-    // |M x + t| <= sigma_max·|x| + |t| bounds the affine image either way.
-    const affineR = s.max * boundingRadius + Math.hypot(tx, ty, tz);
+    // The affine image of ball(boundCenter, R) is inside the ball at
+    // `M·boundCenter + t` of radius `sigma_max·R`, so from the origin
+    // `|M x + t| <= |M·boundCenter + t| + sigma_max·R` — with the origin
+    // center this reduces to the historical `sigma_max·R + |t|` exactly.
+    const [bx, by, bz] = boundCenter;
+    const affineR =
+      s.max * boundingRadius +
+      Math.hypot(
+        affine.m[0] * bx + affine.m[1] * by + affine.m[2] * bz + tx,
+        affine.m[3] * bx + affine.m[4] * by + affine.m[5] * bz + ty,
+        affine.m[6] * bx + affine.m[7] * by + affine.m[8] * bz + tz,
+      );
     if (fold) {
       const kind: SurfaceFoldKind =
         fold.type === "boxfold"
@@ -978,6 +1138,7 @@ export function buildSurfaceDE(
       stepSin: Math.sin(step),
     },
     boundingRadius,
+    boundCenter,
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
@@ -1234,6 +1395,7 @@ function refinedCertValue(
 ): number {
   const { order, axis, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
+  const [bcX, bcY, bcZ] = de.boundCenter;
   let inner = Infinity;
   let sx = ix;
   let sy = iy;
@@ -1429,7 +1591,10 @@ function refinedCertValue(
           jz = imJ[6] * cx + imJ[7] * cy + imJ[8] * cz + itJ[2];
           branchSigma = mapJ.foldSigma * sfSigma;
         }
-        const rj = Math.sqrt(jx * jx + jy * jy + jz * jz);
+        const jcx = jx - bcX;
+        const jcy = jy - bcY;
+        const jcz = jz - bcZ;
+        const rj = Math.sqrt(jcx * jcx + jcy * jcy + jcz * jcz);
         let innerTerm = branchSigma * (rj - R);
         if (branchRd > 0) {
           const regionTerm = absWJ * branchRd;
@@ -1483,7 +1648,8 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
   const sweep = [0, 0, 0];
 
   const R = de.boundingRadius;
-  const startR = Math.sqrt(x * x + y * y + z * z);
+  const [bcX, bcY, bcZ] = de.boundCenter;
+  const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
@@ -1626,7 +1792,10 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
           const ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
           const iy = im[3] * sX + im[4] * sY + im[5] * sZ + it[1];
           const iz = im[6] * sX + im[7] * sY + im[8] * sZ + it[2];
-          const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
+          const icx = ix - bcX;
+          const icy = iy - bcY;
+          const icz = iz - bcZ;
+          const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
           const cert = childScale * (r - R);
@@ -2023,7 +2192,8 @@ function descendFold(
 
   const { order, axis, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
-  const startR = Math.sqrt(x * x + y * y + z * z);
+  const [bcX, bcY, bcZ] = de.boundCenter;
+  const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   let best = Infinity;
   const bailBelow =
@@ -2391,7 +2561,10 @@ function descendFold(
               iz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
               branchSigma = map.foldSigma * sfSigma;
             }
-            const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
+            const icx = ix - bcX;
+            const icy = iy - bcY;
+            const icz = iz - bcZ;
+            const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
             const childScale = pScale * branchSigma;
             let key = pScale * (r - R);
             if (candFloor > 0 && candFloor > key) key = candFloor;
@@ -2592,7 +2765,11 @@ function descendLens(
 ): number {
   const lens = de.foldFinal!;
   const R = de.boundingRadius;
+  const [bcX, bcY, bcZ] = de.boundCenter;
   const hasFolds = deHasFolds(de);
+  // The VISIBLE ball stays origin-centered (its own bound, its own
+  // radius); only the raw attractor's descent ball carries fr-pjqw's
+  // center.
   const visBound =
     Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) -
     de.visibleBoundingRadius;
@@ -2748,10 +2925,14 @@ function descendLens(
     const qy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
     const qz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
     const factor = absW * sfSigma * sigmaMinM;
-    const rq = Math.sqrt(qx * qx + qy * qy + qz * qz);
-    // The core's return never undercuts its own depth-0 sphere bound, so
-    // a branch whose scaled sphere certificate already reaches the running
-    // min cannot advance it — skip the whole descent, exactly.
+    const qcx = qx - bcX;
+    const qcy = qy - bcY;
+    const qcz = qz - bcZ;
+    const rq = Math.sqrt(qcx * qcx + qcy * qcy + qcz * qcz);
+    // The core's return never undercuts its own depth-0 sphere bound
+    // (|q − boundCenter| − R since fr-pjqw), so a branch whose scaled
+    // sphere certificate already reaches the running min cannot advance
+    // it — skip the whole descent, exactly.
     if (factor * (rq - R) >= best) continue;
     const innerCutoff =
       cutoff > 0 ? (best < cutoff ? best : cutoff) / factor : 0;

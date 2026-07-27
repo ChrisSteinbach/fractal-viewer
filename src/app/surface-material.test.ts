@@ -52,6 +52,7 @@ function de3(
     maps,
     symmetry,
     boundingRadius: 1,
+    boundCenter: [0, 0, 0],
     visibleBoundingRadius: 1,
     escapeRadius: 2,
     maxDepth: 8,
@@ -72,6 +73,23 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     expect(u.uSymOrder.value).toBe(1);
     expect((u.uSymStep.value as THREE.Vector2).x).toBe(1);
     expect((u.uSymStep.value as THREE.Vector2).y).toBe(0);
+  });
+
+  it("passes the bounding ball's center through (fr-pjqw)", () => {
+    const material = createSurfaceMaterial();
+    const de = de3([map3()]);
+    setSurfaceSystem(material, { ...de, boundCenter: [0.5, -1.25, 2] }, [
+      black,
+    ]);
+    const center = material.uniforms.uBoundCenter.value as THREE.Vector3;
+    expect(center.x).toBe(0.5);
+    expect(center.y).toBe(-1.25);
+    expect(center.z).toBe(2);
+    // The next system must not inherit it.
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(center.x).toBe(0);
+    expect(center.y).toBe(0);
+    expect(center.z).toBe(0);
   });
 
   it("codes the x axis as 0, y as 1 and z as 2", () => {
