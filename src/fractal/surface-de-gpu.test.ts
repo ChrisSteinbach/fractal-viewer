@@ -364,9 +364,10 @@ describe("packSurfaceGpuMaps", () => {
   });
 });
 
-/** Full mode-"image" shading params, overridable per test — distinct
- * exactly-representable values per field so any offset mixup shows up as
- * the wrong value, not a coincidental match. */
+/** Full ShadeParams inputs (march "unproject" + mode "shade"),
+ * overridable per test — distinct exactly-representable values per field
+ * so any offset mixup shows up as the wrong value, not a coincidental
+ * match. */
 function shadeParams(
   overrides: Partial<SurfaceGpuShadeParams> = {},
 ): SurfaceGpuShadeParams {
@@ -531,16 +532,17 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     expect(wgsl).not.toContain("fn evalQueries");
   });
 
-  it("mode 'image' generates fn marchShadeRays on top of the march ray-state bindings and no evalQueries", () => {
-    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
-    expect(wgsl).toContain("fn marchShadeRays");
+  it("mode 'shade' generates fn shadeRays over the ray-state bindings, with no march or eval entry", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    expect(wgsl).toContain("fn shadeRays");
     expect(wgsl).toContain("var<storage, read> activeList: array<u32>;");
     expect(wgsl).toContain("var<storage, read_write> states: array<vec4f>;");
+    expect(wgsl).not.toContain("fn marchRays");
     expect(wgsl).not.toContain("fn evalQueries");
   });
 
-  it("mode 'image' declares the shading interface at bindings 4-8 (shade/shadeMaps/colorOut/lutTex/lutSamp)", () => {
-    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+  it("mode 'shade' declares the shading interface at bindings 4-8 (shade/shadeMaps/colorOut/lutTex/lutSamp)", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
     expect(wgsl).toContain(
       "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
     );
@@ -556,35 +558,79 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     expect(wgsl).toContain("@group(0) @binding(8) var lutSamp: sampler;");
   });
 
-  it("mode 'image' emits the greedy hit-info descent and packs pixels with pack4x8unorm", () => {
-    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
+  it("mode 'shade' emits the greedy hit-info descent and packs pixels with pack4x8unorm", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
     expect(wgsl).toContain("fn surfaceDEHitInfo");
     expect(wgsl).toContain("pack4x8unorm");
   });
 
-  it("mode 'image' gates the march-start hash dither behind the flags bit", () => {
-    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "image" }));
-    expect(wgsl).toContain("(shade.flags & 1u) != 0u");
-    expect(wgsl).toContain("hash2(");
+  it("mode 'shade' has no march loop and no dither — a shade batch only reads terminal states", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    expect(wgsl).not.toContain("hash2");
+    expect(wgsl).not.toContain("shade.flags");
+    expect(wgsl).not.toContain("params.stepsThisPass");
   });
 });
 
-describe("surfaceDeKernelWgsl image-mode isolation (eval/march output unchanged)", () => {
-  it("mode 'eval' output contains none of the image-only markers", () => {
+describe("surfaceDeKernelWgsl march ray derivation (rays option)", () => {
+  it("rays 'unproject' keeps fn marchRays and derives rays through shade.invProjView with ShadeParams at binding 4", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    expect(wgsl).toContain("struct ShadeParams");
+    expect(wgsl).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+    expect(wgsl).toContain("shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0)");
+  });
+
+  it("rays 'unproject' gates the march-start hash dither behind the flags bit", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject" }),
+    );
+    expect(wgsl).toContain("(shade.flags & 1u) != 0u");
+    expect(wgsl).toContain("hash2(");
+  });
+
+  it("rays 'unproject' writes states only — no shade-mode pixel interface, no hit-info descent", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject" }),
+    );
+    expect(wgsl).not.toContain("shadeMaps");
+    expect(wgsl).not.toContain("colorOut");
+    expect(wgsl).not.toContain("lutTex");
+    expect(wgsl).not.toContain("lutSamp");
+    expect(wgsl).not.toContain("binding(5)");
+    expect(wgsl).not.toContain("surfaceDEHitInfo");
+    expect(wgsl).not.toContain("pack4x8unorm");
+  });
+
+  it("rays defaults to 'pose': explicit and omitted produce identical source", () => {
+    const omitted = surfaceDeKernelWgsl(kernelOpts({ mode: "march" }));
+    const explicit = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "pose" }),
+    );
+    expect(explicit).toBe(omitted);
+  });
+});
+
+describe("surfaceDeKernelWgsl shade-split isolation (eval/march-pose output unchanged)", () => {
+  it("mode 'eval' output contains none of the shade markers", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "eval" }));
     expect(wgsl).not.toContain("ShadeParams");
     expect(wgsl).not.toContain("binding(4)");
-    expect(wgsl).not.toContain("marchShadeRays");
+    expect(wgsl).not.toContain("shadeRays");
     expect(wgsl).not.toContain("shade");
   });
 
-  it("mode 'march' output contains none of the image-only markers — not even the 'shade' substring", () => {
+  it("mode 'march' with default pose rays contains none of the shade markers — not even the 'shade' substring", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "march", sharedFrontier: true, bnbStage2: true }),
     );
     expect(wgsl).not.toContain("ShadeParams");
     expect(wgsl).not.toContain("binding(4)");
-    expect(wgsl).not.toContain("marchShadeRays");
+    expect(wgsl).not.toContain("shadeRays");
     expect(wgsl).not.toContain("shade");
   });
 });

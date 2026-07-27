@@ -1,14 +1,22 @@
 /**
  * WebGPU compute renderer for FOLD 3D surface sessions (fr-tzdg) — the
- * integration of fr-q1f8's measured verdict: `surface-de-gpu.ts`'s image
- * kernel (the fold GLSL tracer's march + shading, mirrored term for term)
- * traces mandelboxKifs at ~49µs/ray on the same hardware where the WebGL
- * fragment tracer is unbounded (>1300µs/ray), compiles in ~0.1-0.3s where
- * the fold GLSL links in ~25s on Mesa (fr-096u's entry cliff), and — by
- * construction — never hands the driver an unbounded submission: a frame
- * is a sequence of small compute passes (`stepsThisPass` DE steps each)
- * with the active-ray list compacted host-side between them, the bench's
- * own march-loop shape.
+ * integration of fr-q1f8's measured verdict: the WGSL march kernel traces
+ * mandelboxKifs at ~49µs/ray on the same hardware where the WebGL
+ * fragment tracer is unbounded (>1300µs/ray), and compiles in ~0.1-0.3s
+ * where the fold GLSL links in ~25s on Mesa (fr-096u's entry cliff).
+ *
+ * A frame is TWO pipelines, both bounded by construction (no submission
+ * ever outruns the i915 watchdog): MARCH passes advance every active ray
+ * by `stepsThisPass` DE steps (the bench's proven register-light kernel,
+ * ray derivation swapped to the GLSL tracer's unproject), with the active
+ * list compacted host-side between them; rays that turn terminal join a
+ * SHADE QUEUE drained in host-sized batches through the shade kernel (the
+ * GLSL tracer's full shading, mirrored term for term). The split is a
+ * measured verdict, not taste: shading a freshly-hit ray costs ~40
+ * zero-cutoff on-surface DE evals, and the v1 megakernel — which shaded
+ * rays inside whichever march pass terminated them — measured 1.1-5.3s
+ * per pass on Iris and LOST THE DEVICE at full depth/budgets (fr-096u's
+ * watchdog through the shading door; numbers on the fr-tzdg bead).
  *
  * Division of labor: this module owns the DEVICE — acquisition, the
  * per-session pipeline (the DE is frozen at session enter, matching the
@@ -39,6 +47,9 @@ import {
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
+  SURFACE_GPU_RAY_EXHAUSTED,
+  SURFACE_GPU_RAY_HIT,
+  SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
@@ -133,6 +144,11 @@ export interface SurfaceComputeFrame {
   gpuMs: number;
   passes: number;
   truncated: boolean;
+  /** Final ray-status tallies — how the frame's rays ended (`active` is
+   * nonzero only on truncated frames). Field-debuggability: an
+   * exhausted-dominated frame means the march budget ran dry, a
+   * miss-dominated one that rays left the visible sphere. */
+  counts: { hit: number; miss: number; exhausted: number; active: number };
 }
 
 /**
@@ -171,6 +187,63 @@ export function buildSurfaceComputeBackground(
   return out;
 }
 
+/** Smallest march slice worth its dispatch overhead. */
+export const SURFACE_COMPUTE_MARCH_CHUNK_MIN = 4096;
+
+/** Conservative pre-measurement guess of march cost per ray·step (µs) —
+ * sizes the very first slice of a frame; the measured EMA takes over from
+ * the second slice on. ~8.7µs/ray·step measured far-field on Iris. */
+export const SURFACE_COMPUTE_INITIAL_RAY_STEP_US = 10;
+
+/**
+ * March slice sizing: how many rays one dispatch may advance by `steps`
+ * DE steps to land near the pass target, from the measured per-ray·step
+ * EMA. This is what keeps a FULL-RESOLUTION settle's submissions bounded
+ * — a 921k-ray raster at ~9µs/ray·step would otherwise hand the driver
+ * an ~8s pass (the same watchdog class the shade split fixed). Pure so
+ * the bound is unit-tested.
+ */
+export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
+  const budgetUs = SURFACE_COMPUTE_PASS_TARGET_MS * 1000;
+  const rays = Math.floor(
+    budgetUs / Math.max(1e-3, emaUsPerRayStep * Math.max(1, steps)),
+  );
+  return Math.max(SURFACE_COMPUTE_MARCH_CHUNK_MIN, rays);
+}
+
+/** First shade batch of a frame — deliberately small: a single hit ray's
+ * shade is ~40 zero-cutoff on-surface DE evals, and the very first batch
+ * has no measurement to size itself with. */
+export const SURFACE_COMPUTE_SHADE_BATCH_START = 32;
+
+/** Shade batch ceiling — plenty to swallow a whole preview's hits in one
+ * bounded dispatch once the measured cost allows it. */
+export const SURFACE_COMPUTE_MAX_SHADE_BATCH = 4096;
+
+/**
+ * Adaptive shade-batch sizing: grow while batches come in well under the
+ * pass target, QUARTER on a big overshoot — shading cost per ray swings
+ * orders of magnitude with surface position (fold branch trees explode
+ * near the set), and the downward reaction is what keeps a mass-hit
+ * frame's shading submissions under the i915 watchdog (the measured v1
+ * failure). Pure so the safety bias is unit-tested.
+ */
+export function nextShadeBatchSize(
+  current: number,
+  lastBatchMs: number,
+): number {
+  if (
+    lastBatchMs < SURFACE_COMPUTE_PASS_TARGET_MS / 2 &&
+    current < SURFACE_COMPUTE_MAX_SHADE_BATCH
+  ) {
+    return Math.min(current * 2, SURFACE_COMPUTE_MAX_SHADE_BATCH);
+  }
+  if (lastBatchMs > SURFACE_COMPUTE_PASS_TARGET_MS * 2) {
+    return Math.max(1, Math.floor(current / 4));
+  }
+  return current;
+}
+
 /** The bench host loop's adaptive pass sizing: double while the last pass
  * came in under target, capped. Pure so the pacing is unit-tested. */
 export function nextStepsPerPass(current: number, lastPassMs: number): number {
@@ -183,6 +256,43 @@ export function nextStepsPerPass(current: number, lastPassMs: number): number {
   return current;
 }
 
+/**
+ * Nearest-neighbor resample of the previous frame's pixels into a new
+ * raster — the compute path's analogue of the strip settle's
+ * preview-seeded target (scene.ts beginSurfaceSettle): unresolved rays
+ * show the last known image instead of bare backdrop, so a settle's
+ * progressive presents never look WORSE than the preview they follow.
+ * Pure so the row mapping (row 0 = bottom on both sides) is unit-tested.
+ */
+export function resampleSurfacePixels(
+  src: Uint8Array,
+  srcWidth: number,
+  srcHeight: number,
+  width: number,
+  height: number,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(width * height * 4);
+  for (let py = 0; py < height; py++) {
+    const sy = Math.min(
+      srcHeight - 1,
+      Math.floor(((py + 0.5) / height) * srcHeight),
+    );
+    for (let px = 0; px < width; px++) {
+      const sx = Math.min(
+        srcWidth - 1,
+        Math.floor(((px + 0.5) / width) * srcWidth),
+      );
+      const s = (sy * srcWidth + sx) * 4;
+      const o = (py * width + px) * 4;
+      out[o] = src[s];
+      out[o + 1] = src[s + 1];
+      out[o + 2] = src[s + 2];
+      out[o + 3] = src[s + 3];
+    }
+  }
+  return out;
+}
+
 const WHITE_LUT = new Uint8Array(256 * 4).fill(255);
 
 interface FrameBuffers {
@@ -192,7 +302,8 @@ interface FrameBuffers {
   color: GPUBuffer;
   stagingStates: GPUBuffer;
   stagingColor: GPUBuffer;
-  bindGroup: GPUBindGroup;
+  marchBindGroup: GPUBindGroup;
+  shadeBindGroup: GPUBindGroup;
 }
 
 export class SurfaceComputeRenderer {
@@ -269,61 +380,66 @@ export class SurfaceComputeRenderer {
     device.pushErrorScope("out-of-memory");
     device.pushErrorScope("validation");
 
-    const code = surfaceDeKernelWgsl({
-      mode: "image",
-      width: SURFACE_FOLD_BEAM_WIDTH,
-      workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
-      sharedFrontier: false,
-      bnbStage2: false,
-    });
-    const module = device.createShaderModule({ code });
-    const info = await module.getCompilationInfo();
-    const errors = info.messages.filter((m) => m.type === "error");
-    if (errors.length > 0) {
-      throw new Error(
-        `Surface compute: WGSL compile failed:\n${errors
-          .map((m) => `${String(m.lineNum)}:${String(m.linePos)}: ${m.message}`)
-          .join("\n")}`,
-      );
-    }
+    // TWO pipelines (the measured v2 split — see the module doc): the
+    // march kernel is the bench's proven register-light shape with only
+    // the ray derivation swapped to the app's unproject, and the shade
+    // kernel runs over host-sized batches of terminal rays so no shading
+    // submission is ever unbounded.
+    const compileEntry = async (
+      mode: "march" | "shade",
+    ): Promise<GPUShaderModule> => {
+      const module = device.createShaderModule({
+        code: surfaceDeKernelWgsl({
+          mode,
+          rays: mode === "march" ? "unproject" : undefined,
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
+          sharedFrontier: false,
+          bnbStage2: false,
+        }),
+      });
+      const info = await module.getCompilationInfo();
+      const errors = info.messages.filter((m) => m.type === "error");
+      if (errors.length > 0) {
+        throw new Error(
+          `Surface compute: ${mode} WGSL compile failed:\n${errors
+            .map(
+              (m) => `${String(m.lineNum)}:${String(m.linePos)}: ${m.message}`,
+            )
+            .join("\n")}`,
+        );
+      }
+      return module;
+    };
 
-    const layout = device.createBindGroupLayout({
+    const bufferEntry = (
+      binding: number,
+      type: GPUBufferBindingType,
+    ): GPUBindGroupLayoutEntry => ({
+      binding,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type },
+    });
+    // March (rays:"unproject") binds params/maps/active/states + the
+    // shade uniform (invProjView + dither knobs only).
+    const marchLayout = device.createBindGroupLayout({
       entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "read-only-storage" },
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "read-only-storage" },
-        },
-        {
-          binding: 3,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "storage" },
-        },
-        {
-          binding: 4,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "uniform" },
-        },
-        {
-          binding: 5,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "read-only-storage" },
-        },
-        {
-          binding: 6,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: "storage" },
-        },
+        bufferEntry(0, "uniform"),
+        bufferEntry(1, "read-only-storage"),
+        bufferEntry(2, "read-only-storage"),
+        bufferEntry(3, "storage"),
+        bufferEntry(4, "uniform"),
+      ],
+    });
+    const shadeLayout = device.createBindGroupLayout({
+      entries: [
+        bufferEntry(0, "uniform"),
+        bufferEntry(1, "read-only-storage"),
+        bufferEntry(2, "read-only-storage"),
+        bufferEntry(3, "storage"),
+        bufferEntry(4, "uniform"),
+        bufferEntry(5, "read-only-storage"),
+        bufferEntry(6, "storage"),
         {
           binding: 7,
           visibility: GPUShaderStage.COMPUTE,
@@ -336,10 +452,24 @@ export class SurfaceComputeRenderer {
         },
       ],
     });
-    const pipeline = await device.createComputePipelineAsync({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-      compute: { module, entryPoint: "marchShadeRays" },
-    });
+    const [marchModule, shadeModule] = await Promise.all([
+      compileEntry("march"),
+      compileEntry("shade"),
+    ]);
+    const [marchPipeline, shadePipeline] = await Promise.all([
+      device.createComputePipelineAsync({
+        layout: device.createPipelineLayout({
+          bindGroupLayouts: [marchLayout],
+        }),
+        compute: { module: marchModule, entryPoint: "marchRays" },
+      }),
+      device.createComputePipelineAsync({
+        layout: device.createPipelineLayout({
+          bindGroupLayouts: [shadeLayout],
+        }),
+        compute: { module: shadeModule, entryPoint: "shadeRays" },
+      }),
+    ]);
 
     const paramsBuf = device.createBuffer({
       size: SURFACE_GPU_PARAMS_BYTES,
@@ -396,8 +526,10 @@ export class SurfaceComputeRenderer {
     return new SurfaceComputeRenderer(
       device,
       de,
-      pipeline,
-      layout,
+      marchPipeline,
+      marchLayout,
+      shadePipeline,
+      shadeLayout,
       paramsBuf,
       shadeBuf,
       mapsBuf,
@@ -425,6 +557,13 @@ export class SurfaceComputeRenderer {
   private chain: Promise<unknown> = Promise.resolve();
   private frame: FrameBuffers | null = null;
   private uploadedLutVersion: number | null = null;
+  /** Last completed frame — the seed for the next frame's prefill (see
+   * runFrame's seeding comment). */
+  private lastFrame: {
+    pixels: Uint8Array<ArrayBuffer>;
+    width: number;
+    height: number;
+  } | null = null;
   private background: {
     width: number;
     height: number;
@@ -434,8 +573,10 @@ export class SurfaceComputeRenderer {
   private constructor(
     private readonly device: GPUDevice,
     private readonly de: SurfaceDE,
-    private readonly pipeline: GPUComputePipeline,
-    private readonly layout: GPUBindGroupLayout,
+    private readonly marchPipeline: GPUComputePipeline,
+    private readonly marchLayout: GPUBindGroupLayout,
+    private readonly shadePipeline: GPUComputePipeline,
+    private readonly shadeLayout: GPUBindGroupLayout,
     private readonly paramsBuf: GPUBuffer,
     private readonly shadeBuf: GPUBuffer,
     private readonly mapsBuf: GPUBuffer,
@@ -531,8 +672,18 @@ export class SurfaceComputeRenderer {
       size: rays * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
-    const bindGroup = device.createBindGroup({
-      layout: this.layout,
+    const marchBindGroup = device.createBindGroup({
+      layout: this.marchLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuf } },
+        { binding: 1, resource: { buffer: this.mapsBuf } },
+        { binding: 2, resource: { buffer: active } },
+        { binding: 3, resource: { buffer: states } },
+        { binding: 4, resource: { buffer: this.shadeBuf } },
+      ],
+    });
+    const shadeBindGroup = device.createBindGroup({
+      layout: this.shadeLayout,
       entries: [
         { binding: 0, resource: { buffer: this.paramsBuf } },
         { binding: 1, resource: { buffer: this.mapsBuf } },
@@ -552,7 +703,8 @@ export class SurfaceComputeRenderer {
       color,
       stagingStates,
       stagingColor,
-      bindGroup,
+      marchBindGroup,
+      shadeBindGroup,
     };
     return this.frame;
   }
@@ -627,12 +779,27 @@ export class SurfaceComputeRenderer {
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still
-    // ACTIVE at a budget cut keep this backdrop; the kernel writes every
-    // terminal pixel itself.
+    // ACTIVE at a budget cut (or mid-frame progress presents) keep this
+    // seed; the kernel writes every terminal pixel itself. Seeding from
+    // the LAST frame — resampled across raster changes — is the strip
+    // settle's preview-seeded-target discipline: a frame's presents never
+    // look worse than the image they follow. First frame of a session
+    // seeds the backdrop gradient.
+    const last = this.lastFrame;
     device.queue.writeBuffer(
       buffers.color,
       0,
-      this.backgroundRows(width, height),
+      last === null
+        ? this.backgroundRows(width, height)
+        : last.width === width && last.height === height
+          ? last.pixels
+          : resampleSurfacePixels(
+              last.pixels,
+              last.width,
+              last.height,
+              width,
+              height,
+            ),
     );
     const states = new Float32Array(rays * 4);
     for (let i = 0; i < rays; i++) states[i * 4] = -1;
@@ -640,84 +807,174 @@ export class SurfaceComputeRenderer {
 
     let active = new Uint32Array(rays);
     for (let i = 0; i < rays; i++) active[i] = i;
+    // Rays that turned terminal in a march pass, awaiting a shade batch.
+    // The QUEUE is the v2 architecture's point: shading a freshly-hit ray
+    // costs ~40 zero-cutoff on-surface DE evals — orders of magnitude
+    // more than a march step — and letting it ride the march pass that
+    // terminated it measured 1.1-5.3s submissions and a real device loss
+    // on Iris (fr-096u's watchdog through the shading door). Host-sized
+    // batches keep every shading submission bounded too.
+    let shadeQueue: number[] = [];
     let stepsThisPass = 1;
+    let shadeBatch = SURFACE_COMPUTE_SHADE_BATCH_START;
     let passes = 0;
     let gpuMs = 0;
     let truncated = false;
     let lastProgress = wallStart;
 
-    while (active.length > 0) {
-      if (performance.now() - wallStart > budgetMs) {
-        truncated = true;
-        break;
-      }
-      const params = packSurfaceGpuParams(this.de, {
-        itemCount: active.length,
-        stepsThisPass,
-        marchSteps: spec.marchSteps,
-        maxDepth: spec.maxDepth,
-        hitFloor: spec.hitFloor,
-        cutoff: 0,
-        footprint: 0,
-        pose: {
-          ro: spec.camPos,
-          right: [1, 0, 0],
-          up: [0, 1, 0],
-          fwd: [0, 0, 1],
-          tanHalf: 0,
-          aspect: width / Math.max(1, height),
-          rasterWidth: width,
-          rasterHeight: height,
-          // The ACCEPTANCE slope (fr-7xgi): eps = max(pixelEps * t,
-          // hitFloorEps) in the kernel's march — native-height derived,
-          // tier-independent.
-          pixelEps: spec.acceptPixelEps,
-        },
-      });
-      device.queue.writeBuffer(this.paramsBuf, 0, params);
-      device.queue.writeBuffer(buffers.active, 0, active);
+    const writeParams = (itemCount: number, steps: number): void => {
+      device.queue.writeBuffer(
+        this.paramsBuf,
+        0,
+        packSurfaceGpuParams(this.de, {
+          itemCount,
+          stepsThisPass: steps,
+          marchSteps: spec.marchSteps,
+          maxDepth: spec.maxDepth,
+          hitFloor: spec.hitFloor,
+          cutoff: 0,
+          footprint: 0,
+          pose: {
+            ro: spec.camPos,
+            right: [1, 0, 0],
+            up: [0, 1, 0],
+            fwd: [0, 0, 1],
+            tanHalf: 0,
+            aspect: width / Math.max(1, height),
+            rasterWidth: width,
+            rasterHeight: height,
+            // The ACCEPTANCE slope (fr-7xgi): eps = max(pixelEps * t,
+            // hitFloorEps) in the kernel's march — native-height derived,
+            // tier-independent.
+            pixelEps: spec.acceptPixelEps,
+          },
+        }),
+      );
+    };
+    const dispatchTimed = async (
+      pipeline: GPUComputePipeline,
+      bindGroup: GPUBindGroup,
+      count: number,
+    ): Promise<number | null> => {
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
-      pass.setPipeline(this.pipeline);
-      pass.setBindGroup(0, buffers.bindGroup);
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(active.length / SURFACE_COMPUTE_WORKGROUP_SIZE),
+        Math.ceil(count / SURFACE_COMPUTE_WORKGROUP_SIZE),
       );
       pass.end();
       const t0 = performance.now();
       device.queue.submit([encoder.finish()]);
       await device.queue.onSubmittedWorkDone();
-      if (token !== this.frameToken || this.isLost || this.destroyed)
+      if (token !== this.frameToken || this.isLost || this.destroyed) {
         return null;
-      const passMs = performance.now() - t0;
-      gpuMs += passMs;
-      passes++;
-
-      const stateCopy = new Float32Array(
-        await this.readback(buffers.states, buffers.stagingStates, rays * 16),
-      );
-      if (token !== this.frameToken || this.isLost || this.destroyed)
-        return null;
-      const next: number[] = [];
-      for (const ray of active) {
-        if (stateCopy[ray * 4 + 1] === SURFACE_GPU_RAY_ACTIVE) next.push(ray);
       }
-      active = Uint32Array.from(next);
-      stepsThisPass = nextStepsPerPass(stepsThisPass, passMs);
+      return performance.now() - t0;
+    };
 
-      const now = performance.now();
-      if (
-        opts.onProgress &&
-        active.length > 0 &&
-        now - lastProgress >= progressMs
-      ) {
-        const partial = new Uint8Array(
-          await this.readback(buffers.color, buffers.stagingColor, rays * 4),
+    // Progress presents fire BETWEEN bounded pieces of work — march
+    // slices and shade batches alike — never only at iteration ends: a
+    // full-depth shade drain can grind for minutes, and the whole point
+    // of progressive presents is that the screen develops through it.
+    const maybePresent = async (): Promise<boolean> => {
+      if (!opts.onProgress) return true;
+      if (performance.now() - lastProgress < progressMs) return true;
+      const partial = new Uint8Array(
+        await this.readback(buffers.color, buffers.stagingColor, rays * 4),
+      );
+      if (token !== this.frameToken || this.isLost || this.destroyed) {
+        return false;
+      }
+      lastProgress = performance.now();
+      opts.onProgress(partial);
+      return true;
+    };
+
+    let rayStepEmaUs = SURFACE_COMPUTE_INITIAL_RAY_STEP_US;
+    let finalStates: Float32Array | null = null;
+    outer: while (active.length > 0 || shadeQueue.length > 0) {
+      if (performance.now() - wallStart > budgetMs) {
+        truncated = true;
+        break;
+      }
+      if (active.length > 0) {
+        // One sweep over the active list, in slices sized from the
+        // measured per-ray·step cost so no single submission outruns the
+        // pass target — a full-resolution settle is ~200x a preview's
+        // rays, and stepsThisPass alone cannot bound it.
+        for (let offset = 0; offset < active.length;) {
+          if (performance.now() - wallStart > budgetMs) {
+            truncated = true;
+            break outer;
+          }
+          const chunk = Math.min(
+            marchChunkFor(rayStepEmaUs, stepsThisPass),
+            active.length - offset,
+          );
+          const slice = active.subarray(offset, offset + chunk);
+          writeParams(slice.length, stepsThisPass);
+          device.queue.writeBuffer(buffers.active, 0, slice);
+          const marchMs = await dispatchTimed(
+            this.marchPipeline,
+            buffers.marchBindGroup,
+            slice.length,
+          );
+          if (marchMs === null) return null;
+          gpuMs += marchMs;
+          passes++;
+          const usPerRayStep =
+            (marchMs * 1000) / (slice.length * Math.max(1, stepsThisPass));
+          rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
+          offset += chunk;
+          if (!(await maybePresent())) return null;
+        }
+        const stateCopy = new Float32Array(
+          await this.readback(buffers.states, buffers.stagingStates, rays * 16),
         );
-        if (token !== this.frameToken || this.isLost || this.destroyed)
+        if (token !== this.frameToken || this.isLost || this.destroyed) {
           return null;
-        lastProgress = performance.now();
-        opts.onProgress(partial);
+        }
+        finalStates = stateCopy;
+        const next: number[] = [];
+        for (const ray of active) {
+          if (stateCopy[ray * 4 + 1] === SURFACE_GPU_RAY_ACTIVE) {
+            next.push(ray);
+          } else {
+            shadeQueue.push(ray);
+          }
+        }
+        // Steps grow only while the WHOLE active set fits a single slice
+        // — small rasters (previews) climb toward 32 exactly like the
+        // bench loop; big rasters stay at fine steps and let the slicing
+        // do the bounding (same total work, bounded pieces, presents in
+        // between).
+        const sweptWhole =
+          marchChunkFor(rayStepEmaUs, stepsThisPass) >= active.length;
+        active = Uint32Array.from(next);
+        if (sweptWhole) stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
+      }
+      while (shadeQueue.length > 0) {
+        if (performance.now() - wallStart > budgetMs) {
+          // Marched-but-unshaded rays keep their seed pixels — the
+          // documented truncation contract.
+          truncated = true;
+          break outer;
+        }
+        const batch = Uint32Array.from(shadeQueue.slice(0, shadeBatch));
+        shadeQueue = shadeQueue.slice(batch.length);
+        writeParams(batch.length, 0);
+        device.queue.writeBuffer(buffers.active, 0, batch);
+        const shadeMs = await dispatchTimed(
+          this.shadePipeline,
+          buffers.shadeBindGroup,
+          batch.length,
+        );
+        if (shadeMs === null) return null;
+        gpuMs += shadeMs;
+        passes++;
+        shadeBatch = nextShadeBatchSize(shadeBatch, shadeMs);
+        if (!(await maybePresent())) return null;
       }
     }
 
@@ -725,6 +982,19 @@ export class SurfaceComputeRenderer {
       await this.readback(buffers.color, buffers.stagingColor, rays * 4),
     );
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
+    const counts = { hit: 0, miss: 0, exhausted: 0, active: 0 };
+    if (finalStates) {
+      for (let i = 0; i < rays; i++) {
+        const status = finalStates[i * 4 + 1];
+        if (status === SURFACE_GPU_RAY_HIT) counts.hit++;
+        else if (status === SURFACE_GPU_RAY_MISS) counts.miss++;
+        else if (status === SURFACE_GPU_RAY_EXHAUSTED) counts.exhausted++;
+        else counts.active++;
+      }
+    } else {
+      counts.active = rays;
+    }
+    this.lastFrame = { pixels, width, height };
     return {
       pixels,
       width,
@@ -733,6 +1003,7 @@ export class SurfaceComputeRenderer {
       gpuMs,
       passes,
       truncated,
+      counts,
     };
   }
 }

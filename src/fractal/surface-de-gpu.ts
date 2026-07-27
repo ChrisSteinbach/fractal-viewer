@@ -59,25 +59,42 @@ import type { Vec3 } from "./types";
  * "compaction every N steps", which is also what keeps every submission
  * bounded (the i915 preemption-timeout lesson from fr-096u).
  *
- * IMAGE MODE (`marchShadeRays`, fr-tzdg) is march mode + terminal
- * shading: the march arithmetic is `marchRays`' verbatim, but the ray
- * direction comes from the GLSL tracer's unproject — near/far clip
- * points through `shade.invProjView`, with `params.ro` doubling as
- * uCamPos and the pose basis fields (right/up/fwd/tanHalf/aspect)
- * IGNORED — plus the tracer's march-start hash dither (flags bit0; off
- * for agreement runs). A ray that turns terminal in-dispatch writes its
- * pixel: misses and exhausted rays the background gradient, hits the
+ * MARCH RAY DERIVATION (`rays`, march mode only): `"pose"` (default)
+ * keeps the bench baseline — NDC pixel centers against the pose basis,
+ * byte-identical output to the pre-shade-split generator. `"unproject"`
+ * derives rays the GLSL tracer's way — near/far clip points through
+ * `shade.invProjView` (ShadeParams binds at 4 in this variant), with
+ * `params.ro` doubling as uCamPos and the pose basis fields
+ * (right/up/fwd/tanHalf/aspect) IGNORED — plus the tracer's march-start
+ * hash dither (flags bit0; off for agreement runs). That is the app
+ * path, where inset/centered-projection parity matters. Either way the
+ * march writes RAY STATES ONLY, never pixels.
+ *
+ * SHADE MODE (`shadeRays`, fr-tzdg) is the split's other half: one
+ * dispatch over a host-compacted list of TERMINAL rays (status HIT /
+ * MISS / EXHAUSTED; `itemCount` is the BATCH length, not the frame's ray
+ * count). Misses and exhausted rays write the background gradient; hits
+ * recompute the unproject + sphere gate for the fog origin and run the
  * full `surface-material.ts` `main()` shade — greedy width-1 hit-info
  * descent (the fold shading overload's colors), tetrahedron normal,
  * soft shadow, AO, linear-space lighting, depth fog — term for term.
+ * Shading is the EXPENSIVE half (hit-info descent + 4 normal + up-to-32
+ * shadow + 5 AO `surfaceDE` calls, all at on-surface positions): the
+ * earlier march+shade megakernel rode it on whichever march pass a ray
+ * terminated in, so a mass-hit pass became one unbounded submission —
+ * measured 1.1-5.3 s per pass and LOST THE DEVICE at full depth/budgets
+ * (the i915 ~7.5 s watchdog, fr-096u's failure class). Separate entry
+ * points let the HOST size shade batches, so every shading submission is
+ * bounded — the fr-096u lesson applied to shading, not just marching.
  *
  * Scope: BASE fold/affine maps + kaleidoscope sector sweep + affine
  * final lens. `foldFinal` lenses (descendLens) and the refined estimator
  * remain out of scope — {@link packSurfaceGpuParams} throws on
- * `foldFinal`. Modes "eval" and "march" are the fr-q1f8 bench baselines
- * (`src/app/gpu-bench/` pins them) and their generated source is
- * unchanged by the image work; mode "image" is the GLSL tracer's SHADING
- * mirror for the app integration program (fr-tzdg).
+ * `foldFinal`. Modes "eval" and "march" (rays "pose") are the fr-q1f8
+ * bench baselines (`src/app/gpu-bench/` pins them) and their generated
+ * source is unchanged by the shade split; march rays "unproject" plus
+ * mode "shade" are the GLSL tracer's mirror halves for the app
+ * integration program (fr-tzdg).
  *
  * BYTE LAYOUT CONTRACT (pinned by surface-de-gpu.test.ts):
  *
@@ -114,8 +131,8 @@ import type { Vec3 } from "./types";
  * run yet. Status vocabulary: {@link SURFACE_GPU_RAY_ACTIVE} /
  * `_HIT` / `_MISS` / `_EXHAUSTED`.
  *
- * Shade uniform (mode "image") — {@link SURFACE_GPU_SHADE_BYTES} = 128
- * bytes, WGSL `struct ShadeParams`:
+ * Shade uniform (march "unproject" + mode "shade") — {@link
+ * SURFACE_GPU_SHADE_BYTES} = 128 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -124,18 +141,22 @@ import type { Vec3 } from "./types";
  *         112  u32  colorSource       116  u32 shadowSteps
  *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
  *
- * Shade maps storage (mode "image") — one vec4f per map slot:
+ * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
  * like {@link packSurfaceGpuMaps}.
  *
- * Image bindings = march bindings plus:
+ * Bindings per mode — eval and march "pose" bind 0-3 (params, maps, the
+ * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
+ * plus shade: ShadeParams (rays + dither inputs only — it declares none
+ * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8:
  *   @binding(4) var<uniform> shade: ShadeParams
  *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
  *   @binding(6) var<storage, read_write> colorOut: array<u32> — one RGBA8
  *               pixel per ray via pack4x8unorm (x lands in byte 0, so a
  *               readback Uint8Array is RGBA order). The HOST MUST PRE-FILL
  *               the buffer with the background: a ray still ACTIVE at
- *               frame abort writes nothing and keeps the prefill.
+ *               frame abort is never queued into a shade batch, writes
+ *               nothing, and keeps the prefill.
  *   @binding(7) var lutTex: texture_2d<f32> — the 256x1 rgba8unorm LUT
  *   @binding(8) var lutSamp: sampler — FILTERING, linear + clamp-to-edge,
  *               so textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0)
@@ -151,8 +172,8 @@ export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 export const SURFACE_GPU_PARAMS_BYTES = 208;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
-/** Byte size of mode "image"'s ShadeParams uniform (layout contract in
- * the module doc). */
+/** Byte size of the ShadeParams uniform (march "unproject" + mode
+ * "shade"; layout contract in the module doc). */
 export const SURFACE_GPU_SHADE_BYTES = 128;
 
 /** Ray-state status codes (the `y` component of a march state vec4). */
@@ -167,7 +188,15 @@ export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 
 export interface SurfaceGpuKernelOptions {
   /** Which entry point (and binding interface) to generate. */
-  mode: "eval" | "march" | "image";
+  mode: "eval" | "march" | "shade";
+  /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
+   * NDC pixel centers against the pose basis — byte-identical output to
+   * the pre-shade-split generator. "unproject" derives rays the GLSL
+   * tracer's way (near/far clip points through shade.invProjView, with
+   * params.ro as uCamPos) and adds the flag-gated march-start hash dither
+   * — the app path, where inset/centered-projection parity matters.
+   * Ignored outside march mode. */
+  rays?: "pose" | "unproject";
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
    * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. */
   width: number;
@@ -334,9 +363,10 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   return out;
 }
 
-/** Shading inputs for mode "image" — the GLSL tracer's shading uniforms.
- * `invProjView` is column-major (THREE.Matrix4.elements order), the exact
- * matrix scene.ts uploads as uInvProjView. */
+/** The GLSL tracer's shading uniforms — bound whole by mode "shade" and,
+ * for the ray/dither inputs only (invProjView, tracePixelEps, dither), by
+ * march "unproject". `invProjView` is column-major (THREE.Matrix4.elements
+ * order), the exact matrix scene.ts uploads as uInvProjView. */
 export interface SurfaceGpuShadeParams {
   invProjView: ArrayLike<number>; // 16 floats, column-major
   lightDir: Vec3; // unit, toward the light (uLightDir)
@@ -355,8 +385,8 @@ export interface SurfaceGpuShadeParams {
   dither: boolean; // march-start hash dither (off for bench agreement)
 }
 
-/** Pack the mode-"image" ShadeParams uniform (layout contract in the
- * module doc). flags = dither ? 1 : 0. */
+/** Pack the ShadeParams uniform (march "unproject" + mode "shade";
+ * layout contract in the module doc). flags = dither ? 1 : 0. */
 export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   const buf = new ArrayBuffer(SURFACE_GPU_SHADE_BYTES);
   const view = new DataView(buf);
@@ -376,7 +406,7 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   return buf;
 }
 
-/** Per-map shading storage for mode "image": one vec4f per map slot,
+/** Per-map shading storage for mode "shade": one vec4f per map slot,
  * (color.r, color.g, color.b, trapIndex) — uMapColor + the uFoldParams .w
  * trap component, which GpuMap does not carry. Pads to one zero stride
  * when empty, like packSurfaceGpuMaps. */
@@ -444,12 +474,17 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     ? `return slot * ${workgroupSize}u + li;`
     : `return slot;`;
 
-  // march and image share the ray-state I/O; image adds the shading
-  // interface on top (ShadeParams block + bindings 4-8, module doc).
+  // "pose" (the default) keeps the march arm's bench-baseline bytes;
+  // "unproject" swaps only the ray derivation + dither (module doc).
+  const unproject = mode === "march" && opts.rays === "unproject";
+  // march and shade share the ray-state I/O. march "unproject" adds the
+  // ShadeParams block (binding 4) it reads rays and dither from — nothing
+  // else — plus the hash2 helper; mode "shade" adds the full shading
+  // interface on top (bindings 4-8, module doc), no hash2 (no dither).
   const rayIo = `
 @group(0) @binding(2) var<storage, read> activeList: array<u32>;
 @group(0) @binding(3) var<storage, read_write> states: array<vec4f>;`;
-  const imageIo = `${rayIo}
+  const shadeParamsIo = `
 
 struct ShadeParams {
   invProjView: mat4x4f,
@@ -465,19 +500,60 @@ struct ShadeParams {
   flags: u32,
 }
 
-@group(0) @binding(4) var<uniform> shade: ShadeParams;
-@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
-@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
-@group(0) @binding(7) var lutTex: texture_2d<f32>;
-@group(0) @binding(8) var lutSamp: sampler;`;
+@group(0) @binding(4) var<uniform> shade: ShadeParams;`;
+  const hash2Io = `
+
+// Per-pixel march-start dither — surface-material.ts's hash(), fed
+// gl_FragCoord.xy parity inputs (pixel centers).
+fn hash2(p: vec2f) -> f32 {
+  return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
+}`;
   const io =
     mode === "eval"
       ? `
 @group(0) @binding(2) var<storage, read> queries: array<vec4f>;
 @group(0) @binding(3) var<storage, read_write> results: array<f32>;`
       : mode === "march"
-        ? rayIo
-        : imageIo;
+        ? unproject
+          ? `${rayIo}${shadeParamsIo}${hash2Io}`
+          : rayIo
+        : `${rayIo}${shadeParamsIo}
+@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
+@group(0) @binding(7) var lutTex: texture_2d<f32>;
+@group(0) @binding(8) var lutSamp: sampler;`;
+
+  // March-arm interpolation points, so the "pose" bench baseline stays
+  // byte-identical while "unproject" swaps in the GLSL tracer's ray.
+  const marchRd = unproject
+    ? `  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  // The GLSL tracer's unproject (main(): near/far clip points through
+  // uInvProjView); params.ro doubles as uCamPos, and the pose basis
+  // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
+  let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
+  let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
+  let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+  let ro = params.ro;`
+    : `  // poseRays mirror (scripts/fold-cost-split.harness.ts): NDC pixel
+  // centers against the vertical-fov tangent.
+  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  let rd = normalize(
+    params.fwd +
+      params.right * (ndcX * params.tanHalf * params.aspect) +
+      params.up * (ndcY * params.tanHalf),
+  );
+  let ro = params.ro;`;
+  const marchDither = unproject
+    ? `
+    // Tiny dithered start (main()'s hash line), flag-gated so agreement
+    // runs stay deterministic against the CPU emulator.
+    if ((shade.flags & 1u) != 0u) {
+      t += hash2(vec2f(f32(px) + 0.5, f32(py) + 0.5)) *
+        shade.tracePixelEps * max(t, 1.0);
+    }`
+    : "";
 
   const entry =
     mode === "eval"
@@ -511,16 +587,7 @@ fn marchRays(
   }
   let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
-  // poseRays mirror (scripts/fold-cost-split.harness.ts): NDC pixel
-  // centers against the vertical-fov tangent.
-  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
-  let rd = normalize(
-    params.fwd +
-      params.right * (ndcX * params.tanHalf * params.aspect) +
-      params.up * (ndcY * params.tanHalf),
-  );
-  let ro = params.ro;
+${marchRd}
   // Sphere gate, origin-centered like the GLSL marcher (the emulator's
   // exact arithmetic; recomputed per pass — cheaper than persisting).
   let radius = params.visibleRadius * 1.02;
@@ -541,7 +608,7 @@ fn marchRays(
   }
   var t = st.x;
   if (t < 0.0) {
-    t = max(-bq - sq, 0.0);
+    t = max(-bq - sq, 0.0);${marchDither}
   }
   var steps = u32(st.z);
   for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
@@ -568,12 +635,6 @@ fn marchRays(
   states[ray] = st;
 }`
         : `
-// Per-pixel march-start dither — surface-material.ts's hash(), fed
-// gl_FragCoord.xy parity inputs (pixel centers).
-fn hash2(p: vec2f) -> f32 {
-  return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43758.5453);
-}
-
 struct SurfaceHitInfo {
   firstChoice: i32,
   trap: f32,
@@ -789,7 +850,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
 }
 
 @compute @workgroup_size(${workgroupSize})
-fn marchShadeRays(
+fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
 ) {
@@ -798,8 +859,11 @@ fn marchShadeRays(
     return;
   }
   let ray = activeList[slotI];
-  var st = states[ray];
-  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {
+  let st = states[ray];
+  if (st.y == ${SURFACE_GPU_RAY_ACTIVE}.0) {
+    // The host queues TERMINAL rays only (HIT/MISS/EXHAUSTED), sized so
+    // every shading submission stays bounded; an ACTIVE ray is never in
+    // a batch — guard anyway, leaving its prefilled pixel alone.
     return;
   }
   let px = ray % params.rasterWidth;
@@ -810,6 +874,10 @@ fn marchShadeRays(
     shade.bgTop,
     clamp((f32(py) + 0.5) / f32(params.rasterHeight), 0.0, 1.0),
   );
+  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    return;
+  }
   let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
   let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
   // The GLSL tracer's unproject (main(): near/far clip points through
@@ -819,68 +887,19 @@ fn marchShadeRays(
   let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
   let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
   let ro = params.ro;
-  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
-  // exact arithmetic; recomputed per pass — cheaper than persisting).
+  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
+  // than persisting it in the march state.
   let radius = params.visibleRadius * 1.02;
   let bq = dot(ro, rd);
   let cq = dot(ro, ro) - radius * radius;
   let disc = bq * bq - cq;
   if (disc < 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
+    // Defensive — a HIT ray always intersected the gate sphere.
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
     return;
   }
   let sq = sqrt(disc);
-  let tFar = -bq + sq;
-  if (tFar <= 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
-    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
-    return;
-  }
-  var t = st.x;
-  if (t < 0.0) {
-    t = max(-bq - sq, 0.0);
-    // Tiny dithered start (main()'s hash line), flag-gated so agreement
-    // runs stay deterministic against the CPU emulator.
-    if ((shade.flags & 1u) != 0u) {
-      t += hash2(vec2f(f32(px) + 0.5, f32(py) + 0.5)) *
-        shade.tracePixelEps * max(t, 1.0);
-    }
-  }
-  var steps = u32(st.z);
-  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
-    if (t > tFar) {
-      st.y = ${SURFACE_GPU_RAY_MISS}.0;
-      break;
-    }
-    if (steps >= params.marchSteps) {
-      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
-      break;
-    }
-    let eps = max(params.pixelEps * t, params.hitFloorEps);
-    let d = surfaceDE(ro + rd * t, eps, li);
-    steps++;
-    if (d < eps) {
-      st.y = ${SURFACE_GPU_RAY_HIT}.0;
-      break;
-    }
-    t += d * params.stepScale;
-    st.w = d;
-  }
-  st.x = t;
-  st.z = f32(steps);
-  states[ray] = st;
-  if (st.y == ${SURFACE_GPU_RAY_ACTIVE}.0) {
-    // Out of pass budget: write nothing — the host prefilled colorOut
-    // with the background, and a later pass finishes this ray.
-    return;
-  }
-  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
-    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
-    return;
-  }
+  let t = st.x;
   // --- shade: surface-material.ts main()'s hit path, term for term ---
   let pos = ro + rd * t;
   // The PRE-dither sphere entry — exactly main()'s tEnter fog origin.
