@@ -415,7 +415,10 @@ function marchCounted(
     p[2] = ro[2] + rd[2] * t;
     const before = counter.n;
     const fineBefore = fineCounter.n;
-    const d = estimateDistance(de, p, eps);
+    // eps doubles as the cutoff (fr-55r5) AND the cone footprint for the
+    // per-step depth cap (fr-3c0k) — exactly the pair the shipped GLSL
+    // march passes.
+    const d = estimateDistance(de, p, eps, eps);
     const callCost = counter.n - before;
     const fineCallCost = fineCounter.n - fineBefore;
     callApps.push(callCost);
