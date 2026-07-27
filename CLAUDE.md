@@ -98,7 +98,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     ghosts plain certificates rendered across voids; lazily guarded,
     measured void-false-hits 0 on every preset; fr-55r5's march-epsilon
     cutoff + fr-zkt2's value-exact sphere-floor pin exit the descent
-    early, both mirrored in the GLSL bodies). Oracle for
+    early, both mirrored in the GLSL bodies). A pure-fold FINAL transform
+    is eligible via `descendLens` (fr-g58b): the fr-5rvk branch
+    vocabulary lifted one level — each lens branch seeds a root descent
+    through the UNTOUCHED cores (`final` stays null when `foldFinal` is
+    set), with region floors, value-exact sphere/floor prunes and the
+    visible-sphere pin; no contraction gate (an un-iterated lens needs
+    none). Oracle for
     `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
     render mode over.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
@@ -293,7 +299,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     scalar uniforms rather than expanded into slots (fr-x029), so symmetry
     order no longer counts against the cap. Callers gate eligibility on the
     bare active-map count first, so an over-cap count throws here rather
-    than degrading silently.
+    than degrading silently. A fold FINAL lens compiles as the
+    `SURFACE_FOLD_LENS` variant (fr-g58b): the preprocessor renames the
+    descent bodies to `surfaceDECore`, the wrapper owns the public
+    `surfaceDE` overloads (mirroring `descendLens`), and the cores' own
+    `uFinal*` lens uniforms are packed IDENTITY — the wrapper applies the
+    real lens from `uLens*`.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the

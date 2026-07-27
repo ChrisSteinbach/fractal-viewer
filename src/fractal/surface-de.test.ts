@@ -2013,10 +2013,36 @@ describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => 
     expect(analysis.reasons).toEqual([]);
   });
 
-  it("keeps a pure-fold final transform ineligible — the lens applies once, no branch descent", () => {
+  it("admits a pure-fold final transform — the lens expands into one round of branch root descents (fr-g58b)", () => {
     const analysis = analyzeSurfaceSystem(
       [map()],
       map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
+    );
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("puts no contraction gate on a pure-fold final — an un-iterated lens needs none", () => {
+    // Weight 2 mandelbox: iterated it would need sigma_max < 0.125; as a
+    // lens it is applied once and any weight is admissible.
+    const analysis = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 99, variations: [{ type: "mandelbox", weight: 2 }] }),
+    );
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("keeps a BLENDED final transform ineligible — a weighted sum has no branch decomposition", () => {
+    const analysis = analyzeSurfaceSystem(
+      [map()],
+      map({
+        id: 99,
+        variations: [
+          { type: "boxfold", weight: 1 },
+          { type: "linear", weight: 0.25 },
+        ],
+      }),
     );
     expect(analysis.status).toBe("ineligible");
     expect(analysis.reasons).toEqual(["final transform uses variations"]);
@@ -2268,5 +2294,267 @@ describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)",
       ];
       expect(estimateDistance(narrow, p)).toBe(estimateDistance(de, p));
     }
+  });
+});
+
+/** A boxfold final lens over the Sierpinski tetrahedron — the fr-g58b
+ * archetype (an affine base under a fold lens; Surprise Me's boxfold-final
+ * rolls land here). The SMALL weight matters: `u = p/w` reaches ~2.2, so
+ * the attractor genuinely CROSSES the fold planes and the non-identity
+ * branches carry real geometry — a weight much above 1 leaves `|u| < 1`
+ * everywhere and the lens degenerates to its affine part. */
+function boxfoldFinal(): Transform {
+  return map({
+    id: 99,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "boxfold", weight: 0.55 }],
+  });
+}
+
+describe("buildSurfaceDE with a pure-fold final lens (fr-g58b)", () => {
+  it("builds foldFinal (and no affine final) with the lens's kind, weight and affine part", () => {
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), final);
+    expect(de.final).toBeNull();
+    expect(de.foldFinal).not.toBeNull();
+    expect(de.foldFinal!.foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(de.foldFinal!.invW).toBeCloseTo(1 / 0.55, 12);
+    expect(de.foldFinal!.absW).toBeCloseTo(0.55, 12);
+    expect(de.foldFinal!.sigmaMin).toBeCloseTo(0.9, 12);
+  });
+
+  it("bounds the visible set: every plotted point of the lensed cloud sits inside visibleBoundingRadius", () => {
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), final);
+    const cloud = runChaosGame(
+      sierpinskiTetrahedron(),
+      20000,
+      mulberry32(11),
+      final,
+    );
+    expect(cloud.bounds.maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+  });
+
+  it("bounds the visible set of a mandelbox lens the same way", () => {
+    const final = map({
+      id: 99,
+      variations: [{ type: "mandelbox", weight: 0.6 }],
+    });
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), final);
+    const cloud = runChaosGame(
+      sierpinskiTetrahedron(),
+      20000,
+      mulberry32(11),
+      final,
+    );
+    expect(de.foldFinal!.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
+    expect(cloud.bounds.maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+  });
+});
+
+describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-g58b)", () => {
+  it("keeps both estimators below the brute-force nearest distance to the LENSED cloud, jittered and uniform probes alike", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(101), final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(202);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 100; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+      ]);
+    }
+    for (let i = 0; i < 50; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    for (const p of probes) {
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays within 0.02R of the lensed attractor for points sampled exactly on it (no erosion)", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101), final);
+    const R = de.visibleBoundingRadius;
+    for (let i = 0; i < 50; i++) {
+      const idx = (i * 337) % cloud.count;
+      const p: Vec3 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ];
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(0.02 * R);
+    }
+  });
+
+  it("absorbs a negative lens weight through |w| — both estimators stay sound", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = map({
+      id: 99,
+      position: [0.1, 0, -0.1],
+      rotation: [0, 0.4, 0.2],
+      scale: [0.8, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: -0.6 }],
+    });
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 100000, mulberry32(31), final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(32);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays sound with a mandelbox lens (81 branches, the region-floor stress case)", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = map({
+      id: 99,
+      position: [0.05, 0.1, 0],
+      rotation: [0.3, 0, 0.2],
+      scale: [0.85, 0.85, 0.85],
+      variations: [{ type: "mandelbox", weight: 0.6 }],
+    });
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(41), final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(42);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays sound with a boxfold lens OVER a pure-fold base — lens branches seeding fold-frontier descents", () => {
+    const transforms = pureBoxfoldPair();
+    const final = map({
+      id: 99,
+      position: [0.1, -0.05, 0.1],
+      rotation: [0.15, 0.25, 0],
+      scale: [0.9, 0.9, 0.9],
+      variations: [{ type: "boxfold", weight: 0.6 }],
+    });
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 100000, mulberry32(51), final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(52);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays sound under a kaleidoscope sweep beneath the lens", () => {
+    const transforms = sierpinskiTetrahedron();
+    const symmetry = { order: 3, axis: "z" } as const;
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(transforms, final, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      100000,
+      mulberry32(61),
+      final,
+      symmetry,
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(62);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("honors the cutoff contract: values at or above the cutoff equal the full result, values below imply the full result is below too", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(transforms, final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(72);
+    for (let i = 0; i < 120; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.6 * R,
+        (rng() - 0.5) * 2.6 * R,
+        (rng() - 0.5) * 2.6 * R,
+      ];
+      const cutoff = rng() * 0.2 * R;
+      const full = estimateDistanceRefined(de, p);
+      const cut = estimateDistanceRefined(de, p, cutoff);
+      if (cut >= cutoff) {
+        expect(cut).toBe(full);
+      } else {
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+  });
+
+  it("reports positive distance across deep voids of the lensed set — the region floors close vacuous branch terms", () => {
+    const transforms = sierpinskiTetrahedron();
+    const final = boxfoldFinal();
+    const de = buildSurfaceDE(transforms, final);
+    const cloud = runChaosGame(transforms, 300000, mulberry32(81), final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(82);
+    let deepVoidProbes = 0;
+    for (let i = 0; i < 200; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.2 * R,
+        (rng() - 0.5) * 2.2 * R,
+        (rng() - 0.5) * 2.2 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      if (nearest <= 0.15 * R) continue;
+      deepVoidProbes++;
+      expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
+    }
+    expect(deepVoidProbes).toBeGreaterThan(20);
   });
 });
