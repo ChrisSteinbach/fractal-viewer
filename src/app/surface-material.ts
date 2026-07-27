@@ -2342,7 +2342,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     // changes — rare, session-enter-scale recompiles.
     defines: { SURFACE_FOLDS: 0, SURFACE_FOLD_LENS: 0, SURFACE_ESCAPE: 0 },
     vertexShader: SURFACE_VERTEX,
-    fragmentShader: SURFACE_FRAGMENT,
+    // The lens/escape arms are resolved JS-side (resolveVariantArms) so
+    // the driver never parses another variant's text — the fold
+    // compiler's measured source-size edge. SURFACE_FOLDS stays a
+    // driver-side define, exactly as shipped.
+    fragmentShader: surfaceFragmentFor(0, 0),
     depthTest: false,
     depthWrite: false,
   });
@@ -2414,6 +2418,7 @@ export function setSurfaceSystem(
     material.defines.SURFACE_FOLD_LENS = wantLens;
     // A previous escape-time session must hand the descent bodies back.
     material.defines.SURFACE_ESCAPE = 0;
+    material.fragmentShader = surfaceFragmentFor(0, wantLens);
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -2476,6 +2481,85 @@ export function setSurfaceSystem(
 const ESCAPE_STEP_SCALE = 0.7;
 
 /**
+ * Resolve the SURFACE_ESCAPE / SURFACE_FOLD_LENS preprocessor arms
+ * JS-SIDE, so the source each variant hands the driver contains ONLY its
+ * own bodies. Measured necessity, not tidiness: Mesa's compiler sits on a
+ * knife's edge with the fold-frontier variant — the shipped ~68KB source
+ * links (in ~25s), but the SAME compiled tokens preceded by the
+ * lens/escape variants' preprocessor-dead text pushed the source past
+ * 80KB and the compile crashed outright, twice per session (empty info
+ * log, lost context — the exact fr-5rvk failure signature, resurrected
+ * by nothing but source growth). SURFACE_FOLDS stays a driver-side
+ * define, exactly as shipped and measured. Handles the two names'
+ * `#if` / `#else` / `#endif` with proper nesting bookkeeping for every
+ * OTHER `#if`-family directive encountered inside their arms (those
+ * lines pass through untouched for the driver).
+ */
+function resolveVariantArms(
+  source: string,
+  values: Record<string, number>,
+): string {
+  const out: string[] = [];
+  // Each frame: whether this level is one of OURS, and whether lines at
+  // this level are emitted (parent activity folded in).
+  const stack: { mine: boolean; active: boolean }[] = [];
+  const emitting = () => stack.every((f) => f.active);
+  for (const line of source.split("\n")) {
+    const directive = /^\s*#(if|ifdef|ifndef|else|elif|endif)\b(.*)$/.exec(
+      line,
+    );
+    if (directive) {
+      const [, kind, rest] = directive;
+      if (kind === "if") {
+        const name = rest.trim();
+        if (name in values) {
+          stack.push({ mine: true, active: emitting() && values[name] !== 0 });
+          continue; // our directive lines never reach the driver
+        }
+        stack.push({ mine: false, active: emitting() });
+        if (emitting()) out.push(line);
+        continue;
+      }
+      if (kind === "ifdef" || kind === "ifndef") {
+        stack.push({ mine: false, active: emitting() });
+        if (emitting()) out.push(line);
+        continue;
+      }
+      const top = stack[stack.length - 1];
+      if (top?.mine) {
+        if (kind === "else") {
+          const parent = stack.slice(0, -1).every((f) => f.active);
+          top.active = parent && !top.active;
+        } else if (kind === "endif") {
+          stack.pop();
+        }
+        // elif never appears in our arms.
+        continue;
+      }
+      if (kind === "endif") stack.pop();
+      if (emitting() || kind === "endif") {
+        // Non-our directives pass through whenever their region emits;
+        // the emitting() check above already reflects the post-pop state
+        // for endif.
+        if (stack.every((f) => f.active)) out.push(line);
+      }
+      continue;
+    }
+    if (emitting()) out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** Compose the fragment source for a variant selection — the driver only
+ * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). */
+function surfaceFragmentFor(escape: number, lens: number): string {
+  return resolveVariantArms(SURFACE_FRAGMENT, {
+    SURFACE_ESCAPE: escape,
+    SURFACE_FOLD_LENS: lens,
+  });
+}
+
+/**
  * Pack an {@link EscapeDE} (fr-kltj) and flip the material onto the
  * escape-time variant. The IFS-side uniforms the shared marcher still
  * reads — bounding/visible radii, uMaxDepth (the iteration budget the
@@ -2536,6 +2620,7 @@ export function setEscapeSystem(
     material.defines.SURFACE_ESCAPE = 1;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
+    material.fragmentShader = surfaceFragmentFor(1, 0);
     material.needsUpdate = true;
   }
 }
