@@ -279,6 +279,28 @@ import type {
  * transform stays ineligible too — the lens is applied ONCE to the query
  * point, and a multi-branch lens would need one root descent per branch
  * (beam seeding), which is out of scope rather than unsound.
+ *
+ * MEASURED VERDICT (fr-5rvk; scripts/surface-beam.harness.ts section 4,
+ * CLOUD=300k, both estimators): on the two-map stress pairs — boxfold,
+ * boxfold(-w)+affine, spherefold, mandelbox, boxfold x order-3 — jittered
+ * and uniform violations are 0 everywhere, DEEP void false hits
+ * (> 0.15R, the fr-1z6p ghost proxy) are 0 everywhere, the cutoff
+ * contract is exact, and the only exact-class reading is the spherefold
+ * pair's 6/100 at 5.5e-5 = 0.0024%R — deep-descent fp noise, two orders
+ * under a marcher epsilon. The shipped mandelboxKifs preset (12 maps,
+ * 8x81 + 4x27 branches) carries the one real disclosed residual: an
+ * EXACT-class erosion tail of 77 probes at 4.4e-3 = 0.22%R — the fold
+ * edition of fr-jkpn's more-in-sphere-branches-than-slots drop, width-
+ * bound (frontier 24 measures 0.06%R at 3x the applications) and far
+ * inside the affine precedent (repro3's disclosed 1.2%R, jittered) —
+ * with every off-attractor and void column at 0. Inverse applications:
+ * ~13/call on the boxfold pairs, ~175-232 on the spherefold/mandelbox
+ * pairs, ~1400-2040 on the preset (map visits; each visit expands the
+ * map's branches). The 0.05R-0.15R "shallow void" band reads high on the
+ * dust-like sphere-family pairs — that band measures the fold bounds'
+ * LOOSENESS (median DE/D 0.13-0.20 vs the affine presets' 0.61-0.84),
+ * not fabricated hits; the harness's DEEP_VOID_FACTOR doc carries the
+ * argument.
  */
 
 /** Per-map anisotropy ratio `sigma_max / sigma_min` at or below which the

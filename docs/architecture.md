@@ -91,7 +91,9 @@ weight 2 reproduces the canonical step).
 
 The `radiolarian` and `swirl` presets showcase the feature (`mandelbox` showcases
 the fold family); the transform editor's **Variations** group adds/removes/weights
-them live.
+them live. A map whose variation list is exactly one fold-family entry is also the
+one nonlinear case the surface distance estimator can descend — see **The surface
+distance estimator** below (fr-5rvk).
 
 ## Final transform
 
@@ -515,17 +517,50 @@ bound is exact for conformal maps, so an all-conformal system marches at full
 step; conservative for anisotropic ones, so the tracer only backs off its
 step size rather than risk piercing the surface; and intractable for
 nonlinear variations, which have no closed-form inverse for any bound to be
-stated in terms of — so a system using variations is ineligible outright,
-alongside one whose maps don't contract (Hutchinson's condition for the
-attractor to exist in the first place, and for the descent to terminate). A
+stated in terms of — so a system using variations is ineligible outright
+(one exception below, fr-5rvk), alongside one whose maps don't contract
+(Hutchinson's condition for the attractor to exist in the first place, and
+for the descent to terminate). A
 system extending into 4D is not a disqualifier but a route: it gets the
 DE's 4D twin (two paragraphs down) instead of this 3D one.
+
+The one exception is a **pure-fold map** (fr-5rvk): a map whose variation
+list is exactly one active fold-family entry (`boxfold`/`spherefold`/
+`mandelbox`) composes a genuine function `w·V(Mp + t)`, not a sum — unlike a
+blend, which has no branch decomposition and stays ineligible forever — and
+each fold is piecewise affine-or-conformal, so its inverse decomposes into
+per-cell branches that are all sound to enumerate unconditionally (a dropped
+cell intersection only shrinks a lower-bound term): 27 branches for
+`boxfold`'s per-axis reflections, 3 for `spherefold`'s outer/inner/mid
+pieces, 81 for `mandelbox`'s composition of the two. `spherefold`'s mid
+branch — a unit-sphere inversion — defeats the "inverse maps expand, so
+wanderers escape" argument the affine descent's terminals rest on, so every
+candidate also carries a region floor, a certified bound on distance to its
+own branch's output region, that catches the spurious never-escaping chains
+the inversion would otherwise spawn. Because a fold map can leave dozens of
+branches simultaneously in-sphere, the descent runs a width-12 frontier in
+place of the affine ladder's four beam slots (see `surface-de.ts`'s module
+doc for the full argument and measured numbers). Eligibility itself gates on
+the composite Lipschitz bound `|w|·L_V·sigma_max(M) < 0.999` (`L = 1` for
+`boxfold`'s isometries, `L = 4` for the families carrying `spherefold`'s ×4
+inner branch), so a fold map can read contractive in the editor yet fail the
+gate — and, the other way, a small enough weight can rescue an expanding
+affine part. The shipped Mandelbox preset's `mandelbox` + `linear` blend
+still reads "uses variations" under this rule, and a pure-fold final
+transform stays ineligible too (the lens applies once; a multi-branch lens
+would need one root descent per branch). **Mandelbox KIFS** — twelve maps,
+each exactly one fold entry — is the pure-fold showcase, and its preset
+loads straight into Surface mode.
 
 `src/app/surface-material.ts` is the GLSL sphere-tracer, and it mirrors
 `surface-de.ts`'s `estimateDistanceRefined` line for line — the same
 symmetry-expanded inverse maps, sigma_min values, and bounding radii packed
 into fixed-size uniform arrays (capped at 24 slots) instead of JS objects,
-running the identical refined beam-descent loop per ray step. It is the same
+running the identical refined beam-descent loop per ray step. Since fr-5rvk
+that mirror is two compiled variants behind a `SURFACE_FOLDS` define — the
+affine-ladder body unchanged, or a fold-frontier body mirroring the oracle's
+`descendFold` — flipped by `setSurfaceSystem` in a rare, session-set-scale
+program rebuild, never per frame. It is the same
 CPU-oracle-to-GPU mirror discipline as `flame.ts` <-> `flame-gpu.ts`: the
 tested, dependency-free module is the source of truth, and the shader is a
 hand-kept-in-lockstep port, not an independent implementation. Unlike the
