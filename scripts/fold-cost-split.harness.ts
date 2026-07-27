@@ -146,6 +146,46 @@
  * i.e. an uncut full descent) — the two measure genuinely different
  * regimes; treat any cross-reference as order-of-magnitude only.
  *
+ * MEASURED VERDICT — TRANSFORMS APPLIED FOLLOW-UP (same dev machine/commit;
+ * `countingDEFine`, `harness-profiles.ts`). CORRECTNESS: every system's
+ * directly-measured transforms/call landed at EXACTLY 1.000x the apps x
+ * mean-branch-fan-out reconstruction above (mandelboxKifs 17,408.4 vs
+ * 17,407 reconstructed; boxfold pair 184.2 vs 184; boxfold-w+affine 80.7 vs
+ * 81; spherefold pair 233.5 vs 234; mandelbox pair 6,739.7 vs 6,740) — the
+ * expected result pre-fr-kidj (every branch's transform still runs
+ * unconditionally today; the floor-vs-best prune only decides whether the
+ * RESULT is kept, never whether the transform executes), and strong
+ * evidence the element-counting Proxy counts the right thing. BASELINE
+ * (fr-kidj's "before" numbers): boxfold pair 184.2 transforms/call / 613.7
+ * /ray; boxfold-w+affine 80.7 /call / 157.0 /ray; spherefold pair 233.5
+ * /call / 1,915.5 /ray; mandelbox pair 6,739.7 /call / 75,385.1 /ray (N=162
+ * rays, hit its own hard cap — see below); mandelboxKifs 17,408.4 /call /
+ * 99,493.9 /ray (N=144 rays). PERFORMANCE (the actual finding this follow-up
+ * exists to surface): the counting Proxy itself is expensive enough to
+ * change the experiment. Direct microbenchmark on mandelboxKifs at a
+ * representative near-object point (cutoff 1e-4): plain `estimateDistance`
+ * 0.61ms/call vs Proxy-wrapped 52.5ms/call — ~86x slower, ~252k element
+ * reads for that one (near-worst-case) call. That overhead broke the
+ * ORIGINAL sizing logic's soft `MIN_SIDE` floor (16, i.e. `Math.max`ed a
+ * forced 256-ray minimum OVER the budget projection whenever a system was
+ * expensive enough that the budget alone would have picked fewer) — the
+ * first attempt at this run hung past 3 minutes of pegged CPU on
+ * mandelboxKifs before being killed. Fixed by two changes, both required:
+ * `MIN_SIDE` dropped to a true bare floor (4, not 16), and BOTH the pilot
+ * and main ray loops now check a hard wall-clock cap after EVERY ray and
+ * break on whatever completed (see the constants block's HARD WALL-CLOCK
+ * CAPS note) — `SystemResult.rays` is always the ACTUAL count marched, not
+ * the originally intended grid size. Consequence for THIS run: the three
+ * cheap systems (boxfold pair, boxfold-w+affine, spherefold pair) still ran
+ * their full 2304-ray 48x48 grid in seconds; mandelboxKifs's pilot alone
+ * measured 207ms/ray, so the budget (30s/system) sized it down to a 12x12
+ * grid (144 rays, completed without hitting the hard cap); mandelbox pair's
+ * pilot measured 99ms/ray, sized to 17x17 (289 rays), but the main loop DID
+ * hit `MAIN_HARD_CAP_MS` (45s) and stopped at 162/289 — its numbers above
+ * are over that smaller completed subset, not the full intended grid. Both
+ * undersized systems still produced a stable, EXACT 1.000x cross-check, so
+ * the smaller N did not compromise correctness, only percentile precision.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/fold-cost-split.harness.ts
  */
