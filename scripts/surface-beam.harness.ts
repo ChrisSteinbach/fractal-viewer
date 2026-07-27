@@ -82,6 +82,38 @@
  * residual (1.2%R) and wanderer-terminal void false hits (2/435) persist
  * unchanged at depth 127, confirming they were never cap artifacts.
  *
+ * FR-5RVK ADDENDUM: section (4) measures PURE-FOLD systems — maps whose
+ * variation list is exactly one active fold-family entry (`boxfold`,
+ * `spherefold`, `mandelbox`), which `surface-de.ts` decomposes into inverse
+ * BRANCHES (27/3/81 of them) and descends through a fixed-width
+ * `SURFACE_FOLD_BEAM_WIDTH` FRONTIER (`descendFold`) rather than the affine
+ * two-plus-two ladder. Consequence for this harness: those systems IGNORE
+ * `SurfaceDE.beamWidth`, so the w1..w4 grid would print four identical rows
+ * — the fold section prints ONE row per estimator (`frontier(base)` /
+ * `frontier(refined)`) plus an explicit `width-invariance` line that pins
+ * refined-at-w1 against refined-at-w4 bit-for-bit (a difference there is a
+ * bug, not a measurement). The affine sections above are untouched.
+ *
+ * Measured verdict (CLOUD=300k, refined estimator): width invariance holds
+ * exactly — 0 mismatches, maxDelta 0, on all five profiles. Off-attractor
+ * (jittered + uniform) violations are 0 everywhere, and deep-void false
+ * hits are 0/197-0/364 everywhere, so the region floors do hold the
+ * spherefold inversion's escape-defeating chains. Two disclosures. (a)
+ * TIGHTNESS: the fold bound is far looser than the affine one — median
+ * DE/D 0.13 (mandelbox pair) and 0.20 (spherefold pair) against 0.61-0.84
+ * across the affine presets — which is what puts 85/308 and 75/344 hits in
+ * `collect`'s shallow 0.05R-0.15R void band while the deep band stays
+ * clean. The boxfold-only profiles are much tighter (0.47-0.63) and score
+ * 0 in both bands: the looseness rides the spherefold's conformal mid
+ * branch, not the frontier. (b) EROSION: the spherefold pair reads
+ * 6/100 exact on-attractor probes positive at 5.5e-5 (0.0024%R) — the same
+ * deep-descent tail the affine repro2 (e66@3.2e-8) and 4D doubleRotation
+ * (e98@3.0e-8) rows carry, two orders under a marcher epsilon. COST, in
+ * `invM` reads per call: 12.5-13.3 boxfold pairs, 173.5 the order-3
+ * kaleidoscope sweep, 194.0 spherefold, 231.8 mandelbox — comparable to
+ * the affine presets' 90-865, because a visit fans out to its 27/81
+ * branches off ONE inverse matrix.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/surface-beam.harness.ts
  *
@@ -103,6 +135,7 @@ import {
   doubleRotation,
   icosahedronFlake,
   jerusalemCube,
+  mandelboxKifs,
   mengerSponge,
   octahedronFlake,
   pentatope,
@@ -119,6 +152,7 @@ import {
   buildSurfaceDE,
   estimateDistance,
   estimateDistanceRefined,
+  SURFACE_FOLD_BEAM_WIDTH,
 } from "../src/fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../src/fractal/surface-de";
 import {
@@ -387,13 +421,15 @@ interface System3 {
   symmetry?: SymmetryParams;
 }
 
-function measure3(sys: System3): {
+/** The seeded ground truth a 3D system's rows are all measured against:
+ * its DE, the spike-shaped query mix, and brute-force nearest-cloud
+ * distances. Shared verbatim by {@link measure3} (affine ladder rows) and
+ * {@link measureFold} (fr-5rvk frontier rows) so both sections quote the
+ * same numbers for the same seeds. */
+function probe3(sys: System3): {
   de: SurfaceDE;
-  rows: {
-    width: 1 | 2 | 3 | 4;
-    estimator: "base" | "refined";
-    result: MeasureResult;
-  }[];
+  qs: Query3[];
+  trueD: number[];
 } {
   const de = buildSurfaceDE(sys.transforms, null, sys.symmetry);
   const cloud = runChaosGame(
@@ -405,6 +441,18 @@ function measure3(sys: System3): {
   );
   const qs = queries3(cloud, de.boundingRadius);
   const trueD = qs.map((q) => nearest3(cloud, q.p));
+  return { de, qs, trueD };
+}
+
+function measure3(sys: System3): {
+  de: SurfaceDE;
+  rows: {
+    width: 1 | 2 | 3 | 4;
+    estimator: "base" | "refined";
+    result: MeasureResult;
+  }[];
+} {
+  const { de, qs, trueD } = probe3(sys);
   const rows: {
     width: 1 | 2 | 3 | 4;
     estimator: "base" | "refined";
@@ -425,6 +473,238 @@ function measure3(sys: System3): {
     }
   }
   return { de, rows };
+}
+
+// -----------------------------------------------------------------------
+// fr-5rvk: PURE-FOLD SYSTEMS. Every map below carries exactly ONE active
+// fold-family variation and nothing else, which is what makes it a genuine
+// composition `T = w.V(M p + t)` the descent can decompose into branches
+// (a BLENDED list is a weighted sum — no branch decomposition exists, so
+// blends stay ineligible; the shipped `mandelboxLattice` preset is one).
+// Profiles chosen to cover the three branch counts and both weight signs:
+// isometric boxfold branches (27), the spherefold's query-dependent mid
+// inversion (3), the mandelbox composite (81), a negative fold weight, a
+// fold-plus-plain-affine mix, and a kaleidoscope-swept fold pair.
+// -----------------------------------------------------------------------
+
+/** Both maps pure `boxfold`: 27 branches each, every one a reflection +
+ * translation isometry (sigma_c = 1). Mirrors the surface-de test suite's
+ * `pureBoxfoldPair`. */
+function foldBoxfoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [{ type: "boxfold", weight: 1 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    },
+  ];
+}
+
+/** A NEGATIVE-weight boxfold map beside a plain affine map: exercises the
+ * `dist(q, w.X) = |w|.dist(q/w, X)` sign absorption (both folds are odd)
+ * and the mixed frontier, where fold branches and single affine children
+ * compete in the same candidate stream. */
+function foldBoxfoldNegPlusAffine(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, 0, 0.2],
+      rotation: [0.1, 0, 0.4],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: -0.8 }],
+    },
+    {
+      id: 1,
+      position: [-0.4, 0.3, -0.1],
+      rotation: [0.2, 0.3, 0],
+      scale: [0.4, 0.4, 0.4],
+    },
+  ];
+}
+
+/** Both maps pure `spherefold`: only 3 branches, but one of them is the
+ * unit-sphere inversion whose escape-defeating expansion is what the region
+ * floors exist to tame — the hardest void-false-hit profile in the set. */
+function foldSpherefoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.5, 0.2, -0.1],
+      rotation: [0.4, 0.1, 0.2],
+      scale: [0.24, 0.24, 0.24],
+      variations: [{ type: "spherefold", weight: 0.9 }],
+    },
+    {
+      id: 1,
+      position: [-0.3, -0.4, 0.25],
+      rotation: [0, 0.6, 0.3],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "spherefold", weight: 1.1 }],
+    },
+  ];
+}
+
+/** Both maps pure `mandelbox` (`sphereFold . boxFold`): the widest branch
+ * count in the family, 81 per map — the frontier's cost worst case. */
+function foldMandelboxPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.45, 0.25, 0.1],
+      rotation: [0.2, 0.4, 0],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 1.1 }],
+    },
+    {
+      id: 1,
+      position: [-0.4, -0.15, -0.3],
+      rotation: [0.5, 0, 0.25],
+      scale: [0.22, 0.22, 0.22],
+      variations: [{ type: "mandelbox", weight: 0.9 }],
+    },
+  ];
+}
+
+/** Human-readable {@link SurfaceDEMap.foldKind}, indexed by the numeric
+ * `SURFACE_FOLD_*` vocabulary the DE packs into its uniforms. */
+const FOLD_KIND_NAMES = ["affine", "boxfold", "spherefold", "mandelbox"];
+
+/** How many of a system's queries the width-invariance check re-runs. */
+const WIDTH_INVARIANCE_PROBES = 200;
+
+/** DEEP-void threshold: the criterion the fr-5rvk fold work itself measured
+ * against (and the one `surface-de.test.ts`'s pure-fold void suites pin at
+ * zero), reported alongside `collect`'s shared `voidFalseHit` column so the
+ * two are comparable. `collect` calls anything past `0.05 * R` a void; the
+ * shallow `0.05R-0.15R` band inside that is where a VALID but loose fold
+ * bound legitimately reads under a marcher epsilon, and the fold
+ * estimators ARE much looser than the affine ones (measured median DE/D
+ * 0.13 mandelbox / 0.20 spherefold, against 0.61-0.84 across the affine
+ * presets), so the shallow band measures tightness, not soundness. Only a
+ * false hit in genuine deep void paints a ghost. */
+const DEEP_VOID_FACTOR = 0.15;
+
+/** Marcher hit-test proxy, shared with `collect`'s void column. */
+const VOID_HIT_FACTOR = 0.01;
+
+/** On-attractor EROSION budget, as a fraction of `R`, for the `exact`
+ * probe class only. Those probes are cloud points, so their `nearest` is
+ * 0 by construction and ANY positive estimate counts as a violation at the
+ * 1e-9 threshold — the column measures how far the descent's bound sits
+ * OFF a point known to be on the attractor, not an overshoot into void.
+ * The affine and 4D sections carry the identical tail (repro2 w4 refined
+ * `e66@3.2e-8`, doubleRotation w4 refined `e98@3.0e-8`) and the module doc
+ * says of it: read maxExcess, not viol. Measured (CLOUD=300k): the fold
+ * PAIRS read 0 or fp-noise (spherefold pair 6/100 at 5.55e-5 = 0.0024%R
+ * — two orders below a marcher epsilon, at the set's deepest descent),
+ * but the SHIPPED mandelboxKifs preset (12 maps, 8x81 + 4x27 branches)
+ * holds a real width-bound tail: refined e77 @4.4e-3 = 0.22%R at the
+ * production frontier width 12 — the fold edition of fr-jkpn's
+ * more-simultaneous-in-sphere-branches-than-slots drop, EXACT class only
+ * (its jittered/uniform/void columns are all 0). Diagnostic at frontier
+ * width 24: 39 @0.06%R at 3x the inverse applications (2039 -> 6029
+ * apps/call) — converging in width, so wider frontiers buy it down, but
+ * 0.22%R sits well under the disclosed affine precedent (repro3 1.2%R
+ * JITTERED) and at the scale of a close-zoom marcher epsilon, so width
+ * 12 ships and the tail is budgeted here instead: 0.3%R, ~35% headroom
+ * over the measured worst. The jittered/uniform classes stay a HARD
+ * zero: an overshoot there is a real validity break. */
+const EXACT_EROSION_BUDGET_R = 3e-3;
+
+interface VoidStats {
+  probes: number;
+  falseHits: number;
+}
+
+/** Void false hits at the {@link DEEP_VOID_FACTOR} criterion. */
+function deepVoid(
+  estimates: number[],
+  trueD: number[],
+  radius: number,
+): VoidStats {
+  const stats: VoidStats = { probes: 0, falseHits: 0 };
+  for (let i = 0; i < estimates.length; i++) {
+    if (trueD[i] <= DEEP_VOID_FACTOR * radius) continue;
+    stats.probes++;
+    if (estimates[i] < VOID_HIT_FACTOR * radius) stats.falseHits++;
+  }
+  return stats;
+}
+
+interface FoldRow {
+  estimator: "base" | "refined";
+  result: MeasureResult;
+  deep: VoidStats;
+}
+
+interface WidthInvariance {
+  probes: number;
+  mismatches: number;
+  maxDelta: number;
+}
+
+/**
+ * Fold-system rows: ONE per estimator, not a width grid. `estimateDistance`
+ * / `estimateDistanceRefined` route fold systems to `descendFold`'s fixed
+ * width-{@link SURFACE_FOLD_BEAM_WIDTH} frontier, which never reads
+ * `SurfaceDE.beamWidth` — so the affine section's w1..w4 loop would print
+ * four byte-identical rows here. {@link WidthInvariance} pins exactly that:
+ * refined-at-width-1 against refined-at-width-4, bit-for-bit.
+ *
+ * `apps` is still the shipped `invM`-read counter, which on this path
+ * counts map VISITS (one read per (chain, sector, map) triple), NOT branch
+ * children — a single visit fans out to up to 81 candidates off one inverse
+ * matrix, so fold `apps` and affine `apps` are the same unit of *inverse
+ * affine work* but a very different unit of *candidates considered*.
+ */
+function measureFold(sys: System3): {
+  de: SurfaceDE;
+  rows: FoldRow[];
+  invariance: WidthInvariance;
+} {
+  const { de, qs, trueD } = probe3(sys);
+  const rows: FoldRow[] = [];
+  for (const [estimator, fn] of [
+    ["base", estimateDistance],
+    ["refined", estimateDistanceRefined],
+  ] as const) {
+    const { de: counted, counter } = countingDE(de, de.beamWidth);
+    const estimates = qs.map((q) => fn(counted, q.p));
+    rows.push({
+      estimator,
+      result: collect(estimates, qs, trueD, de.boundingRadius, counter.n),
+      deep: deepVoid(estimates, trueD, de.boundingRadius),
+    });
+  }
+  // Spread the invariance probes across the whole query mix so all three
+  // classes (jittered / uniform / exact) are represented.
+  const { de: narrow } = countingDE(de, 1);
+  const { de: wide } = countingDE(de, 4);
+  const invariance: WidthInvariance = {
+    probes: 0,
+    mismatches: 0,
+    maxDelta: 0,
+  };
+  for (let i = 0; i < WIDTH_INVARIANCE_PROBES; i++) {
+    const q = qs[Math.floor((qs.length * i) / WIDTH_INVARIANCE_PROBES)];
+    const a = estimateDistanceRefined(narrow, q.p);
+    const b = estimateDistanceRefined(wide, q.p);
+    invariance.probes++;
+    if (!Object.is(a, b)) {
+      invariance.mismatches++;
+      invariance.maxDelta = Math.max(invariance.maxDelta, Math.abs(a - b));
+    }
+  }
+  return { de, rows, invariance };
 }
 
 interface Query4 {
@@ -621,4 +901,112 @@ describe("fr-v6yg surface beam harness", () => {
     }
     expect(true).toBe(true);
   }, 600_000);
+
+  it("(4) 3D pure-fold systems: frontier validity, tightness, cost, width invariance", () => {
+    const systems: System3[] = [
+      { label: "boxfold pair", transforms: foldBoxfoldPair() },
+      { label: "boxfold -w + affine", transforms: foldBoxfoldNegPlusAffine() },
+      { label: "spherefold pair", transforms: foldSpherefoldPair() },
+      { label: "mandelbox pair", transforms: foldMandelboxPair() },
+      {
+        label: "boxfold pair x sym3y",
+        transforms: foldBoxfoldPair(),
+        symmetry: { order: 3, axis: "y" },
+      },
+      // The shipped pure-fold preset — the fr-5rvk acceptance criterion's
+      // probe set (12 maps: 8 mandelbox corners + 4 boxfold binders).
+      { label: "mandelboxKifs preset", transforms: mandelboxKifs() },
+    ];
+    console.log(
+      `\n== 3D pure-fold systems (CLOUD=${CLOUD},` +
+        ` frontier width ${SURFACE_FOLD_BEAM_WIDTH}, beamWidth ignored) ==`,
+    );
+    // Collected, not asserted inline: a mid-loop failure would truncate the
+    // table this harness exists to print.
+    const failures: string[] = [];
+    for (const sys of systems) {
+      const analysis = analyzeSurfaceSystem(sys.transforms);
+      if (analysis.status === "ineligible") {
+        console.log(
+          `-- ${sys.label}: INELIGIBLE (${analysis.reasons.join("; ")})`,
+        );
+        failures.push(`${sys.label}: unexpectedly ineligible`);
+        continue;
+      }
+      const { de, rows, invariance } = measureFold(sys);
+      const maxSigma = sys.transforms.reduce(
+        (acc, t, i) =>
+          (t.weight ?? 1) > 0 ? Math.max(acc, analysis.sigmas[i].max) : acc,
+        0,
+      );
+      const kinds = de.maps.map((m) => FOLD_KIND_NAMES[m.foldKind]).join(",");
+      console.log(
+        `-- ${sys.label}: baseMaps=${de.maps.length}x${de.symmetry.order}` +
+          ` folds=[${kinds}] maxSigmaMax=${maxSigma.toFixed(3)}` +
+          ` status=${analysis.status}` +
+          ` R=${de.boundingRadius.toFixed(4)} maxDepth=${de.maxDepth}`,
+      );
+      for (const row of rows) {
+        console.log(
+          `   frontier(${row.estimator.padEnd(7)}): ${fmt(row.result, de.boundingRadius)}` +
+            ` deepVoidFalseHit=${row.deep.falseHits}/${row.deep.probes}`,
+        );
+      }
+      const ok = invariance.mismatches === 0;
+      console.log(
+        `   width-invariance: ${ok ? "OK" : "FAIL"}` +
+          ` (refined w1 vs w4 over ${invariance.probes} probes,` +
+          ` mismatches=${invariance.mismatches}` +
+          ` maxDelta=${invariance.maxDelta.toExponential(1)})`,
+      );
+      if (!ok) {
+        failures.push(
+          `${sys.label}: width-invariance FAIL` +
+            ` (${invariance.mismatches} mismatches,` +
+            ` maxDelta=${invariance.maxDelta.toExponential(1)})`,
+        );
+      }
+      const refinedRow = rows.find((r) => r.estimator === "refined")!;
+      const refined = refinedRow.result;
+      // Hard: the region floors exist precisely so a spurious never-escaping
+      // chain cannot fabricate a hit across genuine DEEP void — the fr-5rvk
+      // criterion, pinned at zero by the pure-fold suites in
+      // surface-de.test.ts. `collect`'s shallower 0.05R column is printed
+      // above but NOT asserted: see DEEP_VOID_FACTOR for why its inner band
+      // measures looseness rather than ghosts.
+      if (refinedRow.deep.falseHits !== 0) {
+        failures.push(
+          `${sys.label}: refined deepVoidFalseHits=` +
+            `${refinedRow.deep.falseHits}/${refinedRow.deep.probes}`,
+        );
+      }
+      // Validity, hard: an estimate that exceeds the true distance at a
+      // jittered or uniform probe is the real thing — a bound the marcher
+      // could step straight through. Measured 0 on every fold system at
+      // CLOUD=60k and 300k alike.
+      const offAttractor =
+        refined.byClass.jittered.violations +
+        refined.byClass.uniform.violations;
+      if (offAttractor !== 0) {
+        failures.push(
+          `${sys.label}: refined off-attractor violations=${offAttractor}` +
+            ` (j${refined.byClass.jittered.violations}@` +
+            `${refined.byClass.jittered.maxExcess.toExponential(1)}` +
+            `/u${refined.byClass.uniform.violations}@` +
+            `${refined.byClass.uniform.maxExcess.toExponential(1)})`,
+        );
+      }
+      // On-attractor erosion, budgeted rather than zeroed: see
+      // EXACT_EROSION_BUDGET_R for why the `exact` class counts differently.
+      const erosion = refined.byClass.exact.maxExcess;
+      if (erosion > EXACT_EROSION_BUDGET_R * de.boundingRadius) {
+        failures.push(
+          `${sys.label}: refined exact-probe erosion=${erosion.toExponential(2)}` +
+            ` (${((erosion / de.boundingRadius) * 100).toFixed(4)}%R) over budget` +
+            ` on ${refined.byClass.exact.violations} probes`,
+        );
+      }
+    }
+    expect(failures).toEqual([]);
+  }, 900_000);
 });
