@@ -186,10 +186,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
-  /** Angular pixel footprint (scene-set per frame): the cone-style hit test
-   * accepts once the DE drops below uPixelEps * t, so surface resolution
-   * scales with distance. */
+  /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
+   * sizes the shading probes (normal offsets, ray dither) to the pixels
+   * actually being rendered — not the hit test; see uAcceptPixelEps. */
   uniform float uPixelEps;
+  /** Angular pixel footprint of the FULL-RESOLUTION frame, tier-INDEPENDENT
+   * (fr-7xgi, mirrored from the 3D tracer): hit acceptance and the DE
+   * cutoff run at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) in
+   * every tier — a tier may coarsen sampling, never acceptance, so a
+   * preview can never accept a hit the settle frame would reject. The 3D
+   * declaration's doc carries the measured fold-phantom mechanism that
+   * forced this; the 4D tracer takes the same contract for lockstep. */
+  uniform float uAcceptPixelEps;
 
   in vec2 vUv;
   out vec4 outColor;
@@ -951,7 +959,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (t > tFar) {
         break;
       }
-      float eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+      // Tier-independent acceptance — see uAcceptPixelEps (fr-7xgi).
+      float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
         hit = true;
@@ -1170,6 +1179,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
+      uAcceptPixelEps: { value: 0.002 },
       // Full-tier defaults; the scene overwrites all four per tier
       // (fr-sjff), same knobs as the 3D tracer.
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },

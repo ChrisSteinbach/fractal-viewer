@@ -2214,14 +2214,15 @@ export class FractalScene {
     this.renderNeeded = false;
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     if (tier === "preview") {
-      // uPixelEps derives from the TARGET's height: the cone-style hit
-      // test coarsens to match the preview pixels (fewer march steps) with
-      // no extra fudge factor.
+      // uPixelEps derives from the TARGET's height (shading probes match
+      // the preview pixels), but ACCEPTANCE derives from the native height
+      // — a preview must never accept a hit the settle frame would reject
+      // (fr-7xgi; see setSurfaceFrameUniforms).
       const scale = this.surfacePreviewGovernor.scale;
       const w = Math.max(1, Math.round(size.x * scale));
       const h = Math.max(1, Math.round(size.y * scale));
       sizeTarget(this.surfacePreviewTarget, w, h);
-      this.setSurfaceFrameUniforms("preview", h);
+      this.setSurfaceFrameUniforms("preview", h, size.y);
       this.renderer.setRenderTarget(this.surfacePreviewTarget);
       const gl = this.renderer.getContext();
       const t0 = performance.now();
@@ -2251,7 +2252,7 @@ export class FractalScene {
     // too. A stale async job must not interleave with this frame's strips.
     this.abandonSurfaceSettle();
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
-    this.setSurfaceFrameUniforms("full", size.y);
+    this.setSurfaceFrameUniforms("full", size.y, size.y);
     this.surfaceStripJob = {
       planner: createStripPlanner(size.y),
       lastStripMs: null,
@@ -2273,7 +2274,7 @@ export class FractalScene {
   beginSurfaceSettle(): void {
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
-    this.setSurfaceFrameUniforms("full", size.y);
+    this.setSurfaceFrameUniforms("full", size.y, size.y);
     this.blitSurface(
       this.surfacePreviewTarget.texture,
       this.surfaceSettleTarget,
@@ -2331,11 +2332,20 @@ export class FractalScene {
 
   /**
    * Camera + per-tier quality uniforms on the ACTIVE surface material, for
-   * a trace whose buffer is `height` pixels tall. The tier knobs are all
+   * a trace whose buffer is `height` pixels tall. `acceptHeight` is the
+   * height of the FULL-RESOLUTION frame this trace stands in for (the
+   * settle/capture buffer): hit acceptance derives its epsilon from THAT,
+   * tier-independently, so a preview can never accept a hit the settle
+   * frame would reject (fr-7xgi — the fold-phantom fix; see
+   * uAcceptPixelEps's doc in surface-material.ts). The tier knobs are all
    * tracer-side (march/shadow/AO budgets, hit floor, depth clamp — plain
    * uniform writes); the oracle-mirrored DE bodies never change.
    */
-  private setSurfaceFrameUniforms(tier: RenderTier, height: number): void {
+  private setSurfaceFrameUniforms(
+    tier: RenderTier,
+    height: number,
+    acceptHeight: number,
+  ): void {
     this.camera.updateMatrixWorld();
     const u = this.activeSurfaceMaterial.uniforms;
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
@@ -2345,8 +2355,9 @@ export class FractalScene {
         this.camera.matrixWorldInverse,
       )
       .invert();
-    u.uPixelEps.value =
-      (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(height, 1);
+    const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
+    u.uPixelEps.value = angularPerPixel / Math.max(height, 1);
+    u.uAcceptPixelEps.value = angularPerPixel / Math.max(acceptHeight, 1);
     const preview = tier === "preview";
     // Derived per frame, never cached: the clamp depends on BOTH the
     // active DE's own full depth (fr-ttg5) and the live rung (fr-hith),

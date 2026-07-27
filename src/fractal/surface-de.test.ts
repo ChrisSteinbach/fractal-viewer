@@ -1026,6 +1026,71 @@ describe("estimateDistanceRefined cutoff on a swept kaleidoscope", () => {
   });
 });
 
+describe("estimateDistance cutoff on a mixed affine+boxfold system (fr-7xgi)", () => {
+  // fr-aj4w grew the cutoff param on the PLAIN estimator too — it's the
+  // one the fold GLSL tracer marches (surface-material.ts's SURFACE_FOLDS
+  // body has no refined variant; see that module's doc for why), but no
+  // test ever exercised the cutoff path on a MIXED affine+fold system —
+  // the shape that grew phantom box faces under the fr-7xgi investigation
+  // (scripts/fold-phantom.harness.ts). Same fr-55r5 contract as the swept-
+  // kaleidoscope describe above, on defaultTransforms with a boxfold map
+  // substituted in for map 0.
+  function defaultTetraWithBoxfoldMap0(): Transform[] {
+    return defaultTransforms().map((t) =>
+      t.id === 0
+        ? { ...t, variations: [{ type: "boxfold" as const, weight: 1 }] }
+        : t,
+    );
+  }
+
+  it("returns the full-descent value whenever the result clears the cutoff", () => {
+    const de = buildSurfaceDE(defaultTetraWithBoxfoldMap0());
+    const R = de.boundingRadius;
+    // Seed picked (of 200 probed) so the 60-sample cube draws a handful of
+    // near-surface points too — this system has no kaleidoscope sweep to
+    // thicken the attractor's presence the way sierpinskiTetrahedron+
+    // symmetry(8) does above, so the true dip rate here is only ~2%
+    // (measured over 5000 uniform samples) and most seeds draw zero of
+    // them at n=60. Seed 4 measures 57 cleared / 3 dipped.
+    const rng = mulberry32(4);
+    let cleared = 0;
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const cutoff = 0.02 * R;
+      const early = estimateDistance(de, p, cutoff);
+      if (early < cutoff) continue;
+      cleared++;
+      expect(early).toBe(estimateDistance(de, p));
+    }
+    expect(cleared).toBeGreaterThan(40);
+  });
+
+  it("agrees with the full descent whenever the result falls under the cutoff", () => {
+    const de = buildSurfaceDE(defaultTetraWithBoxfoldMap0());
+    const R = de.boundingRadius;
+    const rng = mulberry32(4);
+    let dipped = 0;
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const cutoff = 0.02 * R;
+      const early = estimateDistance(de, p, cutoff);
+      if (early >= cutoff) continue;
+      dipped++;
+      // The hit VERDICT is what the cutoff preserves, not the value.
+      expect(estimateDistance(de, p)).toBeLessThan(cutoff);
+    }
+    expect(dipped).toBeGreaterThan(0);
+  });
+});
+
 // -----------------------------------------------------------------------
 // estimateDistanceRefined (fr-1z6p — fr-beck's 4D ghost-eliminator ported
 // down; see the module doc's refined-certificates paragraph): one extra

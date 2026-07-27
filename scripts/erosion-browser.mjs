@@ -28,7 +28,12 @@ function parseArgs(argv) {
     const value = eq === -1 ? "" : raw.slice(eq + 1);
     if (key === "url") args.url = value.replace(/\/+$/, "");
     else if (key === "preset") args.preset = value;
-    else if (key === "out") args.out = value;
+    else if (key === "hash") {
+      // Load an arbitrary scene via the #v1 share hash instead of a preset
+      // (fr-7xgi: repro systems that are edits of a preset, not a preset).
+      args.hash = value;
+      args.preset = "";
+    } else if (key === "out") args.out = value;
     else if (key === "gpu") args.gpu = true;
     else if (key === "browser") args.browser = value;
     else if (key === "orbit") args.orbit = value;
@@ -97,12 +102,14 @@ async function main() {
       await page.route("**/surface-grid-worker*", (route) => route.abort());
       console.error("[erosion] grid worker BLOCKED (gridless marching)");
     }
-    await page.goto(args.url, { waitUntil: "load", timeout: 30_000 });
+    // --hash rides the URL fragment (persist.ts's #v1=<base64url> loader).
+    const target = args.hash ? `${args.url}/#${args.hash}` : args.url;
+    await page.goto(target, { waitUntil: "load", timeout: 30_000 });
     // Production first visit reloads once for cross-origin isolation
     // (register-sw.ts); renderMode is session-only, so wait the dance out
     // before driving the UI. A second goto is a no-op on the dev server.
     await page.waitForTimeout(3000);
-    await page.goto(args.url, { waitUntil: "load", timeout: 30_000 });
+    await page.goto(target, { waitUntil: "load", timeout: 30_000 });
     await page.waitForFunction(
       () => {
         const el = document.getElementById("pointCount");
@@ -126,9 +133,19 @@ async function main() {
       }
       await page.click("#modeSurfaceBtn");
       await page.waitForTimeout(1000);
+      // Canvas rect via evaluate, NOT locator.boundingBox(): the locator
+      // carries Playwright's fixed ~30s actionability wait, which a
+      // fold-system Surface entry under SwiftShader can exceed while the
+      // page main thread is wedged in shader compile (fr-7xgi).
+      const canvasRect = () =>
+        page.evaluate(() => {
+          const c = document.querySelector("canvas");
+          const r = c.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        });
       if (orbit) {
         const [dx, dy] = orbit.split(",").map(Number);
-        const canvas = await page.locator("canvas").first().boundingBox();
+        const canvas = await canvasRect();
         const cx = canvas.x + canvas.width * 0.4;
         const cy = canvas.y + canvas.height * 0.5;
         await page.mouse.move(cx, cy);
@@ -140,7 +157,7 @@ async function main() {
         await page.mouse.up();
       }
       if (zoom) {
-        const canvas = await page.locator("canvas").first().boundingBox();
+        const canvas = await canvasRect();
         await page.mouse.move(
           canvas.x + canvas.width * 0.4,
           canvas.y + canvas.height * 0.5,
@@ -154,14 +171,18 @@ async function main() {
       // complete: poll until two consecutive canvas grabs are identical.
       const deadline = Date.now() + args.settleMs;
       let prev = null;
+      // Viewport-clipped page grabs, not element screenshots: Playwright's
+      // element screenshot waits for element stability, which can block
+      // for the whole shader-compile/settle it is trying to observe
+      // (fr-7xgi hit exactly that on the fold tracer under SwiftShader).
+      const clip = await canvasRect();
       for (;;) {
         await page.waitForTimeout(2500);
         const cur = await page
-          .locator("canvas")
-          .first()
-          .screenshot()
-          .then((b) => b.toString("base64"));
-        if (prev === cur || Date.now() > deadline) break;
+          .screenshot({ clip, timeout: 10_000 })
+          .then((b) => b.toString("base64"))
+          .catch(() => null);
+        if ((cur !== null && prev === cur) || Date.now() > deadline) break;
         prev = cur;
       }
       await mkdir(path.dirname(outPath), { recursive: true });

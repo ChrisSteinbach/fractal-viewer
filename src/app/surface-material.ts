@@ -201,10 +201,27 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
-  /** Angular pixel footprint (scene-set per frame): the cone-style hit test
-   * accepts once the DE drops below uPixelEps * t, so surface resolution
-   * scales with distance. */
+  /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
+   * sizes the shading probes (normal offsets, ray dither) to the pixels
+   * actually being rendered. NOT the hit test's epsilon — see
+   * uAcceptPixelEps. */
   uniform float uPixelEps;
+  /** Angular pixel footprint of the FULL-RESOLUTION frame (the settle /
+   * capture buffer), scene-set per frame and tier-INDEPENDENT: the march's
+   * hit acceptance, the grid's no-hit proof, and the DE's cutoff all run
+   * at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) in EVERY
+   * tier. A tier may coarsen sampling, never acceptance (fr-7xgi): scaling
+   * the acceptance epsilon with a preview's smaller buffer let it cross
+   * the fold DE's loose-but-valid plateau band (fold-branch region floors
+   * measure DE/D as low as 0.13 near fold faces, vs 0.6+ on affine
+   * systems), which rendered entire box-face shells as crisp phantom
+   * geometry on coarse rungs — solid faces the settle frame then erased,
+   * except fold systems settle slowest, so the phantom was what users
+   * actually saw. Pinning acceptance to the full-resolution epsilon makes
+   * a preview unable to accept any hit the settle frame would reject;
+   * measured on the fr-7xgi repro (CPU march emulation, 40-step preview
+   * budget): phantom hits 2 -> 0, hole cost 0.4-0.9% of true hits. */
+  uniform float uAcceptPixelEps;
 
   /** Empty-space-skipping grid (fr-55r5 part 2), the CPU-built
    * surface-grid.ts cube uploaded as a 3D texture: each texel is a
@@ -1551,7 +1568,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
       if (t > tFar) {
         break;
       }
-      float eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+      // Acceptance epsilon: tier-independent by design — see
+      // uAcceptPixelEps (fr-7xgi).
+      float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
       // Empty-space skip (fr-55r5 part 2): texture reads against the
       // precomputed grid before paying a descent. The stored floor bounds
       // the distance from ANYWHERE in the sample's cell (surface-grid.ts's
@@ -1575,7 +1594,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
           if (t > tFar) {
             break;
           }
-          eps = max(uPixelEps * t, uBoundingRadius * uHitFloor);
+          eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
         }
         if (t > tFar) {
           break;
@@ -1917,6 +1936,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
+      uAcceptPixelEps: { value: 0.002 },
       // Full-tier defaults; the scene overwrites all four per tier
       // (fr-sjff).
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
