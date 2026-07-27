@@ -162,6 +162,32 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
     expect(u.uFinalSigmaMin.value).toBe(1);
   });
 
+  it("keeps every variant's fragment source free of the other variants' text", () => {
+    // The measured Mesa edge (fr-kltj follow-up): the fold variant's
+    // compiler crashed when the source merely GREW past ~80KB with
+    // preprocessor-dead lens/escape arms — so the arms are resolved
+    // JS-side and each variant's source carries only its own bodies.
+    const material = createSurfaceMaterial();
+    // Default: no lens wrapper, no escape loop, SURFACE_FOLDS still a
+    // driver-side conditional.
+    expect(material.fragmentShader).not.toContain("surfaceDECore");
+    expect(material.fragmentShader).not.toContain("uEscParams.y * y");
+    expect(material.fragmentShader).toContain("#if SURFACE_FOLDS");
+
+    const withLens = de3([map3()]);
+    withLens.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 1,
+      foldKind: 1,
+      invW: 1,
+      absW: 1,
+    };
+    setSurfaceSystem(material, withLens, [black]);
+    expect(material.fragmentShader).toContain("surfaceDECore");
+    expect(material.fragmentShader).not.toContain("uEscParams.y * y");
+  });
+
   it("resets the lens uniforms and the define when the next system has no fold final", () => {
     const material = createSurfaceMaterial();
     const withLens = de3([map3()]);
