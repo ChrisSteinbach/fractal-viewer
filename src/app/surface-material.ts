@@ -190,6 +190,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
   /** Descent depth cap, sized CPU-side so the slowest contraction chain
    * resolves features below resolution. */
   uniform int uMaxDepth;
+  /** 1 / ln(slowestSigma), negative (every certified factor is < 1): the
+   * per-step depth cap (fr-3c0k) multiplies it against ln(eps / 2R). */
+  uniform float uInvLogSlowest;
   /** March step multiplier in (0, 1]: 1 for conformal systems, smaller as
    * anisotropy grows (SurfaceEligibility.stepScale). */
   uniform float uStepScale;
@@ -308,6 +311,18 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * certificates painted across attractor voids. "Every map" means every
    * (sector, base map) pair, which the sweep spells out where the expanded
    * slot list used to (fr-x029). */
+  /** Per-call descent depth bound (fr-3c0k): main() seeds it with
+   * uMaxDepth, the march loop lowers it to each step's cone-footprint cap
+   * before the stepping DE call — once every chain's tracked piece
+   * (diameter <= 2R·slowestSigma^depth) is under the step's acceptance
+   * footprint, deeper levels resolve sub-pixel detail — and it is reset
+   * to uMaxDepth after the march, so shading probes (hit info, normals,
+   * AO, shadows) keep the frame-wide depth. A global rather than a
+   * parameter so the descent bodies' signatures (and the fold-lens
+   * wrapper's calls through them) stay untouched. The escape-time
+   * variant never reads it. */
+  int gDepthCap;
+
 #if SURFACE_FOLDS
   // The fold variant defines NO refinedCert at all: its descent folds
   // PLAIN certificates (the oracle's descendFold refine=false path). Two
@@ -557,7 +572,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float fnFloor[FOLD_W];
     float fnR[FOLD_W];
     float fnCert[FOLD_W];
-    for (int depth = 0; depth < uMaxDepth; depth++) {
+    for (int depth = 0; depth < gDepthCap; depth++) {
       if (chainCount == 0) {
         break;
       }
@@ -930,7 +945,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     vec3 v2Q = vec3(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
-    for (int depth = 0; depth < uMaxDepth; depth++) {
+    for (int depth = 0; depth < gDepthCap; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
@@ -1992,6 +2007,8 @@ const SURFACE_FRAGMENT = /* glsl */ `
 
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
+    // Frame-wide depth until the march lowers it per step (fr-3c0k).
+    gDepthCap = uMaxDepth;
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes.
@@ -2081,6 +2098,26 @@ const SURFACE_FRAGMENT = /* glsl */ `
           break;
         }
       }
+#if SURFACE_FOLD_LENS == 0 && SURFACE_ESCAPE == 0
+      // Per-step depth cap (fr-3c0k): a chain at depth d tracks a piece
+      // of diameter <= 2R·slowestSigma^d; once that is under THIS step's
+      // acceptance footprint, deeper levels resolve sub-pixel detail and
+      // an in-sphere cap terminal is a hit at this resolution
+      // (previewMaxDepth's own argument, per step instead of per frame).
+      // The 4-level floor is previewMaxDepth's, for fr-xok8's reason (an
+      // unfloored cap regrows the solid-ball artifact at the slowest
+      // map's fixed point). Skipped under the fold lens: its branches
+      // rescale the footprint by their factor (the oracle divides
+      // per branch; one global cap cannot), and lens cores are the cheap
+      // affine kind. The escape variant runs its own fixed-cost loop.
+      gDepthCap = min(
+        uMaxDepth,
+        max(
+          4,
+          int(ceil(log(eps / (2.0 * uBoundingRadius)) * uInvLogSlowest))
+        )
+      );
+#endif
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
         hit = true;
@@ -2088,6 +2125,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       t += d * uStepScale;
     }
+    // Shading probes (hit info, normals, AO, shadows) keep the frame-wide
+    // depth: fr-3c0k caps the march's stepping calls only.
+    gDepthCap = uMaxDepth;
     if (!hit) {
       outColor = vec4(background, 1.0);
       return;
@@ -2409,6 +2449,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBoundCenter: { value: new THREE.Vector3() },
       uEscapeRadius: { value: 2 },
       uMaxDepth: { value: 0 },
+      // 1/ln(slowestSigma) for the per-step depth cap (fr-3c0k); any
+      // negative value is inert until a real system lands.
+      uInvLogSlowest: { value: -1 },
       uStepScale: { value: 1 },
       uVisibleRadius: { value: 1 },
       uFinalInvM: { value: new THREE.Matrix3() },
@@ -2553,6 +2596,9 @@ export function setSurfaceSystem(
   (u.uBoundCenter.value as THREE.Vector3).set(...de.boundCenter);
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
+  // Negative (slowestSigma < 1 by eligibility); the march's per-step
+  // depth cap divides by ln(slowestSigma) via this product form.
+  u.uInvLogSlowest.value = 1 / Math.log(de.slowestSigma);
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may have

@@ -2707,3 +2707,153 @@ describe("probe-fit centered bounding ball (fr-pjqw)", () => {
     }
   });
 });
+
+// -----------------------------------------------------------------------
+// fr-3c0k: FOOTPRINT-CAPPED DESCENT DEPTH. The marcher's per-step cone
+// footprint (eps·t) caps how deep a descent can usefully resolve: a chain
+// at depth d tracks a piece of diameter <= 2R·slowestSigma^d, so depth
+// past ceil(log(f/2R)/log(slowestSigma)) resolves sub-footprint detail.
+// The cap is VALID at any depth (cap terminals are certified bounds for
+// their pieces); what it trades is resolution — bounded by the footprint
+// itself, which is the fr-ttg5/previewMaxDepth argument made per-query.
+// -----------------------------------------------------------------------
+
+describe("footprint-capped descent depth (fr-3c0k)", () => {
+  /** The doubleRotation 3D mirror (sigma 0.93 — maxDepth 127, the
+   * profile fr-xok8's solid-ball artifact was measured on; its slow
+   * map's fixed point is the origin). */
+  function slowProfile(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0.55],
+        scale: [0.93, 0.93, 0.93],
+        weight: 6,
+      },
+      {
+        id: 1,
+        position: [0.85, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.22, 0.22, 0.22],
+        weight: 1,
+      },
+    ];
+  }
+
+  it("is bit-identical to the frame-wide descent at footprint 0 (and NaN)", () => {
+    const de = buildSurfaceDE(slowProfile());
+    const rng = mulberry32(31);
+    for (let i = 0; i < 40; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      expect(
+        Object.is(estimateDistance(de, p), estimateDistance(de, p, 0, 0)),
+      ).toBe(true);
+      expect(
+        Object.is(
+          estimateDistanceRefined(de, p),
+          estimateDistanceRefined(de, p, 0, Number.NaN),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("stays a valid lower bound at every footprint, on affine and fold systems alike", () => {
+    for (const transforms of [sierpinskiTetrahedron(), pureBoxfoldPair()]) {
+      const de = buildSurfaceDE(transforms);
+      const cloud = runChaosGame(transforms, 200000, mulberry32(91));
+      const rng = mulberry32(92);
+      const R = de.boundingRadius;
+      for (const f of [R / 10, R / 100, R / 1000]) {
+        for (let i = 0; i < 40; i++) {
+          const base = Math.floor(rng() * cloud.count) * 3;
+          const p: Vec3 = [
+            cloud.positions[base] + (rng() - 0.5) * 0.3,
+            cloud.positions[base + 1] + (rng() - 0.5) * 0.3,
+            cloud.positions[base + 2] + (rng() - 0.5) * 0.3,
+          ];
+          const nearest = nearestDistance(cloud, p);
+          expect(estimateDistance(de, p, 0, f)).toBeLessThanOrEqual(
+            nearest + 1e-6,
+          );
+          expect(estimateDistanceRefined(de, p, 0, f)).toBeLessThanOrEqual(
+            nearest + 1e-6,
+          );
+        }
+      }
+    }
+  });
+
+  it("bounds any fabricated reading by the footprint itself", () => {
+    // The resolution trade's whole envelope: a capped in-sphere terminal
+    // is scale·(r − R) with scale <= footprint/2R by the cap's sizing, so
+    // no capped estimate can sit below -footprint — the fabricated
+    // surface, where one exists, is sub-footprint by construction.
+    const de = buildSurfaceDE(slowProfile());
+    const R = de.boundingRadius;
+    const rng = mulberry32(93);
+    for (const f of [R / 20, R / 200, R / 2000]) {
+      for (let i = 0; i < 60; i++) {
+        const p: Vec3 = [
+          (rng() - 0.5) * 2.4 * R,
+          (rng() - 0.5) * 2.4 * R,
+          (rng() - 0.5) * 2.4 * R,
+        ];
+        expect(estimateDistance(de, p, 0, f)).toBeGreaterThanOrEqual(-f);
+        expect(estimateDistanceRefined(de, p, 0, f)).toBeGreaterThanOrEqual(-f);
+      }
+    }
+  });
+
+  it("does not regrow the fr-xok8 solid ball at a realistic pixel footprint", () => {
+    // fr-xok8's record: at frame-wide cap 48 this profile read
+    // est = |p| − 0.047 along a ray into the slow map's fixed point (the
+    // origin) — a fat fabricated ball, ~5% of R. With the footprint form
+    // at a full-tier pixel scale (f = 1e-3·R) the cap sizes itself to
+    // ~105 levels and the fabricated band shrinks under f: probes well
+    // clear of the attractor (nearest >= 0.02R, 20x the footprint) must
+    // still read a no-hit-at-this-resolution estimate.
+    const transforms = slowProfile();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(94));
+    const R = de.boundingRadius;
+    const f = 1e-3 * R;
+    let checked = 0;
+    for (let i = 0; i < 400; i++) {
+      // March-like samples along rays toward the origin from outside.
+      const theta = (i / 400) * Math.PI * 2;
+      const t = 0.02 + (0.18 * ((i * 7) % 400)) / 400;
+      const p: Vec3 = [
+        Math.cos(theta) * t * R,
+        Math.sin(theta) * t * R,
+        (((i * 13) % 400) / 400 - 0.5) * 0.2 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      if (nearest < 0.02 * R) continue;
+      checked++;
+      expect(estimateDistance(de, p, 0, f)).toBeGreaterThan(f);
+      expect(estimateDistanceRefined(de, p, 0, f)).toBeGreaterThan(f);
+    }
+    expect(checked).toBeGreaterThan(60);
+  });
+
+  it("actually engages: a coarse footprint coarsens some estimate", () => {
+    const de = buildSurfaceDE(slowProfile());
+    const R = de.boundingRadius;
+    const rng = mulberry32(95);
+    let differing = 0;
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 1.6 * R,
+        (rng() - 0.5) * 1.6 * R,
+        (rng() - 0.5) * 1.6 * R,
+      ];
+      if (
+        !Object.is(estimateDistance(de, p), estimateDistance(de, p, 0, R / 2))
+      ) {
+        differing++;
+      }
+    }
+    expect(differing).toBeGreaterThan(0);
+  });
+});

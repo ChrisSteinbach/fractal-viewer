@@ -426,6 +426,33 @@ function fitEnclosingBall(positions: Float32Array): {
  * beyond it, deeper certificates cannot improve the min. */
 export const ESCAPE_FACTOR = 2;
 
+/** Depth floor for the footprint-capped descent (fr-3c0k) — the same
+ * 4-level floor `render-tier.ts`'s `previewMaxDepth` keeps, for the same
+ * reason (fr-xok8's solid-ball artifact at the slowest map's fixed point
+ * is what an unfloored cap regrows). */
+export const FOOTPRINT_DEPTH_FLOOR = 4;
+
+/**
+ * Depth needed before every chain's tracked piece is smaller than the
+ * caller's own resolution (fr-3c0k, brief §3.3): a chain at depth `d`
+ * tracks a piece of diameter `<= 2R·slowestSigma^d`, so once that is
+ * under `footprint` — the marcher's cone width `eps·t` at the current
+ * step — deeper levels resolve sub-footprint detail and an in-sphere cap
+ * terminal is a hit AT THAT RESOLUTION (`previewMaxDepth`'s own
+ * argument, made per-query instead of per-frame). `footprint <= 0` (and
+ * NaN) disables the cap: today's frame-wide depth, bit-identical.
+ * Validity is depth-independent — every cap terminal is a certified
+ * bound for its chain's piece at ANY depth — so a capped estimate is
+ * still a true lower bound, merely coarser.
+ */
+function footprintDepthCap(de: SurfaceDE, footprint: number): number {
+  if (!(footprint > 0)) return de.maxDepth;
+  const cap = Math.ceil(
+    Math.log(footprint / (2 * de.boundingRadius)) / Math.log(de.slowestSigma),
+  );
+  return Math.min(de.maxDepth, Math.max(FOOTPRINT_DEPTH_FLOOR, cap));
+}
+
 /** Accumulated-contraction floor that sizes {@link SurfaceDE.maxDepth}:
  * descend until the slowest map chain has shrunk features below ~1e-4. */
 export const DEPTH_RESOLUTION = 1e-4;
@@ -609,6 +636,12 @@ export interface SurfaceDE {
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
    * features below {@link DEPTH_RESOLUTION}. */
   maxDepth: number;
+  /** The largest per-level certified shrink factor over the maps (the
+   * factor {@link maxDepth} is sized from): a chain at depth `d` tracks a
+   * piece of the attractor of diameter `<= 2R·slowestSigma^d`, which is
+   * what lets a caller cap depth at ITS OWN resolution (fr-3c0k: the
+   * marcher's per-step cone footprint) instead of the frame-wide cap. */
+  slowestSigma: number;
   /** How many descent chains {@link estimateDistance} refines in parallel.
    * Widths 1/2 are the classic greedy chain and the fr-v6yg pair; widths
    * 3/4 add the fr-jkpn VALIDITY slots — extra chains that hold the level's
@@ -1142,6 +1175,7 @@ export function buildSurfaceDE(
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
+    slowestSigma: slowest,
     beamWidth: 4,
     stepScale: analysis.stepScale,
     final,
@@ -1190,11 +1224,16 @@ export function buildSurfaceDE(
  * grid can price fold floors with the estimator the fold GLSL actually
  * marches).
  */
-export function estimateDistance(de: SurfaceDE, p: Vec3, cutoff = 0): number {
-  if (de.foldFinal) return descendLens(de, p, false, cutoff);
+export function estimateDistance(
+  de: SurfaceDE,
+  p: Vec3,
+  cutoff = 0,
+  footprint = 0,
+): number {
+  if (de.foldFinal) return descendLens(de, p, false, cutoff, footprint);
   return deHasFolds(de)
-    ? descendFold(de, p, false, cutoff)
-    : descend(de, p, false, cutoff);
+    ? descendFold(de, p, false, cutoff, footprint)
+    : descend(de, p, false, cutoff, footprint);
 }
 
 /** Whether any map expands into fold branches — such systems descend via
@@ -1345,11 +1384,12 @@ export function estimateDistanceRefined(
   de: SurfaceDE,
   p: Vec3,
   cutoff = 0,
+  footprint = 0,
 ): number {
-  if (de.foldFinal) return descendLens(de, p, true, cutoff);
+  if (de.foldFinal) return descendLens(de, p, true, cutoff, footprint);
   return deHasFolds(de)
-    ? descendFold(de, p, true, cutoff)
-    : descend(de, p, true, cutoff);
+    ? descendFold(de, p, true, cutoff, footprint)
+    : descend(de, p, true, cutoff, footprint);
 }
 
 /** The descent's return value for a running min: the folded terms' min
@@ -1625,7 +1665,14 @@ function refinedCertValue(
  * doc for the contract and why the exits sit where they sit); `0` — what
  * {@link estimateDistance} always passes — disables it entirely.
  */
-function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
+function descend(
+  de: SurfaceDE,
+  p: Vec3,
+  refine: boolean,
+  cutoff = 0,
+  footprint = 0,
+): number {
+  const maxDepth = footprintDepthCap(de, footprint);
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -1702,7 +1749,7 @@ function descend(de: SurfaceDE, p: Vec3, refine: boolean, cutoff = 0): number {
   let v2Scale = 1;
   let v2Live = false;
 
-  for (let depth = 0; depth < de.maxDepth; depth++) {
+  for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
@@ -2174,7 +2221,9 @@ function descendFold(
   p: Vec3,
   refine: boolean,
   cutoff = 0,
+  footprint = 0,
 ): number {
+  const maxDepth = footprintDepthCap(de, footprint);
   let x = p[0];
   let y = p[1];
   let z = p[2];
@@ -2207,7 +2256,7 @@ function descendFold(
   fcFloor[0] = 0;
   fcR[0] = startR;
 
-  for (let depth = 0; depth < de.maxDepth && chainCount > 0; depth++) {
+  for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
     let keptCount = 0;
     // Worst kept slot, maintained by a fixed-bound rescan whenever the
     // frontier is full (see the insertion comment below for why the
@@ -2762,6 +2811,7 @@ function descendLens(
   p: Vec3,
   refine: boolean,
   cutoff = 0,
+  footprint = 0,
 ): number {
   const lens = de.foldFinal!;
   const R = de.boundingRadius;
@@ -2936,12 +2986,17 @@ function descendLens(
     if (factor * (rq - R) >= best) continue;
     const innerCutoff =
       cutoff > 0 ? (best < cutoff ? best : cutoff) / factor : 0;
+    // The footprint scales like the cutoff (fr-3c0k): a world feature of
+    // size f is an inner-space feature of size f / factor — a lens with
+    // |w| > 1 SHRINKS inner features in world terms, so dividing keeps
+    // the cap resolving exactly to the caller's resolution either way.
+    const innerFootprint = footprint > 0 ? footprint / factor : 0;
     LENS_QUERY[0] = qx;
     LENS_QUERY[1] = qy;
     LENS_QUERY[2] = qz;
     const inner = hasFolds
-      ? descendFold(de, LENS_QUERY, refine, innerCutoff)
-      : descend(de, LENS_QUERY, refine, innerCutoff);
+      ? descendFold(de, LENS_QUERY, refine, innerCutoff, innerFootprint)
+      : descend(de, LENS_QUERY, refine, innerCutoff, innerFootprint);
     let term = factor * inner;
     if (floor > term) term = floor;
     if (term < best) {

@@ -56,6 +56,7 @@ function de3(
     visibleBoundingRadius: 1,
     escapeRadius: 2,
     maxDepth: 8,
+    slowestSigma: 0.5,
     beamWidth: 4,
     stepScale: 1,
     final: null,
