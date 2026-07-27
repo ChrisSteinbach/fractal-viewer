@@ -2757,6 +2757,9 @@ function main(): void {
           return;
         }
         surfaceComputeRenderer = renderer;
+        // Field-debuggability breadcrumb (the ?surfacegl escape hatch's
+        // counterpart): one line saying which tracer owns this session.
+        console.info("Surface render: WebGPU compute tracer active.");
         renderer.onLost = () => {
           if (surfaceComputeRenderer !== renderer) return;
           console.warn(
@@ -2823,6 +2826,13 @@ function main(): void {
             frame.height,
           );
           scene.sampleSurfaceComputeCost(performance.now() - t0);
+          console.debug(
+            `Surface compute preview ${String(frame.width)}x${String(frame.height)}: ` +
+              `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes` +
+              `${frame.truncated ? " (truncated)" : ""}, ` +
+              `hit ${String(frame.counts.hit)} / miss ${String(frame.counts.miss)} / ` +
+              `exhausted ${String(frame.counts.exhausted)} / active ${String(frame.counts.active)}`,
+          );
         }
       }
     } finally {
@@ -2865,6 +2875,12 @@ function main(): void {
           frame.height,
         );
         surfaceSettled = true;
+        console.debug(
+          `Surface compute settle ${String(frame.width)}x${String(frame.height)}: ` +
+            `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes, ` +
+            `hit ${String(frame.counts.hit)} / miss ${String(frame.counts.miss)} / ` +
+            `exhausted ${String(frame.counts.exhausted)}`,
+        );
       }
     } finally {
       surfaceComputeSettleFlight = false;
