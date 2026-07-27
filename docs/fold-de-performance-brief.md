@@ -1,0 +1,338 @@
+# Fold-DE performance brief
+
+Handover notes for a Claude Code session working on `fractal-viewer`
+(`github.com/ChrisSteinbach/fractal-viewer`, deployed as fractal-4d.com).
+
+**Problem statement.** Surface-mode DE rendering of systems containing pure-fold
+maps (`boxfold` / `spherefold` / `mandelbox`, fr-p7nu / fr-5rvk) is unusably slow
+and locks up browsers on anything visually interesting.
+
+**Ground rules.** Everything below must preserve the validity argument in
+`src/fractal/surface-de.ts`'s module doc: the DE must remain a certified **lower
+bound** on distance to the attractor. An idea that trades soundness for speed is
+not on this list, and anything that looks like it does should be rejected rather
+than fudged. Follow the existing oracle discipline: change
+`src/fractal/surface-de.ts` first, re-run `scripts/surface-beam.harness.ts`
+(violations, void false hits, DE/D tightness, inverse applications), and only
+then mirror into the GLSL in `src/app/surface-material.ts`.
+
+---
+
+## 1. Cost model — why this is a wall, not a slope
+
+Three independent multiplicative factors. Establish which dominates _before_
+committing to any rewrite.
+
+### Factor A — branch count per descent step
+
+The rest of the fractal-rendering world renders folds **forward**: one-valued,
+~15 iterations, a scalar running derivative, no branching. This codebase does
+inverse-map descent with certified `sigma_min` bounds, because that is what
+generalises to an arbitrary IFS. The price is that a fold's inverse is
+_multivalued_: 27 branches for `boxfold`, 3 for `spherefold`, 81 for `mandelbox`.
+
+From the repo's own measured numbers (module doc, fr-5rvk MEASURED VERDICT):
+`mandelboxKifs` costs ~1400–2040 map visits per DE call, each expanding 27–81
+branches. That is on the order of 10^5 branch evaluations **per march step**.
+
+### Factor B — bound looseness
+
+Same doc: median DE/D of 0.13–0.20 on fold systems versus 0.61–0.84 on affine
+presets. Roughly 4x more march steps, multiplying factor A.
+
+### Factor C — GPU occupancy (suspected silent killer)
+
+`src/app/surface-material.ts`, the `#if SURFACE_FOLDS` variant of `surfaceDE`,
+declares ten **dynamically indexed** private arrays at `FOLD_W = 12`:
+
+```
+vec3  fcQ[12]; float fcScale[12]; float fcFloor[12]; float fcR[12];
+float fnKey[12]; vec3 fnQ[12]; float fnScale[12];
+float fnFloor[12]; float fnR[12]; float fnCert[12];
+```
+
+That is ~168 floats ≈ 672 bytes of indexed per-thread state. No GPU keeps that in
+registers — it spills to scratch/local memory, and occupancy collapses to a
+handful of warps. The recorded Mesa compiler failure on the inlined refinement
+sweep is the same symptom from the compile side.
+
+**This is cheap to test and should be tested first.** See §2.
+
+---
+
+## 2. Instrument before optimising
+
+Two experiments, both roughly a day, that decide the rest of the plan.
+
+1. **Spill probe.** Build with `SURFACE_FOLD_BEAM_WIDTH` at 12, 8, 6, and 4 and
+   measure settled-frame trace time at a fixed pose on `mandelboxKifs`. If time
+   drops _far more than linearly_ in width, factor C dominates and the answer is
+   a WebGPU compute rewrite (§3.7), not a better search. If it drops roughly
+   linearly, factor A dominates and §3.1 is the highest-value change.
+   Cross-check with driver spill statistics where available.
+2. **Step-count vs DE-cost split.** Add a debug output mode that visualises
+   (a) march steps per pixel and (b) inverse applications per pixel. The ratio
+   tells you whether to attack factor A (§3.1, §3.5, §3.6) or factor B
+   (§3.2, §3.3).
+
+Record both in a beads issue before changing anything.
+
+---
+
+## 3. Work items, ranked by leverage per unit of pain
+
+### 3.1 Branch-and-bound the 27/81 instead of enumerating them
+
+**Highest algorithmic value; local change; provably sound.**
+
+Today `descendFold` enumerates every branch unconditionally, and only then applies
+the floor-vs-best prune. The prune can be moved _ahead_ of the child computation
+using an admissible lower bound on the branch's selection key.
+
+`boxFold` preimages are separable per axis: for output component `u_a` the three
+preimages are `{u_a, 2 - u_a, -2 - u_a}`. The child is
+`inv(M) * pre + invT`, and
+
+```
+|child| = |inv(M)*pre + invT| >= |pre| / sigma_max(M) - |invT|
+|pre|^2 = sum_a pre_a^2                                   <- separable
+```
+
+So:
+
+- per axis, sort the three candidates by `pre_a^2` (3 elements, branchless);
+- run the triple-nested loop in ascending order;
+- `break` the inner loops as soon as the partial sum-of-squares implies a key
+  `>= best`.
+
+**Soundness.** Skipping a branch whose key provably cannot beat `best` drops a
+term that could not have lowered the min. This is the existing floor-vs-best
+prune applied one step earlier, with a different (cheaper) bound. Certificates of
+skipped branches are lower bounds on distance to their own piece, and the bound
+proves that piece is `>= best`, so not folding them cannot change the result.
+
+`mandelbox` is `81 = 3 * 27` and inherits the box ordering inside each spherefold
+branch. Expect 27 to collapse to ~2–5 in practice.
+
+**Where.** `descendFold` in `src/fractal/surface-de.ts` (~line 1880 onward), then
+the `#if SURFACE_FOLDS` body in `src/app/surface-material.ts` (~line 390 onward).
+Note the GLSL currently precomputes `pre0/pre1/pre2`, `dUp`, `dDn` before the
+branch loop — the sort fits naturally there.
+
+**Verify.** `scripts/surface-beam.harness.ts` — inverse applications should fall
+sharply; violations, void false hits and DE/D must be unchanged (this is a pure
+work-skipping change, so values should be bit-identical or within fp noise).
+
+---
+
+### 3.2 Fix the base case — the bounding sphere is origin-centred
+
+`buildSurfaceDE` sets `boundingRadius = probe.bounds.maxR * RADIUS_PAD + 1e-3`,
+i.e. max `‖p‖` **from the origin**. The terminal bound `|q| - R` is then used at
+every level of every chain. If the attractor is not centred on the origin, that
+slack multiplies through the entire descent and shows up directly as factor B.
+
+- **Cheap version.** Compute a proper smallest-enclosing ball `(c, R)` from the
+  probe cloud (Welzl, or Larsson's fast approximate fitting) and use
+  `|q - c| - R`. One extra `vec3` uniform; the validity argument is unchanged
+  because a tighter enclosing ball is still an enclosing ball.
+- **Stronger version.** Precompute a per-map — and per-fold-branch — bounding
+  sphere for `f_j(A)` from the chaos-game cloud the app already generates, and
+  use it instead of transporting the _global_ sphere through `sigma_min`. This is
+  where the 0.13 DE/D lives: `regionDist` bounds a branch's output _region_,
+  which is far larger than the piece of the attractor actually in it.
+
+**Caution.** Per-branch spheres derived from a finite point cloud need an outward
+pad that is itself certified, or the bound stops being a lower bound. Derive the
+pad from the level-`k` Hutchinson contraction (`R * prod sigma_max`), not from the
+sampling density.
+
+**Literature.** Martyn, _Tight bounding ball for affine IFS attractor_, Computers
+& Graphics 27(4), 2003 — this exact problem. Also Rice (GI 1996), Canright
+(C&G 1994), Edalat/Sharp/While (Imperial College TR, 1996).
+
+---
+
+### 3.3 Make descent depth a function of cone radius, per march step
+
+`uMaxDepth` is a per-frame uniform, clamped per tier by `previewMaxDepth` in
+`src/app/render-tier.ts`. But a chain at depth `d` tracks a piece of diameter
+`<= 2R * sigma_max^d`. Once that is below the ray's own footprint
+(`uAcceptPixelEps * t`), descending further resolves detail smaller than the
+pixel.
+
+With `MAX_DESCENT_DEPTH = 128` (raised from 48 by fr-xok8), far rays are running
+~100 levels to resolve features orders of magnitude under their footprint.
+
+**Change.** Compute the depth cap inside the march loop from the current `t`:
+
+```
+dMax(t) = min(uMaxDepth, ceil(log(coneRadius(t) / (2R)) / log(sigmaMaxSlowest)))
+```
+
+**Soundness.** This is the same argument `previewMaxDepth` already rests on —
+treating "chain still in-sphere at depth `d`" as a hit is correct _at that
+resolution_ once the tracked piece is sub-footprint. Keep the fr-ttg5
+contraction-aware clamp semantics; the change is making `t` an input rather than
+using a single frame-wide value. Watch specifically for the return of the
+"core-ball" artefact at the slowest map's fixed point (fr-xok8) — that is the
+failure mode if the coupling is got wrong.
+
+---
+
+### 3.4 Build the empty-space grid on the GPU
+
+`src/fractal/surface-grid.ts` currently runs a CPU worker with a 3-second budget,
+downshifting a 64/48/32 ladder, and buys 8–13%. That is the tell that the
+structure is too coarse, not that the idea is weak — a 32^3 grid over a fractal is
+almost no information.
+
+- The project already has WebGPU kernels (`flame-gpu.ts`, `flame-gpu-4d.ts`) and
+  a device-acquisition/fallback ladder in `flame-worker-core.ts`. Reuse it.
+- Evaluating the DE at 256^3 cell centres is embarrassingly parallel: seconds of
+  CPU becomes milliseconds of GPU, and `pickSurfaceGridResolution`'s pilot-slab
+  downshift ladder mostly stops being needed.
+- Then add a **mip pyramid of the floors** and do hierarchical DDA (NanoVDB /
+  ESVO style) rather than single-level `NEAREST` reads bounded by
+  `SURFACE_GRID_SKIP_CAP = 256`. The skip cap exists precisely because
+  single-level traversal takes many small steps through gaps.
+
+Keep the existing f32-floor discipline (quantisation must never round a bound
+_up_) and the "no-sync-fallback, pure enhancement" session semantics.
+
+---
+
+### 3.5 Specialise the branch set per spatial region (MPR's real trick)
+
+This is the two-orders-of-magnitude idea.
+
+Most of the 27/81 branches are irrelevant in any given region of space — the
+module doc already notes that a branch whose cell the attractor never occupies
+"just contributes a loose-but-true term". Today that term is still _computed_.
+
+**Change.** During the grid build (§3.4), run interval arithmetic over each cell
+to determine which branches can possibly matter there, and store a per-cell
+**live-branch bitmask** alongside the distance floor. The shader iterates only
+live branches.
+
+- The grid build already visits every cell, so this is extra output from a pass
+  already being paid for.
+- 27 branches fits a `uint32` mask directly; 81 needs three, or a two-level
+  scheme (3-bit spherefold mask + 27-bit box mask).
+- Dropping a provably-empty branch is sound for the same reason as §3.1: an empty
+  cell contributes `+inf` to the min.
+
+**Reference.** Keeter, _Massively Parallel Rendering of Complex Closed-Form
+Implicit Surfaces_, SIGGRAPH 2020 (`github.com/mkeeter/mpr`). Interval arithmetic
+is used both to skip empty regions **and** to build reduced expressions for each
+region; the paper reports expression complexity falling by two orders of
+magnitude between the original and reduced forms, and identifies that reduction
+as the thing that makes the method practical. The mapping onto this codebase is
+almost one-to-one, with the fold-branch set playing the role of the expression
+tape.
+
+---
+
+### 3.6 Precompute the descent tree (the structural move)
+
+Biggest payoff, biggest rewrite. Makes fold branch count almost free by moving it
+from per-query to per-system.
+
+Adaptive-cut the Hutchinson expansion offline into a **sphere hierarchy**: each
+node is `f_w(B)` with a centre and radius `R * prod sigma_max` over the word `w`.
+Prune empty fold branches at build time. Stop subdividing when a node's sphere is
+sub-pixel at the target scale. Then the per-pixel DE becomes a BVH nearest-sphere
+query — on the order of 20–40 node visits, versus ~10^5 branch evaluations.
+
+`dist(p, A) >= min_w (|p - c_w| - r_w)` over any _cover_ of the attractor, so
+validity is inherited from the cover being complete. The build must therefore be
+conservative about which branches it prunes.
+
+Can be made view-dependent (expand deeper near the camera) — which is what the
+uniform grid in §3.4 is a crude, non-adaptive approximation of. The two are
+complementary: the grid handles empty-space skipping, the hierarchy handles the
+near field.
+
+**Literature.** Hart & DeFanti, _Efficient antialiased rendering of 3-D linear
+fractals_, SIGGRAPH 1991 (unbounding volumes); Hart, Sandin & Kauffman, _Ray
+tracing deterministic 3-D fractals_, SIGGRAPH 1989; Martyn, _Realistic rendering
+3D IFS fractals in real-time with graphics accelerators_, Computers & Graphics
+34(2), 2010 (adaptive-cut convex hulls of fractal subsets, self-similarity
+exploited via hardware instancing to keep hundreds of fractals in VRAM).
+
+---
+
+### 3.7 Move the tracer to a WebGPU compute wavefront
+
+Fixes factor C from the other end, and factor A's divergence.
+
+A fragment-shader marcher forces every pixel in a warp to pay the **maximum**
+step count and descent depth in that warp. Fold systems have brutal variance
+(some rays terminate in 5 steps, some in 400), so the average pixel pays close to
+the worst case.
+
+**Change.** Ray queue in a storage buffer, compaction every N steps
+("megakernels considered harmful", Laine et al. 2013 / wavefront path tracing).
+Two consequences:
+
+- divergence collapses to the compaction granularity;
+- the frontier arrays can live in **workgroup shared memory** instead of private
+  scratch, which is the direct fix for §1 factor C.
+
+This also subsumes much of what `strip-planner.ts` does by hand, since compute
+dispatches are naturally bounded.
+
+**Prerequisite.** WebGPU availability is not universal; the WebGL2 fragment path
+has to stay as a fallback, which means two tracer implementations against one
+oracle. Weigh that against the measured win from §2 experiment 1 before
+committing.
+
+---
+
+### 3.8 Cheap wins worth folding in opportunistically
+
+- **Over-relaxation sphere tracing.** Keinert, Schäfer, Korndörfer, Ganse &
+  Stamminger, _Enhanced Sphere Tracing_, STAG 2014 — safe over-relaxation with
+  fallback on overshoot, plus a screen-space metric for choosing the intersection
+  candidate. Typically ~2x, well-trodden, orthogonal to everything above.
+- **Segment tracing.** Galin, Guérin, Paris & Peytavie, _Segment Tracing Using
+  Local Lipschitz Bounds_, CGF 39(2), 2020 — computes the Lipschitz bound locally
+  over a ray segment rather than globally, significantly reducing field-function
+  queries with no extra acceleration structure. Attacks factor B directly.
+- **Generalised Lipschitz tracing.** Bán & Valasek, CGF 2025 — a precomputed
+  Lipschitz-field voxel hierarchy for _black-box_ fields, with ray intervals
+  aligned to voxel boundaries. This codebase's DE is exactly a black-box field
+  with wildly varying local Lipschitz behaviour, so this is a close fit and it
+  composes with §3.4.
+- **Screen-space beam prepass.** Laine & Karras, _Efficient Sparse Voxel
+  Octrees_, I3D 2010 — trace at 1/8 resolution first to get a conservative
+  per-tile start depth, then start full-res rays from there. Cheap, and it stacks
+  with the existing tier system.
+- **Interval/affine arithmetic for implicit surfaces.** Knoll, Hijazi, Kensler,
+  Schott, Hansen & Hagen, CGF 28, 2009 — background for §3.5.
+
+---
+
+## 4. Recommended order
+
+1. §2 — both instrumentation experiments. Do not skip; they decide 3 vs 7.
+2. §3.1 — branch-and-bound ordering. CPU oracle, harness, then GLSL mirror.
+3. §3.2 cheap version — centred enclosing ball.
+4. §3.3 — per-step LOD depth.
+5. Re-measure. If factor A is now under control, go to §3.4 + §3.5.
+   If factor C dominated all along, go to §3.7.
+6. §3.6 only if the above leaves it still short, and only with a written
+   validity argument in the module doc first.
+
+## 5. Things not to do
+
+- Do not weaken the lower-bound guarantee to buy speed. The existing disclosed
+  residuals (the `mandelboxKifs` 0.22%R erosion tail, `repro2+sym4y`'s ~9.8%R)
+  are documented and bounded; new unbounded ones are not acceptable.
+- Do not scale hit **acceptance** with tier or buffer resolution — fr-7xgi
+  already established that this renders the fold DE's plateau band as phantom box
+  faces. A preview may coarsen sampling, never acceptance.
+- Do not lower `MAX_DESCENT_DEPTH` as a blunt speed fix — fr-xok8 documents the
+  solid-ball artefact that causes. §3.3 is the correct form of that idea.
+- Do not let the CPU oracle and the GLSL mirror drift. Any change here lands in
+  `surface-de.ts` first with harness numbers attached.
