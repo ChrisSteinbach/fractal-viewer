@@ -1851,6 +1851,15 @@ const FOLD_SWEEP = [0, 0, 0];
  * better here). In-sphere floor-0 drops past the frontier width remain
  * the one silent residual, overshoot-direction only — measured zero at
  * this width on the probe set.
+ *
+ * MIRROR NOTE: the GLSL fold tracer marches this body's refine=FALSE
+ * path. Refinement is measurably a no-op on fold systems — the harness's
+ * base and refined rows are indistinguishable (region floors, not
+ * refinement, carry the ghost-killing; deep-void false hits are 0 in
+ * both) — and {@link refinedCertValue}'s branch sweep inlined into the
+ * frontier's innermost GLSL loop is part of what Mesa's compiler died
+ * on (see surface-material.ts's fold notes). The refined path stays the
+ * CPU production estimator for the grid worker and the tests.
  */
 function descendFold(
   de: SurfaceDE,
@@ -1891,6 +1900,11 @@ function descendFold(
 
   for (let depth = 0; depth < de.maxDepth && chainCount > 0; depth++) {
     let keptCount = 0;
+    // Worst kept slot, maintained by a fixed-bound rescan whenever the
+    // frontier is full (see the insertion comment below for why the
+    // storage is deliberately UNSORTED).
+    let fnWorstKey = -Infinity;
+    let fnWorstIdx = 0;
     for (let c = 0; c < chainCount; c++) {
       const pScale = fcScale[c];
       const pFloor = fcFloor[c];
@@ -2147,12 +2161,24 @@ function descendFold(
               }
               continue;
             }
-            // Frontier insertion by floored key, first-seen wins ties.
-            // Whatever leaves the kept set — this candidate, or the
-            // displaced worst slot — folds: escaped tuples the guarded
-            // refined certificate, in-sphere tuples their floor (the
-            // drop-fold rule; a floor-0 in-sphere drop stays the silent
-            // overshoot-direction residual, measured zero at this width).
+            // Frontier insertion: UNSORTED storage with a tracked worst
+            // slot. The kept set is still exactly the level's FOLD_W
+            // smallest floored keys — a full frontier replaces its worst
+            // slot whenever a smaller key arrives, ties evicting the
+            // newcomer — only the storage ORDER differs from the sorted
+            // insert-shift this replaces. The shape is forced by the GLSL
+            // mirror: Mesa's compiler dies outright on the data-dependent
+            // shift chains (measured on Iris Xe: seconds of linkProgram
+            // stall, then VALIDATE_STATUS false with an empty info log and
+            // a lost GL context — the driver-reset signature), while one
+            // indexed write plus a fixed-bound read-only rescan compiles
+            // fine; the oracle keeps the identical structure so the two
+            // stay in lockstep term for term. Whatever leaves the kept set
+            // — this candidate, or the displaced worst slot — folds:
+            // escaped tuples their certificate, in-sphere tuples their
+            // floor (the drop-fold rule; a floor-0 in-sphere drop stays
+            // the silent overshoot-direction residual, measured zero at
+            // this width).
             let evX = 0;
             let evY = 0;
             let evZ = 0;
@@ -2161,7 +2187,7 @@ function descendFold(
             let evCert = 0;
             let evFloor = 0;
             let evHas = false;
-            if (keptCount === FOLD_W && key >= fnKey[FOLD_W - 1]) {
+            if (keptCount === FOLD_W && key >= fnWorstKey) {
               evX = ix;
               evY = iy;
               evZ = iz;
@@ -2171,41 +2197,41 @@ function descendFold(
               evFloor = candFloor;
               evHas = true;
             } else {
-              let i: number;
+              let slot: number;
               if (keptCount === FOLD_W) {
-                const last = FOLD_W - 1;
-                evX = fnX[last];
-                evY = fnY[last];
-                evZ = fnZ[last];
-                evScale = fnScale[last];
-                evR = fnR[last];
-                evCert = fnCert[last];
-                evFloor = fnFloor[last];
+                slot = fnWorstIdx;
+                evX = fnX[slot];
+                evY = fnY[slot];
+                evZ = fnZ[slot];
+                evScale = fnScale[slot];
+                evR = fnR[slot];
+                evCert = fnCert[slot];
+                evFloor = fnFloor[slot];
                 evHas = true;
-                i = last;
               } else {
-                i = keptCount;
+                slot = keptCount;
                 keptCount++;
               }
-              while (i > 0 && key < fnKey[i - 1]) {
-                fnKey[i] = fnKey[i - 1];
-                fnX[i] = fnX[i - 1];
-                fnY[i] = fnY[i - 1];
-                fnZ[i] = fnZ[i - 1];
-                fnScale[i] = fnScale[i - 1];
-                fnFloor[i] = fnFloor[i - 1];
-                fnR[i] = fnR[i - 1];
-                fnCert[i] = fnCert[i - 1];
-                i--;
+              fnKey[slot] = key;
+              fnX[slot] = ix;
+              fnY[slot] = iy;
+              fnZ[slot] = iz;
+              fnScale[slot] = childScale;
+              fnFloor[slot] = candFloor;
+              fnR[slot] = r;
+              fnCert[slot] = cert;
+              // Recompute the worst kept key once the frontier is full —
+              // a fixed-bound scan of reads, first max wins.
+              if (keptCount === FOLD_W) {
+                fnWorstKey = -Infinity;
+                fnWorstIdx = 0;
+                for (let s = 0; s < FOLD_W; s++) {
+                  if (fnKey[s] > fnWorstKey) {
+                    fnWorstKey = fnKey[s];
+                    fnWorstIdx = s;
+                  }
+                }
               }
-              fnKey[i] = key;
-              fnX[i] = ix;
-              fnY[i] = iy;
-              fnZ[i] = iz;
-              fnScale[i] = childScale;
-              fnFloor[i] = candFloor;
-              fnR[i] = r;
-              fnCert[i] = cert;
             }
             if (evHas) {
               if (evR > R) {

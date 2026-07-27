@@ -128,7 +128,9 @@ morphs into place instead of snapping (see **Presets** below).
   fold-free system's does, since a fold descent runs orders of magnitude
   pricier per pixel — and even that floor rung still traces slowly on a
   software-GL device (disclosed; fr-du81 tracks progressive preview
-  strips). A system extending into 4D is not a blocker but a different
+  strips). The first fold surface entry of a session also compiles the
+  fold tracer program, a one-off stall measured at ~25s on Mesa/Iris
+  (the browser caches the compiled program afterwards). A system extending into 4D is not a blocker but a different
   tracer: the mode marches the
   **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag
