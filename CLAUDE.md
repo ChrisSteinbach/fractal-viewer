@@ -184,9 +184,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     staying pinned soft; depth couples to scale via `previewMaxDepth`, the
     fr-ttg5 contraction-aware clamp, so finer rungs trace deeper and the
     core-ball bug cannot return in adaptive form). March/shadow/AO budgets +
-    hit floor per tier — uniform writes only, shader bodies untouched; after
-    `TIER_SETTLE_MS` of quiet the full-quality frame renders as an
-    interruptible strip job (see `strip-planner.ts`). Capture/offline
+    hit floor per tier — uniform writes only, shader bodies untouched; hit
+    ACCEPTANCE is tier-independent (fr-7xgi: `uAcceptPixelEps`, the settle
+    frame's pixel footprint, drives the hit test/grid proof/DE cutoff in
+    every tier — a preview coarsens sampling, never acceptance; the
+    buffer-scaled eps had rendered fold-DE plateau bands as phantom box
+    faces at coarse rungs); after `TIER_SETTLE_MS` of quiet the full-quality
+    frame renders as an interruptible strip job (see `strip-planner.ts`).
+    Capture/offline
     `force` frames stay full. Pure, tested, injected clock.
   - `strip-planner.ts` — adaptive scissor-strip sizing for every
     full-quality surface trace (fr-sjff): probe strip, then strips sized
@@ -280,8 +285,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     rings/sheets orbit-trap color sources ride the same hit-info descent
     (fr-rl4b). The march samples `surface-grid.ts`'s floors (NEAREST 3D
     texture) before paying a descent (fr-55r5 part 2): a floor above the
-    pixel epsilon is both a no-hit proof and a safe stride, damped by the
-    same `uStepScale` as analytic steps; gridless marching stays the
+    pixel epsilon (`uAcceptPixelEps`, fr-7xgi's tier-pinned acceptance eps —
+    not the buffer-scaled `uPixelEps`) is both a no-hit proof and a safe
+    stride, damped by the same `uStepScale` as analytic steps; gridless
+    marching stays the
     always-correct fallback. Skips drain their own whole-ray cap
     (`SURFACE_GRID_SKIP_CAP`), never the analytic march budget, and the
     full-tier budget is 160 — fr-z70m: charging cheap conservative skips
