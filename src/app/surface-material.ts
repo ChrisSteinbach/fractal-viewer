@@ -35,9 +35,20 @@ import { lightDirection } from "./voxel-material";
  * The GLSL `surfaceDE` mirrors `estimateDistanceRefined` in `surface-de.ts`
  * line for line (the `refine === true` path of its shared descent body) —
  * the tested CPU oracle, the same discipline as `flame.ts` <->
- * `flame-gpu.ts`. Kept in its own module so `scene.ts` stays the wiring
- * layer: everything GLSL lives here, everything camera/frame lives there
- * (the scene sets `uCamPos`, `uInvProjView`, and `uPixelEps` per frame).
+ * `flame-gpu.ts`. Since fr-5rvk that is TWO compiled variants behind the
+ * `SURFACE_FOLDS` define, flipped by `setSurfaceSystem` when the DE's
+ * fold-ness changes (a session-set-scale program rebuild): `0` compiles the
+ * affine ladder bodies above byte-for-byte as they shipped, `1` compiles
+ * fold-frontier bodies mirroring the oracle's `descendFold` — the
+ * `SURFACE_FOLD_BEAM_WIDTH`-slot frontier with region floors, floored
+ * keys, the drop-fold rule and floor-vs-best pruning that make pure-fold
+ * maps (27/3/81 inverse branches each) marchable at all. Per-map fold data
+ * rides a `uFoldParams` vec4 array that REPLACES `uTrapIndex` under the
+ * define (the trap coordinate moves into its `.w`), so both variants meet
+ * the same uniform budget. Kept in its own module so `scene.ts` stays the
+ * wiring layer: everything GLSL lives here, everything camera/frame lives
+ * there (the scene sets `uCamPos`, `uInvProjView`, and `uPixelEps` per
+ * frame).
  * GLSL3 because the DE needs dynamic loop bounds and non-constant
  * uniform-array indexing (ES 1.00 fragment shaders allow neither); Three
  * injects the built-in vertex attributes and matrix uniforms for GLSL3

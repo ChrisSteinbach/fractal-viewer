@@ -109,9 +109,27 @@ morphs into place instead of snapping (see **Presets** below).
   sectors around the base maps instead — any order is admissible now, at a
   proportional cost in trace time rather than in slots. High orders do
   soften the estimate (more branches per level than the tracer's beam can
-  follow), which can show as faint membranes across the shape's voids. A
-  system extending
-  into 4D is not a blocker but a different tracer: the mode marches the
+  follow), which can show as faint membranes across the shape's voids.
+  **Pure-fold maps** are no longer an automatic disqualifier either
+  (fr-5rvk): a map whose variation list is exactly one fold-family entry
+  (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can
+  sweep the inverse branches of, so it stays eligible — a blend (the
+  shipped **Mandelbox** preset pairs `mandelbox` with `linear`) or a
+  pure-fold final-transform lens still trips the same uses-variations
+  reason, since neither has a sound per-branch inverse. Its contraction
+  check changes shape too: the whole weighted fold must contract, not just
+  its affine part, so a fold map can look tame in the editor yet still
+  trip the does-not-contract reason — and, the other way, a small enough
+  weight can rescue an affine part that would otherwise read as expanding.
+  **Mandelbox KIFS** in the Presets menu is the pure-fold showcase and
+  loads straight into Surface mode. Orbiting or tumbling one also starts
+  its live preview at the preview ladder's floor rung rather than the
+  usual mid-ladder entry — sized so the first frame costs about what a
+  fold-free system's does, since a fold descent runs orders of magnitude
+  pricier per pixel — and even that floor rung still traces slowly on a
+  software-GL device (disclosed; fr-du81 tracks progressive preview
+  strips). A system extending into 4D is not a blocker but a different
+  tracer: the mode marches the
   **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag
   keeps rotating the hidden planes, and the **W slice** slider sweeps the
