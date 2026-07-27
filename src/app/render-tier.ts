@@ -272,8 +272,21 @@ export interface PreviewGovernor {
    * null.
    */
   sample(traceMs: number): number | null;
-  /** Forget all timing state and return to {@link PREVIEW_START_SCALE}. */
-  reset(): void;
+  /**
+   * Forget all timing state and return to the entry rung for a system
+   * whose descent costs `costWeight` times the shipped anchor per pixel
+   * (`surface-de.ts`'s `surfaceDescentCostWeight`; default 1 = the plain
+   * {@link PREVIEW_START_SCALE} entry). The mid-ladder start bakes in the
+   * assumption that a session's first frames cost what they cost at the
+   * shipped fixed scale — fold-frontier systems (fr-5rvk) break it by
+   * orders of magnitude, and the FIRST trace has no sample for the panic
+   * path to act on, so the entry rung itself must absorb what is known
+   * STATICALLY: enter at the highest rung whose area discount covers the
+   * weight, or the floor once nothing can (scale buys at most
+   * (0.3/0.15)² = 4x — beyond that the ladder starts at the floor and the
+   * depth clamp, march budget and settle strips carry the rest).
+   */
+  reset(costWeight?: number): void;
 }
 
 /**
@@ -328,7 +341,25 @@ export interface PreviewGovernor {
 export function createPreviewGovernor(): PreviewGovernor {
   const startIndex = PREVIEW_SCALE_RUNGS.indexOf(PREVIEW_START_SCALE);
   const floorIndex = PREVIEW_SCALE_RUNGS.length - 1;
-  let rungIndex = startIndex;
+
+  // Entry rung for a given static cost weight (see reset's doc): walk down
+  // from the shipped anchor until the rung's area discount relative to it
+  // covers the weight, saturating at the floor. Weight 1 (every fold-free
+  // system) reproduces the anchor entry exactly.
+  function entryIndexFor(costWeight: number): number {
+    if (!Number.isFinite(costWeight) || costWeight <= 1) return startIndex;
+    let i = startIndex;
+    while (
+      i < floorIndex &&
+      (PREVIEW_SCALE_RUNGS[i] / PREVIEW_START_SCALE) ** 2 * costWeight > 1
+    ) {
+      i++;
+    }
+    return i;
+  }
+
+  let entryIndex = startIndex;
+  let rungIndex = entryIndex;
   let ema: number | null = null;
   let downMs = 0;
   let upMs = 0;
@@ -398,8 +429,9 @@ export function createPreviewGovernor(): PreviewGovernor {
       return null;
     },
 
-    reset(): void {
-      rungIndex = startIndex;
+    reset(costWeight = 1): void {
+      entryIndex = entryIndexFor(costWeight);
+      rungIndex = entryIndex;
       ema = null;
       downMs = 0;
       upMs = 0;

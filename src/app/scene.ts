@@ -59,6 +59,7 @@ import {
   setSurfaceView4 as packSurfaceView4,
 } from "./surface-material-4d";
 import type { SurfaceDE } from "../fractal/surface-de";
+import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
@@ -2046,7 +2047,11 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
-    this.surfacePreviewGovernor.reset();
+    // Cost-weighted ladder entry (fr-5rvk): a fold-frontier DE's per-pixel
+    // cost is a known static multiple of an affine system's, and the FIRST
+    // trace has no measurement for the panic path to act on — the entry
+    // rung must absorb what is known up front.
+    this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
   }
 
   /**

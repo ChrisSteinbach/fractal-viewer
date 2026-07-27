@@ -916,6 +916,35 @@ function deHasFolds(de: SurfaceDE): boolean {
 }
 
 /**
+ * Static per-level cost multiple of {@link descendFold}'s frontier over the
+ * affine ladder descent: the mean fold-branch count per map (an affine map
+ * contributes one candidate where a fold map contributes 27/3/81) times the
+ * frontier-over-ladder width ratio. Exactly `1` for fold-free systems.
+ *
+ * This is the number the preview ladder's cost-weighted entry
+ * (`render-tier.ts`) consumes: the ladder's mid-ladder start rung assumes a
+ * session's first frames cost what the shipped anchor rung costs, and fold
+ * systems break that assumption by two to four orders of magnitude — enough
+ * to wedge a weak GPU on the very first trace, before the governor has a
+ * single sample to act on.
+ */
+export function surfaceDescentCostWeight(de: SurfaceDE): number {
+  if (de.maps.length === 0 || !deHasFolds(de)) return 1;
+  let branches = 0;
+  for (const m of de.maps) {
+    branches +=
+      m.foldKind === SURFACE_FOLD_NONE
+        ? 1
+        : m.foldKind === SURFACE_FOLD_BOXFOLD
+          ? 27
+          : m.foldKind === SURFACE_FOLD_SPHEREFOLD
+            ? 3
+            : 81;
+  }
+  return (branches / de.maps.length) * (SURFACE_FOLD_BEAM_WIDTH / 4);
+}
+
+/**
  * Certificate-refinement variant of {@link estimateDistance} — the fr-beck
  * ghost-eliminator (`estimateDistance4Refined`) ported back down to 3D
  * (fr-1z6p): identical beam descent, terminal KIFS bound, depth-0 sphere

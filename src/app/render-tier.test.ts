@@ -219,6 +219,46 @@ describe("createPreviewGovernor", () => {
     expect(governor.sample(400)).toBeNull();
     expect(governor.scale).toBe(PREVIEW_START_SCALE);
   });
+
+  it("reset(costWeight) enters at the rung whose area discount covers the weight", () => {
+    const governor = createPreviewGovernor();
+    // 0.22's area discount vs 0.3 is (0.22/0.3)^2 ~ 0.54 — enough for a
+    // system 1.8x the anchor cost, not for 2x.
+    governor.reset(1.8);
+    expect(governor.scale).toBe(0.22);
+    governor.reset(2);
+    expect(governor.scale).toBe(0.15);
+  });
+
+  it("reset(costWeight) saturates at the floor for fold-frontier weights", () => {
+    const governor = createPreviewGovernor();
+    // A mandelbox pair's static weight is ~243x (81 branches x 12/4 wide
+    // frontier) — far past what any scale rung can buy back. The ladder
+    // starts at the floor; depth clamp, march budget and settle strips
+    // carry the rest.
+    governor.reset(243);
+    expect(governor.scale).toBe(0.15);
+  });
+
+  it("reset(1) and reset() keep the shipped anchor entry bit for bit", () => {
+    const governor = createPreviewGovernor();
+    governor.reset(1);
+    expect(governor.scale).toBe(PREVIEW_START_SCALE);
+    governor.reset();
+    expect(governor.scale).toBe(PREVIEW_START_SCALE);
+  });
+
+  it("a weighted entry can still climb once traces measure fast", () => {
+    const governor = createPreviewGovernor();
+    governor.reset(243);
+    expect(governor.scale).toBe(0.15);
+    governor.sample(5);
+    // 2500ms of up-sustain at 16ms minimum accrual per fast trace.
+    for (let i = 0; i < 200 && governor.scale === 0.15; i++) {
+      governor.sample(5);
+    }
+    expect(governor.scale).toBe(0.22);
+  });
 });
 
 describe("createRenderTierScheduler", () => {

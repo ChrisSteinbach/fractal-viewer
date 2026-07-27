@@ -1,5 +1,10 @@
 import * as THREE from "three";
 import type { SurfaceDE } from "../fractal/surface-de";
+import {
+  SPHEREFOLD_MID_MIN_R,
+  SURFACE_FOLD_BEAM_WIDTH,
+  SURFACE_FOLD_NONE,
+} from "../fractal/surface-de";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
@@ -124,9 +129,21 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform float uSigmaMin[MAX_MAPS];
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
+#if SURFACE_FOLDS
+  /** Fold-branch sweep (fr-5rvk), compiled in only for systems with
+   * pure-fold maps (the SURFACE_FOLDS define; affine systems keep the
+   * ladder bodies verbatim). Frontier width, from the oracle's measured
+   * SURFACE_FOLD_BEAM_WIDTH. */
+  const int FOLD_W = ${SURFACE_FOLD_BEAM_WIDTH};
+  /** Per-map fold data + the orbit-trap coordinate uTrapIndex carries in
+   * the affine variant (folded in here so the swap is uniform-budget
+   * neutral): (foldKind 0..3, 1/w signed, |w|*sigmaMin, trapIndex). */
+  uniform vec4 uFoldParams[MAX_MAPS];
+#else
   /** Per-slot palette coordinate in [0, 1] for the orbit trap
    * (CPU-precomputed from each slot's base-map index). */
   uniform float uTrapIndex[MAX_MAPS];
+#endif
   uniform int uMapCount;
   /** Kaleidoscope sectors swept around every base map (fr-x029; >= 1).
    * 1 leaves the sweep a single pass with no rotation, which is what keeps
@@ -230,6 +247,122 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * certificates painted across attractor voids. "Every map" means every
    * (sector, base map) pair, which the sweep spells out where the expanded
    * slot list used to (fr-x029). */
+#if SURFACE_FOLDS
+  /** Fold-variant refinement (the oracle's refinedCertValue): the inner
+   * Hutchinson level covers every (sector, base map, fold branch) triple,
+   * each term region-strengthened to
+   * max(branchSigma * (r - R), |w| * regionDist). */
+  float refinedCert(vec3 img, float r, float childScale) {
+    float inner = 1e30;
+    vec3 sImg = img;
+    for (int k = 0; k < uSymOrder; k++) {
+      if (k > 0) {
+        sImg = stepSector(sImg);
+      }
+      for (int j = 0; j < uMapCount; j++) {
+        vec4 fp = uFoldParams[j];
+        int kind = int(fp.x);
+        int branchCount = kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
+        float absW = fp.z / uSigmaMin[j];
+        vec3 u = vec3(0.0);
+        float ru = 0.0;
+        vec3 pre0 = vec3(0.0);
+        vec3 pre1 = vec3(0.0);
+        vec3 pre2 = vec3(0.0);
+        vec3 dUp = vec3(0.0);
+        vec3 dDn = vec3(0.0);
+        vec3 v = vec3(0.0);
+        float sfSigma = 1.0;
+        float sfRd = 0.0;
+        if (kind != 0) {
+          u = sImg * fp.y;
+          if (kind == 1) {
+            pre0 = u;
+            pre1 = 2.0 - u;
+            pre2 = -2.0 - u;
+            dUp = max(u - 1.0, 0.0);
+            dDn = max(-1.0 - u, 0.0);
+          } else {
+            ru = length(u);
+          }
+        }
+        for (int b = 0; b < branchCount; b++) {
+          vec3 jImg;
+          float branchSigma;
+          float branchRd = 0.0;
+          if (kind == 0) {
+            jImg = uInvM[j] * sImg + uInvT[j];
+            branchSigma = uSigmaMin[j];
+          } else {
+            if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+              int s = kind == 2 ? b : b / 27;
+              if (s == 0) {
+                v = u;
+                sfSigma = 1.0;
+                sfRd = max(1.0 - ru, 0.0);
+              } else if (s == 1) {
+                v = 0.25 * u;
+                sfSigma = 4.0;
+                sfRd = max(ru - 2.0, 0.0);
+              } else {
+                if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  // Same shell stand-in the frontier folds, in the frozen
+                  // child's own frame.
+                  inner = min(inner, absW * (1.0 - ru));
+                  if (kind == 3) {
+                    b += 26;
+                  }
+                  continue;
+                }
+                float invR2 = 1.0 / (ru * ru);
+                v = u * invR2;
+                sfSigma = ru;
+                sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+              }
+              if (kind == 3) {
+                pre0 = v;
+                pre1 = 2.0 - v;
+                pre2 = -2.0 - v;
+                dUp = max(v - 1.0, 0.0);
+                dDn = max(-1.0 - v, 0.0);
+              }
+            }
+            vec3 pre;
+            if (kind == 2) {
+              pre = v;
+              branchRd = sfRd;
+            } else {
+              int bb = kind == 1 ? b : b % 27;
+              int selX = bb % 3;
+              int selY = (bb / 3) % 3;
+              int selZ = bb / 9;
+              pre = vec3(
+                selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+                selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+                selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+              );
+              vec3 dd = vec3(
+                selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+                selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+                selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+              );
+              float boxRd = length(dd);
+              branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+            }
+            jImg = uInvM[j] * pre + uInvT[j];
+            branchSigma = fp.z * sfSigma;
+          }
+          float innerTerm = branchSigma * (length(jImg) - uBoundingRadius);
+          if (branchRd > 0.0) {
+            innerTerm = max(innerTerm, absW * branchRd);
+          }
+          inner = min(inner, innerTerm);
+        }
+      }
+    }
+    return childScale * max(r - uBoundingRadius, inner);
+  }
+#else
   float refinedCert(vec3 img, float r, float childScale) {
     float inner = 1e30;
     vec3 sImg = img;
@@ -244,6 +377,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     }
     return childScale * max(r - uBoundingRadius, inner);
   }
+#endif
 
   /**
    * Both surfaceDE overloads mirror estimateDistanceRefined in
@@ -305,7 +439,302 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * factor per level and dip under the floor); provably dead on
    * isotropic invariant-ball maps, where certificates never dip (see
    * the oracle's paragraph).
+   *
+   * FOLD SYSTEMS (fr-5rvk) compile the WIDE-FRONTIER variant instead —
+   * the oracle's descendFold, selected by the SURFACE_FOLDS define at
+   * system-set time so the affine ladder text above stays byte-for-byte
+   * what shipped: a FOLD_W-slot frontier replaces the four ladder slots
+   * (fold maps spawn 27/3/81 branch candidates and whole sets stay
+   * in-sphere at once), every candidate carries a REGION FLOOR (the
+   * strongest scale * |w| * regionDist certificate of its branch
+   * history) that its keys, certificates and cap terminals are raised
+   * to, tuples dropped off the frontier fold their floor (the drop-fold
+   * rule — validity at any width), and candidates whose floor already
+   * reaches the running min are pruned outright. See descendFold's doc
+   * for the measured numbers.
    */
+#if SURFACE_FOLDS
+  float surfaceDE(vec3 p, float cutoff) {
+    vec3 q = uFinalInvM * p + uFinalInvT;
+    float startR = length(q);
+    float sphereBound = startR - uBoundingRadius;
+    float best = 1e30;
+    // The oracle's bailBelow (fr-55r5): -1e30 disables the test.
+    float bailBelow =
+      (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
+    // The frontier (the oracle's fc* scratch): point, scale, floor and
+    // selection radius per live chain.
+    vec3 fcQ[FOLD_W];
+    float fcScale[FOLD_W];
+    float fcFloor[FOLD_W];
+    float fcR[FOLD_W];
+    int chainCount = 1;
+    fcQ[0] = q;
+    fcScale[0] = 1.0;
+    fcFloor[0] = 0.0;
+    fcR[0] = startR;
+    // Next-level kept tuples, key-ascending (the oracle's fn* scratch).
+    float fnKey[FOLD_W];
+    vec3 fnQ[FOLD_W];
+    float fnScale[FOLD_W];
+    float fnFloor[FOLD_W];
+    float fnR[FOLD_W];
+    float fnCert[FOLD_W];
+    for (int depth = 0; depth < uMaxDepth; depth++) {
+      if (chainCount == 0) {
+        break;
+      }
+      int keptCount = 0;
+      for (int c = 0; c < chainCount; c++) {
+        float pScale = fcScale[c];
+        float pFloor = fcFloor[c];
+        vec3 sQ = fcQ[c];
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector(sQ);
+          }
+          for (int j = 0; j < uMapCount; j++) {
+            vec4 fp = uFoldParams[j];
+            int kind = int(fp.x);
+            int branchCount =
+              kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
+            float absW = fp.z / uSigmaMin[j];
+            vec3 u = vec3(0.0);
+            float ru = 0.0;
+            vec3 pre0 = vec3(0.0);
+            vec3 pre1 = vec3(0.0);
+            vec3 pre2 = vec3(0.0);
+            vec3 dUp = vec3(0.0);
+            vec3 dDn = vec3(0.0);
+            vec3 v = vec3(0.0);
+            float sfSigma = 1.0;
+            float sfRd = 0.0;
+            if (kind != 0) {
+              u = sQ * fp.y;
+              if (kind == 1) {
+                pre0 = u;
+                pre1 = 2.0 - u;
+                pre2 = -2.0 - u;
+                dUp = max(u - 1.0, 0.0);
+                dDn = max(-1.0 - u, 0.0);
+              } else {
+                ru = length(u);
+              }
+            }
+            for (int b = 0; b < branchCount; b++) {
+              vec3 img;
+              float branchSigma;
+              float branchRd = 0.0;
+              if (kind == 0) {
+                img = uInvM[j] * sQ + uInvT[j];
+                branchSigma = uSigmaMin[j];
+              } else {
+                if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+                  // (Re)compute the spherefold branch this b enters, with
+                  // its distance to the branch's OUTPUT region.
+                  int s = kind == 2 ? b : b / 27;
+                  if (s == 0) {
+                    v = u;
+                    sfSigma = 1.0;
+                    sfRd = max(1.0 - ru, 0.0);
+                  } else if (s == 1) {
+                    v = 0.25 * u;
+                    sfSigma = 4.0;
+                    sfRd = max(ru - 2.0, 0.0);
+                  } else {
+                    if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                      // f32 overflow guard: fold the unit-shell bound
+                      // (~pScale * |w|, never a near-zero ghost term) and
+                      // skip the branch + its box expansion.
+                      float shellCert = pScale * absW * (1.0 - ru);
+                      shellCert = max(shellCert, pFloor);
+                      if (shellCert < best) {
+                        best = shellCert;
+                        if (
+                          best <= sphereBound ||
+                          best * uFinalSigmaMin < bailBelow
+                        ) {
+                          return max(best, sphereBound) * uFinalSigmaMin;
+                        }
+                      }
+                      if (kind == 3) {
+                        b += 26;
+                      }
+                      continue;
+                    }
+                    float invR2 = 1.0 / (ru * ru);
+                    v = u * invR2;
+                    sfSigma = ru;
+                    sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  }
+                  if (kind == 3) {
+                    pre0 = v;
+                    pre1 = 2.0 - v;
+                    pre2 = -2.0 - v;
+                    dUp = max(v - 1.0, 0.0);
+                    dDn = max(-1.0 - v, 0.0);
+                  }
+                }
+                vec3 pre;
+                if (kind == 2) {
+                  pre = v;
+                  branchRd = sfRd;
+                } else {
+                  // Box branch decode: per-axis preimage selectors, x
+                  // fastest (b = selX + 3*selY + 9*selZ).
+                  int bb = kind == 1 ? b : b % 27;
+                  int selX = bb % 3;
+                  int selY = (bb / 3) % 3;
+                  int selZ = bb / 9;
+                  pre = vec3(
+                    selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+                    selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+                    selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+                  );
+                  vec3 dd = vec3(
+                    selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+                    selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+                    selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+                  );
+                  float boxRd = length(dd);
+                  branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+                }
+                img = uInvM[j] * pre + uInvT[j];
+                branchSigma = fp.z * sfSigma;
+              }
+              float r = length(img);
+              float childScale = pScale * branchSigma;
+              // The candidate's floor: its chain's floor raised by this
+              // branch's own region certificate; key and certificate are
+              // never below it.
+              float candFloor = pFloor;
+              if (branchRd > 0.0) {
+                candFloor = max(candFloor, pScale * absW * branchRd);
+              }
+              // Floor-vs-best prune: the subtree's every fold is >= its
+              // floor, which already cannot advance the min.
+              if (candFloor > 0.0 && candFloor >= best) {
+                continue;
+              }
+              float key = pScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > key) {
+                key = candFloor;
+              }
+              float cert = childScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > cert) {
+                cert = candFloor;
+              }
+              // Past the escape radius deeper refinement cannot improve
+              // the min: fold the (floor-raised) certificate plain.
+              if (r > uEscapeRadius) {
+                if (cert < best) {
+                  best = cert;
+                  if (
+                    best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                  ) {
+                    return max(best, sphereBound) * uFinalSigmaMin;
+                  }
+                }
+                continue;
+              }
+              // Frontier insertion by floored key, first-seen wins ties.
+              // Whatever leaves the kept set folds: escaped tuples the
+              // guarded refined certificate (max'd with the floor-raised
+              // plain one — the two bounds are independent), in-sphere
+              // tuples their floor (the drop-fold rule).
+              vec3 evQ = vec3(0.0);
+              float evScale = 0.0;
+              float evR = 0.0;
+              float evCert = 0.0;
+              float evFloor = 0.0;
+              bool evHas = false;
+              if (keptCount == FOLD_W && key >= fnKey[FOLD_W - 1]) {
+                evQ = img;
+                evScale = childScale;
+                evR = r;
+                evCert = cert;
+                evFloor = candFloor;
+                evHas = true;
+              } else {
+                int i;
+                if (keptCount == FOLD_W) {
+                  evQ = fnQ[FOLD_W - 1];
+                  evScale = fnScale[FOLD_W - 1];
+                  evR = fnR[FOLD_W - 1];
+                  evCert = fnCert[FOLD_W - 1];
+                  evFloor = fnFloor[FOLD_W - 1];
+                  evHas = true;
+                  i = FOLD_W - 1;
+                } else {
+                  i = keptCount;
+                  keptCount++;
+                }
+                for (; i > 0 && key < fnKey[i - 1]; i--) {
+                  fnKey[i] = fnKey[i - 1];
+                  fnQ[i] = fnQ[i - 1];
+                  fnScale[i] = fnScale[i - 1];
+                  fnFloor[i] = fnFloor[i - 1];
+                  fnR[i] = fnR[i - 1];
+                  fnCert[i] = fnCert[i - 1];
+                }
+                fnKey[i] = key;
+                fnQ[i] = img;
+                fnScale[i] = childScale;
+                fnFloor[i] = candFloor;
+                fnR[i] = r;
+                fnCert[i] = cert;
+              }
+              if (evHas) {
+                if (evR > uBoundingRadius) {
+                  if (evCert < best) {
+                    float folded = max(refinedCert(evQ, evR, evScale), evCert);
+                    if (folded < best) {
+                      best = folded;
+                      if (
+                        best <= sphereBound ||
+                        best * uFinalSigmaMin < bailBelow
+                      ) {
+                        return max(best, sphereBound) * uFinalSigmaMin;
+                      }
+                    }
+                  }
+                } else if (evFloor > 0.0 && evFloor < best) {
+                  best = evFloor;
+                  if (
+                    best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                  ) {
+                    return max(best, sphereBound) * uFinalSigmaMin;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      // The kept tuples become the next frontier.
+      for (int i = 0; i < keptCount; i++) {
+        fcQ[i] = fnQ[i];
+        fcScale[i] = fnScale[i];
+        fcFloor[i] = fnFloor[i];
+        fcR[i] = fnR[i];
+      }
+      chainCount = keptCount;
+    }
+    // Floor-raised KIFS terminals for every chain alive at the depth cap:
+    // a floor-0 chain is a true preimage orbit (its negative terminal is
+    // the hit signal), a strayed chain folds its certified positive floor.
+    for (int c = 0; c < chainCount; c++) {
+      float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+      if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
+        terminal = fcFloor[c];
+      }
+      best = min(best, terminal);
+    }
+    return max(best, sphereBound) * uFinalSigmaMin;
+  }
+#else
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = uFinalInvM * p + uFinalInvT;
     float startR = length(q);
@@ -616,6 +1045,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
+#endif
 
   /** Value form: the full descent, no early-out — every caller that needs
    * the DISTANCE rather than a hit decision (normal taps, shadow rays,
@@ -657,7 +1087,275 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * rendered one flat hue.) It follows the per-level best candidate and
    * stops when every chain has escaped. Called ONCE per hit; the march
    * itself uses the plain overload.
+   *
+   * The SURFACE_FOLDS variant runs the same wide frontier as the plain
+   * overload (no cutoff — full descent, mirroring the affine pair) and
+   * reads its shading extras off a per-level BEST-CANDIDATE tracker:
+   * the smallest floored key among every enumerated candidate, exactly
+   * the tuple the affine ladders surface as c1 — including candidates
+   * the frontier then prunes or escape-folds, which the affine c1 also
+   * admits (its escape check happens at promote time).
    */
+#if SURFACE_FOLDS
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    vec3 q = uFinalInvM * p + uFinalInvT;
+    float startR = length(q);
+    float sphereBound = startR - uBoundingRadius;
+    float best = 1e30;
+    vec3 fcQ[FOLD_W];
+    float fcScale[FOLD_W];
+    float fcFloor[FOLD_W];
+    float fcR[FOLD_W];
+    int chainCount = 1;
+    fcQ[0] = q;
+    fcScale[0] = 1.0;
+    fcFloor[0] = 0.0;
+    fcR[0] = startR;
+    float fnKey[FOLD_W];
+    vec3 fnQ[FOLD_W];
+    float fnScale[FOLD_W];
+    float fnFloor[FOLD_W];
+    float fnR[FOLD_W];
+    float fnCert[FOLD_W];
+    firstChoice = 0;
+    trap = 0.0;
+    rings = 1.0;
+    sheets = 1.0;
+    float trapAcc = 0.0;
+    float trapNorm = 0.0;
+    float trapW = 1.0;
+    for (int depth = 0; depth < uMaxDepth; depth++) {
+      if (chainCount == 0) {
+        break;
+      }
+      int keptCount = 0;
+      // The level's best candidate by floored key, feeding the shading
+      // extras exactly where the affine body reads its c1.
+      float lbKey = 1e30;
+      int lbMap = 0;
+      float lbR = 0.0;
+      float lbAbsY = 0.0;
+      for (int c = 0; c < chainCount; c++) {
+        float pScale = fcScale[c];
+        float pFloor = fcFloor[c];
+        vec3 sQ = fcQ[c];
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector(sQ);
+          }
+          for (int j = 0; j < uMapCount; j++) {
+            vec4 fp = uFoldParams[j];
+            int kind = int(fp.x);
+            int branchCount =
+              kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
+            float absW = fp.z / uSigmaMin[j];
+            vec3 u = vec3(0.0);
+            float ru = 0.0;
+            vec3 pre0 = vec3(0.0);
+            vec3 pre1 = vec3(0.0);
+            vec3 pre2 = vec3(0.0);
+            vec3 dUp = vec3(0.0);
+            vec3 dDn = vec3(0.0);
+            vec3 v = vec3(0.0);
+            float sfSigma = 1.0;
+            float sfRd = 0.0;
+            if (kind != 0) {
+              u = sQ * fp.y;
+              if (kind == 1) {
+                pre0 = u;
+                pre1 = 2.0 - u;
+                pre2 = -2.0 - u;
+                dUp = max(u - 1.0, 0.0);
+                dDn = max(-1.0 - u, 0.0);
+              } else {
+                ru = length(u);
+              }
+            }
+            for (int b = 0; b < branchCount; b++) {
+              vec3 img;
+              float branchSigma;
+              float branchRd = 0.0;
+              if (kind == 0) {
+                img = uInvM[j] * sQ + uInvT[j];
+                branchSigma = uSigmaMin[j];
+              } else {
+                if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+                  int s = kind == 2 ? b : b / 27;
+                  if (s == 0) {
+                    v = u;
+                    sfSigma = 1.0;
+                    sfRd = max(1.0 - ru, 0.0);
+                  } else if (s == 1) {
+                    v = 0.25 * u;
+                    sfSigma = 4.0;
+                    sfRd = max(ru - 2.0, 0.0);
+                  } else {
+                    if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                      float shellCert = pScale * absW * (1.0 - ru);
+                      shellCert = max(shellCert, pFloor);
+                      best = min(best, shellCert);
+                      if (kind == 3) {
+                        b += 26;
+                      }
+                      continue;
+                    }
+                    float invR2 = 1.0 / (ru * ru);
+                    v = u * invR2;
+                    sfSigma = ru;
+                    sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  }
+                  if (kind == 3) {
+                    pre0 = v;
+                    pre1 = 2.0 - v;
+                    pre2 = -2.0 - v;
+                    dUp = max(v - 1.0, 0.0);
+                    dDn = max(-1.0 - v, 0.0);
+                  }
+                }
+                vec3 pre;
+                if (kind == 2) {
+                  pre = v;
+                  branchRd = sfRd;
+                } else {
+                  int bb = kind == 1 ? b : b % 27;
+                  int selX = bb % 3;
+                  int selY = (bb / 3) % 3;
+                  int selZ = bb / 9;
+                  pre = vec3(
+                    selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+                    selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+                    selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+                  );
+                  vec3 dd = vec3(
+                    selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+                    selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+                    selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+                  );
+                  float boxRd = length(dd);
+                  branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+                }
+                img = uInvM[j] * pre + uInvT[j];
+                branchSigma = fp.z * sfSigma;
+              }
+              float r = length(img);
+              float childScale = pScale * branchSigma;
+              float candFloor = pFloor;
+              if (branchRd > 0.0) {
+                candFloor = max(candFloor, pScale * absW * branchRd);
+              }
+              float key = pScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > key) {
+                key = candFloor;
+              }
+              if (key < lbKey) {
+                lbKey = key;
+                lbMap = j;
+                lbR = r;
+                lbAbsY = abs(img.y);
+              }
+              if (candFloor > 0.0 && candFloor >= best) {
+                continue;
+              }
+              float cert = childScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > cert) {
+                cert = candFloor;
+              }
+              if (r > uEscapeRadius) {
+                best = min(best, cert);
+                continue;
+              }
+              vec3 evQ = vec3(0.0);
+              float evScale = 0.0;
+              float evR = 0.0;
+              float evCert = 0.0;
+              float evFloor = 0.0;
+              bool evHas = false;
+              if (keptCount == FOLD_W && key >= fnKey[FOLD_W - 1]) {
+                evQ = img;
+                evScale = childScale;
+                evR = r;
+                evCert = cert;
+                evFloor = candFloor;
+                evHas = true;
+              } else {
+                int i;
+                if (keptCount == FOLD_W) {
+                  evQ = fnQ[FOLD_W - 1];
+                  evScale = fnScale[FOLD_W - 1];
+                  evR = fnR[FOLD_W - 1];
+                  evCert = fnCert[FOLD_W - 1];
+                  evFloor = fnFloor[FOLD_W - 1];
+                  evHas = true;
+                  i = FOLD_W - 1;
+                } else {
+                  i = keptCount;
+                  keptCount++;
+                }
+                for (; i > 0 && key < fnKey[i - 1]; i--) {
+                  fnKey[i] = fnKey[i - 1];
+                  fnQ[i] = fnQ[i - 1];
+                  fnScale[i] = fnScale[i - 1];
+                  fnFloor[i] = fnFloor[i - 1];
+                  fnR[i] = fnR[i - 1];
+                  fnCert[i] = fnCert[i - 1];
+                }
+                fnKey[i] = key;
+                fnQ[i] = img;
+                fnScale[i] = childScale;
+                fnFloor[i] = candFloor;
+                fnR[i] = r;
+                fnCert[i] = cert;
+              }
+              if (evHas) {
+                if (evR > uBoundingRadius) {
+                  if (evCert < best) {
+                    best = min(best, max(refinedCert(evQ, evR, evScale), evCert));
+                  }
+                } else if (evFloor > 0.0) {
+                  best = min(best, evFloor);
+                }
+              }
+            }
+          }
+        }
+      }
+      if (lbKey < 1e29) {
+        if (depth == 0) {
+          firstChoice = lbMap;
+        }
+        trapAcc += trapW * uFoldParams[lbMap].w;
+        trapNorm += trapW;
+        trapW *= uColorSpeed;
+        rings = min(rings, lbR / uBoundingRadius);
+        sheets = min(sheets, lbAbsY / uBoundingRadius);
+      }
+      for (int i = 0; i < keptCount; i++) {
+        fcQ[i] = fnQ[i];
+        fcScale[i] = fnScale[i];
+        fcFloor[i] = fnFloor[i];
+        fcR[i] = fnR[i];
+      }
+      chainCount = keptCount;
+    }
+    for (int c = 0; c < chainCount; c++) {
+      float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+      if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
+        terminal = fcFloor[c];
+      }
+      best = min(best, terminal);
+    }
+    trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
+    rings = clamp(rings, 0.0, 1.0);
+    sheets = clamp(sheets, 0.0, 1.0);
+    return max(best, sphereBound) * uFinalSigmaMin;
+  }
+#else
   float surfaceDE(
     vec3 p,
     out int firstChoice,
@@ -949,6 +1647,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
+#endif
 
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
@@ -1341,6 +2040,16 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uTrapIndex: { value: new Array<number>(SURFACE_MAX_MAPS).fill(0) },
+      // Fold-variant per-map data (fr-5rvk): (foldKind, 1/w, |w|*sigmaMin,
+      // trapIndex). Only the variant selected by the SURFACE_FOLDS define
+      // has this uniform active — Three.js ignores entries the compiled
+      // program does not use, so both arrays stay packed unconditionally.
+      uFoldParams: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(0, 1, 1, 0),
+        ),
+      },
       uMapCount: { value: 0 },
       uSymOrder: { value: 1 },
       uSymAxis: { value: 1 },
@@ -1372,6 +2081,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
       uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
+    // Which descent bodies are compiled in: 0 = the affine ladder pair
+    // (byte-for-byte the pre-fr-5rvk shader), 1 = the fold-frontier pair.
+    // setSurfaceSystem flips it when the system's fold-ness changes —
+    // a rare, session-enter-scale recompile.
+    defines: { SURFACE_FOLDS: 0 },
     vertexShader: SURFACE_VERTEX,
     fragmentShader: SURFACE_FRAGMENT,
     depthTest: false,
@@ -1412,6 +2126,8 @@ export function setSurfaceSystem(
   const sigmaMin = u.uSigmaMin.value as number[];
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
+  const foldParams = u.uFoldParams.value as THREE.Vector4[];
+  let hasFolds = false;
   de.maps.forEach((map, j) => {
     const m = map.invM;
     // SurfaceDEMap.invM is ROW-major; Matrix3.set takes row-major arguments
@@ -1421,8 +2137,21 @@ export function setSurfaceSystem(
     invT[j].set(...map.invT);
     sigmaMin[j] = map.sigmaMin;
     mapColor[j].set(...colors[j]);
-    trapIndex[j] = trapIndices ? trapIndices[j] : 0;
+    const trap = trapIndices ? trapIndices[j] : 0;
+    trapIndex[j] = trap;
+    // The fold-variant vec4 carries the trap coordinate in .w so swapping
+    // uTrapIndex out keeps the swap uniform-budget neutral.
+    foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
+    if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
+  // Select the compiled descent pair (fold frontier vs affine ladders).
+  // A define change forces a program rebuild — rare (system-set time,
+  // and only when fold-ness actually flips).
+  const wantFolds = hasFolds ? 1 : 0;
+  if (material.defines.SURFACE_FOLDS !== wantFolds) {
+    material.defines.SURFACE_FOLDS = wantFolds;
+    material.needsUpdate = true;
+  }
   u.uMapCount.value = de.maps.length;
   // The kaleidoscope the descent sweeps instead of expanding (fr-x029):
   // three scalars where every extra order used to cost `maps.length` slots.
