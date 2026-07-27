@@ -183,6 +183,15 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform mat3 uFinalInvM;
   uniform vec3 uFinalInvT;
   uniform float uFinalSigmaMin;
+  /** Pure-fold final lens (fr-g58b): (foldKind, 1/w, |w|, sigmaMin of the
+   * lens's affine part). Alive only under the SURFACE_FOLD_LENS define —
+   * the wrapper past the descent bodies enumerates the fold's inverse
+   * branches around the UNTOUCHED cores, and the uFinal* trio above is
+   * packed IDENTITY so the cores run their no-lens arithmetic verbatim
+   * (the oracle's descendLens / foldFinal split). */
+  uniform vec4 uLensParams;
+  uniform mat3 uLensInvM;
+  uniform vec3 uLensInvT;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -387,6 +396,15 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * region floors carry the ghost-killing, base and refined measure
    * indistinguishable). See descendFold's doc for the measured numbers.
    */
+#if SURFACE_FOLD_LENS
+  // Compile every descent body below under a CORE name: the fold-lens
+  // wrapper past the hit variants owns the public surfaceDE overloads and
+  // calls these once per lens branch (fr-g58b; the oracle's descendLens).
+  // With the define off this block vanishes and the bodies keep their
+  // shipped names, untouched.
+  #define surfaceDE surfaceDECore
+#endif
+
 #if SURFACE_FOLDS
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -1509,6 +1527,257 @@ const SURFACE_FRAGMENT = /* glsl */ `
   }
 #endif
 
+#if SURFACE_FOLD_LENS
+  #undef surfaceDE
+  /**
+   * Pure-fold FINAL lens (fr-g58b), mirroring the oracle's descendLens
+   * line for line: the visible set is F(A) with F = w*V(M p + t), so each
+   * of V's inverse branches seeds one root descent through the untouched
+   * cores above (uFinal* is packed identity when this define is on), with
+   * the fr-5rvk branch vocabulary — preimage, conformal sigma, region
+   * floor — lifted one level to the query. The estimate is the min over
+   * branch terms, floored by the visible-set sphere bound. Prunes (region
+   * floor vs best, sphere certificate vs best, visible-sphere pin) are
+   * value-exact — see the oracle's doc for the argument, and the cutoff
+   * contract note there for why inner descents receive
+   * min(best, cutoff) / factor.
+   */
+  float surfaceDE(vec3 p, float cutoff) {
+    float visBound = length(p) - uVisibleRadius;
+    int kind = int(uLensParams.x);
+    float absW = uLensParams.z;
+    vec3 u = p * uLensParams.y;
+    float best = 1e30;
+    float ru = 0.0;
+    vec3 pre0 = vec3(0.0);
+    vec3 pre1 = vec3(0.0);
+    vec3 pre2 = vec3(0.0);
+    vec3 dUp = vec3(0.0);
+    vec3 dDn = vec3(0.0);
+    vec3 v = vec3(0.0);
+    float sfSigma = 1.0;
+    float sfRd = 0.0;
+    if (kind == 1) {
+      pre0 = u;
+      pre1 = 2.0 - u;
+      pre2 = -2.0 - u;
+      dUp = max(u - 1.0, 0.0);
+      dDn = max(-1.0 - u, 0.0);
+    } else {
+      ru = length(u);
+    }
+    int branchCount = kind == 1 ? 27 : (kind == 2 ? 3 : 81);
+    for (int b = 0; b < branchCount; b++) {
+      if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+        int s = kind == 2 ? b : b / 27;
+        if (s == 0) {
+          v = u;
+          sfSigma = 1.0;
+          sfRd = max(1.0 - ru, 0.0);
+        } else if (s == 1) {
+          v = 0.25 * u;
+          sfSigma = 4.0;
+          sfRd = max(ru - 2.0, 0.0);
+        } else {
+          if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+            // Shell guard (the oracle's): fold the settled shell bound,
+            // skip the branch + its box expansion.
+            float shellCert = absW * (1.0 - ru);
+            if (shellCert < best) {
+              best = shellCert;
+              if (best <= visBound) {
+                return visBound;
+              }
+              if (cutoff > 0.0 && best < cutoff) {
+                return max(best, visBound);
+              }
+            }
+            if (kind == 3) {
+              b += 26;
+            }
+            continue;
+          }
+          float invR2 = 1.0 / (ru * ru);
+          v = u * invR2;
+          sfSigma = ru;
+          sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        }
+        if (kind == 3) {
+          pre0 = v;
+          pre1 = 2.0 - v;
+          pre2 = -2.0 - v;
+          dUp = max(v - 1.0, 0.0);
+          dDn = max(-1.0 - v, 0.0);
+        }
+      }
+      vec3 pre;
+      float branchRd;
+      if (kind == 2) {
+        pre = v;
+        branchRd = sfRd;
+      } else {
+        int bb = kind == 1 ? b : b % 27;
+        int selX = bb % 3;
+        int selY = (bb / 3) % 3;
+        int selZ = bb / 9;
+        pre = vec3(
+          selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+          selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+          selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+        );
+        vec3 dd = vec3(
+          selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+          selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+          selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+        );
+        float boxRd = length(dd);
+        branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+      }
+      float flr = absW * branchRd;
+      if (flr > 0.0 && flr >= best) {
+        continue;
+      }
+      vec3 q = uLensInvM * pre + uLensInvT;
+      float factor = absW * sfSigma * uLensParams.w;
+      float rq = length(q);
+      // The core never undercuts its own depth-0 sphere bound, so a branch
+      // whose scaled sphere certificate reaches the running min cannot
+      // advance it — an exact skip.
+      if (factor * (rq - uBoundingRadius) >= best) {
+        continue;
+      }
+      float innerCutoff = cutoff > 0.0 ? min(best, cutoff) / factor : 0.0;
+      float term = factor * surfaceDECore(q, innerCutoff);
+      term = max(term, flr);
+      if (term < best) {
+        best = term;
+        if (best <= visBound) {
+          return visBound;
+        }
+        if (cutoff > 0.0 && best < cutoff) {
+          return max(best, visBound);
+        }
+      }
+    }
+    return max(best, visBound);
+  }
+
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }
+
+  /** Hit-shading overload under the lens: re-run the branch loop tracking
+   * the ARGMIN branch's core query, then fetch the shading extras from one
+   * core hit call on that winner. Called once per accepted hit; the return
+   * value keeps signature parity (main() discards it). */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    int kind = int(uLensParams.x);
+    float absW = uLensParams.z;
+    vec3 u = p * uLensParams.y;
+    float best = 1e30;
+    float ru = 0.0;
+    vec3 pre0 = vec3(0.0);
+    vec3 pre1 = vec3(0.0);
+    vec3 pre2 = vec3(0.0);
+    vec3 dUp = vec3(0.0);
+    vec3 dDn = vec3(0.0);
+    vec3 v = vec3(0.0);
+    float sfSigma = 1.0;
+    float sfRd = 0.0;
+    if (kind == 1) {
+      pre0 = u;
+      pre1 = 2.0 - u;
+      pre2 = -2.0 - u;
+      dUp = max(u - 1.0, 0.0);
+      dDn = max(-1.0 - u, 0.0);
+    } else {
+      ru = length(u);
+    }
+    // Fallback: the identity-branch query, so a fully pruned loop (only
+    // reachable off-surface) still hands the core hit call a sane point.
+    vec3 bestQ = uLensInvM * u + uLensInvT;
+    int branchCount = kind == 1 ? 27 : (kind == 2 ? 3 : 81);
+    for (int b = 0; b < branchCount; b++) {
+      if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+        int s = kind == 2 ? b : b / 27;
+        if (s == 0) {
+          v = u;
+          sfSigma = 1.0;
+          sfRd = max(1.0 - ru, 0.0);
+        } else if (s == 1) {
+          v = 0.25 * u;
+          sfSigma = 4.0;
+          sfRd = max(ru - 2.0, 0.0);
+        } else {
+          if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+            if (kind == 3) {
+              b += 26;
+            }
+            continue;
+          }
+          float invR2 = 1.0 / (ru * ru);
+          v = u * invR2;
+          sfSigma = ru;
+          sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        }
+        if (kind == 3) {
+          pre0 = v;
+          pre1 = 2.0 - v;
+          pre2 = -2.0 - v;
+          dUp = max(v - 1.0, 0.0);
+          dDn = max(-1.0 - v, 0.0);
+        }
+      }
+      vec3 pre;
+      float branchRd;
+      if (kind == 2) {
+        pre = v;
+        branchRd = sfRd;
+      } else {
+        int bb = kind == 1 ? b : b % 27;
+        int selX = bb % 3;
+        int selY = (bb / 3) % 3;
+        int selZ = bb / 9;
+        pre = vec3(
+          selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+          selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+          selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+        );
+        vec3 dd = vec3(
+          selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+          selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+          selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+        );
+        float boxRd = length(dd);
+        branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+      }
+      float flr = absW * branchRd;
+      if (flr > 0.0 && flr >= best) {
+        continue;
+      }
+      vec3 q = uLensInvM * pre + uLensInvT;
+      float factor = absW * sfSigma * uLensParams.w;
+      float rq = length(q);
+      if (factor * (rq - uBoundingRadius) >= best) {
+        continue;
+      }
+      float term = factor * surfaceDECore(q, 0.0);
+      term = max(term, flr);
+      if (term < best) {
+        best = term;
+        bestQ = q;
+      }
+    }
+    return surfaceDECore(bestQ, firstChoice, trap, rings, sheets);
+  }
+#endif
+
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
@@ -1924,6 +2193,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uFinalInvM: { value: new THREE.Matrix3() },
       uFinalInvT: { value: new THREE.Vector3() },
       uFinalSigmaMin: { value: 1 },
+      // Fold final lens (fr-g58b): inert defaults; alive only under the
+      // SURFACE_FOLD_LENS define.
+      uLensParams: { value: new THREE.Vector4(0, 1, 1, 1) },
+      uLensInvM: { value: new THREE.Matrix3() },
+      uLensInvT: { value: new THREE.Vector3() },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -1944,11 +2218,13 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
       uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
-    // Which descent bodies are compiled in: 0 = the affine ladder pair
-    // (byte-for-byte the pre-fr-5rvk shader), 1 = the fold-frontier pair.
-    // setSurfaceSystem flips it when the system's fold-ness changes —
-    // a rare, session-enter-scale recompile.
-    defines: { SURFACE_FOLDS: 0 },
+    // Which descent bodies are compiled in: SURFACE_FOLDS 0 = the affine
+    // ladder pair (byte-for-byte the pre-fr-5rvk shader), 1 = the
+    // fold-frontier pair. SURFACE_FOLD_LENS 1 additionally renames the
+    // bodies to surfaceDECore and compiles the fold-lens wrapper as the
+    // public surfaceDE (fr-g58b). setSurfaceSystem flips both when the
+    // system's fold-ness changes — rare, session-enter-scale recompiles.
+    defines: { SURFACE_FOLDS: 0, SURFACE_FOLD_LENS: 0 },
     vertexShader: SURFACE_VERTEX,
     fragmentShader: SURFACE_FRAGMENT,
     depthTest: false,
@@ -2007,12 +2283,18 @@ export function setSurfaceSystem(
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
-  // Select the compiled descent pair (fold frontier vs affine ladders).
-  // A define change forces a program rebuild — rare (system-set time,
-  // and only when fold-ness actually flips).
+  // Select the compiled descent pair (fold frontier vs affine ladders)
+  // and whether the fold-lens wrapper wraps them (fr-g58b). A define
+  // change forces a program rebuild — rare (system-set time, and only
+  // when fold-ness actually flips).
   const wantFolds = hasFolds ? 1 : 0;
-  if (material.defines.SURFACE_FOLDS !== wantFolds) {
+  const wantLens = de.foldFinal ? 1 : 0;
+  if (
+    material.defines.SURFACE_FOLDS !== wantFolds ||
+    material.defines.SURFACE_FOLD_LENS !== wantLens
+  ) {
     material.defines.SURFACE_FOLDS = wantFolds;
+    material.defines.SURFACE_FOLD_LENS = wantLens;
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -2031,6 +2313,11 @@ export function setSurfaceSystem(
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may have
   // had one, and identity / zero / 1 is the shader's "no lens" encoding.
+  // With a FOLD lens (fr-g58b) the identity encoding is deliberate and
+  // load-bearing: the descent cores must run their no-lens arithmetic
+  // (the oracle keeps final null whenever foldFinal is set), and the
+  // wrapper compiled by SURFACE_FOLD_LENS applies the real lens from
+  // uLens* instead.
   const finalM = u.uFinalInvM.value as THREE.Matrix3;
   const finalT = u.uFinalInvT.value as THREE.Vector3;
   if (de.final) {
@@ -2042,5 +2329,23 @@ export function setSurfaceSystem(
     finalM.identity();
     finalT.set(0, 0, 0);
     u.uFinalSigmaMin.value = 1;
+  }
+  const lensM = u.uLensInvM.value as THREE.Matrix3;
+  const lensT = u.uLensInvT.value as THREE.Vector3;
+  if (de.foldFinal) {
+    const lens = de.foldFinal;
+    (u.uLensParams.value as THREE.Vector4).set(
+      lens.foldKind,
+      lens.invW,
+      lens.absW,
+      lens.sigmaMin,
+    );
+    const m = lens.invM;
+    lensM.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    lensT.set(...lens.invT);
+  } else {
+    (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+    lensM.identity();
+    lensT.set(0, 0, 0);
   }
 }

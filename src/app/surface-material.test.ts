@@ -55,6 +55,7 @@ function de3(
     beamWidth: 4,
     stepScale: 1,
     final: null,
+    foldFinal: null,
   };
 }
 
@@ -130,5 +131,54 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
         tooMany.map(() => black),
       ),
     ).toThrow(RangeError);
+  });
+});
+
+describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
+  it("packs the lens uniforms, flips SURFACE_FOLD_LENS, and keeps the cores' uFinal* at identity", () => {
+    const material = createSurfaceMaterial();
+    const de = de3([map3()]);
+    de.foldFinal = {
+      invM: [1, 0, 0, 0, 2, 0, 0, 0, 4],
+      invT: [0.1, -0.2, 0.3],
+      sigmaMin: 0.7,
+      foldKind: 1,
+      invW: 1 / 1.4,
+      absW: 1.4,
+    };
+    setSurfaceSystem(material, de, [black]);
+    const u = material.uniforms;
+    expect(material.defines.SURFACE_FOLD_LENS).toBe(1);
+    const params = u.uLensParams.value as THREE.Vector4;
+    expect(params.x).toBe(1);
+    expect(params.y).toBeCloseTo(1 / 1.4, 12);
+    expect(params.z).toBeCloseTo(1.4, 12);
+    expect(params.w).toBeCloseTo(0.7, 12);
+    const lensT = u.uLensInvT.value as THREE.Vector3;
+    expect([lensT.x, lensT.y, lensT.z]).toEqual([0.1, -0.2, 0.3]);
+    // The cores must run their no-lens arithmetic: identity / zero / 1.
+    const finalM = u.uFinalInvM.value as THREE.Matrix3;
+    expect(Array.from(finalM.elements)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(u.uFinalSigmaMin.value).toBe(1);
+  });
+
+  it("resets the lens uniforms and the define when the next system has no fold final", () => {
+    const material = createSurfaceMaterial();
+    const withLens = de3([map3()]);
+    withLens.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 1,
+      foldKind: 3,
+      invW: 1,
+      absW: 1,
+    };
+    setSurfaceSystem(material, withLens, [black]);
+    expect(material.defines.SURFACE_FOLD_LENS).toBe(1);
+
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_FOLD_LENS).toBe(0);
+    const params = material.uniforms.uLensParams.value as THREE.Vector4;
+    expect([params.x, params.y, params.z, params.w]).toEqual([0, 1, 1, 1]);
   });
 });

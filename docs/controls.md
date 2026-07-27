@@ -114,10 +114,18 @@ morphs into place instead of snapping (see **Presets** below).
   (fr-5rvk): a map whose variation list is exactly one fold-family entry
   (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can
   sweep the inverse branches of, so it stays eligible — a blend (the
-  shipped **Mandelbox** preset pairs `mandelbox` with `linear`) or a
-  pure-fold final-transform lens still trips the same uses-variations
-  reason, since neither has a sound per-branch inverse. Its contraction
-  check changes shape too: the whole weighted fold must contract, not just
+  shipped **Mandelbox** preset pairs `mandelbox` with `linear`) still
+  trips the uses-variations reason, since a weighted sum has no
+  per-branch inverse. A **pure-fold final transform** is eligible too
+  (fr-g58b): the lens applies once to each query, so its fold expands
+  into one round of branch root descents around the untouched estimator
+  — Surprise Me's boxfold-final rolls now surface-render, and a fold
+  lens over an affine base costs only a few times an ordinary trace
+  (the branch prunes carry the rest), far below an iterated fold
+  system's frontier. No contraction requirement applies to the lens
+  (an un-iterated map needs none), but blended final lists stay out.
+  For iterated fold maps the contraction check changes shape too: the
+  whole weighted fold must contract, not just
   its affine part, so a fold map can look tame in the editor yet still
   trip the does-not-contract reason — and, the other way, a small enough
   weight can rescue an affine part that would otherwise read as expanding.

@@ -275,10 +275,14 @@ import type {
  * Anisotropy stays `sigma_max/sigma_min` of `M` alone: every branch is
  * conformal, so the fold contributes ratio 1. Consequences worth naming:
  * the shipped Mandelbox preset (`mandelbox 1.2` blended with
- * `linear 0.25`) still reads "uses variations", and a pure-fold FINAL
- * transform stays ineligible too — the lens is applied ONCE to the query
- * point, and a multi-branch lens would need one root descent per branch
- * (beam seeding), which is out of scope rather than unsound.
+ * `linear 0.25`) still reads "uses variations". A pure-fold FINAL
+ * transform is eligible since fr-g58b: the lens is applied ONCE to the
+ * query point, so its branches expand into one round of root descents —
+ * {@link descendLens} lifts this exact branch/sigma/region-floor
+ * vocabulary to the query level and leaves the descent cores untouched
+ * (`final` stays null when `foldFinal` is set). No contraction gate
+ * applies to the lens: an un-iterated map needs none, exactly like the
+ * affine lens.
  *
  * MEASURED VERDICT (fr-5rvk; scripts/surface-beam.harness.ts section 4,
  * CLOUD=300k, both estimators): on the two-map stress pairs — boxfold,
@@ -502,10 +506,28 @@ export interface SurfaceDE {
   beamWidth: 1 | 2 | 3 | 4;
   /** March step multiplier from {@link analyzeSurfaceSystem}. */
   stepScale: number;
-  /** Pre-inverted final-transform lens (the plotted set is `F(attractor)`),
-   * or `null`. Applied ONCE to the query point; the result is un-scaled by
-   * its `sigmaMin`. */
+  /** Pre-inverted AFFINE final-transform lens (the plotted set is
+   * `F(attractor)`), or `null`. Applied ONCE to the query point; the result
+   * is un-scaled by its `sigmaMin`. Always `null` when {@link foldFinal}
+   * is set — the two lens shapes are mutually exclusive, and the descent
+   * cores only ever see this one (the fold lens wraps them from outside). */
   final: { invM: number[]; invT: Vec3; sigmaMin: number } | null;
+  /** Pure-FOLD final-transform lens `F = w·V(M p + t)` (fr-g58b), or
+   * `null`. Handled by {@link descendLens}: the fold's inverse branches
+   * are enumerated ONCE at the query — each an affine-lensed root descent
+   * with certified factor `|w|·sigma_branch·sigmaMin` and a region floor
+   * `|w|·regionDist` (the fr-5rvk vocabulary, lifted one level) — and the
+   * descent cores run their no-lens path untouched. `invW`/`absW` are
+   * `1/w` and `|w|`; `invM`/`invT`/`sigmaMin` are the lens's AFFINE part,
+   * exactly {@link SurfaceDE.final}'s fields. */
+  foldFinal: {
+    invM: number[];
+    invT: Vec3;
+    sigmaMin: number;
+    foldKind: SurfaceFoldKind;
+    invW: number;
+    absW: number;
+  } | null;
 }
 
 /** Mirrors `composeVariations`' active filter exactly: a variation entry
@@ -664,10 +686,16 @@ export function analyzeSurfaceSystem(
   });
 
   if (finalTransform) {
-    // A pure-fold FINAL stays ineligible, unlike an iterated map: the lens
-    // is applied ONCE to the query point, and a multi-branch lens would
-    // need one root descent per branch (module doc's fold section).
-    if (hasActiveVariations(finalTransform)) {
+    // A pure-fold FINAL is eligible (fr-g58b): the lens is applied ONCE to
+    // the query point, so its fold expands into one round of branch root
+    // descents — {@link descendLens} — with no contraction requirement (an
+    // un-iterated map needs none, exactly like the affine lens). Blended
+    // final variation lists stay out for the iterated maps' reason: a
+    // weighted sum has no branch decomposition.
+    if (
+      !pureFoldVariation(finalTransform) &&
+      hasActiveVariations(finalTransform)
+    ) {
       reasons.push("final transform uses variations");
     }
     if (!isFlatTransform(finalTransform)) {
@@ -856,6 +884,7 @@ export function buildSurfaceDE(
   );
 
   let final: SurfaceDE["final"] = null;
+  let foldFinal: SurfaceDE["foldFinal"] = null;
   let visibleBoundingRadius = boundingRadius;
   if (finalTransform) {
     const affine = composeAffine(finalTransform);
@@ -867,9 +896,42 @@ export function buildSurfaceDE(
       -(invM[6] * tx + invM[7] * ty + invM[8] * tz),
     ];
     const s = transformSigmas(finalTransform);
-    final = { invM, invT, sigmaMin: s.min };
-    // |F(x)| <= sigma_max·|x| + |t| bounds the visible set F(attractor).
-    visibleBoundingRadius = s.max * boundingRadius + Math.hypot(tx, ty, tz);
+    const fold = pureFoldVariation(finalTransform);
+    // |M x + t| <= sigma_max·|x| + |t| bounds the affine image either way.
+    const affineR = s.max * boundingRadius + Math.hypot(tx, ty, tz);
+    if (fold) {
+      const kind: SurfaceFoldKind =
+        fold.type === "boxfold"
+          ? SURFACE_FOLD_BOXFOLD
+          : fold.type === "spherefold"
+            ? SURFACE_FOLD_SPHEREFOLD
+            : SURFACE_FOLD_MANDELBOX;
+      foldFinal = {
+        invM,
+        invT,
+        sigmaMin: s.min,
+        foldKind: kind,
+        invW: 1 / fold.weight,
+        absW: Math.abs(fold.weight),
+      };
+      // Bound the visible set w·V(M·A + t). Per axis the boxfold obeys
+      // |fold(t)| <= max(|t|, 1), so |boxfold(y)|² <= Σ max(y_a², 1)
+      // <= |y|² + 3; the spherefold's clamp caps every branch's output at
+      // max(|y|, 2) (identity keeps |y|, the shell inverts into (1, 2],
+      // the ×4 inner region tops out at 4·0.5 = 2); the mandelbox chains
+      // the two.
+      const boxR = Math.sqrt(affineR * affineR + 3);
+      visibleBoundingRadius =
+        foldFinal.absW *
+        (kind === SURFACE_FOLD_BOXFOLD
+          ? boxR
+          : kind === SURFACE_FOLD_SPHEREFOLD
+            ? Math.max(affineR, 2)
+            : Math.max(boxR, 2));
+    } else {
+      final = { invM, invT, sigmaMin: s.min };
+      visibleBoundingRadius = affineR;
+    }
   }
 
   return {
@@ -890,6 +952,7 @@ export function buildSurfaceDE(
     beamWidth: 4,
     stepScale: analysis.stepScale,
     final,
+    foldFinal,
   };
 }
 
@@ -935,6 +998,7 @@ export function buildSurfaceDE(
  * marches).
  */
 export function estimateDistance(de: SurfaceDE, p: Vec3, cutoff = 0): number {
+  if (de.foldFinal) return descendLens(de, p, false, cutoff);
   return deHasFolds(de)
     ? descendFold(de, p, false, cutoff)
     : descend(de, p, false, cutoff);
@@ -968,19 +1032,35 @@ export function deHasFolds(de: SurfaceDE): boolean {
  * single sample to act on.
  */
 export function surfaceDescentCostWeight(de: SurfaceDE): number {
-  if (de.maps.length === 0 || !deHasFolds(de)) return 1;
-  let branches = 0;
-  for (const m of de.maps) {
-    branches +=
-      m.foldKind === SURFACE_FOLD_NONE
-        ? 1
-        : m.foldKind === SURFACE_FOLD_BOXFOLD
-          ? 27
-          : m.foldKind === SURFACE_FOLD_SPHEREFOLD
-            ? 3
-            : 81;
+  let weight = 1;
+  if (de.maps.length > 0 && deHasFolds(de)) {
+    let branches = 0;
+    for (const m of de.maps) {
+      branches += foldBranchCount(m.foldKind);
+    }
+    weight = (branches / de.maps.length) * (SURFACE_FOLD_BEAM_WIDTH / 4);
   }
-  return (branches / de.maps.length) * (SURFACE_FOLD_BEAM_WIDTH / 4);
+  if (de.foldFinal) {
+    // A fold LENS multiplies the whole trace by its root-descent count.
+    // Statically that is the branch count, but the sphere/floor prunes
+    // (descendLens) kill the branches whose preimages fall outside the
+    // bounding sphere — most of them, for typical attractors well inside
+    // the fold's cell lattice — so weight by a measured-typical /8. The
+    // governor's ladder corrects the residual either way (fr-hith).
+    weight *= Math.max(1, foldBranchCount(de.foldFinal.foldKind) / 8);
+  }
+  return weight;
+}
+
+/** Inverse-branch count of a fold family — 1 for a plain affine map. */
+function foldBranchCount(kind: SurfaceFoldKind): number {
+  return kind === SURFACE_FOLD_NONE
+    ? 1
+    : kind === SURFACE_FOLD_BOXFOLD
+      ? 27
+      : kind === SURFACE_FOLD_SPHEREFOLD
+        ? 3
+        : 81;
 }
 
 /**
@@ -1073,6 +1153,7 @@ export function estimateDistanceRefined(
   p: Vec3,
   cutoff = 0,
 ): number {
+  if (de.foldFinal) return descendLens(de, p, true, cutoff);
   return deHasFolds(de)
     ? descendFold(de, p, true, cutoff)
     : descend(de, p, true, cutoff);
@@ -2306,3 +2387,244 @@ function descendFold(
   }
   return descentValue(best, sphereBound, finalScale);
 }
+
+/**
+ * Pure-fold FINAL-transform lens descent (fr-g58b): the visible set is
+ * `F(A)` with `F = w·V(M p + t)` and `V` a fold family, so
+ *
+ *     dist(p, F(A)) = |w| · dist(p/w, V(Y))          (odd folds; Y = M·A + t)
+ *                   >= |w| · min_c max( regionDist_c(p/w),
+ *                                       sigma_c · dist(B_c^-1(p/w), Y) )
+ *                   >= min_c max( |w|·regionDist_c(p/w),
+ *                                 |w|·sigma_c·sigmaMin(M) · dist(q_c, A) )
+ *
+ * — exactly the fr-5rvk fold-branch sweep vocabulary (branch preimages,
+ * conformal sigmas, region floors) lifted ONE level, to the query itself:
+ * each fold branch seeds a root descent at `q_c = invM·B_c^-1(p/w) + invT`
+ * through the UNTOUCHED descent cores ({@link descend}/{@link descendFold}
+ * — `de.final` is null whenever `de.foldFinal` is set, so the cores run
+ * their no-lens arithmetic verbatim), and the estimate is the min over
+ * branch terms, floored by the visible-set sphere bound
+ * `|p| − visibleBoundingRadius`.
+ *
+ * Three prunes keep the branch loop from costing its worst case, each
+ * VALUE-EXACT (a pruned branch's term is proven `>= best`, so the min is
+ * untouched):
+ *
+ * - REGION FLOOR vs best: `|w|·regionDist_c >= best` — every value the
+ *   branch could contribute is at least its floor.
+ * - SPHERE CERTIFICATE vs best: `factor_c·(|q_c| − R) >= best` — the
+ *   core's return never undercuts its own depth-0 sphere bound.
+ * - VISIBLE-SPHERE PIN (the fr-zkt2 argument, outer edition): once
+ *   `best <= |p| − visibleR` the eventual `max(best, visBound)` is pinned;
+ *   return it immediately, bit-exact for every caller.
+ *
+ * The spherefold MID branch keeps its {@link SPHEREFOLD_MID_MIN_R} shell
+ * guard: a query that close to the origin in u-space folds the settled
+ * shell bound `|w|·(1 − ru)` instead of inverting (and, for the mandelbox,
+ * skips that sphere branch's whole box expansion), exactly as the iterated
+ * sweep does.
+ *
+ * CUTOFF CONTRACT (fr-55r5's, honored verbatim): inner descents receive
+ * `min(best, cutoff)/factor_c` when `cutoff > 0` — an inner value below
+ * that line certifies its term below `min(best, cutoff)`, so any inexact
+ * (early-exited) term forces the final return under the cutoff, and every
+ * return at or above the cutoff is a min over EXACT terms. With
+ * `cutoff <= 0` the inner descents run full (`0`), keeping the value
+ * callers (normals, AO taps, the grid's floor build) bit-exact — the
+ * prunes above carry the cost saving instead.
+ */
+function descendLens(
+  de: SurfaceDE,
+  p: Vec3,
+  refine: boolean,
+  cutoff = 0,
+): number {
+  const lens = de.foldFinal!;
+  const R = de.boundingRadius;
+  const hasFolds = deHasFolds(de);
+  const visBound =
+    Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) -
+    de.visibleBoundingRadius;
+  const kind = lens.foldKind;
+  const absW = lens.absW;
+  const im = lens.invM;
+  const it = lens.invT;
+  const sigmaMinM = lens.sigmaMin;
+
+  const ux = p[0] * lens.invW;
+  const uy = p[1] * lens.invW;
+  const uz = p[2] * lens.invW;
+  let best = Infinity;
+
+  // Per-axis box preimage triples + output-interval distances (boxfold
+  // reads them off u once; the mandelbox refreshes them from each
+  // spherefold branch output) — the iterated sweep's locals, one level up.
+  let px0 = 0;
+  let px1 = 0;
+  let px2 = 0;
+  let py0 = 0;
+  let py1 = 0;
+  let py2 = 0;
+  let pz0 = 0;
+  let pz1 = 0;
+  let pz2 = 0;
+  let dxUp = 0;
+  let dxDn = 0;
+  let dyUp = 0;
+  let dyDn = 0;
+  let dzUp = 0;
+  let dzDn = 0;
+  let vx = 0;
+  let vy = 0;
+  let vz = 0;
+  let sfSigma = 1;
+  let sfRd = 0;
+  let ru = 0;
+  if (kind === SURFACE_FOLD_BOXFOLD) {
+    px0 = ux;
+    px1 = 2 - ux;
+    px2 = -2 - ux;
+    py0 = uy;
+    py1 = 2 - uy;
+    py2 = -2 - uy;
+    pz0 = uz;
+    pz1 = 2 - uz;
+    pz2 = -2 - uz;
+    dxUp = ux > 1 ? ux - 1 : 0;
+    dxDn = ux < -1 ? -1 - ux : 0;
+    dyUp = uy > 1 ? uy - 1 : 0;
+    dyDn = uy < -1 ? -1 - uy : 0;
+    dzUp = uz > 1 ? uz - 1 : 0;
+    dzDn = uz < -1 ? -1 - uz : 0;
+  } else {
+    ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
+  }
+
+  const branchCount = foldBranchCount(kind);
+  for (let b = 0; b < branchCount; b++) {
+    if (
+      kind === SURFACE_FOLD_SPHEREFOLD ||
+      (kind === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
+    ) {
+      const s = kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 27;
+      if (s === 0) {
+        vx = ux;
+        vy = uy;
+        vz = uz;
+        sfSigma = 1;
+        sfRd = ru < 1 ? 1 - ru : 0;
+      } else if (s === 1) {
+        vx = 0.25 * ux;
+        vy = 0.25 * uy;
+        vz = 0.25 * uz;
+        sfSigma = 4;
+        sfRd = ru > 2 ? ru - 2 : 0;
+      } else {
+        if (ru < SPHEREFOLD_MID_MIN_R) {
+          // Shell guard (see doc): fold the settled shell bound and skip
+          // the branch, box expansion included.
+          const shellCert = absW * (1 - ru);
+          if (shellCert < best) {
+            best = shellCert;
+            if (best <= visBound) return visBound;
+            if (cutoff > 0 && best < cutoff) {
+              return best > visBound ? best : visBound;
+            }
+          }
+          if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
+          continue;
+        }
+        const invR2 = 1 / (ru * ru);
+        vx = ux * invR2;
+        vy = uy * invR2;
+        vz = uz * invR2;
+        sfSigma = ru;
+        sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+      }
+      if (kind === SURFACE_FOLD_MANDELBOX) {
+        px0 = vx;
+        px1 = 2 - vx;
+        px2 = -2 - vx;
+        py0 = vy;
+        py1 = 2 - vy;
+        py2 = -2 - vy;
+        pz0 = vz;
+        pz1 = 2 - vz;
+        pz2 = -2 - vz;
+        dxUp = vx > 1 ? vx - 1 : 0;
+        dxDn = vx < -1 ? -1 - vx : 0;
+        dyUp = vy > 1 ? vy - 1 : 0;
+        dyDn = vy < -1 ? -1 - vy : 0;
+        dzUp = vz > 1 ? vz - 1 : 0;
+        dzDn = vz < -1 ? -1 - vz : 0;
+      }
+    }
+    let cx: number;
+    let cy: number;
+    let cz: number;
+    let branchRd: number;
+    if (kind === SURFACE_FOLD_SPHEREFOLD) {
+      cx = vx;
+      cy = vy;
+      cz = vz;
+      branchRd = sfRd;
+    } else {
+      const bb = kind === SURFACE_FOLD_BOXFOLD ? b : b % 27;
+      const selX = bb % 3;
+      const selY = ((bb / 3) | 0) % 3;
+      const selZ = (bb / 9) | 0;
+      cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+      cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+      cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+      const ddx =
+        selX === 0 ? (dxUp > dxDn ? dxUp : dxDn) : selX === 1 ? dxUp : dxDn;
+      const ddy =
+        selY === 0 ? (dyUp > dyDn ? dyUp : dyDn) : selY === 1 ? dyUp : dyDn;
+      const ddz =
+        selZ === 0 ? (dzUp > dzDn ? dzUp : dzDn) : selZ === 1 ? dzUp : dzDn;
+      const boxRd2 = ddx * ddx + ddy * ddy + ddz * ddz;
+      const boxRd = boxRd2 > 0 ? Math.sqrt(boxRd2) : 0;
+      branchRd =
+        kind === SURFACE_FOLD_BOXFOLD
+          ? boxRd
+          : sfRd > sfSigma * boxRd
+            ? sfRd
+            : sfSigma * boxRd;
+    }
+    const floor = absW * branchRd;
+    if (floor > 0 && floor >= best) continue;
+    const qx = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
+    const qy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
+    const qz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
+    const factor = absW * sfSigma * sigmaMinM;
+    const rq = Math.sqrt(qx * qx + qy * qy + qz * qz);
+    // The core's return never undercuts its own depth-0 sphere bound, so
+    // a branch whose scaled sphere certificate already reaches the running
+    // min cannot advance it — skip the whole descent, exactly.
+    if (factor * (rq - R) >= best) continue;
+    const innerCutoff =
+      cutoff > 0 ? (best < cutoff ? best : cutoff) / factor : 0;
+    LENS_QUERY[0] = qx;
+    LENS_QUERY[1] = qy;
+    LENS_QUERY[2] = qz;
+    const inner = hasFolds
+      ? descendFold(de, LENS_QUERY, refine, innerCutoff)
+      : descend(de, LENS_QUERY, refine, innerCutoff);
+    let term = factor * inner;
+    if (floor > term) term = floor;
+    if (term < best) {
+      best = term;
+      if (best <= visBound) return visBound;
+      if (cutoff > 0 && best < cutoff) {
+        return best > visBound ? best : visBound;
+      }
+    }
+  }
+  return best > visBound ? best : visBound;
+}
+
+/** Scratch query triple for {@link descendLens}' root descents — module
+ * scope so the branch loop never allocates. Single-threaded by
+ * construction, like the descent scratch above. */
+const LENS_QUERY: Vec3 = [0, 0, 0];
