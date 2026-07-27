@@ -415,10 +415,12 @@ function marchCounted(
     p[2] = ro[2] + rd[2] * t;
     const before = counter.n;
     const fineBefore = fineCounter.n;
-    // eps doubles as the cutoff (fr-55r5) AND the cone footprint for the
-    // per-step depth cap (fr-3c0k) — exactly the pair the shipped GLSL
-    // march passes.
-    const d = estimateDistance(de, p, eps, eps);
+    // eps is the cutoff (fr-55r5), exactly what the shipped GLSL march
+    // passes. fr-3c0k's footprint cap is deliberately NOT passed: it is
+    // CPU-only (the shipped shader doesn't cap — surface-material.ts's
+    // Mesa link-cliff note), so mirroring the GPU means leaving it off;
+    // the footprint path is measured by its own unit tests instead.
+    const d = estimateDistance(de, p, eps);
     const callCost = counter.n - before;
     const fineCallCost = fineCounter.n - fineBefore;
     callApps.push(callCost);

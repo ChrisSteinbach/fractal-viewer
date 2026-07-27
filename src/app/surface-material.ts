@@ -152,12 +152,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * the affine variant (folded in here so the swap is uniform-budget
    * neutral): (foldKind 0..3, 1/w signed, |w|*sigmaMin, trapIndex). */
   uniform vec4 uFoldParams[MAX_MAPS];
-  /** fr-kidj stage-2 branch-and-bound data: (bnbDir.xyz, invMSigmaMin) —
-   * the directional bound's pull-back direction invM^T*invT/|invT| and
-   * sigma_min(invM). |invT| is derived per visit from uInvT[j] (one
-   * length() amortized over the whole branch loop) rather than spending a
-   * fifth packed scalar. */
-  uniform vec4 uFoldBnb[MAX_MAPS];
 #else
   /** Per-slot palette coordinate in [0, 1] for the orbit trap
    * (CPU-precomputed from each slot's base-map index). */
@@ -190,9 +184,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
   /** Descent depth cap, sized CPU-side so the slowest contraction chain
    * resolves features below resolution. */
   uniform int uMaxDepth;
-  /** 1 / ln(slowestSigma), negative (every certified factor is < 1): the
-   * per-step depth cap (fr-3c0k) multiplies it against ln(eps / 2R). */
-  uniform float uInvLogSlowest;
   /** March step multiplier in (0, 1]: 1 for conformal systems, smaller as
    * anisotropy grows (SurfaceEligibility.stepScale). */
   uniform float uStepScale;
@@ -311,17 +302,15 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * certificates painted across attractor voids. "Every map" means every
    * (sector, base map) pair, which the sweep spells out where the expanded
    * slot list used to (fr-x029). */
-  /** Per-call descent depth bound (fr-3c0k): main() seeds it with
-   * uMaxDepth, the march loop lowers it to each step's cone-footprint cap
-   * before the stepping DE call — once every chain's tracked piece
-   * (diameter <= 2R·slowestSigma^depth) is under the step's acceptance
-   * footprint, deeper levels resolve sub-pixel detail — and it is reset
-   * to uMaxDepth after the march, so shading probes (hit info, normals,
-   * AO, shadows) keep the frame-wide depth. A global rather than a
-   * parameter so the descent bodies' signatures (and the fold-lens
-   * wrapper's calls through them) stay untouched. The escape-time
-   * variant never reads it. */
-  int gDepthCap;
+  // fr-3c0k's per-step footprint depth cap is deliberately CPU-ONLY
+  // (estimateDistance*'s optional footprint parameter). Every GLSL
+  // encoding tried — a mutable global as the descent loop bound, and the
+  // same global as an in-loop break under a uniform bound — regressed
+  // this variant's already-critical Mesa/Iris fold LINK past the browser
+  // watchdog (context lost at entry with the VALIDATE_STATUS-false reset
+  // debris; bisected on the real driver, fr-096u). A depth-cap PARAMETER
+  // threaded through the overloads (an SSA value, not a global) is the
+  // credible future encoding.
 
 #if SURFACE_FOLDS
   // The fold variant defines NO refinedCert at all: its descent folds
@@ -572,7 +561,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     float fnFloor[FOLD_W];
     float fnR[FOLD_W];
     float fnCert[FOLD_W];
-    for (int depth = 0; depth < gDepthCap; depth++) {
+    for (int depth = 0; depth < uMaxDepth; depth++) {
       if (chainCount == 0) {
         break;
       }
@@ -583,11 +572,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
         float pScale = fcScale[c];
         float pFloor = fcFloor[c];
         vec3 sQ = fcQ[c];
-        // fr-kidj stage-2 hoists: the chain-point norm is sector-invariant
-        // (sectors rotate about an axis through the origin); 1/pScale
-        // prices the skip's frontier-key condition.
-        float chainNormSq = dot(sQ, sQ);
-        float invPScale = 1.0 / pScale;
         for (int k = 0; k < uSymOrder; k++) {
           if (k > 0) {
             sQ = stepSector(sQ);
@@ -598,20 +582,21 @@ const SURFACE_FRAGMENT = /* glsl */ `
             int branchCount =
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
-            // fr-kidj stage-2 branch-and-bound (the oracle's exact skip,
-            // with its case analysis — see descendFold): child radius
-            // lower bounds from the branch preimage alone, so no-op
-            // candidates never pay the inverse application. bnbT derives
-            // from uInvT once per visit; f32 rounding can flip a
-            // knife-edge skip only within ulps of a tie, orders under the
-            // marcher's acceptance epsilon either way.
-            vec4 bnb = uFoldBnb[j];
-            float bnbT = length(uInvT[j]);
-            float bnbSigmaSq = bnb.w * bnb.w;
-            float needE = uEscapeRadius + bnbT;
-            float needESq = needE * needE;
-            float invChildScale =
-              1.0 / (pScale * (kind == 0 ? uSigmaMin[j] : fp.z));
+            // fr-kidj stage 2 is deliberately CPU-ONLY. The oracle's
+            // branch-and-bound skips (descendFold) are VALUE no-ops, so
+            // this mirror computes identical values without them — and
+            // every GLSL encoding tried (full dual-bound, dir-form only,
+            // uniform-array data, in-shader-derived data) pushed this
+            // variant's already-critical Mesa/Iris LINK over the browser
+            // watchdog cliff: sessions died at entry with the
+            // VALIDATE_STATUS-false/empty-log reset debris (fr-096u;
+            // stage 1 alone links and runs clean — bisected commit by
+            // commit on the real driver). The trade is measured: the
+            // width sweep shows this kernel OCCUPANCY-bound (superlinear
+            // in frontier width; ALU cuts bought ~14% at equal width), so
+            // the skip's GPU value is small, while its CPU value (grid
+            // builds, oracle consumers: 75x fewer transforms/call) is
+            // kept in full.
             vec3 u = vec3(0.0);
             float ru = 0.0;
             vec3 pre0 = vec3(0.0);
@@ -646,34 +631,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
               if (kind == 0) {
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
-                }
-                // Stage-2 B&B skips (see the visit hoist comment).
-                float rDir = dot(bnb.xyz, sQ) + bnbT;
-                float rEsc = uBoundingRadius + best * invChildScale;
-                if (rDir > uEscapeRadius && rDir >= rEsc) {
-                  continue;
-                }
-                float sTerm = chainNormSq * bnbSigmaSq;
-                if (sTerm > needESq) {
-                  float needC = rEsc + bnbT;
-                  if (needC <= 0.0 || sTerm >= needC * needC) {
-                    continue;
-                  }
-                }
-                if (keptCount == FOLD_W) {
-                  float qReq =
-                    uBoundingRadius +
-                    max(
-                      0.0,
-                      max(best * invChildScale, fnWorstKey * invPScale)
-                    );
-                  if (rDir >= qReq) {
-                    continue;
-                  }
-                  float need = qReq + bnbT;
-                  if (sTerm >= need * need) {
-                    continue;
-                  }
                 }
                 img = uInvM[j] * sQ + uInvT[j];
                 branchSigma = uSigmaMin[j];
@@ -717,9 +674,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
                     sfSigma = ru;
                     sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
                   }
-                  // This sphere branch's childScale reciprocal for the
-                  // stage-2 skip (sfSigma just changed).
-                  invChildScale = 1.0 / (pScale * fp.z * sfSigma);
                   if (kind == 3) {
                     pre0 = v;
                     pre1 = 2.0 - v;
@@ -760,36 +714,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
                 // branches never reach the inverse application below.
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
-                }
-                // Stage-2 B&B skips (see the visit hoist comment); the
-                // bounds read the branch preimage exactly, after the
-                // shell guard.
-                float rDir = dot(bnb.xyz, pre) + bnbT;
-                float rEsc = uBoundingRadius + best * invChildScale;
-                if (rDir > uEscapeRadius && rDir >= rEsc) {
-                  continue;
-                }
-                float sTerm = dot(pre, pre) * bnbSigmaSq;
-                if (sTerm > needESq) {
-                  float needC = rEsc + bnbT;
-                  if (needC <= 0.0 || sTerm >= needC * needC) {
-                    continue;
-                  }
-                }
-                if (keptCount == FOLD_W) {
-                  float qReq =
-                    uBoundingRadius +
-                    max(
-                      0.0,
-                      max(best * invChildScale, fnWorstKey * invPScale)
-                    );
-                  if (rDir >= qReq) {
-                    continue;
-                  }
-                  float need = qReq + bnbT;
-                  if (sTerm >= need * need) {
-                    continue;
-                  }
                 }
                 img = uInvM[j] * pre + uInvT[j];
                 branchSigma = fp.z * sfSigma;
@@ -945,7 +869,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     vec3 v2Q = vec3(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
-    for (int depth = 0; depth < gDepthCap; depth++) {
+    for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
@@ -2007,8 +1931,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
 
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
-    // Frame-wide depth until the march lowers it per step (fr-3c0k).
-    gDepthCap = uMaxDepth;
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes.
@@ -2098,26 +2020,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
           break;
         }
       }
-#if SURFACE_FOLD_LENS == 0 && SURFACE_ESCAPE == 0
-      // Per-step depth cap (fr-3c0k): a chain at depth d tracks a piece
-      // of diameter <= 2R·slowestSigma^d; once that is under THIS step's
-      // acceptance footprint, deeper levels resolve sub-pixel detail and
-      // an in-sphere cap terminal is a hit at this resolution
-      // (previewMaxDepth's own argument, per step instead of per frame).
-      // The 4-level floor is previewMaxDepth's, for fr-xok8's reason (an
-      // unfloored cap regrows the solid-ball artifact at the slowest
-      // map's fixed point). Skipped under the fold lens: its branches
-      // rescale the footprint by their factor (the oracle divides
-      // per branch; one global cap cannot), and lens cores are the cheap
-      // affine kind. The escape variant runs its own fixed-cost loop.
-      gDepthCap = min(
-        uMaxDepth,
-        max(
-          4,
-          int(ceil(log(eps / (2.0 * uBoundingRadius)) * uInvLogSlowest))
-        )
-      );
-#endif
+      // fr-3c0k's per-step cone-footprint depth cap runs CPU-side only —
+      // see the note above the descent bodies for the measured Mesa link
+      // cliff that keeps it out of this shader.
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
         hit = true;
@@ -2125,9 +2030,6 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       t += d * uStepScale;
     }
-    // Shading probes (hit info, normals, AO, shadows) keep the frame-wide
-    // depth: fr-3c0k caps the march's stepping calls only.
-    gDepthCap = uMaxDepth;
     if (!hit) {
       outColor = vec4(background, 1.0);
       return;
@@ -2433,14 +2335,6 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
-      // fr-kidj stage-2 bound data (bnbDir.xyz, invMSigmaMin); alive only
-      // under SURFACE_FOLDS, packed unconditionally like uFoldParams.
-      uFoldBnb: {
-        value: Array.from(
-          { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector4(0, 0, 0, 1),
-        ),
-      },
       uMapCount: { value: 0 },
       uSymOrder: { value: 1 },
       uSymAxis: { value: 1 },
@@ -2449,9 +2343,6 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBoundCenter: { value: new THREE.Vector3() },
       uEscapeRadius: { value: 2 },
       uMaxDepth: { value: 0 },
-      // 1/ln(slowestSigma) for the per-step depth cap (fr-3c0k); any
-      // negative value is inert until a real system lands.
-      uInvLogSlowest: { value: -1 },
       uStepScale: { value: 1 },
       uVisibleRadius: { value: 1 },
       uFinalInvM: { value: new THREE.Matrix3() },
@@ -2541,7 +2432,6 @@ export function setSurfaceSystem(
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
   const foldParams = u.uFoldParams.value as THREE.Vector4[];
-  const foldBnb = u.uFoldBnb.value as THREE.Vector4[];
   let hasFolds = false;
   de.maps.forEach((map, j) => {
     const m = map.invM;
@@ -2557,12 +2447,6 @@ export function setSurfaceSystem(
     // The fold-variant vec4 carries the trap coordinate in .w so swapping
     // uTrapIndex out keeps the swap uniform-budget neutral.
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
-    foldBnb[j].set(
-      map.bnbDir[0],
-      map.bnbDir[1],
-      map.bnbDir[2],
-      map.invMSigmaMin,
-    );
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
   // Select the compiled descent pair (fold frontier vs affine ladders)
@@ -2596,9 +2480,6 @@ export function setSurfaceSystem(
   (u.uBoundCenter.value as THREE.Vector3).set(...de.boundCenter);
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
-  // Negative (slowestSigma < 1 by eligibility); the march's per-step
-  // depth cap divides by ln(slowestSigma) via this product form.
-  u.uInvLogSlowest.value = 1 / Math.log(de.slowestSigma);
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
   // The final lens must be RESET when absent — the previous system may have
