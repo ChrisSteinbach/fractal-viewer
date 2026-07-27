@@ -1,7 +1,7 @@
 /**
  * Shared measurement profiles for the surface-DE harnesses.
  *
- * `countingDE` (the machine-independent inverse-map-visit counter) and the
+ * `countingDE` (the machine-independent inverse-map-VISIT counter) and the
  * four pure-fold system factories (`foldBoxfoldPair`,
  * `foldBoxfoldNegPlusAffine`, `foldSpherefoldPair`, `foldMandelboxPair`)
  * were born in `surface-beam.harness.ts`'s fr-5rvk section (4). They are
@@ -9,6 +9,10 @@
  * harness.ts` (fr-aj4w) can reuse the IDENTICAL frozen profiles instead of
  * drifting a second copy: a harness comparing costs across two files is
  * only meaningful if both measure the same systems with the same counter.
+ * `countingDEFine` (fr-ck0w EXPERIMENT 2 follow-up) is `countingDE`'s
+ * element-granularity twin, added later, purely additively — `countingDE`
+ * itself is untouched, so every existing caller's numbers are unaffected;
+ * see its own doc for why per-visit counting is too coarse for fr-kidj.
  *
  * This file is deliberately not named `*.harness.ts`: it carries no
  * `describe`/`it` blocks of its own, so importing it (from either harness,
@@ -43,6 +47,88 @@ export function countingDE(
     },
   }));
   return { de: { ...de, maps, beamWidth }, counter };
+}
+
+/** Wrap a plain 3x3 `invM` array so every NUMERIC-INDEX element read
+ * (`im[0]` through `im[8]`) bumps `counter.n` — the element-granularity
+ * twin of {@link countingDE}'s per-VISIT counter, for measuring work that
+ * counter cannot see (fr-ck0w EXPERIMENT 2 follow-up, for fr-kidj).
+ *
+ * Must wrap the ARRAY the getter returns, not (only) the map object:
+ * `descendFold` (`surface-de.ts`) hoists `const im = map.invM` ONCE per
+ * (chain, sector, map) VISIT and then indexes `im[0]..im[8]` once per
+ * BRANCH TRANSFORM inside that visit — up to 81 times for a mandelbox map,
+ * confirmed against `descendFold`'s own body (`ix = im[0]*cx + im[1]*cy +
+ * im[2]*cz + it[0]; ...`, one triple of reads per axis, three axes, once
+ * per branch). A property-read counter on `invM` sees only the one hoist;
+ * a future branch-and-bound prune (moving the floor-vs-best test AHEAD of
+ * this transform, brief §3.1) would skip transforms WITHIN a visit without
+ * changing the visit count at all, so only an element-level counter can see
+ * it move. Non-numeric access (`.length`, iteration, `Symbol.iterator`,
+ * etc.) passes through uncounted via `Reflect.get` — the estimators never
+ * touch `invM` that way, but a `get`-only Proxy handler is safe regardless:
+ * every other internal method falls back to the target by spec. */
+function wrapInvMElementCounter(
+  invM: number[],
+  counter: { n: number },
+): number[] {
+  return new Proxy(invM, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && /^\d+$/.test(prop)) {
+        counter.n++;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/**
+ * {@link countingDE}'s element-granularity twin: both the visit counter AND
+ * the fine element counter off ONE march, so callers needing the fine
+ * number don't pay for a second run of the system (the visit counter rides
+ * along for a direct cross-check against {@link countingDE}'s own numbers —
+ * it increments identically, since the property getter below still bumps
+ * it exactly once per `invM` read, before returning the proxied array).
+ *
+ * One Proxy per map, built ONCE (not per visit): so identity-sensitive code
+ * sees the SAME `invM` reference on every read, matching production (where
+ * `map.invM` is a fixed array every visit reads), and so the Proxy's own
+ * construction cost is paid once per system rather than once per visit.
+ *
+ * `fineCounter.n / 9` is "transforms applied": every full inverse-affine
+ * application — the affine ladder's single child, or one of a fold
+ * branch's candidates — reads all nine `im[i]` elements exactly once (see
+ * {@link wrapInvMElementCounter}'s doc for the confirmed line citation), so
+ * dividing by 9 recovers a transform count directly comparable across the
+ * affine and fold paths, and finer than {@link countingDE}'s per-visit
+ * "apps".
+ */
+export function countingDEFine(
+  de: SurfaceDE,
+  beamWidth: 1 | 2 | 3 | 4,
+): {
+  de: SurfaceDE;
+  counter: { n: number };
+  fineCounter: { n: number };
+} {
+  const counter = { n: 0 };
+  const fineCounter = { n: 0 };
+  const maps = de.maps.map((m): SurfaceDEMap => {
+    const proxiedInvM = wrapInvMElementCounter(m.invM, fineCounter);
+    return {
+      invT: m.invT,
+      sigmaMin: m.sigmaMin,
+      foldKind: m.foldKind,
+      foldInvW: m.foldInvW,
+      foldSigma: m.foldSigma,
+      baseIndex: m.baseIndex,
+      get invM() {
+        counter.n++;
+        return proxiedInvM;
+      },
+    };
+  });
+  return { de: { ...de, maps, beamWidth }, counter, fineCounter };
 }
 
 // -----------------------------------------------------------------------
