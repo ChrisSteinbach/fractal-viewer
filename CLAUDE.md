@@ -22,6 +22,7 @@ npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing (fr-q1f8 spike) — pins surface-de-gpu.ts to the CPU estimator; add --display=:0 for real-driver timing
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
@@ -121,7 +122,29 @@ and UI**, so the interesting math is unit-tested without a browser:
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
     Measured verdict + numbers in the module doc.
-  - `surface-grid.ts` — empty-space-skipping grid (fr-55r5 part 2): cube of
+  - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (fr-q1f8, brief §3.7
+    spike, gated in by fr-ck0w's occupancy verdict): mirrors
+    `estimateDistance`'s refine=false fold path term for term (the
+    estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
+    discipline, source-generated per config — frontier width,
+    workgroup-SHARED (banked, transposed) vs private frontier storage,
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff) — plus a
+    bounded-dispatch march mode (erosion-repro's march loop, host-compacted
+    active list between passes). Pinned against the CPU oracle by
+    `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
+    real-driver timing via `--display=:0`); shared-vs-private measured
+    bit-exact, width-12 agreement at f32 noise on mandelboxKifs.
+    MEASURED VERDICT (Iris Xe, real driver): the compute megakernel
+    traces mandelboxKifs at width 12 in 49µs/ray (private frontier,
+    stage 2 off) where the WebGL fragment tracer was unbounded
+    (>1300µs/ray, fr-ck0w) — the width superlinearity is GONE in
+    compute (w12/w4 ≈ 3.3x), compiles in ~0.1-0.3s vs the ~25s GLSL
+    link cliff, and §3.7's specific mechanism is REFUTED: the
+    workgroup-shared frontier is 2-3.3x SLOWER than private arrays at
+    equal workgroup size, and stage-2 B&B costs 1.6x GPU-side — the
+    winning config is the simplest one, the shipped GLSL body's exact
+    structure. Bench-only consumer until the integration program lands —
+    the app's tracer is untouched.
     conservative distance floors (cell centers, cutoff `cellRadius` — at/above
     the cutoff the return is the exact full-descent value, below it 0 is the
     only safe store — f32-FLOORED so quantization never rounds a bound up),
