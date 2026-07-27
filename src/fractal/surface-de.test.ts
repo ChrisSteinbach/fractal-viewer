@@ -868,18 +868,24 @@ describe("sector sweep at the wedge boundaries", () => {
     // the sweep, while the expansion's COMPOSED matrices carried per-copy
     // rounding that scattered the tie — so the two fill the beam with
     // different (equally certified) branches and their estimates part
-    // company. Measured at order 5: 21 of 400 axis probes differ, by up to
-    // 1.25e-2 in either direction, with both estimators valid against the
-    // attractor throughout. Off the axis, where nothing ties, the two agree
-    // to 1e-15 (the suites above).
+    // company, with both estimators valid against the attractor
+    // throughout. Off the axis, where nothing ties, the two agree to 1e-15
+    // (the suites above). Probes sweep the segment of the axis inside the
+    // bounding ball: outside it, fr-pjqw's tighter fitted sphere bound
+    // DOMINATES the returned max on both sides, which masks the tie noise
+    // this test exists to pin (the original origin-ball sweep of
+    // z in [-2, 2] measured 21/400 differing; the ball-clipped sweep keeps
+    // the phenomenon observable regardless of how tight the fit gets).
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 5,
       axis: "z",
     });
     const reference = expandedReference(de);
+    const zLo = de.boundCenter[2] - de.boundingRadius;
+    const zHi = de.boundCenter[2] + de.boundingRadius;
     let differing = 0;
     for (let i = 0; i < 400; i++) {
-      const p: Vec3 = [0, 0, -2 + (4 * i) / 399];
+      const p: Vec3 = [0, 0, zLo + ((zHi - zLo) * i) / 399];
       const gap = Math.abs(
         estimateDistanceRefined(de, p) - estimateDistanceRefined(reference, p),
       );
@@ -2569,5 +2575,135 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
       expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
     }
     expect(deepVoidProbes).toBeGreaterThan(20);
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-pjqw: PROBE-FIT CENTERED BOUNDING BALL. Shipped presets are authored
+// near the origin, so the origin ball wins the build's tightness
+// comparison on every one of them and the centered path never runs there
+// (measured: every beam-harness system keeps its historical R). These
+// tests exist to exercise the centered path deliberately — off-center
+// systems (Surprise-Me rolls translate freely) are where it pays.
+// -----------------------------------------------------------------------
+
+describe("probe-fit centered bounding ball (fr-pjqw)", () => {
+  /** Translate an IFS so its attractor moves by exactly `d`: the map
+   * x -> M(x − d) + t + d has translation t + d − M·d and the same linear
+   * part, and its attractor is the original's shifted by `d`. */
+  function translated(transforms: Transform[], d: Vec3): Transform[] {
+    return transforms.map((t): Transform => {
+      const m = composeAffine(t).m;
+      const md: Vec3 = [
+        m[0] * d[0] + m[1] * d[1] + m[2] * d[2],
+        m[3] * d[0] + m[4] * d[1] + m[5] * d[2],
+        m[6] * d[0] + m[7] * d[1] + m[8] * d[2],
+      ];
+      return {
+        ...t,
+        position: [
+          (t.position?.[0] ?? 0) + d[0] - md[0],
+          (t.position?.[1] ?? 0) + d[1] - md[1],
+          (t.position?.[2] ?? 0) + d[2] - md[2],
+        ],
+      };
+    });
+  }
+
+  it("keeps a far-translated system's ball tight instead of inflating it to reach the origin", () => {
+    const d: Vec3 = [5, -3, 4];
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const shifted = buildSurfaceDE(translated(sierpinskiTetrahedron(), d));
+    // The origin ball would need radius ~|d| + R (~8.8); the fit stays at
+    // the attractor's own size and sits on the shifted attractor.
+    expect(shifted.boundingRadius).toBeLessThan(Math.hypot(...d));
+    expect(shifted.boundingRadius).toBeLessThan(de.boundingRadius * 1.35);
+    const centerOffset = Math.hypot(
+      shifted.boundCenter[0] - d[0],
+      shifted.boundCenter[1] - d[1],
+      shifted.boundCenter[2] - d[2],
+    );
+    expect(centerOffset).toBeLessThan(shifted.boundingRadius);
+  });
+
+  it("keeps a far-translated system's estimates valid and un-degraded by |d|", () => {
+    const d: Vec3 = [5, -3, 4];
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const shiftedTransforms = translated(sierpinskiTetrahedron(), d);
+    const shifted = buildSurfaceDE(shiftedTransforms);
+    const cloud = runChaosGame(shiftedTransforms, 300000, mulberry32(1235));
+    const rng = mulberry32(1234);
+    const R = de.boundingRadius;
+    for (let i = 0; i < 60; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const q: Vec3 = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+      const a = estimateDistanceRefined(de, p);
+      const b = estimateDistanceRefined(shifted, q);
+      // Still a lower bound at the translated query...
+      expect(b).toBeLessThanOrEqual(nearestDistance(cloud, q) + 1e-6);
+      // ...and within the two BALLS' own shape difference of the
+      // original's estimate — Ritter's few-percent radius slack plus the
+      // fitted center's offset, measured ~0.18R worst here. The origin
+      // ball would have degraded these estimates by |d|-scale slack
+      // (whole units at |d| ~ 7), which this band cleanly excludes.
+      expect(b).toBeGreaterThan(a - 0.25 * R);
+    }
+  });
+
+  it("keeps descendFold a valid lower bound under a hand-centered ball", () => {
+    // No shipped fold system picks a fitted center (fold attractors hug
+    // the origin), so exercise the fold body's centered arithmetic
+    // directly: any ball enclosing ball(0, R) is a valid bound ball, so
+    // shifting the center by c and growing the radius by |c| must keep
+    // every estimate a lower bound. The stage-2 skip data is rebuilt for
+    // the new center exactly as buildSurfaceDE derives it.
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const c: Vec3 = [0.11, -0.07, 0.09];
+    const grown = de.boundingRadius + Math.hypot(...c);
+    const maps = de.maps.map((m): SurfaceDEMap => {
+      const tpx = m.invT[0] - c[0];
+      const tpy = m.invT[1] - c[1];
+      const tpz = m.invT[2] - c[2];
+      const tn = Math.hypot(tpx, tpy, tpz);
+      return {
+        ...m,
+        invTNorm: tn,
+        bnbDir:
+          tn > 0
+            ? [
+                (m.invM[0] * tpx + m.invM[3] * tpy + m.invM[6] * tpz) / tn,
+                (m.invM[1] * tpx + m.invM[4] * tpy + m.invM[7] * tpz) / tn,
+                (m.invM[2] * tpx + m.invM[5] * tpy + m.invM[8] * tpz) / tn,
+              ]
+            : [0, 0, 0],
+      };
+    });
+    const centered: SurfaceDE = {
+      ...de,
+      maps,
+      boundCenter: c,
+      boundingRadius: grown,
+      escapeRadius: 2 * grown,
+    };
+    const cloud = runChaosGame(transforms, 300000, mulberry32(55));
+    const rng = mulberry32(56);
+    for (let i = 0; i < 150; i++) {
+      const base = Math.floor(rng() * cloud.count) * 3;
+      const p: Vec3 = [
+        cloud.positions[base] + (rng() - 0.5) * 0.3,
+        cloud.positions[base + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[base + 2] + (rng() - 0.5) * 0.3,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(centered, p)).toBeLessThanOrEqual(nearest + 1e-6);
+      expect(estimateDistanceRefined(centered, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
   });
 });

@@ -176,6 +176,14 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform vec2 uSymStep;
   /** Bounding-sphere radius R of the RAW attractor (pre final transform). */
   uniform float uBoundingRadius;
+  /** Center of the raw attractor's bounding ball (fr-pjqw: the probe-fit
+   * near-smallest enclosing ball when it beats the origin ball, else the
+   * origin). Every attractor-sphere term below reads
+   * length(x - uBoundCenter) - uBoundingRadius; u-space fold geometry and
+   * the uVisibleRadius gates stay origin-anchored. The escape-time
+   * variant never reads it (its uBoundingRadius is that mode's own
+   * bailout radius). */
+  uniform vec3 uBoundCenter;
   /** Descent stops once the greedy image escapes this (2R): deeper
    * certificates cannot improve the min. */
   uniform float uEscapeRadius;
@@ -322,7 +330,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       for (int j = 0; j < uMapCount; j++) {
         vec3 jImg = uInvM[j] * sImg + uInvT[j];
-        inner = min(inner, uSigmaMin[j] * (length(jImg) - uBoundingRadius));
+        inner = min(
+          inner,
+          uSigmaMin[j] * (length(jImg - uBoundCenter) - uBoundingRadius)
+        );
       }
     }
     return childScale * max(r - uBoundingRadius, inner);
@@ -519,7 +530,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
 #if SURFACE_FOLDS
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = uFinalInvM * p + uFinalInvT;
-    float startR = length(q);
+    float startR = length(q - uBoundCenter);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     // The oracle's bailBelow (fr-55r5): -1e30 disables the test.
@@ -768,7 +779,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
                 img = uInvM[j] * pre + uInvT[j];
                 branchSigma = fp.z * sfSigma;
               }
-              float r = length(img);
+              float r = length(img - uBoundCenter);
               float childScale = pScale * branchSigma;
               float key = pScale * (r - uBoundingRadius);
               if (candFloor > 0.0 && candFloor > key) {
@@ -886,7 +897,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
 #else
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = uFinalInvM * p + uFinalInvT;
-    float startR = length(q);
+    float startR = length(q - uBoundCenter);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     // The value below which this descent may stop (the oracle's bailBelow).
@@ -992,7 +1003,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
           }
           for (int j = 0; j < uMapCount; j++) {
             vec3 img = uInvM[j] * sQ + uInvT[j];
-            float r = length(img);
+            float r = length(img - uBoundCenter);
             float key = pScale * (r - uBoundingRadius);
             float childScale = pScale * uSigmaMin[j];
             float cert = childScale * (r - uBoundingRadius);
@@ -1385,7 +1396,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
               img = uInvM[j] * pre + uInvT[j];
               branchSigma = fp.z * sfSigma;
             }
-            float r = length(img);
+            float r = length(img - uBoundCenter);
             float candFloor = pFloor;
             if (branchRd > 0.0) {
               candFloor = max(candFloor, pScale * absW * branchRd);
@@ -1428,7 +1439,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
-    return (length(q) - uBoundingRadius) * uFinalSigmaMin;
+    return (length(q - uBoundCenter) - uBoundingRadius) * uFinalSigmaMin;
   }
 #else
   float surfaceDE(
@@ -1439,7 +1450,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
     out float sheets
   ) {
     vec3 q = uFinalInvM * p + uFinalInvT;
-    float startR = length(q);
+    float startR = length(q - uBoundCenter);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     vec3 aQ = q;
@@ -1539,7 +1550,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
           }
           for (int j = 0; j < uMapCount; j++) {
             vec3 img = uInvM[j] * sQ + uInvT[j];
-            float r = length(img);
+            float r = length(img - uBoundCenter);
             float key = pScale * (r - uBoundingRadius);
             float childScale = pScale * uSigmaMin[j];
             float cert = childScale * (r - uBoundingRadius);
@@ -1836,7 +1847,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       vec3 q = uLensInvM * pre + uLensInvT;
       float factor = absW * sfSigma * uLensParams.w;
-      float rq = length(q);
+      float rq = length(q - uBoundCenter);
       // The core never undercuts its own depth-0 sphere bound, so a branch
       // whose scaled sphere certificate reaches the running min cannot
       // advance it — an exact skip.
@@ -1960,7 +1971,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
       }
       vec3 q = uLensInvM * pre + uLensInvT;
       float factor = absW * sfSigma * uLensParams.w;
-      float rq = length(q);
+      float rq = length(q - uBoundCenter);
       if (factor * (rq - uBoundingRadius) >= best) {
         continue;
       }
@@ -2395,6 +2406,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uSymAxis: { value: 1 },
       uSymStep: { value: new THREE.Vector2(1, 0) },
       uBoundingRadius: { value: 1 },
+      uBoundCenter: { value: new THREE.Vector3() },
       uEscapeRadius: { value: 2 },
       uMaxDepth: { value: 0 },
       uStepScale: { value: 1 },
@@ -2538,6 +2550,7 @@ export function setSurfaceSystem(
     de.symmetry.stepSin,
   );
   u.uBoundingRadius.value = de.boundingRadius;
+  (u.uBoundCenter.value as THREE.Vector3).set(...de.boundCenter);
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
