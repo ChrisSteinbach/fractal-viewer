@@ -2093,13 +2093,20 @@ function descendFold(
             let iy: number;
             let iz: number;
             let branchSigma: number;
-            let branchRd = 0;
+            // The candidate's floor — its chain's floor, raised below by
+            // the branch's own region certificate — is knowable BEFORE the
+            // child transform (fr-kidj stage 1: branchRd needs only the
+            // branch decode), so the floor-vs-best prune runs first and
+            // only surviving branches pay the inverse application.
+            let candFloor = pFloor;
             if (kind === SURFACE_FOLD_NONE) {
+              if (candFloor > 0 && candFloor >= best) continue;
               ix = im[0] * sX + im[1] * sY + im[2] * sZ + it[0];
               iy = im[3] * sX + im[4] * sY + im[5] * sZ + it[1];
               iz = im[6] * sX + im[7] * sY + im[8] * sZ + it[2];
               branchSigma = map.sigmaMin;
             } else {
+              let branchRd: number;
               if (
                 kind === SURFACE_FOLD_SPHEREFOLD ||
                 (kind === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
@@ -2225,6 +2232,15 @@ function descendFold(
                       ? sfRd
                       : sfSigma * boxRd;
               }
+              if (branchRd > 0) {
+                const flr = pScale * absW * branchRd;
+                if (flr > candFloor) candFloor = flr;
+              }
+              // Floor-vs-best prune: every fold the candidate's subtree
+              // could ever contribute is >= its floor, which already
+              // cannot advance the min. Pruned branches never reach the
+              // inverse application below.
+              if (candFloor > 0 && candFloor >= best) continue;
               ix = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
               iy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
               iz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
@@ -2232,17 +2248,6 @@ function descendFold(
             }
             const r = Math.sqrt(ix * ix + iy * iy + iz * iz);
             const childScale = pScale * branchSigma;
-            // Floor first: the chain's floor raised by this branch's own
-            // region certificate.
-            let candFloor = pFloor;
-            if (branchRd > 0) {
-              const flr = pScale * absW * branchRd;
-              if (flr > candFloor) candFloor = flr;
-            }
-            // Floor-vs-best prune: every fold the candidate's subtree
-            // could ever contribute is >= its floor, which already
-            // cannot advance the min.
-            if (candFloor > 0 && candFloor >= best) continue;
             let key = pScale * (r - R);
             if (candFloor > 0 && candFloor > key) key = candFloor;
             let cert = childScale * (r - R);

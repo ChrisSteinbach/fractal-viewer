@@ -586,11 +586,20 @@ const SURFACE_FRAGMENT = /* glsl */ `
             for (int b = 0; b < branchCount; b++) {
               vec3 img;
               float branchSigma;
-              float branchRd = 0.0;
+              // The candidate's floor is knowable BEFORE the child
+              // transform (fr-kidj stage 1: branchRd needs only the branch
+              // decode), so the floor-vs-best prune runs first and only
+              // surviving branches pay the inverse application — the
+              // oracle's exact order.
+              float candFloor = pFloor;
               if (kind == 0) {
+                if (candFloor > 0.0 && candFloor >= best) {
+                  continue;
+                }
                 img = uInvM[j] * sQ + uInvT[j];
                 branchSigma = uSigmaMin[j];
               } else {
+                float branchRd;
                 if (kind == 2 || (kind == 3 && b % 27 == 0)) {
                   // (Re)compute the spherefold branch this b enters, with
                   // its distance to the branch's OUTPUT region.
@@ -661,23 +670,20 @@ const SURFACE_FRAGMENT = /* glsl */ `
                   float boxRd = length(dd);
                   branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
                 }
+                if (branchRd > 0.0) {
+                  candFloor = max(candFloor, pScale * absW * branchRd);
+                }
+                // Floor-vs-best prune: the subtree's every fold is >= its
+                // floor, which already cannot advance the min. Pruned
+                // branches never reach the inverse application below.
+                if (candFloor > 0.0 && candFloor >= best) {
+                  continue;
+                }
                 img = uInvM[j] * pre + uInvT[j];
                 branchSigma = fp.z * sfSigma;
               }
               float r = length(img);
               float childScale = pScale * branchSigma;
-              // The candidate's floor: its chain's floor raised by this
-              // branch's own region certificate; key and certificate are
-              // never below it.
-              float candFloor = pFloor;
-              if (branchRd > 0.0) {
-                candFloor = max(candFloor, pScale * absW * branchRd);
-              }
-              // Floor-vs-best prune: the subtree's every fold is >= its
-              // floor, which already cannot advance the min.
-              if (candFloor > 0.0 && candFloor >= best) {
-                continue;
-              }
               float key = pScale * (r - uBoundingRadius);
               if (candFloor > 0.0 && candFloor > key) {
                 key = candFloor;
