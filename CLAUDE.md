@@ -108,12 +108,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
     Measured verdict + numbers in the module doc.
   - `surface-grid.ts` — empty-space-skipping grid (fr-55r5 part 2): cube of
-    conservative distance floors (`estimateDistanceRefined` at cell
-    centers, cutoff `cellRadius` — at/above the cutoff the return is the
-    exact full-descent value, below it 0 is the only safe store —
-    f32-FLOORED so quantization never rounds a bound up). The 3D march
-    samples it before paying a descent. Module doc carries the validity
-    chain; 3D only (4D's live rotor/slice would invalidate a grid per
+    conservative distance floors (cell centers, cutoff `cellRadius` — at/above
+    the cutoff the return is the exact full-descent value, below it 0 is the
+    only safe store — f32-FLOORED so quantization never rounds a bound up),
+    priced per-system by `surfaceGridEstimator` (fr-aj4w: `"plain"` for fold
+    systems — the estimator the fold GLSL actually marches, measured ~1.5x
+    cheaper with near-identical floors — `"refined"` for affine). The 3D march
+    samples it before paying a descent; `pickSurfaceGridResolution` sizes the
+    build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
+    fit a 3s budget (floored at 32, never skipped). Module doc carries the
+    validity chain; 3D only (4D's live rotor/slice would invalidate a grid per
     frame).
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
@@ -252,12 +256,15 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `flame-perf.ts` — opt-in flame throughput diagnostics (`?flameperf`).
   - `voxel-worker.ts` / `voxel-worker-core.ts` — solid render worker (transfer only).
   - `surface-grid-worker.ts` / `surface-grid-worker-core.ts` /
-    `surface-grid-client.ts` — empty-space-grid build worker (fr-55r5
-    part 2): one-shot `buildSurfaceGrid` request/response (transfer),
-    latest-wins-by-id client with `settle()` for the offline exporter. One
-    request per 3D surface-session enter (the session freezes its DE), NO
-    sync fallback — a lost worker degrades to gridless (correct, slower)
-    marching.
+    `surface-grid-client.ts` — empty-space-grid build worker (fr-55r5 part 2):
+    one-shot `buildSurfaceGrid` request/response (transfer), latest-wins-by-id
+    client with `settle()` for the offline exporter. One request per 3D
+    surface-session enter (the session freezes its DE), NO sync fallback — a
+    lost worker degrades to gridless (correct, slower) marching. Request
+    `resolution` is a ceiling (fr-aj4w): the worker times a measured pilot slab
+    and downshifts through a 64/48/32 ladder to stay under a 3s budget, floored
+    at 32, never skipped; the result's own `resolution`/`halfExtent` are what
+    was actually built.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
