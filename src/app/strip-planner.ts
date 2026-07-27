@@ -38,10 +38,12 @@
  * measurement it returns calibrates every strip after it. */
 export const STRIP_PROBE_FRACTION = 1 / 256;
 
-/** Measured GPU time (ms) each strip aims for. Low enough to stay far from
- * any watchdog and to keep the async settle path's frames responsive; high
- * enough that `gl.finish()` pipeline bubbles stay a small fraction of the
- * work. */
+/** Measured GPU time (ms) each strip aims for by default — the settle/
+ * capture tiers' size. Low enough to stay far from any watchdog and to keep
+ * the async settle path's frames responsive; high enough that
+ * forced-completion pipeline bubbles stay a small fraction of the work.
+ * The preview tier plans against a smaller target (fr-du81) so its strips
+ * interleave with a live drag — passed per planner via `targetMs`. */
 export const STRIP_TARGET_MS = 75;
 
 /** Per-step growth cap on strip rows. A strip measuring near-zero (a light
@@ -54,6 +56,12 @@ export const STRIP_MAX_GROWTH = 8;
 export interface StripPlanner {
   /** True once every row has been handed out. */
   readonly done: boolean;
+  /** Rows handed out so far. Callers render every strip the moment it is
+   * planned, so this doubles as "rows traced" — the numerator a superseded
+   * job extrapolates its full-frame cost from (fr-du81). */
+  readonly plannedRows: number;
+  /** The full row count this planner tiles. */
+  readonly totalRows: number;
   /**
    * The next strip to render, sized from `prevMs` — the measured cost of
    * the PREVIOUS strip (null for the first call, or when the caller could
@@ -64,8 +72,12 @@ export interface StripPlanner {
 }
 
 /** Create a planner over `totalRows` rows (a non-positive total is
- * immediately done). */
-export function createStripPlanner(totalRows: number): StripPlanner {
+ * immediately done), sizing each strip toward `targetMs` of measured GPU
+ * time. */
+export function createStripPlanner(
+  totalRows: number,
+  targetMs: number = STRIP_TARGET_MS,
+): StripPlanner {
   const total = Math.max(0, Math.floor(totalRows));
   let y = 0;
   let lastRows = 0;
@@ -73,6 +85,14 @@ export function createStripPlanner(totalRows: number): StripPlanner {
   return {
     get done(): boolean {
       return y >= total;
+    },
+
+    get plannedRows(): number {
+      return y;
+    },
+
+    get totalRows(): number {
+      return total;
     },
 
     next(prevMs: number | null): { y: number; rows: number } | null {
@@ -83,7 +103,7 @@ export function createStripPlanner(totalRows: number): StripPlanner {
       } else {
         const scale =
           prevMs !== null && prevMs > 0
-            ? Math.min(STRIP_TARGET_MS / prevMs, STRIP_MAX_GROWTH)
+            ? Math.min(targetMs / prevMs, STRIP_MAX_GROWTH)
             : 1;
         rows = Math.max(1, Math.round(lastRows * scale));
       }

@@ -100,6 +100,31 @@ describe("createStripPlanner", () => {
     expect(planner.next(null)).toBeNull();
   });
 
+  it("sizes strips against a custom targetMs when one is given", () => {
+    const totalRows = 6400;
+    const targetMs = 10;
+    const planner = createStripPlanner(totalRows, targetMs);
+    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
+    planner.next(null);
+
+    // A strip measuring exactly the custom target keeps its size — the
+    // default 75ms target would have grown it 7.5x here.
+    expect(planner.next(targetMs)).toEqual({ y: probeRows, rows: probeRows });
+  });
+
+  it("reports planned and total rows as strips are handed out", () => {
+    const totalRows = 6400;
+    const planner = createStripPlanner(totalRows);
+    expect(planner.totalRows).toBe(totalRows);
+    expect(planner.plannedRows).toBe(0);
+
+    const probe = planner.next(null)!;
+    expect(planner.plannedRows).toBe(probe.rows);
+
+    const second = planner.next(1)!;
+    expect(planner.plannedRows).toBe(probe.rows + second.rows);
+  });
+
   it("floors a fractional totalRows before tiling", () => {
     const planner = createStripPlanner(10.9);
     const strips: { y: number; rows: number }[] = [];

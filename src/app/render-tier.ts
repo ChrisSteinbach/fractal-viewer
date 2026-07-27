@@ -78,10 +78,17 @@ export interface RenderTierScheduler {
  * invalidates every frame and therefore NEVER reaches the settle tier, now
  * tumbles at up to full resolution instead of being pinned at 0.3 forever.
  * Below it lie the rungs a phone on a 24-map system needs; 0.15 is a
- * further 4x fewer rays than the old fixed floor.
+ * further 4x fewer rays than the old fixed floor, and the 0.1 / 0.07
+ * emergency rungs (fr-du81) exist for the fold-frontier DEs (fr-5rvk),
+ * whose per-pixel cost runs 10^2-10^4x an affine descent: on a mid GPU
+ * the 0.15 rung still means minutes of strip-paced fill-in, and each
+ * emergency step buys ~2x fewer rays AND a shallower depth clamp on top
+ * ({@link previewMaxDepth} couples depth to scale), which is where the
+ * real fold savings live. Light systems never reach them — the sustain
+ * ladder only walks down under sustained over-budget measurements.
  */
 export const PREVIEW_SCALE_RUNGS = [
-  1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15,
+  1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15, 0.1, 0.07,
 ] as const;
 
 /** The rung every surface session starts on — fr-5ne3's shipped fixed
@@ -211,11 +218,11 @@ export const PREVIEW_TARGET_MS = 33;
 /**
  * EMA below this (ms) counts toward stepping UP. The dead band it opens
  * with {@link PREVIEW_TARGET_MS} is wide (2.75x) BY CONSTRUCTION, not by
- * taste: one rung up multiplies the ray count by as much as 2.15x (see
+ * taste: one rung up multiplies the ray count by as much as 2.25x (see
  * {@link PREVIEW_SCALE_RUNGS}) and raises the depth clamp on top of that,
  * so a step-up threshold any closer to the budget would land the very next
  * frame back in step-down territory — the flap this band exists to
- * prevent. At 12ms the worst-case step-up lands near 26ms, still inside
+ * prevent. At 12ms the worst-case step-up lands near 27ms, still inside
  * budget with room for the extra descent levels.
  */
 export const PREVIEW_UP_MS = 12;

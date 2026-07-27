@@ -63,11 +63,11 @@ describe("previewMaxDepth", () => {
     const depths = PREVIEW_SCALE_RUNGS.map((scale) =>
       previewMaxDepth(20, scale),
     );
-    expect(depths).toEqual([20, 18, 16, 13, 10, 10, 9]);
+    expect(depths).toEqual([20, 18, 16, 13, 10, 10, 9, 8, 7]);
   });
 
   it("keeps the 4-level floor even at the coarsest rung", () => {
-    expect(previewMaxDepth(6, 0.15)).toBe(4);
+    expect(previewMaxDepth(6, 0.07)).toBe(4);
   });
 });
 
@@ -176,8 +176,8 @@ describe("createPreviewGovernor", () => {
   it("drops straight to the floor rung on one catastrophic trace", () => {
     const governor = createPreviewGovernor();
     governor.sample(10);
-    expect(governor.sample(300)).toBe(0.15);
-    expect(governor.scale).toBe(0.15);
+    expect(governor.sample(300)).toBe(0.07);
+    expect(governor.scale).toBe(0.07);
   });
 
   it("panics from the top of the ladder without walking down it", () => {
@@ -188,7 +188,7 @@ describe("createPreviewGovernor", () => {
 
     // A close-up that suddenly costs a quarter second is the last warning
     // before the GPU watchdog, not a data point to average.
-    expect(governor.sample(300)).toBe(0.15);
+    expect(governor.sample(300)).toBe(0.07);
   });
 
   it("panics even while the hold-off from a previous step is still running", () => {
@@ -196,7 +196,7 @@ describe("createPreviewGovernor", () => {
     governor.sample(60);
     for (let i = 0; i < 12; i++) governor.sample(60);
     expect(governor.scale).toBe(0.22);
-    expect(governor.sample(400)).toBe(0.15);
+    expect(governor.sample(400)).toBe(0.07);
   });
 
   it("ignores a nonsensical measurement entirely", () => {
@@ -211,7 +211,7 @@ describe("createPreviewGovernor", () => {
     const governor = createPreviewGovernor();
     governor.sample(10);
     governor.sample(300);
-    expect(governor.scale).toBe(0.15);
+    expect(governor.scale).toBe(0.07);
 
     governor.reset();
     expect(governor.scale).toBe(PREVIEW_START_SCALE);
@@ -234,10 +234,10 @@ describe("createPreviewGovernor", () => {
     const governor = createPreviewGovernor();
     // A mandelbox pair's static weight is ~243x (81 branches x 12/4 wide
     // frontier) — far past what any scale rung can buy back. The ladder
-    // starts at the floor; depth clamp, march budget and settle strips
+    // starts at the floor; depth clamp, march budget and strip pacing
     // carry the rest.
     governor.reset(243);
-    expect(governor.scale).toBe(0.15);
+    expect(governor.scale).toBe(0.07);
   });
 
   it("reset(1) and reset() keep the shipped anchor entry bit for bit", () => {
@@ -251,13 +251,13 @@ describe("createPreviewGovernor", () => {
   it("a weighted entry can still climb once traces measure fast", () => {
     const governor = createPreviewGovernor();
     governor.reset(243);
-    expect(governor.scale).toBe(0.15);
+    expect(governor.scale).toBe(0.07);
     governor.sample(5);
     // 2500ms of up-sustain at 16ms minimum accrual per fast trace.
-    for (let i = 0; i < 200 && governor.scale === 0.15; i++) {
+    for (let i = 0; i < 200 && governor.scale === 0.07; i++) {
       governor.sample(5);
     }
-    expect(governor.scale).toBe(0.22);
+    expect(governor.scale).toBe(0.1);
   });
 });
 
