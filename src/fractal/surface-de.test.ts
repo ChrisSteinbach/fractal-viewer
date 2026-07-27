@@ -101,8 +101,10 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
   const { order, axis } = de.symmetry;
   const maps: SurfaceDEMap[] = [];
   for (let k = 0; k < order; k++) {
-    const rotT = transpose3(symmetryRotation(axis, (2 * Math.PI * k) / order));
+    const rot = symmetryRotation(axis, (2 * Math.PI * k) / order);
+    const rotT = transpose3(rot);
     for (const base of de.maps) {
+      const [gx, gy, gz] = base.bnbDir;
       maps.push({
         invM: mulMat3(base.invM, rotT),
         invT: base.invT,
@@ -111,6 +113,17 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
         foldInvW: base.foldInvW,
         foldSigma: base.foldSigma,
         baseIndex: base.baseIndex,
+        // Rotations leave singular values (and invT) alone, so the
+        // composed copy's stage-2 scalars are the base map's exactly;
+        // the directional bound rotates with the matrix:
+        // (invM·rotT)^T · d = rot · (invM^T · d).
+        invMSigmaMin: base.invMSigmaMin,
+        invTNorm: base.invTNorm,
+        bnbDir: [
+          rot[0] * gx + rot[1] * gy + rot[2] * gz,
+          rot[3] * gx + rot[4] * gy + rot[5] * gz,
+          rot[6] * gx + rot[7] * gy + rot[8] * gz,
+        ],
       });
     }
   }
