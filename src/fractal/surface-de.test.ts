@@ -1,9 +1,16 @@
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
+  DEPTH_RESOLUTION,
   estimateDistance,
   estimateDistanceRefined,
+  MAX_DESCENT_DEPTH,
   singularValues3,
+  SPHEREFOLD_LIPSCHITZ,
+  SURFACE_FOLD_BOXFOLD,
+  SURFACE_FOLD_MANDELBOX,
+  SURFACE_FOLD_NONE,
+  SURFACE_FOLD_SPHEREFOLD,
   transformSigmas,
 } from "./surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "./surface-de";
@@ -1800,6 +1807,401 @@ describe("SurfaceDEMap inverse contract", () => {
       expect(back[0]).toBeCloseTo(point[0], 10);
       expect(back[1]).toBeCloseTo(point[1], 10);
       expect(back[2]).toBeCloseTo(point[2], 10);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-5rvk: PURE-FOLD MAPS — the fold-branch sweep. A map whose variation
+// list is exactly one active fold-family entry (boxfold/spherefold/
+// mandelbox) decomposes into its inverse BRANCHES instead of gating the
+// mode out; see the module doc's "PURE-FOLD MAPS" section for the validity
+// argument `descendFold` implements. `map()` (above) is reused throughout
+// for the eligibility-table tests, exactly as the pre-existing eligibility
+// suite uses it.
+// -----------------------------------------------------------------------
+
+/** Two-map pure-boxfold system: both maps carry exactly one active boxfold
+ * variation and nothing else — isometric branches only (sigma_c = 1 on
+ * every one of the 27), shared by the fold-branch soundness tests below. */
+function pureBoxfoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [{ type: "boxfold", weight: 1 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    },
+  ];
+}
+
+/** Two-map pure-mandelbox system: both maps carry exactly one active
+ * mandelbox variation (`sphereFold . boxFold`), the widest branch count (81)
+ * and the spherefold's query-dependent mid-branch sigma. */
+function pureMandelboxPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, -0.15, 0.1],
+      rotation: [0.2, 0.4, 0],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "mandelbox", weight: 1.1 }],
+    },
+    {
+      id: 1,
+      position: [-0.25, 0.2, -0.2],
+      rotation: [0.1, 0, 0.3],
+      scale: [0.22, 0.22, 0.22],
+      variations: [{ type: "mandelbox", weight: 0.9 }],
+    },
+  ];
+}
+
+describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => {
+  it("classifies a pure-boxfold map (plus a plain affine map) as not ineligible", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({ variations: [{ type: "boxfold", weight: 1 }] }),
+      map({ id: 1 }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("keeps a blended fold+linear map ineligible, naming it a variations map — blends stay out forever", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        variations: [
+          { type: "mandelbox", weight: 1.2 },
+          { type: "linear", weight: 0.25 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 uses variations"]);
+  });
+
+  it("keeps a map blending two fold variations ineligible — a sum of folds is not a composition", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        variations: [
+          { type: "boxfold", weight: 1 },
+          { type: "spherefold", weight: 0.5 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 uses variations"]);
+  });
+
+  it("treats a weight-0 extra variation as inert alongside a pure-fold entry", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        scale: [0.2, 0.2, 0.2],
+        variations: [
+          { type: "mandelbox", weight: 1 },
+          { type: "linear", weight: 0 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("gates a spherefold map on the composite Lipschitz bound, not the affine scale alone", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        scale: [0.3, 0.3, 0.3],
+        variations: [{ type: "spherefold", weight: 1.2 }],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 does not contract"]);
+  });
+
+  it("lets a boxfold map at the same weight and scale contract, since its Lipschitz bound is 1 not 4", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        scale: [0.3, 0.3, 0.3],
+        variations: [{ type: "boxfold", weight: 1.2 }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("lets a small fold weight rescue an affine part that alone would expand", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        scale: [5, 5, 5],
+        variations: [{ type: "boxfold", weight: 0.1 }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("keeps a pure-fold final transform ineligible — the lens applies once, no branch descent", () => {
+    const analysis = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["final transform uses variations"]);
+  });
+});
+
+describe("buildSurfaceDE fold fields and depth sizing (fr-5rvk)", () => {
+  it("gives a plain affine map the inert fold defaults and a pure-fold map its signed weight and branch kind", () => {
+    const transforms: Transform[] = [
+      map(),
+      map({
+        id: 1,
+        scale: [0.16, 0.16, 0.16],
+        variations: [{ type: "mandelbox", weight: -1.25 }],
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    const [affineMap, foldMap] = de.maps;
+    expect(affineMap.foldKind).toBe(SURFACE_FOLD_NONE);
+    expect(affineMap.foldInvW).toBe(1);
+    expect(affineMap.foldSigma).toBe(affineMap.sigmaMin);
+    expect(foldMap.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
+    expect(foldMap.sigmaMin).toBe(0.16);
+    expect(foldMap.foldInvW).toBe(1 / -1.25);
+    expect(foldMap.foldSigma).toBe(Math.abs(-1.25) * 0.16);
+  });
+
+  it("sizes maxDepth from the slowest fold branch factor, not the affine sigmaMin", () => {
+    const transforms: Transform[] = [
+      map({ scale: [0.2, 0.2, 0.2] }),
+      map({
+        id: 1,
+        scale: [0.24, 0.24, 0.24],
+        variations: [{ type: "spherefold", weight: 0.9 }],
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    // The spherefold branch factor (|w| * sigmaMin * SPHEREFOLD_LIPSCHITZ)
+    // beats the affine map's plain sigmaMin (0.2), so it drives the cap.
+    const slowest = 0.9 * 0.24 * SPHEREFOLD_LIPSCHITZ;
+    const expected = Math.min(
+      MAX_DESCENT_DEPTH,
+      Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
+    );
+    expect(de.maxDepth).toBe(expected);
+  });
+});
+
+describe("estimateDistance / estimateDistanceRefined validity on a pure-boxfold system (fr-5rvk)", () => {
+  it("keeps both estimators below the brute-force nearest cloud distance, jittered and uniform probes alike", () => {
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    expect(de.maps[0].foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(de.maps[1].foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101));
+    const R = de.boundingRadius;
+    const rng = mulberry32(202);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 100; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+      ]);
+    }
+    for (let i = 0; i < 50; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    for (const p of probes) {
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays within 0.02R of the attractor for points sampled exactly on it (no erosion)", () => {
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101));
+    const R = de.boundingRadius;
+    for (let i = 0; i < 50; i++) {
+      const idx = (i * 337) % cloud.count;
+      const p: Vec3 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ];
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(0.02 * R);
+    }
+  });
+
+  it("has zero void false hits: the refined estimate never dips below 0.01R once the true distance clears 0.15R", () => {
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101));
+    const R = de.boundingRadius;
+    const rng = mulberry32(303);
+    let voidProbes = 0;
+    for (let i = 0; i < 150; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      if (nearest <= 0.15 * R) continue;
+      voidProbes++;
+      expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
+    }
+    expect(voidProbes).toBeGreaterThan(0);
+  });
+});
+
+describe("estimateDistanceRefined on a pure-mandelbox system (fr-5rvk)", () => {
+  it("never falls below the base estimate", () => {
+    const transforms = pureMandelboxPair();
+    const de = buildSurfaceDE(transforms);
+    const R = de.boundingRadius;
+    const rng = mulberry32(404);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      expect(estimateDistanceRefined(de, p)).toBeGreaterThanOrEqual(
+        estimateDistance(de, p) - 1e-12,
+      );
+    }
+  });
+
+  it("honors the early-out cutoff contract on a fold system: clearing the cutoff matches the full descent bit-for-bit, dipping under it implies the full descent does too", () => {
+    const transforms = pureMandelboxPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101));
+    const R = de.boundingRadius;
+    const cutoff = 0.02 * R;
+    const rng = mulberry32(505);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 60; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.3][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 40; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    let cleared = 0;
+    let dipped = 0;
+    for (const q of probes) {
+      const full = estimateDistanceRefined(de, q);
+      const cut = estimateDistanceRefined(de, q, cutoff);
+      if (cut >= cutoff) {
+        cleared++;
+        expect(cut).toBe(full);
+      } else {
+        dipped++;
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+    // Pins the mechanism as live on both sides, as the pre-existing cutoff
+    // suites do for the affine descent.
+    expect(cleared).toBeGreaterThan(0);
+    expect(dipped).toBeGreaterThan(0);
+  });
+});
+
+describe("spherefold mid-branch guard (fr-5rvk)", () => {
+  it("returns a finite estimate at and near the sector origin, where the mid branch's inversion would otherwise overflow", () => {
+    const transforms: Transform[] = [
+      map({
+        scale: [0.2, 0.2, 0.2],
+        variations: [{ type: "spherefold", weight: 1 }],
+      }),
+      map({
+        id: 1,
+        position: [-0.1, 0.1, -0.05],
+        scale: [0.22, 0.22, 0.22],
+        variations: [{ type: "spherefold", weight: 0.9 }],
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    expect(de.maps[0].foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    expect(de.maps[1].foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    const points: Vec3[] = [
+      [0, 0, 0],
+      [1e-9, 0, 0],
+    ];
+    for (const p of points) {
+      expect(Number.isFinite(estimateDistanceRefined(de, p))).toBe(true);
+    }
+  });
+});
+
+describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)", () => {
+  it("stays a sound bound under a kaleidoscope sweep combined with pure-fold maps", () => {
+    const transforms = pureBoxfoldPair();
+    const symmetry = { order: 3, axis: "y" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(101),
+      null,
+      symmetry,
+    );
+    const R = de.boundingRadius;
+    const rng = mulberry32(606);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("returns identical estimates whether the DE reports beamWidth 4 or is forced to 1 — the fold frontier ignores it", () => {
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const narrow = { ...de, beamWidth: 1 as const };
+    const R = de.boundingRadius;
+    const rng = mulberry32(707);
+    for (let i = 0; i < 20; i++) {
+      const p: Vec3 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      expect(estimateDistance(narrow, p)).toBe(estimateDistance(de, p));
     }
   });
 });
