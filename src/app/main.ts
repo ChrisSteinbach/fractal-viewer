@@ -11,6 +11,7 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
+import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { analyzeSurfaceSystem, buildSurfaceDE } from "../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
@@ -2687,6 +2688,51 @@ function main(): void {
           // invalidate one per frame) — and a still-building 3D grid from
           // a previous session must not land mid-4D-session.
           surfaceGrid.cancel();
+        } else if (
+          analyzeSurfaceSystem(state.transforms, state.finalTransform ?? null)
+            .status === "ineligible"
+        ) {
+          // The IFS gate refused — the escape-time complement (fr-kltj):
+          // a single non-contracting pure-fold map has no attractor, but
+          // it has the canonical Mandelbox escape-time set, and THAT is
+          // what Surface renders for it. Same session plumbing (tiers,
+          // strips, compile gate); no grid — the empty-space chain's
+          // validity argument is IFS-specific.
+          surfaceSessionIs4D = false;
+          const de = buildEscapeDE(
+            state.transforms,
+            state.finalTransform ?? null,
+            state.symmetry,
+          );
+          const active = Math.max(
+            0,
+            state.transforms.findIndex((t) => (t.weight ?? 1) > 0),
+          );
+          scene.setEscapeSystem(
+            de,
+            transformColors(state.transforms.length)[active],
+          );
+          surfaceGrid.cancel();
+          // The explorer camera was framed on the chaos game's cloud —
+          // for a non-contracting map that is escape-reset debris near
+          // the origin, which sits INSIDE the escape-time solid: the
+          // session would open on a featureless interior wall. Glide out
+          // to frame the bailout ball instead; the user dives back in
+          // from a view that shows the object.
+          const R = de.boundingRadius;
+          cameraTween.fitToBounds(
+            {
+              minX: -R,
+              maxX: R,
+              minY: -R,
+              maxY: R,
+              minZ: -R,
+              maxZ: R,
+              minR: 0,
+              maxR: R,
+            },
+            { fov: scene.camera.fov, aspect: scene.camera.aspect },
+          );
         } else {
           surfaceSessionIs4D = false;
           const de = buildSurfaceDE(
@@ -3012,6 +3058,23 @@ function main(): void {
       state.finalTransform ?? null,
     );
     if (analysis.status === "ineligible") {
+      // The escape-time complement (fr-kltj): a single non-contracting
+      // pure-fold map — the canonical Mandelbox parameterization — has no
+      // IFS attractor, but Surface can march its escape-time set instead.
+      // Reported through the "degraded" channel so the mode's note names
+      // the different object being rendered.
+      const escape = analyzeEscapeSystem(
+        state.transforms,
+        state.finalTransform ?? null,
+        state.symmetry,
+      );
+      if (escape.status === "eligible") {
+        ui.setSurfaceEligibility(
+          "degraded",
+          "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
+        );
+        return;
+      }
       ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
       return;
     }

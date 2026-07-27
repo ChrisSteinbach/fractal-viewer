@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import type { EscapeDE } from "../fractal/escape-de";
+import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
   SPHEREFOLD_MID_MIN_R,
@@ -192,6 +194,14 @@ const SURFACE_FRAGMENT = /* glsl */ `
   uniform vec4 uLensParams;
   uniform mat3 uLensInvM;
   uniform vec3 uLensInvT;
+  /** Escape-time fold render (fr-kltj), alive only under SURFACE_ESCAPE:
+   * the FORWARD affine (M, t) of the single fold map and
+   * (foldKind, w, |w|·sigma_max(M), unused). The variant replaces the
+   * inverse-descent bodies wholesale — see escape-de.ts, the CPU oracle
+   * its loop mirrors. */
+  uniform mat3 uEscM;
+  uniform vec3 uEscT;
+  uniform vec4 uEscParams;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -396,6 +406,101 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * region floors carry the ghost-killing, base and refined measure
    * indistinguishable). See descendFold's doc for the measured numbers.
    */
+#if SURFACE_ESCAPE
+  /**
+   * Escape-time fold DE (fr-kltj), mirroring escape-de.ts's
+   * estimateEscapeDistance: iterate the single fold map FORWARD from the
+   * query with a scalar running derivative (the Buddhi/Rrrola Mandelbox
+   * form), DE = |v| / dr. This variant REPLACES the inverse-descent
+   * bodies wholesale — the whole #else arm below is not compiled — and
+   * it is phone-cheap: uMaxDepth (30 full, preview-clamped) iterations of
+   * branchless folds per evaluation, no frontier, no branches. cutoff
+   * is accepted for signature parity and ignored: the loop is fixed-cost,
+   * so the full value is always returned, trivially satisfying the
+   * fr-55r5 contract (every return IS the cutoff-0 result).
+   */
+  float surfaceDE(vec3 p, float cutoff) {
+    vec3 v = p;
+    float dr = 1.0;
+    float r = length(v);
+    int kind = int(uEscParams.x);
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (r > uBoundingRadius) {
+        break;
+      }
+      vec3 y = uEscM * v + uEscT;
+      float localL = 1.0;
+      if (kind != 2) {
+        // The box fold (boxfold + mandelbox): per-axis reflections,
+        // local factor 1.
+        y = clamp(y, -1.0, 1.0) * 2.0 - y;
+      }
+      if (kind != 1) {
+        // The sphere fold (spherefold + mandelbox): variations.ts's
+        // sphereFoldFactor, which IS the local conformal factor.
+        float f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+        y *= f;
+        localL = f;
+      }
+      v = uEscParams.y * y;
+      dr = uEscParams.z * localL * dr + 1.0;
+      r = length(v);
+    }
+    return r / dr;
+  }
+
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }
+
+  /** Hit-shading overload: the same loop, with the classic escape-time
+   * extras — trap is the escape fraction (the canonical Mandelbox palette
+   * coordinate), rings/sheets are the orbit's closest radial / y-plane
+   * approaches, the same trap vocabulary the IFS variants feed the shared
+   * color sources. firstChoice is always 0 (one map). */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    firstChoice = 0;
+    rings = 1.0;
+    sheets = 1.0;
+    vec3 v = p;
+    float dr = 1.0;
+    float r = length(v);
+    int kind = int(uEscParams.x);
+    int escapedAt = uMaxDepth;
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (r > uBoundingRadius) {
+        escapedAt = i;
+        break;
+      }
+      vec3 y = uEscM * v + uEscT;
+      float localL = 1.0;
+      if (kind != 2) {
+        y = clamp(y, -1.0, 1.0) * 2.0 - y;
+      }
+      if (kind != 1) {
+        float f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+        y *= f;
+        localL = f;
+      }
+      v = uEscParams.y * y;
+      dr = uEscParams.z * localL * dr + 1.0;
+      r = length(v);
+      rings = min(rings, r / uBoundingRadius);
+      sheets = min(sheets, abs(v.y) / uBoundingRadius);
+    }
+    trap = float(escapedAt) / float(uMaxDepth);
+    rings = clamp(rings, 0.0, 1.0);
+    sheets = clamp(sheets, 0.0, 1.0);
+    return r / dr;
+  }
+#else
+
 #if SURFACE_FOLD_LENS
   // Compile every descent body below under a CORE name: the fold-lens
   // wrapper past the hit variants owns the public surfaceDE overloads and
@@ -1778,6 +1883,10 @@ const SURFACE_FRAGMENT = /* glsl */ `
   }
 #endif
 
+// Closes SURFACE_ESCAPE's #else arm: everything from the fold-lens rename
+// through the lens wrapper exists only when the escape variant is off.
+#endif
+
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
@@ -2198,6 +2307,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uLensParams: { value: new THREE.Vector4(0, 1, 1, 1) },
       uLensInvM: { value: new THREE.Matrix3() },
       uLensInvT: { value: new THREE.Vector3() },
+      // Escape-time render (fr-kltj): inert defaults; alive only under
+      // the SURFACE_ESCAPE define.
+      uEscM: { value: new THREE.Matrix3() },
+      uEscT: { value: new THREE.Vector3() },
+      uEscParams: { value: new THREE.Vector4(0, 1, 1, 0) },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -2222,9 +2336,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     // ladder pair (byte-for-byte the pre-fr-5rvk shader), 1 = the
     // fold-frontier pair. SURFACE_FOLD_LENS 1 additionally renames the
     // bodies to surfaceDECore and compiles the fold-lens wrapper as the
-    // public surfaceDE (fr-g58b). setSurfaceSystem flips both when the
-    // system's fold-ness changes — rare, session-enter-scale recompiles.
-    defines: { SURFACE_FOLDS: 0, SURFACE_FOLD_LENS: 0 },
+    // public surfaceDE (fr-g58b). SURFACE_ESCAPE 1 replaces the descent
+    // bodies wholesale with the escape-time loop (fr-kltj).
+    // setSurfaceSystem/setEscapeSystem flip these when the system's shape
+    // changes — rare, session-enter-scale recompiles.
+    defines: { SURFACE_FOLDS: 0, SURFACE_FOLD_LENS: 0, SURFACE_ESCAPE: 0 },
     vertexShader: SURFACE_VERTEX,
     fragmentShader: SURFACE_FRAGMENT,
     depthTest: false,
@@ -2291,10 +2407,13 @@ export function setSurfaceSystem(
   const wantLens = de.foldFinal ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
-    material.defines.SURFACE_FOLD_LENS !== wantLens
+    material.defines.SURFACE_FOLD_LENS !== wantLens ||
+    material.defines.SURFACE_ESCAPE !== 0
   ) {
     material.defines.SURFACE_FOLDS = wantFolds;
     material.defines.SURFACE_FOLD_LENS = wantLens;
+    // A previous escape-time session must hand the descent bodies back.
+    material.defines.SURFACE_ESCAPE = 0;
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -2347,5 +2466,76 @@ export function setSurfaceSystem(
     (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
     lensM.identity();
     lensT.set(0, 0, 0);
+  }
+}
+
+/** March step fudge for the escape-time variant: the scalar-derivative
+ * estimate is the field's standard heuristic, not a certified lower bound
+ * — every published Mandelbox marcher damps its steps; 0.7 is the common
+ * conservative pick. */
+const ESCAPE_STEP_SCALE = 0.7;
+
+/**
+ * Pack an {@link EscapeDE} (fr-kltj) and flip the material onto the
+ * escape-time variant. The IFS-side uniforms the shared marcher still
+ * reads — bounding/visible radii, uMaxDepth (the iteration budget the
+ * preview tier clamps through previewMaxDepth), step scale, slot-0 color
+ * for the by-transform source — are packed to the escape set's values;
+ * everything descent-specific (maps, symmetry, lenses, grid) is reset to
+ * inert, and no grid is ever uploaded for this mode (the empty-space
+ * chain's validity argument is IFS-specific).
+ */
+export function setEscapeSystem(
+  material: THREE.ShaderMaterial,
+  de: EscapeDE,
+  color: Vec3,
+): void {
+  setSurfaceGrid(material, null);
+  const u = material.uniforms;
+  const m = de.m;
+  (u.uEscM.value as THREE.Matrix3).set(
+    m[0],
+    m[1],
+    m[2],
+    m[3],
+    m[4],
+    m[5],
+    m[6],
+    m[7],
+    m[8],
+  );
+  (u.uEscT.value as THREE.Vector3).set(...de.t);
+  (u.uEscParams.value as THREE.Vector4).set(
+    de.foldKind,
+    de.w,
+    de.derivGrowth,
+    0,
+  );
+  (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
+  (u.uTrapIndex.value as number[])[0] = 0;
+  u.uMapCount.value = 1;
+  u.uSymOrder.value = 1;
+  u.uSymAxis.value = 1;
+  (u.uSymStep.value as THREE.Vector2).set(1, 0);
+  u.uBoundingRadius.value = de.boundingRadius;
+  u.uEscapeRadius.value = de.boundingRadius * 2;
+  u.uMaxDepth.value = ESCAPE_TIME_ITERATIONS;
+  u.uStepScale.value = ESCAPE_STEP_SCALE;
+  u.uVisibleRadius.value = de.boundingRadius;
+  (u.uFinalInvM.value as THREE.Matrix3).identity();
+  (u.uFinalInvT.value as THREE.Vector3).set(0, 0, 0);
+  u.uFinalSigmaMin.value = 1;
+  (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+  (u.uLensInvM.value as THREE.Matrix3).identity();
+  (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  if (
+    material.defines.SURFACE_ESCAPE !== 1 ||
+    material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_FOLD_LENS !== 0
+  ) {
+    material.defines.SURFACE_ESCAPE = 1;
+    material.defines.SURFACE_FOLDS = 0;
+    material.defines.SURFACE_FOLD_LENS = 0;
+    material.needsUpdate = true;
   }
 }

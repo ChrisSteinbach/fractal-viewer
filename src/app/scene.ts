@@ -37,6 +37,7 @@ import {
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setSurfaceGrid as packSurfaceGrid,
+  setEscapeSystem as packEscapeSystem,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -62,6 +63,8 @@ import {
   setSurfaceSystem4 as packSurfaceSystem4,
   setSurfaceView4 as packSurfaceView4,
 } from "./surface-material-4d";
+import type { EscapeDE } from "../fractal/escape-de";
+import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
@@ -2078,6 +2081,28 @@ export class FractalScene {
     // trace has no measurement for the panic path to act on — the entry
     // rung must absorb what is known up front.
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
+    this.surfacePreviewPxCostMs = null;
+  }
+
+  /**
+   * Escape-time sibling of {@link setSurfaceSystem} (fr-kltj): upload the
+   * single fold map's forward affine + fold params and flip the material
+   * onto the SURFACE_ESCAPE variant. Everything else about the mode —
+   * tiers, strips, compile gate, capture — runs unchanged on the same
+   * material; the iteration budget rides {@link surfaceFullMaxDepth}, so
+   * the preview depth clamp trades boundary detail for speed exactly as
+   * the IFS descent trades levels. No grid exists for this mode.
+   */
+  setEscapeSystem(de: EscapeDE, color: Vec3): void {
+    this.renderNeeded = true;
+    this.dropSurfaceGridTexture();
+    packEscapeSystem(this.surfaceMaterial, de, color);
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    // The escape loop is phone-cheap (~30 branchless folds per eval):
+    // the plain anchor entry is right.
+    this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
   }
 

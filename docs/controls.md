@@ -129,6 +129,18 @@ morphs into place instead of snapping (see **Presets** below).
   its affine part, so a fold map can look tame in the editor yet still
   trip the does-not-contract reason — and, the other way, a small enough
   weight can rescue an affine part that would otherwise read as expanding.
+  A single pure-fold map that does NOT contract — the canonical Mandelbox
+  parameterization, weight ~2 — keeps the Surface button enabled anyway
+  (fr-kltj): such a map has no IFS attractor at all, so Surface marches
+  its **escape-time set** instead (the classic ray-marched Mandelbox
+  object, Julia-form: the transform's own offset plays the role of the
+  constant), disclosed by the mode's status note. This render is cheap —
+  ~30 branchless fold iterations per ray step, no branch frontier — and
+  the session opens with the camera pulled out to frame the bailout ball
+  (the chaos-game cloud such a map produces is escape-reset debris, so
+  the explorer camera would otherwise start inside the solid). Multi-map,
+  blended, kaleidoscoped or final-transform systems have no escape-time
+  reading; they keep the ordinary eligibility reasons.
   **Mandelbox KIFS** in the Presets menu is the pure-fold showcase and
   loads straight into Surface mode. Orbiting or tumbling one also starts
   its live preview at the preview ladder's floor rung rather than the

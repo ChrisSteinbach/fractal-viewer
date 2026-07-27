@@ -125,6 +125,20 @@ and UI**, so the interesting math is unit-tested without a browser:
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
     validity chain; 3D only (4D's live rotor/slice would invalidate a grid per
     frame).
+  - `escape-de.ts` — escape-time fold render's CPU oracle (fr-kltj): the
+    canonical Mandelbox/Juliabox object for exactly the systems the IFS
+    gate refuses (single non-contracting pure-fold map, flat, no
+    final/kaleidoscope — `analyzeEscapeSystem` is the deliberate
+    COMPLEMENT of `analyzeSurfaceSystem` on that shape).
+    `estimateEscapeDistance` iterates the map FORWARD with a scalar
+    running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
+    standard heuristic, not a certified bound; the marcher damps steps),
+    mirrored by `surface-material.ts`'s `SURFACE_ESCAPE` variant.
+    Phone-cheap by construction (~30 branchless folds per eval). The
+    rendered set is the JULIA-form set of the authored transform (`t` is
+    the document's fixed offset), so the mode stays a render MODE over
+    the existing transform vocabulary — morphs/mutations/persistence
+    untouched.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
@@ -304,7 +318,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     descent bodies to `surfaceDECore`, the wrapper owns the public
     `surfaceDE` overloads (mirroring `descendLens`), and the cores' own
     `uFinal*` lens uniforms are packed IDENTITY — the wrapper applies the
-    real lens from `uLens*`.
+    real lens from `uLens*`. The `SURFACE_ESCAPE` variant (fr-kltj)
+    replaces the descent bodies wholesale with `escape-de.ts`'s forward
+    loop (`setEscapeSystem` packs it; main.ts routes there when the IFS
+    gate refuses but `analyzeEscapeSystem` admits) — same marcher, tiers,
+    strips, capture; no grid (its validity chain is IFS-specific).
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
