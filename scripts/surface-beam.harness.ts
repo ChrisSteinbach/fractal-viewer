@@ -154,7 +154,7 @@ import {
   estimateDistanceRefined,
   SURFACE_FOLD_BEAM_WIDTH,
 } from "../src/fractal/surface-de";
-import type { SurfaceDE, SurfaceDEMap } from "../src/fractal/surface-de";
+import type { SurfaceDE } from "../src/fractal/surface-de";
 import {
   buildSurfaceDE4,
   estimateDistance4,
@@ -167,6 +167,13 @@ import type {
   Vec3,
   Vec4,
 } from "../src/fractal/types";
+import {
+  countingDE,
+  foldBoxfoldNegPlusAffine,
+  foldBoxfoldPair,
+  foldMandelboxPair,
+  foldSpherefoldPair,
+} from "./harness-profiles";
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -296,32 +303,6 @@ function nearest3(cloud: ChaosGameResult, p: Vec3): number {
     if (d2 < best) best = d2;
   }
   return Math.sqrt(best);
-}
-
-/** Wrap a DE's maps so every `invM` read (one per inverse-affine
- * application in the estimators) bumps a counter — cost measured on the
- * SHIPPED estimator, not a copy. */
-function countingDE(
-  de: SurfaceDE,
-  beamWidth: 1 | 2 | 3 | 4,
-): {
-  de: SurfaceDE;
-  counter: { n: number };
-} {
-  const counter = { n: 0 };
-  const maps = de.maps.map((m): SurfaceDEMap => ({
-    invT: m.invT,
-    sigmaMin: m.sigmaMin,
-    foldKind: m.foldKind,
-    foldInvW: m.foldInvW,
-    foldSigma: m.foldSigma,
-    baseIndex: m.baseIndex,
-    get invM() {
-      counter.n++;
-      return m.invM;
-    },
-  }));
-  return { de: { ...de, maps, beamWidth }, counter };
 }
 
 function countingDE4(
@@ -473,105 +454,6 @@ function measure3(sys: System3): {
     }
   }
   return { de, rows };
-}
-
-// -----------------------------------------------------------------------
-// fr-5rvk: PURE-FOLD SYSTEMS. Every map below carries exactly ONE active
-// fold-family variation and nothing else, which is what makes it a genuine
-// composition `T = w.V(M p + t)` the descent can decompose into branches
-// (a BLENDED list is a weighted sum — no branch decomposition exists, so
-// blends stay ineligible; the shipped `mandelboxLattice` preset is one).
-// Profiles chosen to cover the three branch counts and both weight signs:
-// isometric boxfold branches (27), the spherefold's query-dependent mid
-// inversion (3), the mandelbox composite (81), a negative fold weight, a
-// fold-plus-plain-affine mix, and a kaleidoscope-swept fold pair.
-// -----------------------------------------------------------------------
-
-/** Both maps pure `boxfold`: 27 branches each, every one a reflection +
- * translation isometry (sigma_c = 1). Mirrors the surface-de test suite's
- * `pureBoxfoldPair`. */
-function foldBoxfoldPair(): Transform[] {
-  return [
-    {
-      id: 0,
-      position: [0.4, 0.1, 0],
-      rotation: [0.3, 0.2, 0],
-      scale: [0.45, 0.45, 0.45],
-      variations: [{ type: "boxfold", weight: 1 }],
-    },
-    {
-      id: 1,
-      position: [-0.35, -0.2, 0.3],
-      rotation: [0, 0.5, 0.1],
-      scale: [0.5, 0.5, 0.5],
-      variations: [{ type: "boxfold", weight: 0.9 }],
-    },
-  ];
-}
-
-/** A NEGATIVE-weight boxfold map beside a plain affine map: exercises the
- * `dist(q, w.X) = |w|.dist(q/w, X)` sign absorption (both folds are odd)
- * and the mixed frontier, where fold branches and single affine children
- * compete in the same candidate stream. */
-function foldBoxfoldNegPlusAffine(): Transform[] {
-  return [
-    {
-      id: 0,
-      position: [0.3, 0, 0.2],
-      rotation: [0.1, 0, 0.4],
-      scale: [0.5, 0.5, 0.5],
-      variations: [{ type: "boxfold", weight: -0.8 }],
-    },
-    {
-      id: 1,
-      position: [-0.4, 0.3, -0.1],
-      rotation: [0.2, 0.3, 0],
-      scale: [0.4, 0.4, 0.4],
-    },
-  ];
-}
-
-/** Both maps pure `spherefold`: only 3 branches, but one of them is the
- * unit-sphere inversion whose escape-defeating expansion is what the region
- * floors exist to tame — the hardest void-false-hit profile in the set. */
-function foldSpherefoldPair(): Transform[] {
-  return [
-    {
-      id: 0,
-      position: [0.5, 0.2, -0.1],
-      rotation: [0.4, 0.1, 0.2],
-      scale: [0.24, 0.24, 0.24],
-      variations: [{ type: "spherefold", weight: 0.9 }],
-    },
-    {
-      id: 1,
-      position: [-0.3, -0.4, 0.25],
-      rotation: [0, 0.6, 0.3],
-      scale: [0.2, 0.2, 0.2],
-      variations: [{ type: "spherefold", weight: 1.1 }],
-    },
-  ];
-}
-
-/** Both maps pure `mandelbox` (`sphereFold . boxFold`): the widest branch
- * count in the family, 81 per map — the frontier's cost worst case. */
-function foldMandelboxPair(): Transform[] {
-  return [
-    {
-      id: 0,
-      position: [0.45, 0.25, 0.1],
-      rotation: [0.2, 0.4, 0],
-      scale: [0.2, 0.2, 0.2],
-      variations: [{ type: "mandelbox", weight: 1.1 }],
-    },
-    {
-      id: 1,
-      position: [-0.4, -0.15, -0.3],
-      rotation: [0.5, 0, 0.25],
-      scale: [0.22, 0.22, 0.22],
-      variations: [{ type: "mandelbox", weight: 0.9 }],
-    },
-  ];
 }
 
 /** Human-readable {@link SurfaceDEMap.foldKind}, indexed by the numeric

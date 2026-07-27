@@ -921,16 +921,33 @@ export function buildSurfaceDE(
  * `|p| - R`. A point tracking the attractor's occupied region the whole
  * way down ends `<= 0`; the MARCHER floors at its epsilon, not this
  * function, so callers see the raw (possibly negative) bound.
+ *
+ * `cutoff` is {@link estimateDistanceRefined}'s early-out contract
+ * (fr-55r5), verbatim: `<= 0` (the default) is the full descent
+ * bit-for-bit; `> 0` lets the descent stop once its return is pinned under
+ * the cutoff — a returned value `>= cutoff` equals the full result exactly,
+ * a value `< cutoff` guarantees the full result is `< cutoff` too. The
+ * contract's monotone/finalized argument is refine-agnostic: both paths
+ * share the descent bodies' exits, and the plain path folds only settled
+ * plain certificates, so the running min never tests a term the full
+ * computation lacks (fr-aj4w exposed the parameter here so the empty-space
+ * grid can price fold floors with the estimator the fold GLSL actually
+ * marches).
  */
-export function estimateDistance(de: SurfaceDE, p: Vec3): number {
-  return deHasFolds(de) ? descendFold(de, p, false) : descend(de, p, false);
+export function estimateDistance(de: SurfaceDE, p: Vec3, cutoff = 0): number {
+  return deHasFolds(de)
+    ? descendFold(de, p, false, cutoff)
+    : descend(de, p, false, cutoff);
 }
 
 /** Whether any map expands into fold branches — such systems descend via
  * {@link descendFold}'s wide frontier instead of the affine ladder body
  * (which `beamWidth` parameterizes; the fold frontier has one measured
- * width, {@link SURFACE_FOLD_BEAM_WIDTH}). */
-function deHasFolds(de: SurfaceDE): boolean {
+ * width, {@link SURFACE_FOLD_BEAM_WIDTH}). Exported for
+ * `surface-grid.ts`'s estimator choice (fr-aj4w): fold systems price
+ * their empty-space floors with the plain descent — the estimator the
+ * fold GLSL actually marches — instead of the refined one. */
+export function deHasFolds(de: SurfaceDE): boolean {
   for (const m of de.maps) {
     if (m.foldKind !== SURFACE_FOLD_NONE) return true;
   }

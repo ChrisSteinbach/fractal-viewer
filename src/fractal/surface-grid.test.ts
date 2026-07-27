@@ -2,6 +2,8 @@ import {
   buildSurfaceGrid,
   buildSurfaceGridSlab,
   floorToF32,
+  pickSurfaceGridResolution,
+  surfaceGridEstimator,
   surfaceGridSpec,
 } from "./surface-grid";
 import type { SurfaceGrid, SurfaceGridSpec } from "./surface-grid";
@@ -21,6 +23,33 @@ function anisotropicSierpinski(): Transform[] {
     ...t,
     scale: [0.5, 0.25, 0.5],
   }));
+}
+
+/** Both maps pure `boxfold`: 27 branches each, every one a reflection +
+ * translation isometry (sigma_c = 1) — mirrors `scripts/harness-profiles.ts`'s
+ * `foldBoxfoldPair` (itself extracted verbatim from `surface-de.test.ts`'s
+ * `pureBoxfoldPair`), duplicated locally since that module sits outside the
+ * `src/` program's `rootDir` — importing it here would break `tsc --noEmit`
+ * (`npm run lint`'s first step) with a TS6059 rootDir violation. A small,
+ * already-validated pure-fold system for the fr-aj4w estimator-parameter
+ * tests below. */
+function foldBoxfoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [{ type: "boxfold", weight: 1 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    },
+  ];
 }
 
 /** Flat index into a `resolution`-cube {@link SurfaceGrid.values}, matching
@@ -305,5 +334,135 @@ describe("buildSurfaceGrid", () => {
     const a = buildSurfaceGrid(de, 8);
     const b = buildSurfaceGrid(de, 8);
     expect(Array.from(a.values)).toEqual(Array.from(b.values));
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-aj4w: the `estimator` parameter (measurement infrastructure for the
+// fold-system grid-build cost; see scripts/surface-grid-cost.harness.ts).
+// "plain" must stay a SOUND — if weaker — lower bound on every fold system,
+// exactly like "refined". The DEFAULT is no longer flatly "refined": it now
+// follows surfaceGridEstimator's per-system choice (affine -> "refined",
+// unchanged from the pre-fr-aj4w behavior; fold -> "plain", the new
+// behavior this bead introduces so fold builds stay inside budget).
+// -----------------------------------------------------------------------
+
+describe("surfaceGridEstimator (fr-aj4w)", () => {
+  it('picks "refined" for an affine system', () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    expect(surfaceGridEstimator(de)).toBe("refined");
+  });
+
+  it('picks "plain" for a fold system', () => {
+    const de = buildSurfaceDE(foldBoxfoldPair());
+    expect(surfaceGridEstimator(de)).toBe("plain");
+  });
+});
+
+describe("the estimator parameter (fr-aj4w)", () => {
+  // Affine systems keep the pre-fr-aj4w default: surfaceGridEstimator only
+  // switches FOLD systems to "plain" (see "the default estimator flip is
+  // live" below for that half).
+  it('defaults to "refined" on an affine system: bit-identical values to an explicit refined build', () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const implicit = buildSurfaceGrid(de, 8);
+    const explicit = buildSurfaceGrid(de, 8, "refined");
+    expect(Array.from(implicit.values)).toEqual(Array.from(explicit.values));
+  });
+
+  it("stores a plain floor no greater than the refined floor, cell for cell, on a fold system", () => {
+    const de = buildSurfaceDE(foldBoxfoldPair());
+    const plain = buildSurfaceGrid(de, 12, "plain");
+    const refined = buildSurfaceGrid(de, 12, "refined");
+    for (let i = 0; i < plain.values.length; i++) {
+      expect(plain.values[i]).toBeLessThanOrEqual(refined.values[i]);
+    }
+  });
+
+  it("keeps plain floors conservative against a brute-force nearest-cloud check on a fold system", () => {
+    const transforms = foldBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(1));
+    const grid = buildSurfaceGrid(de, 12, "plain");
+    const positiveDraws = checkStoredFloorsAgainstCloud(
+      grid,
+      cloud,
+      mulberry32(2024),
+    );
+    expect(positiveDraws).toBeGreaterThan(30);
+  });
+});
+
+describe("the default estimator flip is live (fr-aj4w)", () => {
+  it('matches an explicit "plain" build bit-for-bit on a fold system', () => {
+    const de = buildSurfaceDE(foldBoxfoldPair());
+    const implicit = buildSurfaceGrid(de, 8);
+    const plain = buildSurfaceGrid(de, 8, "plain");
+    expect(Array.from(implicit.values)).toEqual(Array.from(plain.values));
+  });
+
+  // Deliberately NOT asserting implicit !== an explicit "refined" build:
+  // checked directly, this small 2-map fold pair already agrees with
+  // refined cell for cell at resolution 8 (surfaceGridEstimator's own doc
+  // notes 2-map fold pairs cost the same because the refined level's lazy
+  // guard almost never fires extra sweeps — evidently that extends to the
+  // VALUES here too, not just the timing). Asserting inequality would pin a
+  // coincidental property of this tiny fixture rather than the default flip
+  // under test, and would go flaky the moment somebody retuned
+  // foldBoxfoldPair.
+});
+
+describe("pickSurfaceGridResolution", () => {
+  it("keeps the requested resolution when the pilot projects comfortably under budget", () => {
+    // projected(64) = 5 * 64 * (64/64)^3 = 320 <= 3000.
+    expect(pickSurfaceGridResolution(64, 5)).toBe(64);
+  });
+
+  it("downshifts one rung when the requested resolution projects over budget but the next rung down fits", () => {
+    // projected(64) = 100 * 64 = 6400 > 3000.
+    // projected(48) = 100 * 64 * (48/64)^3 = 6400 * 0.75^3 = 2700 <= 3000.
+    expect(pickSurfaceGridResolution(64, 100)).toBe(48);
+  });
+
+  it("falls all the way to the ladder floor when every rung projects over budget", () => {
+    // projected(64) = 600 * 64 = 38400 > 3000.
+    // projected(48) = 600 * 64 * 0.75^3 = 16200 > 3000.
+    // projected(32) = 600 * 64 * 0.5^3 = 4800 > 3000: over budget even at
+    // the floor, but the floor still wins — coarsest grid, never no grid.
+    expect(pickSurfaceGridResolution(64, 600)).toBe(32);
+  });
+
+  it("keeps the requested resolution for a degenerate zero-time pilot", () => {
+    expect(pickSurfaceGridResolution(64, 0)).toBe(64);
+  });
+
+  it("treats an exactly-at-budget projection as fitting (inclusive boundary)", () => {
+    // projected(64) = 46.875 * 64 = 3000.0 exactly.
+    expect(pickSurfaceGridResolution(64, 46.875)).toBe(64);
+  });
+
+  it("returns the requested resolution unchanged when it already sits at the ladder floor", () => {
+    // 32 is the lowest ladder rung, so there is nowhere lower to shift to,
+    // no matter how expensive the pilot projects.
+    expect(pickSurfaceGridResolution(32, 1e9)).toBe(32);
+  });
+
+  it("returns the requested resolution unchanged when it sits below the whole ladder", () => {
+    // 24 is below every ladder rung (64/48/32), so the loop never matches
+    // an `r <= requested` and the explicit small resolution is never
+    // second-guessed, however expensive the pilot projects.
+    expect(pickSurfaceGridResolution(24, 1e9)).toBe(24);
+  });
+
+  it("honors a custom budget", () => {
+    // projected(64) = 100 * 64 = 6400 <= 10_000.
+    expect(pickSurfaceGridResolution(64, 100, 10_000)).toBe(64);
+  });
+
+  it("skips ladder rungs above the requested resolution", () => {
+    // 64 sits above the requested 48 and is skipped entirely.
+    // projected(48) = 600 * 48 = 28800 > 3000.
+    // projected(32) = 600 * 48 * (32/48)^3 ~= 8533 > 3000 -> floor 32.
+    expect(pickSurfaceGridResolution(48, 600)).toBe(32);
   });
 });
