@@ -152,6 +152,12 @@ const SURFACE_FRAGMENT = /* glsl */ `
    * the affine variant (folded in here so the swap is uniform-budget
    * neutral): (foldKind 0..3, 1/w signed, |w|*sigmaMin, trapIndex). */
   uniform vec4 uFoldParams[MAX_MAPS];
+  /** fr-kidj stage-2 branch-and-bound data: (bnbDir.xyz, invMSigmaMin) —
+   * the directional bound's pull-back direction invM^T*invT/|invT| and
+   * sigma_min(invM). |invT| is derived per visit from uInvT[j] (one
+   * length() amortized over the whole branch loop) rather than spending a
+   * fifth packed scalar. */
+  uniform vec4 uFoldBnb[MAX_MAPS];
 #else
   /** Per-slot palette coordinate in [0, 1] for the orbit trap
    * (CPU-precomputed from each slot's base-map index). */
@@ -551,6 +557,11 @@ const SURFACE_FRAGMENT = /* glsl */ `
         float pScale = fcScale[c];
         float pFloor = fcFloor[c];
         vec3 sQ = fcQ[c];
+        // fr-kidj stage-2 hoists: the chain-point norm is sector-invariant
+        // (sectors rotate about an axis through the origin); 1/pScale
+        // prices the skip's frontier-key condition.
+        float chainNormSq = dot(sQ, sQ);
+        float invPScale = 1.0 / pScale;
         for (int k = 0; k < uSymOrder; k++) {
           if (k > 0) {
             sQ = stepSector(sQ);
@@ -561,6 +572,20 @@ const SURFACE_FRAGMENT = /* glsl */ `
             int branchCount =
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
+            // fr-kidj stage-2 branch-and-bound (the oracle's exact skip,
+            // with its case analysis — see descendFold): child radius
+            // lower bounds from the branch preimage alone, so no-op
+            // candidates never pay the inverse application. bnbT derives
+            // from uInvT once per visit; f32 rounding can flip a
+            // knife-edge skip only within ulps of a tie, orders under the
+            // marcher's acceptance epsilon either way.
+            vec4 bnb = uFoldBnb[j];
+            float bnbT = length(uInvT[j]);
+            float bnbSigmaSq = bnb.w * bnb.w;
+            float needE = uEscapeRadius + bnbT;
+            float needESq = needE * needE;
+            float invChildScale =
+              1.0 / (pScale * (kind == 0 ? uSigmaMin[j] : fp.z));
             vec3 u = vec3(0.0);
             float ru = 0.0;
             vec3 pre0 = vec3(0.0);
@@ -595,6 +620,34 @@ const SURFACE_FRAGMENT = /* glsl */ `
               if (kind == 0) {
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
+                }
+                // Stage-2 B&B skips (see the visit hoist comment).
+                float rDir = dot(bnb.xyz, sQ) + bnbT;
+                float rEsc = uBoundingRadius + best * invChildScale;
+                if (rDir > uEscapeRadius && rDir >= rEsc) {
+                  continue;
+                }
+                float sTerm = chainNormSq * bnbSigmaSq;
+                if (sTerm > needESq) {
+                  float needC = rEsc + bnbT;
+                  if (needC <= 0.0 || sTerm >= needC * needC) {
+                    continue;
+                  }
+                }
+                if (keptCount == FOLD_W) {
+                  float qReq =
+                    uBoundingRadius +
+                    max(
+                      0.0,
+                      max(best * invChildScale, fnWorstKey * invPScale)
+                    );
+                  if (rDir >= qReq) {
+                    continue;
+                  }
+                  float need = qReq + bnbT;
+                  if (sTerm >= need * need) {
+                    continue;
+                  }
                 }
                 img = uInvM[j] * sQ + uInvT[j];
                 branchSigma = uSigmaMin[j];
@@ -638,6 +691,9 @@ const SURFACE_FRAGMENT = /* glsl */ `
                     sfSigma = ru;
                     sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
                   }
+                  // This sphere branch's childScale reciprocal for the
+                  // stage-2 skip (sfSigma just changed).
+                  invChildScale = 1.0 / (pScale * fp.z * sfSigma);
                   if (kind == 3) {
                     pre0 = v;
                     pre1 = 2.0 - v;
@@ -678,6 +734,36 @@ const SURFACE_FRAGMENT = /* glsl */ `
                 // branches never reach the inverse application below.
                 if (candFloor > 0.0 && candFloor >= best) {
                   continue;
+                }
+                // Stage-2 B&B skips (see the visit hoist comment); the
+                // bounds read the branch preimage exactly, after the
+                // shell guard.
+                float rDir = dot(bnb.xyz, pre) + bnbT;
+                float rEsc = uBoundingRadius + best * invChildScale;
+                if (rDir > uEscapeRadius && rDir >= rEsc) {
+                  continue;
+                }
+                float sTerm = dot(pre, pre) * bnbSigmaSq;
+                if (sTerm > needESq) {
+                  float needC = rEsc + bnbT;
+                  if (needC <= 0.0 || sTerm >= needC * needC) {
+                    continue;
+                  }
+                }
+                if (keptCount == FOLD_W) {
+                  float qReq =
+                    uBoundingRadius +
+                    max(
+                      0.0,
+                      max(best * invChildScale, fnWorstKey * invPScale)
+                    );
+                  if (rDir >= qReq) {
+                    continue;
+                  }
+                  float need = qReq + bnbT;
+                  if (sTerm >= need * need) {
+                    continue;
+                  }
                 }
                 img = uInvM[j] * pre + uInvT[j];
                 branchSigma = fp.z * sfSigma;
@@ -2296,6 +2382,14 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
+      // fr-kidj stage-2 bound data (bnbDir.xyz, invMSigmaMin); alive only
+      // under SURFACE_FOLDS, packed unconditionally like uFoldParams.
+      uFoldBnb: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(0, 0, 0, 1),
+        ),
+      },
       uMapCount: { value: 0 },
       uSymOrder: { value: 1 },
       uSymAxis: { value: 1 },
@@ -2392,6 +2486,7 @@ export function setSurfaceSystem(
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
   const foldParams = u.uFoldParams.value as THREE.Vector4[];
+  const foldBnb = u.uFoldBnb.value as THREE.Vector4[];
   let hasFolds = false;
   de.maps.forEach((map, j) => {
     const m = map.invM;
@@ -2407,6 +2502,12 @@ export function setSurfaceSystem(
     // The fold-variant vec4 carries the trap coordinate in .w so swapping
     // uTrapIndex out keeps the swap uniform-budget neutral.
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
+    foldBnb[j].set(
+      map.bnbDir[0],
+      map.bnbDir[1],
+      map.bnbDir[2],
+      map.invMSigmaMin,
+    );
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
   // Select the compiled descent pair (fold frontier vs affine ladders)
