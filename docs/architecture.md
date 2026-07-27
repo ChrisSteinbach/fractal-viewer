@@ -578,8 +578,15 @@ early-out **cutoff** (part 1): the descent stops the moment its bound is
 provably below the hit threshold — at or above the cutoff the returned value
 is the full-descent result bit for bit, so step sizes never drift, and
 fr-zkt2 added the value-exact twin exit that fires unconditionally once the
-running min reaches the depth-0 sphere floor. And an **empty-space-skipping
-grid** (part 2): on every 3D surface-session enter, a dedicated worker runs
+running min reaches the depth-0 sphere floor. fr-7xgi pinned that acceptance
+epsilon itself to the full-resolution frame in every tier: the interaction
+preview tier (`render-tier.ts`) used to scale it down with its own smaller
+buffer, and at a fold system's coarse rungs that epsilon crossed the fold
+DE's loose-but-valid plateau band (region floors read as low as 0.13 DE/D
+near fold faces), rendering whole box-face shells as phantom geometry — a
+preview may coarsen sampling, never acceptance. And an
+**empty-space-skipping grid** (part 2): on every 3D surface-session enter, a
+dedicated worker runs
 `src/fractal/surface-grid.ts` — pricing each cell with a per-system estimator
 (fr-aj4w's `surfaceGridEstimator`: the PLAIN one for fold systems, matching
 what the fold GLSL tracer itself marches and measured ~1.5x cheaper with
