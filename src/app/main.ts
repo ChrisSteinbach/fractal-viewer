@@ -12,7 +12,16 @@ import {
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
-import { analyzeSurfaceSystem, buildSurfaceDE } from "../fractal/surface-de";
+import {
+  analyzeSurfaceSystem,
+  buildSurfaceDE,
+  deHasFolds,
+  type SurfaceDE,
+} from "../fractal/surface-de";
+import {
+  SurfaceComputeRenderer,
+  type SurfaceComputeFrameSpec,
+} from "./surface-compute";
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
@@ -1204,7 +1213,15 @@ function main(): void {
           new Promise<void>((resolve) => {
             offlineParkWaiter = resolve;
           }),
-        renderFrame: (frameNowMs) => {
+        renderFrame: async (frameNowMs) => {
+          // The compute surface path traces its full-quality frame on the
+          // GPU FIRST (memoized per view, so dwell frames skip it) — all
+          // task-crossing awaits happen here, and tickRender's force paint
+          // stays the final synchronous act before the encode (the
+          // drawing-buffer/composite rule in OfflineExportDeps).
+          if (state.renderMode === "surface" && surfaceComputeRenderer) {
+            await ensureSurfaceComputeForceFrame();
+          }
           tickRender(frameNowMs, true);
         },
         encodeFrame: (index) => session.encodeFrame(scene.canvas, index),
@@ -2659,8 +2676,289 @@ function main(): void {
   // not mark the CURRENT session's first frame or report its progress.
   let surfaceCompileToken = 0;
 
+  // --- The WebGPU compute path for FOLD 3D surface sessions (fr-tzdg) ---
+  //
+  // fr-q1f8's measured verdict on real Iris Xe: the WGSL image kernel
+  // traces mandelboxKifs at ~49µs/ray where the WebGL fragment tracer is
+  // unbounded (>1300µs/ray), compiles in ~0.1-0.3s where the fold GLSL
+  // links in ~25s on Mesa, and its bounded multi-pass dispatch respects
+  // the i915 watchdog by construction — so fold sessions PREFER compute
+  // when a WebGPU adapter exists, and the WebGL fragment tracer stays THE
+  // fallback (affine/escape/lens/4D sessions never route here at all).
+  // `?surfacegl` forces the WebGL path (the ?flameperf-style escape
+  // hatch); any create failure or a device loss sets the one-way session
+  // memo and re-enters, which routes the same system through the WebGL
+  // branch — grid build included, since the compute path skips the grid
+  // request on purpose (49µs/ray was measured gridless; the multi-second
+  // fold grid build buys nothing this path needs — measure before wiring,
+  // see the fr-tzdg follow-ups).
+  let surfaceComputeBlocked = new URLSearchParams(window.location.search).has(
+    "surfacegl",
+  );
+  let surfaceComputeRenderer: SurfaceComputeRenderer | null = null;
+  // Latest-wins preview coalescing: `pending` latches every invalidation,
+  // the single driver loop re-checks it after each completed frame — a
+  // drag presents previews at whatever rate frames finish, each with the
+  // freshest camera, instead of restarting (and never finishing) per rAF.
+  let surfaceComputePreviewFlight = false;
+  let surfaceComputePreviewPending = false;
+  let surfaceComputeSettleFlight = false;
+  // Memo key of the last completed offline-export force frame: dwell
+  // frames re-present it instead of re-tracing seconds of identical
+  // pixels (the strip path re-traces per frame — affordable there only
+  // because affine systems are cheap; a fold settle is not).
+  let surfaceComputeForceKey: string | null = null;
+
+  // Preview frames carry a wall budget so a rung too heavy for this
+  // device still completes (truncated — untraced rays show backdrop),
+  // presents, and SAMPLES: the governor's panic path then drops the rung.
+  // Without it, continuous motion could cancel every over-heavy preview
+  // before a single measurement existed and the ladder would never learn.
+  const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
+
+  // Fold 3D IFS sessions only: affine systems stay on the WebGL tracer
+  // (fast there, with the refined estimator and the grid), fold-lens
+  // systems are out of the kernel's scope (packSurfaceGpuParams throws on
+  // foldFinal), and escape/4D route before this predicate is consulted.
+  function surfaceComputeEligible(de: SurfaceDE): boolean {
+    return (
+      !surfaceComputeBlocked &&
+      !de.foldFinal &&
+      deHasFolds(de) &&
+      SurfaceComputeRenderer.supported()
+    );
+  }
+
+  function teardownSurfaceCompute(): void {
+    surfaceComputeRenderer?.destroy();
+    surfaceComputeRenderer = null;
+    surfaceComputePreviewPending = false;
+    surfaceComputeSettleFlight = false;
+    surfaceComputeForceKey = null;
+    scene.exitSurfaceComputeSession();
+  }
+
+  // The compute path's first-frame gate — the compile gate's twin, one
+  // async resource over: device + pipeline instead of a GLSL link. Same
+  // token discipline, same deferred selection-drop/guide-refresh
+  // rationale (see the GLSL gate below), same failure contract — except
+  // failure here FALLS BACK (memo + re-enter routes the WebGL path)
+  // rather than exiting the mode: the WebGL tracer is the fallback, not
+  // the error state.
+  function beginSurfaceComputeGate(token: number, de: SurfaceDE): void {
+    SurfaceComputeRenderer.create(
+      de,
+      surfaceSlotColors(de),
+      surfaceTrapIndices(de),
+    )
+      .then((renderer) => {
+        if (token !== surfaceCompileToken || state.renderMode !== "surface") {
+          renderer.destroy();
+          return;
+        }
+        surfaceComputeRenderer = renderer;
+        renderer.onLost = () => {
+          if (surfaceComputeRenderer !== renderer) return;
+          console.warn(
+            "Surface compute device lost; re-entering via the WebGL tracer.",
+          );
+          surfaceComputeBlocked = true;
+          surfaceSession.enter();
+        };
+        state = selectTransform(state, null);
+        refreshGuides();
+        refreshUi();
+        surfaceSession.markFirstFrame();
+        noteRenderProgress("surface", 1, 1);
+        scene.invalidate();
+      })
+      .catch((error: unknown) => {
+        if (token !== surfaceCompileToken || state.renderMode !== "surface") {
+          return;
+        }
+        console.warn(
+          "Surface compute unavailable; falling back to the WebGL tracer.",
+          error,
+        );
+        surfaceComputeBlocked = true;
+        surfaceSession.enter();
+      });
+  }
+
+  function kickSurfaceComputePreview(): void {
+    surfaceComputePreviewPending = true;
+    if (surfaceComputePreviewFlight) return;
+    void runSurfaceComputePreviewLoop();
+  }
+
+  async function runSurfaceComputePreviewLoop(): Promise<void> {
+    const renderer = surfaceComputeRenderer;
+    if (!renderer) {
+      surfaceComputePreviewPending = false;
+      return;
+    }
+    surfaceComputePreviewFlight = true;
+    try {
+      while (surfaceComputePreviewPending) {
+        surfaceComputePreviewPending = false;
+        if (surfaceComputeRenderer !== renderer) return;
+        // Supersede whatever is in flight — a stale settle or an older
+        // preview; latest wins, exactly the cloud generator's slot rule.
+        renderer.cancel();
+        const spec = scene.surfaceComputeFrameSpec("preview");
+        const t0 = performance.now();
+        const frame = await renderer.renderFrame(spec, {
+          budgetMs: SURFACE_COMPUTE_PREVIEW_BUDGET_MS,
+        });
+        if (
+          surfaceComputeRenderer !== renderer ||
+          state.renderMode !== "surface"
+        ) {
+          return;
+        }
+        if (frame) {
+          scene.presentSurfaceComputeFrame(
+            frame.pixels,
+            frame.width,
+            frame.height,
+          );
+          scene.sampleSurfaceComputeCost(performance.now() - t0);
+        }
+      }
+    } finally {
+      surfaceComputePreviewFlight = false;
+    }
+  }
+
+  async function runSurfaceComputeSettle(): Promise<void> {
+    const renderer = surfaceComputeRenderer;
+    if (!renderer || surfaceComputeSettleFlight) return;
+    surfaceComputeSettleFlight = true;
+    try {
+      renderer.cancel();
+      const spec = scene.surfaceComputeFrameSpec("full");
+      const frame = await renderer.renderFrame(spec, {
+        // Progressive presents: a full-resolution fold settle is tens of
+        // seconds of bounded passes — the image develops on screen
+        // (resolved rays shade in, unresolved ones keep backdrop) instead
+        // of parking on the last preview. An invalidation cancels via the
+        // preview loop's cancel() and this resolves null.
+        onProgress: (pixels) => {
+          if (
+            surfaceComputeRenderer === renderer &&
+            state.renderMode === "surface"
+          ) {
+            scene.presentSurfaceComputeFrame(pixels, spec.width, spec.height);
+          }
+        },
+      });
+      if (
+        surfaceComputeRenderer !== renderer ||
+        state.renderMode !== "surface"
+      ) {
+        return;
+      }
+      if (frame) {
+        scene.presentSurfaceComputeFrame(
+          frame.pixels,
+          frame.width,
+          frame.height,
+        );
+        surfaceSettled = true;
+      }
+    } finally {
+      surfaceComputeSettleFlight = false;
+    }
+  }
+
+  function surfaceComputeForceFrameKey(spec: SurfaceComputeFrameSpec): string {
+    return [
+      Array.from(spec.invProjView).join(","),
+      spec.width,
+      spec.height,
+      spec.lutVersion,
+      spec.ambient,
+      spec.colorSource,
+      spec.colorSpeed,
+      spec.lightDir.join(","),
+    ].join("|");
+  }
+
+  // Offline-export force frames (fr-tzdg): trace the full-quality frame on
+  // the compute path's own async clock BEFORE tickRender(force) paints —
+  // the awaitable renderFrame dep — and memoize by view/params so the
+  // step's dwell frames re-present instead of re-tracing an identical
+  // settle per exported frame.
+  async function ensureSurfaceComputeForceFrame(): Promise<void> {
+    const renderer = surfaceComputeRenderer;
+    if (!renderer) return;
+    const spec = scene.surfaceComputeFrameSpec("full");
+    const key = surfaceComputeForceFrameKey(spec);
+    if (key === surfaceComputeForceKey) return;
+    renderer.cancel();
+    const frame = await renderer.renderFrame(spec);
+    if (!frame || surfaceComputeRenderer !== renderer) return;
+    scene.presentSurfaceComputeFrame(frame.pixels, frame.width, frame.height);
+    surfaceComputeForceKey = key;
+  }
+
+  // Save-PNG while a compute surface session is live: trace at export
+  // size off-canvas, then present + read in one synchronous span
+  // (scene.captureSurfaceComputeFrame). The GLSL path keeps its sync
+  // strip capture.
+  function captureSurfacePng(
+    scale: number,
+  ): ReturnType<FractalScene["captureSurfaceFrame"]> {
+    const renderer = surfaceComputeRenderer;
+    if (!renderer) return scene.captureSurfaceFrame(scale);
+    return scene.captureSurfaceComputeFrame(scale, async (spec) => {
+      renderer.cancel();
+      const frame = await renderer.renderFrame(spec);
+      return frame ? frame.pixels : null;
+    });
+  }
+
+  // The compute path's per-frame choreography — the strip choreography's
+  // twin with async frames: invalidations preview (latest-wins), the tier
+  // clock's settle verdict waits out the preview flight, the recorder
+  // re-presents parked frames so captureStream keeps receiving paints.
+  function surfaceComputeTick(now: number, force: boolean): void {
+    if (force) {
+      // ensureSurfaceComputeForceFrame already traced and presented on
+      // this task's await chain — this paint just re-presents so the
+      // paint and the encode that follows share one task.
+      scene.representSurfaceComputeFrame();
+      return;
+    }
+    const tier = surfaceRenderTier.frame(now, scene.needsRender);
+    if (tier === "preview") {
+      scene.clearRenderNeeded();
+      surfaceSettled = false;
+      surfaceSettlePending = false;
+      surfaceComputeForceKey = null;
+      kickSurfaceComputePreview();
+    } else if (tier === "full") {
+      surfaceSettlePending = true;
+    }
+    if (surfaceSettlePending && !surfaceComputePreviewFlight) {
+      surfaceSettlePending = false;
+      void runSurfaceComputeSettle();
+    }
+    if (
+      recorderActive &&
+      !surfaceComputePreviewFlight &&
+      !surfaceComputeSettleFlight
+    ) {
+      scene.representSurfaceComputeFrame();
+    }
+  }
+
   const surfaceSession = new RenderSession<never>({
     start: () => {
+      // Set when this session routes to the WebGPU compute path (fr-tzdg)
+      // — the gate below then awaits device + pipeline instead of the
+      // GLSL link.
+      let computeDe: SurfaceDE | null = null;
       try {
         if (
           systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null)
@@ -2740,15 +3038,26 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
-          scene.setSurfaceSystem(
-            de,
-            surfaceSlotColors(de),
-            surfaceTrapIndices(de),
-          );
-          // Kick the empty-space grid build (fr-55r5 part 2). Async and
-          // optional: the session renders gridless until it lands, and a
-          // superseding session boundary drops it by id.
-          surfaceGrid.request(de);
+          if (surfaceComputeEligible(de)) {
+            // The WebGPU compute path (fr-tzdg): no GLSL system upload —
+            // the fold variant must never compile here (its ~25s Mesa
+            // link / fr-096u entry hazards are what this path removes) —
+            // and no grid request: the kernel marches gridless by
+            // decision (49µs/ray was measured without it; the fallback
+            // re-enter requests one when it routes the WebGL branch).
+            computeDe = de;
+            scene.enterSurfaceComputeSession(de);
+          } else {
+            scene.setSurfaceSystem(
+              de,
+              surfaceSlotColors(de),
+              surfaceTrapIndices(de),
+            );
+            // Kick the empty-space grid build (fr-55r5 part 2). Async and
+            // optional: the session renders gridless until it lands, and a
+            // superseding session boundary drops it by id.
+            surfaceGrid.request(de);
+          }
         }
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
@@ -2767,6 +3076,18 @@ function main(): void {
         // completion and the render-complete signal (which holding shows /
         // timeline render keyframes depart on) wait for it.
         const token = ++surfaceCompileToken;
+        if (computeDe) {
+          beginSurfaceComputeGate(token, computeDe);
+          return {
+            post: () => {},
+            terminate: () => {
+              // Session boundary (exit or re-enter): the renderer, its
+              // in-flight frames, and the presentation flags die with the
+              // handle — RenderSession calls this before any new start().
+              teardownSurfaceCompute();
+            },
+          };
+        }
         scene
           .compileSurfaceMaterial()
           .then(() => {
@@ -2816,7 +3137,11 @@ function main(): void {
         showRenderError();
         queueMicrotask(() => surfaceSession.exit());
       }
-      return { post: () => {}, terminate: () => {} };
+      // GLSL sessions have nothing compute-scoped, but a compute route
+      // that THREW after enterSurfaceComputeSession lands here too — the
+      // teardown (idempotent, a no-op for pure-GLSL sessions) clears the
+      // scene's compute flag either way.
+      return { post: () => {}, terminate: () => teardownSurfaceCompute() };
     },
     clearNotes: () => {
       // The one surface note (the degraded-march notice) is derived from
@@ -4281,7 +4606,7 @@ function main(): void {
         state.renderMode === "solid" && solidSession.hasFirstFrame
           ? scene.captureSolidFrame(scale)
           : state.renderMode === "surface" && surfaceSession.hasFirstFrame
-            ? scene.captureSurfaceFrame(scale)
+            ? captureSurfacePng(scale)
             : state.renderMode === "flame" && flameSession.hasFirstFrame
               ? scene.captureFlameFrame()
               : scene.captureFrame(scale);
@@ -4832,7 +5157,13 @@ function main(): void {
         // an identical frame) and repaints the preview otherwise; a
         // recorded drag captures the preview frames the user actually
         // saw.
-        if (force) {
+        if (surfaceComputeRenderer) {
+          // The WebGPU compute path (fr-tzdg): async bounded-pass frames
+          // instead of scissor strips — same tier clock, same
+          // preview/settle choreography, presented through the shared
+          // blit. The strip machinery below never arms in this mode.
+          surfaceComputeTick(now, force);
+        } else if (force) {
           scene.abandonSurfaceSettle();
           surfaceSettled = false;
           surfaceSettlePending = false;
