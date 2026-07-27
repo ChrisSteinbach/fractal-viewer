@@ -126,11 +126,20 @@ morphs into place instead of snapping (see **Presets** below).
   its live preview at the preview ladder's floor rung rather than the
   usual mid-ladder entry — sized so the first frame costs about what a
   fold-free system's does, since a fold descent runs orders of magnitude
-  pricier per pixel — and even that floor rung still traces slowly on a
-  software-GL device (disclosed; fr-du81 tracks progressive preview
-  strips). The first fold surface entry of a session also compiles the
-  fold tracer program, a one-off stall measured at ~25s on Mesa/Iris
-  (the browser caches the compiled program afterwards). A system extending into 4D is not a blocker but a different
+  pricier per pixel. Previews are traced as the same bounded scissor
+  strips as the settle/capture tiers (fr-du81): a frame too heavy to
+  finish inside its per-frame budget presents its partial progress and
+  continues across frames instead of handing the GPU one unbounded
+  submission — on a device far too slow for the system (a phone on a fold
+  preset, software GL) the image fills in progressively and the page
+  stays responsive, where it used to wedge the GPU process outright. The
+  first fold surface entry of a session also compiles the fold tracer
+  program — a one-off measured at ~25s on Mesa/Iris (the browser caches
+  the compiled program afterwards) — which now happens while the explorer
+  stays on screen, compiled in the driver's background threads where it
+  offers them (`KHR_parallel_shader_compile`); on drivers without the
+  extension the stall still exists but lands before the mode's first
+  frame rather than inside it. A system extending into 4D is not a blocker but a different
   tracer: the mode marches the
   **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag

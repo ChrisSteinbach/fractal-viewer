@@ -191,16 +191,31 @@ and UI**, so the interesting math is unit-tested without a browser:
     buffer-scaled eps had rendered fold-DE plateau bands as phantom box
     faces at coarse rungs); after `TIER_SETTLE_MS` of quiet the full-quality
     frame renders as an interruptible strip job (see `strip-planner.ts`).
+    The ladder's 0.1/0.07 emergency rungs (fr-du81) exist for fold-frontier
+    DEs — each buys ~2x fewer rays AND a shallower depth clamp.
     Capture/offline
     `force` frames stay full. Pure, tested, injected clock.
-  - `strip-planner.ts` — adaptive scissor-strip sizing for every
-    full-quality surface trace (fr-sjff): probe strip, then strips sized
-    to `STRIP_TARGET_MS` of measured GPU time each (forced-completion 1x1
-    readback — NOT `gl.finish()`, which some command-buffer paths return
-    from before execution), so no single GPU submission is ever unbounded
-    (the close-up watchdog wedge). scene.ts spreads them across frames
-    for the settle job and runs them to completion synchronously for
-    capture/offline export. Pure, tested.
+  - `strip-planner.ts` — adaptive scissor-strip sizing for EVERY surface
+    trace, previews included (fr-sjff; fr-du81 removed the preview tier's
+    one unbounded draw — the i915-preemption GPU-hang path that killed
+    fold sessions outright): probe strip, then strips sized to a per-tier
+    `targetMs` of measured GPU time each (forced-completion 1x1 readback —
+    NOT `gl.finish()`, which some command-buffer paths return from before
+    execution), so no single GPU submission is ever unbounded. scene.ts's
+    strip pump spreads jobs across frames (settle AND heavy previews,
+    which present progressively and feed the governor measured/extrapolated
+    samples), switching from the blocking readback join to
+    fenceSync+clientWaitSync(0) polling when a strip's predicted cost
+    exceeds `SURFACE_STRIP_SYNC_JOIN_CAP_MS` — multi-second fold strips no
+    longer freeze the main thread — and runs strips to completion
+    synchronously for capture/offline export. Fold surface sessions also
+    gate their first frame on `compileAsync` of the fold tracer program
+    (~25s links happen off the critical path where the driver offers
+    `KHR_parallel_shader_compile`; the compile mesh MUST mirror
+    FullScreenQuad's position+uv triangle or the draw links a second
+    program variant, and the gate defers activate()'s guide/selection
+    refresh so no other re-link joins the driver's compile queue behind
+    the fold program). Pure, tested.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and

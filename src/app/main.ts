@@ -395,6 +395,10 @@ function main(): void {
   // it instead of re-tracing seconds of identical pixels (fr-sjff). Any
   // invalidation clears it.
   let surfaceSettled = false;
+  // A settle verdict the tier scheduler fired while a preview strip job was
+  // still mid-flight (fr-du81): held here until the preview completes, then
+  // begun. A fresh invalidation supersedes it.
+  let surfaceSettlePending = false;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
@@ -2648,6 +2652,12 @@ function main(): void {
   // tickRender's per-frame rotor/slice push.
   let surfaceSessionIs4D = false;
 
+  // Monotonic token guarding the async shader-compile gate (fr-du81): each
+  // start() takes a fresh one, and a compile promise resolving for a
+  // superseded session (exited, or re-entered with a different system) must
+  // not mark the CURRENT session's first frame or report its progress.
+  let surfaceCompileToken = 0;
+
   const surfaceSession = new RenderSession<never>({
     start: () => {
       try {
@@ -2701,7 +2711,52 @@ function main(): void {
         scene.setSurfaceParams(state.surface);
         const lut = surfaceColorLUT(state);
         if (lut) scene.setSurfaceColorLUT(lut);
-        surfaceSession.markFirstFrame();
+        // Gate the first frame on the tracer's program compile (fr-du81):
+        // the fold-frontier variant links in ~25s on desktop Mesa (worse on
+        // mobile drivers), and drawing before it is ready would spend that
+        // stall INSIDE a frame with the main thread blocked. compileAsync
+        // uses KHR_parallel_shader_compile where available; meanwhile
+        // animate() keeps showing the live explorer — the same startup-gap
+        // choreography as the flame/solid workers' first frame. Both the
+        // completion and the render-complete signal (which holding shows /
+        // timeline render keyframes depart on) wait for it.
+        const token = ++surfaceCompileToken;
+        scene
+          .compileSurfaceMaterial()
+          .then(() => {
+            if (token !== surfaceCompileToken) return;
+            if (state.renderMode !== "surface") return;
+            // compileAsync resolves on compile COMPLETION, not success —
+            // prove the program draws before declaring the session live
+            // (a crashed driver compiler reports only at first use).
+            if (!scene.probeSurfaceProgram()) {
+              throw new Error("surface tracer program failed to link");
+            }
+            // Now that the tracer is about to take over the canvas, drop
+            // the transform selection (no guide boxes in this mode, so a
+            // raycast drag should orbit — the solid session's reasoning).
+            // Deferred to HERE rather than activate() because rebuilding
+            // guides re-links their programs, and on drivers that
+            // serialize compiles (Mesa) the gated explorer's next frame
+            // would join the queue BEHIND the multi-second fold compile —
+            // the exact stall the gate exists to avoid.
+            state = selectTransform(state, null);
+            refreshGuides();
+            refreshUi();
+            surfaceSession.markFirstFrame();
+            noteRenderProgress("surface", 1, 1);
+            scene.invalidate();
+          })
+          .catch((error: unknown) => {
+            if (token !== surfaceCompileToken) return;
+            if (state.renderMode !== "surface") return;
+            console.error(
+              "Surface tracer failed to compile; returning to explorer.",
+              error,
+            );
+            showRenderError();
+            surfaceSession.exit();
+          });
       } catch (error) {
         // Unreachable while the segmented control's gate tracks
         // analyzeSurfaceSystem, but a build failure must fall back to the
@@ -2728,30 +2783,40 @@ function main(): void {
       renderComplete.surface = false;
     },
     activate: () => {
-      // Drop any transform selection: no guide boxes in this mode, so a
-      // raycast drag should orbit the camera (the solid session's reasoning).
-      state = selectTransform(state, null);
+      // NOTE the selection/guide handling other sessions do here happens
+      // in the compile gate's resolution instead (see start()): until the
+      // tracer program is ready the canvas keeps showing the explorer,
+      // which should stay EXACTLY as it was — visually and in program
+      // terms, since a guide rebuild's re-links would queue behind the
+      // fold compile on serializing drivers.
       // A fresh session must not inherit the previous one's pending settle
-      // timer (fr-5ne3) or a completed frame's validity (fr-sjff).
+      // timer (fr-5ne3), a completed frame's validity (fr-sjff), or a
+      // deferred settle verdict (fr-du81). No refreshGuides here either:
+      // updateGuides disposes and rebuilds the guide materials, whose
+      // re-links the gated explorer's next frame would then JOIN — behind
+      // the whole fold compile on serializing drivers. Nothing the guides
+      // reflect has changed yet; the compile gate's resolution refreshes
+      // them together with the selection drop.
       surfaceRenderTier.reset();
       surfaceSettled = false;
+      surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
-      refreshGuides();
       refreshUi();
-      // With the mode flipped and the DE uploaded (start() marked the first
-      // frame — skipped if the build failed), the instant render is a
-      // COMPLETE render: the same budget-met signal a converging flame/solid
-      // progress event sends, so a holding collection show or timeline
-      // render keyframe departs on schedule instead of waiting forever.
+      // The render-complete signal — the budget-met event a holding
+      // collection show or timeline render keyframe departs on — fires
+      // when the compile gate in start() resolves and marks the first
+      // frame, not here: the DE upload is instant, but the tracer program
+      // may still be linking (fr-du81).
       if (surfaceSession.hasFirstFrame) noteRenderProgress("surface", 1, 1);
     },
     deactivate: () => {
       // The 4D flag dies with the session (tickRender's surface branch is
       // unreachable once the mode resets, but stale-true costs nothing to
-      // preclude). So does an in-flight settle job (fr-sjff) — nothing
-      // steps it outside this mode, and a stale planner must not greet the
-      // next session.
+      // preclude). So do in-flight settle/preview strip jobs (fr-sjff /
+      // fr-du81) — nothing steps them outside this mode, and a stale
+      // planner must not greet the next session.
       scene.abandonSurfaceSettle();
+      scene.abandonSurfacePreview();
       // A grid still building for this session is nobody's business once
       // the session ends — drop it so its late arrival can't touch the
       // next mode's frame (fr-55r5 part 2). The next 3D session's request
@@ -4707,19 +4772,32 @@ function main(): void {
         if (force) {
           scene.abandonSurfaceSettle();
           surfaceSettled = false;
+          surfaceSettlePending = false;
           scene.renderSurface("full");
         } else {
           const tier = surfaceRenderTier.frame(now, scene.needsRender);
           if (tier === "preview") {
             scene.abandonSurfaceSettle();
             surfaceSettled = false;
+            surfaceSettlePending = false;
             scene.renderSurface("preview");
-          } else if (tier === "full") {
+          } else {
+            // The settle verdict fires on the tier clock, but on systems
+            // whose previews span frames (fr-du81's strip jobs) the
+            // preview may still be mid-flight — let it finish first: it
+            // is the cheapest route to a COMPLETE image of the parked
+            // view, and beginning the full-resolution job now would both
+            // abandon that progress and seed itself from a partial.
+            if (tier === "full") surfaceSettlePending = true;
+            if (scene.surfacePreviewActive) scene.stepSurfacePreview();
+          }
+          if (!scene.surfacePreviewActive && surfaceSettlePending) {
+            surfaceSettlePending = false;
             scene.beginSurfaceSettle();
           }
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) surfaceSettled = true;
-          } else if (recorderActive) {
+          } else if (recorderActive && !scene.surfacePreviewActive) {
             if (surfaceSettled) scene.presentSettledSurface();
             else scene.renderSurface("preview");
           }
