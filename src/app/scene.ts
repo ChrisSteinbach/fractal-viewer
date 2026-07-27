@@ -71,6 +71,7 @@ import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
+import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -618,6 +619,27 @@ export class FractalScene {
    * very first submission (see beginSurfaceSettle). Reset with the
    * governor on every system upload — a new DE is a new cost profile. */
   private surfacePreviewPxCostMs: number | null = null;
+  /** Whether the ACTIVE surface session renders on the WebGPU compute path
+   * (fr-tzdg) — set by {@link enterSurfaceComputeSession}. While true the
+   * fold GLSL is never compiled: {@link renderSurface} degrades to a
+   * re-present so a stray call cannot trigger the ~25s Mesa link the
+   * compute path exists to avoid, and {@link captureThumbnail} reads the
+   * last presented frame instead of tracing. */
+  private surfaceComputeActive = false;
+  /** Last compute frame, uploaded as a plain RGBA8 texture and stretched
+   * over the canvas by the shared surface blit — the same presentation
+   * seam as the preview/settle targets, so capture and the recorder keep
+   * reading the one WebGL canvas. Row 0 is the BOTTOM row (the kernel's
+   * py=0 is ndcY=-1), which is exactly an unflipped DataTexture under the
+   * blit quad's v=0-at-bottom UVs. */
+  private surfaceComputeTexture: THREE.DataTexture | null = null;
+  /** Live SurfaceParams snapshot for compute frame specs — kept beside the
+   * GLSL uniform writes in {@link setSurfaceParams} so both paths read the
+   * one document. */
+  private surfaceComputeParams: SurfaceParams | null = null;
+  /** Bumped by {@link setSurfaceColorLUT} so the compute renderer
+   * re-uploads its LUT texture only when the ramp actually changed. */
+  private surfaceLUTVersion = 0;
 
   /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
   private viewportWidth: number;
@@ -1863,8 +1885,14 @@ export class FractalScene {
     }
     return this.withCenteredProjection(() => {
       if (mode === "solid") this.renderSolid();
-      else if (mode === "surface") this.renderSurface();
-      else this.render();
+      else if (mode === "surface") {
+        // Compute sessions re-present their last traced frame — tracing
+        // here would be renderSurface's fold-GLSL path, which a compute
+        // session deliberately never compiles (fr-tzdg). Before any frame
+        // has presented, the explorer render is the honest thumbnail.
+        if (!this.surfaceComputeActive) this.renderSurface();
+        else if (!this.representSurfaceComputeFrame()) this.render();
+      } else this.render();
       return thumbnailFrom(this.renderer.domElement, maxDim);
     });
   }
@@ -2191,6 +2219,9 @@ export class FractalScene {
    */
   setSurfaceParams(params: SurfaceParams): void {
     this.renderNeeded = true;
+    // The compute path reads the same document at frame-spec assembly
+    // (fr-tzdg) — snapshot it beside the uniform writes.
+    this.surfaceComputeParams = params;
     // Both tracers share the one SurfaceParams document — push to both so
     // whichever the next session activates is already current.
     for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
@@ -2234,6 +2265,195 @@ export class FractalScene {
       data[i * 4 + 3] = 255;
     }
     this.surfaceLUTTexture.needsUpdate = true;
+    // The compute renderer shares these exact quantized bytes (fr-tzdg) —
+    // one ramp definition, bit-identical on both tracers.
+    this.surfaceLUTVersion++;
+  }
+
+  /**
+   * Enter the WebGPU compute presentation for the surface session being
+   * started (fr-tzdg): the same session-entry resets as
+   * {@link setSurfaceSystem} — cost-weighted governor entry rung, the DE's
+   * own full depth for the preview clamp — without touching the GLSL
+   * material, whose fold variant must never compile on this path (the
+   * ~25s Mesa link / fr-096u entry hazards are the point of the mode).
+   */
+  enterSurfaceComputeSession(de: SurfaceDE): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceFullMaxDepth = de.maxDepth;
+    this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
+    this.surfacePreviewPxCostMs = null;
+  }
+
+  /** Leave the compute presentation (session exit or fallback re-enter):
+   * drop the flag and free the frame texture — a settled full-resolution
+   * frame holds megabytes of GPU memory nothing will re-present. */
+  exitSurfaceComputeSession(): void {
+    this.surfaceComputeActive = false;
+    this.surfaceComputeTexture?.dispose();
+    this.surfaceComputeTexture = null;
+  }
+
+  get surfaceComputeSessionActive(): boolean {
+    return this.surfaceComputeActive;
+  }
+
+  /**
+   * Assemble one compute frame's inputs from the live camera, the tier
+   * knobs, and the SurfaceParams snapshot — the exact quantities
+   * {@link setSurfaceFrameUniforms} writes as uniforms, handed across the
+   * WebGPU seam as plain data. Preview frames raster at the governor's
+   * rung of the drawing buffer and clamp depth via previewMaxDepth, the
+   * fr-hith/fr-ttg5 coupling; acceptance eps ALWAYS derives from the
+   * native buffer height (fr-7xgi — a tier coarsens sampling, never
+   * acceptance).
+   */
+  surfaceComputeFrameSpec(tier: RenderTier): SurfaceComputeFrameSpec {
+    const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
+    const scale = tier === "preview" ? this.surfacePreviewGovernor.scale : 1;
+    const w = Math.max(1, Math.round(size.x * scale));
+    const h = Math.max(1, Math.round(size.y * scale));
+    return this.surfaceComputeFrameSpecAt(tier, w, h, size.y);
+  }
+
+  private surfaceComputeFrameSpecAt(
+    tier: RenderTier,
+    width: number,
+    height: number,
+    acceptHeight: number,
+  ): SurfaceComputeFrameSpec {
+    const params = this.surfaceComputeParams;
+    if (!params) {
+      throw new Error("surface compute frame spec requested before params");
+    }
+    this.camera.updateMatrixWorld();
+    const inv = new THREE.Matrix4()
+      .multiplyMatrices(
+        this.camera.projectionMatrix,
+        this.camera.matrixWorldInverse,
+      )
+      .invert();
+    const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
+    const preview = tier === "preview";
+    const light = lightDirection(params.lightAzimuth, params.lightElevation);
+    return {
+      width,
+      height,
+      invProjView: new Float32Array(inv.elements),
+      camPos: [
+        this.camera.position.x,
+        this.camera.position.y,
+        this.camera.position.z,
+      ],
+      acceptPixelEps: angularPerPixel / Math.max(acceptHeight, 1),
+      tracePixelEps: angularPerPixel / Math.max(height, 1),
+      maxDepth: preview
+        ? previewMaxDepth(
+            this.surfaceFullMaxDepth,
+            this.surfacePreviewGovernor.scale,
+          )
+        : this.surfaceFullMaxDepth,
+      marchSteps: preview
+        ? SURFACE_PREVIEW_MARCH_STEPS
+        : SURFACE_FULL_MARCH_STEPS,
+      shadowSteps: preview
+        ? SURFACE_PREVIEW_SHADOW_STEPS
+        : SURFACE_FULL_SHADOW_STEPS,
+      aoTaps: preview ? SURFACE_PREVIEW_AO_TAPS : SURFACE_FULL_AO_TAPS,
+      hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
+      lightDir: [light.x, light.y, light.z],
+      ambient: params.ambient,
+      colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
+      colorSpeed: params.colorSpeed,
+      lut:
+        (this.surfaceLUTTexture?.image.data as Uint8Array | undefined) ?? null,
+      lutVersion: this.surfaceLUTVersion,
+      dither: true,
+    };
+  }
+
+  /**
+   * Upload a finished (or progressively presenting) compute frame and
+   * stretch it over the canvas via the shared blit — presentation only,
+   * deliberately not an invalidation: presents must not re-arm the
+   * preview tier they themselves satisfy.
+   */
+  presentSurfaceComputeFrame(
+    pixels: Uint8Array,
+    width: number,
+    height: number,
+  ): void {
+    let tex = this.surfaceComputeTexture;
+    if (!tex || tex.image.width !== width || tex.image.height !== height) {
+      tex?.dispose();
+      tex = new THREE.DataTexture(
+        new Uint8Array(width * height * 4),
+        width,
+        height,
+      );
+      // Linear + clamp like the preview target: previews upscale to the
+      // canvas, and nearest sampling would pixelate the stretch.
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      this.surfaceComputeTexture = tex;
+    }
+    (tex.image.data as Uint8Array).set(pixels);
+    tex.needsUpdate = true;
+    this.blitSurface(tex, null);
+  }
+
+  /** Repaint the last presented compute frame (recorder ticks, forced
+   * offline frames, exit repaints). False when none exists yet. */
+  representSurfaceComputeFrame(): boolean {
+    if (!this.surfaceComputeTexture) return false;
+    this.blitSurface(this.surfaceComputeTexture, null);
+    return true;
+  }
+
+  /** Feed the preview governor a measured compute preview cost — the
+   * compute path's analogue of the strip jobs' completed-trace samples. */
+  sampleSurfaceComputeCost(traceMs: number): void {
+    this.surfacePreviewGovernor.sample(traceMs);
+  }
+
+  /** Consume the dirty flag when the compute path kicks a frame for it —
+   * the role {@link renderSurface}'s own clear plays on the GLSL path. */
+  clearRenderNeeded(): void {
+    this.renderNeeded = false;
+  }
+
+  /**
+   * Compute-path Save-PNG (fr-tzdg): trace at the export raster fully
+   * off-canvas (`trace` runs the async compute frame), then present and
+   * read back in ONE synchronous span at the export pixel ratio — the
+   * paint and the `toBlob` snapshot share a task, the same discipline as
+   * {@link captureSurfaceFrame}. The spec is assembled under the centered
+   * projection so the export composes like every other capture
+   * (fr-936q), at the export buffer's own eps (finer resolution traces
+   * finer, exactly like the GLSL capture).
+   */
+  async captureSurfaceComputeFrame(
+    exportScale: number,
+    trace: (spec: SurfaceComputeFrameSpec) => Promise<Uint8Array | null>,
+  ): Promise<ExportImage | null> {
+    const ratio = this.exportPixelRatio(exportScale);
+    // The renderer floors when deriving a buffer from a ratio — match it
+    // (flameRenderSize's own arithmetic) without paying a resize just to
+    // measure.
+    const width = Math.floor(this.viewportWidth * ratio);
+    const height = Math.floor(this.viewportHeight * ratio);
+    const spec = this.withCenteredProjection(() =>
+      this.surfaceComputeFrameSpecAt("full", width, height, height),
+    );
+    const pixels = await trace(spec);
+    if (!pixels) return null;
+    return this.withPixelRatio(ratio, () => {
+      this.presentSurfaceComputeFrame(pixels, width, height);
+      return exportImageFrom(this.renderer.domElement);
+    });
   }
 
   /**
@@ -2265,6 +2485,15 @@ export class FractalScene {
    */
   renderSurface(tier: RenderTier = "full"): void {
     this.renderNeeded = false;
+    if (this.surfaceComputeActive) {
+      // A compute session never compiled the fold GLSL — a stray call
+      // through this path must not trigger the ~25s Mesa link the mode
+      // exists to avoid (fr-tzdg). main.ts routes ticks and captures
+      // before this can matter; re-presenting keeps an accidental caller
+      // harmless.
+      this.representSurfaceComputeFrame();
+      return;
+    }
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     if (tier === "preview") {
       // Arm a fresh preview strip job for THIS invalidation (superseding

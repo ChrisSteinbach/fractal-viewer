@@ -125,10 +125,15 @@ export interface OfflineExportDeps {
    * spurious signals are harmless. */
   nextParkSignal(): Promise<void>;
   /** Paint the settled frame at `nowMs` to the canvas, forced past
-   * render-on-demand. For a CAPTURE it must stay synchronous with the
-   * encode that follows; park wakes also call it un-encoded, purely to
-   * keep the on-screen canvas honest while a render converges. */
-  renderFrame(nowMs: number): void;
+   * render-on-demand. May be async (fr-tzdg: the surface compute path
+   * traces its full-quality frame on the GPU first), and the driver
+   * awaits it — but the PAINT itself must be the implementation's final
+   * synchronous act, so the canvas read in `encodeFrame` shares its task
+   * (the WebGL drawing buffer is only guaranteed until the browser
+   * composites, and awaits that cross real task boundaries must all
+   * happen BEFORE the paint). Park wakes also call it un-encoded, purely
+   * to keep the on-screen canvas honest while a render converges. */
+  renderFrame(nowMs: number): void | Promise<void>;
   /** Encode the just-painted canvas as frame `index`; resolves once the
    * encoder accepted it (backpressure honored). A rejection aborts the
    * export — the caller catches. */
@@ -172,10 +177,10 @@ export async function runOfflineExport(
     // still at this same frame's time. See the module header, step 3.
     while (deps.running() && deps.renderParked()) {
       await deps.nextParkSignal();
-      if (deps.running() && deps.renderParked()) deps.renderFrame(nowMs);
+      if (deps.running() && deps.renderParked()) await deps.renderFrame(nowMs);
     }
     if (!deps.running()) break;
-    deps.renderFrame(nowMs);
+    await deps.renderFrame(nowMs);
     await deps.encodeFrame(frames);
     frames++;
     deps.onProgress(frames, deps.totalFrames);

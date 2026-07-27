@@ -27,7 +27,9 @@ function makeDeps(
       log.push("parkSignal");
       return Promise.resolve();
     },
-    renderFrame: (nowMs) => log.push(`render@${String(nowMs)}`),
+    renderFrame: (nowMs) => {
+      log.push(`render@${String(nowMs)}`);
+    },
     encodeFrame: (index) => {
       log.push(`encode#${String(index)}`);
       return Promise.resolve();
@@ -65,6 +67,29 @@ describe("runOfflineExport", () => {
       "step@1200",
     ]);
     expect(run).toEqual({ frames: 2, capped: false });
+  });
+
+  it("awaits an async renderFrame before encoding its frame (fr-tzdg)", async () => {
+    // The surface compute path traces on the GPU inside renderFrame — the
+    // encode must observe the completed paint, never race it.
+    const { deps, log } = makeDeps({
+      stopAfterSteps: 2,
+      renderFrame: async (nowMs) => {
+        log.push(`render-start@${String(nowMs)}`);
+        await Promise.resolve();
+        log.push(`render-done@${String(nowMs)}`);
+      },
+    });
+
+    const run = await runOfflineExport(deps);
+
+    expect(log.slice(0, 4)).toEqual([
+      "step@1000",
+      "render-start@1000",
+      "render-done@1000",
+      "encode#0",
+    ]);
+    expect(run.frames).toBe(1);
   });
 
   it("captures nothing when the run is already over before frame 0", async () => {
