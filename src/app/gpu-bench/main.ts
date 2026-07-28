@@ -2168,22 +2168,26 @@ const SURFACE_FRAME_BUDGET_SW_MS = 300_000;
 const SURFACE_FRAME_SHADOW_STEPS = 32;
 const SURFACE_FRAME_AO_TAPS = 5;
 
-/** fr-p8bc shade A/B leg raster — smaller than leg B's (SURFACE_FRAME_WIDTH
- * 256x144) because this leg renders MANY frames (2 poses × (1 baseline +
- * N cheap widths), the baseline reused across widths): 128x72 keeps a
- * real-adapter run in minutes rather than tens of minutes; software forces
- * the same 96x54 leg B shrinks to. */
-const SURFACE_SHADE_AB_WIDTH = 128;
-const SURFACE_SHADE_AB_HEIGHT = 72;
+/** fr-p8bc shade A/B leg raster — leg A's 96x54 on BOTH adapter kinds,
+ * smaller than leg B's (SURFACE_FRAME_WIDTH 256x144) by measured
+ * necessity: the full-width BASELINE arm is the leg's cost ceiling
+ * (~108-516 ms/hit on Iris — the standard pose's silhouette-graze hits
+ * probe the deepest fold trees and measured the WORST), and at 128x72 a
+ * 600 s/pose budget still truncated both poses, which makes the image
+ * diff meaningless. ~650 (standard) / ~1.9k (near) hit pixels keep the
+ * diff statistics meaningful; the amplified diff canvas carries the
+ * eyeball. */
+const SURFACE_SHADE_AB_WIDTH = 96;
+const SURFACE_SHADE_AB_HEIGHT = 54;
 const SURFACE_SHADE_AB_WIDTH_SW = 96;
 const SURFACE_SHADE_AB_HEIGHT_SW = 54;
 /** Per-frame budget — sized for the leg's WORST arm, the full-width
- * baseline at the near pose: ~108 ms/hit measured on Iris × ~3.5k hits at
- * 128x72 ≈ 7 minutes of shading (a 240s budget measured TRUNCATED — a
- * truncated baseline makes the image diff meaningless, which is the whole
- * leg). The cheap arms finish in seconds; only the baseline ever spends
- * this. */
-const SURFACE_SHADE_AB_BUDGET_MS = 600_000;
+ * baseline (see the raster comment above: 600 s/pose at 128x72 measured
+ * TRUNCATED at both poses; 96x54 is 0.56x the rays with headroom on
+ * top). The cheap arms finish in seconds-to-a-minute; only the baseline
+ * ever spends this. The headless runner stretches its section timeout
+ * when this leg is requested (gpu-flame-bench.mjs). */
+const SURFACE_SHADE_AB_BUDGET_MS = 900_000;
 const SURFACE_SHADE_AB_BUDGET_SW_MS = 300_000;
 
 /** fr-p8bc shade A/B leg's "near" pose distance factor, vs. the standard

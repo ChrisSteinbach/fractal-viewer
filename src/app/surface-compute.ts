@@ -81,11 +81,18 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 export const SURFACE_COMPUTE_WORKGROUP_SIZE = 64;
 
 /** Frontier width for the shade kernel's PROBE evals — the normal/shadow/
- * AO taps, fr-p8bc's lever (they light a hit the full-width march already
- * certified, never decide geometry). Starts at full-width parity; the
- * gpu-bench shade A/B leg (`--surface-shade-width`) carries the
- * quality/timing verdict that flips this. */
-export const SURFACE_COMPUTE_SHADE_DE_WIDTH = SURFACE_FOLD_BEAM_WIDTH;
+ * AO taps, fr-p8bc's lever: they light a hit the full-width march already
+ * certified, never decide geometry, so they ride the width-1 greedy
+ * descent. MEASURED VERDICT (gpu-bench shade A/B leg, real Iris Xe,
+ * mandelboxKifs 96x54, identical 660-hit sets): full-width probe shading
+ * 740 s/frame vs 31 s at width 1 (23.8x, thermally understated), and at
+ * the hit-dominated near pose the full-width arm cannot even converge a
+ * 900 s budget — while the images are eyeball-identical (differences are
+ * a slight lightening of deep-crease shadow/AO from the greedy DE's
+ * overshoot; 8.1% of pixels differ by >8/255, mean 23.5 on those, no
+ * structural artifacts). Rerun via
+ * `npm run bench:surface -- --display=:0 --surface-shade-width=1`. */
+export const SURFACE_COMPUTE_SHADE_DE_WIDTH = 1;
 
 /** Per-pass GPU-time target the adaptive `stepsThisPass` doubles toward —
  * the bench host loop's own pacing constant. Far under the ~7.5s i915

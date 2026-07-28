@@ -336,3 +336,27 @@ committing.
   solid-ball artefact that causes. §3.3 is the correct form of that idea.
 - Do not let the CPU oracle and the GLSL mirror drift. Any change here lands in
   `surface-de.ts` first with harness numbers attached.
+
+## 6. Post-brief measured outcomes (2026-07-28 addendum)
+
+The §3.7 compute-port hypothesis was spiked (fr-q1f8), measured, and shipped
+as the fold surface session's preferred tracer (fr-tzdg,
+`src/app/surface-compute.ts`) — though with the OPPOSITE internal shape to
+§3.7's sketch: private per-thread frontiers beat the workgroup-shared layout
+2-3.3x, and wavefront-style stage-2 compaction stayed off (1.4-1.6x slower).
+The march itself landed at 49µs/ray where the fragment tracer was unbounded.
+
+That victory moved the wall: with marching bounded, SHADING dominated
+end-to-end frame cost — every hit paid ~40 zero-cutoff on-surface `surfaceDE`
+evals (4 normal + up-to-32 shadow + 5 AO) through the full width-12 beam,
+measured 740s for a 96x54 frame's 660 hits on Iris (unable to converge a
+900s budget at a hit-dominated pose). This cost class is invisible to §1's
+per-eval model because it is per-HIT, not per-march-step. fr-p8bc resolved
+it: probe evals light a hit the full-width march already certified, never
+decide geometry, so they ride a width-1 greedy descent — 23.8x cheaper
+shading, eyeball-identical frames (a slight lightening of deep-crease
+shadow/AO from the greedy overshoot; quality A/B leg in
+`npm run bench:surface -- --surface-shade-width=N`). The same trick is a
+candidate for the WebGL fold GLSL's shading (its cost structure is
+identical), gated on a link-cliff measurement — the fragment path is now the
+fallback, so it waits its turn.

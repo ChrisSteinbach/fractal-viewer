@@ -80,6 +80,11 @@ const BENCH_TIMEOUT_MS = 10 * 60_000;
  * (many kernel configs, multi-pass marches, a per-config wall cap of its
  * own) can legitimately run far past the flame sweep's 10 minutes. */
 const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
+/** Wait cap when the fr-p8bc shade A/B leg is requested on top: its
+ * full-width BASELINE arms are the whole point of the comparison and
+ * measured up to ~10-15 minutes EACH on Iris (two poses), on top of leg
+ * B's own budget — a 30-minute ceiling measured a timeout mid-leg. */
+const SURFACE_SHADE_AB_TIMEOUT_MS = 60 * 60_000;
 const DEFAULT_CHROME = "/usr/bin/google-chrome";
 
 /** `--surface-*` passthrough flags → the page's URL params (defaults and
@@ -368,7 +373,9 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const surfaceRequested = args.surface || args.surfaceOnly;
   const benchTimeoutMs = surfaceRequested
-    ? SURFACE_BENCH_TIMEOUT_MS
+    ? args.surfaceParams.surfaceShadeWidth
+      ? SURFACE_SHADE_AB_TIMEOUT_MS
+      : SURFACE_BENCH_TIMEOUT_MS
     : BENCH_TIMEOUT_MS;
   const outDir = path.resolve(REPO_ROOT, args.out);
   await mkdir(outDir, { recursive: true });
