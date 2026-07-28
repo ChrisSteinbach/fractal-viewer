@@ -316,6 +316,16 @@ export function createStripPlanner(
         px = Math.min(Math.max(1, Math.round(lastPx * scale)), capPx());
       }
       px = Math.min(px, totalPx - planned);
+      // Row-snap strips of a row or more: ending on a row boundary keeps
+      // a row-aligned successor to ONE scissor rect (fr-096u measured a
+      // ~20-30ms fixed GPU cost per draw on Iris/ANGLE — three rects per
+      // strip tripled it) and avoids 1px-tall partial rows, whose 2x2
+      // fragment-quad shading wastes half the lanes. Sub-row strips (the
+      // worst-case cap's territory) keep exact pixel granularity.
+      if (px >= width && width > 0) {
+        const rem = (planned + px) % width;
+        if (rem !== 0 && px - rem >= width) px -= rem;
+      }
       const strip = { px, rects: intervalRects(planned, px, width) };
       planned += px;
       lastPx = px;
