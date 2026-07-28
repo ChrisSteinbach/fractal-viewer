@@ -9,14 +9,31 @@
  * ever outruns the i915 watchdog): MARCH passes advance every active ray
  * by `stepsThisPass` DE steps (the bench's proven register-light kernel,
  * ray derivation swapped to the GLSL tracer's unproject), with the active
- * list compacted host-side between them; rays that turn terminal join a
- * SHADE QUEUE drained in host-sized batches through the shade kernel (the
+ * list compacted host-side between them; rays that turn terminal join the
+ * SHADE QUEUES drained in host-sized batches through the shade kernel (the
  * GLSL tracer's full shading, mirrored term for term). The split is a
  * measured verdict, not taste: shading a freshly-hit ray costs ~40
  * zero-cutoff on-surface DE evals, and the v1 megakernel — which shaded
  * rays inside whichever march pass terminated them — measured 1.1-5.3s
  * per pass on Iris and LOST THE DEVICE at full depth/budgets (fr-096u's
  * watchdog through the shading door; numbers on the fr-tzdg bead).
+ *
+ * Shade batches are sized in HIT units, not ray units (fr-p8bc's second
+ * lesson): only HIT rays pay the on-surface probe evals — miss/exhausted
+ * rays write one background pixel — and the queue arrives in scanline
+ * order, so cost is spatially CLUSTERED. The original ray-unit doubling
+ * grew batch capacity across a run of ~free misses and then submitted
+ * thousands of rays straight into a hit band (~108 ms/hit measured
+ * full-width near-surface on Iris) — several seconds past the ~7.5 s
+ * i915 preemption watchdog, five kernel-confirmed GPU HANGs (ecode
+ * 12:1:85dcfffb) in one bench session, and reactive quartering can only
+ * react AFTER the killing batch. Now misses drain in fixed
+ * ceiling-sized batches (trivially bounded), and hit batches are sized
+ * predictively from a per-hit cost EMA under a pessimistic prior
+ * ({@link shadeHitBatchSize}), with the EMA lifting INSTANTLY on a
+ * measured spike ({@link nextShadeHitEmaUs}) and a slow-growing capacity
+ * cap ({@link nextShadeBatchSize}) bounding the first encounter with an
+ * unmeasured-cost region.
  *
  * Division of labor: this module owns the DEVICE — acquisition, the
  * per-session pipeline (the DE is frozen at session enter, matching the
@@ -149,6 +166,11 @@ export interface SurfaceComputeFrame {
   /** Measured compute-submission time (excludes readbacks) — the honest
    * cost sample for the preview governor. */
   gpuMs: number;
+  /** March / shade portions of {@link gpuMs} — the fr-p8bc verdict split:
+   * shading dominance is the measured lever the shade probe width
+   * targets, so the two costs stay separately visible. */
+  marchMs: number;
+  shadeMs: number;
   passes: number;
   truncated: boolean;
   /** Final ray-status tallies — how the frame's rays ended (`active` is
@@ -218,22 +240,33 @@ export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
   return Math.max(SURFACE_COMPUTE_MARCH_CHUNK_MIN, rays);
 }
 
-/** First shade batch of a frame — deliberately small: a single hit ray's
- * shade is ~40 zero-cutoff on-surface DE evals, and the very first batch
- * has no measurement to size itself with. */
-export const SURFACE_COMPUTE_SHADE_BATCH_START = 32;
-
-/** Shade batch ceiling — plenty to swallow a whole preview's hits in one
- * bounded dispatch once the measured cost allows it. */
+/** Shade batch ceiling — plenty to swallow a whole preview's misses (or a
+ * cheap-probe frame's hits) in one bounded dispatch once the measured cost
+ * allows it. */
 export const SURFACE_COMPUTE_MAX_SHADE_BATCH = 4096;
 
+/** First hit-batch CAPACITY of a frame — deliberately small: even at the
+ * worst per-hit cost measured on Iris (~250 ms full-width probes at a
+ * near-surface silhouette), 8 hits stay well under the ~7.5 s i915
+ * watchdog while the frame's first measurements come in. */
+export const SURFACE_COMPUTE_SHADE_HIT_CAP_START = 8;
+
+/** Pessimistic prior for per-HIT shade cost (µs) before a frame's first
+ * measured hit batch — deliberately far above the cheap-probe common case
+ * (~1 ms/hit measured) and same-order with the full-width near-surface
+ * grind (~108 ms/hit measured, fr-p8bc's A/B): overestimating shrinks the
+ * first batches, underestimating hangs the GPU. The measured EMA takes
+ * over from the first hit batch on. */
+export const SURFACE_COMPUTE_INITIAL_HIT_SHADE_US = 20_000;
+
 /**
- * Adaptive shade-batch sizing: grow while batches come in well under the
- * pass target, QUARTER on a big overshoot — shading cost per ray swings
- * orders of magnitude with surface position (fold branch trees explode
- * near the set), and the downward reaction is what keeps a mass-hit
- * frame's shading submissions under the i915 watchdog (the measured v1
- * failure). Pure so the safety bias is unit-tested.
+ * Adaptive hit-batch CAPACITY: grow while hit batches come in well under
+ * the pass target, QUARTER on a big overshoot. This is the slow-trust
+ * bound layered over {@link shadeHitBatchSize}'s cost prediction: a
+ * region whose per-hit cost the EMA has not seen yet can only be met at
+ * a capacity earned through measured-cheap batches, so the first
+ * encounter's overshoot stays a bounded multiple of the pass target
+ * instead of a watchdog kill. Pure so the safety bias is unit-tested.
  */
 export function nextShadeBatchSize(
   current: number,
@@ -249,6 +282,33 @@ export function nextShadeBatchSize(
     return Math.max(1, Math.floor(current / 4));
   }
   return current;
+}
+
+/**
+ * Predictive hit-batch sizing (fr-p8bc): as many hits as the measured
+ * per-hit cost EMA predicts fit the pass target, clamped by the
+ * slow-trust capacity cap and floored at one hit (progress guarantee —
+ * a single hit is the irreducible bounded unit). Pure so the prediction
+ * is unit-tested.
+ */
+export function shadeHitBatchSize(emaUsPerHit: number, cap: number): number {
+  const byCost = Math.floor(
+    (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / Math.max(1, emaUsPerHit),
+  );
+  return Math.max(1, Math.min(cap, byCost));
+}
+
+/**
+ * Per-hit shade-cost EMA update, deliberately ASYMMETRIC: a measured
+ * spike lifts the estimate to the spike INSTANTLY (the next batch is
+ * sized for the expensive region the queue's scanline order says we just
+ * entered), while cheaper measurements blend in slowly (re-trusting a
+ * cheap region is worth a few conservative batches; trusting an
+ * expensive one late is a watchdog kill). Pure so the asymmetry — the
+ * safety property — is unit-tested.
+ */
+export function nextShadeHitEmaUs(emaUs: number, measuredUs: number): number {
+  return measuredUs > emaUs ? measuredUs : emaUs * 0.6 + measuredUs * 0.4;
 }
 
 /** The bench host loop's adaptive pass sizing: double while the last pass
@@ -821,17 +881,26 @@ export class SurfaceComputeRenderer {
     let active = new Uint32Array(rays);
     for (let i = 0; i < rays; i++) active[i] = i;
     // Rays that turned terminal in a march pass, awaiting a shade batch.
-    // The QUEUE is the v2 architecture's point: shading a freshly-hit ray
-    // costs ~40 zero-cutoff on-surface DE evals — orders of magnitude
+    // The QUEUES are the v2 architecture's point: shading a freshly-HIT
+    // ray costs ~40 zero-cutoff on-surface DE evals — orders of magnitude
     // more than a march step — and letting it ride the march pass that
     // terminated it measured 1.1-5.3s submissions and a real device loss
-    // on Iris (fr-096u's watchdog through the shading door). Host-sized
-    // batches keep every shading submission bounded too.
-    let shadeQueue: number[] = [];
+    // on Iris (fr-096u's watchdog through the shading door). Hits and
+    // misses queue SEPARATELY because their costs differ by those same
+    // orders of magnitude and the arrival order is scanline-coherent: a
+    // shared ray-unit queue let miss runs inflate the batch size that a
+    // following hit band then paid — the module doc's five kernel-
+    // confirmed GPU hangs. Host-sized pure batches keep every shading
+    // submission bounded in the unit that actually costs.
+    let shadeHitQueue: number[] = [];
+    let shadeFreeQueue: number[] = [];
     let stepsThisPass = 1;
-    let shadeBatch = SURFACE_COMPUTE_SHADE_BATCH_START;
+    let shadeHitCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    let shadeHitEmaUs = SURFACE_COMPUTE_INITIAL_HIT_SHADE_US;
     let passes = 0;
     let gpuMs = 0;
+    let marchGpuMs = 0;
+    let shadeGpuMs = 0;
     let truncated = false;
     let lastProgress = wallStart;
 
@@ -906,7 +975,11 @@ export class SurfaceComputeRenderer {
 
     let rayStepEmaUs = SURFACE_COMPUTE_INITIAL_RAY_STEP_US;
     let finalStates: Float32Array | null = null;
-    outer: while (active.length > 0 || shadeQueue.length > 0) {
+    outer: while (
+      active.length > 0 ||
+      shadeHitQueue.length > 0 ||
+      shadeFreeQueue.length > 0
+    ) {
       if (performance.now() - wallStart > budgetMs) {
         truncated = true;
         break;
@@ -935,6 +1008,7 @@ export class SurfaceComputeRenderer {
           );
           if (marchMs === null) return null;
           gpuMs += marchMs;
+          marchGpuMs += marchMs;
           passes++;
           const usPerRayStep =
             (marchMs * 1000) / (slice.length * Math.max(1, stepsThisPass));
@@ -951,10 +1025,13 @@ export class SurfaceComputeRenderer {
         finalStates = stateCopy;
         const next: number[] = [];
         for (const ray of active) {
-          if (stateCopy[ray * 4 + 1] === SURFACE_GPU_RAY_ACTIVE) {
+          const rayStatus = stateCopy[ray * 4 + 1];
+          if (rayStatus === SURFACE_GPU_RAY_ACTIVE) {
             next.push(ray);
+          } else if (rayStatus === SURFACE_GPU_RAY_HIT) {
+            shadeHitQueue.push(ray);
           } else {
-            shadeQueue.push(ray);
+            shadeFreeQueue.push(ray);
           }
         }
         // Steps grow only while the WHOLE active set fits a single slice
@@ -967,15 +1044,28 @@ export class SurfaceComputeRenderer {
         active = Uint32Array.from(next);
         if (sweptWhole) stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
       }
-      while (shadeQueue.length > 0) {
+      while (shadeHitQueue.length > 0 || shadeFreeQueue.length > 0) {
         if (performance.now() - wallStart > budgetMs) {
           // Marched-but-unshaded rays keep their seed pixels — the
           // documented truncation contract.
           truncated = true;
           break outer;
         }
-        const batch = Uint32Array.from(shadeQueue.slice(0, shadeBatch));
-        shadeQueue = shadeQueue.slice(batch.length);
+        // Free rays (miss/exhausted) first: one background write each,
+        // trivially bounded at the ceiling — and presents fill the
+        // backdrop before the hit grind starts.
+        const isFree = shadeFreeQueue.length > 0;
+        const batchSize = isFree
+          ? SURFACE_COMPUTE_MAX_SHADE_BATCH
+          : shadeHitBatchSize(shadeHitEmaUs, shadeHitCap);
+        const batch = Uint32Array.from(
+          (isFree ? shadeFreeQueue : shadeHitQueue).slice(0, batchSize),
+        );
+        if (isFree) {
+          shadeFreeQueue = shadeFreeQueue.slice(batch.length);
+        } else {
+          shadeHitQueue = shadeHitQueue.slice(batch.length);
+        }
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
         const shadeMs = await dispatchTimed(
@@ -985,8 +1075,17 @@ export class SurfaceComputeRenderer {
         );
         if (shadeMs === null) return null;
         gpuMs += shadeMs;
+        shadeGpuMs += shadeMs;
         passes++;
-        shadeBatch = nextShadeBatchSize(shadeBatch, shadeMs);
+        if (!isFree) {
+          // Hit economics only — free batches would just dilute the EMA
+          // toward zero and re-open the miss-inflated-capacity hole.
+          shadeHitEmaUs = nextShadeHitEmaUs(
+            shadeHitEmaUs,
+            (shadeMs * 1000) / batch.length,
+          );
+          shadeHitCap = nextShadeBatchSize(shadeHitCap, shadeMs);
+        }
         if (!(await maybePresent())) return null;
       }
     }
@@ -1014,6 +1113,8 @@ export class SurfaceComputeRenderer {
       height,
       wallMs: performance.now() - wallStart,
       gpuMs,
+      marchMs: marchGpuMs,
+      shadeMs: shadeGpuMs,
       passes,
       truncated,
       counts,
