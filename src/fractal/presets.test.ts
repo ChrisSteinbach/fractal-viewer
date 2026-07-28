@@ -834,6 +834,13 @@ describe("PRESET_RENDER_HINTS", () => {
     expect(PRESET_RENDER_HINTS.mandelbox).toBe("flame");
   });
 
+  // mandelboxKifs is the pure-fold twin whose payoff lives in the fold
+  // surface descent, not the live point cloud (see its own doc, fr-5rvk) —
+  // loading it switches the app into that renderer.
+  it("hints mandelboxKifs as a surface showcase", () => {
+    expect(PRESET_RENDER_HINTS.mandelboxKifs).toBe("surface");
+  });
+
   // Guards against a typo'd key silently falling out of the Preset union.
   it("keys only real preset names", () => {
     for (const key of Object.keys(PRESET_RENDER_HINTS)) {

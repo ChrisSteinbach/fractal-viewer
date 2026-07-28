@@ -271,7 +271,11 @@ import type {
  * Lipschitz bound `|w|·L_V·sigma_max(M) < CONTRACTION_LIMIT` with
  * `L_boxfold = 1` and `L_spherefold = L_mandelbox = 4` (the ×4 inner
  * region is the worst branch) — which also caps every certified branch
- * factor below 1, since `|w|·L_V·sigma_min <= 0.999·sigma_min/sigma_max`.
+ * factor below 1, since `|w|·L_V·sigma_min <= 0.999·sigma_min/sigma_max`
+ * — and floors `|w|` itself at {@link NEAR_ZERO_FOLD_WEIGHT}: the
+ * contraction bound only ever IMPROVES as `w -> 0`, but the descent
+ * divides by `w`, so a near-zero weight must be refused rather than
+ * admitted (fr-2v0y).
  * Anisotropy stays `sigma_max/sigma_min` of `M` alone: every branch is
  * conformal, so the fold contributes ratio 1. Consequences worth naming:
  * the shipped Mandelbox preset (`mandelbox 1.2` blended with
@@ -343,6 +347,21 @@ export const CONTRACTION_LIMIT = 0.999;
 /** Smallest singular value below which a map is treated as non-invertible
  * (a flat/degenerate map has no inverse to descend through). */
 export const NEAR_SINGULAR_SIGMA = 1e-4;
+
+/**
+ * Eligibility floor on a pure-fold variation's |weight| (fr-2v0y). The
+ * descent works in u-space `u = p/w` (`foldInvW = 1/w`, an f32 uniform in
+ * the GLSL/WGSL mirrors), and `w -> 0+` slides THROUGH the composite
+ * Lipschitz gate — `|w|·L_V·sigma_max` only improves as the weight
+ * shrinks — while the mirrors degrade: the ±2 fold-cell lattice loses f32
+ * resolution against `|u| ~ |p|/w` long before `1/w` literally overflows
+ * to Inf (where the map's branch terms would silently leave the min and
+ * the estimator would march through its own surface). At 1e-4 the lattice
+ * stays resolved with orders of margin. The UI's 0–2 weight slider cannot
+ * land in `(0, 1e-4)` — only a hand-edited hash/import payload can, which
+ * is exactly what an eligibility reason (rather than a clamp) is for.
+ */
+export const NEAR_ZERO_FOLD_WEIGHT = 1e-4;
 
 /** Points drawn by the seeded bounding-radius probe. */
 export const PROBE_POINTS = 8192;
@@ -816,6 +835,12 @@ export function analyzeSurfaceSystem(
     if (!fold && hasActiveVariations(t)) {
       reasons.push(`${label} uses variations`);
     }
+    // The composite gate below cannot catch w ≈ 0 — a smaller weight only
+    // ever helps contraction — but the descent divides by w. See
+    // NEAR_ZERO_FOLD_WEIGHT.
+    if (fold && Math.abs(fold.weight) < NEAR_ZERO_FOLD_WEIGHT) {
+      reasons.push(`${label} fold weight ≈ 0`);
+    }
     if (!isFlatTransform(t)) {
       reasons.push(`${label} extends into 4D`);
     }
@@ -841,11 +866,15 @@ export function analyzeSurfaceSystem(
     // un-iterated map needs none, exactly like the affine lens). Blended
     // final variation lists stay out for the iterated maps' reason: a
     // weighted sum has no branch decomposition.
-    if (
-      !pureFoldVariation(finalTransform) &&
-      hasActiveVariations(finalTransform)
-    ) {
+    const foldFinal = pureFoldVariation(finalTransform);
+    if (!foldFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
+    }
+    // The lens has no contraction gate at all, so the weight floor is the
+    // ONLY thing standing between a hand-edited w ≈ 0 and descendLens's
+    // 1/w (see NEAR_ZERO_FOLD_WEIGHT).
+    if (foldFinal && Math.abs(foldFinal.weight) < NEAR_ZERO_FOLD_WEIGHT) {
+      reasons.push("final transform fold weight ≈ 0");
     }
     if (!isFlatTransform(finalTransform)) {
       reasons.push("final transform extends into 4D");
@@ -2147,6 +2176,46 @@ const fnR = new Float64Array(FOLD_W);
 const fnCert = new Float64Array(FOLD_W);
 const FOLD_SWEEP = [0, 0, 0];
 
+/** One frontier-insertion candidate as {@link FoldFrontierTap} reports it:
+ * the floored selection key and the chain state the slot would carry. */
+export interface FoldFrontierCandidate {
+  key: number;
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  floor: number;
+  r: number;
+}
+
+/**
+ * Test-only observation tap on {@link descendFold}'s frontier (fr-2v0y).
+ * When installed, every candidate that reaches frontier INSERTION (i.e.
+ * survived the floor-vs-best prune and the B&B skips and did not fold as
+ * an escape) is reported in arrival order, and every level that completes
+ * its sweep reports the kept slots in slot order — levels truncated by a
+ * value-exact early exit report nothing. The contract this exists to pin:
+ * the kept set is exactly the level's FOLD_W smallest floored keys, a
+ * full frontier replacing its first-scanned worst slot only when a
+ * STRICTLY smaller key arrives (ties evict the newcomer). The cross-check
+ * lives in surface-de.test.ts as a brute-force replay of the candidate
+ * stream. Production never installs a tap: the null path costs one
+ * pointer check per inserted candidate and per level, and the GLSL/WGSL
+ * mirrors carry no counterpart — the tap reads state, never perturbs it.
+ */
+export interface FoldFrontierTap {
+  candidate(depth: number, c: FoldFrontierCandidate): void;
+  level(depth: number, kept: FoldFrontierCandidate[]): void;
+}
+
+let foldFrontierTap: FoldFrontierTap | null = null;
+
+/** Install (or clear, with `null`) the {@link FoldFrontierTap}. Tests
+ * only; callers must clear the tap in a `finally`. */
+export function setFoldFrontierTap(tap: FoldFrontierTap | null): void {
+  foldFrontierTap = tap;
+}
+
 /**
  * Fold-system descent (fr-5rvk): a width-{@link SURFACE_FOLD_BEAM_WIDTH}
  * FRONTIER of chains replaces {@link descend}'s two-plus-two ladder
@@ -2631,6 +2700,17 @@ function descendFold(
               }
               continue;
             }
+            if (foldFrontierTap !== null) {
+              foldFrontierTap.candidate(depth, {
+                key,
+                x: ix,
+                y: iy,
+                z: iz,
+                scale: childScale,
+                floor: candFloor,
+                r,
+              });
+            }
             // Frontier insertion: UNSORTED storage with a tracked worst
             // slot. The kept set is still exactly the level's FOLD_W
             // smallest floored keys — a full frontier replaces its worst
@@ -2747,6 +2827,21 @@ function descendFold(
       fcR[i] = fnR[i];
     }
     chainCount = keptCount;
+    if (foldFrontierTap !== null) {
+      const kept: FoldFrontierCandidate[] = [];
+      for (let i = 0; i < keptCount; i++) {
+        kept.push({
+          key: fnKey[i],
+          x: fnX[i],
+          y: fnY[i],
+          z: fnZ[i],
+          scale: fnScale[i],
+          floor: fnFloor[i],
+          r: fnR[i],
+        });
+      }
+      foldFrontierTap.level(depth, kept);
+    }
   }
 
   // Floor-raised KIFS terminals for every chain alive at the depth cap: a
