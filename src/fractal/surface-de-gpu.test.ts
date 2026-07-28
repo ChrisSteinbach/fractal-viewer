@@ -665,6 +665,83 @@ describe("surfaceDeKernelWgsl frontier storage class", () => {
   });
 });
 
+describe("surfaceDeKernelWgsl shade probe width (shadeDeWidth, fr-p8bc)", () => {
+  it("throws on a zero or non-integer shade probe width", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", shadeDeWidth: 0 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", shadeDeWidth: 2.5 })),
+    ).toThrow();
+  });
+
+  it("omitted and equal-to-width produce identical shade source — the byte-identical off state", () => {
+    const omitted = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    const equal = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", shadeDeWidth: 4 }),
+    );
+    expect(equal).toBe(omitted);
+    expect(omitted).not.toContain("surfaceDEProbe");
+  });
+
+  it("emits fn surfaceDEProbe at the probe width and routes the normal/shadow/AO taps to it, leaving the main descent at full width", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1 }),
+    );
+    expect(wgsl).toContain("fn surfaceDEProbe(pIn: vec3f");
+    expect(wgsl).toContain("fn probeIx(");
+    // The probe's 14 frontier arrays are its own p-named privates at the
+    // probe width; the main descent keeps its full-width f-named arrays.
+    const probeArrays = [...wgsl.matchAll(/var p\w+: array<f32, (\d+)>;/g)];
+    expect(probeArrays.length).toBe(14);
+    for (const m of probeArrays) expect(Number(m[1])).toBe(1);
+    const mainArrays = [...wgsl.matchAll(/var f\w+: array<f32, (\d+)>;/g)];
+    expect(mainArrays.length).toBe(14);
+    for (const m of mainArrays) expect(Number(m[1])).toBe(12);
+    // Every probe tap goes through the cheap descent…
+    expect(wgsl).toContain("surfaceDEProbe(pos + e.xyy * h, 0.0, li)");
+    expect(wgsl).toContain("surfaceDEProbe(sp, 0.0, li)");
+    expect(wgsl).toContain("surfaceDEProbe(pos + n * hh, 0.0, li)");
+    // …and none stays on the full-width descent.
+    expect(wgsl).not.toContain("surfaceDE(pos + e.xyy * h, 0.0, li)");
+    expect(wgsl).not.toContain("surfaceDE(sp, 0.0, li)");
+    expect(wgsl).not.toContain("surfaceDE(pos + n * hh, 0.0, li)");
+  });
+
+  it("keeps the probe frontier in function-scope private arrays under a workgroup-shared main frontier", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+        shadeDeWidth: 1,
+      }),
+    );
+    // Main frontier: 14 workgroup arrays, none of them probe-named.
+    const shared = [...wgsl.matchAll(/var<workgroup> (\w+):/g)];
+    expect(shared.length).toBe(14);
+    for (const m of shared) expect(m[1].startsWith("p")).toBe(false);
+    // Probe frontier: private, probe-sized.
+    const probeArrays = [...wgsl.matchAll(/var p\w+: array<f32, (\d+)>;/g)];
+    expect(probeArrays.length).toBe(14);
+    for (const m of probeArrays) expect(Number(m[1])).toBe(1);
+  });
+
+  it("is ignored outside shade mode: march and eval source are unchanged by shadeDeWidth", () => {
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "march", rays: "unproject", shadeDeWidth: 1 }),
+      ),
+    ).toBe(
+      surfaceDeKernelWgsl(kernelOpts({ mode: "march", rays: "unproject" })),
+    );
+    expect(
+      surfaceDeKernelWgsl(kernelOpts({ mode: "eval", shadeDeWidth: 1 })),
+    ).toBe(surfaceDeKernelWgsl(kernelOpts({ mode: "eval" })));
+  });
+});
+
 describe("surfaceDeKernelWgsl stage-2 branch-and-bound flag", () => {
   it("includes the bnbSigmaSq marker when bnbStage2 is true", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ bnbStage2: true }));
