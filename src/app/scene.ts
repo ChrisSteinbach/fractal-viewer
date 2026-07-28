@@ -3229,9 +3229,12 @@ const DRAW_SIZE = new THREE.Vector2();
 const SURFACE_SETTLE_STEP_BUDGET_MS = 40;
 /** Multiplier from a completed job's observed worst px cost to the next
  * job's worst-case price floor (fr-096u): covers the preview-to-settle
- * tier gap (~4-6x measured px cost) plus margin for crease structure the
- * coarser trace under-sampled. */
-const STRIP_WORST_EVIDENCE_SAFETY = 10;
+ * tier gap (~4-6x measured px cost). Crease structure the coarser trace
+ * under-sampled is the accepted residual — the cap's own headroom under
+ * the watchdog absorbs it; pricing it here as well (the first cut used
+ * x10) doubled the strip count of every measured-cheap fold frame for no
+ * measured safety. */
+const STRIP_WORST_EVIDENCE_SAFETY = 5;
 /** Measured GPU time (ms) each preview strip aims for (fr-du81) — well
  * under the settle tier's 75 so strips interleave with a live drag: a
  * preview frame's budget below fits two of these plus the probe. */

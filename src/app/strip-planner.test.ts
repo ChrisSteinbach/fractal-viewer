@@ -241,9 +241,14 @@ describe("createStripPlanner", () => {
   });
 
   it("caps the affine class loosely enough to leave the legacy probe alone", () => {
-    // Affine cap: floor(2000/0.1) = 20000px — far above the 3840px legacy
-    // probe, so cheap systems keep their legacy behavior; only a
-    // growth-ballooned strip (8 x 3840 = 30720px) feels the bound.
+    // The affine cap (STRIP_WORST_CASE_CAP_MS / 0.1 = 40000px) sits far
+    // above the 3840px legacy probe, so cheap systems keep their legacy
+    // behavior; a growth-ballooned strip feels whichever binds first, the
+    // growth cap or the worst-case cap.
+    const capPx = Math.floor(
+      STRIP_WORST_CASE_CAP_MS / STRIP_AFFINE_WORST_MS_PER_PX,
+    );
+    expect(capPx).toBeGreaterThan(3840);
     const planner = createStripPlanner(720, 1280, {
       worstMsPerPx: STRIP_AFFINE_WORST_MS_PER_PX,
     });
@@ -251,23 +256,21 @@ describe("createStripPlanner", () => {
       px: 3840,
       rects: [{ x: 0, y: 0, w: 1280, h: 3 }],
     });
-    expect(planner.next(0.001)!.px).toBe(
-      Math.floor(STRIP_WORST_CASE_CAP_MS / STRIP_AFFINE_WORST_MS_PER_PX),
-    );
+    expect(planner.next(0.001)!.px).toBe(Math.min(3840 * 8, capPx));
   });
 
   it("ratchets the cap down as measurements reveal worse pixels mid-job", () => {
-    // Fold floor 50ms/px -> initial cap floor(2000/50) = 40px; the probe
+    // Fold floor 50ms/px -> initial cap floor(4000/50) = 80px; the probe
     // (prior-sized 3750px) is capped there.
     const planner = createStripPlanner(720, 1280, {
       priorMsPerPx: 0.02,
       worstMsPerPx: 50,
     });
-    expect(planner.next(null)!.px).toBe(40);
-    // The 40px strip measures 40s -> 1000ms/px observed: the cap
-    // collapses to 2px and target scaling itself asks for less.
+    expect(planner.next(null)!.px).toBe(80);
+    // The 80px strip measures 40s -> 500ms/px observed: the cap collapses
+    // to 8px and target scaling itself asks for less.
     expect(planner.next(40_000)!.px).toBe(1);
-    expect(planner.observedWorstMsPerPx).toBe(1000);
+    expect(planner.observedWorstMsPerPx).toBe(500);
     // A single 3s pixel raises the observation further...
     expect(planner.next(3000)!.px).toBe(1);
     expect(planner.observedWorstMsPerPx).toBe(3000);
