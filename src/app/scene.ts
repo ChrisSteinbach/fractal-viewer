@@ -55,7 +55,9 @@ import {
 } from "./render-tier";
 import {
   createStripPlanner,
-  STRIP_PROBE_FRACTION,
+  STRIP_AFFINE_WORST_MS_PER_PX,
+  STRIP_FOLD_PRIOR_MS_PER_PX,
+  STRIP_FOLD_WORST_MS_PER_PX,
   type StripPlanner,
 } from "./strip-planner";
 import {
@@ -614,11 +616,29 @@ export class FractalScene {
   private surfaceCompileScene: THREE.Scene | null = null;
   private surfaceCompileMesh: THREE.Mesh | null = null;
   /** Measured per-pixel cost (ms) of the last COMPLETED preview trace for
-   * the current system, or null before one completes. Predicts the settle
-   * job's probe-strip cost so the heavy-DE probe can fence-pace from its
-   * very first submission (see beginSurfaceSettle). Reset with the
-   * governor on every system upload — a new DE is a new cost profile. */
+   * the current system, or null before one completes. SIZES the next
+   * job's probe strip (fr-096u: the planner turns a prior into a
+   * pixel-bounded probe), so a heavy DE's first submission is target-sized
+   * from its very first strip. Reset with the governor on every system
+   * upload — a new DE is a new cost profile. */
   private surfacePreviewPxCostMs: number | null = null;
+  /** Whether the active WebGL surface DE is FOLD-CLASS (fold maps or a
+   * fold lens — `surfaceDescentCostWeight` > 1): before ANY measurement
+   * exists, its strip probes are sized from the pessimistic
+   * {@link STRIP_FOLD_PRIOR_MS_PER_PX} instead of the rows-fraction
+   * default. The unprimed rows-fraction probe on a fold system was
+   * fr-096u's kernel-confirmed i915 preemption hang: 0.5-4ms/px at full
+   * resolution put the one submission that runs before measurement past
+   * the 7.5s watchdog. Affine and escape-time systems (microseconds per
+   * pixel) keep the legacy probe. */
+  private surfaceDeFoldClass = false;
+  /** Worst per-pixel strip cost (ms) the most recently RETIRED strip job
+   * observed (0 before any) — the fr-096u ratchet chain: it floors the
+   * next job's worst-case cap so a monster pose discovered by one job
+   * cannot be re-rouletted by its re-armed successor, and a later job on
+   * a cheap pose (small observation) relaxes the floor back to the class
+   * constant. Reset on every system upload. */
+  private surfaceStripLastJobWorstMsPerPx = 0;
   /** Whether the ACTIVE surface session renders on the WebGPU compute path
    * (fr-tzdg) — set by {@link enterSurfaceComputeSession}. While true the
    * fold GLSL is never compiled: {@link renderSurface} degrades to a
@@ -2107,9 +2127,13 @@ export class FractalScene {
     // Cost-weighted ladder entry (fr-5rvk): a fold-frontier DE's per-pixel
     // cost is a known static multiple of an affine system's, and the FIRST
     // trace has no measurement for the panic path to act on — the entry
-    // rung must absorb what is known up front.
-    this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
+    // rung must absorb what is known up front. The same "known up front"
+    // marks the system fold-class for strip-probe sizing (fr-096u).
+    const costWeight = surfaceDescentCostWeight(de);
+    this.surfacePreviewGovernor.reset(costWeight);
     this.surfacePreviewPxCostMs = null;
+    this.surfaceDeFoldClass = costWeight > 1;
+    this.surfaceStripLastJobWorstMsPerPx = 0;
   }
 
   /**
@@ -2129,9 +2153,11 @@ export class FractalScene {
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
     // The escape loop is phone-cheap (~30 branchless folds per eval):
-    // the plain anchor entry is right.
+    // the plain anchor entry is right, and so is the legacy strip probe.
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
+    this.surfaceDeFoldClass = false;
+    this.surfaceStripLastJobWorstMsPerPx = 0;
   }
 
   /**
@@ -2187,6 +2213,9 @@ export class FractalScene {
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
+    // 4D surface DEs have no fold vocabulary (affine-class throughout).
+    this.surfaceDeFoldClass = false;
+    this.surfaceStripLastJobWorstMsPerPx = 0;
   }
 
   /**
@@ -2519,13 +2548,61 @@ export class FractalScene {
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
     this.setSurfaceFrameUniforms("full", size.y, size.y);
     this.surfaceStripJob = {
-      planner: createStripPlanner(size.y),
+      planner: createStripPlanner(size.y, size.x, {
+        priorMsPerPx: this.surfaceStripPriorMsPerPx(),
+        worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+      }),
       lastStripMs: null,
       spentMs: 0,
       pending: null,
     };
     this.renderSurfaceStrips(Infinity);
     this.blitSurface(this.surfaceSettleTarget.texture, null);
+  }
+
+  /**
+   * Best per-pixel cost estimate (ms) available BEFORE a strip job's probe
+   * runs — the planner sizes the probe from it (fr-096u). A completed
+   * preview's measurement when one exists (it understates the full tier's
+   * deeper depth clamp and richer budgets by a small factor, which the
+   * probe's target absorbs); else the pessimistic fold-class prior, so a
+   * fold session's very FIRST submission is bounded the way the compute
+   * path's first slice is (fr-p8bc's discipline); else null — affine-cheap
+   * systems keep the legacy rows-fraction probe.
+   */
+  private surfaceStripPriorMsPerPx(): number | null {
+    return (
+      this.surfacePreviewPxCostMs ??
+      (this.surfaceDeFoldClass ? STRIP_FOLD_PRIOR_MS_PER_PX : null)
+    );
+  }
+
+  /**
+   * Class-pessimistic per-pixel cost for the planner's worst-case strip
+   * cap (fr-096u's second mechanism): unlike the probe prior above, this
+   * must NEVER be replaced by a measurement — a measured value comes from
+   * whatever band recent strips crossed, and the cap exists precisely for
+   * the strip that leaves that band for a 100-1000x pricier one.
+   */
+  private surfaceStripWorstMsPerPx(): number {
+    return Math.max(
+      this.surfaceDeFoldClass
+        ? STRIP_FOLD_WORST_MS_PER_PX
+        : STRIP_AFFINE_WORST_MS_PER_PX,
+      this.surfaceStripLastJobWorstMsPerPx,
+    );
+  }
+
+  /** Retire a strip job into the ratchet chain (see
+   * {@link surfaceStripLastJobWorstMsPerPx}): its own observation REPLACES
+   * the chain value — a cheap pose's small observation is exactly what
+   * lets the floor relax after a monster pose poisoned it. A job that
+   * measured NOTHING (superseded before its first strip completed) is
+   * absence of evidence and keeps the chain as it was — dropping the
+   * floor on it would hand the next job one fresh roulette spin. */
+  private retireStripJob(job: SurfaceStripJob): void {
+    const observed = job.planner.observedWorstMsPerPx;
+    if (observed > 0) this.surfaceStripLastJobWorstMsPerPx = observed;
   }
 
   /**
@@ -2550,17 +2627,17 @@ export class FractalScene {
     let pxCostMs = this.surfacePreviewPxCostMs;
     if (job) {
       this.surfacePreviewJob = null;
-      // Rows handed to a still-pending fence were planned but never
-      // accounted — extrapolate from the MEASURED rows only, or the
+      this.retireStripJob(job);
+      // Pixels handed to a still-pending fence were planned but never
+      // accounted — extrapolate from the MEASURED pixels only, or the
       // estimate would read low by the pending strip's whole cost.
-      const traced = job.planner.plannedRows - (job.pending?.rows ?? 0);
+      const tracedPx = job.planner.plannedPx - (job.pending?.px ?? 0);
       this.releaseStripJob(job);
-      if (traced > 0 && job.spentMs > 0) {
+      if (tracedPx > 0 && job.spentMs > 0) {
         this.surfacePreviewGovernor.sample(
-          (job.spentMs * job.planner.totalRows) / traced,
+          (job.spentMs * job.planner.totalPx) / tracedPx,
         );
-        pxCostMs ??=
-          job.spentMs / (traced * Math.max(1, this.surfacePreviewTarget.width));
+        pxCostMs ??= job.spentMs / tracedPx;
       }
     }
     // uPixelEps derives from the TARGET's height (shading probes match
@@ -2583,21 +2660,22 @@ export class FractalScene {
       this.renderer.setRenderTarget(null);
     }
     this.setSurfaceFrameUniforms("preview", h, size.y);
-    // Prime the probe's pacing prediction (see beginSurfaceSettle's twin):
-    // during a drag on a heavy fold system every frame re-arms, and an
-    // unprimed probe would block the main thread for its whole sub-second
-    // join each time — fence-paced, the drag stays fluid at whatever rate
-    // the strips actually complete.
-    const probeRows = Math.max(1, Math.round(h * STRIP_PROBE_FRACTION));
-    const predictedProbeMs =
-      pxCostMs !== null ? pxCostMs * probeRows * w : null;
+    // Probe SIZED from the prior (fr-096u): a measured px cost when one
+    // exists, else the pessimistic fold-class prior. Either way the probe
+    // plans at most ~one strip target of predicted GPU — during a drag on
+    // a heavy fold system every frame re-arms, and each re-arm's first
+    // submission stays bounded (fr-du81's pacing-only priming used to
+    // leave the probe's SIZE fixed at a rows fraction, which on fold
+    // systems was seconds of GPU in the one unmeasured submission).
     this.surfacePreviewJob = {
-      planner: createStripPlanner(h, SURFACE_PREVIEW_STRIP_TARGET_MS),
-      lastStripMs:
-        predictedProbeMs !== null &&
-        predictedProbeMs > SURFACE_STRIP_SYNC_JOIN_CAP_MS
-          ? predictedProbeMs
-          : null,
+      planner: createStripPlanner(h, w, {
+        targetMs: SURFACE_PREVIEW_STRIP_TARGET_MS,
+        priorMsPerPx:
+          pxCostMs ??
+          (this.surfaceDeFoldClass ? STRIP_FOLD_PRIOR_MS_PER_PX : null),
+        worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+      }),
+      lastStripMs: null,
       spentMs: 0,
       pending: null,
     };
@@ -2623,6 +2701,7 @@ export class FractalScene {
     );
     if (done) {
       this.surfacePreviewJob = null;
+      this.retireStripJob(job);
       const { width, height } = this.surfacePreviewTarget;
       // Per-pixel cost of the completed trace: primes the settle job's
       // probe prediction (beginSurfaceSettle) so ITS first strip can
@@ -2748,6 +2827,11 @@ export class FractalScene {
    * uninitialized rows — and arm the strip planner.
    * {@link stepSurfaceSettle} does the actual tracing, a bounded slice per
    * animation frame.
+   *
+   * May decline to arm (fr-096u): when the preview's measured cost prices
+   * the full frame past {@link SURFACE_SETTLE_SKIP_CEILING_MS}, the seeded
+   * stretch is the final frame — callers observe {@link surfaceSettleActive}
+   * false right after this call and treat the settle as complete.
    */
   beginSurfaceSettle(): void {
     // main.ts holds the settle off until the preview job completes; a
@@ -2761,6 +2845,26 @@ export class FractalScene {
       this.surfacePreviewTarget.texture,
       this.surfaceSettleTarget,
     );
+    // Cost gate (fr-096u): the settle never ARMS when the preview's
+    // measured per-pixel cost extrapolates the full-tier frame past
+    // {@link SURFACE_SETTLE_SKIP_CEILING_MS}. On fold systems at
+    // near-surface poses the full frame prices out in HOURS (measured
+    // ~42ms/px band average on Iris, single crease pixels up to ~2.2s) —
+    // a trace that can never complete, whose only real product is
+    // watchdog-reset roulette that the per-strip cap alone cannot fully
+    // rule out (crease pixels cluster, so even few-pixel strips can run
+    // seconds). The preview-seeded stretch above IS the settled frame
+    // then: the caller observes no job armed and treats the settle as
+    // complete. A fold session with NO completed preview measurement is
+    // expensive by definition (its previews could not finish) — same
+    // verdict.
+    const predictedMs =
+      this.surfacePreviewPxCostMs !== null
+        ? this.surfacePreviewPxCostMs * size.x * size.y
+        : this.surfaceDeFoldClass
+          ? Infinity
+          : 0;
+    if (predictedMs > SURFACE_SETTLE_SKIP_CEILING_MS) return;
     // Force the seed — and every frame still queued before it — to
     // COMPLETE before the probe strip runs, so the probe's measurement is
     // the probe alone, not leftover backlog. A 1x1 readback is the one
@@ -2770,25 +2874,20 @@ export class FractalScene {
     const gl = this.renderer.getContext();
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
     this.renderer.setRenderTarget(null);
-    // Prime the probe-strip prediction from the completed preview's
-    // measured per-pixel cost (scaled to the probe's own pixel count):
-    // on heavy DEs the full-resolution probe is seconds of GPU, and an
-    // unprimed pump would block the main thread through its whole first
-    // join before any fence pacing could engage. The planner ignores the
-    // prediction for the probe's SIZE (probe size is fixed), so this only
-    // affects pacing; the probe's real measurement then replaces it.
-    const probeRows = Math.max(1, Math.round(size.y * STRIP_PROBE_FRACTION));
-    const predictedProbeMs =
-      this.surfacePreviewPxCostMs !== null
-        ? this.surfacePreviewPxCostMs * probeRows * size.x
-        : null;
+    // Probe SIZED from the completed preview's measured per-pixel cost —
+    // or the pessimistic fold prior when none exists (fr-096u). The
+    // rows-fraction probe this replaces was the settle's one unmeasured
+    // submission: at full resolution on a fold system it measured up to
+    // ~15s of GPU, past the i915 7.5s preemption window — the
+    // kernel-confirmed context-loss class. Sized from the prior, the probe
+    // plans ~one strip target of predicted GPU and the real measurement
+    // takes over from the second strip.
     this.surfaceStripJob = {
-      planner: createStripPlanner(size.y),
-      lastStripMs:
-        predictedProbeMs !== null &&
-        predictedProbeMs > SURFACE_STRIP_SYNC_JOIN_CAP_MS
-          ? predictedProbeMs
-          : null,
+      planner: createStripPlanner(size.y, size.x, {
+        priorMsPerPx: this.surfaceStripPriorMsPerPx(),
+        worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+      }),
+      lastStripMs: null,
       spentMs: 0,
       pending: null,
     };
@@ -2902,6 +3001,7 @@ export class FractalScene {
     if (!job) return true;
     const done = this.pumpStrips(job, this.surfaceSettleTarget, budgetMs);
     if (done) {
+      this.retireStripJob(job);
       if (SURFPERF) {
         const t = this.surfaceSettleTarget;
         console.log(
@@ -2932,7 +3032,9 @@ export class FractalScene {
    *   on healthy devices this is the whole job in one call, behaviorally
    *   the pre-fr-du81 frame.
    * - HEAVY strips (predicted above {@link SURFACE_STRIP_SYNC_JOIN_CAP_MS};
-   *   fold systems on weak GPUs sit here with multi-second 1-row strips)
+   *   fold systems on weak GPUs sit here, pinned at few-pixel strips
+   *   that still run whole seconds — fr-096u measured single crease
+   *   pixels at 1.7-3.1s on Iris)
    *   would stall the main thread for their whole duration inside that
    *   readback, so they are submitted with a FENCE and polled: one strip
    *   in flight, `clientWaitSync(…, 0)` per call, the wall-clock from
@@ -2940,9 +3042,10 @@ export class FractalScene {
    *   (rAF-quantized and slightly high — which only makes the planner
    *   more conservative). The page keeps animating between polls where it
    *   used to freeze in ~strip-length chunks. The probe strip (no
-   *   prediction yet) always joins synchronously — it is sized
-   *   near-trivial exactly so its one blocking join is affordable, and
-   *   everything after it is calibrated.
+   *   prediction yet) always joins synchronously — sized from the
+   *   planner's cost prior (fr-096u) it plans ~one strip target of GPU,
+   *   so its one blocking join is affordable, and everything after it is
+   *   calibrated.
    *
    * The capture path (budget Infinity) never uses fences: it must
    * complete synchronously, and its callers tolerate the stalls.
@@ -2961,6 +3064,12 @@ export class FractalScene {
       gl.deleteSync(job.pending.sync);
       job.lastStripMs = performance.now() - job.pending.submittedAt;
       job.spentMs += job.lastStripMs;
+      if (SURFPERF && job.lastStripMs > SURFPERF_HEAVY_STRIP_MS) {
+        console.log(
+          `[surfperf] heavy strip px=${job.pending.px}` +
+            ` ms=${job.lastStripMs.toFixed(0)} (fenced)`,
+        );
+      }
       job.pending = null;
     }
     let spent = 0;
@@ -2971,12 +3080,20 @@ export class FractalScene {
         job.lastStripMs !== null &&
         job.lastStripMs > SURFACE_STRIP_SYNC_JOIN_CAP_MS;
       target.scissorTest = true;
-      target.scissor.set(0, strip.y, target.width, strip.rows);
-      // setRenderTarget re-applies the target's scissor each call — the
-      // r185 idiom for scissored render-target draws.
-      this.renderer.setRenderTarget(target);
       const t0 = performance.now();
-      this.surfaceQuad.render(this.renderer);
+      // A strip is a row-major pixel interval, tiled by 1-3 scissor rects
+      // (fr-096u: sub-row strips are what let the planner bound fold
+      // submissions below one row's cost). All of a strip's rects go into
+      // the ONE submission the fence/readback below closes — the bounded
+      // quantity is the strip's pixel count, which the planner sized.
+      for (const r of strip.rects) {
+        target.scissor.set(r.x, r.y, r.w, r.h);
+        // setRenderTarget re-applies the target's scissor each call — the
+        // r185 idiom for scissored render-target draws.
+        this.renderer.setRenderTarget(target);
+        this.surfaceQuad.render(this.renderer);
+      }
+      const last = strip.rects[strip.rects.length - 1];
       if (fencePaced) {
         const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
         if (sync) {
@@ -2984,16 +3101,32 @@ export class FractalScene {
           // fence may not signal until the browser's own end-of-frame
           // flush, double-counting a frame of latency.
           gl.flush();
-          job.pending = { sync, rows: strip.rows, submittedAt: t0 };
+          job.pending = { sync, px: strip.px, submittedAt: t0 };
           break;
         }
         // fenceSync failing (lost/dying context) degrades to the
         // blocking join below — correctness over smoothness.
       }
       // Forced-completion sync + measurement (see the method doc). Reads
-      // the strip's own corner while the target is still bound.
-      gl.readPixels(0, strip.y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+      // a corner of the strip's LAST rect while the target is still
+      // bound — freshly written pixels, so the read is a data dependency
+      // on the whole strip.
+      gl.readPixels(
+        last.x,
+        last.y,
+        1,
+        1,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        SYNC_PIXEL,
+      );
       job.lastStripMs = performance.now() - t0;
+      if (SURFPERF && job.lastStripMs > SURFPERF_HEAVY_STRIP_MS) {
+        console.log(
+          `[surfperf] heavy strip px=${strip.px}` +
+            ` ms=${job.lastStripMs.toFixed(0)}`,
+        );
+      }
       job.spentMs += job.lastStripMs;
       spent += job.lastStripMs;
       if (spent >= budgetMs) break;
@@ -3074,6 +3207,18 @@ const DRAW_SIZE = new THREE.Vector2();
  * cheaper. Low enough that the page stays responsive (and interruptible)
  * while a heavy frame settles over many animation frames. */
 const SURFACE_SETTLE_STEP_BUDGET_MS = 40;
+/** Predicted full-tier frame cost (ms, extrapolated from the completed
+ * preview's measured per-pixel cost) above which the WebGL settle job
+ * never arms (fr-096u): the preview-seeded settle target stands in as the
+ * settled frame. The preview measurement UNDERSTATES the full tier
+ * (deeper depth clamp, bigger march/shadow/AO budgets, ~4-6x measured),
+ * so 15s here means a real frame of a minute at the very least — beyond
+ * what a parked view's background job should grind through on the
+ * fallback path, and on fold systems the poses that trip this measure in
+ * HOURS with GPU-watchdog roulette on every band-transition strip. The
+ * WebGPU compute path (the preferred fold tracer) has its own bounded
+ * economics and no such gate. */
+const SURFACE_SETTLE_SKIP_CEILING_MS = 15_000;
 /** Measured GPU time (ms) each preview strip aims for (fr-du81) — well
  * under the settle tier's 75 so strips interleave with a live drag: a
  * preview frame's budget below fits two of these plus the probe. */
@@ -3090,7 +3235,7 @@ const SURFACE_PREVIEW_STEP_BUDGET_MS = 30;
  * strip predicted under this joins synchronously — exact measurement,
  * whole-job-in-one-frame behavior on healthy devices; above it the join
  * itself would freeze the main thread for the strip's whole GPU duration
- * (fold systems on weak GLs run multi-second 1-row strips), so the pump
+ * (fold systems on weak GLs run multi-second few-pixel strips), so the pump
  * fences and polls instead. Sits above both tiers' strip targets, so
  * fence pacing only ever engages when the planner is ALREADY pinned at
  * its 1-row floor and cannot size the strip down any further. */
@@ -3105,7 +3250,7 @@ interface SurfaceStripJob {
   planner: StripPlanner;
   lastStripMs: number | null;
   spentMs: number;
-  pending: { sync: WebGLSync; rows: number; submittedAt: number } | null;
+  pending: { sync: WebGLSync; px: number; submittedAt: number } | null;
 }
 /** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
 const SYNC_PIXEL = new Uint8Array(4);
@@ -3119,6 +3264,13 @@ const SYNC_PIXEL = new Uint8Array(4);
 const SURFPERF =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).has("surfperf");
+/** `?surfperf` also logs any single strip whose MEASURED cost exceeded
+ * this (ms) — the field signal for fr-096u's watchdog class: a healthy
+ * planner never plans a strip past `STRIP_WORST_CASE_CAP_MS` of
+ * worst-case cost, so a heavy-strip log is either the bounded
+ * cheap-to-expensive transition (expected, rare, ~seconds at most) or
+ * evidence the priors are wrong on this hardware. */
+const SURFPERF_HEAVY_STRIP_MS = 500;
 
 /** Resize a render target only when the wanted size differs — `setSize`
  * reallocates, so per-frame calls must be no-ops at steady state. */
