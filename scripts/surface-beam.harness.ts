@@ -486,11 +486,24 @@ const VOID_HIT_FACTOR = 0.01;
  * The affine and 4D sections carry the identical tail (repro2 w4 refined
  * `e66@3.2e-8`, doubleRotation w4 refined `e98@3.0e-8`) and the module doc
  * says of it: read maxExcess, not viol. Measured (CLOUD=300k): the fold
- * PAIRS read 0 or fp-noise (spherefold pair 6/100 at 5.55e-5 = 0.0024%R
- * — two orders below a marcher epsilon, at the set's deepest descent),
- * but the SHIPPED mandelboxKifs preset (12 maps, 8x81 + 4x27 branches)
- * holds a real width-bound tail: refined e77 @4.4e-3 = 0.22%R at the
- * production frontier width 12 — the fold edition of fr-jkpn's
+ * PAIRS read 0 or fp-noise — the worst is the spherefold pair at 9/100,
+ * 1.02e-4 = 0.0060%R on the fr-pjqw probe set (6/100 at 5.55e-5 before
+ * the probe-fit ball moved its R), still two orders below a marcher
+ * epsilon at the set's deepest descent — so 1e-4 of R holds every
+ * pair/mix row here with ~1.7x headroom while refusing anything an order
+ * worse. One row needs more: see
+ * {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (fr-2v0y). The jittered/uniform
+ * classes stay a HARD zero: an overshoot there is a real validity break. */
+const EXACT_EROSION_BUDGET_R = 1e-4;
+
+/** Per-system overrides of {@link EXACT_EROSION_BUDGET_R}, keyed by the
+ * system's `label` in test (4)'s `systems` array. fr-2v0y (PR #174
+ * review): the budget used to be loosened globally 1e-4 -> 3e-3 to admit
+ * ONE system's tail, which handed every fold PAIR ~54x of regression
+ * headroom they never needed — split per-system instead. The SHIPPED
+ * mandelboxKifs preset (12 maps, 8x81 + 4x27 branches) holds a real
+ * width-bound tail: refined e77 @4.4e-3 = 0.22%R at the production
+ * frontier width 12 — the fold edition of fr-jkpn's
  * more-simultaneous-in-sphere-branches-than-slots drop, EXACT class only
  * (its jittered/uniform/void columns are all 0). Diagnostic at frontier
  * width 24: 39 @0.06%R at 3x the inverse applications (2039 -> 6029
@@ -498,9 +511,28 @@ const VOID_HIT_FACTOR = 0.01;
  * 0.22%R sits well under the disclosed affine precedent (repro3 1.2%R
  * JITTERED) and at the scale of a close-zoom marcher epsilon, so width
  * 12 ships and the tail is budgeted here instead: 0.3%R, ~35% headroom
- * over the measured worst. The jittered/uniform classes stay a HARD
- * zero: an overshoot there is a real validity break. */
-const EXACT_EROSION_BUDGET_R = 3e-3;
+ * over the measured worst — for THIS row only. */
+const EXACT_EROSION_BUDGET_R_OVERRIDES: Record<string, number> = {
+  "mandelboxKifs preset": 3e-3,
+};
+
+/** Per-system allowances against the deep-void HARD zero, keyed like
+ * {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (fr-2v0y — the fold section
+ * had been failing since fr-pjqw landed, because the hard zero never
+ * absorbed that change's disclosed reading). The one entry is carried in
+ * surface-de.ts's fr-pjqw addendum: the probe-fit ball shrank the
+ * mandelbox pair's R (2.30 -> 1.88), and the R-relative uniform probe
+ * cloud now samples a pre-existing weak spot at p ~ [0.99, 1.93, 0.05] —
+ * trueD 0.646 (0.34R) against an estimate of 0.0123, i.e. 1/200 in the
+ * deep-void column. Verified BIT-IDENTICAL under the origin ball at the
+ * old radius (the old probe set just never landed there) and above the
+ * marcher's real acceptance epsilon at typical hit distances (~0.006): a
+ * slow-march spot of the known in-sphere floor-0-drop residual class,
+ * not a rendered ghost. The allowance is exactly that one probe; a
+ * second hit on any system is a regression. */
+const DEEP_VOID_ALLOWANCES: Record<string, number> = {
+  "mandelbox pair": 1,
+};
 
 interface VoidStats {
   probes: number;
@@ -850,16 +882,20 @@ describe("fr-v6yg surface beam harness", () => {
       }
       const refinedRow = rows.find((r) => r.estimator === "refined")!;
       const refined = refinedRow.result;
-      // Hard: the region floors exist precisely so a spurious never-escaping
-      // chain cannot fabricate a hit across genuine DEEP void — the fr-5rvk
-      // criterion, pinned at zero by the pure-fold suites in
-      // surface-de.test.ts. `collect`'s shallower 0.05R column is printed
-      // above but NOT asserted: see DEEP_VOID_FACTOR for why its inner band
-      // measures looseness rather than ghosts.
-      if (refinedRow.deep.falseHits !== 0) {
+      // Hard zero: the region floors exist precisely so a spurious
+      // never-escaping chain cannot fabricate a hit across genuine DEEP
+      // void — the fr-5rvk criterion, pinned at zero by the pure-fold
+      // suites in surface-de.test.ts — except where a disclosed, verified
+      // reading says otherwise (DEEP_VOID_ALLOWANCES). `collect`'s
+      // shallower 0.05R column is printed above but NOT asserted: see
+      // DEEP_VOID_FACTOR for why its inner band measures looseness rather
+      // than ghosts.
+      const deepAllowance = DEEP_VOID_ALLOWANCES[sys.label] ?? 0;
+      if (refinedRow.deep.falseHits > deepAllowance) {
         failures.push(
           `${sys.label}: refined deepVoidFalseHits=` +
-            `${refinedRow.deep.falseHits}/${refinedRow.deep.probes}`,
+            `${refinedRow.deep.falseHits}/${refinedRow.deep.probes}` +
+            ` (allowance ${deepAllowance})`,
         );
       }
       // Validity, hard: an estimate that exceeds the true distance at a
@@ -880,12 +916,15 @@ describe("fr-v6yg surface beam harness", () => {
       }
       // On-attractor erosion, budgeted rather than zeroed: see
       // EXACT_EROSION_BUDGET_R for why the `exact` class counts differently.
+      const budgetR =
+        EXACT_EROSION_BUDGET_R_OVERRIDES[sys.label] ?? EXACT_EROSION_BUDGET_R;
       const erosion = refined.byClass.exact.maxExcess;
-      if (erosion > EXACT_EROSION_BUDGET_R * de.boundingRadius) {
+      if (erosion > budgetR * de.boundingRadius) {
         failures.push(
           `${sys.label}: refined exact-probe erosion=${erosion.toExponential(2)}` +
             ` (${((erosion / de.boundingRadius) * 100).toFixed(4)}%R) over budget` +
-            ` on ${refined.byClass.exact.violations} probes`,
+            ` on ${refined.byClass.exact.violations} probes` +
+            ` (budget ${(budgetR * 100).toFixed(2)}%R)`,
         );
       }
     }

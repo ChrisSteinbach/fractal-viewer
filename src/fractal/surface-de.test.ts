@@ -5,20 +5,29 @@ import {
   estimateDistance,
   estimateDistanceRefined,
   MAX_DESCENT_DEPTH,
+  NEAR_ZERO_FOLD_WEIGHT,
+  setFoldFrontierTap,
   singularValues3,
   SPHEREFOLD_LIPSCHITZ,
+  SURFACE_FOLD_BEAM_WIDTH,
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_NONE,
   SURFACE_FOLD_SPHEREFOLD,
+  surfaceDescentCostWeight,
   transformSigmas,
 } from "./surface-de";
-import type { SurfaceDE, SurfaceDEMap } from "./surface-de";
+import type {
+  FoldFrontierCandidate,
+  SurfaceDE,
+  SurfaceDEMap,
+} from "./surface-de";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { runChaosGame, symmetryRotation } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
 import {
   defaultTransforms,
+  mandelboxKifs,
   mengerSponge,
   sierpinskiTetrahedron,
 } from "./presets";
@@ -2068,6 +2077,65 @@ describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => 
   });
 });
 
+describe("fold-weight eligibility floor (fr-2v0y)", () => {
+  it("refuses a boxfold map whose weight is just under the floor, though the composite Lipschitz gate alone would pass", () => {
+    // A smaller |w| only ever HELPS the composite contraction bound (it
+    // shrinks as w -> 0), so nothing here fails on that gate — the descent
+    // divides the chain point by w instead, and NEAR_ZERO_FOLD_WEIGHT is the
+    // only thing standing between this and that division blowing up.
+    const analysis = analyzeSurfaceSystem([
+      map({ variations: [{ type: "boxfold", weight: 5e-5 }] }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 fold weight ≈ 0"]);
+  });
+
+  it("refuses the same weight negated — the floor is on |w|; folds are odd, so negative weights are otherwise legal above it", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({ variations: [{ type: "boxfold", weight: -5e-5 }] }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 fold weight ≈ 0"]);
+  });
+
+  it("admits a weight exactly at the floor — the gate is a strict less-than", () => {
+    const analysis = analyzeSurfaceSystem([
+      map({
+        variations: [{ type: "boxfold", weight: NEAR_ZERO_FOLD_WEIGHT }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("refuses a pure-fold FINAL transform at a near-zero weight — the lens has no contraction gate to catch it otherwise", () => {
+    const analysis = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 99, variations: [{ type: "mandelbox", weight: 5e-5 }] }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["final transform fold weight ≈ 0"]);
+  });
+
+  it("leaves a weight-0 fold variation inert rather than naming it near-zero — it is not a fold map at all", () => {
+    // composeVariations' active filter drops weight-0 entries outright, so
+    // pureFoldVariation sees no active variation here; the floor must never
+    // misfire on an entry that was never a fold map to begin with.
+    const analysis = analyzeSurfaceSystem([
+      map({ variations: [{ type: "boxfold", weight: 0 }] }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("makes buildSurfaceDE throw for a near-zero-weight fold system", () => {
+    const ineligible = [
+      map({ variations: [{ type: "boxfold", weight: 5e-5 }] }),
+    ];
+    expect(() => buildSurfaceDE(ineligible)).toThrow(/fold weight/);
+  });
+});
+
 describe("buildSurfaceDE fold fields and depth sizing (fr-5rvk)", () => {
   it("gives a plain affine map the inert fold defaults and a pure-fold map its signed weight and branch kind", () => {
     const transforms: Transform[] = [
@@ -2107,6 +2175,103 @@ describe("buildSurfaceDE fold fields and depth sizing (fr-5rvk)", () => {
       Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
     );
     expect(de.maxDepth).toBe(expected);
+  });
+});
+
+describe("surfaceDescentCostWeight (fr-2v0y)", () => {
+  // render-tier.ts's preview ladder consumes this number to pick a starting
+  // rung before a fold session has a single measured frame; these are its
+  // first direct pins, one per shape the formula treats specially.
+
+  it("is exactly 1 for an affine-only system — the ladder's untouched baseline", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    expect(surfaceDescentCostWeight(de)).toBe(1);
+  });
+
+  it("prices a pure-boxfold pair at the 27-branch mean times the frontier/ladder width ratio", () => {
+    const de = buildSurfaceDE(pureBoxfoldPair());
+    // Every map contributes 27 branches, so the mean is 27; the frontier
+    // (SURFACE_FOLD_BEAM_WIDTH = 12) prices over the affine ladder's 4
+    // slots: 27 * (12/4) = 81.
+    const expected = 27 * (SURFACE_FOLD_BEAM_WIDTH / 4);
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("prices a pure-spherefold pair at the 3-branch mean times the width ratio", () => {
+    // Inline fixture — no local spherefold pair exists in this file.
+    // Mirrors scripts/harness-profiles.ts's foldSpherefoldPair: uniform
+    // contraction-safe scales and weights whose composite Lipschitz bound
+    // (|w| * 4 * sigma_max) clears CONTRACTION_LIMIT on both maps.
+    const transforms: Transform[] = [
+      map({
+        scale: [0.24, 0.24, 0.24],
+        variations: [{ type: "spherefold", weight: 0.9 }],
+      }),
+      map({
+        id: 1,
+        scale: [0.2, 0.2, 0.2],
+        variations: [{ type: "spherefold", weight: 1.1 }],
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    // 3 * (12/4) = 9.
+    const expected = 3 * (SURFACE_FOLD_BEAM_WIDTH / 4);
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("prices the shipped mandelboxKifs preset from its 8 mandelbox + 4 boxfold maps", () => {
+    const de = buildSurfaceDE(mandelboxKifs());
+    // 8 mandelbox corner maps (81 branches) + 4 boxfold binder maps (27
+    // branches) over 12 maps total, times the width ratio:
+    // ((8*81 + 4*27) / 12) * (12/4) = 189. Update this pin deliberately if
+    // the preset's composition ever changes.
+    const expected = ((8 * 81 + 4 * 27) / 12) * (SURFACE_FOLD_BEAM_WIDTH / 4);
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("counts a plain affine map as 1 branch in a mixed mean", () => {
+    const transforms: Transform[] = [
+      map({ variations: [{ type: "boxfold", weight: 1 }] }),
+      map({ id: 1 }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    // (27 + 1) / 2 = 14, times the width ratio: 14 * (12/4) = 42.
+    const expected = ((27 + 1) / 2) * (SURFACE_FOLD_BEAM_WIDTH / 4);
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("multiplies by branchCount/8 for a pure-boxfold FINAL lens (fr-g58b)", () => {
+    const de = buildSurfaceDE(
+      [map()],
+      map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
+    );
+    // No fold maps in the base system, so the map-side weight stays 1; the
+    // lens multiplies by 27/8 = 3.375.
+    const expected = 27 / 8;
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("clamps a pure-spherefold FINAL lens's multiplier to 1 — max(1, 3/8)", () => {
+    const de = buildSurfaceDE(
+      [map()],
+      map({ id: 99, variations: [{ type: "spherefold", weight: 1 }] }),
+    );
+    expect(surfaceDescentCostWeight(de)).toBe(1);
+  });
+
+  it("multiplies the maps' fold cost by the lens's cost when a system has both", () => {
+    const de = buildSurfaceDE(
+      pureBoxfoldPair(),
+      map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
+    );
+    const expected = 27 * (SURFACE_FOLD_BEAM_WIDTH / 4) * (27 / 8);
+    expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
+  });
+
+  it("returns 1 for an empty maps array — guards the mean's 0/0 against NaN", () => {
+    expect(surfaceDescentCostWeight({ maps: [] } as unknown as SurfaceDE)).toBe(
+      1,
+    );
   });
 });
 
@@ -2313,6 +2478,278 @@ describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)",
       ];
       expect(estimateDistance(narrow, p)).toBe(estimateDistance(de, p));
     }
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-2v0y: the c59b019 unsorted-worst-scan frontier restructure needs a
+// direct pin on the KEPT SET itself, not just estimator validity — a
+// dropped candidate always folds a VALID (if looser) bound, so the
+// validity suites above would stay green through a kept-set regression.
+// -----------------------------------------------------------------------
+
+describe("descendFold frontier kept set (fr-2v0y)", () => {
+  // The tap reports every candidate that reaches frontier insertion
+  // (arrival order) and each completed level's kept slots (slot order);
+  // replayFrontier below is a brute-force model of the CONTRACT — fill in
+  // arrival order; once full, replace the FIRST-scanned worst slot (strict
+  // `>` scan from index 0) only when a STRICTLY smaller key arrives; ties
+  // evict the newcomer — and the tests below demand slot-exact agreement.
+  // Any future frontier restructure that drifts the kept set, the tie
+  // rule, or the worst-slot tracking fails this suite.
+
+  function replayFrontier(candidates: FoldFrontierCandidate[]): {
+    slots: FoldFrontierCandidate[];
+    replacements: number;
+  } {
+    const slots: FoldFrontierCandidate[] = [];
+    let replacements = 0;
+    for (const c of candidates) {
+      if (slots.length < SURFACE_FOLD_BEAM_WIDTH) {
+        slots.push(c);
+        continue;
+      }
+      let worst = 0;
+      for (let i = 1; i < slots.length; i++) {
+        if (slots[i].key > slots[worst].key) worst = i;
+      }
+      if (c.key < slots[worst].key) {
+        slots[worst] = c;
+        replacements++;
+      }
+    }
+    return { slots, replacements };
+  }
+
+  /** Installs the tap for one `estimateDistance` call and hands back every
+   * candidate seen (by depth) alongside every completed level's kept slots. */
+  function tapDescent(
+    de: SurfaceDE,
+    p: Vec3,
+  ): {
+    candidates: Map<number, FoldFrontierCandidate[]>;
+    levels: Map<number, FoldFrontierCandidate[]>;
+  } {
+    const candidates = new Map<number, FoldFrontierCandidate[]>();
+    const levels = new Map<number, FoldFrontierCandidate[]>();
+    setFoldFrontierTap({
+      candidate(depth, c) {
+        let list = candidates.get(depth);
+        if (!list) {
+          list = [];
+          candidates.set(depth, list);
+        }
+        list.push(c);
+      },
+      level(depth, kept) {
+        levels.set(depth, kept);
+      },
+    });
+    try {
+      estimateDistance(de, p);
+    } finally {
+      setFoldFrontierTap(null);
+    }
+    return { candidates, levels };
+  }
+
+  it("agrees slot-for-slot with the replay on a pure-boxfold pair (27-branch isometries)", () => {
+    const transforms = pureBoxfoldPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(2101));
+    const R = de.boundingRadius;
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ]);
+    }
+    const rng = mulberry32(2102);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    // Unlike the three fixtures below, a bare 2-map boxfold pair never
+    // floods a level anywhere near SURFACE_FOLD_BEAM_WIDTH: every
+    // non-identity branch differs from the identity branch by a
+    // box-lattice reflection (a jump of ~2-4 units), and inv(M) EXPANDS
+    // that gap (M itself contracts to build the attractor), so almost
+    // every reflected branch lands past the escape radius immediately.
+    // Measured directly (a hill-climbing search over query points
+    // maximizing per-level candidate count, 40 restarts x 60 steps,
+    // starting from this exact DE): the true ceiling is 4, and replacement
+    // never triggers below FOLD_W. This it() therefore pins the replay
+    // contract in the SPARSE regime — the complementary case to the
+    // saturating fixtures below, where every candidate fits without ever
+    // evicting — rather than asserting a saturation floor this pair
+    // cannot reach.
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(false);
+    expect(replacements).toBe(0);
+  });
+
+  it("agrees slot-for-slot with the replay on a pure-mandelbox pair (81-branch worst case, saturation guaranteed)", () => {
+    const transforms = pureMandelboxPair();
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(2201));
+    const R = de.boundingRadius;
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ]);
+    }
+    const rng = mulberry32(2202);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
+  });
+
+  it("agrees slot-for-slot with the replay under a kaleidoscope sweep over a pure-boxfold pair", () => {
+    const transforms = pureBoxfoldPair();
+    const symmetry = { order: 3, axis: "y" } as const;
+    const de = buildSurfaceDE(transforms, null, symmetry);
+    const cloud = runChaosGame(
+      transforms,
+      20000,
+      mulberry32(2301),
+      null,
+      symmetry,
+    );
+    const R = de.boundingRadius;
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ]);
+    }
+    const rng = mulberry32(2302);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
+  });
+
+  it("agrees slot-for-slot with the replay on a mixed boxfold + plain-affine pair (a single-candidate arm competing in the same stream)", () => {
+    const transforms: Transform[] = [
+      map({ variations: [{ type: "boxfold", weight: 1 }] }),
+      // A hair off map 0's position (rather than sharing it verbatim): an
+      // IDENTICAL affine part makes the plain map's one candidate exactly
+      // coincide with the boxfold map's identity branch every time, which
+      // floods saturated levels with EXACT duplicate keys and starves the
+      // replacement path (ties always evict the newcomer). The 1e-4 offset
+      // keeps this a plain, ordinarily-contracting affine map while letting
+      // the two arms' candidates genuinely differ.
+      map({ id: 1, position: [0.1001, 0.2, 0.3] }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(2401));
+    const R = de.boundingRadius;
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+      ]);
+    }
+    const rng = mulberry32(2402);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
   });
 });
 
