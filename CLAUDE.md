@@ -290,18 +290,36 @@ and UI**, so the interesting math is unit-tested without a browser:
     readback overhead dissolves its settle and poisons the cost gate —
     while partial jobs only raise. Iris measured the mandelboxKifs band
     at ~40-125ms/px with single crease pixels of 1.7-3.1s, so
-    post-discovery strips pin at ~1px there. scene.ts's
-    strip pump spreads jobs across frames (settle AND heavy previews,
-    which present progressively and feed the governor measured/extrapolated
-    samples), switching from the blocking readback join to
-    fenceSync+clientWaitSync(0) polling when a strip's predicted cost
-    exceeds `SURFACE_STRIP_SYNC_JOIN_CAP_MS` — multi-second fold strips no
-    longer freeze the main thread — and runs strips to completion
-    synchronously for capture/offline export. The settle always ARMS,
-    however expensive the frame — bounded strips grind visibly and
-    interruptibly (an early fr-096u cut gated it on predicted cost and
-    silently blanked legitimate lens settles into permanent preview blur:
-    a silent refusal reads as a broken render). Fold surface sessions also
+    post-discovery strips pin at ~1px there, and evidence relaxation
+    lives exactly ONE completed-preview->settle handoff (a superseded job
+    = the pose moved on = stale evidence dies; a far-pose glide preview
+    once relaxed the floor under a parked monster pose). scene.ts's
+    strip pump is PIPELINED (fr-096u's A/B verdict): every sync point on
+    the Iris/ANGLE stack costs ~66-90ms REGARDLESS of the work behind it
+    (`SURFACE_STRIP_SYNC_TAX_MS` — main's 3.3s lens settle was ~50 strips
+    x that tax, and the branch's first per-strip-join cut multiplied it
+    by the caps' strip count into a 15x regression), so strips go out as
+    individually FLUSHED draw groups (the watchdog's preemption
+    boundaries) fenced only per ~`SURFACE_STRIP_FENCE_GROUP_MS` of
+    predicted work, batch measurements subtract the tax to price MARGINAL
+    trace work (leaving it in re-inflated the evidence 5x -> tighter caps
+    -> more strips -> more tax, a vicious cycle), strips of a row or more
+    row-snap to a single scissor rect (a ~20-30ms per-DRAW fixed cost
+    tripled under 3-rect strips), and the canvas blit rides
+    PRESENT-ON-DRAIN gaps (presents share the strips' GL queue; the first
+    pipelined cut presented behind the queue and stalled the page's own
+    rAF). No-prior jobs (affine) keep the legacy sync-collapse: serial
+    joined strips completing whole light jobs in one call, escaping to
+    the pipeline past `SURFACE_STRIP_SYNC_ESCAPE_MS`. Capture/offline
+    export still drains serially with forced-completion joins. Measured
+    A/B (Iris, real driver, `?surfacegl`): lens-system settle 2.5s vs
+    main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair settle
+    0.2s, escape 45ms — at full safety caps, kernel-silent through every
+    monster run. The settle always ARMS, however expensive the frame —
+    bounded strips grind visibly and interruptibly (an early fr-096u cut
+    gated it on predicted cost and silently blanked legitimate lens
+    settles into permanent preview blur: a silent refusal reads as a
+    broken render). Fold surface sessions also
     gate their first frame on `compileAsync` of the fold tracer program
     (~25s links happen off the critical path where the driver offers
     `KHR_parallel_shader_compile`; the compile mesh MUST mirror
