@@ -141,18 +141,28 @@ and UI**, so the interesting math is unit-tested without a browser:
     shaded rays inside the march pass that terminated them and LOST THE
     DEVICE on Iris (shading = ~40 zero-cutoff on-surface DE evals/hit —
     fr-096u's watchdog through the shading door; numbers on fr-tzdg).
-    MEASURED VERDICTS (Iris Xe, real driver): march traces mandelboxKifs
-    at width 12 in 49µs/ray primary (private frontier, stage 2 off) where
+    `shadeDeWidth` (fr-p8bc) routes exactly those probe taps
+    (normal/shadow/AO — they LIGHT a hit the full-width march already
+    certified, never decide geometry) to a second narrow descent
+    `surfaceDEProbe`, derived from the same body template by token
+    rename so the two cannot drift; app ships width 1. MEASURED
+    VERDICTS (Iris Xe, real driver): march traces mandelboxKifs at
+    width 12 in 49µs/ray primary (private frontier, stage 2 off) where
     the WebGL fragment tracer was unbounded (>1300µs/ray, fr-ck0w), width
     superlinearity GONE (w12/w4 ≈ 3.3x), compiles ~0.1-0.3s vs the ~25s
     GLSL link cliff; workgroup-shared frontier 2-3.3x SLOWER than private;
     stage-2 B&B 1.4-1.6x slower GPU-side at BOTH far-field and
-    near-surface poses — config stays stage-1-only. Near-surface fold
-    grinding (~0.2ms/ray·step) and shading now dominate end-to-end cost —
-    the same intrinsic evals the GLSL pays; follow-up levers on fr-tzdg.
+    near-surface poses — config stays stage-1-only. Shading DOMINATED
+    end-to-end cost after fr-tzdg (full-width probes: 740s/frame at
+    96x54, unable to converge a 900s budget at a hit-dominated pose);
+    fr-p8bc's width-1 probes shade the identical 660-hit frame in 31s
+    (23.8x, thermally understated) with eyeball-identical images —
+    differences are a slight lightening of deep-crease shadow/AO from
+    the greedy DE's overshoot, no structural artifacts.
     Consumed by `src/app/surface-compute.ts` (the fold surface session's
     preferred tracer) and pinned by `src/app/gpu-bench/`'s surface section
-    (`npm run bench:surface`; real-driver timing via `--display=:0`).
+    (`npm run bench:surface`; real-driver timing via `--display=:0`;
+    `--surface-shade-width=N` reruns the fr-p8bc probe-width A/B).
   - `surface-grid.ts` — empty-space skip grid for the 3D surface march:
     conservative distance floors (cell centers, cutoff `cellRadius` — at/above
     the cutoff the return is the exact full-descent value, below it 0 is the
@@ -398,8 +408,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     (gridless by decision, measured). Owns the device (bench acquisition
     idioms + flame-backend error taxonomy) and the frame loop: march
     slices sized from a measured per-ray·step EMA + shade batches sized
-    adaptively (quarters on overshoot) so NO submission outruns the i915
-    watchdog; host-compacted active list; progressive presents between
+    in HIT units (fr-p8bc: terminal rays queue by status — misses are
+    one background write, hits pay the probe evals and arrive
+    scanline-CLUSTERED; batches are predicted from a per-hit cost EMA
+    under a pessimistic prior, spike-lifts instantly, decays slowly,
+    capped by the slow-trust double/quarter policy — the original
+    ray-unit doubling let miss runs inflate capacity a hit band then
+    paid, five kernel-confirmed i915 GPU hangs) so NO submission
+    outruns the i915 watchdog; shading probes ride the width-1 greedy
+    descent (`SURFACE_COMPUTE_SHADE_DE_WIDTH`, the fr-p8bc measured
+    verdict: 23.8x cheaper shading, eyeball-identical frames);
+    host-compacted active list; progressive presents between
     every bounded piece; colorOut prefill seeded from the last frame
     (nearest-resampled — the strip settle's preview-seeded-target
     discipline); per-frame status counts for field debugging. scene.ts
