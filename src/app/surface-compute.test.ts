@@ -2,12 +2,16 @@ import {
   buildSurfaceComputeBackground,
   marchChunkFor,
   nextShadeBatchSize,
+  nextShadeHitEmaUs,
   nextStepsPerPass,
   resampleSurfacePixels,
+  shadeHitBatchSize,
+  SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
   SURFACE_COMPUTE_MAX_SHADE_BATCH,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
+  SURFACE_COMPUTE_SHADE_HIT_CAP_START,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -112,5 +116,51 @@ describe("nextShadeBatchSize", () => {
     expect(nextShadeBatchSize(SURFACE_COMPUTE_MAX_SHADE_BATCH, 1)).toBe(
       SURFACE_COMPUTE_MAX_SHADE_BATCH,
     );
+  });
+});
+
+describe("shadeHitBatchSize", () => {
+  it("sizes the first batch from the pessimistic prior, clamped by the starting capacity", () => {
+    // Prior 20ms/hit predicts 12 hits fit the 250ms target; the slow-trust
+    // cap of 8 wins until measurements earn more.
+    expect(
+      shadeHitBatchSize(
+        SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
+        SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+      ),
+    ).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
+  });
+
+  it("shrinks to a single hit when the measured cost approaches the pass target — the near-surface grind regime", () => {
+    // ~108ms/hit (full-width probes at the fr-p8bc near pose on Iris):
+    // two hits fit the 250ms target, never a watchdog-scale batch.
+    expect(shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(2);
+    // At or past the target per hit, one hit is the irreducible unit.
+    expect(shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(1);
+  });
+
+  it("lets cheap measured costs fill the earned capacity, no further", () => {
+    // ~1ms/hit (cheap-probe shading) predicts 250 hits, but capacity is
+    // whatever the double/quarter policy has earned.
+    expect(shadeHitBatchSize(1_000, 64)).toBe(64);
+    expect(shadeHitBatchSize(1_000, 4096)).toBe(250);
+  });
+});
+
+describe("nextShadeHitEmaUs", () => {
+  it("lifts INSTANTLY to a measured spike — the queue's scanline order says an expensive region just started", () => {
+    expect(nextShadeHitEmaUs(1_000, 108_000)).toBe(108_000);
+  });
+
+  it("decays slowly toward cheaper measurements — re-trusting a cheap region costs a few conservative batches, never a hang", () => {
+    expect(nextShadeHitEmaUs(108_000, 1_000)).toBeCloseTo(
+      108_000 * 0.6 + 1_000 * 0.4,
+      6,
+    );
+    // The decay converges: repeated cheap measurements do reach the cheap
+    // cost rather than pinning conservative forever.
+    let ema = 108_000;
+    for (let i = 0; i < 30; i++) ema = nextShadeHitEmaUs(ema, 1_000);
+    expect(ema).toBeLessThan(1_100);
   });
 });
