@@ -130,15 +130,15 @@ export const STRIP_AFFINE_WORST_MS_PER_PX = 0.1;
  * the expensive band as one multi-minute submission — the kernel-confirmed
  * i915 preemption hang that survived the probe fix. Capping every strip at
  * `STRIP_WORST_CASE_CAP_MS / worstMsPerPx` pixels bounds that transition
- * strip to ~2s even if the measurement history says the region is free;
- * within the expensive band the ordinary measurement scaling takes over
- * and strips shrink to `targetMs`. 2000ms sits a 2.5x prior-error margin
- * under the 7.5s i915 preemption window (and under browser-level GPU
- * watchdogs), while keeping the cheap-band strip count overhead small
- * (~1250 strips to cross a fold frame's empty regions, sub-second in
- * readback overhead).
+ * strip to seconds even if the measurement history says the region is
+ * free; within the expensive band the ordinary measurement scaling takes
+ * over and strips shrink to `targetMs`. 4000ms sits just under the 7.5s
+ * i915 preemption window at the priced worst case — the margin the first
+ * fr-096u cut doubled (2000ms) bought nothing but strip-count overhead,
+ * which the review measured as a real slowdown on measured-cheap fold
+ * systems.
  */
-export const STRIP_WORST_CASE_CAP_MS = 2000;
+export const STRIP_WORST_CASE_CAP_MS = 4000;
 
 /** One scissor rect of a strip, in target pixels (same coordinate
  * convention as `WebGLRenderTarget.scissor`). */
