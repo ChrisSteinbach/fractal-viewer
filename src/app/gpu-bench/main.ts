@@ -116,7 +116,10 @@ import {
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
 } from "../surface-compute";
-import type { SurfaceComputeFrameSpec } from "../surface-compute";
+import type {
+  SurfaceComputeFrame,
+  SurfaceComputeFrameSpec,
+} from "../surface-compute";
 
 // ---------------------------------------------------------------------------
 // Window surface for the headless runner
@@ -1816,6 +1819,17 @@ interface SurfaceSectionConfig {
   systems: "all" | "synthetic";
   timing: boolean;
   force: boolean;
+  /** fr-p8bc shade A/B leg probe widths (`--surface-shade-width`, e.g.
+   * "1,4"), default empty — the leg skips (silently) when this is empty. */
+  surfaceShadeWidths: number[];
+  /** Invalid `surfaceShadeWidth` tokens dropped while parsing
+   * `surfaceShadeWidths` above (non-numeric or < 1) — unlike the other list
+   * params' silent `parseSurfaceIntList` filter, this one is user-facing
+   * enough (hand-typed while chasing fr-p8bc's verdict) that a typo is
+   * reported rather than silently doing nothing. Merged into the section's
+   * `notes` by `runSurfaceShadeAbLeg`'s caller, since `parseSurfaceConfig`
+   * runs before the section's `results` object exists. */
+  shadeWidthNotes: string[];
 }
 
 interface SurfaceKernelConfig {
@@ -1984,6 +1998,63 @@ interface SurfaceComputeFrameRow {
   counts: { hit: number; miss: number; exhausted: number; active: number };
 }
 
+/** One arm's {@link SurfaceComputeFrame} timing/status, sliced for a
+ * {@link SurfaceShadeAbRow}. */
+interface ShadeAbArmResult {
+  wallMs: number;
+  gpuMs: number;
+  marchMs: number;
+  shadeMs: number;
+  passes: number;
+  truncated: boolean;
+  counts: { hit: number; miss: number; exhausted: number; active: number };
+}
+
+/**
+ * fr-p8bc shade A/B leg — one row per (pose, probe width): the PRODUCTION
+ * `SurfaceComputeRenderer` at shipped-parity (`shadeDeWidth =
+ * SURFACE_FOLD_BEAM_WIDTH`, "baseline") against a cheap-shade-probe-width
+ * renderer ("cheap"), same DE/frame-spec/raster otherwise. Purely
+ * informational (see `runSurfaceShadeAbLeg`'s doc) — this is the measured
+ * verdict for fr-p8bc, not a section gate.
+ */
+interface SurfaceShadeAbRow {
+  pose: "standard" | "near";
+  probeWidth: number;
+  raster: { width: number; height: number };
+  baseline: ShadeAbArmResult;
+  cheap: ShadeAbArmResult;
+  diff: {
+    /** Pixels where any of R/G/B differs at all (not just over the report
+     * threshold below). */
+    diffPixels: number;
+    totalPixels: number;
+    /** Mean |Δ| over R/G/B, averaged over `diffPixels` ONLY — background/
+     * agreeing pixels are identical by construction (identical march
+     * kernel, identical per-pixel hash dither in both arms) and would
+     * dilute an all-pixels mean toward ~0 regardless of how different the
+     * actually-shaded pixels are. */
+    meanAbsDeltaDiffPixels: number;
+    /** Largest single-channel |Δ| over every pixel. */
+    maxAbsDelta: number;
+    /** Percent of ALL pixels (not just `diffPixels`) whose largest channel
+     * delta exceeds {@link SURFACE_SHADE_AB_DIFF_THRESHOLD}. */
+    pctPixelsOver8: number;
+  };
+  /** The two arms' terminal ray-status tallies (`counts`) disagree. The
+   * march kernel and its ray derivation are IDENTICAL between arms (only
+   * the shade probe width differs) and the hash dither is per-pixel
+   * deterministic, so hit sets must match by construction — a mismatch
+   * here is a march determinism bug, not a shading difference. Surfaced
+   * prominently, never gated (this leg is informational). */
+  hitMismatch: boolean;
+  /** Set when either arm's frame resolved null (superseded/lost) or
+   * truncated — the diff numbers above are still computed where possible
+   * but are not a fair like-for-like comparison. */
+  suspect?: boolean;
+  reason?: string;
+}
+
 interface SurfaceDeResults {
   verdict: "pass" | "fail" | "skipped";
   reason?: string;
@@ -1998,6 +2069,11 @@ interface SurfaceDeResults {
   /** fr-tzdg leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
+   * `surfaceShadeWidths` is empty (the default, silent) or every requested
+   * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
+   * {@link SurfaceDeResults.verdict}. */
+  shadeAb?: SurfaceShadeAbRow[];
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -2092,6 +2168,37 @@ const SURFACE_FRAME_BUDGET_SW_MS = 300_000;
 const SURFACE_FRAME_SHADOW_STEPS = 32;
 const SURFACE_FRAME_AO_TAPS = 5;
 
+/** fr-p8bc shade A/B leg raster — smaller than leg B's (SURFACE_FRAME_WIDTH
+ * 256x144) because this leg renders MANY frames (2 poses × (1 baseline +
+ * N cheap widths), the baseline reused across widths): 128x72 keeps a
+ * real-adapter run in minutes rather than tens of minutes; software forces
+ * the same 96x54 leg B shrinks to. */
+const SURFACE_SHADE_AB_WIDTH = 128;
+const SURFACE_SHADE_AB_HEIGHT = 72;
+const SURFACE_SHADE_AB_WIDTH_SW = 96;
+const SURFACE_SHADE_AB_HEIGHT_SW = 54;
+/** Per-frame budget — sized for the leg's WORST arm, the full-width
+ * baseline at the near pose: ~108 ms/hit measured on Iris × ~3.5k hits at
+ * 128x72 ≈ 7 minutes of shading (a 240s budget measured TRUNCATED — a
+ * truncated baseline makes the image diff meaningless, which is the whole
+ * leg). The cheap arms finish in seconds; only the baseline ever spends
+ * this. */
+const SURFACE_SHADE_AB_BUDGET_MS = 600_000;
+const SURFACE_SHADE_AB_BUDGET_SW_MS = 300_000;
+
+/** fr-p8bc shade A/B leg's "near" pose distance factor, vs. the standard
+ * bench pose's `SURFACE_POSE_DIST_FACTOR` (2.4, far-field — mostly
+ * background/miss rays). Closer in means hits dominate the raster: the
+ * shading-BOUND regime the standard pose lacks and the one fr-p8bc's probe
+ * width actually needs to be measured in. */
+const SURFACE_SHADE_AB_NEAR_DIST_FACTOR = 1.4;
+
+/** fr-p8bc shade A/B diff: doubles as the amplified-diff canvas's per-channel
+ * multiplier (`min(255, |Δ| × 8)`, so an 8-level channel delta already
+ * saturates to visible) and the `pctPixelsOver8` report threshold — the
+ * field's own name is this constant's value, so the two never drift apart. */
+const SURFACE_SHADE_AB_DIFF_THRESHOLD = 8;
+
 /** Both maps pure `spherefold` — the hardest void-false-hit profile in the
  * fr-5rvk set. Mirrors scripts/harness-profiles.ts — keep in sync
  * (importing from scripts/ into the Vite page is off-limits). */
@@ -2144,6 +2251,31 @@ function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
   return parsed.length > 0 ? parsed : fallback;
 }
 
+/** Like {@link parseSurfaceIntList}, but for `surfaceShadeWidth`: default
+ * `[]` (absent = leg skipped) and every dropped token is reported instead
+ * of silently vanishing — see `SurfaceSectionConfig.shadeWidthNotes`'s doc
+ * for why this one param gets that treatment. */
+function parseSurfaceShadeWidths(raw: string | null): {
+  widths: number[];
+  notes: string[];
+} {
+  if (raw === null) return { widths: [], notes: [] };
+  const widths: number[] = [];
+  const notes: string[] = [];
+  for (const token of raw.split(",").map((s) => s.trim())) {
+    if (token.length === 0) continue;
+    const n = Number.parseInt(token, 10);
+    if (Number.isInteger(n) && n >= 1) {
+      widths.push(n);
+    } else {
+      notes.push(
+        `surfaceShadeWidth: ignoring invalid entry "${token}" (must be a positive integer)`,
+      );
+    }
+  }
+  return { widths, notes };
+}
+
 /** URL-param surface config, all optional: `surfaceWidths` (agreement,
  * default 12,4), `surfaceTimingWidths` (default 12,8,6,4),
  * `surfaceVariants` (default shared,private), `surfaceWg` (shared default
@@ -2152,7 +2284,8 @@ function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
  * (per-timing-config wall cap, default 120000), `surfaceSystems`
  * (all|synthetic — synthetic skips the mandelboxKifs preset),
  * `surfaceTiming` (0 skips timing), `surfaceForce` (1 runs timing even on
- * a software adapter). */
+ * a software adapter), `surfaceShadeWidth` (fr-p8bc shade A/B leg probe
+ * widths, e.g. "1,4"; default empty — leg skipped). */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -2163,6 +2296,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const wgGiven = Number.isInteger(wgParsed) && wgParsed >= 1;
   const sizeMatch = /^(\d+)x(\d+)$/.exec(params.get("surfaceSize") ?? "");
   const capParsed = Number.parseInt(params.get("surfaceCapMs") ?? "", 10);
+  const shadeWidths = parseSurfaceShadeWidths(params.get("surfaceShadeWidth"));
   return {
     agreementWidths: parseSurfaceIntList(params.get("surfaceWidths"), [12, 4]),
     timingWidths: parseSurfaceIntList(
@@ -2178,6 +2312,8 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     systems: params.get("surfaceSystems") === "synthetic" ? "synthetic" : "all",
     timing: params.get("surfaceTiming") !== "0",
     force: params.get("surfaceForce") === "1",
+    surfaceShadeWidths: shadeWidths.widths,
+    shadeWidthNotes: shadeWidths.notes,
   };
 }
 
@@ -2254,15 +2390,19 @@ function surfaceCross(a: Vec3, b: Vec3): Vec3 {
 
 /** `poseRays`'s camera math (scripts/fold-cost-split.harness.ts) verbatim —
  * target origin, orbit angles (0.9, 1.2), distance
- * 2.4 × visibleBoundingRadius, vertical fov 60° — packed into the kernel's
- * {@link SurfaceGpuPose}. */
+ * `distFactor` × visibleBoundingRadius (default `SURFACE_POSE_DIST_FACTOR`
+ * 2.4 — every existing caller), vertical fov 60° — packed into the kernel's
+ * {@link SurfaceGpuPose}. `distFactor` is fr-p8bc's shade A/B leg's hook for
+ * its closer "near" pose ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}); no
+ * other caller passes it. */
 function buildSurfacePose(
   de: SurfaceDE,
   rasterWidth: number,
   rasterHeight: number,
+  distFactor: number = SURFACE_POSE_DIST_FACTOR,
 ): SurfaceGpuPose {
   const target: Vec3 = [0, 0, 0];
-  const radius = SURFACE_POSE_DIST_FACTOR * de.visibleBoundingRadius;
+  const radius = distFactor * de.visibleBoundingRadius;
   const ro: Vec3 = [
     target[0] +
       radius * Math.sin(SURFACE_POSE_PHI) * Math.sin(SURFACE_POSE_THETA),
@@ -3573,6 +3713,456 @@ async function runSurfaceComputeFrameLeg(
   }
 }
 
+/** Create (or reuse — same lookup-before-create idiom as
+ * {@link surfaceFrameCanvas}, so re-running the section doesn't pile up
+ * duplicate canvases) a labeled canvas block under the section root.
+ * `data-bench-label` is the headless runner's PNG filename suffix (see
+ * gpu-flame-bench.mjs's per-canvas screenshot loop) — the shade-ab leg
+ * needs many of these (base/cheap/diff per pose × probe width), unlike leg
+ * B's one fixed canvas. */
+function surfaceLabeledCanvas(
+  dom: SurfaceSectionDom,
+  label: string,
+  caption: string,
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  let canvas = dom.root.querySelector<HTMLCanvasElement>(
+    `canvas[data-bench-label="${label}"]`,
+  );
+  if (!canvas) {
+    const rowDiv = document.createElement("div");
+    rowDiv.className = "canvases";
+    const block = document.createElement("div");
+    block.className = "canvas-block";
+    canvas = document.createElement("canvas");
+    canvas.dataset.benchLabel = label;
+    block.appendChild(canvas);
+    const span = document.createElement("span");
+    span.textContent = caption;
+    block.appendChild(span);
+    rowDiv.appendChild(block);
+    dom.root.insertBefore(rowDiv, dom.pre);
+  }
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+/** {@link SurfaceComputeFrame} sliced onto a shade-ab row's per-arm shape —
+ * `null` (superseded/lost) zeros out with `truncated: true` so the row
+ * keeps a fixed shape; {@link SurfaceShadeAbRow.suspect}/`reason` carry why
+ * the numbers aren't meaningful in that case. */
+function shadeAbArmResult(frame: SurfaceComputeFrame | null): ShadeAbArmResult {
+  if (!frame) {
+    return {
+      wallMs: 0,
+      gpuMs: 0,
+      marchMs: 0,
+      shadeMs: 0,
+      passes: 0,
+      truncated: true,
+      counts: { hit: 0, miss: 0, exhausted: 0, active: 0 },
+    };
+  }
+  return {
+    wallMs: frame.wallMs,
+    gpuMs: frame.gpuMs,
+    marchMs: frame.marchMs,
+    shadeMs: frame.shadeMs,
+    passes: frame.passes,
+    truncated: frame.truncated,
+    counts: frame.counts,
+  };
+}
+
+/**
+ * fr-p8bc shade A/B pixel diff: RGB-only (the kernel never writes
+ * translucent pixels — alpha is always 255), comparing the two arms' raw
+ * RGBA8 buffers directly in the kernel's OWN row-0-is-bottom order —
+ * equivalent pixel-for-pixel to comparing the flipped/presented images,
+ * since both arms share that same convention. Returns the diff image in
+ * that SAME order so the caller can hand it to
+ * {@link drawSurfaceComputeFrame} for the identical flip the base/cheap
+ * canvases got, keeping all three aligned.
+ */
+function computeShadeAbDiff(
+  width: number,
+  height: number,
+  base: Uint8Array,
+  cheap: Uint8Array,
+): { diff: SurfaceShadeAbRow["diff"]; diffImage: Uint8Array<ArrayBuffer> } {
+  const totalPixels = width * height;
+  const diffImage = new Uint8Array(totalPixels * 4);
+  let diffPixels = 0;
+  let sumAbsDeltaDiffPixels = 0;
+  let maxAbsDelta = 0;
+  let over8 = 0;
+  for (let i = 0; i < totalPixels; i++) {
+    const o = i * 4;
+    const dr = Math.abs(base[o] - cheap[o]);
+    const dg = Math.abs(base[o + 1] - cheap[o + 1]);
+    const db = Math.abs(base[o + 2] - cheap[o + 2]);
+    const maxChannel = Math.max(dr, dg, db);
+    if (maxChannel > 0) {
+      diffPixels++;
+      sumAbsDeltaDiffPixels += (dr + dg + db) / 3;
+    }
+    if (maxChannel > maxAbsDelta) maxAbsDelta = maxChannel;
+    if (maxChannel > SURFACE_SHADE_AB_DIFF_THRESHOLD) over8++;
+    diffImage[o] = Math.min(255, dr * SURFACE_SHADE_AB_DIFF_THRESHOLD);
+    diffImage[o + 1] = Math.min(255, dg * SURFACE_SHADE_AB_DIFF_THRESHOLD);
+    diffImage[o + 2] = Math.min(255, db * SURFACE_SHADE_AB_DIFF_THRESHOLD);
+    diffImage[o + 3] = 255;
+  }
+  return {
+    diff: {
+      diffPixels,
+      totalPixels,
+      meanAbsDeltaDiffPixels:
+        diffPixels > 0 ? sumAbsDeltaDiffPixels / diffPixels : 0,
+      maxAbsDelta,
+      pctPixelsOver8: totalPixels > 0 ? (100 * over8) / totalPixels : 0,
+    },
+    diffImage,
+  };
+}
+
+/**
+ * Recover-from-device-loss helper for {@link runSurfaceShadeAbLeg}: reuse
+ * `current` when it's still alive, otherwise destroy it (a no-op if it was
+ * never created) and create a replacement. Measured on real hardware (Iris
+ * Xe): the FIRST `SurfaceComputeRenderer` created right after leg B's own
+ * budget-maxed 120s render deterministically hits `VK_ERROR_DEVICE_LOST` on
+ * its very first submission, but a device created immediately afterward
+ * works fine — so reusing a renderer that `.lost` reports true for would
+ * just keep resolving null (device loss latches) rather than recovering.
+ */
+async function ensureRenderer(
+  current: SurfaceComputeRenderer | null,
+  de: SurfaceDE,
+  colors: Vec3[],
+  trapIndices: number[],
+  shadeDeWidth: number,
+): Promise<SurfaceComputeRenderer> {
+  if (current && !current.lost) return current;
+  current?.destroy();
+  return SurfaceComputeRenderer.create(de, colors, trapIndices, {
+    shadeDeWidth,
+  });
+}
+
+/**
+ * fr-p8bc's measured-verdict leg: the shipped shade-probe width
+ * (`SURFACE_FOLD_BEAM_WIDTH`, the full width-12 beam) against cheaper
+ * `--surface-shade-width` candidates, on the PRODUCTION
+ * `SurfaceComputeRenderer` — renderers differing ONLY in `opts.shadeDeWidth`,
+ * same DE/colors/frame-spec otherwise, so any pixel difference is
+ * attributable to the probe width alone. Runs at two poses (see
+ * {@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}'s doc for why "near" matters).
+ *
+ * Renderers are reused across both poses (a `SurfaceComputeRenderer`
+ * compiles two WGSL pipelines at creation, so re-creating one per row would
+ * dominate the leg's own wall time over what it's trying to measure), and
+ * this leg processes one arm fully (create → render every pose → destroy)
+ * before creating the next: baseline first, into `baseFrames` keyed by
+ * pose, then each cheap width in turn compared against that cache. At most
+ * one `SurfaceComputeRenderer` — one GPUDevice — is ever alive at a time.
+ *
+ * Measured on real hardware (Iris Xe): the FIRST `SurfaceComputeRenderer`
+ * created right after leg B's own budget-maxed 120s render reliably hits
+ * `VK_ERROR_DEVICE_LOST` on its very first submission — reproduced
+ * identically across repeated runs. This is NOT a concurrent-device effect
+ * (fully serializing renderer lifetimes, one alive at a time, changed
+ * nothing — the baseline's first render still died); a device created
+ * afterward, whatever its config, works fine. So every render call
+ * re-validates the current renderer's `.lost` flag ({@link ensureRenderer})
+ * and transparently recreates before rendering, rather than trusting a
+ * renderer that may have gone dead underneath it (device loss latches — a
+ * known-lost renderer would just keep resolving null forever). This
+ * recovers same-pose reruns and, more importantly, stops one pose's device
+ * loss from silently poisoning the NEXT pose's or width's attempt too.
+ *
+ * Deliberately never section-gating: called AFTER leg B, and the caller
+ * wraps the whole call so a thrown error becomes a note rather than a
+ * section failure. This leg exists to MEASURE a quality/cost trade-off,
+ * not to certify correctness — that is leg A's (`marchUnproject`) job.
+ * `hitMismatch` is reported per row because a mismatch WOULD indicate a
+ * determinism bug (the march kernel and its ray derivation are identical
+ * between arms — only the shade probe width differs), but even that is
+ * surfaced, never failed. A single probe-width renderer failing to compile
+ * is noted and that width is dropped, rather than losing every other
+ * width's measurement. `renderFrame` resolving null (device lost/superseded)
+ * on either arm still produces a row, marked `suspect` — this leg reports
+ * evidence, it doesn't assume the hardware will cooperate.
+ */
+async function runSurfaceShadeAbLeg(
+  config: SurfaceSectionConfig,
+  systems: SurfaceSystemState[],
+  software: boolean,
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+  onRow: (rows: SurfaceShadeAbRow[]) => void,
+): Promise<{ rows: SurfaceShadeAbRow[]; notes: string[] }> {
+  const notes = [...config.shadeWidthNotes];
+  if (config.surfaceShadeWidths.length === 0) return { rows: [], notes };
+  if (software && !config.force) {
+    notes.push(
+      "shade-ab: skipped — software WebGPU adapter (timings would not be representative; pass surfaceForce=1 to run anyway)",
+    );
+    return { rows: [], notes };
+  }
+  const mbox = systems.find((s) => s.name === "mandelboxKifs");
+  if (!mbox) {
+    notes.push(
+      "shade-ab: skipped — mandelboxKifs did not build or was excluded (surfaceSystems=synthetic)",
+    );
+    return { rows: [], notes };
+  }
+
+  // Requested widths, deduped, dropping the baseline width itself — an A/A
+  // comparison against the exact width it's compared TO measures nothing.
+  const widths: number[] = [];
+  for (const w of config.surfaceShadeWidths) {
+    if (w === SURFACE_FOLD_BEAM_WIDTH) {
+      notes.push(
+        `shade-ab: skipping requested width ${String(w)} — equals the baseline width SURFACE_FOLD_BEAM_WIDTH (${String(SURFACE_FOLD_BEAM_WIDTH)})`,
+      );
+      continue;
+    }
+    if (!widths.includes(w)) widths.push(w);
+  }
+  if (widths.length === 0) {
+    notes.push(
+      "shade-ab: skipped — no probe widths left after dropping the baseline width",
+    );
+    return { rows: [], notes };
+  }
+
+  const width = software ? SURFACE_SHADE_AB_WIDTH_SW : SURFACE_SHADE_AB_WIDTH;
+  const height = software
+    ? SURFACE_SHADE_AB_HEIGHT_SW
+    : SURFACE_SHADE_AB_HEIGHT;
+  const budgetMs = software
+    ? SURFACE_SHADE_AB_BUDGET_SW_MS
+    : SURFACE_SHADE_AB_BUDGET_MS;
+
+  // Same per-slot color/trap keying as leg B (runSurfaceComputeFrameLeg) —
+  // both renderers shade the SAME de.maps, so every arm stays byte-identical
+  // apart from shadeDeWidth.
+  const palette = transformColors(mbox.transformCount);
+  const colors = mbox.de.maps.map((m) => palette[m.baseIndex]);
+  const denom = Math.max(1, mbox.transformCount - 1);
+  const trapIndices = mbox.de.maps.map((m) => m.baseIndex / denom);
+
+  const poses: { name: "standard" | "near"; distFactor: number }[] = [
+    { name: "standard", distFactor: SURFACE_POSE_DIST_FACTOR },
+    { name: "near", distFactor: SURFACE_SHADE_AB_NEAR_DIST_FACTOR },
+  ];
+  const specForPose = (poseDef: {
+    distFactor: number;
+  }): SurfaceComputeFrameSpec => {
+    const pose = buildSurfacePose(mbox.de, width, height, poseDef.distFactor);
+    // Identical frame spec for both arms at a given pose — production
+    // dither on: the march kernel is byte-identical in both arms and the
+    // hash dither is per-pixel deterministic, so both arms' hit sets align
+    // (a fair diff needs that), and it matches what the app ships.
+    return {
+      width,
+      height,
+      invProjView: surfaceInvProjView(mbox.de, pose),
+      camPos: pose.ro,
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+      maxDepth: mbox.de.maxDepth,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+    };
+  };
+
+  activity.setState("gpu", "Surface shade A/B (fr-p8bc)");
+  const rows: SurfaceShadeAbRow[] = [];
+
+  // Phase 1: the baseline arm — reused across poses when it stays alive,
+  // but re-validated (see ensureRenderer's doc) before EVERY render rather
+  // than trusted for the whole phase, so one pose's device loss can't
+  // silently poison the other's. Cached per pose for phase 2 below.
+  const baseFrames = new Map<"standard" | "near", SurfaceComputeFrame | null>();
+  let baselineRenderer: SurfaceComputeRenderer | null = null;
+  try {
+    for (const poseDef of poses) {
+      status(`shade-ab: creating baseline renderer…`);
+      baselineRenderer = await ensureRenderer(
+        baselineRenderer,
+        mbox.de,
+        colors,
+        trapIndices,
+        SURFACE_FOLD_BEAM_WIDTH,
+      );
+      status(`shade-ab: ${poseDef.name} baseline render…`);
+      console.info(
+        `[surface-bench] shade-ab ${poseDef.name}: baseline (w${String(SURFACE_FOLD_BEAM_WIDTH)}) rendering ${String(width)}x${String(height)}…`,
+      );
+      const frame = await baselineRenderer.renderFrame(specForPose(poseDef), {
+        budgetMs,
+      });
+      console.info(
+        `[surface-bench] shade-ab ${poseDef.name}: baseline ` +
+          (frame
+            ? `done — ${String(frame.passes)} passes, march=${frame.marchMs.toFixed(0)}ms shade=${frame.shadeMs.toFixed(0)}ms${frame.truncated ? " TRUNCATED" : ""}`
+            : "resolved null"),
+      );
+      baseFrames.set(poseDef.name, frame);
+    }
+  } catch (e) {
+    notes.push(`shade-ab: baseline renderer failed — ${describeError(e)}`);
+    return { rows, notes };
+  } finally {
+    baselineRenderer?.destroy();
+  }
+
+  // Phase 2: one cheap-probe-width renderer at a time, same reuse-but-
+  // re-validate discipline as phase 1 — ensureRenderer recreates on a
+  // device lost mid-width, rather than losing the width's other pose too.
+  for (const w of widths) {
+    let renderer: SurfaceComputeRenderer | null = null;
+    try {
+      for (const poseDef of poses) {
+        status(`shade-ab: creating width ${String(w)} renderer…`);
+        renderer = await ensureRenderer(
+          renderer,
+          mbox.de,
+          colors,
+          trapIndices,
+          w,
+        );
+        status(`shade-ab: ${poseDef.name} w${String(w)} render…`);
+        console.info(
+          `[surface-bench] shade-ab ${poseDef.name}: w${String(w)} rendering…`,
+        );
+        const cheapFrame = await renderer.renderFrame(specForPose(poseDef), {
+          budgetMs,
+        });
+        console.info(
+          `[surface-bench] shade-ab ${poseDef.name}: w${String(w)} ` +
+            (cheapFrame
+              ? `done — ${String(cheapFrame.passes)} passes, march=${cheapFrame.marchMs.toFixed(0)}ms shade=${cheapFrame.shadeMs.toFixed(0)}ms${cheapFrame.truncated ? " TRUNCATED" : ""}`
+              : "resolved null"),
+        );
+        const baseFrame = baseFrames.get(poseDef.name) ?? null;
+
+        const baseCanvas = surfaceLabeledCanvas(
+          dom,
+          `shade-ab-${poseDef.name}-w${String(w)}-base`,
+          `shade-ab ${poseDef.name} w${String(w)}: baseline (w${String(SURFACE_FOLD_BEAM_WIDTH)})`,
+          width,
+          height,
+        );
+        const cheapCanvas = surfaceLabeledCanvas(
+          dom,
+          `shade-ab-${poseDef.name}-w${String(w)}-cheap`,
+          `shade-ab ${poseDef.name} w${String(w)}: cheap`,
+          width,
+          height,
+        );
+        const diffCanvas = surfaceLabeledCanvas(
+          dom,
+          `shade-ab-${poseDef.name}-w${String(w)}-diff`,
+          `shade-ab ${poseDef.name} w${String(w)}: diff (×${String(SURFACE_SHADE_AB_DIFF_THRESHOLD)})`,
+          width,
+          height,
+        );
+        if (baseFrame) {
+          drawSurfaceComputeFrame(baseCanvas, baseFrame.pixels, width, height);
+        }
+        if (cheapFrame) {
+          drawSurfaceComputeFrame(
+            cheapCanvas,
+            cheapFrame.pixels,
+            width,
+            height,
+          );
+        }
+
+        let diff: SurfaceShadeAbRow["diff"] = {
+          diffPixels: 0,
+          totalPixels: width * height,
+          meanAbsDeltaDiffPixels: 0,
+          maxAbsDelta: 0,
+          pctPixelsOver8: 0,
+        };
+        let hitMismatch = false;
+        let suspect = false;
+        let reason: string | undefined;
+        if (!baseFrame || !cheapFrame) {
+          suspect = true;
+          reason = `${!baseFrame ? "baseline" : "cheap"} frame resolved null (superseded/lost)`;
+        } else {
+          hitMismatch =
+            baseFrame.counts.hit !== cheapFrame.counts.hit ||
+            baseFrame.counts.miss !== cheapFrame.counts.miss ||
+            baseFrame.counts.exhausted !== cheapFrame.counts.exhausted ||
+            baseFrame.counts.active !== cheapFrame.counts.active;
+          if (baseFrame.truncated || cheapFrame.truncated) {
+            suspect = true;
+            reason =
+              baseFrame.truncated && cheapFrame.truncated
+                ? `both arms truncated at the ${String(budgetMs)}ms budget`
+                : `${baseFrame.truncated ? "baseline" : "cheap"} truncated at the ${String(budgetMs)}ms budget`;
+          }
+          const computed = computeShadeAbDiff(
+            width,
+            height,
+            baseFrame.pixels,
+            cheapFrame.pixels,
+          );
+          diff = computed.diff;
+          drawSurfaceComputeFrame(
+            diffCanvas,
+            computed.diffImage,
+            width,
+            height,
+          );
+        }
+
+        const row: SurfaceShadeAbRow = {
+          pose: poseDef.name,
+          probeWidth: w,
+          raster: { width, height },
+          baseline: shadeAbArmResult(baseFrame),
+          cheap: shadeAbArmResult(cheapFrame),
+          diff,
+          hitMismatch,
+        };
+        if (suspect) {
+          row.suspect = true;
+          row.reason = reason;
+        }
+        rows.push(row);
+        onRow(rows);
+      }
+    } catch (e) {
+      notes.push(
+        `shade-ab: width ${String(w)} renderer failed — ${describeError(e)}`,
+      );
+    } finally {
+      renderer?.destroy();
+    }
+  }
+  return { rows, notes };
+}
+
 interface SurfaceSectionDom {
   root: HTMLElement;
   status: HTMLElement;
@@ -4184,6 +4774,31 @@ async function runSurfaceDeSection(
       }
       render();
     }
+
+    // ----- Shade A/B leg (fr-p8bc): cheap shading-probe-width vs the -----
+    // shipped full-width baseline. Runs AFTER leg B, purely informational —
+    // never gates the verdict below (see runSurfaceShadeAbLeg's doc) — so
+    // the whole call is wrapped: any thrown error becomes a note instead of
+    // failing the section.
+    try {
+      const { rows, notes: abNotes } = await runSurfaceShadeAbLeg(
+        config,
+        systems,
+        acquired.software,
+        dom,
+        status,
+        activity,
+        (partial) => {
+          results.shadeAb = partial;
+          render();
+        },
+      );
+      for (const n of abNotes) results.notes.push(n);
+      if (rows.length > 0) results.shadeAb = rows;
+    } catch (e) {
+      results.notes.push(`shade-ab: ${describeError(e)}`);
+    }
+    render();
 
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is

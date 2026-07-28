@@ -20,7 +20,7 @@
  *     [--surface-variants=shared,private] [--surface-wg=32]
  *     [--surface-size=320x180] [--surface-cap-ms=120000]
  *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
- *     [--surface-force=1]
+ *     [--surface-force=1] [--surface-shade-width=1,4]
  *
  * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
@@ -94,6 +94,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   "surface-timing": "surfaceTiming",
   "surface-wg": "surfaceWg",
   "surface-force": "surfaceForce",
+  // fr-p8bc shade A/B leg: comma list of cheap shade-probe widths to
+  // measure against the shipped full-width baseline (e.g. "1,4"); absent =
+  // the leg is skipped (see parseSurfaceConfig's doc).
+  "surface-shade-width": "surfaceShadeWidth",
 };
 
 function parseArgs(argv) {
@@ -243,6 +247,22 @@ function printSurfaceSummary(surfaceDe) {
           `active=${cf.counts.active}${cf.truncated ? " TRUNCATED" : ""}`,
       );
     }
+  }
+  // fr-p8bc shade A/B leg: cheap shading-probe-width vs the shipped
+  // full-width baseline — informational, never gates surfaceDe.verdict.
+  for (const r of surfaceDe.shadeAb ?? []) {
+    const ratio =
+      r.cheap.shadeMs > 0 ? r.baseline.shadeMs / r.cheap.shadeMs : Infinity;
+    const flags =
+      (r.hitMismatch ? " HIT MISMATCH" : "") +
+      (r.suspect ? ` SUSPECT(${r.reason ?? "?"})` : "");
+    console.log(
+      `  shade-ab ${r.pose} w${r.probeWidth}: shade ${r.baseline.shadeMs.toFixed(0)}ms -> ` +
+        `${r.cheap.shadeMs.toFixed(0)}ms (${ratio.toFixed(1)}x), ` +
+        `march ${r.baseline.marchMs.toFixed(0)}ms/${r.cheap.marchMs.toFixed(0)}ms, ` +
+        `diff ${r.diff.pctPixelsOver8.toFixed(1)}% px >8, mean ${r.diff.meanAbsDeltaDiffPixels.toFixed(1)} ` +
+        `max ${r.diff.maxAbsDelta}, hits ${r.baseline.counts.hit}/${r.cheap.counts.hit}${flags}`,
+    );
   }
   for (const note of surfaceDe.notes ?? []) {
     console.log(`  note: ${note}`);
@@ -489,15 +509,25 @@ async function main() {
     console.error(`[gpu-flame-bench] screenshot written to ${screenshotPath}`);
 
     // Per-canvas element screenshots (cpu/gpu/diff per scenario) — full-res
-    // artifacts for eyeballing agreement, independent of page layout.
+    // artifacts for eyeballing agreement, independent of page layout. The
+    // surface-DE section's canvases now outnumber `labels` (fr-p8bc's
+    // shade A/B leg adds a variable base/cheap/diff triple per pose ×
+    // probe width), so each canvas's own `data-bench-label` attribute (set
+    // by `surfaceLabeledCanvas` in main.ts) wins the filename suffix when
+    // present; the positional `labels` array is the fallback for canvases
+    // that don't set one (the flame scenarios' cpu/gpu/diff triple, and
+    // leg A's/leg B's fixed canvases) — unchanged from before this leg
+    // existed, then a bare index for anything past both.
     for (const scenario of await page.locator(".scenario").all()) {
       const name = (await scenario.locator("h2").innerText())
         .split("—")[0]
         .trim();
       const canvases = await scenario.locator("canvas").all();
       const labels = ["cpu", "gpu", "diff"];
-      for (let i = 0; i < canvases.length && i < labels.length; i++) {
-        const canvasPath = path.join(outDir, `${name}-${labels[i]}.png`);
+      for (let i = 0; i < canvases.length; i++) {
+        const benchLabel = await canvases[i].getAttribute("data-bench-label");
+        const suffix = benchLabel ?? labels[i] ?? String(i);
+        const canvasPath = path.join(outDir, `${name}-${suffix}.png`);
         await canvases[i].screenshot({ path: canvasPath });
       }
     }
