@@ -213,8 +213,10 @@ export interface StripPlanner {
   /** Worst per-pixel cost (ms) this job's own measurements have revealed
    * (0 before any measurement) — the value a caller carries into the next
    * job's `worstMsPerPx` floor so pose-cost discoveries survive job
-   * re-arms, and a later cheap job relaxes the floor back to the class
-   * constant. */
+   * re-arms. The caller decides direction: a COMPLETED job's whole-frame
+   * observation may replace the floor in both directions (a measured-cheap
+   * fold system must not stay pinned at the class floor's micro-strips);
+   * a superseded job's partial observation may only raise it. */
   readonly observedWorstMsPerPx: number;
   /**
    * The next strip to render, sized from `prevMs` — the measured cost of

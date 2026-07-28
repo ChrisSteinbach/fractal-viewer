@@ -632,13 +632,25 @@ export class FractalScene {
    * the 7.5s watchdog. Affine and escape-time systems (microseconds per
    * pixel) keep the legacy probe. */
   private surfaceDeFoldClass = false;
-  /** Worst per-pixel strip cost (ms) the most recently RETIRED strip job
-   * observed (0 before any) — the fr-096u ratchet chain: it floors the
-   * next job's worst-case cap so a monster pose discovered by one job
-   * cannot be re-rouletted by its re-armed successor, and a later job on
-   * a cheap pose (small observation) relaxes the floor back to the class
-   * constant. Reset on every system upload. */
-  private surfaceStripLastJobWorstMsPerPx = 0;
+  /** Worst per-pixel strip cost (ms) observed by the most recent COMPLETED
+   * strip job (null before any) — the fr-096u evidence chain: a completed
+   * job traced its WHOLE frame, so its observation REPLACES the class
+   * floor in both directions (scaled by
+   * {@link STRIP_WORST_EVIDENCE_SAFETY}). Downward matters as much as up:
+   * the fold-class floor is calibrated for deep-KIFS monsters, and pinning
+   * a measured-cheap fold system (a lens over affine cores) to it forever
+   * would dissolve its settle into tens of thousands of readback-bound
+   * micro-strips — and feed the settle cost gate an overhead-inflated
+   * prediction that silently skips a perfectly affordable frame (the
+   * fr-096u review regression). Reset on every system upload. */
+  private surfaceStripEvidencedWorstMsPerPx: number | null = null;
+  /** Worst per-pixel strip cost (ms) observed by PARTIAL (superseded) jobs
+   * since the last completed one (0 = none). Partial coverage can prove a
+   * pose expensive but never cheap, so this only ever RAISES the floor —
+   * a monster pose discovered mid-job cannot be re-rouletted by the
+   * re-armed successor — and the next completed job's whole-frame
+   * evidence clears it. Reset on every system upload. */
+  private surfaceStripPartialWorstMsPerPx = 0;
   /** Whether the ACTIVE surface session renders on the WebGPU compute path
    * (fr-tzdg) — set by {@link enterSurfaceComputeSession}. While true the
    * fold GLSL is never compiled: {@link renderSurface} degrades to a
@@ -2133,7 +2145,8 @@ export class FractalScene {
     this.surfacePreviewGovernor.reset(costWeight);
     this.surfacePreviewPxCostMs = null;
     this.surfaceDeFoldClass = costWeight > 1;
-    this.surfaceStripLastJobWorstMsPerPx = 0;
+    this.surfaceStripEvidencedWorstMsPerPx = null;
+    this.surfaceStripPartialWorstMsPerPx = 0;
   }
 
   /**
@@ -2157,7 +2170,8 @@ export class FractalScene {
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.surfaceDeFoldClass = false;
-    this.surfaceStripLastJobWorstMsPerPx = 0;
+    this.surfaceStripEvidencedWorstMsPerPx = null;
+    this.surfaceStripPartialWorstMsPerPx = 0;
   }
 
   /**
@@ -2215,7 +2229,8 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
     // 4D surface DEs have no fold vocabulary (affine-class throughout).
     this.surfaceDeFoldClass = false;
-    this.surfaceStripLastJobWorstMsPerPx = 0;
+    this.surfaceStripEvidencedWorstMsPerPx = null;
+    this.surfaceStripPartialWorstMsPerPx = 0;
   }
 
   /**
@@ -2578,31 +2593,50 @@ export class FractalScene {
   }
 
   /**
-   * Class-pessimistic per-pixel cost for the planner's worst-case strip
-   * cap (fr-096u's second mechanism): unlike the probe prior above, this
-   * must NEVER be replaced by a measurement — a measured value comes from
-   * whatever band recent strips crossed, and the cap exists precisely for
-   * the strip that leaves that band for a 100-1000x pricier one.
+   * Worst-case per-pixel price (ms) for the planner's strip cap (fr-096u's
+   * second mechanism). Before any COMPLETED job exists, the class constant
+   * rules: partial measurements come from whatever band the strips crossed
+   * and can prove a pose expensive, never cheap, so they only RAISE the
+   * price. A completed job's whole-frame observation then OWNS it — scaled
+   * by {@link STRIP_WORST_EVIDENCE_SAFETY} for the tier gap (the settle
+   * traces deeper than the preview whose evidence seeds it, ~4-6x
+   * measured) — in both directions: up on monster poses (Iris crease
+   * pixels measured 1.7-3.1s), down on measured-cheap fold systems, whose
+   * settles would otherwise crawl through tens of thousands of
+   * class-floor micro-strips of pure readback overhead.
    */
   private surfaceStripWorstMsPerPx(): number {
+    const evidenced = this.surfaceStripEvidencedWorstMsPerPx;
+    const base =
+      evidenced !== null
+        ? evidenced * STRIP_WORST_EVIDENCE_SAFETY
+        : this.surfaceDeFoldClass
+          ? STRIP_FOLD_WORST_MS_PER_PX
+          : STRIP_AFFINE_WORST_MS_PER_PX;
     return Math.max(
-      this.surfaceDeFoldClass
-        ? STRIP_FOLD_WORST_MS_PER_PX
-        : STRIP_AFFINE_WORST_MS_PER_PX,
-      this.surfaceStripLastJobWorstMsPerPx,
+      base,
+      this.surfaceStripPartialWorstMsPerPx * STRIP_WORST_EVIDENCE_SAFETY,
     );
   }
 
-  /** Retire a strip job into the ratchet chain (see
-   * {@link surfaceStripLastJobWorstMsPerPx}): its own observation REPLACES
-   * the chain value — a cheap pose's small observation is exactly what
-   * lets the floor relax after a monster pose poisoned it. A job that
-   * measured NOTHING (superseded before its first strip completed) is
-   * absence of evidence and keeps the chain as it was — dropping the
-   * floor on it would hand the next job one fresh roulette spin. */
-  private retireStripJob(job: SurfaceStripJob): void {
+  /** Retire a strip job into the evidence chain (see
+   * {@link surfaceStripWorstMsPerPx}). A COMPLETED job's observation
+   * replaces the evidence (and clears the partial raise); a superseded
+   * job's observation can only raise. A job that measured NOTHING
+   * (superseded before its first strip completed, or done in a single
+   * strip) carries no information and changes nothing. */
+  private retireStripJob(job: SurfaceStripJob, completed: boolean): void {
     const observed = job.planner.observedWorstMsPerPx;
-    if (observed > 0) this.surfaceStripLastJobWorstMsPerPx = observed;
+    if (observed <= 0) return;
+    if (completed) {
+      this.surfaceStripEvidencedWorstMsPerPx = observed;
+      this.surfaceStripPartialWorstMsPerPx = 0;
+    } else {
+      this.surfaceStripPartialWorstMsPerPx = Math.max(
+        this.surfaceStripPartialWorstMsPerPx,
+        observed,
+      );
+    }
   }
 
   /**
@@ -2627,7 +2661,7 @@ export class FractalScene {
     let pxCostMs = this.surfacePreviewPxCostMs;
     if (job) {
       this.surfacePreviewJob = null;
-      this.retireStripJob(job);
+      this.retireStripJob(job, false);
       // Pixels handed to a still-pending fence were planned but never
       // accounted — extrapolate from the MEASURED pixels only, or the
       // estimate would read low by the pending strip's whole cost.
@@ -2701,7 +2735,7 @@ export class FractalScene {
     );
     if (done) {
       this.surfacePreviewJob = null;
-      this.retireStripJob(job);
+      this.retireStripJob(job, true);
       const { width, height } = this.surfacePreviewTarget;
       // Per-pixel cost of the completed trace: primes the settle job's
       // probe prediction (beginSurfaceSettle) so ITS first strip can
@@ -2709,6 +2743,14 @@ export class FractalScene {
       // matters for.
       this.surfacePreviewPxCostMs = job.spentMs / Math.max(1, width * height);
       this.surfacePreviewGovernor.sample(job.spentMs);
+      if (SURFPERF) {
+        console.log(
+          `[surfperf] preview complete ${String(width)}x${String(height)}` +
+            ` spentMs=${job.spentMs.toFixed(1)}` +
+            ` pxCost=${this.surfacePreviewPxCostMs.toFixed(4)}` +
+            ` worstSeen=${job.planner.observedWorstMsPerPx.toFixed(3)}`,
+        );
+      }
     }
     // Present whenever this call traced NEW rows (or finished). A pure
     // fence poll-miss painted nothing — skip the blit so those frames
@@ -2826,12 +2868,10 @@ export class FractalScene {
    * blits then show the preview sharpening strip by strip, never
    * uninitialized rows — and arm the strip planner.
    * {@link stepSurfaceSettle} does the actual tracing, a bounded slice per
-   * animation frame.
-   *
-   * May decline to arm (fr-096u): when the preview's measured cost prices
-   * the full frame past {@link SURFACE_SETTLE_SKIP_CEILING_MS}, the seeded
-   * stretch is the final frame — callers observe {@link surfaceSettleActive}
-   * false right after this call and treat the settle as complete.
+   * animation frame. It always ARMS — however expensive the frame, the
+   * planner's caps keep every submission bounded and the progressive
+   * blits keep the grind visible and interruptible; a silent refusal
+   * would read as a broken render (the fr-096u review lesson).
    */
   beginSurfaceSettle(): void {
     // main.ts holds the settle off until the preview job completes; a
@@ -2845,26 +2885,6 @@ export class FractalScene {
       this.surfacePreviewTarget.texture,
       this.surfaceSettleTarget,
     );
-    // Cost gate (fr-096u): the settle never ARMS when the preview's
-    // measured per-pixel cost extrapolates the full-tier frame past
-    // {@link SURFACE_SETTLE_SKIP_CEILING_MS}. On fold systems at
-    // near-surface poses the full frame prices out in HOURS (measured
-    // ~42ms/px band average on Iris, single crease pixels up to ~2.2s) —
-    // a trace that can never complete, whose only real product is
-    // watchdog-reset roulette that the per-strip cap alone cannot fully
-    // rule out (crease pixels cluster, so even few-pixel strips can run
-    // seconds). The preview-seeded stretch above IS the settled frame
-    // then: the caller observes no job armed and treats the settle as
-    // complete. A fold session with NO completed preview measurement is
-    // expensive by definition (its previews could not finish) — same
-    // verdict.
-    const predictedMs =
-      this.surfacePreviewPxCostMs !== null
-        ? this.surfacePreviewPxCostMs * size.x * size.y
-        : this.surfaceDeFoldClass
-          ? Infinity
-          : 0;
-    if (predictedMs > SURFACE_SETTLE_SKIP_CEILING_MS) return;
     // Force the seed — and every frame still queued before it — to
     // COMPLETE before the probe strip runs, so the probe's measurement is
     // the probe alone, not leftover backlog. A 1x1 readback is the one
@@ -3001,7 +3021,7 @@ export class FractalScene {
     if (!job) return true;
     const done = this.pumpStrips(job, this.surfaceSettleTarget, budgetMs);
     if (done) {
-      this.retireStripJob(job);
+      this.retireStripJob(job, true);
       if (SURFPERF) {
         const t = this.surfaceSettleTarget;
         console.log(
@@ -3207,18 +3227,11 @@ const DRAW_SIZE = new THREE.Vector2();
  * cheaper. Low enough that the page stays responsive (and interruptible)
  * while a heavy frame settles over many animation frames. */
 const SURFACE_SETTLE_STEP_BUDGET_MS = 40;
-/** Predicted full-tier frame cost (ms, extrapolated from the completed
- * preview's measured per-pixel cost) above which the WebGL settle job
- * never arms (fr-096u): the preview-seeded settle target stands in as the
- * settled frame. The preview measurement UNDERSTATES the full tier
- * (deeper depth clamp, bigger march/shadow/AO budgets, ~4-6x measured),
- * so 15s here means a real frame of a minute at the very least — beyond
- * what a parked view's background job should grind through on the
- * fallback path, and on fold systems the poses that trip this measure in
- * HOURS with GPU-watchdog roulette on every band-transition strip. The
- * WebGPU compute path (the preferred fold tracer) has its own bounded
- * economics and no such gate. */
-const SURFACE_SETTLE_SKIP_CEILING_MS = 15_000;
+/** Multiplier from a completed job's observed worst px cost to the next
+ * job's worst-case price floor (fr-096u): covers the preview-to-settle
+ * tier gap (~4-6x measured px cost) plus margin for crease structure the
+ * coarser trace under-sampled. */
+const STRIP_WORST_EVIDENCE_SAFETY = 10;
 /** Measured GPU time (ms) each preview strip aims for (fr-du81) — well
  * under the settle tier's 75 so strips interleave with a live drag: a
  * preview frame's budget below fits two of these plus the probe. */

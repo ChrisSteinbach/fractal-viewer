@@ -280,24 +280,28 @@ and UI**, so the interesting math is unit-tested without a browser:
     readback — NOT `gl.finish()`, which some command-buffer paths return
     from before execution). Measurement scaling is blind to the fold+grid
     frames' 100-1000x cheap/expensive band bimodality, so every strip is
-    ALSO capped at `STRIP_WORST_CASE_CAP_MS` of worst-case predicted cost,
-    priced at a class-pessimistic ms/px that RATCHETS up as the job's own
-    measurements reveal worse pixels and chains across job re-arms via
-    scene.ts (relaxing on the next measured-cheap job) — Iris measured the
-    mandelboxKifs band at ~40-125ms/px with single crease pixels of
-    1.7-3.1s, so post-discovery strips pin at ~1px. scene.ts's
+    ALSO capped at `STRIP_WORST_CASE_CAP_MS` of worst-case predicted cost.
+    The price starts at a class-pessimistic ms/px, RATCHETS up as the
+    job's own measurements reveal worse pixels, and chains across job
+    re-arms via scene.ts with evidence semantics: a COMPLETED job's
+    whole-frame observation REPLACES the floor in both directions (x10
+    tier-gap safety) — down matters, or a measured-cheap fold system
+    (lens over affine) stays pinned at class-floor micro-strips whose
+    readback overhead dissolves its settle and poisons the cost gate —
+    while partial jobs only raise. Iris measured the mandelboxKifs band
+    at ~40-125ms/px with single crease pixels of 1.7-3.1s, so
+    post-discovery strips pin at ~1px there. scene.ts's
     strip pump spreads jobs across frames (settle AND heavy previews,
     which present progressively and feed the governor measured/extrapolated
     samples), switching from the blocking readback join to
     fenceSync+clientWaitSync(0) polling when a strip's predicted cost
     exceeds `SURFACE_STRIP_SYNC_JOIN_CAP_MS` — multi-second fold strips no
     longer freeze the main thread — and runs strips to completion
-    synchronously for capture/offline export. The settle job itself is
-    cost-GATED (fr-096u): when the completed preview's measured px cost
-    extrapolates the full-tier frame past
-    `SURFACE_SETTLE_SKIP_CEILING_MS` (fold poses price out in HOURS), it
-    never arms — the preview-seeded stretch IS the settled frame, instead
-    of watchdog roulette on a trace that cannot finish. Fold surface sessions also
+    synchronously for capture/offline export. The settle always ARMS,
+    however expensive the frame — bounded strips grind visibly and
+    interruptibly (an early fr-096u cut gated it on predicted cost and
+    silently blanked legitimate lens settles into permanent preview blur:
+    a silent refusal reads as a broken render). Fold surface sessions also
     gate their first frame on `compileAsync` of the fold tracer program
     (~25s links happen off the critical path where the driver offers
     `KHR_parallel_shader_compile`; the compile mesh MUST mirror
