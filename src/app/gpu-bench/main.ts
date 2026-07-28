@@ -78,8 +78,10 @@ import {
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_SHADE_BYTES,
   packSurfaceGpuMaps,
   packSurfaceGpuParams,
+  packSurfaceGpuShade,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "../../fractal/surface-de-gpu";
@@ -109,6 +111,12 @@ import type {
   GpuBackendRequest4,
 } from "../flame-worker-core";
 import { wSupport } from "../rotor4";
+import {
+  SURFACE_COMPUTE_INITIAL_RAY_STEP_US,
+  SURFACE_COMPUTE_WORKGROUP_SIZE,
+  SurfaceComputeRenderer,
+} from "../surface-compute";
+import type { SurfaceComputeFrameSpec } from "../surface-compute";
 
 // ---------------------------------------------------------------------------
 // Window surface for the headless runner
@@ -1907,6 +1915,75 @@ interface SurfaceTimingRow {
   sanity?: "ok" | "suspect" | "skipped (truncated)";
 }
 
+/**
+ * fr-tzdg leg A — the march-unproject agreement gate: the app path's ray
+ * derivation (`rays:"unproject"`, dirs from ShadeParams.invProjView, the
+ * exact kernel config `SurfaceComputeRenderer` compiles) marched to
+ * completion and compared per ray against a CPU emulator that derives rays
+ * by the SAME f32 unproject arithmetic and then runs `surfaceCpuMarch`'s
+ * loop on the plain-`estimateDistance` oracle. GATING: any `failures` (or a
+ * truncated march, which verifies nothing) fails the section.
+ */
+interface SurfaceUnprojectRow {
+  system: string;
+  width: number;
+  wg: number;
+  rasterWidth: number;
+  rasterHeight: number;
+  rays: number;
+  /** Rays whose terminal status (hit/miss/exhausted) differs. */
+  statusMismatches: number;
+  /** Status mismatches excluded from the gate per {@link boundaryFlipRule}:
+   * CPU and GPU tracked the same trajectory (final `t` within the hit-t
+   * tolerance) and only classified its terminal event differently —
+   * f32-vs-f64 noise at the hit floor / sphere exit / budget edge, not ray
+   * or estimator disagreement. */
+  boundaryFlips: number;
+  /** The exclusion rule, verbatim, so the row is self-reporting. */
+  boundaryFlipRule: string;
+  /** Max |gpuT − cpuT| over rays where BOTH sides hit — grazes included,
+   * so a nonzero {@link hitTGrazes} row legitimately shows a large max. */
+  maxAbsT: number;
+  /** Both-hit rays over the t tolerance whose GPU endpoint the CPU oracle
+   * CONFIRMS on-surface (see {@link boundaryFlipRule}) — silhouette grazes
+   * resolved to a different sheet: at a graze one f32 trajectory fires
+   * `d < eps` on the near sheet where the other skims past at `d ≥ eps`
+   * and hits genuinely deeper (measured: 1 ray of 660 hits on Iris Xe,
+   * Δt 2e-2). Excluded from the gate. */
+  hitTGrazes: number;
+  /** Both-hit rays whose |gpuT − cpuT| exceeded the eval gate's tolerance
+   * formula applied to the hit distance —
+   * `max(2e-4·R, 2e-3·max(|cpuT|, 0.05·R))` — AND whose GPU endpoint the
+   * oracle could NOT confirm on-surface: real disagreement. */
+  hitTFailures: number;
+  /** `(statusMismatches − boundaryFlips) + hitTFailures` — any nonzero
+   * fails the section. */
+  failures: number;
+  gpuHits: number;
+  cpuHits: number;
+  compileMs: number;
+  gpuMs: number;
+  passes: number;
+  truncated: boolean;
+}
+
+/**
+ * fr-tzdg leg B — one end-to-end frame through the PRODUCTION
+ * `SurfaceComputeRenderer` (march slices + shade batches, the app's exact
+ * host loop), presented onto a canvas the headless runner screenshots.
+ * Informational, except: zero hit rays on a REAL adapter, or a null
+ * `renderFrame`, fail the section (see the verdict computation).
+ */
+interface SurfaceComputeFrameRow {
+  width: number;
+  height: number;
+  wallMs: number;
+  gpuMs: number;
+  passes: number;
+  truncated: boolean;
+  counts: { hit: number; miss: number; exhausted: number; active: number };
+}
+
 interface SurfaceDeResults {
   verdict: "pass" | "fail" | "skipped";
   reason?: string;
@@ -1915,6 +1992,12 @@ interface SurfaceDeResults {
   agreement: SurfaceAgreementRow[];
   crossChecks: SurfaceCrossCheckRow[];
   timing: SurfaceTimingRow[];
+  /** fr-tzdg leg A (gating) — absent until the leg runs; SkippedResult when
+   * it could not run (the error is also in notes, and the verdict fails). */
+  marchUnproject?: SurfaceUnprojectRow | SkippedResult;
+  /** fr-tzdg leg B (informational + canvas artifact) — absent until run;
+   * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
+  computeFrame?: SurfaceComputeFrameRow | SkippedResult;
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -1961,6 +2044,53 @@ const SURFACE_SANITY_HIT_RATE_TOL = 0.15;
 /** WebGPU's default `maxComputeWorkgroupStorageSize` — above this the
  * device must be asked for more at acquisition (surface-de-gpu.ts doc). */
 const SURFACE_DEFAULT_WORKGROUP_STORAGE = 16_384;
+
+/** fr-tzdg leg A raster — an agreement gate, not a timing, so small keeps
+ * both the CPU emulator (a full estimateDistance march per pixel) and the
+ * SwiftShader CI path affordable. 16:9 like the timing raster, so leg B's
+ * real-adapter raster shares the same aspect (and therefore the same
+ * invProjView tanHalf column scaling). */
+const SURFACE_UNPROJ_WIDTH = 96;
+const SURFACE_UNPROJ_HEIGHT = 54;
+
+/** Leg A must reach COMPLETION to gate anything (a truncated march has
+ * unverifiable rays), so it carries its own generous cap instead of the
+ * timing legs' `surfaceCapMs` — on SwiftShader the march is slow but small
+ * (5184 rays); truncation is reported and FAILS the leg, never waters down
+ * the comparison. */
+const SURFACE_UNPROJ_CAP_MS = 600_000;
+
+/** Leg A march pacing: unlike the timing legs' `runSurfaceMarchConfig`
+ * (real adapters only — software adapters skip timing), this leg's march
+ * also runs on SwiftShader, where the kernel executes on the CPU and a
+ * whole-raster dispatch of width-12 descents is a MINUTES-long single
+ * submission — Chrome kills the GPU process (and took the page with it,
+ * measured on the first CI-shaped run of this leg) — exactly the
+ * unbounded-submission class fr-096u bans. So the leg's own host loop
+ * slices the ACTIVE LIST too (surface-compute.ts's marchChunkFor idea,
+ * floor sized for software costs), from a deliberately pessimistic
+ * initial per-ray·step cost on software adapters that the measured EMA
+ * immediately corrects; step growth waits on MEASURED sub-target passes,
+ * never assumed ones. */
+const SURFACE_UNPROJ_MIN_CHUNK = 64;
+const SURFACE_UNPROJ_INITIAL_RAY_STEP_US_SW = 1000;
+
+/** fr-tzdg leg B raster/budget: full-tier knobs at 256x144 on a real
+ * adapter; the SwiftShader CI path shrinks the raster and stretches the
+ * budget (truncation is accepted there — software timing is not the
+ * point, the exercised host loop is). */
+const SURFACE_FRAME_WIDTH = 256;
+const SURFACE_FRAME_HEIGHT = 144;
+const SURFACE_FRAME_WIDTH_SW = 96;
+const SURFACE_FRAME_HEIGHT_SW = 54;
+const SURFACE_FRAME_BUDGET_MS = 120_000;
+const SURFACE_FRAME_BUDGET_SW_MS = 300_000;
+
+/** Leg B full-tier shading budgets — `SURFACE_FULL_SHADOW_STEPS` /
+ * `SURFACE_FULL_AO_TAPS` mirrors (surface-material.ts), duplicated like
+ * {@link SURFACE_MARCH_STEPS} is. */
+const SURFACE_FRAME_SHADOW_STEPS = 32;
+const SURFACE_FRAME_AO_TAPS = 5;
 
 /** Both maps pure `spherefold` — the hardest void-false-hit profile in the
  * fr-5rvk set. Mirrors scripts/harness-profiles.ts — keep in sync
@@ -2213,6 +2343,121 @@ function surfaceCpuMarch(
   return false;
 }
 
+/**
+ * `inverse(P·V)` for the harness pose — the exact matrix scene.ts uploads
+ * as uInvProjView (column-major THREE.Matrix4.elements), constructed from
+ * the SAME pose basis the march legs use: camera world matrix with columns
+ * right/up/−fwd/ro (THREE cameras look down local −Z), symmetric
+ * perspective from the pose's tanHalf/aspect. near/far only shape the
+ * matrix's depth row — the unproject divides them back out — so round
+ * radius-proportional picks are fine. Returned as Float32Array so the CPU
+ * emulator reads the IDENTICAL f32 entries the kernel's uniform holds.
+ */
+function surfaceInvProjView(de: SurfaceDE, pose: SurfaceGpuPose): Float32Array {
+  const near = de.boundingRadius * 1e-3;
+  const far = de.boundingRadius * 10;
+  const top = near * pose.tanHalf;
+  const right = top * pose.aspect;
+  const proj = new THREE.Matrix4().makePerspective(
+    -right,
+    right,
+    top,
+    -top,
+    near,
+    far,
+  );
+  // prettier-ignore
+  const world = new THREE.Matrix4().set(
+    pose.right[0], pose.up[0], -pose.fwd[0], pose.ro[0],
+    pose.right[1], pose.up[1], -pose.fwd[1], pose.ro[1],
+    pose.right[2], pose.up[2], -pose.fwd[2], pose.ro[2],
+    0, 0, 0, 1,
+  );
+  const view = world.clone().invert();
+  const inv = new THREE.Matrix4().multiplyMatrices(proj, view).invert();
+  return new Float32Array(inv.elements);
+}
+
+/**
+ * The march "unproject" kernel's per-pixel ray, emulated in f32: every
+ * intermediate `Math.fround`ed (surfaceQueries' discipline) over the SAME
+ * Float32Array matrix entries the kernel's ShadeParams uniform holds — ndc
+ * from pixel centers, near/far clip points through invProjView with
+ * perspective divides, `normalize(far − near)`. Residual GPU-vs-emulator
+ * noise (accumulation order, fma) is what the leg's tolerance absorbs.
+ */
+function surfaceUnprojectRay(
+  inv: Float32Array,
+  px: number,
+  py: number,
+  rasterWidth: number,
+  rasterHeight: number,
+): Vec3 {
+  const f = Math.fround;
+  const ndcX = f(f(f(f(px + 0.5) / rasterWidth) * 2) - 1);
+  const ndcY = f(f(f(f(py + 0.5) / rasterHeight) * 2) - 1);
+  const mul = (z: number): [number, number, number, number] => {
+    const out: [number, number, number, number] = [0, 0, 0, 0];
+    for (let r = 0; r < 4; r++) {
+      let acc = f(inv[r] * ndcX);
+      acc = f(acc + f(inv[4 + r] * ndcY));
+      acc = f(acc + f(inv[8 + r] * z));
+      acc = f(acc + inv[12 + r]);
+      out[r] = acc;
+    }
+    return out;
+  };
+  const nearP = mul(-1);
+  const farP = mul(1);
+  const dx = f(f(farP[0] / farP[3]) - f(nearP[0] / nearP[3]));
+  const dy = f(f(farP[1] / farP[3]) - f(nearP[1] / nearP[3]));
+  const dz = f(f(farP[2] / farP[3]) - f(nearP[2] / nearP[3]));
+  const len = f(Math.sqrt(f(f(f(dx * dx) + f(dy * dy)) + f(dz * dz))));
+  return [f(dx / len), f(dy / len), f(dz / len)];
+}
+
+/**
+ * {@link surfaceCpuMarch} with the terminal CONTRACT surfaced — status +
+ * final `t`, mirroring marchRays' persisted-state semantics exactly (one
+ * continuous f64 loop ≡ the kernel's pass-bounded loop resumed on
+ * `(t, steps)`; the check order — sphere exit, then budget, then eval — is
+ * the kernel's). Ray derivation is the caller's; the loop itself stays
+ * surfaceCpuMarch's: f64 accumulation, plain `estimateDistance`, the same
+ * eps/hit-floor/stepScale. Pre-gate misses report `t = −1`, matching the
+ * kernel's untouched `st.x` initialization.
+ */
+function surfaceCpuMarchState(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  pixelEps: number,
+  maxSteps: number,
+): { status: number; t: number } {
+  const radius = de.visibleBoundingRadius * 1.02;
+  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
+  const sq = Math.sqrt(disc);
+  const tFar = -b + sq;
+  if (tFar <= 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
+  let t = Math.max(-b - sq, 0);
+  let steps = 0;
+  for (;;) {
+    if (t > tFar) return { status: SURFACE_GPU_RAY_MISS, t };
+    if (steps >= maxSteps) return { status: SURFACE_GPU_RAY_EXHAUSTED, t };
+    const eps = Math.max(
+      pixelEps * t,
+      de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
+    );
+    const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
+    const d = estimateDistance(de, p, eps);
+    steps++;
+    if (d < eps) return { status: SURFACE_GPU_RAY_HIT, t };
+    t += d * de.stepScale;
+  }
+}
+
 /** Every SURFACE_SANITY_STRIDE-th pixel in both axes, as ray indices. */
 function surfaceSanityPixels(width: number, height: number): number[] {
   const out: number[] = [];
@@ -2392,6 +2637,9 @@ async function createSurfaceBuffer(
 interface SurfaceSystemState {
   name: string;
   de: SurfaceDE;
+  /** The authored transform count behind `de` — what the app keys
+   * `transformColors` on (fr-tzdg leg B copies that keying). */
+  transformCount: number;
   queries: Vec3[];
   cpu: number[];
   buffers?: {
@@ -2430,6 +2678,44 @@ function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
         binding: 3,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "storage" },
+      },
+    ],
+  });
+}
+
+/** The march "unproject" interface (fr-tzdg): the march set (0-3) plus
+ * binding 4 = the 128-byte ShadeParams uniform the kernel reads its rays +
+ * dither inputs from (surface-de-gpu.ts's binding table). */
+function surfaceUnprojectBindGroupLayout(
+  device: GPUDevice,
+): GPUBindGroupLayout {
+  return device.createBindGroupLayout({
+    label: "surface-de march-unproject bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
       },
     ],
   });
@@ -2751,7 +3037,544 @@ function summarizeSurfaceMarch(
   };
 }
 
+/**
+ * Leg A's own march loop: `runSurfaceMarchConfig`'s protocol (host-
+ * initialized states, compaction between passes, gpuMs = Σ compute-submit
+ * spans) with BOTH work axes bounded per submission — `stepsThisPass` AND
+ * an active-list slice sized from the measured per-ray·step EMA against
+ * `SURFACE_PASS_TARGET_MS` (see the SURFACE_UNPROJ_MIN_CHUNK doc for why
+ * the timing legs' whole-list dispatch cannot be reused on a software
+ * adapter). Steps double only after a MEASURED whole-sweep pass came in
+ * under target, so a software adapter never talks itself into a 32-step
+ * mega-dispatch.
+ */
+async function runSurfaceUnprojectMarch(
+  device: GPUDevice,
+  pipeline: GPUComputePipeline,
+  bindGroup: GPUBindGroup,
+  buffers: {
+    params: GPUBuffer;
+    states: GPUBuffer;
+    active: GPUBuffer;
+    staging: GPUBuffer;
+  },
+  de: SurfaceDE,
+  pose: SurfaceGpuPose,
+  software: boolean,
+  capMs: number,
+  onProgress: (text: string) => void,
+): Promise<SurfaceMarchOutcome> {
+  const rays = pose.rasterWidth * pose.rasterHeight;
+  const stateBytes = rays * 16;
+  const init = new Float32Array(rays * 4);
+  for (let i = 0; i < rays; i++) init[i * 4] = -1;
+  device.queue.writeBuffer(buffers.states, 0, init);
+  let active = new Uint32Array(rays);
+  for (let i = 0; i < rays; i++) active[i] = i;
+  let states = init;
+  let stepsThisPass = 1;
+  let emaUsPerRayStep = software
+    ? SURFACE_UNPROJ_INITIAL_RAY_STEP_US_SW
+    : SURFACE_COMPUTE_INITIAL_RAY_STEP_US;
+  let gpuMs = 0;
+  let passes = 0;
+  let truncated = false;
+  const wallStart = performance.now();
+  outer: while (active.length > 0) {
+    let sweptWhole = true;
+    let lastPassMs = Infinity;
+    for (let offset = 0; offset < active.length;) {
+      if (performance.now() - wallStart > capMs) {
+        truncated = true;
+        break outer;
+      }
+      const budgetUs = SURFACE_PASS_TARGET_MS * 1000;
+      const chunk = Math.min(
+        Math.max(
+          SURFACE_UNPROJ_MIN_CHUNK,
+          Math.floor(
+            budgetUs / Math.max(1e-3, emaUsPerRayStep * stepsThisPass),
+          ),
+        ),
+        active.length - offset,
+      );
+      if (offset > 0 || chunk < active.length) sweptWhole = false;
+      const slice = active.subarray(offset, offset + chunk);
+      const params = packSurfaceGpuParams(de, {
+        itemCount: slice.length,
+        stepsThisPass,
+        marchSteps: SURFACE_MARCH_STEPS,
+        pose,
+        cutoff: 0,
+        footprint: 0,
+      });
+      device.queue.writeBuffer(buffers.params, 0, params);
+      device.queue.writeBuffer(buffers.active, 0, slice);
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(
+        Math.ceil(slice.length / SURFACE_COMPUTE_WORKGROUP_SIZE),
+      );
+      pass.end();
+      const t0 = performance.now();
+      device.queue.submit([encoder.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      lastPassMs = performance.now() - t0;
+      gpuMs += lastPassMs;
+      passes++;
+      emaUsPerRayStep =
+        emaUsPerRayStep * 0.6 +
+        ((lastPassMs * 1000) / (slice.length * stepsThisPass)) * 0.4;
+      offset += chunk;
+    }
+    const copyEncoder = device.createCommandEncoder();
+    copyEncoder.copyBufferToBuffer(
+      buffers.states,
+      0,
+      buffers.staging,
+      0,
+      stateBytes,
+    );
+    device.queue.submit([copyEncoder.finish()]);
+    await buffers.staging.mapAsync(GPUMapMode.READ);
+    states = new Float32Array(buffers.staging.getMappedRange().slice(0));
+    buffers.staging.unmap();
+    const next: number[] = [];
+    for (const ray of active) {
+      if (states[ray * 4 + 1] === SURFACE_GPU_RAY_ACTIVE) next.push(ray);
+    }
+    active = Uint32Array.from(next);
+    onProgress(
+      `pass ${passes} (${stepsThisPass} steps): ${active.length}/${rays} active, ` +
+        `${lastPassMs.toFixed(0)}ms`,
+    );
+    if (
+      sweptWhole &&
+      lastPassMs < SURFACE_PASS_TARGET_MS &&
+      stepsThisPass < SURFACE_MAX_STEPS_PER_PASS
+    ) {
+      stepsThisPass = Math.min(stepsThisPass * 2, SURFACE_MAX_STEPS_PER_PASS);
+    }
+  }
+  return {
+    states,
+    gpuMs,
+    wallMs: performance.now() - wallStart,
+    passes,
+    truncated,
+    activeRemaining: active.length,
+  };
+}
+
+/**
+ * fr-tzdg leg A driver: compile the march kernel at the app's EXACT config
+ * (`rays:"unproject"`, production width, private frontier, stage-2 off,
+ * `SURFACE_COMPUTE_WORKGROUP_SIZE`), march the agreement raster to
+ * completion through {@link runSurfaceUnprojectMarch}'s bounded host loop,
+ * then emulate every ray on the CPU (f32 unproject + plain-estimateDistance
+ * march) and gate statuses + hit `t` per ray. Throws on compile/buffer
+ * failure — the caller notes it and fails the section.
+ */
+async function runSurfaceUnprojectLeg(
+  device: GPUDevice,
+  sys: SurfaceSystemState,
+  software: boolean,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<SurfaceUnprojectRow> {
+  const width = SURFACE_UNPROJ_WIDTH;
+  const height = SURFACE_UNPROJ_HEIGHT;
+  const rays = width * height;
+  const pose = buildSurfacePose(sys.de, width, height);
+  const invProjView = surfaceInvProjView(sys.de, pose);
+
+  activity.setState("gpu", "Surface march-unproject agreement");
+  status("march-unproject: compiling…");
+  const layout = surfaceUnprojectBindGroupLayout(device);
+  const pipelineLayout = device.createPipelineLayout({
+    label: "surface-de march-unproject pipeline layout",
+    bindGroupLayouts: [layout],
+  });
+  const code = surfaceDeKernelWgsl({
+    mode: "march",
+    rays: "unproject",
+    width: SURFACE_FOLD_BEAM_WIDTH,
+    workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
+    sharedFrontier: false,
+    bnbStage2: false,
+  });
+  const { pipeline, compileMs } = await buildSurfacePipeline(
+    device,
+    pipelineLayout,
+    code,
+    "marchRays",
+    "surface-de march-unproject",
+  );
+  const params = await createSurfaceBuffer(
+    device,
+    "surface-de unproj params",
+    SURFACE_GPU_PARAMS_BYTES,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  );
+  // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
+  const mapsData = new Float32Array(packSurfaceGpuMaps(sys.de));
+  const maps = await createSurfaceBuffer(
+    device,
+    "surface-de unproj maps",
+    mapsData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(maps, 0, mapsData);
+  const active = await createSurfaceBuffer(
+    device,
+    "surface-de unproj active",
+    rays * 4,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  const states = await createSurfaceBuffer(
+    device,
+    "surface-de unproj states",
+    rays * 16,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  );
+  const staging = await createSurfaceBuffer(
+    device,
+    "surface-de unproj staging",
+    rays * 16,
+    GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  );
+  const shade = await createSurfaceBuffer(
+    device,
+    "surface-de unproj shade",
+    SURFACE_GPU_SHADE_BYTES,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  );
+  try {
+    // Only invProjView and the dither flag reach the march arm (module
+    // doc); the shading fields are packed inert. dither OFF so the run is
+    // deterministic against the emulator.
+    device.queue.writeBuffer(
+      shade,
+      0,
+      packSurfaceGpuShade({
+        invProjView,
+        lightDir: [0, 1, 0],
+        ambient: 0,
+        bgTop: [0, 0, 0],
+        bgBottom: [0, 0, 0],
+        colorSpeed: 0.5,
+        tracePixelEps: SURFACE_PIXEL_EPS,
+        colorSource: 0,
+        shadowSteps: 0,
+        aoTaps: 0,
+        dither: false,
+      }),
+    );
+    const bindGroup = device.createBindGroup({
+      label: "surface-de march-unproject bind group",
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: params } },
+        { binding: 1, resource: { buffer: maps } },
+        { binding: 2, resource: { buffer: active } },
+        { binding: 3, resource: { buffer: states } },
+        { binding: 4, resource: { buffer: shade } },
+      ],
+    });
+    console.info(
+      `[surface-bench] march-unproject: compiled in ${compileMs.toFixed(0)}ms, marching ${String(rays)} rays…`,
+    );
+    const outcome = await runSurfaceUnprojectMarch(
+      device,
+      pipeline,
+      bindGroup,
+      { params, states, active, staging },
+      sys.de,
+      pose,
+      software,
+      SURFACE_UNPROJ_CAP_MS,
+      (text) => status(`march-unproject: ${text}`),
+    );
+    console.info(
+      `[surface-bench] march-unproject: march done — ${String(outcome.passes)} passes, ` +
+        `${outcome.gpuMs.toFixed(0)}ms gpu${outcome.truncated ? ", TRUNCATED" : ""}`,
+    );
+
+    const boundaryFlipRule =
+      "excluded from failures: (a) boundaryFlips — status mismatch with " +
+      "|tGpu − tCpu| <= max(2e-4·R, 2e-3·max(|tCpu|, 0.05·R)): same " +
+      "trajectory, terminal event reclassified by f32/f64 noise; (b) " +
+      "hitTGrazes — both-hit rays over that t tolerance whose GPU endpoint " +
+      "the CPU oracle confirms on-surface (estimateDistance(ro + rd·tGpu) " +
+      "< 1.5·eps(tGpu)): a silhouette graze resolved to a different sheet. " +
+      "Diverged trajectories and off-surface endpoints still fail.";
+    const row: SurfaceUnprojectRow = {
+      system: sys.name,
+      width: SURFACE_FOLD_BEAM_WIDTH,
+      wg: SURFACE_COMPUTE_WORKGROUP_SIZE,
+      rasterWidth: width,
+      rasterHeight: height,
+      rays,
+      statusMismatches: 0,
+      boundaryFlips: 0,
+      boundaryFlipRule,
+      maxAbsT: 0,
+      hitTGrazes: 0,
+      hitTFailures: 0,
+      failures: 0,
+      gpuHits: 0,
+      cpuHits: 0,
+      compileMs,
+      gpuMs: outcome.gpuMs,
+      passes: outcome.passes,
+      truncated: outcome.truncated,
+    };
+    if (outcome.truncated) {
+      // A truncated march verifies nothing — the caller fails the leg on
+      // this flag; comparing partially-marched rays would only muddy it.
+      return row;
+    }
+
+    activity.setState("cpu", "Surface march-unproject CPU emulator");
+    const ro: Vec3 = [
+      Math.fround(pose.ro[0]),
+      Math.fround(pose.ro[1]),
+      Math.fround(pose.ro[2]),
+    ];
+    const cpuStatus = new Int32Array(rays);
+    const cpuT = new Float64Array(rays);
+    for (let py = 0; py < height; py++) {
+      for (let px = 0; px < width; px++) {
+        const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+        const res = surfaceCpuMarchState(
+          sys.de,
+          ro,
+          rd,
+          pose.pixelEps,
+          SURFACE_MARCH_STEPS,
+        );
+        const ray = py * width + px;
+        cpuStatus[ray] = res.status;
+        cpuT[ray] = res.t;
+      }
+      status(`march-unproject: cpu emulator row ${py + 1}/${height}…`);
+      await new Promise<void>((resolve) => setTimeout(resolve));
+    }
+
+    const R = sys.de.boundingRadius;
+    for (let ray = 0; ray < rays; ray++) {
+      const gpuStatus = outcome.states[ray * 4 + 1];
+      const gpuT = outcome.states[ray * 4];
+      const cs = cpuStatus[ray];
+      const ct = cpuT[ray];
+      if (gpuStatus === SURFACE_GPU_RAY_HIT) row.gpuHits++;
+      if (cs === SURFACE_GPU_RAY_HIT) row.cpuHits++;
+      const tol = Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(ct), 0.05 * R));
+      if (gpuStatus !== cs) {
+        row.statusMismatches++;
+        if (ct >= 0 && gpuT >= 0 && Math.abs(gpuT - ct) <= tol) {
+          row.boundaryFlips++;
+        }
+      } else if (gpuStatus === SURFACE_GPU_RAY_HIT) {
+        const err = Math.abs(gpuT - ct);
+        if (err > row.maxAbsT) row.maxAbsT = err;
+        if (err > tol) {
+          // Divergent both-hit t. At a silhouette graze the two f32
+          // trajectories legitimately resolve different sheets — one
+          // fires d < eps on the near sheet where the other skims past
+          // at d ≥ eps and hits deeper — so before failing, ask the CPU
+          // oracle whether the GPU's endpoint is a genuine surface point
+          // at its own acceptance eps. A phantom reads far above it
+          // (kernel-vs-oracle noise here measures ~1e-5 abs; eps ~1e-2),
+          // so 1.5·eps discriminates sharply and real disagreement still
+          // fails. Measured need: 1 ray of 660 hits on Iris Xe.
+          const px = ray % width;
+          const py = Math.floor(ray / width);
+          const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+          const pGpu: Vec3 = [
+            ro[0] + rd[0] * gpuT,
+            ro[1] + rd[1] * gpuT,
+            ro[2] + rd[2] * gpuT,
+          ];
+          const epsGpu = Math.max(
+            pose.pixelEps * gpuT,
+            R * SURFACE_GPU_HIT_FLOOR,
+          );
+          if (estimateDistance(sys.de, pGpu, epsGpu * 1.5) < epsGpu * 1.5) {
+            row.hitTGrazes++;
+          } else {
+            row.hitTFailures++;
+          }
+        }
+      }
+    }
+    row.failures = row.statusMismatches - row.boundaryFlips + row.hitTFailures;
+    console.info(
+      `[surface-bench] march-unproject: compared — statusMm=${String(row.statusMismatches)} ` +
+        `boundary=${String(row.boundaryFlips)} graze=${String(row.hitTGrazes)} ` +
+        `hitTFail=${String(row.hitTFailures)} ` +
+        `maxAbsT=${row.maxAbsT.toExponential(2)} fail=${String(row.failures)}`,
+    );
+    return row;
+  } finally {
+    params.destroy();
+    maps.destroy();
+    active.destroy();
+    states.destroy();
+    staging.destroy();
+    shade.destroy();
+  }
+}
+
+/** The leg B presentation canvas, created once under the surface section
+ * root (inside a labeled `.canvases` row so the headless runner's existing
+ * per-scenario canvas screenshot loop picks it up) and reused on re-runs. */
+function surfaceFrameCanvas(
+  dom: SurfaceSectionDom,
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  let canvas = dom.root.querySelector<HTMLCanvasElement>(
+    "canvas[data-surface-frame]",
+  );
+  if (!canvas) {
+    const rowDiv = document.createElement("div");
+    rowDiv.className = "canvases";
+    const block = document.createElement("div");
+    block.className = "canvas-block";
+    canvas = document.createElement("canvas");
+    canvas.dataset.surfaceFrame = "1";
+    block.appendChild(canvas);
+    const span = document.createElement("span");
+    span.textContent = "SurfaceComputeRenderer frame (march + shade)";
+    block.appendChild(span);
+    rowDiv.appendChild(block);
+    dom.root.insertBefore(rowDiv, dom.pre);
+  }
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+/** Present a compute frame's RGBA8 pixels — row 0 is the BOTTOM row
+ * (surface-de-gpu.ts's ndcY convention), so rows flip into ImageData's
+ * top-first order. */
+function drawSurfaceComputeFrame(
+  canvas: HTMLCanvasElement,
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const img = new ImageData(width, height);
+  for (let y = 0; y < height; y++) {
+    const src = (height - 1 - y) * width * 4;
+    img.data.set(pixels.subarray(src, src + width * 4), y * width * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/**
+ * fr-tzdg leg B driver: one end-to-end mandelboxKifs frame through the
+ * PRODUCTION `SurfaceComputeRenderer` — its own device, its own march/shade
+ * pipelines, the app's host loop — at full-tier knobs, presented onto the
+ * section's canvas (progressively, like the app's settle presents). Colors
+ * and trap indices copy main.ts's keying: each slot takes its BASE map's
+ * "By Transform" color, trap coordinate `baseIndex / (n − 1)`. Throws on
+ * renderer-creation failure or a null frame — the caller fails the section.
+ */
+async function runSurfaceComputeFrameLeg(
+  sys: SurfaceSystemState,
+  software: boolean,
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<SurfaceComputeFrameRow> {
+  const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
+  const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
+  const budgetMs = software
+    ? SURFACE_FRAME_BUDGET_SW_MS
+    : SURFACE_FRAME_BUDGET_MS;
+  const pose = buildSurfacePose(sys.de, width, height);
+  const invProjView = surfaceInvProjView(sys.de, pose);
+  const palette = transformColors(sys.transformCount);
+  const colors = sys.de.maps.map((m) => palette[m.baseIndex]);
+  const denom = Math.max(1, sys.transformCount - 1);
+  const trapIndices = sys.de.maps.map((m) => m.baseIndex / denom);
+
+  activity.setState("gpu", "Surface compute frame (app path)");
+  status("compute frame: creating SurfaceComputeRenderer…");
+  const renderer = await SurfaceComputeRenderer.create(
+    sys.de,
+    colors,
+    trapIndices,
+  );
+  try {
+    const canvas = surfaceFrameCanvas(dom, width, height);
+    const spec: SurfaceComputeFrameSpec = {
+      width,
+      height,
+      invProjView,
+      camPos: pose.ro,
+      // The harness's fixed acceptance slope (fr-7xgi semantics) — the
+      // same eps leg A marched with; trace slope from this raster's own
+      // height, scene.ts's convention.
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+      maxDepth: sys.de.maxDepth,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+    };
+    status(`compute frame: rendering ${width}x${height}…`);
+    console.info(
+      `[surface-bench] compute frame: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
+    );
+    const frame = await renderer.renderFrame(spec, {
+      budgetMs,
+      onProgress: (pixels) => {
+        drawSurfaceComputeFrame(canvas, pixels, width, height);
+      },
+    });
+    if (!frame) {
+      throw new Error(
+        "renderFrame resolved null — the app path produced no frame",
+      );
+    }
+    console.info(
+      `[surface-bench] compute frame: done — ${String(frame.passes)} passes, ` +
+        `${frame.wallMs.toFixed(0)}ms wall, hit=${String(frame.counts.hit)}` +
+        `${frame.truncated ? ", TRUNCATED" : ""}`,
+    );
+    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
+    return {
+      width: frame.width,
+      height: frame.height,
+      wallMs: frame.wallMs,
+      gpuMs: frame.gpuMs,
+      passes: frame.passes,
+      truncated: frame.truncated,
+      counts: frame.counts,
+    };
+  } finally {
+    renderer.destroy();
+  }
+}
+
 interface SurfaceSectionDom {
+  root: HTMLElement;
   status: HTMLElement;
   pre: HTMLPreElement;
 }
@@ -2769,7 +3592,7 @@ function buildSurfaceSectionDom(container: HTMLElement): SurfaceSectionDom {
   const pre = document.createElement("pre");
   root.appendChild(pre);
   container.appendChild(root);
-  return { status, pre };
+  return { root, status, pre };
 }
 
 /**
@@ -2833,7 +3656,13 @@ async function runSurfaceDeSection(
       // estimator the kernel mirrors term for term. NOT
       // estimateDistanceRefined.
       const cpu = queries.map((q) => estimateDistance(de, q, 0));
-      systems.push({ name: def.name, de, queries, cpu });
+      systems.push({
+        name: def.name,
+        de,
+        transformCount: def.transforms.length,
+        queries,
+        cpu,
+      });
     } catch (e) {
       results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
     }
@@ -3056,6 +3885,39 @@ async function runSurfaceDeSection(
     }
     render();
 
+    // ----- Leg A (fr-tzdg): march-unproject agreement — GATING -----
+    // The app path's ray derivation against the CPU emulator, at the exact
+    // kernel config SurfaceComputeRenderer compiles. An agreement gate, so
+    // it runs on software adapters too (the CI path), like the eval legs.
+    let unprojFailed = false;
+    {
+      const sys = systems.find((s) => s.name === "mandelboxKifs") ?? systems[0];
+      try {
+        const row = await runSurfaceUnprojectLeg(
+          device,
+          sys,
+          acquired.software,
+          status,
+          activity,
+        );
+        results.marchUnproject = row;
+        if (row.truncated) {
+          unprojFailed = true;
+          results.notes.push(
+            `march-unproject: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
+              "agreement not verifiable, failing the leg",
+          );
+        } else if (row.failures > 0) {
+          unprojFailed = true;
+        }
+      } catch (e) {
+        unprojFailed = true;
+        results.marchUnproject = { skipped: describeError(e) };
+        results.notes.push(`march-unproject: ${describeError(e)}`);
+      }
+      render();
+    }
+
     // ----- Timing protocol (march — the §3.7 measurement) -----
     if (!config.timing) {
       results.notes.push("timing: skipped (surfaceTiming=0)");
@@ -3276,6 +4138,53 @@ async function runSurfaceDeSection(
       }
     }
 
+    // ----- Leg B (fr-tzdg): end-to-end frame via SurfaceComputeRenderer --
+    // The production app loop on its own device; informational except the
+    // two documented conditions. Runs on software adapters too (shrunken
+    // raster, stretched budget, truncation accepted — see the constants).
+    let frameFailed = false;
+    {
+      const mbox = systems.find((s) => s.name === "mandelboxKifs");
+      if (!mbox) {
+        results.computeFrame = {
+          skipped:
+            "mandelboxKifs did not build or was excluded (surfaceSystems=synthetic)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFrameLeg(
+            mbox,
+            acquired.software,
+            dom,
+            status,
+            activity,
+          );
+          results.computeFrame = row;
+          if (row.counts.hit === 0 && !acquired.software) {
+            // A settled mandelboxKifs frame with zero hit rays on real
+            // hardware means the app path is broken, not slow.
+            frameFailed = true;
+            results.notes.push(
+              "compute frame: zero hit rays on a real adapter — failing the leg",
+            );
+          }
+          if (row.truncated) {
+            results.notes.push(
+              `compute frame: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                (acquired.software
+                  ? " — accepted on a software adapter"
+                  : " — informational (only hit=0 or a null frame gate)"),
+            );
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrame = { skipped: describeError(e) };
+          results.notes.push(`compute frame: ${describeError(e)}`);
+        }
+      }
+      render();
+    }
+
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is
     // the fixed SURFACE_FOLD_BEAM_WIDTH scratch, so narrower-width rows
@@ -3288,18 +4197,32 @@ async function runSurfaceDeSection(
       (c) => c.kind === "shared-vs-private" && c.mismatches > 0,
     );
     const gatingRows = results.agreement.filter((r) => r.gating);
-    if (gatingRows.length === 0 && !compileFailed) {
-      // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH)
-      // verify nothing against a like-for-like oracle — refuse to certify.
-      results.verdict = "skipped";
-      results.reason = `no agreement row ran at the oracle width ${SURFACE_FOLD_BEAM_WIDTH} (see notes)`;
-    } else if (compileFailed || anyAgreementFail || anyCrossFail) {
+    const unprojRan =
+      results.marchUnproject !== undefined &&
+      !("skipped" in results.marchUnproject);
+    if (
+      compileFailed ||
+      anyAgreementFail ||
+      anyCrossFail ||
+      unprojFailed ||
+      frameFailed
+    ) {
       results.verdict = "fail";
       results.reason = compileFailed
         ? "kernel compile/pipeline failure — WGSL errors verbatim in notes"
         : anyAgreementFail
           ? "agreement tolerance failures — see agreement rows"
-          : "shared-vs-private exact-equality mismatch — see crossChecks";
+          : anyCrossFail
+            ? "shared-vs-private exact-equality mismatch — see crossChecks"
+            : unprojFailed
+              ? "march-unproject (app ray path) agreement failure — see marchUnproject/notes"
+              : "compute-frame (app path) failure — see computeFrame/notes";
+    } else if (gatingRows.length === 0 && !unprojRan) {
+      // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
+      // no march-unproject gate verify nothing against a like-for-like
+      // oracle — refuse to certify.
+      results.verdict = "skipped";
+      results.reason = `no agreement row ran at the oracle width ${SURFACE_FOLD_BEAM_WIDTH} (see notes)`;
     } else {
       results.verdict = "pass";
     }

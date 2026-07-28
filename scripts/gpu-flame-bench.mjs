@@ -213,6 +213,37 @@ function printSurfaceSummary(surfaceDe) {
         truncated,
     );
   }
+  // fr-tzdg leg A: the march-unproject agreement gate (app ray path).
+  const mu = surfaceDe.marchUnproject;
+  if (mu) {
+    if (mu.skipped) {
+      console.log(`  unproj: skipped — ${mu.skipped}`);
+    } else {
+      console.log(
+        `  unproj ${mu.system} w${mu.width} wg${mu.wg} ${mu.rasterWidth}x${mu.rasterHeight}: ` +
+          `rays=${mu.rays} statusMm=${mu.statusMismatches} boundary=${mu.boundaryFlips} ` +
+          `graze=${mu.hitTGrazes} hitTFail=${mu.hitTFailures} ` +
+          `maxAbsT=${mu.maxAbsT.toExponential(2)} ` +
+          `fail=${mu.failures} hits=${mu.gpuHits}/${mu.cpuHits}(gpu/cpu) ` +
+          `gpu=${mu.gpuMs.toFixed(0)}ms passes=${mu.passes}` +
+          (mu.truncated ? " TRUNCATED" : ""),
+      );
+    }
+  }
+  // fr-tzdg leg B: the end-to-end SurfaceComputeRenderer frame.
+  const cf = surfaceDe.computeFrame;
+  if (cf) {
+    if (cf.skipped) {
+      console.log(`  frame: skipped — ${cf.skipped}`);
+    } else {
+      console.log(
+        `  frame ${cf.width}x${cf.height}: wall=${cf.wallMs.toFixed(0)}ms ` +
+          `gpu=${cf.gpuMs.toFixed(0)}ms passes=${cf.passes} ` +
+          `hit=${cf.counts.hit} miss=${cf.counts.miss} exh=${cf.counts.exhausted} ` +
+          `active=${cf.counts.active}${cf.truncated ? " TRUNCATED" : ""}`,
+      );
+    }
+  }
   for (const note of surfaceDe.notes ?? []) {
     console.log(`  note: ${note}`);
   }
