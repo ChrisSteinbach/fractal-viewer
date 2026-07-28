@@ -400,11 +400,10 @@ function main(): void {
   // surface render's cost outright — the resolution governor takes its
   // flame-style restore path there (see governResolution).
   const surfaceRenderTier = createRenderTierScheduler();
-  // Whether the settle target holds a COMPLETED settle frame for the
-  // CURRENT (uninvalidated) view — full-quality, or the cost gate's
-  // preview-seeded stand-in when the full tier priced out (fr-096u) — the
-  // recorder's parked repaints re-present it instead of re-tracing seconds
-  // of identical pixels (fr-sjff). Any invalidation clears it.
+  // Whether the settle target holds a COMPLETED full-quality frame for the
+  // CURRENT (uninvalidated) view — the recorder's parked repaints re-present
+  // it instead of re-tracing seconds of identical pixels (fr-sjff). Any
+  // invalidation clears it.
   let surfaceSettled = false;
   // A settle verdict the tier scheduler fired while a preview strip job was
   // still mid-flight (fr-du81): held here until the preview completes, then
@@ -5205,11 +5204,6 @@ function main(): void {
           if (!scene.surfacePreviewActive && surfaceSettlePending) {
             surfaceSettlePending = false;
             scene.beginSurfaceSettle();
-            // A settle the cost gate declined to arm (fr-096u) is
-            // complete NOW: the settle target holds the preview-seeded
-            // stretch — the best frame this pose affords on the WebGL
-            // path without hours of watchdog-roulette tracing.
-            if (!scene.surfaceSettleActive) surfaceSettled = true;
           }
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) surfaceSettled = true;
