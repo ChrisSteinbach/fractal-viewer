@@ -22,7 +22,7 @@ npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing (fr-q1f8 spike) — pins surface-de-gpu.ts to the CPU estimator; add --display=:0 for real-driver timing
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (eval/march baselines + fr-tzdg's march-unproject/shade app path) to the CPU estimator; add --display=:0 for real-driver timing
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
@@ -122,29 +122,38 @@ and UI**, so the interesting math is unit-tested without a browser:
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
     Measured verdict + numbers in the module doc.
-  - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (fr-q1f8, brief §3.7
-    spike, gated in by fr-ck0w's occupancy verdict): mirrors
+  - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (fr-q1f8 spike, gated
+    in by fr-ck0w's occupancy verdict; app integration fr-tzdg): mirrors
     `estimateDistance`'s refine=false fold path term for term (the
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff) — plus a
-    bounded-dispatch march mode (erosion-repro's march loop, host-compacted
-    active list between passes). Pinned against the CPU oracle by
-    `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
-    real-driver timing via `--display=:0`); shared-vs-private measured
-    bit-exact, width-12 agreement at f32 noise on mandelboxKifs.
-    MEASURED VERDICT (Iris Xe, real driver): the compute megakernel
-    traces mandelboxKifs at width 12 in 49µs/ray (private frontier,
-    stage 2 off) where the WebGL fragment tracer was unbounded
-    (>1300µs/ray, fr-ck0w) — the width superlinearity is GONE in
-    compute (w12/w4 ≈ 3.3x), compiles in ~0.1-0.3s vs the ~25s GLSL
-    link cliff, and §3.7's specific mechanism is REFUTED: the
-    workgroup-shared frontier is 2-3.3x SLOWER than private arrays at
-    equal workgroup size, and stage-2 B&B costs 1.6x GPU-side — the
-    winning config is the simplest one, the shipped GLSL body's exact
-    structure. Bench-only consumer until the integration program lands —
-    the app's tracer is untouched.
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). Modes:
+    `eval` (per-query distances) and `march` (bounded-dispatch ray march,
+    host-compacted active list) are the fr-q1f8 bench baselines,
+    byte-identical since the spike; `march` + `rays:"unproject"` swaps the
+    ray derivation to the GLSL tracer's uInvProjView unproject (+
+    flag-gated start dither) for the app path, and `shade` runs the GLSL
+    tracer's FULL shading (greedy width-1 hit-info descent, tetra normal,
+    penumbra shadow, AO, linear-space lighting, fog, LUT color sources)
+    over host-compacted batches of TERMINAL rays. March and shade are
+    separate entries by measured verdict, not taste: the v1 megakernel
+    shaded rays inside the march pass that terminated them and LOST THE
+    DEVICE on Iris (shading = ~40 zero-cutoff on-surface DE evals/hit —
+    fr-096u's watchdog through the shading door; numbers on fr-tzdg).
+    MEASURED VERDICTS (Iris Xe, real driver): march traces mandelboxKifs
+    at width 12 in 49µs/ray primary (private frontier, stage 2 off) where
+    the WebGL fragment tracer was unbounded (>1300µs/ray, fr-ck0w), width
+    superlinearity GONE (w12/w4 ≈ 3.3x), compiles ~0.1-0.3s vs the ~25s
+    GLSL link cliff; workgroup-shared frontier 2-3.3x SLOWER than private;
+    stage-2 B&B 1.4-1.6x slower GPU-side at BOTH far-field and
+    near-surface poses — config stays stage-1-only. Near-surface fold
+    grinding (~0.2ms/ray·step) and shading now dominate end-to-end cost —
+    the same intrinsic evals the GLSL pays; follow-up levers on fr-tzdg.
+    Consumed by `src/app/surface-compute.ts` (the fold surface session's
+    preferred tracer) and pinned by `src/app/gpu-bench/`'s surface section
+    (`npm run bench:surface`; real-driver timing via `--display=:0`).
+  - `surface-grid.ts` — empty-space skip grid for the 3D surface march:
     conservative distance floors (cell centers, cutoff `cellRadius` — at/above
     the cutoff the return is the exact full-descent value, below it 0 is the
     only safe store — f32-FLOORED so quantization never rounds a bound up),
@@ -246,8 +255,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     DEs — each buys ~2x fewer rays AND a shallower depth clamp.
     Capture/offline
     `force` frames stay full. Pure, tested, injected clock.
-  - `strip-planner.ts` — adaptive scissor-strip sizing for EVERY surface
-    trace, previews included (fr-sjff; fr-du81 removed the preview tier's
+  - `strip-planner.ts` — adaptive scissor-strip sizing for EVERY WebGL surface
+    trace (fr-tzdg's compute path bounds its own submissions instead),
+    previews included (fr-sjff; fr-du81 removed the preview tier's
     one unbounded draw — the i915-preemption GPU-hang path that killed
     fold sessions outright): probe strip, then strips sized to a per-tier
     `targetMs` of measured GPU time each (forced-completion 1x1 readback —
@@ -381,6 +391,26 @@ and UI**, so the interesting math is unit-tested without a browser:
     guaranteed 16KB, where default-block arrays would have taken 192 of the
     guaranteed 224 fragment uniform vectors), and there is no kaleidoscope to
     expand, so 24 slots means 24 transforms.
+  - `surface-compute.ts` — WebGPU compute renderer for FOLD 3D surface
+    sessions (fr-tzdg): fold 3D IFS systems (deHasFolds, no foldFinal)
+    PREFER it when an adapter exists — no fold GLSL ever compiles (the
+    ~25s Mesa link / fr-096u entry hazards never engage), no grid request
+    (gridless by decision, measured). Owns the device (bench acquisition
+    idioms + flame-backend error taxonomy) and the frame loop: march
+    slices sized from a measured per-ray·step EMA + shade batches sized
+    adaptively (quarters on overshoot) so NO submission outruns the i915
+    watchdog; host-compacted active list; progressive presents between
+    every bounded piece; colorOut prefill seeded from the last frame
+    (nearest-resampled — the strip settle's preview-seeded-target
+    discipline); per-frame status counts for field debugging. scene.ts
+    presents frames as a DataTexture through the shared surface blit (the
+    one WebGL canvas — capture/recorder unchanged) and assembles specs
+    with the uniform-exact camera/eps/tier quantities (acceptance eps
+    stays native-height, fr-7xgi); main.ts routes and choreographs (same
+    tier clock + preview governor, latest-wins preview coalescing,
+    memoized offline force frames, one-way fallback: create failure or
+    device loss re-enters through the untouched WebGL path; `?surfacegl`
+    forces WebGL).
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.
