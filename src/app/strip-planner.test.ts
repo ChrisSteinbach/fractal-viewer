@@ -1,146 +1,298 @@
 import {
   createStripPlanner,
-  STRIP_MAX_GROWTH,
-  STRIP_PROBE_FRACTION,
+  STRIP_AFFINE_WORST_MS_PER_PX,
+  STRIP_FOLD_PRIOR_MS_PER_PX,
+  STRIP_FOLD_WORST_MS_PER_PX,
   STRIP_TARGET_MS,
+  STRIP_WORST_CASE_CAP_MS,
 } from "./strip-planner";
 
 describe("createStripPlanner", () => {
-  it("plans the first strip as a probe starting at y 0", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    expect(planner.next(null)).toEqual({ y: 0, rows: probeRows });
-  });
-
-  it("shrinks the next strip after a slow probe measurement", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    planner.next(null);
-
-    const measuredMs = 2000;
-    const shrunkRows = Math.max(
-      1,
-      Math.round(probeRows * (STRIP_TARGET_MS / measuredMs)),
-    );
-    expect(planner.next(measuredMs)).toEqual({
-      y: probeRows,
-      rows: shrunkRows,
+  it("plans the first strip as a legacy rows-fraction probe when no prior exists", () => {
+    const planner = createStripPlanner(720, 1280);
+    // No priorMsPerPx: probeRows = max(1, round(720/256)) = 3 rows -> 3 * 1280 = 3840px.
+    expect(planner.next(null)).toEqual({
+      px: 3840,
+      rects: [{ x: 0, y: 0, w: 1280, h: 3 }],
     });
   });
 
-  it("grows the next strip after a fast measurement, capped at STRIP_MAX_GROWTH", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    planner.next(null);
+  it("sizes the probe from a per-pixel cost prior when one is given", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    // round(75/10) = 8 -- one strip target of predicted GPU time.
+    expect(planner.next(null)).toEqual({
+      px: 8,
+      rects: [{ x: 0, y: 0, w: 8, h: 1 }],
+    });
+  });
 
-    // The raw ratio to STRIP_TARGET_MS would blow this strip up far past
-    // totalRows; the remainder left after the probe is still well clear of
-    // the capped size, so the growth cap — not the remaining rows — is what
-    // limits this strip.
+  it("caps a cheap prior's probe at the legacy rows-fraction size", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 0.00001 });
+    // 75 / 0.00001 = 7,500,000px, dwarfing the 3840px legacy probe -- a
+    // cheap prior must never plan a BIGGER probe than the legacy one ever
+    // was, so the result is identical to the no-prior case.
+    expect(planner.next(null)).toEqual({
+      px: 3840,
+      rects: [{ x: 0, y: 0, w: 1280, h: 3 }],
+    });
+  });
+
+  it("exposes probePx equal to the first strip's px", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    const probePxBeforeFirstCall = planner.probePx;
+    expect(planner.next(null)!.px).toBe(probePxBeforeFirstCall);
+  });
+
+  it("sizes the prior probe against a custom targetMs", () => {
+    const planner = createStripPlanner(720, 1280, {
+      targetMs: 12,
+      priorMsPerPx: 10,
+    });
+    // max(1, round(12/10)) = 1 -- the default 75ms target would have sized
+    // this probe at 8px instead.
+    expect(planner.next(null)).toEqual({
+      px: 1,
+      rects: [{ x: 0, y: 0, w: 1, h: 1 }],
+    });
+  });
+
+  it("grows the next strip after a fast measurement, capped at STRIP_MAX_GROWTH, continuing mid-row", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    planner.next(null); // 8px probe
+    // The raw ratio 75/0.001 would blow this strip up far past totalPx; the
+    // growth cap (8x) is what actually limits it to 64px, continuing right
+    // where the probe left off (x 8) rather than restarting the row.
     expect(planner.next(0.001)).toEqual({
-      y: probeRows,
-      rows: probeRows * STRIP_MAX_GROWTH,
+      px: 64,
+      rects: [{ x: 8, y: 0, w: 64, h: 1 }],
+    });
+  });
+
+  it("shrinks the next strip toward targetMs after a slow measurement, floored at 1px", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    planner.next(null); // 8px probe
+    // round(75 / 1e9) rounds to 0; the 1px floor is what actually fires.
+    expect(planner.next(1e9)).toEqual({
+      px: 1,
+      rects: [{ x: 8, y: 0, w: 1, h: 1 }],
     });
   });
 
   it("repeats the previous strip size when a measurement is unavailable", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    planner.next(null);
-    expect(planner.next(null)).toEqual({ y: probeRows, rows: probeRows });
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    planner.next(null); // 8px probe
+    expect(planner.next(null)).toEqual({
+      px: 8,
+      rects: [{ x: 8, y: 0, w: 8, h: 1 }],
+    });
   });
 
-  it("clamps strips to the remaining rows and tiles the whole frame exactly", () => {
+  it("tiles a strip spanning rows into partial-first-row, full-middle-rows, partial-last-row rects", () => {
+    const planner = createStripPlanner(4, 10, { priorMsPerPx: 15 });
+    // round(75/15) = 5
+    expect(planner.next(null)).toEqual({
+      px: 5,
+      rects: [{ x: 0, y: 0, w: 5, h: 1 }],
+    });
+    // Growth cap asks for 5 * 8 = 40px, clamped to the 35 remaining: 5px
+    // finishes row 0, then 3 full rows of width 10 tile the rest.
+    expect(planner.next(0.001)).toEqual({
+      px: 35,
+      rects: [
+        { x: 5, y: 0, w: 5, h: 1 },
+        { x: 0, y: 1, w: 10, h: 3 },
+      ],
+    });
+  });
+
+  it("tiles the whole frame exactly with no overlaps or gaps, no prior", () => {
     const totalRows = 64;
-    const planner = createStripPlanner(totalRows);
-    const strips: { y: number; rows: number }[] = [];
+    const rowPx = 100;
+    const planner = createStripPlanner(totalRows, rowPx);
+    const covered = new Array<number>(totalRows * rowPx).fill(0);
     let measurement: number | null = null;
     while (!planner.done) {
       const strip = planner.next(measurement);
       expect(strip).not.toBeNull();
-      strips.push(strip!);
+      for (const rect of strip!.rects) {
+        expect(rect.x).toBeGreaterThanOrEqual(0);
+        expect(rect.y).toBeGreaterThanOrEqual(0);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(rowPx);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(totalRows);
+        for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+          for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+            covered[y * rowPx + x] += 1;
+          }
+        }
+      }
       // Very fast every time after the probe, so later strips are limited
-      // by the growth cap and then by the remaining rows, not by timing.
+      // by the growth cap and then by the remaining pixels, not by timing.
       measurement = 0.001;
     }
 
-    // done tracks next() running out of rows to hand out: once it flips
+    // done tracks next() running out of pixels to hand out: once it flips
     // true, the following call returns null.
     expect(planner.next(measurement)).toBeNull();
-
-    let y = 0;
-    for (const strip of strips) {
-      expect(strip.y).toBe(y);
-      y += strip.rows;
-    }
-    expect(y).toBe(totalRows);
+    expect(covered.every((count) => count === 1)).toBe(true);
+    expect(planner.plannedPx).toBe(6400);
+    expect(planner.totalPx).toBe(6400);
   });
 
-  it("never returns strip rows below 1, even for an enormous measurement", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    planner.next(null);
-    expect(planner.next(1e9)).toEqual({ y: probeRows, rows: 1 });
+  it("tiles the whole frame exactly with sub-row strips under alternating measurements", () => {
+    const totalRows = 3;
+    const rowPx = 7;
+    const planner = createStripPlanner(totalRows, rowPx, { priorMsPerPx: 25 });
+    const covered = new Array<number>(totalRows * rowPx).fill(0);
+    // probe = max(1, round(75/25)) = 3px. Cycling slow/fast/slower/null
+    // measurements keeps the strip size changing across a sub-row width,
+    // stressing the partial-row continuation math for overlaps or gaps.
+    const measurements: (number | null)[] = [500, 0.001, 200, null];
+    let i = 0;
+    while (!planner.done) {
+      const strip = planner.next(measurements[i % measurements.length]);
+      i += 1;
+      expect(strip).not.toBeNull();
+      for (const rect of strip!.rects) {
+        expect(rect.x).toBeGreaterThanOrEqual(0);
+        expect(rect.y).toBeGreaterThanOrEqual(0);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(rowPx);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(totalRows);
+        for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+          for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+            covered[y * rowPx + x] += 1;
+          }
+        }
+      }
+    }
+
+    expect(covered.every((count) => count === 1)).toBe(true);
+    expect(planner.plannedPx).toBe(21);
+  });
+
+  it("reports plannedPx and totalPx as strips are handed out", () => {
+    const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
+    expect(planner.totalPx).toBe(921600);
+    expect(planner.plannedPx).toBe(0);
+
+    const probe = planner.next(null)!;
+    expect(planner.plannedPx).toBe(probe.px);
+
+    const second = planner.next(1)!;
+    expect(planner.plannedPx).toBe(probe.px + second.px);
   });
 
   it("is done immediately for a zero totalRows", () => {
-    const planner = createStripPlanner(0);
+    const planner = createStripPlanner(0, 1280);
     expect(planner.done).toBe(true);
     expect(planner.next(null)).toBeNull();
   });
 
   it("is done immediately for a negative totalRows", () => {
-    const planner = createStripPlanner(-5);
+    const planner = createStripPlanner(-5, 1280);
     expect(planner.done).toBe(true);
     expect(planner.next(null)).toBeNull();
   });
 
-  it("sizes strips against a custom targetMs when one is given", () => {
-    const totalRows = 6400;
-    const targetMs = 10;
-    const planner = createStripPlanner(totalRows, targetMs);
-    const probeRows = Math.max(1, Math.round(totalRows * STRIP_PROBE_FRACTION));
-    planner.next(null);
-
-    // A strip measuring exactly the custom target keeps its size — the
-    // default 75ms target would have grown it 7.5x here.
-    expect(planner.next(targetMs)).toEqual({ y: probeRows, rows: probeRows });
-  });
-
-  it("reports planned and total rows as strips are handed out", () => {
-    const totalRows = 6400;
-    const planner = createStripPlanner(totalRows);
-    expect(planner.totalRows).toBe(totalRows);
-    expect(planner.plannedRows).toBe(0);
-
-    const probe = planner.next(null)!;
-    expect(planner.plannedRows).toBe(probe.rows);
-
-    const second = planner.next(1)!;
-    expect(planner.plannedRows).toBe(probe.rows + second.rows);
+  it("is done immediately for a zero rowPx", () => {
+    const planner = createStripPlanner(720, 0);
+    expect(planner.done).toBe(true);
+    expect(planner.totalPx).toBe(0);
+    expect(planner.next(null)).toBeNull();
   });
 
   it("floors a fractional totalRows before tiling", () => {
-    const planner = createStripPlanner(10.9);
-    const strips: { y: number; rows: number }[] = [];
+    const rowPx = 10;
+    const flooredRows = 10;
+    const planner = createStripPlanner(10.9, rowPx);
+    const covered = new Array<number>(flooredRows * rowPx).fill(0);
     let measurement: number | null = null;
     while (!planner.done) {
       const strip = planner.next(measurement);
       expect(strip).not.toBeNull();
-      strips.push(strip!);
+      for (const rect of strip!.rects) {
+        for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+          for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+            covered[y * rowPx + x] += 1;
+          }
+        }
+      }
       measurement = 0.001;
     }
 
-    let y = 0;
-    for (const strip of strips) {
-      expect(strip.y).toBe(y);
-      y += strip.rows;
-    }
-    expect(y).toBe(10);
+    expect(covered.every((count) => count === 1)).toBe(true);
+    expect(planner.totalPx).toBe(100);
+  });
+
+  it("caps every strip's worst-case predicted cost, growth included", () => {
+    // Fold-class cap: floor(2000/10) = 200px. A cheap measured region
+    // (0.02ms/px) would size strips toward 3750px by target and 8x growth
+    // — but any of those pixels could land in the frame's expensive band
+    // at the worst-case price, so the cap pins them at 200px (~2s worst).
+    const capPx = Math.floor(
+      STRIP_WORST_CASE_CAP_MS / STRIP_FOLD_WORST_MS_PER_PX,
+    );
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 0.02,
+      worstMsPerPx: STRIP_FOLD_WORST_MS_PER_PX,
+    });
+    expect(planner.next(null)!.px).toBe(capPx);
+    expect(planner.next(0.001)!.px).toBe(capPx);
+    expect(planner.next(4)!.px).toBe(capPx);
+  });
+
+  it("caps the affine class loosely enough to leave the legacy probe alone", () => {
+    // Affine cap: floor(2000/0.1) = 20000px — far above the 3840px legacy
+    // probe, so cheap systems keep their legacy behavior; only a
+    // growth-ballooned strip (8 x 3840 = 30720px) feels the bound.
+    const planner = createStripPlanner(720, 1280, {
+      worstMsPerPx: STRIP_AFFINE_WORST_MS_PER_PX,
+    });
+    expect(planner.next(null)).toEqual({
+      px: 3840,
+      rects: [{ x: 0, y: 0, w: 1280, h: 3 }],
+    });
+    expect(planner.next(0.001)!.px).toBe(
+      Math.floor(STRIP_WORST_CASE_CAP_MS / STRIP_AFFINE_WORST_MS_PER_PX),
+    );
+  });
+
+  it("ratchets the cap down as measurements reveal worse pixels mid-job", () => {
+    // Fold floor 50ms/px -> initial cap floor(2000/50) = 40px; the probe
+    // (prior-sized 3750px) is capped there.
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 0.02,
+      worstMsPerPx: 50,
+    });
+    expect(planner.next(null)!.px).toBe(40);
+    // The 40px strip measures 40s -> 1000ms/px observed: the cap
+    // collapses to 2px and target scaling itself asks for less.
+    expect(planner.next(40_000)!.px).toBe(1);
+    expect(planner.observedWorstMsPerPx).toBe(1000);
+    // A single 3s pixel raises the observation further...
+    expect(planner.next(3000)!.px).toBe(1);
+    expect(planner.observedWorstMsPerPx).toBe(3000);
+    // ...and a suspiciously-fast measurement cannot re-grow past the
+    // ratcheted cap: growth asks for 8px, the cap holds 1.
+    expect(planner.next(0.001)!.px).toBe(1);
+  });
+
+  it("leaves strips uncapped when no worst-case price is given", () => {
+    const planner = createStripPlanner(720, 1280);
+    planner.next(null); // 3840px legacy probe
+    // 8x growth would exceed any class cap; with no worstMsPerPx it
+    // stands.
+    expect(planner.next(0.001)!.px).toBe(3840 * 8);
+  });
+
+  it("sizes a fold-prior probe within one strip target of predicted cost", () => {
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: STRIP_FOLD_PRIOR_MS_PER_PX,
+    });
+    // STRIP_FOLD_PRIOR_MS_PER_PX is exported and, used as the prior, must
+    // still land the probe within one pixel's rounding of one strip target
+    // of PREDICTED cost (probePx * prior) -- never blow past it.
+    expect(planner.probePx * STRIP_FOLD_PRIOR_MS_PER_PX).toBeLessThanOrEqual(
+      STRIP_TARGET_MS + STRIP_FOLD_PRIOR_MS_PER_PX,
+    );
   });
 });
