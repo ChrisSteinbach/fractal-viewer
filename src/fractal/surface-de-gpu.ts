@@ -87,6 +87,25 @@ import type { Vec3 } from "./types";
  * points let the HOST size shade batches, so every shading submission is
  * bounded — the fr-096u lesson applied to shading, not just marching.
  *
+ * SHADE PROBE WIDTH (`shadeDeWidth`, fr-p8bc): those on-surface probe
+ * evals dominate END-TO-END fold frame cost (the fr-tzdg landing
+ * verdict), yet normal/shadow/AO are QUALITATIVE effects — they light a
+ * hit the full-width march already certified, never decide geometry. In
+ * shade mode, `shadeDeWidth` (when set and ≠ `width`) emits a second
+ * descent `surfaceDEProbe` at that frontier width — the identical body
+ * derived from the same template by token rename, so the two descents
+ * cannot drift; width 1 is the old greedy descent, `surface-de.ts`'s
+ * kept-for-tests vocabulary — and the probe taps call it while the
+ * hit-info descent (already greedy width-1) and every other mode stay
+ * untouched. The probe frontier is ALWAYS function-scope private arrays
+ * regardless of `sharedFrontier`: narrow arrays are registers, which is
+ * the point, and workgroup budgets stay a main-descent-only concern
+ * ({@link surfaceGpuWorkgroupBytes} is unchanged). Absent or equal to
+ * `width`, the generated source is byte-identical to the pre-fr-p8bc
+ * generator. Quality/timing A/B lives in `src/app/gpu-bench/`'s shade
+ * A/B leg, images + march/shade split, since no CPU shading oracle
+ * exists to pin against.
+ *
  * Scope: BASE fold/affine maps + kaleidoscope sector sweep + affine
  * final lens. `foldFinal` lenses (descendLens) and the refined estimator
  * remain out of scope — {@link packSurfaceGpuParams} throws on
@@ -200,6 +219,13 @@ export interface SurfaceGpuKernelOptions {
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
    * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. */
   width: number;
+  /** Shade-mode only: frontier width for the shading PROBE evals — the
+   * normal/shadow/AO taps in `shadeRays` (fr-p8bc; module doc). When set
+   * and ≠ `width`, a second descent `surfaceDEProbe` is emitted at this
+   * width (always private frontier arrays) and the probe taps call it.
+   * Absent or equal to `width` reproduces the pre-fr-p8bc source byte
+   * for byte. Ignored outside shade mode. */
+  shadeDeWidth?: number;
   /** Threads per workgroup. */
   workgroupSize: number;
   /** Workgroup-shared (banked, transposed) frontier vs private arrays. */
@@ -438,9 +464,27 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
+  if (
+    opts.shadeDeWidth !== undefined &&
+    (!Number.isInteger(opts.shadeDeWidth) || opts.shadeDeWidth < 1)
+  ) {
+    throw new Error(
+      `surface-de-gpu: bad shade probe width ${opts.shadeDeWidth}`,
+    );
+  }
   if (!Number.isInteger(workgroupSize) || workgroupSize < 1) {
     throw new Error(`surface-de-gpu: bad workgroup size ${workgroupSize}`);
   }
+  // fr-p8bc: an active probe width means shade mode's normal/shadow/AO
+  // taps call a second, narrower descent (module doc). Equal widths stay
+  // a single descent so the "off" state is byte-identical source.
+  const probeWidth =
+    mode === "shade" &&
+    opts.shadeDeWidth !== undefined &&
+    opts.shadeDeWidth !== width
+      ? opts.shadeDeWidth
+      : null;
+  const probeDe = probeWidth === null ? "surfaceDE" : "surfaceDEProbe";
   const W = `${width}u`;
   const arrays = [
     "fcX",
@@ -931,10 +975,10 @@ fn shadeRays(
   // of dividing by ~zero.
   let h = max(shade.tracePixelEps * t, R * 2.0e-4);
   let e = vec2f(1.0, -1.0) * 0.5773;
-  let grad = e.xyy * surfaceDE(pos + e.xyy * h, 0.0, li) +
-    e.yyx * surfaceDE(pos + e.yyx * h, 0.0, li) +
-    e.yxy * surfaceDE(pos + e.yxy * h, 0.0, li) +
-    e.xxx * surfaceDE(pos + e.xxx * h, 0.0, li);
+  let grad = e.xyy * ${probeDe}(pos + e.xyy * h, 0.0, li) +
+    e.yyx * ${probeDe}(pos + e.yyx * h, 0.0, li) +
+    e.yxy * ${probeDe}(pos + e.yxy * h, 0.0, li) +
+    e.xxx * ${probeDe}(pos + e.xxx * h, 0.0, li);
   let n = select(-rd, normalize(grad), dot(grad, grad) > 1e-12);
   // Soft shadow: DE penumbra toward the light, started just off the
   // surface; near-black penumbras and leaving the sphere end early.
@@ -942,7 +986,7 @@ fn shadeRays(
   var ts = h * 2.0;
   for (var i = 0u; i < shade.shadowSteps; i++) {
     let sp = pos + n * h * 2.0 + shade.lightDir * ts;
-    let d = surfaceDE(sp, 0.0, li);
+    let d = ${probeDe}(sp, 0.0, li);
     shadow = min(shadow, 8.0 * d / ts);
     ts += clamp(d, R * 2.0e-4, visR * 0.1);
     if (shadow < 0.02 || length(sp) > visR * 1.05) {
@@ -957,7 +1001,7 @@ fn shadeRays(
   var norm = 0.0;
   for (var i = 1u; i <= shade.aoTaps; i++) {
     let hh = R * 0.02 * f32(i);
-    occ += wgt * clamp((hh - surfaceDE(pos + n * hh, 0.0, li)) / hh, 0.0, 1.0);
+    occ += wgt * clamp((hh - ${probeDe}(pos + n * hh, 0.0, li)) / hh, 0.0, 1.0);
     norm += wgt;
     wgt *= 0.6;
   }
@@ -997,8 +1041,9 @@ fn shadeRays(
             invChildScale = 1.0 / (pScale * m.p0.z);
           }`
     : "";
-  const stage2AffineSkip = bnbStage2
-    ? `
+  const stage2AffineSkipFor = (Wstr: string): string =>
+    bnbStage2
+      ? `
             let rDir = dot(bnbG, sQ) + bnbT;
             let rEsc = R + best * invChildScale;
             if (rDir > params.escapeRadius && rDir >= rEsc) {
@@ -1011,7 +1056,7 @@ fn shadeRays(
                 continue;
               }
             }
-            if (keptCount == ${W}) {
+            if (keptCount == ${Wstr}) {
               let qReq =
                 R + max(0.0, max(best * invChildScale, fnWorstKey * invPScale));
               if (rDir >= qReq) {
@@ -1022,13 +1067,14 @@ fn shadeRays(
                 continue;
               }
             }`
-    : "";
+      : "";
   const stage2SphereRescale = bnbStage2
     ? `
                 invChildScale = 1.0 / (pScale * m.p0.z * sfSigma);`
     : "";
-  const stage2FoldSkip = bnbStage2
-    ? `
+  const stage2FoldSkipFor = (Wstr: string): string =>
+    bnbStage2
+      ? `
               let rDir = dot(bnbG, pre) + bnbT;
               let rEsc = R + best * invChildScale;
               if (rDir > params.escapeRadius && rDir >= rEsc) {
@@ -1041,7 +1087,7 @@ fn shadeRays(
                   continue;
                 }
               }
-              if (keptCount == ${W}) {
+              if (keptCount == ${Wstr}) {
                 let qReq =
                   R +
                   max(0.0, max(best * invChildScale, fnWorstKey * invPScale));
@@ -1053,9 +1099,9 @@ fn shadeRays(
                   continue;
                 }
               }`
-    : "";
+      : "";
 
-  return /* wgsl */ `
+  const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
   boundingRadius: f32,
@@ -1132,12 +1178,19 @@ fn stepSector(v: vec3f) -> vec3f {
     return vec3f(c * v.x - s * v.z, v.y, s * v.x + c * v.z);
   }
   return vec3f(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
-}
+}`;
 
-// descendFold's refine=false path (surface-de.ts), the estimator the
-// fold GLSL marches, in that mirror's f32 formulation.
-fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-${privateDecls}
+  // ONE descent body template (fr-p8bc): the main surfaceDE below is
+  // this text verbatim; the probe descent is derived from the SAME text
+  // by token rename ({@link renameToProbe}) so the two descents cannot
+  // drift. Width is a REAL template parameter — small integer literals
+  // ("2u", "3u") collide with body constants, so a post-hoc width rename
+  // could never be safe.
+  const descentFnText = (
+    Wstr: string,
+    decls: string,
+  ): string => /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+${decls}
   let q = vec3f(
     dot(params.finalM0, pIn) + params.finalT0,
     dot(params.finalM1, pIn) + params.finalT1,
@@ -1234,7 +1287,7 @@ ${privateDecls}
             if (kind == 0u) {
               if (candFloor > 0.0 && candFloor >= best) {
                 continue;
-              }${stage2AffineSkip}
+              }${stage2AffineSkipFor(Wstr)}
               img = mapApply(m, sQ);
               branchSigma = mapSigma;
             } else {
@@ -1337,7 +1390,7 @@ ${privateDecls}
               // floor, which already cannot advance the min.
               if (candFloor > 0.0 && candFloor >= best) {
                 continue;
-              }${stage2FoldSkip}
+              }${stage2FoldSkipFor(Wstr)}
               img = mapApply(m, pre);
               branchSigma = m.p0.z * sfSigma;
             }
@@ -1373,14 +1426,14 @@ ${privateDecls}
             var evCert = 0.0;
             var evFloor = 0.0;
             var evHas = false;
-            if (keptCount == ${W} && key >= fnWorstKey) {
+            if (keptCount == ${Wstr} && key >= fnWorstKey) {
               evR = r;
               evCert = cert;
               evFloor = candFloor;
               evHas = true;
             } else {
               var slot = keptCount;
-              if (keptCount == ${W}) {
+              if (keptCount == ${Wstr}) {
                 slot = fnWorstIdx;
                 evR = fnR[frontierIx(slot, li)];
                 evCert = fnCert[frontierIx(slot, li)];
@@ -1399,10 +1452,10 @@ ${privateDecls}
               fnCert[frontierIx(slot, li)] = cert;
               // Recompute the worst kept key once the frontier is full
               // — a fixed-bound scan of reads, first max wins.
-              if (keptCount == ${W}) {
+              if (keptCount == ${Wstr}) {
                 fnWorstKey = -1e30;
                 fnWorstIdx = 0u;
-                for (var s2 = 0u; s2 < ${W}; s2++) {
+                for (var s2 = 0u; s2 < ${Wstr}; s2++) {
                   if (fnKey[frontierIx(s2, li)] > fnWorstKey) {
                     fnWorstKey = fnKey[frontierIx(s2, li)];
                     fnWorstIdx = s2;
@@ -1457,7 +1510,47 @@ ${privateDecls}
     best = min(best, terminal);
   }
   return max(best, sphereBound) * params.finalSigmaMin;
+}`;
+
+  // Probe derivation (fr-p8bc): rename the descent's identity tokens —
+  // fn name, index helper, the 14 frontier array names ("f…" → "p…") —
+  // over the SAME body text. Distinct names rather than shadowing, so a
+  // workgroup-shared MAIN frontier and the always-private probe frontier
+  // can never collide.
+  const renameToProbe = (text: string): string => {
+    let out = text.replace("fn surfaceDE(", "fn surfaceDEProbe(");
+    out = out.replaceAll("frontierIx(", "probeIx(");
+    for (const a of arrays) {
+      out = out.replaceAll(a, `p${a.slice(1)}`);
+    }
+    return out;
+  };
+  const probeDeFns =
+    probeWidth === null
+      ? ""
+      : `
+
+// fr-p8bc: the CHEAP descent for the shading probe taps — normal,
+// shadow and AO light a hit the full-width march already certified, so
+// they ride a width-${probeWidth} frontier (width 1 = the old greedy
+// descent) in function-scope private arrays: narrow arrays are
+// registers, which is the point. Same body as surfaceDE, renamed.
+fn probeIx(slot: u32, li: u32) -> u32 {
+  return slot;
 }
+
+${renameToProbe(
+  descentFnText(
+    `${probeWidth}u`,
+    arrays.map((a) => `  var ${a}: array<f32, ${probeWidth}>;`).join("\n"),
+  ),
+)}`;
+
+  return /* wgsl */ `${headerText}
+
+// descendFold's refine=false path (surface-de.ts), the estimator the
+// fold GLSL marches, in that mirror's f32 formulation.
+${descentFnText(W, privateDecls)}${probeDeFns}
 ${entry}
 `;
 }
