@@ -63,6 +63,13 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * bench's private-variant default). */
 export const SURFACE_COMPUTE_WORKGROUP_SIZE = 64;
 
+/** Frontier width for the shade kernel's PROBE evals — the normal/shadow/
+ * AO taps, fr-p8bc's lever (they light a hit the full-width march already
+ * certified, never decide geometry). Starts at full-width parity; the
+ * gpu-bench shade A/B leg (`--surface-shade-width`) carries the
+ * quality/timing verdict that flips this. */
+export const SURFACE_COMPUTE_SHADE_DE_WIDTH = SURFACE_FOLD_BEAM_WIDTH;
+
 /** Per-pass GPU-time target the adaptive `stepsThisPass` doubles toward —
  * the bench host loop's own pacing constant. Far under the ~7.5s i915
  * preemption watchdog (fr-096u) while keeping pass overhead amortized. */
@@ -317,7 +324,9 @@ export class SurfaceComputeRenderer {
    * Acquire a device and build the session pipeline for `de` (frozen — a
    * system edit re-enters the session, never retargets a live renderer).
    * `colors[j]`/`trapIndices[j]` shade `de.maps[j]`, the same per-slot
-   * inputs the GLSL packer takes. Rejects with
+   * inputs the GLSL packer takes. `opts.shadeDeWidth` overrides the
+   * shipped shade probe width ({@link SURFACE_COMPUTE_SHADE_DE_WIDTH}) —
+   * the gpu-bench A/B knob, never set by the app. Rejects with
    * {@link SurfaceComputeUnavailableError} when WebGPU is absent, or a
    * plain error (compile/validation) the caller treats identically: fall
    * back to the WebGL tracer.
@@ -326,6 +335,7 @@ export class SurfaceComputeRenderer {
     de: SurfaceDE,
     colors: Vec3[],
     trapIndices: number[],
+    opts: { shadeDeWidth?: number } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
       throw new SurfaceComputeUnavailableError(
@@ -357,6 +367,7 @@ export class SurfaceComputeRenderer {
         de,
         colors,
         trapIndices,
+        opts.shadeDeWidth ?? SURFACE_COMPUTE_SHADE_DE_WIDTH,
       );
       return renderer;
     } catch (e) {
@@ -372,6 +383,7 @@ export class SurfaceComputeRenderer {
     de: SurfaceDE,
     colors: Vec3[],
     trapIndices: number[],
+    shadeDeWidth: number,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -393,6 +405,7 @@ export class SurfaceComputeRenderer {
           mode,
           rays: mode === "march" ? "unproject" : undefined,
           width: SURFACE_FOLD_BEAM_WIDTH,
+          shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
           sharedFrontier: false,
           bnbStage2: false,
