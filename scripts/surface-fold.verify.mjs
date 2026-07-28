@@ -32,6 +32,11 @@
  *               SURFACE_FOLD_LENS wrapper over the affine cores);
  *               escape = the canonical non-contracting single-map
  *               Mandelbox, marched escape-time (fr-kltj).
+ *   --query     extra query string (no leading "?") inserted before the
+ *               scene hash — `--query=surfacegl` forces the WebGL fold
+ *               tracer now that fold sessions prefer WebGPU compute
+ *               (fr-tzdg), which is required for this script's original
+ *               purpose; `surfacegl&surfperf` adds strip-cost logging.
  */
 import path from "node:path";
 import process from "node:process";
@@ -60,6 +65,7 @@ function parseArgs(argv) {
     scenario: "hash",
     wait: 20_000,
     shot: "/tmp/fold-probe.png",
+    query: "",
   };
   for (const raw of argv) {
     const eq = raw.indexOf("=");
@@ -114,7 +120,14 @@ async function main() {
     page.on("console", (msg) => {
       const line = `[page:${msg.type()}] ${msg.text()}`;
       consoleTail.push(line);
-      if (msg.type() === "error" || msg.type() === "warning") {
+      // Errors/warnings always; [surfperf] diagnostics (strip-job costs,
+      // heavy-strip flags — the fr-096u watchdog signal) when the caller
+      // opted in via --query=surfperf.
+      if (
+        msg.type() === "error" ||
+        msg.type() === "warning" ||
+        msg.text().startsWith("[surfperf]")
+      ) {
         console.error(line.slice(0, 2000));
       }
     });
@@ -122,14 +135,20 @@ async function main() {
       console.error(`[page:uncaught] ${err.stack ?? err.message}`);
     });
 
+    // `--query=surfacegl` forces the WebGL fold tracer (fr-096u): since
+    // fr-tzdg, fold sessions PREFER the WebGPU compute path when an
+    // adapter exists, so without the flag this script's fold scenarios
+    // would no longer exercise the GLSL path whose historical failure
+    // signature it exists to catch. Query goes before the scene hash.
+    const search = args.query ? `?${args.query}` : "";
     const target =
       args.scenario === "hash"
-        ? `${args.url}/${BOXFOLD_HASH}`
+        ? `${args.url}/${search}${BOXFOLD_HASH}`
         : args.scenario === "lens"
-          ? `${args.url}/${LENS_HASH}`
+          ? `${args.url}/${search}${LENS_HASH}`
           : args.scenario === "escape"
-            ? `${args.url}/${ESCAPE_HASH}`
-            : `${args.url}/`;
+            ? `${args.url}/${search}${ESCAPE_HASH}`
+            : `${args.url}/${search}`;
     console.error(`[probe] mode=${args.mode} scenario=${args.scenario}`);
     await page.goto(target, { waitUntil: "load", timeout: 30_000 });
 
