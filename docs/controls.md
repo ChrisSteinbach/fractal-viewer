@@ -152,7 +152,16 @@ morphs into place instead of snapping (see **Presets** below).
   continues across frames instead of handing the GPU one unbounded
   submission — on a device far too slow for the system (a phone on a fold
   preset, software GL) the image fills in progressively and the page
-  stays responsive, where it used to wedge the GPU process outright. The
+  stays responsive, where it used to wedge the GPU process outright.
+  On an especially heavy view, the preview and the full-detail pass can both
+  take a long time; a progress row under the Surface hint (fr-zx34) shows
+  how far along each one is ("Preview 43%", "Full detail 0.4%") so you can
+  judge whether to wait it out or move the camera on — the render never
+  gives up on its own. **Save PNG** can likewise refuse a capture with an
+  honest estimate of how long it would take rather than start one with no
+  reasonable finish time, but its toast offers a **Render anyway** action
+  that grinds ahead regardless for up to about five minutes before giving
+  up. The
   first fold surface entry of a session also compiles the fold tracer
   program — a one-off measured at ~25s on Mesa/Iris (the browser caches
   the compiled program afterwards) — which now happens while the explorer

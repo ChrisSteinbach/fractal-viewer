@@ -375,10 +375,75 @@ also dissolved fr-f21s's link-watchdog session-death lottery (the A/B's
 only context losses were baseline-arm, kernel silent throughout). Runtime:
 boxfold-pair settles 509-987ms vs baseline 695-1296ms with settled frames
 identical within session noise; mandelboxKifs's parked entry pose stays
-unconverged-in-minutes in BOTH arms (its crease pixels are march-bound on
-the fragment path — the width-12 march the probe deliberately leaves
-untouched), but equal 210s windows resolve ~2.3x more of the frame at
-width 1 (the shipped width). The fold-lens variant deliberately carries
-no probe: its ~79KB source sits at the resolveVariantArms-measured
-cliff, though the inlining discovery suggests a lens probe might SHRINK
-its link too — an open follow-up, not a shipped claim.
+unconverged-in-minutes in BOTH arms (its crease pixels are march-bound on the
+fragment path — the width-12 march the probe deliberately leaves untouched;
+fr-24to below discloses that grind as progress instead of bounding it —
+the pose still grinds, legibly), but equal 210s windows resolve ~2.3x more
+of the frame at width 1 (the shipped width). The fold-lens variant
+deliberately carries no probe: its ~79KB source sits at the
+resolveVariantArms-measured cliff, though the inlining discovery
+suggests a lens probe might SHRINK its link too — an open follow-up, not
+a shipped claim.
+
+The runtime-mode verdict (fr-24to) resolved what to do when a monster
+fold pose (mandelboxKifs's entry pose) makes even the bounded WebGL
+preview unaffordable: crease pixels there cost ~272-287ms/px,
+march-bound, and the floor-rung preview ran past 210s for a 4500px
+frame with no terminal state, so it ground forever and the settle
+behind it never armed. Bailing out of the render mode was rejected:
+cost is pose-local, the WebGL path is already the fallback, and
+post-fr-zqu8 entry now compiles in ~1.45s, so a bail-and-return would
+only thrash. A preview rung below the shipped floor was rejected too:
+each rung buys only ~2x while the gap at a monster pose is >=50-150x,
+and the crease pixels that dominate cost stay march-bound at any
+rung. A truncation contract shipped instead, in two calibration rounds, and both
+were REVERTED. Round one ported the compute path's flat GPU-spend budget
+onto the WebGL pump — past 4000ms of measured spend, stop refilling and
+complete TRUNCATED, retiring the evidence raise-only (fr-id9r semantics)
+— and clipped a completable heavy-lens preview on first contact: a 20-map
+Menger sponge under a mandelbox final lens measured 62% traced with ~2.5s
+left at the check, and truncating it swapped a complete whole-image blur
+for a black top band the bottom-up settle would only repair minutes later
+(fr-zx34). Round two switched the check from spend to PREDICTED remaining
+work — remaining px times the max of the traced average and the pump's
+marginal estimate, a band-vs-wobble spike factor meant to catch a preview
+sliding into a newly-discovered expensive band without over-reacting to
+ordinary per-strip noise — giving up only past another budget's worth of
+predicted work, a 3x grace cap against estimate-lagging bands. It still
+misfired, at zoomed poses on the same Menger-lens system: those poses
+measured an honest ~14-19ms/px with correctly-predicted 53-83s remaining
+— comfortably worth finishing by any reasonable eye — while the true
+monster's early check averaged a MISLEADING ~47s remaining against a true
+preview running past 210s, because its cost is banded (mostly cheap traced
+pixels, a handful of multi-second crease pixels not yet sampled) rather than
+uniform. The two classes are INVERTED on average cost at any early check:
+the pose that should finish predicts more expensive than the pose that should
+give up. That inversion is why prediction kept misfiring — no threshold
+on one early-check number can rank both directions correctly at once.
+
+The final verdict is the user's: no automatic truncation. An
+automatic give-up decides for the user what only the user can weigh, so
+`surfaceRenderProgress()` reports honest traced-px coverage of the in-flight
+preview/settle job — no time predictions, by design — and a surface
+progress row renders it ("Preview 43%" / "Full detail 0.4%", one decimal
+under 10% because a monster settle advances ~1%/min and an integer row parked
+at 0% reads as stuck, hidden entirely when nothing is grinding). The user
+reads the rate and decides whether the pose is worth the wait.
+
+Measured after (Iris Xe, real driver): the Menger-lens mid pose climbs
+Preview 1.2% -> 5.3% -> 16% -> 93% -> complete at 16.4s spentMs, settle arms
+on completed evidence, then Full detail 0% -> 0.1% and climbing; the preset
+monster pose parked for 60s logs 120/120 responsiveness pings, ~0s stalled,
+0 errors, kernel silent, and never arms a settle at all — by decision, not
+by bug, on the same bounded-strip machinery (fr-096u/fr-id9r) that made the
+grind safe to begin with. Truncation was never load-bearing for that safety.
+
+What survives from the branch, orthogonal to truncation and unaffected
+by its reversion: the capture cost ceilings (a predict-ceiling refusal,
+and a spend ceiling on the drain itself) and save-PNG's "Render anyway"
+opt-in — a single consented escalation that skips the predict ceiling
+and raises the spend ceiling to `SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS`
+(300s). Offline export stays loud-fail, thumbnails keep the silent explorer
+fallback, and `formatGpuMinutes`' hours tier — needed once truncated-monster
+evidence started putting hour-scale predictions into refusal messages —
+is module-private again.
