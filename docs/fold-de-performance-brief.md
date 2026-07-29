@@ -356,7 +356,30 @@ it: probe evals light a hit the full-width march already certified, never
 decide geometry, so they ride a width-1 greedy descent — 23.8x cheaper
 shading, eyeball-identical frames (a slight lightening of deep-crease
 shadow/AO from the greedy overshoot; quality A/B leg in
-`npm run bench:surface -- --surface-shade-width=N`). The same trick is a
-candidate for the WebGL fold GLSL's shading (its cost structure is
-identical), gated on a link-cliff measurement — the fragment path is now the
-fallback, so it waits its turn.
+`npm run bench:surface -- --surface-shade-width=N`).
+
+The fragment-path port (fr-zqu8, `?surfshadewidth` runtime A/B in
+`scripts/shade-width-ab.mjs`) then measured a second, unanticipated
+inversion: the width-1 probe didn't grow the ~25s Mesa link the gate feared
+— it CUT it 17.9x (cold links 25.5-26.4s -> 1.42-1.53s, n=3/arm,
+`MESA_SHADER_CACHE_DISABLE=true`, Iris Xe). Mesa force-inlines GLSL calls,
+so the pre-change program inlined the width-12 body at all ~7 `surfaceDE`
+call sites (march + 4 normal taps + shadow + AO); with the value form
+routed to a width-1 `surfaceDEProbe` (one template, two instantiations —
+the WGSL twin's derivation discipline adapted to the fragment source), only
+the march still inlines the monster. fr-5rvk's "a second full frontier body
+pushed Mesa's compiler over the edge" was the same mechanism seen from the
+other side — §1's cost model missed that COMPILE cost, like shading cost,
+scales with call sites x width, not just per-eval work. The link collapse
+also dissolved fr-f21s's link-watchdog session-death lottery (the A/B's
+only context losses were baseline-arm, kernel silent throughout). Runtime:
+boxfold-pair settles 509-987ms vs baseline 695-1296ms with settled frames
+identical within session noise; mandelboxKifs's parked entry pose stays
+unconverged-in-minutes in BOTH arms (its crease pixels are march-bound on
+the fragment path — the width-12 march the probe deliberately leaves
+untouched), but equal 210s windows resolve ~2.3x more of the frame at width
+
+1. The fold-lens variant deliberately carries no probe: its ~79KB source
+   sits at the resolveVariantArms-measured cliff, though the inlining
+   discovery suggests a lens probe might SHRINK its link too — an open
+   follow-up, not a shipped claim.

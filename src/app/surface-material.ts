@@ -47,7 +47,30 @@ import { lightDirection } from "./voxel-material";
  * maps (27/3/81 inverse branches each) marchable at all. Per-map fold data
  * rides a `uFoldParams` vec4 array that REPLACES `uTrapIndex` under the
  * define (the trap coordinate moves into its `.w`), so both variants meet
- * the same uniform budget. Kept in its own module so `scene.ts` stays the
+ * the same uniform budget.
+ *
+ * The three shading taps (normal gradient, penumbra shadow, ambient
+ * occlusion) ride the 1-arg value form, which fold systems route to
+ * `surfaceDEProbe` — a width-1 instantiation of the SAME descent template
+ * (fr-zqu8, the WGSL twin's fr-p8bc verdict ported to the fragment path;
+ * one text, two names, so the bodies cannot drift). Taps light a hit the
+ * full-width march already certified, never decide geometry — the march
+ * and hit acceptance stay at FOLD_W. Measured (Iris Xe, real driver, cold
+ * Mesa cache, `scripts/shade-width-ab.mjs`): the probe CUT the fold
+ * program's ~25s Mesa link 17.9x (25.5-26.4s -> 1.42-1.53s, n=3/arm) —
+ * Mesa inlines the width-12 body at every call site, and with the probe
+ * only the march still does — which also dissolved fr-f21s's
+ * link-watchdog session-death lottery (the A/B's only context losses were
+ * baseline-arm, kernel silent throughout). Boxfold-pair settles 509-987ms
+ * vs baseline 695-1296ms, settled frames identical within session noise
+ * (cross-arm pixel diff == within-arm rerun diff); equal 210s
+ * mandelboxKifs windows resolve ~2.3x more frame at width 1, its crease
+ * pixels staying march-bound (the fragment path's residual — compute owns
+ * those sessions where an adapter exists, fr-tzdg). `?surfshadewidth=N`
+ * overrides the width per session; N = FOLD_W disables the probe and
+ * reproduces the pre-fr-zqu8 source byte for byte.
+ *
+ * Kept in its own module so `scene.ts` stays the
  * wiring layer: everything GLSL lives here, everything camera/frame lives
  * there (the scene sets `uCamPos`, `uInvProjView`, and `uPixelEps` per
  * frame).
