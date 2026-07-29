@@ -298,4 +298,66 @@ describe("createStripPlanner", () => {
       STRIP_TARGET_MS + STRIP_FOLD_PRIOR_MS_PER_PX,
     );
   });
+
+  it("observe() ratchets observedWorstMsPerPx from a direct measurement", () => {
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 10,
+      worstMsPerPx: 50,
+    });
+    planner.observe(3000, 2); // 3000 / 2 = 1500 ms/px
+    expect(planner.observedWorstMsPerPx).toBe(1500);
+  });
+
+  it("observe() tightens the worst-case cap for the very next strip", () => {
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 10,
+      worstMsPerPx: 50,
+    });
+    planner.next(null); // 8px probe (round(75/10))
+    planner.observe(3200, 8); // 3200/8 = 400 ms/px, reported at measurement time
+    // cap = floor(STRIP_WORST_CASE_CAP_MS / max(50, 400)) = floor(4000/400)
+    // = 10px. The cheap prevMs would otherwise grow the strip 8x to 64px
+    // (and its own ratchet contribution 0.001/8 is negligible) -- the
+    // observe()d price wins.
+    expect(planner.next(0.001)!.px).toBe(10);
+  });
+
+  it("closes the last-measurement gap: next() is deaf after done, observe() is not", () => {
+    // 1 row x 4px with a 10ms/px prior: probe = min(legacy 4px,
+    // round(75/10)=8) = 4px = the whole frame -- a one-strip job.
+    const planner = createStripPlanner(1, 4, {
+      priorMsPerPx: 10,
+      worstMsPerPx: 50,
+    });
+    planner.next(null);
+    expect(planner.done).toBe(true);
+    // The sizing door early-returns once every pixel is planned -- the
+    // final strip's measurement handed to next() is silently dropped...
+    expect(planner.next(8000)).toBeNull();
+    expect(planner.observedWorstMsPerPx).toBe(0);
+    // ...the measurement door still ratchets (fr-24to's safety half): the
+    // evidence chain a completed job feeds must include its OWN last strip.
+    planner.observe(8000, 4); // 8000 / 4 = 2000 ms/px
+    expect(planner.observedWorstMsPerPx).toBe(2000);
+  });
+
+  it("observe() only ever ratchets up: a later cheap measurement never lowers it", () => {
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 10,
+      worstMsPerPx: 50,
+    });
+    planner.observe(100, 1); // 100 ms/px
+    planner.observe(1, 1); // 1 ms/px -- cheaper, must not relax
+    expect(planner.observedWorstMsPerPx).toBe(100);
+  });
+
+  it("observe() ignores empty measurements", () => {
+    const planner = createStripPlanner(720, 1280, {
+      priorMsPerPx: 10,
+      worstMsPerPx: 50,
+    });
+    planner.observe(0, 5); // zero ms is not a measurement
+    planner.observe(5, 0); // zero px is not a measurement
+    expect(planner.observedWorstMsPerPx).toBe(0);
+  });
 });

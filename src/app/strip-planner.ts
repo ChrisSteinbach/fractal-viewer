@@ -225,6 +225,21 @@ export interface StripPlanner {
    * guessing). Returns null once all pixels are planned.
    */
   next(prevMs: number | null): Strip | null;
+  /**
+   * Report a measurement directly: `ms` of GPU time observed over `px`
+   * traced pixels (a single strip or a fence batch — the per-pixel
+   * average either way). Ratchets the worst-price observation exactly
+   * like the `prevMs` handed to {@link next} does — the difference is
+   * WHEN: `next` only hears about a measurement if another strip is still
+   * to be planned, so a job's LAST measurement (the final drain strip,
+   * the final fence batch, a sync-collapse strip that escapes the regime)
+   * never reached the ratchet — and a completed job whose final strip
+   * discovered the expensive band then handed the evidence chain a
+   * too-low worst (fr-24to safety half). Callers report every measurement
+   * here at the moment it exists; the `next` door stays as well (same
+   * max, so double-reporting is harmless).
+   */
+  observe(ms: number, px: number): void;
 }
 
 /** Create a planner over `totalRows` rows of `rowPx` pixels each (a
@@ -294,6 +309,12 @@ export function createStripPlanner(
 
     get observedWorstMsPerPx(): number {
       return observedWorst;
+    },
+
+    observe(ms: number, px: number): void {
+      if (ms > 0 && px > 0) {
+        observedWorst = Math.max(observedWorst, ms / px);
+      }
     },
 
     next(prevMs: number | null): Strip | null {
