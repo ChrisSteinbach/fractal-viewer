@@ -2559,7 +2559,10 @@ export class FractalScene {
    * this device actually manages on this system — and only preview frames
    * are sampled, never the settle or capture paths.
    */
-  renderSurface(tier: RenderTier = "full"): void {
+  renderSurface(
+    tier: RenderTier = "full",
+    opts?: { liftCostCeilings?: boolean },
+  ): void {
     this.renderNeeded = false;
     if (this.surfaceComputeActive) {
       // A compute session never compiled the fold GLSL — a stray call
@@ -2595,16 +2598,21 @@ export class FractalScene {
     // below aborts when an unpredicted pose lies. Both throw
     // {@link SurfaceCaptureCostError}; callers own the surface (save-PNG
     // toast, offline "Export failed", thumbnail's explorer fallback).
+    // Save-PNG's opt-in retry (fr-24to) lifts the predict ceiling and
+    // raises the spend ceiling — consent replaces prediction, the
+    // backstop stays.
     const totalPx = size.x * size.y;
-    const predictedMs = this.predictSurfaceFullCostMs(totalPx);
-    if (
-      predictedMs !== null &&
-      predictedMs > SURFACE_CAPTURE_PREDICT_CEILING_MS
-    ) {
-      throw new SurfaceCaptureCostError(
-        `Surface frame would take ~${formatGpuMinutes(predictedMs)} to ` +
-          `trace at this view — export skipped`,
-      );
+    if (!opts?.liftCostCeilings) {
+      const predictedMs = this.predictSurfaceFullCostMs(totalPx);
+      if (
+        predictedMs !== null &&
+        predictedMs > SURFACE_CAPTURE_PREDICT_CEILING_MS
+      ) {
+        throw new SurfaceCaptureCostError(
+          `Surface frame would take ~${formatGpuMinutes(predictedMs)} to ` +
+            `trace at this view — export skipped`,
+        );
+      }
     }
     // A stale async job must not interleave with this frame's strips —
     // nor a stale preview job resume after it with full-tier uniforms.
@@ -2623,7 +2631,13 @@ export class FractalScene {
       this.surfaceStripPriorMsPerPx(),
       SURFACE_SETTLE_PRESENT_MS,
     );
-    const completed = this.drainStripsSync(job, this.surfaceSettleTarget);
+    const completed = this.drainStripsSync(
+      job,
+      this.surfaceSettleTarget,
+      opts?.liftCostCeilings
+        ? SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS
+        : SURFACE_CAPTURE_SPEND_CEILING_MS,
+    );
     // Capture-mode retirement: an export-scale drain's observation (its
     // per-strip join tax included) may TIGHTEN the live evidence but
     // never own it — the pose did not move, so the completed live
@@ -3495,12 +3509,14 @@ export class FractalScene {
    * more than one strip. Its callers tolerate the stalls; the ~10-25ms
    * per-join floor is the price of frame-exact synchronous completion.
    * Tolerate is not "forever" (fr-id9r): a monster fold pose prices a
-   * frame in hours of frozen tab, so past
-   * {@link SURFACE_CAPTURE_SPEND_CEILING_MS} of measured spend the drain
+   * frame in hours of frozen tab, so past `spendCeilingMs` (default
+   * {@link SURFACE_CAPTURE_SPEND_CEILING_MS}; save-PNG's consented retry
+   * passes the lifted ceiling, fr-24to) of measured spend the drain
    * gives up and returns false — the caller surfaces the refusal. */
   private drainStripsSync(
     job: SurfaceStripJob,
     target: THREE.WebGLRenderTarget,
+    spendCeilingMs: number = SURFACE_CAPTURE_SPEND_CEILING_MS,
   ): boolean {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
     let lastMs: number | null =
@@ -3526,7 +3542,7 @@ export class FractalScene {
           `[surfperf] heavy strip px=${strip.px} ms=${lastMs.toFixed(0)}`,
         );
       }
-      if (job.spentMs > SURFACE_CAPTURE_SPEND_CEILING_MS) {
+      if (job.spentMs > spendCeilingMs) {
         this.resetScissor(target);
         return false;
       }
@@ -3604,11 +3620,17 @@ export class FractalScene {
    * the trace (fr-id9r) — `async` so the refusal is a rejection, not a
    * sync throw, and the ratio/projection wrappers' finally blocks have
    * already restored the live state by the time the caller hears it.
+   * `opts.liftCostCeilings` is save-PNG's consented retry (fr-24to):
+   * only the interactive save path passes it — offline export and
+   * thumbnails keep the default ceilings.
    */
-  async captureSurfaceFrame(exportScale = 1): Promise<ExportImage | null> {
+  async captureSurfaceFrame(
+    exportScale = 1,
+    opts?: { liftCostCeilings?: boolean },
+  ): Promise<ExportImage | null> {
     return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
       this.withCenteredProjection(() => {
-        this.renderSurface();
+        this.renderSurface("full", opts);
         return exportImageFrom(this.renderer.domElement);
       }),
     );
@@ -3746,6 +3768,14 @@ const SURFACE_CAPTURE_PREDICT_CEILING_MS = 120_000;
  * legitimately expensive export measured to date, short enough that a
  * user (or the browser's hang detector) still owns the tab. */
 const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
+/** The consented spend backstop (ms) behind save-PNG's "Render anyway"
+ * (fr-24to): the predict ceiling is the user-overridable half (its
+ * refusals overpredict ~4x, fr-096u), but a runaway drain still aborts —
+ * 5x the default ceiling covers the honest just-past-refusal band
+ * without letting a true monster freeze the tab indefinitely. Single
+ * escalation level: the opt-in retry that trips THIS ceiling refuses
+ * for good. */
+const SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS = 300_000;
 
 /** Thrown by {@link FractalScene.renderSurface}'s full tier when a
  * frame's predicted or measured cost crosses the export ceilings
@@ -3755,12 +3785,17 @@ const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
  * thumbnail path falls back to the explorer render. */
 export class SurfaceCaptureCostError extends Error {}
 
-/** "~Ns of GPU" / "~N min of GPU" for {@link SurfaceCaptureCostError}
- * messages. */
+/** "~Ns of GPU" / "~N min of GPU" / "~N hr of GPU" for
+ * {@link SurfaceCaptureCostError} messages. The hours tier exists
+ * because heavy-pose preview evidence can put hour-scale full-frame
+ * predictions into the refusal message — "3534 min" reads as a bug,
+ * not a verdict. Same 90x tier rule at both cuts. */
 function formatGpuMinutes(ms: number): string {
-  return ms < 90_000
-    ? `${String(Math.round(ms / 1000))}s of GPU time`
-    : `${String(Math.round(ms / 60_000))} min of GPU time`;
+  if (ms < 90_000) return `${String(Math.round(ms / 1000))}s of GPU time`;
+  if (ms < 90 * 60_000) {
+    return `${String(Math.round(ms / 60_000))} min of GPU time`;
+  }
+  return `${String(Math.round(ms / 3_600_000))} hr of GPU time`;
 }
 
 /** An in-flight strip job over one of the surface targets: the planner,

@@ -66,6 +66,7 @@ import { renderSystemThumb } from "./mutation-thumbs";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
 import {
+  type ExportImage,
   FOUR_D_SLICE_WIDTH,
   FractalScene,
   SurfaceCaptureCostError,
@@ -4622,6 +4623,20 @@ function main(): void {
       // resizes the shared canvas mid-stream, which MediaRecorder capture
       // doesn't survive (the flame branch never resizes, so it's exempt).
       const scale = recorderActive ? 1 : state.exportScale;
+      // Shared by the ordinary capture below and its opt-in retry
+      // (fr-24to), so the success handling — download + sized toast —
+      // exists exactly once.
+      function deliverPng(image: ExportImage | null): void {
+        if (!image) {
+          ui.flashToast("Couldn't encode the PNG");
+          return;
+        }
+        triggerDownload(image.blob, `fractal-${Date.now()}.png`);
+        // The device ceilings may have clamped the export below the chosen
+        // multiple (scene.exportPixelRatio / the flame memory clamp), so
+        // report the size that actually saved.
+        ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
+      }
       const capture =
         state.renderMode === "solid" && solidSession.hasFirstFrame
           ? scene.captureSolidFrame(scale)
@@ -4630,28 +4645,36 @@ function main(): void {
             : state.renderMode === "flame" && flameSession.hasFirstFrame
               ? scene.captureFlameFrame()
               : scene.captureFrame(scale);
-      void capture
-        .then((image) => {
-          if (!image) {
-            ui.flashToast("Couldn't encode the PNG");
-            return;
-          }
-          triggerDownload(image.blob, `fractal-${Date.now()}.png`);
-          // The device ceilings may have clamped the export below the chosen
-          // multiple (scene.exportPixelRatio / the flame memory clamp), so
-          // report the size that actually saved.
-          ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
-        })
-        .catch((err: unknown) => {
-          // The surface cost ceiling refusing a monster-pose trace
-          // (fr-id9r) carries its own user-presentable message; anything
-          // else is the generic encode failure.
-          ui.flashToast(
-            err instanceof SurfaceCaptureCostError
-              ? err.message
-              : "Couldn't encode the PNG",
-          );
+      void capture.then(deliverPng).catch((err: unknown) => {
+        // The surface cost ceiling refusing a monster-pose trace (fr-id9r)
+        // carries its own user-presentable message; anything else is the
+        // generic encode failure.
+        if (!(err instanceof SurfaceCaptureCostError)) {
+          ui.flashToast("Couldn't encode the PNG");
+          return;
+        }
+        // The capture escalation verdict (fr-24to): the predict refusal is
+        // user-overridable (measured ~4x overprediction), the raised spend
+        // ceiling is not — so the retry's own catch offers no further
+        // action, a single escalation level. Re-runs the SURFACE capture
+        // directly (not the mode ternary above: a cost error can only
+        // come from that path) with the same scale.
+        ui.flashToast(err.message, {
+          label: "Render anyway",
+          onAction: () => {
+            void scene
+              .captureSurfaceFrame(scale, { liftCostCeilings: true })
+              .then(deliverPng)
+              .catch((retryErr: unknown) => {
+                ui.flashToast(
+                  retryErr instanceof SurfaceCaptureCostError
+                    ? retryErr.message
+                    : "Couldn't encode the PNG",
+                );
+              });
+          },
         });
+      });
     },
     onSelect: (index) => {
       state = selectTransform(state, index);
