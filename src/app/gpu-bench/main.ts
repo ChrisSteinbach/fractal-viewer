@@ -68,6 +68,7 @@ import {
   buildSurfaceDE,
   deHasFolds,
   estimateDistance,
+  estimateDistanceRefined,
   SURFACE_FOLD_BEAM_WIDTH,
 } from "../../fractal/surface-de";
 import type { SurfaceDE } from "../../fractal/surface-de";
@@ -1800,7 +1801,12 @@ async function runSs1DisplayDownsampleCheck(): Promise<
 // Pins `src/fractal/surface-de-gpu.ts`'s fold-DE compute kernel against
 // `estimateDistance` (surface-de.ts, refine=false — the exact estimator the
 // kernel mirrors) on real query points, then times the march kernel on
-// mandelboxKifs — the brief §3.7 measurement. Runs only when `?surface=1`
+// mandelboxKifs — the brief §3.7 measurement. Since fr-55s1 the section
+// also pins the kernel's SECOND descent core: a fold-free system compiles
+// `core: "affine"` — the width-4 refined ladder — and is compared against
+// `estimateDistanceRefined`, the estimator THAT core mirrors. Which core
+// and which oracle is inferred per system from `deHasFolds(de)`, exactly
+// as surface-de.ts's own estimators route. Runs only when `?surface=1`
 // (after the flame scenarios) or `?surface=only` (instead of them), or via
 // its own button; with the param absent the flame pipeline above and
 // `computeAgreement` behave bit-for-bit as before.
@@ -1833,6 +1839,11 @@ interface SurfaceSectionConfig {
 }
 
 interface SurfaceKernelConfig {
+  /** Which descent body the kernel carries (fr-55s1). "fold" is the
+   * frontier this section was built around; "affine" is the fixed width-4
+   * refined ladder, where `variant`/`stage2` are inert (the generator
+   * ignores them) and `width` is always the ladder's own 4. */
+  core: "fold" | "affine";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -1841,6 +1852,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
+  core: "fold" | "affine";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -1857,7 +1869,10 @@ interface SurfaceAgreementRow {
    * only rows at exactly that width compare like against like. Narrower
    * kernel widths are still run as an INFORMATIONAL measurement of the
    * fr-5rvk narrow-width erosion (a real, expected estimator difference,
-   * not kernel disagreement). */
+   * not kernel disagreement). AFFINE-core rows always gate (fr-55s1):
+   * their ladder is fixed at {@link SURFACE_AFFINE_LADDER_WIDTH}, which
+   * IS the oracle's production `beamWidth`, so there is no width sweep
+   * and every row is like against like. */
   gating: boolean;
   /** Queries whose error exceeded
    * `max(2e-4·R, 2e-3·max(|cpu|, 0.05·R))` — any nonzero count on a
@@ -2112,6 +2127,17 @@ const SURFACE_PIXEL_EPS =
 const SURFACE_PASS_TARGET_MS = 250;
 const SURFACE_MAX_STEPS_PER_PASS = 32;
 
+/** The affine core's ladder width (fr-55s1): fixed at the CPU oracle's
+ * production `SurfaceDE.beamWidth`, which `buildSurfaceDE` always sets to
+ * 4 and `surface-material.ts`'s affine arm hardcodes. Unlike the fold
+ * frontier there is no width to sweep — so every affine agreement row is
+ * a GATING row. */
+const SURFACE_AFFINE_LADDER_WIDTH = 4;
+
+/** `surface-de.ts`'s `NO_SYMMETRY`, duplicated (it isn't exported) like
+ * this file's other cross-module mirrors. */
+const SURFACE_NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
+
 /** The CPU sanity march samples every Nth pixel in both raster axes. */
 const SURFACE_SANITY_STRIDE = 8;
 /** Hit-rate gap beyond which a timing config's sanity reads "suspect". */
@@ -2223,6 +2249,87 @@ function surfaceFoldSpherefoldPair(): Transform[] {
       variations: [{ type: "spherefold", weight: 1.1 }],
     },
   ];
+}
+
+/** fr-55s1 M0 (a): the sierpinski-shaped 4-map affine base
+ * `scripts/surface-fold.verify.mjs`'s LENS_HASH is built on — no fold
+ * anywhere, so `deHasFolds` routes it to the AFFINE core and its refined
+ * oracle. Deliberately the lens archetype's BASE: stage B wraps this exact
+ * system in a fold FINAL, and an M0 row that already agrees isolates the
+ * lens wrapper as the only new thing there. */
+function surfaceAffineTetra(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.35, 0.35, 0.35],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.35, 0.35],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 2,
+      position: [0.35, -0.35, -0.35],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 3,
+      position: [-0.35, 0.35, -0.35],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+  ];
+}
+
+/** fr-55s1 M0 (b): the affine core's RICH case — three rotated maps whose
+ * per-axis scales differ, run under a kaleidoscope (order 3, `systemDefs`)
+ * and an affine FINAL lens, so one row exercises the fr-x029 sector sweep,
+ * the packed final-lens prologue/epilogue and the fr-zkt2 sphere-floor exit
+ * at once (that exit is live exactly on ANISOTROPIC maps, whose
+ * certificates lose a sigmaMin/sigmaMax factor per level; on isotropic
+ * ones it provably never fires). The anisotropy is deliberately SMALL —
+ * ratio 1.037 against `CONFORMAL_RATIO`'s 1.05 — because past that
+ * `analyzeSurfaceSystem` reports "degraded" rather than "eligible", and an
+ * agreement system should sit inside the mode's own eligible set. */
+function surfaceAffineTwist(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.32, 0.18, -0.12],
+      rotation: [0.35, 0.2, 0.1],
+      scale: [0.42, 0.405, 0.41],
+    },
+    {
+      id: 1,
+      position: [-0.28, 0.3, 0.22],
+      rotation: [0.1, -0.45, 0.25],
+      scale: [0.405, 0.42, 0.41],
+    },
+    {
+      id: 2,
+      position: [0.05, -0.34, 0.3],
+      rotation: [-0.2, 0.15, 0.5],
+      scale: [0.41, 0.405, 0.42],
+    },
+  ];
+}
+
+/** {@link surfaceAffineTwist}'s AFFINE final lens — rotated, offset and
+ * isotropically shrunk, so `SurfaceDE.final` is non-identity and the
+ * kernel's packed `finalM*`/`finalT*`/`finalSigmaMin` path carries real
+ * work (an absent final packs the identity and proves nothing). */
+function surfaceAffineTwistFinal(): Transform {
+  return {
+    id: 99,
+    position: [0.12, -0.08, 0.05],
+    rotation: [0.25, 0.15, -0.3],
+    scale: [0.85, 0.85, 0.85],
+  };
 }
 
 /** A NEGATIVE-weight boxfold map beside a plain affine map: sign absorption
@@ -2340,14 +2447,24 @@ function surfaceWgFor(
  * both sides evaluate the IDENTICAL point — any disagreement is then kernel
  * arithmetic, not query quantization. (≤1 f32 ulp off the harness's f64
  * points; cloud samples are already f32.)
+ *
+ * The cloud is rolled through the system's own FINAL transform and
+ * kaleidoscope (fr-55s1): the on-attractor class only means anything if it
+ * samples the set the DE actually describes. Both default to the
+ * fold systems' existing arguments, so their query sets are unchanged.
  */
-function surfaceQueries(transforms: Transform[], radius: number): Vec3[] {
+function surfaceQueries(
+  transforms: Transform[],
+  radius: number,
+  finalTransform: Transform | null = null,
+  symmetry: SymmetryParams = SURFACE_NO_SYMMETRY,
+): Vec3[] {
   const cloud = runChaosGame(
     transforms,
     SURFACE_CLOUD_POINTS,
     mulberry32(101),
-    null,
-    { order: 1, axis: "y" },
+    finalTransform,
+    symmetry,
   );
   const out: Vec3[] = [];
   const jitterRng = mulberry32(2);
@@ -2780,6 +2897,10 @@ async function createSurfaceBuffer(
  * and (once created) its GPU-side buffers + bind group. */
 interface SurfaceSystemState {
   name: string;
+  /** Which kernel core this system is entitled to, and therefore which CPU
+   * oracle `cpu` below holds — both inferred from the DE by `deHasFolds`,
+   * exactly as `surface-de.ts`'s own estimators route (fr-55s1). */
+  core: "fold" | "affine";
   de: SurfaceDE;
   /** The authored transform count behind `de` — what the app keys
    * `transformColors` on (fr-tzdg leg B copies that keying). */
@@ -3011,6 +3132,7 @@ function compareSurfaceAgreement(
       : 0;
   return {
     system: sys.name,
+    core: cfg.core,
     variant: cfg.variant,
     width: cfg.width,
     stage2: cfg.stage2,
@@ -3019,7 +3141,7 @@ function compareSurfaceAgreement(
     maxAbsErr,
     maxRelErr,
     p99AbsErr,
-    gating: cfg.width === SURFACE_FOLD_BEAM_WIDTH,
+    gating: cfg.core === "affine" || cfg.width === SURFACE_FOLD_BEAM_WIDTH,
     failures,
     maxGpuMinusCpu: Number.isFinite(maxGpuMinusCpu) ? maxGpuMinusCpu : 0,
     minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
@@ -4221,7 +4343,12 @@ async function runSurfaceDeSection(
   };
 
   // ----- Systems + CPU oracle (pure CPU, before any GPU acquisition) -----
-  const systemDefs: { name: string; transforms: Transform[] }[] = [];
+  const systemDefs: {
+    name: string;
+    transforms: Transform[];
+    finalTransform?: Transform;
+    symmetry?: SymmetryParams;
+  }[] = [];
   if (config.systems !== "synthetic") {
     systemDefs.push({ name: "mandelboxKifs", transforms: mandelboxKifs() });
   }
@@ -4231,6 +4358,15 @@ async function runSurfaceDeSection(
       name: "foldBoxfoldNegPlusAffine",
       transforms: surfaceFoldBoxfoldNegPlusAffine(),
     },
+    // fr-55s1 M0 — the AFFINE core's systems. Fold-free base maps, so the
+    // routing below hands them the refined ladder and its own oracle.
+    { name: "affineTetra", transforms: surfaceAffineTetra() },
+    {
+      name: "affineTwistFinal",
+      transforms: surfaceAffineTwist(),
+      finalTransform: surfaceAffineTwistFinal(),
+      symmetry: { order: 3, axis: "y" },
+    },
   );
   const systems: SurfaceSystemState[] = [];
   for (const def of systemDefs) {
@@ -4238,20 +4374,31 @@ async function runSurfaceDeSection(
     activity.setState("cpu", `Surface CPU oracle — ${def.name}`);
     await new Promise<void>((resolve) => setTimeout(resolve));
     try {
-      const de = buildSurfaceDE(def.transforms, null);
-      if (!deHasFolds(de)) {
-        results.notes.push(
-          `${def.name}: skipped — no fold maps (this section pins the fold frontier)`,
-        );
-        continue;
-      }
-      const queries = surfaceQueries(def.transforms, de.boundingRadius);
-      // CPU oracle: PLAIN estimateDistance (refine=false), cutoff 0 — the
-      // estimator the kernel mirrors term for term. NOT
-      // estimateDistanceRefined.
-      const cpu = queries.map((q) => estimateDistance(de, q, 0));
+      const finalTransform = def.finalTransform ?? null;
+      const symmetry = def.symmetry ?? SURFACE_NO_SYMMETRY;
+      const de = buildSurfaceDE(def.transforms, finalTransform, symmetry);
+      // fr-55s1: the DE picks BOTH the kernel core and the CPU oracle, by
+      // the same `deHasFolds` test `estimateDistance*` route on. Fold base
+      // maps march the wide frontier, pinned against PLAIN
+      // `estimateDistance` (refine=false — the estimator that kernel
+      // mirrors term for term); fold-free ones march the width-4 refined
+      // ladder, pinned against `estimateDistanceRefined`, which is what
+      // the affine GLSL marches. Both at cutoff 0.
+      const core = deHasFolds(de) ? "fold" : "affine";
+      const queries = surfaceQueries(
+        def.transforms,
+        de.boundingRadius,
+        finalTransform,
+        symmetry,
+      );
+      const cpu = queries.map((q) =>
+        core === "fold"
+          ? estimateDistance(de, q, 0)
+          : estimateDistanceRefined(de, q, 0),
+      );
       systems.push({
         name: def.name,
+        core,
         de,
         transformCount: def.transforms.length,
         queries,
@@ -4262,8 +4409,10 @@ async function runSurfaceDeSection(
     }
     render();
   }
+  const foldSystems = systems.filter((s) => s.core === "fold");
+  const affineSystems = systems.filter((s) => s.core === "affine");
   if (systems.length === 0) {
-    results.reason = "no eligible fold systems (see notes)";
+    results.reason = "no eligible systems (see notes)";
     status(`skipped — ${results.reason}`);
     activity.setState("idle", "Done");
     render();
@@ -4275,6 +4424,7 @@ async function runSurfaceDeSection(
   for (const variant of config.variants) {
     for (const width of config.agreementWidths) {
       evalConfigs.push({
+        core: "fold",
         variant,
         width,
         stage2: true,
@@ -4290,17 +4440,30 @@ async function runSurfaceDeSection(
     : config.variants[0];
   const stage2OffWidth = config.agreementWidths[0];
   evalConfigs.push({
+    core: "fold",
     variant: stage2OffVariant,
     width: stage2OffWidth,
     stage2: false,
     wg: surfaceWgFor(config, stage2OffVariant),
   });
+  // The affine core's single agreement config (fr-55s1 M0): its ladder is
+  // FIXED width 4 and the generator ignores `sharedFrontier`/`bnbStage2`
+  // there, so a variant/width sweep would compile the identical source
+  // four times over. One config, and every row it produces gates.
+  const affineEvalConfig: SurfaceKernelConfig = {
+    core: "affine",
+    variant: "private",
+    width: SURFACE_AFFINE_LADDER_WIDTH,
+    stage2: false,
+    wg: surfaceWgFor(config, "private"),
+  };
 
   const timingConfigs: SurfaceKernelConfig[] = [];
   if (config.timing) {
     for (const variant of config.variants) {
       for (const width of config.timingWidths) {
         timingConfigs.push({
+          core: "fold",
           variant,
           width,
           stage2: true,
@@ -4313,6 +4476,7 @@ async function runSurfaceDeSection(
       : config.timingWidths[0];
     for (const variant of config.variants) {
       timingConfigs.push({
+        core: "fold",
         variant,
         width: timingS2OffWidth,
         stage2: false,
@@ -4350,10 +4514,13 @@ async function runSurfaceDeSection(
   let compileFailed = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
-    `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+    cfg.core === "affine"
+      ? `affine-ladder w${cfg.width} wg${cfg.wg}`
+      : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
   const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
     cfg.variant === "shared"
       ? surfaceGpuWorkgroupBytes({
+          core: cfg.core,
           width: cfg.width,
           workgroupSize: cfg.wg,
           sharedFrontier: true,
@@ -4404,7 +4571,7 @@ async function runSurfaceDeSection(
         render();
         continue;
       }
-      for (const sys of systems) {
+      for (const sys of foldSystems) {
         status(`agreement: ${label} × ${sys.name}…`);
         await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
         const gpu = await runSurfaceEvalDispatch(device, pipeline, sys, cfg.wg);
@@ -4418,12 +4585,65 @@ async function runSurfaceDeSection(
       }
     }
 
-    // ----- Cross-checks -----
+    // ----- M0 (fr-55s1): the AFFINE core's agreement leg — GATING -----
+    // Fold-free systems compile the width-4 refined ladder and pin against
+    // `estimateDistanceRefined` (their `cpu` values above already are it),
+    // the same eval protocol and tolerance formula as the fold rows one
+    // estimator over. No width sweep and no cross-checks: the ladder has
+    // one width, and `sharedFrontier`/`bnbStage2` generate identical
+    // source there, so there is nothing to compare against itself.
+    if (affineSystems.length > 0) {
+      const label = configLabel(affineEvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      let affinePipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine",
+          width: affineEvalConfig.width,
+          workgroupSize: affineEvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: affinePipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (affinePipeline !== null) {
+        const pipeline = affinePipeline;
+        for (const sys of affineSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            affineEvalConfig.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(sys, affineEvalConfig, gpu),
+          );
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    // ----- Cross-checks (fold core only — see the M0 leg above) -----
     if (
       config.variants.includes("shared") &&
       config.variants.includes("private")
     ) {
-      for (const sys of systems) {
+      for (const sys of foldSystems) {
         for (const width of config.agreementWidths) {
           const a = gpuByKey.get(`${sys.name}|shared|${width}|true`);
           const b = gpuByKey.get(`${sys.name}|private|${width}|true`);
@@ -4451,7 +4671,7 @@ async function runSurfaceDeSection(
         }
       }
     }
-    for (const sys of systems) {
+    for (const sys of foldSystems) {
       const on = gpuByKey.get(
         `${sys.name}|${stage2OffVariant}|${stage2OffWidth}|true`,
       );
@@ -4485,31 +4705,42 @@ async function runSurfaceDeSection(
     // it runs on software adapters too (the CI path), like the eval legs.
     let unprojFailed = false;
     {
-      const sys = systems.find((s) => s.name === "mandelboxKifs") ?? systems[0];
-      try {
-        const row = await runSurfaceUnprojectLeg(
-          device,
-          sys,
-          acquired.software,
-          status,
-          activity,
-        );
-        results.marchUnproject = row;
-        if (row.truncated) {
-          unprojFailed = true;
-          results.notes.push(
-            `march-unproject: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
-              "agreement not verifiable, failing the leg",
+      // The leg compiles a FOLD march kernel, so it only ever runs on a
+      // fold system (fr-55s1: the affine systems beside them march a
+      // different core, whose march/shade legs are stages C's).
+      const sys =
+        foldSystems.find((s) => s.name === "mandelboxKifs") ?? foldSystems[0];
+      if (!sys) {
+        results.marchUnproject = {
+          skipped: "no fold system built (see notes)",
+        };
+        render();
+      } else {
+        try {
+          const row = await runSurfaceUnprojectLeg(
+            device,
+            sys,
+            acquired.software,
+            status,
+            activity,
           );
-        } else if (row.failures > 0) {
+          results.marchUnproject = row;
+          if (row.truncated) {
+            unprojFailed = true;
+            results.notes.push(
+              `march-unproject: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
+                "agreement not verifiable, failing the leg",
+            );
+          } else if (row.failures > 0) {
+            unprojFailed = true;
+          }
+        } catch (e) {
           unprojFailed = true;
+          results.marchUnproject = { skipped: describeError(e) };
+          results.notes.push(`march-unproject: ${describeError(e)}`);
         }
-      } catch (e) {
-        unprojFailed = true;
-        results.marchUnproject = { skipped: describeError(e) };
-        results.notes.push(`march-unproject: ${describeError(e)}`);
+        render();
       }
-      render();
     }
 
     // ----- Timing protocol (march — the §3.7 measurement) -----
