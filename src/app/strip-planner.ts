@@ -106,9 +106,11 @@ export const STRIP_FOLD_PRIOR_MS_PER_PX = 10;
  * 50ms/px the cap is 40px: the observed band enters at ~1.7s per
  * transition strip instead of the ~8.5s that killed the context at a
  * 200px cap. Crease-pixel RUNS (adjacent multi-second pixels) can still
- * exceed the cap's promise — the residual risk the settle cost gate
- * exists for (scene.ts's beginSurfaceSettle: a frame whose predicted cost
- * is hours never arms at all). */
+ * exceed the cap's promise — but the settle always arms regardless
+ * (fr-096u) and previews likewise run to completion however long that takes
+ * (fr-zx34's no-give-up verdict, progress disclosed) — the worst-case
+ * cap's job is keeping each SUBMISSION bounded while those grinds stay
+ * interruptible. */
 export const STRIP_FOLD_WORST_MS_PER_PX = 50;
 
 /** Affine/escape-class worst-case per-pixel cost (ms) for the per-strip

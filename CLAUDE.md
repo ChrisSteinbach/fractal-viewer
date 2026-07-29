@@ -343,15 +343,30 @@ and UI**, so the interesting math is unit-tested without a browser:
     settle/preview evidence stays valid, and the drain's export-scale,
     join-tax-inflated observation may only tighten that floor, never own it (a
     micro-strip capture priced at pure readback overhead would otherwise pin
-    the next settle to dissolved micro-strips). Measured
-    A/B (Iris, real driver, `?surfacegl`): lens-system settle 2.5s vs
-    main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair settle
-    0.2s, escape 45ms — at full safety caps, kernel-silent through every
-    monster run. The settle always ARMS, however expensive the frame —
+    the next settle to dissolved micro-strips). fr-24to asked for a
+    runtime-mode verdict on monster-pose previews: the floor-rung preview
+    at mandelboxKifs's entry ran past 210s/4500px, no terminal state, settle
+    never arming. A mode bail and a sub-floor rung were rejected (pose-local
+    cost, ~2x/rung against a >=50-150x gap). Two rounds of budget/prediction
+    truncation shipped, then REVERTED (fr-zx34): both clipped a completable
+    heavy-lens preview, the first a 20-map Menger-lens preview 62% done
+    with ~2.5s left. Final verdict, the user's: no automatic give-up —
+    `surfaceRenderProgress()` + the surface progress row ("Preview 43%" /
+    "Full detail 0.4%", one decimal under 10%, hidden when idle) disclose
+    honest coverage and the user decides; at true monsters the preview may
+    grind minutes, settle never arming, safely (120/120 pings, 0s stalled
+    — the bounded-strip pump, not truncation, carries safety). Save-PNG's
+    refusals gained the "Render anyway" opt-in (300s consented
+    backstop). Measured A/B (Iris, real driver, `?surfacegl`): lens-system
+    settle 2.5s vs main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair
+    settle 0.2s, escape 45ms — at full safety caps, kernel-silent through
+    every monster run. The settle always ARMS, however expensive the frame —
     bounded strips grind visibly and interruptibly (an early fr-096u cut
     gated it on predicted cost and silently blanked legitimate lens
     settles into permanent preview blur: a silent refusal reads as a
-    broken render). Fold surface sessions also
+    broken render); the same never-refuse discipline now covers the
+    preview too — it always runs to completion, with progress
+    disclosed rather than bounded. Fold surface sessions also
     gate their first frame on `compileAsync` of the fold tracer program
     (~25s links happen off the critical path where the driver offers
     `KHR_parallel_shader_compile`; the compile mesh MUST mirror
