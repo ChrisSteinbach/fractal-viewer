@@ -2991,7 +2991,24 @@ export class FractalScene {
       );
     }
     this.surfaceCompileMesh!.material = this.activeSurfaceMaterial;
+    const compileStart = performance.now();
     await this.renderer.compileAsync(this.surfaceCompileScene, this.camera);
+    if (SURFPERF) {
+      // Wall time of the driver's program compile+link — the fold variant's
+      // measured ~25s Mesa cliff, and fr-zqu8's gate metric for growing the
+      // fold source. `khr` reports whether the async path
+      // (KHR_parallel_shader_compile) was even on offer: fr-f21s's
+      // session-death lottery is sessions that come up without it and pay
+      // the link synchronously.
+      const khr = this.renderer.extensions.has("KHR_parallel_shader_compile")
+        ? 1
+        : 0;
+      console.log(
+        `[surfperf] surface compileAsync ms=${(
+          performance.now() - compileStart
+        ).toFixed(0)} khr=${String(khr)}`,
+      );
+    }
   }
 
   /**
