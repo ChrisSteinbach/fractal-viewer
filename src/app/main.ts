@@ -65,7 +65,11 @@ import { mutateSystem } from "../fractal/mutate-system";
 import { renderSystemThumb } from "./mutation-thumbs";
 import { randomSystem } from "../fractal/random-system";
 import { BOOT_CAMERA_POSITION, OrbitCamera, type CameraPose } from "./orbit";
-import { FOUR_D_SLICE_WIDTH, FractalScene } from "./scene";
+import {
+  FOUR_D_SLICE_WIDTH,
+  FractalScene,
+  SurfaceCaptureCostError,
+} from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
 import { Ui } from "./ui";
@@ -4626,17 +4630,28 @@ function main(): void {
             : state.renderMode === "flame" && flameSession.hasFirstFrame
               ? scene.captureFlameFrame()
               : scene.captureFrame(scale);
-      void capture.then((image) => {
-        if (!image) {
-          ui.flashToast("Couldn't encode the PNG");
-          return;
-        }
-        triggerDownload(image.blob, `fractal-${Date.now()}.png`);
-        // The device ceilings may have clamped the export below the chosen
-        // multiple (scene.exportPixelRatio / the flame memory clamp), so
-        // report the size that actually saved.
-        ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
-      });
+      void capture
+        .then((image) => {
+          if (!image) {
+            ui.flashToast("Couldn't encode the PNG");
+            return;
+          }
+          triggerDownload(image.blob, `fractal-${Date.now()}.png`);
+          // The device ceilings may have clamped the export below the chosen
+          // multiple (scene.exportPixelRatio / the flame memory clamp), so
+          // report the size that actually saved.
+          ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
+        })
+        .catch((err: unknown) => {
+          // The surface cost ceiling refusing a monster-pose trace
+          // (fr-id9r) carries its own user-presentable message; anything
+          // else is the generic encode failure.
+          ui.flashToast(
+            err instanceof SurfaceCaptureCostError
+              ? err.message
+              : "Couldn't encode the PNG",
+          );
+        });
     },
     onSelect: (index) => {
       state = selectTransform(state, index);

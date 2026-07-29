@@ -293,7 +293,27 @@ and UI**, so the interesting math is unit-tested without a browser:
     post-discovery strips pin at ~1px there, and evidence relaxation
     lives exactly ONE completed-preview->settle handoff (a superseded job
     = the pose moved on = stale evidence dies; a far-pose glide preview
-    once relaxed the floor under a parked monster pose). scene.ts's
+    once relaxed the floor under a parked monster pose).
+    fr-id9r closed two remaining holes in that chain: measurements now also
+    reach the ratchet through a measurement-time `observe(ms, px)` door, since
+    `next()`'s sizing-time door only hears a measurement if another strip is
+    still to be planned — a job's LAST measurement (final batch, final drain
+    strip, an escaping sync-collapse strip) never reached it, and capture
+    frames' final strips are the bottom rows, fold monsters' favorite home.
+    The pipelined refill ALSO now bounds its in-flight queue at a queue price
+    (the evidence chain on TYPICAL-cost class floors — the fold PRIOR, not
+    the fold WORST constant, which rAF-dripped a fresh fold session's first
+    preview through its queue at ~10x its real wall — raised live by the
+    job's own ratchet, capped at one `STRIP_WORST_CASE_CAP_MS` of mispredicted
+    work), so an est-lagged cost-band entry can no longer stall the main
+    thread behind seconds of queued monster pixels (was ~3s per crease pixel,
+    ~46s at parked monster poses; now ~one worst-capped strip beyond the one
+    executing). Measured, Iris Xe real driver: a 180s mandelboxKifs run now
+    completes 360/360 responsiveness pings with 0s stalled, kernel silent;
+    lens settle 0.87-1.0s; escape 48ms; boxfold settle 793ms vs 212ms at the
+    fr-096u tip — the accepted cost: the queue-priced first preview paces
+    slower pre-evidence, so its inflated evidence over-strips the settle that
+    follows (a documented residual). scene.ts's
     strip pump is PIPELINED (fr-096u's A/B verdict): every sync point on
     the Iris/ANGLE stack costs ~66-90ms REGARDLESS of the work behind it
     (`SURFACE_STRIP_SYNC_TAX_MS` — main's 3.3s lens settle was ~50 strips
@@ -310,8 +330,20 @@ and UI**, so the interesting math is unit-tested without a browser:
     pipelined cut presented behind the queue and stalled the page's own
     rAF). No-prior jobs (affine) keep the legacy sync-collapse: serial
     joined strips completing whole light jobs in one call, escaping to
-    the pipeline past `SURFACE_STRIP_SYNC_ESCAPE_MS`. Capture/offline
-    export still drains serially with forced-completion joins. Measured
+    the pipeline past `SURFACE_STRIP_SYNC_ESCAPE_MS`.
+    Capture/offline export still drains serially with forced-completion joins,
+    now under cost ceilings (fr-id9r): measured evidence predicts the frame up
+    front — never the class prior, which would refuse every fold export
+    sight unseen — and refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS`
+    (120s); the drain itself aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS`
+    (60s) of real spend; both throw `SurfaceCaptureCostError` — save-PNG
+    toasts it, the offline exporter fails the run, the thumbnail path falls
+    back to the explorer render. Capture observations raise-only into the
+    evidence chain without killing it — the pose hasn't moved, so live
+    settle/preview evidence stays valid, and the drain's export-scale,
+    join-tax-inflated observation may only tighten that floor, never own it (a
+    micro-strip capture priced at pure readback overhead would otherwise pin
+    the next settle to dissolved micro-strips). Measured
     A/B (Iris, real driver, `?surfacegl`): lens-system settle 2.5s vs
     main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair settle
     0.2s, escape 45ms — at full safety caps, kernel-silent through every
