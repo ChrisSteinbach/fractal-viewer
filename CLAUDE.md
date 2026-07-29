@@ -461,7 +461,23 @@ and UI**, so the interesting math is unit-tested without a browser:
     full-tier budget is 160 — fr-z70m: charging cheap conservative skips
     against 96 march steps starved rays that thread gaps or graze faces,
     dissolving far/threaded geometry into view-dependent dropout speckle
-    (measured + healed in `scripts/erosion-repro.harness.ts`).
+    (measured + healed in `scripts/erosion-repro.harness.ts`). The three
+    shading taps (normal/shadow/AO) ride the value form, which fold
+    systems route to `surfaceDEProbe` — a width-1 instantiation of the
+    SAME fold-descent template (fr-zqu8, fr-p8bc's verdict on the
+    fragment path; one text two names, march/hit acceptance stay width
+    12). Measured on Iris (cold cache, `scripts/shade-width-ab.mjs`,
+    `?surfshadewidth=N` A/B — N=12 disables the probe and reproduces the
+    pre-change source byte for byte): the probe CUT the fold program's
+    ~25s Mesa link 17.9x to ~1.45s — Mesa inlines the width-12 body per
+    call site; with the probe only the march still does — dissolving
+    fr-f21s's link-watchdog session-death lottery with it, settles
+    boxfold pairs 509-987ms (baseline 695-1296ms) with frames identical
+    within session noise, and resolves ~2.3x more mandelboxKifs frame
+    per equal window (crease pixels stay march-bound; compute owns fold
+    sessions where an adapter exists, fr-tzdg). The fold-lens variant
+    deliberately carries no probe (its ~79KB source sits at the
+    resolveVariantArms cliff; fr-otkf tracks the lens port).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
