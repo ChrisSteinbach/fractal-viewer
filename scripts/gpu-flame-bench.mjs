@@ -239,6 +239,23 @@ function printSurfaceSummary(surfaceDe) {
       );
     }
   }
+  // fr-55s1 stage C: leg A over the lens field class.
+  const mul = surfaceDe.marchUnprojectLens;
+  if (mul) {
+    if (mul.skipped) {
+      console.log(`  unproj-lens: skipped — ${mul.skipped}`);
+    } else {
+      console.log(
+        `  unproj-lens ${mul.system} w${mul.width} wg${mul.wg} ${mul.rasterWidth}x${mul.rasterHeight}: ` +
+          `rays=${mul.rays} statusMm=${mul.statusMismatches} boundary=${mul.boundaryFlips} ` +
+          `graze=${mul.hitTGrazes} hitTFail=${mul.hitTFailures} ` +
+          `maxAbsT=${mul.maxAbsT.toExponential(2)} ` +
+          `fail=${mul.failures} hits=${mul.gpuHits}/${mul.cpuHits}(gpu/cpu) ` +
+          `gpu=${mul.gpuMs.toFixed(0)}ms passes=${mul.passes}` +
+          (mul.truncated ? " TRUNCATED" : ""),
+      );
+    }
+  }
   // fr-tzdg leg B: the end-to-end SurfaceComputeRenderer frame.
   const cf = surfaceDe.computeFrame;
   if (cf) {
@@ -250,6 +267,21 @@ function printSurfaceSummary(surfaceDe) {
           `gpu=${cf.gpuMs.toFixed(0)}ms passes=${cf.passes} ` +
           `hit=${cf.counts.hit} miss=${cf.counts.miss} exh=${cf.counts.exhausted} ` +
           `active=${cf.counts.active}${cf.truncated ? " TRUNCATED" : ""}`,
+      );
+    }
+  }
+  // fr-55s1 stage C: leg B over the lens field class (production
+  // SurfaceComputeRenderer on lensMandelboxOverAffine).
+  const cfl = surfaceDe.computeFrameLens;
+  if (cfl) {
+    if (cfl.skipped) {
+      console.log(`  frame-lens: skipped — ${cfl.skipped}`);
+    } else {
+      console.log(
+        `  frame-lens ${cfl.width}x${cfl.height}: wall=${cfl.wallMs.toFixed(0)}ms ` +
+          `gpu=${cfl.gpuMs.toFixed(0)}ms passes=${cfl.passes} ` +
+          `hit=${cfl.counts.hit} miss=${cfl.counts.miss} exh=${cfl.counts.exhausted} ` +
+          `active=${cfl.counts.active}${cfl.truncated ? " TRUNCATED" : ""}`,
       );
     }
   }

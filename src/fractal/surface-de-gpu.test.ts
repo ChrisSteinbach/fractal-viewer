@@ -1007,10 +1007,30 @@ describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
     ).toThrow();
   });
 
-  it("core 'affine' with mode 'shade' throws — its hit-info descent lands with stage C", () => {
-    expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", core: "affine" })),
-    ).toThrow(/affine/);
+  it("core 'affine' with mode 'shade' emits the affine hit-info descent — the ladder's trajectory feeding colors only (stage C)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine" }),
+    );
+    expect(wgsl).toContain("fn surfaceDEHitInfo(");
+    // The affine hit-info is the four-chain ladder, not the fold twin's
+    // greedy chain…
+    expect(wgsl).toContain("var c3Key = 1e30;");
+    expect(wgsl).not.toContain("var lbKey = 1e30;");
+    // …and the value side is trimmed: no certificates in the shading
+    // descent (refinedCert exists in the VALUE body alongside it).
+    expect(wgsl).toContain("fn refinedCert(");
+    expect(wgsl).toContain("fn shadeRays(");
+  });
+
+  it("core 'affine' ignores shadeDeWidth — no probe descent, taps ride the full ladder (its GLSL arm carries no probe)", () => {
+    const plain = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine" }),
+    );
+    const withWidth = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", shadeDeWidth: 1 }),
+    );
+    expect(withWidth).toBe(plain);
+    expect(withWidth).not.toContain("surfaceDEProbe");
   });
 });
 
@@ -1083,10 +1103,37 @@ describe("surfaceDeKernelWgsl fold-lens wrapper (lens, fr-55s1 stage B)", () => 
     }
   });
 
-  it("lens with mode 'shade' throws — the hit-info argmin sweep and probe wrapper land with stage C", () => {
-    expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", lens: true, width: 12 })),
-    ).toThrow(/stage C/);
+  it("lens shade renames the hit-info to surfaceDEHitInfoCore behind the argmin-sweep wrapper, for BOTH cores (stage C)", () => {
+    for (const core of ["fold", "affine"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          lens: true,
+          core,
+          width: core === "fold" ? 12 : 4,
+        }),
+      );
+      expect(wgsl.split("fn surfaceDEHitInfoCore(").length).toBe(2);
+      expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+      // The wrapper's argmin sweep: zero-cutoff full-width core calls,
+      // identity-branch fallback, one core hit call on the winner.
+      expect(wgsl).toContain("surfaceDECore(q, 0.0, li)");
+      expect(wgsl).toContain("return surfaceDEHitInfoCore(bestQ, li);");
+    }
+  });
+
+  it("lens shade with a probe width renames the probe body too and hands the taps a probe lens sweep — one text, three names", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", lens: true, width: 12, shadeDeWidth: 1 }),
+    );
+    expect(wgsl.split("fn surfaceDEProbeCore(").length).toBe(2);
+    expect(wgsl.split("fn surfaceDEProbe(").length).toBe(2);
+    expect(wgsl).toContain("surfaceDEProbeCore(q, innerCutoff, li)");
+    // Without a probe width the probe sweep is absent entirely.
+    const noProbe = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", lens: true, width: 12 }),
+    );
+    expect(noProbe).not.toContain("surfaceDEProbe");
   });
 
   it("lens composes with march rays 'unproject' — the app ray derivation needs nothing lens-specific beyond the wrapper", () => {
