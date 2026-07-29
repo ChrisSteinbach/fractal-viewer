@@ -162,8 +162,12 @@ export interface SurfaceComputeFrameOptions {
    * out keep their background prefill and the frame reports `truncated`. */
   budgetMs?: number;
   /** Progressive present: called with a full-frame RGBA snapshot at most
-   * every `progressIntervalMs` while rays are still marching. */
-  onProgress?: (pixels: Uint8Array) => void;
+   * every `progressIntervalMs` while rays are still marching. `done` /
+   * `total` are ray tallies (terminal AND shaded vs the frame's rays) —
+   * the fr-tmgf disclosure hook: main.ts drives the surface progress row
+   * from them, so a compute settle reports honest coverage the way the
+   * WebGL strip path's `surfaceRenderProgress()` does. */
+  onProgress?: (pixels: Uint8Array, done: number, total: number) => void;
   progressIntervalMs?: number;
 }
 
@@ -999,7 +1003,11 @@ export class SurfaceComputeRenderer {
         return false;
       }
       lastProgress = performance.now();
-      opts.onProgress(partial);
+      opts.onProgress(
+        partial,
+        rays - active.length - shadeHitQueue.length - shadeFreeQueue.length,
+        rays,
+      );
       return true;
     };
 

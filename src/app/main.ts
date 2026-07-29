@@ -2713,6 +2713,10 @@ function main(): void {
   // pixels (the strip path re-traces per frame — affordable there only
   // because affine systems are cheap; a fold settle is not).
   let surfaceComputeForceKey: string | null = null;
+  // Fraction of the in-flight compute SETTLE's rays fully resolved
+  // (fr-tmgf: the progress row's compute-path feed — null outside a
+  // settle, so the row hides exactly like the strip path's idle state).
+  let surfaceComputeSettleProgress: number | null = null;
 
   // Preview frames carry a wall budget so a rung too heavy for this
   // device still completes (truncated — untraced rays show backdrop),
@@ -2721,15 +2725,16 @@ function main(): void {
   // before a single measurement existed and the ladder would never learn.
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
-  // Fold 3D IFS sessions only: affine systems stay on the WebGL tracer
-  // (fast there, with the refined estimator and the grid), fold-lens
-  // systems are out of the kernel's scope (packSurfaceGpuParams throws on
-  // foldFinal), and escape/4D route before this predicate is consulted.
+  // Fold 3D sessions — base-map folds OR a fold FINAL lens (fr-55s1: the
+  // kernel wraps either core in descendLens's branch sweep, so fr-zx34's
+  // lens-over-affine field class now routes here too, off the fragile
+  // fold GLSL entirely). Plain affine systems stay on the WebGL tracer
+  // (fast there, with the refined estimator and the grid), and escape/4D
+  // route before this predicate is consulted.
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       !surfaceComputeBlocked &&
-      !de.foldFinal &&
-      deHasFolds(de) &&
+      (deHasFolds(de) || de.foldFinal !== null) &&
       SurfaceComputeRenderer.supported()
     );
   }
@@ -2740,6 +2745,7 @@ function main(): void {
     surfaceComputePreviewPending = false;
     surfaceComputeSettleFlight = false;
     surfaceComputeForceKey = null;
+    surfaceComputeSettleProgress = null;
     scene.exitSurfaceComputeSession();
   }
 
@@ -2858,12 +2864,13 @@ function main(): void {
         // (resolved rays shade in, unresolved ones keep backdrop) instead
         // of parking on the last preview. An invalidation cancels via the
         // preview loop's cancel() and this resolves null.
-        onProgress: (pixels) => {
+        onProgress: (pixels, done, total) => {
           if (
             surfaceComputeRenderer === renderer &&
             state.renderMode === "surface"
           ) {
             scene.presentSurfaceComputeFrame(pixels, spec.width, spec.height);
+            surfaceComputeSettleProgress = total > 0 ? done / total : null;
           }
         },
       });
@@ -2889,6 +2896,7 @@ function main(): void {
       }
     } finally {
       surfaceComputeSettleFlight = false;
+      surfaceComputeSettleProgress = null;
     }
   }
 
@@ -5161,14 +5169,31 @@ function main(): void {
 
   /**
    * The fr-zx34 verdict's legibility affordance: honest coverage of the
-   * in-flight WebGL preview/settle strip job, so the user — not a
-   * prediction — decides whether a heavy pose is worth the wait. Called
-   * every tick of the WebGL strip path; null hides the row (instant
-   * renders and settled frames, the common case). The compute path
-   * presents progressively on its own cadence and converges in tens of
-   * seconds; wiring its pass counts into this row is a follow-up.
+   * in-flight preview/settle, so the user — not a prediction — decides
+   * whether a heavy pose is worth the wait. Called every surface tick on
+   * both paths; null hides the row (instant renders and settled frames,
+   * the common case). Compute settles feed it from onProgress ray
+   * tallies; the label's backend token (fr-tmgf) says which engine owns
+   * the session — WebGPU compute vs the WebGL tracer.
    */
   function syncSurfaceProgress(): void {
+    // The label's backend token is fr-tmgf's minimal cut: after a day of
+    // silently software-rendered sessions, "which engine is this?" must
+    // not require the console breadcrumb.
+    if (surfaceComputeRenderer !== null) {
+      // Compute sessions: the settle's onProgress ray tallies feed the
+      // row; previews finish inside their 2s budget and never surface
+      // here (the first onProgress fires after the present interval).
+      if (surfaceComputeSettleProgress === null) {
+        ui.setSurfaceProgress(null);
+        return;
+      }
+      const pctRaw = surfaceComputeSettleProgress * 100;
+      const pct =
+        pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct });
+      return;
+    }
     const progress = scene.surfaceRenderProgress();
     if (progress === null) {
       ui.setSurfaceProgress(null);
@@ -5182,7 +5207,10 @@ function main(): void {
     const pctRaw = progress.fraction * 100;
     const pct = pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
     ui.setSurfaceProgress({
-      label: progress.phase === "preview" ? "Preview" : "Full detail",
+      label:
+        progress.phase === "preview"
+          ? "Preview · WebGL"
+          : "Full detail · WebGL",
       pct,
     });
   }
@@ -5248,6 +5276,7 @@ function main(): void {
           // preview/settle choreography, presented through the shared
           // blit. The strip machinery below never arms in this mode.
           surfaceComputeTick(now, force);
+          syncSurfaceProgress();
         } else if (force) {
           scene.abandonSurfaceSettle();
           surfaceSettled = false;
