@@ -1,10 +1,13 @@
 import type * as THREE from "three";
 import {
+  buildSurfaceFragment,
   createSurfaceMaterial,
   setSurfaceSystem,
+  surfaceFragmentFor,
   SURFACE_MAX_MAPS,
+  SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
-import { buildSurfaceDE } from "../fractal/surface-de";
+import { buildSurfaceDE, SURFACE_FOLD_BEAM_WIDTH } from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import type { Vec3 } from "../fractal/types";
@@ -228,5 +231,68 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
     expect(material.defines.SURFACE_FOLD_LENS).toBe(0);
     const params = material.uniforms.uLensParams.value as THREE.Vector4;
     expect([params.x, params.y, params.z, params.w]).toEqual([0, 1, 1, 1]);
+  });
+});
+
+/** Counts non-overlapping occurrences of a literal substring. */
+function countOccurrences(source: string, needle: string): number {
+  return source.split(needle).length - 1;
+}
+
+describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
+  it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
+    const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
+    expect(surfaceFragmentFor(0, 0, source)).not.toContain("surfaceDEProbe");
+    expect(surfaceFragmentFor(0, 1, source)).not.toContain("surfaceDEProbe");
+    expect(surfaceFragmentFor(1, 0, source)).not.toContain("surfaceDEProbe");
+  });
+
+  it("compiles exactly one width-1 probe, routed as the shading taps' value form", () => {
+    const resolved = surfaceFragmentFor(0, 0, buildSurfaceFragment(1));
+    expect(
+      countOccurrences(resolved, "float surfaceDEProbe(vec3 p, float cutoff)"),
+    ).toBe(1);
+    expect(resolved).toContain("return surfaceDEProbe(p, 0.0);");
+  });
+
+  it("strips the probe body's comments and indentation, unlike the public descent body", () => {
+    const resolved = surfaceFragmentFor(0, 0, buildSurfaceFragment(1));
+    expect(resolved).toContain("\nvec3 fcQ[1];");
+    expect(resolved).toContain("vec3 fcQ[FOLD_W];");
+  });
+
+  it("never changes the escape variant's source across probe widths", () => {
+    const atWidth1 = surfaceFragmentFor(1, 0, buildSurfaceFragment(1));
+    const atBeamWidth = surfaceFragmentFor(
+      1,
+      0,
+      buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH),
+    );
+    expect(atWidth1).toBe(atBeamWidth);
+  });
+
+  it("carries no probe under the fold lens, which keeps its surfaceDECore rename", () => {
+    const resolved = surfaceFragmentFor(0, 1, buildSurfaceFragment(1));
+    expect(resolved).not.toContain("surfaceDEProbe");
+    expect(resolved).toContain("surfaceDECore");
+  });
+
+  it("adds the probe as a new name rather than another surfaceDE overload", () => {
+    const needle = "float surfaceDE(vec3 p, float cutoff) {";
+    const atWidth1 = surfaceFragmentFor(0, 0, buildSurfaceFragment(1));
+    const atBeamWidth = surfaceFragmentFor(
+      0,
+      0,
+      buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH),
+    );
+    expect(countOccurrences(atWidth1, needle)).toBe(
+      countOccurrences(atBeamWidth, needle),
+    );
+  });
+
+  it("ships width 1 by default, so the module's own fragment source carries the probe", () => {
+    expect(SURFACE_SHADE_DE_WIDTH).toBe(1);
+    const material = createSurfaceMaterial();
+    expect(material.fragmentShader).toContain("surfaceDEProbe");
   });
 });
