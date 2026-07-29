@@ -111,7 +111,419 @@ const SURFACE_VERTEX = /* glsl */ `
   }
 `;
 
-const SURFACE_FRAGMENT = /* glsl */ `
+/**
+ * Default frontier width of the fold shading-probe descent (fr-zqu8, the
+ * WebGL port of fr-p8bc's compute-twin verdict): the value-form DE the
+ * shading taps ride (normal gradient, penumbra shadow, ambient occlusion
+ * — taps LIGHT a hit the full-width march already certified, never
+ * decide geometry) runs a width-1 greedy descent instead of the FOLD_W
+ * frontier. Width 1 is the old greedy descent the oracle keeps for tests
+ * — known to overshoot, which reads as a slight lightening of
+ * deep-crease shadow/AO and which fr-p8bc measured as eyeball-identical
+ * frames at 23.8x cheaper shading on the compute twin.
+ */
+export const SURFACE_SHADE_DE_WIDTH = 1;
+
+/** `?surfshadewidth=N` (1..SURFACE_FOLD_BEAM_WIDTH) overrides the shipped
+ * probe width for A/B runs, read once at module load like scene.ts's
+ * `?surfperf`. N equal to the beam width DISABLES the probe and
+ * reproduces the pre-fr-zqu8 fragment source byte for byte — the WGSL
+ * twin's A/A discipline (equal widths emit identical source). */
+function resolveShadeDeWidth(): number {
+  if (typeof window === "undefined") return SURFACE_SHADE_DE_WIDTH;
+  const raw = new URLSearchParams(window.location.search).get("surfshadewidth");
+  if (raw === null) return SURFACE_SHADE_DE_WIDTH;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= SURFACE_FOLD_BEAM_WIDTH
+    ? n
+    : SURFACE_SHADE_DE_WIDTH;
+}
+
+/**
+ * The fold-frontier descent body (fr-5rvk through fr-kidj) as ONE template
+ * instantiated twice — fr-zqu8, mirroring surface-de-gpu.ts's
+ * surfaceDEProbe derivation: the public `surfaceDE` at width FOLD_W, plus
+ * (when the shade width differs) a `surfaceDEProbe` copy at
+ * {@link SURFACE_SHADE_DE_WIDTH}. One text, two names: the bodies cannot
+ * drift. Unlike the WGSL twin's module-scope frontier, the arrays here
+ * are function-local, so the instances share scratch names safely and
+ * only the function name and width vary.
+ */
+const foldDescentGlsl = (fnName: string, width: string): string =>
+  `  float ${fnName}(vec3 p, float cutoff) {
+    vec3 q = uFinalInvM * p + uFinalInvT;
+    float startR = length(q - uBoundCenter);
+    float sphereBound = startR - uBoundingRadius;
+    float best = 1e30;
+    // The oracle's bailBelow (fr-55r5): -1e30 disables the test.
+    float bailBelow =
+      (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
+    // The frontier (the oracle's fc* scratch): point, scale, floor and
+    // selection radius per live chain.
+    vec3 fcQ[${width}];
+    float fcScale[${width}];
+    float fcFloor[${width}];
+    float fcR[${width}];
+    int chainCount = 1;
+    fcQ[0] = q;
+    fcScale[0] = 1.0;
+    fcFloor[0] = 0.0;
+    fcR[0] = startR;
+    // Next-level kept tuples — UNSORTED, worst slot tracked by rescan
+    // (the oracle's fn* scratch; see its insertion comment — Mesa dies on
+    // the sorted insert-shift chains, one indexed write + a fixed-bound
+    // read-only scan compiles).
+    float fnKey[${width}];
+    vec3 fnQ[${width}];
+    float fnScale[${width}];
+    float fnFloor[${width}];
+    float fnR[${width}];
+    float fnCert[${width}];
+    for (int depth = 0; depth < uMaxDepth; depth++) {
+      if (chainCount == 0) {
+        break;
+      }
+      int keptCount = 0;
+      float fnWorstKey = -1e30;
+      int fnWorstIdx = 0;
+      for (int c = 0; c < chainCount; c++) {
+        float pScale = fcScale[c];
+        float pFloor = fcFloor[c];
+        vec3 sQ = fcQ[c];
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector(sQ);
+          }
+          for (int j = 0; j < uMapCount; j++) {
+            vec4 fp = uFoldParams[j];
+            int kind = int(fp.x);
+            int branchCount =
+              kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
+            float absW = fp.z / uSigmaMin[j];
+            // fr-kidj stage 2 is deliberately CPU-ONLY. The oracle's
+            // branch-and-bound skips (descendFold) are VALUE no-ops, so
+            // this mirror computes identical values without them — and
+            // every GLSL encoding tried (full dual-bound, dir-form only,
+            // uniform-array data, in-shader-derived data) pushed this
+            // variant's already-critical Mesa/Iris LINK over the browser
+            // watchdog cliff: sessions died at entry with the
+            // VALIDATE_STATUS-false/empty-log reset debris (fr-096u;
+            // stage 1 alone links and runs clean — bisected commit by
+            // commit on the real driver). The trade is measured: the
+            // width sweep shows this kernel OCCUPANCY-bound (superlinear
+            // in frontier width; ALU cuts bought ~14% at equal width), so
+            // the skip's GPU value is small, while its CPU value (grid
+            // builds, oracle consumers: 75x fewer transforms/call) is
+            // kept in full.
+            vec3 u = vec3(0.0);
+            float ru = 0.0;
+            vec3 pre0 = vec3(0.0);
+            vec3 pre1 = vec3(0.0);
+            vec3 pre2 = vec3(0.0);
+            vec3 dUp = vec3(0.0);
+            vec3 dDn = vec3(0.0);
+            vec3 v = vec3(0.0);
+            float sfSigma = 1.0;
+            float sfRd = 0.0;
+            if (kind != 0) {
+              u = sQ * fp.y;
+              if (kind == 1) {
+                pre0 = u;
+                pre1 = 2.0 - u;
+                pre2 = -2.0 - u;
+                dUp = max(u - 1.0, 0.0);
+                dDn = max(-1.0 - u, 0.0);
+              } else {
+                ru = length(u);
+              }
+            }
+            for (int b = 0; b < branchCount; b++) {
+              vec3 img;
+              float branchSigma;
+              // The candidate's floor is knowable BEFORE the child
+              // transform (fr-kidj stage 1: branchRd needs only the branch
+              // decode), so the floor-vs-best prune runs first and only
+              // surviving branches pay the inverse application — the
+              // oracle's exact order.
+              float candFloor = pFloor;
+              if (kind == 0) {
+                if (candFloor > 0.0 && candFloor >= best) {
+                  continue;
+                }
+                img = uInvM[j] * sQ + uInvT[j];
+                branchSigma = uSigmaMin[j];
+              } else {
+                float branchRd;
+                if (kind == 2 || (kind == 3 && b % 27 == 0)) {
+                  // (Re)compute the spherefold branch this b enters, with
+                  // its distance to the branch's OUTPUT region.
+                  int s = kind == 2 ? b : b / 27;
+                  if (s == 0) {
+                    v = u;
+                    sfSigma = 1.0;
+                    sfRd = max(1.0 - ru, 0.0);
+                  } else if (s == 1) {
+                    v = 0.25 * u;
+                    sfSigma = 4.0;
+                    sfRd = max(ru - 2.0, 0.0);
+                  } else {
+                    if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                      // f32 overflow guard: fold the unit-shell bound
+                      // (~pScale * |w|, never a near-zero ghost term) and
+                      // skip the branch + its box expansion.
+                      float shellCert = pScale * absW * (1.0 - ru);
+                      shellCert = max(shellCert, pFloor);
+                      if (shellCert < best) {
+                        best = shellCert;
+                        if (
+                          best <= sphereBound ||
+                          best * uFinalSigmaMin < bailBelow
+                        ) {
+                          return max(best, sphereBound) * uFinalSigmaMin;
+                        }
+                      }
+                      if (kind == 3) {
+                        b += 26;
+                      }
+                      continue;
+                    }
+                    float invR2 = 1.0 / (ru * ru);
+                    v = u * invR2;
+                    sfSigma = ru;
+                    sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  }
+                  if (kind == 3) {
+                    pre0 = v;
+                    pre1 = 2.0 - v;
+                    pre2 = -2.0 - v;
+                    dUp = max(v - 1.0, 0.0);
+                    dDn = max(-1.0 - v, 0.0);
+                  }
+                }
+                vec3 pre;
+                if (kind == 2) {
+                  pre = v;
+                  branchRd = sfRd;
+                } else {
+                  // Box branch decode: per-axis preimage selectors, x
+                  // fastest (b = selX + 3*selY + 9*selZ).
+                  int bb = kind == 1 ? b : b % 27;
+                  int selX = bb % 3;
+                  int selY = (bb / 3) % 3;
+                  int selZ = bb / 9;
+                  pre = vec3(
+                    selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
+                    selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
+                    selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
+                  );
+                  vec3 dd = vec3(
+                    selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
+                    selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
+                    selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
+                  );
+                  float boxRd = length(dd);
+                  branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
+                }
+                if (branchRd > 0.0) {
+                  candFloor = max(candFloor, pScale * absW * branchRd);
+                }
+                // Floor-vs-best prune: the subtree's every fold is >= its
+                // floor, which already cannot advance the min. Pruned
+                // branches never reach the inverse application below.
+                if (candFloor > 0.0 && candFloor >= best) {
+                  continue;
+                }
+                img = uInvM[j] * pre + uInvT[j];
+                branchSigma = fp.z * sfSigma;
+              }
+              float r = length(img - uBoundCenter);
+              float childScale = pScale * branchSigma;
+              float key = pScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > key) {
+                key = candFloor;
+              }
+              float cert = childScale * (r - uBoundingRadius);
+              if (candFloor > 0.0 && candFloor > cert) {
+                cert = candFloor;
+              }
+              // Past the escape radius deeper refinement cannot improve
+              // the min: fold the (floor-raised) certificate plain.
+              if (r > uEscapeRadius) {
+                if (cert < best) {
+                  best = cert;
+                  if (
+                    best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                  ) {
+                    return max(best, sphereBound) * uFinalSigmaMin;
+                  }
+                }
+                continue;
+              }
+              // Frontier insertion: unsorted storage, worst-slot replace
+              // (the oracle's structure, term for term). Whatever leaves
+              // the kept set folds plain: escaped tuples their
+              // (floor-raised) certificate, in-sphere tuples their floor
+              // — the drop-fold rule.
+              float evR = 0.0;
+              float evCert = 0.0;
+              float evFloor = 0.0;
+              bool evHas = false;
+              if (keptCount == ${width} && key >= fnWorstKey) {
+                evR = r;
+                evCert = cert;
+                evFloor = candFloor;
+                evHas = true;
+              } else {
+                int slot;
+                if (keptCount == ${width}) {
+                  slot = fnWorstIdx;
+                  evR = fnR[slot];
+                  evCert = fnCert[slot];
+                  evFloor = fnFloor[slot];
+                  evHas = true;
+                } else {
+                  slot = keptCount;
+                  keptCount++;
+                }
+                fnKey[slot] = key;
+                fnQ[slot] = img;
+                fnScale[slot] = childScale;
+                fnFloor[slot] = candFloor;
+                fnR[slot] = r;
+                fnCert[slot] = cert;
+                // Recompute the worst kept key once the frontier is full
+                // — a fixed-bound scan of reads, first max wins.
+                if (keptCount == ${width}) {
+                  fnWorstKey = -1e30;
+                  fnWorstIdx = 0;
+                  for (int s2 = 0; s2 < ${width}; s2++) {
+                    if (fnKey[s2] > fnWorstKey) {
+                      fnWorstKey = fnKey[s2];
+                      fnWorstIdx = s2;
+                    }
+                  }
+                }
+              }
+              if (evHas) {
+                if (evR > uBoundingRadius) {
+                  if (evCert < best) {
+                    best = evCert;
+                    if (
+                      best <= sphereBound ||
+                      best * uFinalSigmaMin < bailBelow
+                    ) {
+                      return max(best, sphereBound) * uFinalSigmaMin;
+                    }
+                  }
+                } else if (evFloor > 0.0 && evFloor < best) {
+                  best = evFloor;
+                  if (
+                    best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                  ) {
+                    return max(best, sphereBound) * uFinalSigmaMin;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      // The kept tuples become the next frontier.
+      for (int i = 0; i < keptCount; i++) {
+        fcQ[i] = fnQ[i];
+        fcScale[i] = fnScale[i];
+        fcFloor[i] = fnFloor[i];
+        fcR[i] = fnR[i];
+      }
+      chainCount = keptCount;
+    }
+    // Floor-raised KIFS terminals for every chain alive at the depth cap:
+    // a floor-0 chain is a true preimage orbit (its negative terminal is
+    // the hit signal), a strayed chain folds its certified positive floor.
+    for (int c = 0; c < chainCount; c++) {
+      float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+      if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
+        terminal = fcFloor[c];
+      }
+      best = min(best, terminal);
+    }
+    return max(best, sphereBound) * uFinalSigmaMin;
+  }`;
+
+/** Strip `//` comments, blank lines and indentation (GLSL has no string
+ * literals to confuse this, and the probe body carries no preprocessor
+ * directives that would need column 0 to themselves). The probe instance
+ * ships stripped because fragment SOURCE SIZE is what Mesa's fold link
+ * prices (see resolveVariantArms: ~68KB links in ~25s, ~80KB crashed) —
+ * the public instance keeps its commentary and its exact shipped bytes. */
+const stripGlslComments = (glsl: string): string =>
+  glsl
+    .split("\n")
+    .map((line) => {
+      const ix = line.indexOf("//");
+      return (ix === -1 ? line : line.slice(0, ix)).trim();
+    })
+    .filter((line) => line.length > 0)
+    .join("\n");
+
+/** The probe instance (fr-zqu8), emitted only when the width differs from
+ * the beam's and only into the NON-lens source: the lens variant's source
+ * already sits at the Mesa cliff (~79KB where ~80KB crashed — see
+ * resolveVariantArms), its taps keep full-width cores through the public
+ * wrapper, and fr-p8bc's compute verdict never covered lenses (the twin
+ * renders no foldFinal systems). Comments are stripped for the same
+ * reason the lens arm is excluded: source size. */
+const foldProbeGlsl = (shadeDeWidth: number): string =>
+  shadeDeWidth === SURFACE_FOLD_BEAM_WIDTH
+    ? ""
+    : `
+#if SURFACE_FOLD_LENS
+#else
+${stripGlslComments(foldDescentGlsl("surfaceDEProbe", String(shadeDeWidth)))}
+#endif`;
+
+/** The value form the shading taps call, routed per fr-zqu8 (probe under
+ * SURFACE_FOLDS, full descent elsewhere) — or the pre-fr-zqu8 text
+ * verbatim when the probe is disabled. */
+const foldValueFormGlsl = (shadeDeWidth: number): string =>
+  shadeDeWidth === SURFACE_FOLD_BEAM_WIDTH
+    ? `  /** Value form: the full descent, no early-out — every caller that needs
+   * the DISTANCE rather than a hit decision (normal taps, shadow rays,
+   * occlusion probes) goes through here, exactly as they pass the oracle
+   * its default cutoff of 0. */
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }`
+    : `  /** Value form: what the shading taps call — normal gradient, penumbra
+   * shadow and occlusion probes; the march and hit acceptance use the
+   * cutoff overload and stay full-width. Fold systems route it to the
+   * width-${String(shadeDeWidth)} shading-probe descent (fr-zqu8;
+   * fr-p8bc's measured verdict). The affine ladder keeps the full
+   * descent, and under the fold lens the public wrapper below owns the
+   * taps with full-width cores — see foldProbeGlsl for why the lens
+   * variant carries no probe. */
+  float surfaceDE(vec3 p) {
+#if SURFACE_FOLD_LENS
+    return surfaceDE(p, 0.0);
+#else
+#if SURFACE_FOLDS
+    return surfaceDEProbe(p, 0.0);
+#else
+    return surfaceDE(p, 0.0);
+#endif
+#endif
+  }`;
+
+/**
+ * Assemble the fragment source for one shading-probe width (fr-zqu8):
+ * `SURFACE_FOLD_BEAM_WIDTH` disables the probe and reproduces the
+ * pre-fr-zqu8 source byte for byte. Exported for tests; the module ships
+ * exactly one build (SURFACE_FRAGMENT below).
+ */
+export function buildSurfaceFragment(shadeDeWidth: number): string {
+  return /* glsl */ `
   precision highp float;
   precision highp sampler3D;
 
@@ -532,307 +944,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
 #endif
 
 #if SURFACE_FOLDS
-  float surfaceDE(vec3 p, float cutoff) {
-    vec3 q = uFinalInvM * p + uFinalInvT;
-    float startR = length(q - uBoundCenter);
-    float sphereBound = startR - uBoundingRadius;
-    float best = 1e30;
-    // The oracle's bailBelow (fr-55r5): -1e30 disables the test.
-    float bailBelow =
-      (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
-    // The frontier (the oracle's fc* scratch): point, scale, floor and
-    // selection radius per live chain.
-    vec3 fcQ[FOLD_W];
-    float fcScale[FOLD_W];
-    float fcFloor[FOLD_W];
-    float fcR[FOLD_W];
-    int chainCount = 1;
-    fcQ[0] = q;
-    fcScale[0] = 1.0;
-    fcFloor[0] = 0.0;
-    fcR[0] = startR;
-    // Next-level kept tuples — UNSORTED, worst slot tracked by rescan
-    // (the oracle's fn* scratch; see its insertion comment — Mesa dies on
-    // the sorted insert-shift chains, one indexed write + a fixed-bound
-    // read-only scan compiles).
-    float fnKey[FOLD_W];
-    vec3 fnQ[FOLD_W];
-    float fnScale[FOLD_W];
-    float fnFloor[FOLD_W];
-    float fnR[FOLD_W];
-    float fnCert[FOLD_W];
-    for (int depth = 0; depth < uMaxDepth; depth++) {
-      if (chainCount == 0) {
-        break;
-      }
-      int keptCount = 0;
-      float fnWorstKey = -1e30;
-      int fnWorstIdx = 0;
-      for (int c = 0; c < chainCount; c++) {
-        float pScale = fcScale[c];
-        float pFloor = fcFloor[c];
-        vec3 sQ = fcQ[c];
-        for (int k = 0; k < uSymOrder; k++) {
-          if (k > 0) {
-            sQ = stepSector(sQ);
-          }
-          for (int j = 0; j < uMapCount; j++) {
-            vec4 fp = uFoldParams[j];
-            int kind = int(fp.x);
-            int branchCount =
-              kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
-            float absW = fp.z / uSigmaMin[j];
-            // fr-kidj stage 2 is deliberately CPU-ONLY. The oracle's
-            // branch-and-bound skips (descendFold) are VALUE no-ops, so
-            // this mirror computes identical values without them — and
-            // every GLSL encoding tried (full dual-bound, dir-form only,
-            // uniform-array data, in-shader-derived data) pushed this
-            // variant's already-critical Mesa/Iris LINK over the browser
-            // watchdog cliff: sessions died at entry with the
-            // VALIDATE_STATUS-false/empty-log reset debris (fr-096u;
-            // stage 1 alone links and runs clean — bisected commit by
-            // commit on the real driver). The trade is measured: the
-            // width sweep shows this kernel OCCUPANCY-bound (superlinear
-            // in frontier width; ALU cuts bought ~14% at equal width), so
-            // the skip's GPU value is small, while its CPU value (grid
-            // builds, oracle consumers: 75x fewer transforms/call) is
-            // kept in full.
-            vec3 u = vec3(0.0);
-            float ru = 0.0;
-            vec3 pre0 = vec3(0.0);
-            vec3 pre1 = vec3(0.0);
-            vec3 pre2 = vec3(0.0);
-            vec3 dUp = vec3(0.0);
-            vec3 dDn = vec3(0.0);
-            vec3 v = vec3(0.0);
-            float sfSigma = 1.0;
-            float sfRd = 0.0;
-            if (kind != 0) {
-              u = sQ * fp.y;
-              if (kind == 1) {
-                pre0 = u;
-                pre1 = 2.0 - u;
-                pre2 = -2.0 - u;
-                dUp = max(u - 1.0, 0.0);
-                dDn = max(-1.0 - u, 0.0);
-              } else {
-                ru = length(u);
-              }
-            }
-            for (int b = 0; b < branchCount; b++) {
-              vec3 img;
-              float branchSigma;
-              // The candidate's floor is knowable BEFORE the child
-              // transform (fr-kidj stage 1: branchRd needs only the branch
-              // decode), so the floor-vs-best prune runs first and only
-              // surviving branches pay the inverse application — the
-              // oracle's exact order.
-              float candFloor = pFloor;
-              if (kind == 0) {
-                if (candFloor > 0.0 && candFloor >= best) {
-                  continue;
-                }
-                img = uInvM[j] * sQ + uInvT[j];
-                branchSigma = uSigmaMin[j];
-              } else {
-                float branchRd;
-                if (kind == 2 || (kind == 3 && b % 27 == 0)) {
-                  // (Re)compute the spherefold branch this b enters, with
-                  // its distance to the branch's OUTPUT region.
-                  int s = kind == 2 ? b : b / 27;
-                  if (s == 0) {
-                    v = u;
-                    sfSigma = 1.0;
-                    sfRd = max(1.0 - ru, 0.0);
-                  } else if (s == 1) {
-                    v = 0.25 * u;
-                    sfSigma = 4.0;
-                    sfRd = max(ru - 2.0, 0.0);
-                  } else {
-                    if (ru < ${SPHEREFOLD_MID_MIN_R}) {
-                      // f32 overflow guard: fold the unit-shell bound
-                      // (~pScale * |w|, never a near-zero ghost term) and
-                      // skip the branch + its box expansion.
-                      float shellCert = pScale * absW * (1.0 - ru);
-                      shellCert = max(shellCert, pFloor);
-                      if (shellCert < best) {
-                        best = shellCert;
-                        if (
-                          best <= sphereBound ||
-                          best * uFinalSigmaMin < bailBelow
-                        ) {
-                          return max(best, sphereBound) * uFinalSigmaMin;
-                        }
-                      }
-                      if (kind == 3) {
-                        b += 26;
-                      }
-                      continue;
-                    }
-                    float invR2 = 1.0 / (ru * ru);
-                    v = u * invR2;
-                    sfSigma = ru;
-                    sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
-                  }
-                  if (kind == 3) {
-                    pre0 = v;
-                    pre1 = 2.0 - v;
-                    pre2 = -2.0 - v;
-                    dUp = max(v - 1.0, 0.0);
-                    dDn = max(-1.0 - v, 0.0);
-                  }
-                }
-                vec3 pre;
-                if (kind == 2) {
-                  pre = v;
-                  branchRd = sfRd;
-                } else {
-                  // Box branch decode: per-axis preimage selectors, x
-                  // fastest (b = selX + 3*selY + 9*selZ).
-                  int bb = kind == 1 ? b : b % 27;
-                  int selX = bb % 3;
-                  int selY = (bb / 3) % 3;
-                  int selZ = bb / 9;
-                  pre = vec3(
-                    selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),
-                    selY == 0 ? pre0.y : (selY == 1 ? pre1.y : pre2.y),
-                    selZ == 0 ? pre0.z : (selZ == 1 ? pre1.z : pre2.z)
-                  );
-                  vec3 dd = vec3(
-                    selX == 0 ? max(dUp.x, dDn.x) : (selX == 1 ? dUp.x : dDn.x),
-                    selY == 0 ? max(dUp.y, dDn.y) : (selY == 1 ? dUp.y : dDn.y),
-                    selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)
-                  );
-                  float boxRd = length(dd);
-                  branchRd = kind == 1 ? boxRd : max(sfRd, sfSigma * boxRd);
-                }
-                if (branchRd > 0.0) {
-                  candFloor = max(candFloor, pScale * absW * branchRd);
-                }
-                // Floor-vs-best prune: the subtree's every fold is >= its
-                // floor, which already cannot advance the min. Pruned
-                // branches never reach the inverse application below.
-                if (candFloor > 0.0 && candFloor >= best) {
-                  continue;
-                }
-                img = uInvM[j] * pre + uInvT[j];
-                branchSigma = fp.z * sfSigma;
-              }
-              float r = length(img - uBoundCenter);
-              float childScale = pScale * branchSigma;
-              float key = pScale * (r - uBoundingRadius);
-              if (candFloor > 0.0 && candFloor > key) {
-                key = candFloor;
-              }
-              float cert = childScale * (r - uBoundingRadius);
-              if (candFloor > 0.0 && candFloor > cert) {
-                cert = candFloor;
-              }
-              // Past the escape radius deeper refinement cannot improve
-              // the min: fold the (floor-raised) certificate plain.
-              if (r > uEscapeRadius) {
-                if (cert < best) {
-                  best = cert;
-                  if (
-                    best <= sphereBound ||
-                    best * uFinalSigmaMin < bailBelow
-                  ) {
-                    return max(best, sphereBound) * uFinalSigmaMin;
-                  }
-                }
-                continue;
-              }
-              // Frontier insertion: unsorted storage, worst-slot replace
-              // (the oracle's structure, term for term). Whatever leaves
-              // the kept set folds plain: escaped tuples their
-              // (floor-raised) certificate, in-sphere tuples their floor
-              // — the drop-fold rule.
-              float evR = 0.0;
-              float evCert = 0.0;
-              float evFloor = 0.0;
-              bool evHas = false;
-              if (keptCount == FOLD_W && key >= fnWorstKey) {
-                evR = r;
-                evCert = cert;
-                evFloor = candFloor;
-                evHas = true;
-              } else {
-                int slot;
-                if (keptCount == FOLD_W) {
-                  slot = fnWorstIdx;
-                  evR = fnR[slot];
-                  evCert = fnCert[slot];
-                  evFloor = fnFloor[slot];
-                  evHas = true;
-                } else {
-                  slot = keptCount;
-                  keptCount++;
-                }
-                fnKey[slot] = key;
-                fnQ[slot] = img;
-                fnScale[slot] = childScale;
-                fnFloor[slot] = candFloor;
-                fnR[slot] = r;
-                fnCert[slot] = cert;
-                // Recompute the worst kept key once the frontier is full
-                // — a fixed-bound scan of reads, first max wins.
-                if (keptCount == FOLD_W) {
-                  fnWorstKey = -1e30;
-                  fnWorstIdx = 0;
-                  for (int s2 = 0; s2 < FOLD_W; s2++) {
-                    if (fnKey[s2] > fnWorstKey) {
-                      fnWorstKey = fnKey[s2];
-                      fnWorstIdx = s2;
-                    }
-                  }
-                }
-              }
-              if (evHas) {
-                if (evR > uBoundingRadius) {
-                  if (evCert < best) {
-                    best = evCert;
-                    if (
-                      best <= sphereBound ||
-                      best * uFinalSigmaMin < bailBelow
-                    ) {
-                      return max(best, sphereBound) * uFinalSigmaMin;
-                    }
-                  }
-                } else if (evFloor > 0.0 && evFloor < best) {
-                  best = evFloor;
-                  if (
-                    best <= sphereBound ||
-                    best * uFinalSigmaMin < bailBelow
-                  ) {
-                    return max(best, sphereBound) * uFinalSigmaMin;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      // The kept tuples become the next frontier.
-      for (int i = 0; i < keptCount; i++) {
-        fcQ[i] = fnQ[i];
-        fcScale[i] = fnScale[i];
-        fcFloor[i] = fnFloor[i];
-        fcR[i] = fnR[i];
-      }
-      chainCount = keptCount;
-    }
-    // Floor-raised KIFS terminals for every chain alive at the depth cap:
-    // a floor-0 chain is a true preimage orbit (its negative terminal is
-    // the hit signal), a strayed chain folds its certified positive floor.
-    for (int c = 0; c < chainCount; c++) {
-      float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
-      if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
-        terminal = fcFloor[c];
-      }
-      best = min(best, terminal);
-    }
-    return max(best, sphereBound) * uFinalSigmaMin;
-  }
+${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
 #else
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = uFinalInvM * p + uFinalInvT;
@@ -1146,13 +1258,7 @@ const SURFACE_FRAGMENT = /* glsl */ `
   }
 #endif
 
-  /** Value form: the full descent, no early-out — every caller that needs
-   * the DISTANCE rather than a hit decision (normal taps, shadow rays,
-   * occlusion probes) goes through here, exactly as they pass the oracle
-   * its default cutoff of 0. */
-  float surfaceDE(vec3 p) {
-    return surfaceDE(p, 0.0);
-  }
+${foldValueFormGlsl(shadeDeWidth)}
 
   /**
    * Hit-shading variant: the SAME refined beam descent as the plain
@@ -2140,6 +2246,11 @@ const SURFACE_FRAGMENT = /* glsl */ `
     outColor = vec4(col, 1.0);
   }
 `;
+}
+
+/** The one shipped fragment source, at the module-load-resolved probe
+ * width. */
+const SURFACE_FRAGMENT = buildSurfaceFragment(resolveShadeDeWidth());
 
 /**
  * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
@@ -2598,9 +2709,15 @@ function resolveVariantArms(
 }
 
 /** Compose the fragment source for a variant selection — the driver only
- * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). */
-function surfaceFragmentFor(escape: number, lens: number): string {
-  return resolveVariantArms(SURFACE_FRAGMENT, {
+ * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `source`
+ * defaults to the module's assembled fragment; tests pass their own
+ * width-parameterized builds (fr-zqu8). */
+export function surfaceFragmentFor(
+  escape: number,
+  lens: number,
+  source: string = SURFACE_FRAGMENT,
+): string {
+  return resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
     SURFACE_FOLD_LENS: lens,
   });
