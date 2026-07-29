@@ -377,9 +377,8 @@ boxfold-pair settles 509-987ms vs baseline 695-1296ms with settled frames
 identical within session noise; mandelboxKifs's parked entry pose stays
 unconverged-in-minutes in BOTH arms (its crease pixels are march-bound on
 the fragment path — the width-12 march the probe deliberately leaves
-untouched), but equal 210s windows resolve ~2.3x more of the frame at width
-
-1. The fold-lens variant deliberately carries no probe: its ~79KB source
-   sits at the resolveVariantArms-measured cliff, though the inlining
-   discovery suggests a lens probe might SHRINK its link too — an open
-   follow-up, not a shipped claim.
+untouched), but equal 210s windows resolve ~2.3x more of the frame at
+width 1 (the shipped width). The fold-lens variant deliberately carries
+no probe: its ~79KB source sits at the resolveVariantArms-measured
+cliff, though the inlining discovery suggests a lens probe might SHRINK
+its link too — an open follow-up, not a shipped claim.
