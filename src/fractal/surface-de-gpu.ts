@@ -52,6 +52,34 @@ import type { Vec3 } from "./types";
  * rather than shading through the wrong descent. Only the eval leg is
  * bench-pinned this stage.
  *
+ * THE FOLD-LENS WRAPPER (`lens`, fr-55s1 stage B) lifts `descendLens` —
+ * the CPU route for `foldFinal` systems (fr-g58b) — over EITHER core.
+ * The chosen descent body is emitted with its declaration token-renamed
+ * `fn surfaceDE(` → `fn surfaceDECore(` — {@link renameToProbe}'s
+ * mechanism playing `surface-material.ts`'s `#define surfaceDE
+ * surfaceDECore` move; neither body calls itself, so the declaration
+ * site is the whole rename — and a new `surfaceDE` wrapper emitted
+ * after it owns the public signature, so the mode entries' call sites
+ * stay textually untouched. The wrapper enumerates the lens fold's
+ * inverse branches (27 boxfold / 3 spherefold / 81 mandelbox — kind and
+ * count are RUNTIME uniform reads, like the fold body's per-map kind
+ * switch: one pipeline per session, the GLSL variant's shape) and seeds
+ * one core descent per surviving branch; the region-floor prune, sphere-
+ * certificate prune, visible-sphere pin, spherefold shell guard (with
+ * the mandelbox `b += 26` box-expansion skip) and the
+ * `min(best, cutoff) / factor` inner-cutoff contract are the oracle's,
+ * value-exact, term for term — `SURFACE_FOLD_LENS`'s GLSL sweep is the
+ * f32 formulation reference. The cores run their no-lens path verbatim:
+ * `de.final` is null whenever `de.foldFinal` is set, so the packer's
+ * identity-final fallback and `finalSigmaMin` 1 hold automatically, and
+ * the REAL lens rides the appended params block below. Which core a
+ * lens system wraps follows its BASE maps (`deHasFolds`), exactly the
+ * CPU's inner routing — lens-over-affine mirrors
+ * {@link estimateDistanceRefined} and lens-over-fold mirrors
+ * {@link estimateDistance}, each still "the estimator the GLSL marches"
+ * for its class. `lens: false` (and absent) generates byte-identical
+ * source to the pre-lens generator for every config.
+ *
  * TWO FRONTIER VARIANTS, selected at source-generation time so the bench
  * can A/B them with everything else held equal:
  *
@@ -137,9 +165,13 @@ import type { Vec3 } from "./types";
  * exists to pin against.
  *
  * Scope: BASE fold/affine maps + kaleidoscope sector sweep + affine
- * final lens. `foldFinal` lenses (descendLens) and the refined estimator
- * remain out of scope — {@link packSurfaceGpuParams} throws on
- * `foldFinal`. Modes "eval" and "march" (rays "pose") are the fr-q1f8
+ * final lens; and, since fr-55s1 stage B, the FOLD final lens — `lens:
+ * true` wraps either core in `descendLens`'s branch sweep (THE
+ * FOLD-LENS WRAPPER above), with the lens fields appended to the params
+ * uniform. Footprint under a lens stays out ({@link
+ * packSurfaceGpuParams} throws — the app path always passes 0), as does
+ * shade mode under either lens or the affine core (hit-info bodies land
+ * with stage C). Modes "eval" and "march" (rays "pose") are the fr-q1f8
  * bench baselines (`src/app/gpu-bench/` pins them) and their generated
  * source is unchanged by the shade split; march rays "unproject" plus
  * mode "shade" are the GLSL tracer's mirror halves for the app
@@ -147,7 +179,7 @@ import type { Vec3 } from "./types";
  *
  * BYTE LAYOUT CONTRACT (pinned by surface-de-gpu.test.ts):
  *
- * Params uniform — {@link SURFACE_GPU_PARAMS_BYTES} = 208 bytes:
+ * Params uniform — {@link SURFACE_GPU_PARAMS_BYTES} = 272 bytes:
  *   offset  0  vec3f boundCenter          12  f32 boundingRadius
  *          16  f32  escapeRadius          20  f32 stepScale
  *          24  f32  visibleRadius         28  f32 slowestSigma
@@ -166,6 +198,15 @@ import type { Vec3 } from "./types";
  *         160  vec3f right               172  f32 tanHalf
  *         176  vec3f up                  188  f32 aspect
  *         192  vec3f fwd                 204  f32 (pad)
+ *         208  vec3f lensM row0          220  f32 lensT.x
+ *         224  vec3f lensM row1          236  f32 lensT.y
+ *         240  vec3f lensM row2          252  f32 lensT.z
+ *         256  vec4f lensParams — (foldKind as f32, invW, absW,
+ *              sigmaMin), the GLSL `uLensParams` order. The whole
+ *              208..271 block is zeros without a `foldFinal`, and the
+ *              no-lens kernels' Params struct still ends at 208 —
+ *              binding the larger buffer is valid, a struct never reads
+ *              past its own size (fr-55s1 stage B).
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -218,7 +259,7 @@ import type { Vec3 } from "./types";
  * stay free of `src/app/` imports. */
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
-export const SURFACE_GPU_PARAMS_BYTES = 208;
+export const SURFACE_GPU_PARAMS_BYTES = 272;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
@@ -247,6 +288,16 @@ export interface SurfaceGpuKernelOptions {
    * `sharedFrontier` and `bnbStage2` options are all inert, and mode
    * "shade" throws (its hit-info body is stage C). */
   core?: "fold" | "affine";
+  /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
+   * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
+   * is renamed `surfaceDECore` and a new `surfaceDE` sweeps the lens's
+   * inverse fold branches around it, each an affine-lensed core descent
+   * — so the mode entries' call sites are untouched text. Absent or
+   * false reproduces the no-lens source byte for byte. Branch kind and
+   * count are RUNTIME params (one pipeline per session, GLSL parity).
+   * Mode "shade" throws under the lens until stage C lands its hit-info
+   * argmin + probe wrapper. */
+  lens?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -341,16 +392,34 @@ function writeVec3(view: DataView, offset: number, v: Vec3): void {
 }
 
 /**
- * Pack the params uniform for one dispatch. Throws on `foldFinal` systems
- * (the fold-lens wrapper is out of spike scope); an absent affine final
- * lens packs as the identity, exactly like `setSurfaceSystem`.
+ * Pack the params uniform for one dispatch. An absent affine final lens
+ * packs as the identity, exactly like `setSurfaceSystem`; a `foldFinal`
+ * lens fills the 208..271 block (fr-55s1 stage B) — and the cores' own
+ * final slots still pack IDENTITY/1, because `buildSurfaceDE` keeps
+ * `final` null whenever `foldFinal` is set: the cores run their no-lens
+ * path verbatim and the wrapper alone applies the lens. Throws when a
+ * footprint is combined with the lens: `descendLens` scales the
+ * footprint per branch (`footprint / factor`), which would need a core
+ * signature change — out of the fr-55s1 cut, and the app path always
+ * passes footprint 0 (GLSL parity).
  */
 export function packSurfaceGpuParams(
   de: SurfaceDE,
   run: SurfaceGpuRunParams,
 ): ArrayBuffer {
-  if (de.foldFinal) {
-    throw new Error("surface-de-gpu: foldFinal lens systems are out of scope");
+  if (de.foldFinal && de.final) {
+    // buildSurfaceDE's invariant (surface-de.ts, `final` doc): the two
+    // lens shapes are mutually exclusive, and the identity-final packing
+    // below leans on it. Only a hand-built SurfaceDE can get here — loud
+    // beats packing a shape no oracle or shader was ever pinned on.
+    throw new Error("surface-de-gpu: foldFinal and final are exclusive");
+  }
+  if (de.foldFinal && (run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: footprint under a foldFinal lens is out of the " +
+        "fr-55s1 cut (per-branch innerFootprint needs a core signature " +
+        "change; the app path always passes 0)",
+    );
   }
   const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_BYTES);
   const view = new DataView(buf);
@@ -401,6 +470,24 @@ export function packSurfaceGpuParams(
   view.setFloat32(188, pose?.aspect ?? 1, true);
   writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
   view.setFloat32(204, 0, true);
+  // fr-55s1 stage B: the fold-lens block (zeros when no foldFinal — the
+  // no-lens kernel's struct ends at 208 and never reads past it). Same
+  // vec3f+f32 interleave as the finalM rows above; the tail vec4f is the
+  // GLSL `uLensParams` order (kind, invW, absW, sigmaMin), so the
+  // wrapper reads like its mirror line for line.
+  const lens = de.foldFinal;
+  if (lens) {
+    writeVec3(view, 208, [lens.invM[0], lens.invM[1], lens.invM[2]]);
+    view.setFloat32(220, lens.invT[0], true);
+    writeVec3(view, 224, [lens.invM[3], lens.invM[4], lens.invM[5]]);
+    view.setFloat32(236, lens.invT[1], true);
+    writeVec3(view, 240, [lens.invM[6], lens.invM[7], lens.invM[8]]);
+    view.setFloat32(252, lens.invT[2], true);
+    view.setFloat32(256, lens.foldKind, true);
+    view.setFloat32(260, lens.invW, true);
+    view.setFloat32(264, lens.absW, true);
+    view.setFloat32(268, lens.sigmaMin, true);
+  }
   return buf;
 }
 
@@ -515,6 +602,16 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     throw new Error(
       'surface-de-gpu: core "affine" has no shade body yet — its hit-info ' +
         "descent lands with fr-55s1 stage C",
+    );
+  }
+  // fr-55s1 stage B: absent means no lens, so every no-lens config
+  // generates byte-identical source.
+  const lens = opts.lens ?? false;
+  if (lens && mode === "shade") {
+    throw new Error(
+      "surface-de-gpu: the fold-lens wrapper has no shade support yet — " +
+        "its hit-info argmin sweep and probe wrapper land with fr-55s1 " +
+        "stage C",
     );
   }
   if (!Number.isInteger(width) || width < 1) {
@@ -1208,7 +1305,18 @@ struct Params {
   up: vec3f,
   aspect: f32,
   fwd: vec3f,
-  pad1: f32,
+  pad1: f32,${
+    lens
+      ? /* wgsl */ `
+  lensM0: vec3f,
+  lensT0: f32,
+  lensM1: vec3f,
+  lensT1: f32,
+  lensM2: vec3f,
+  lensT2: f32,
+  lensParams: vec4f,`
+      : ""
+  }
 }
 
 struct GpuMap {
@@ -1947,9 +2055,192 @@ ${affineDescentText}`
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
 
+  // The FOLD FINAL lens (fr-55s1 stage B): `descendLens` (surface-de.ts)
+  // one level up — exactly the GLSL SURFACE_FOLD_LENS move
+  // (surface-material.ts's `#define surfaceDE surfaceDECore`) in this
+  // generator's own token-rename idiom: the descent body keeps its text
+  // under the name `surfaceDECore`, the wrapper owns the public
+  // `surfaceDE`, and the mode entries' call sites never change. The
+  // wrapper enumerates the lens's inverse fold branches — kind and count
+  // from the params uniform, like the fold body's per-map kind switch
+  // (one pipeline per session, GLSL parity) — and seeds one core descent
+  // per surviving branch. Every prune is the oracle's, value-exact: the
+  // region floor, the scaled sphere certificate, the visible-sphere pin,
+  // the fr-55r5 cutoff exits (inner descents get `min(best, cutoff) /
+  // factor`, so inexact inner exits stay under the caller's cutoff), and
+  // the spherefold mid-branch shell guard with the mandelbox `b += 26u`
+  // box-expansion skip. The cores' own final slots are packed IDENTITY/1
+  // under the lens ({@link packSurfaceGpuParams}), so they run their
+  // no-lens path verbatim; `params.footprint` is 0 by the same packing
+  // contract, keeping the cores' depth cap inert exactly like the CPU's
+  // `innerFootprint = 0`.
+  const lensWrapText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let visBound = length(pIn) - params.visibleRadius;
+  let kind = u32(params.lensParams.x);
+  let absW = params.lensParams.z;
+  let u = pIn * params.lensParams.y;
+  var best = 1e30;
+  var ru = 0.0;
+  var pre0 = vec3f(0.0);
+  var pre1 = vec3f(0.0);
+  var pre2 = vec3f(0.0);
+  var dUp = vec3f(0.0);
+  var dDn = vec3f(0.0);
+  var v = vec3f(0.0);
+  var sfSigma = 1.0;
+  var sfRd = 0.0;
+  if (kind == 1u) {
+    pre0 = u;
+    pre1 = 2.0 - u;
+    pre2 = -2.0 - u;
+    dUp = max(u - 1.0, vec3f(0.0));
+    dDn = max(-1.0 - u, vec3f(0.0));
+  } else {
+    ru = length(u);
+  }
+  var branchCount = 81u;
+  if (kind == 1u) {
+    branchCount = 27u;
+  } else if (kind == 2u) {
+    branchCount = 3u;
+  }
+  for (var b = 0u; b < branchCount; b++) {
+    if (kind == 2u || (kind == 3u && (b % 27u) == 0u)) {
+      var s = b;
+      if (kind == 3u) {
+        s = b / 27u;
+      }
+      if (s == 0u) {
+        v = u;
+        sfSigma = 1.0;
+        sfRd = max(1.0 - ru, 0.0);
+      } else if (s == 1u) {
+        v = 0.25 * u;
+        sfSigma = 4.0;
+        sfRd = max(ru - 2.0, 0.0);
+      } else {
+        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          // Shell guard (the oracle's): fold the settled shell bound,
+          // skip the branch + its box expansion.
+          let shellCert = absW * (1.0 - ru);
+          if (shellCert < best) {
+            best = shellCert;
+            if (best <= visBound) {
+              return visBound;
+            }
+            if (cutoff > 0.0 && best < cutoff) {
+              return max(best, visBound);
+            }
+          }
+          if (kind == 3u) {
+            b += 26u;
+          }
+          continue;
+        }
+        let invR2 = 1.0 / (ru * ru);
+        v = u * invR2;
+        sfSigma = ru;
+        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+      }
+      if (kind == 3u) {
+        pre0 = v;
+        pre1 = 2.0 - v;
+        pre2 = -2.0 - v;
+        dUp = max(v - 1.0, vec3f(0.0));
+        dDn = max(-1.0 - v, vec3f(0.0));
+      }
+    }
+    var pre: vec3f;
+    var branchRd: f32;
+    if (kind == 2u) {
+      pre = v;
+      branchRd = sfRd;
+    } else {
+      // Box branch decode: per-axis preimage selectors, x fastest
+      // (b = selX + 3*selY + 9*selZ).
+      var bb = b;
+      if (kind == 3u) {
+        bb = b % 27u;
+      }
+      let selX = bb % 3u;
+      let selY = (bb / 3u) % 3u;
+      let selZ = bb / 9u;
+      pre = vec3f(
+        select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+        select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+        select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+      );
+      let dd = vec3f(
+        select(
+          select(dDn.x, dUp.x, selX == 1u),
+          max(dUp.x, dDn.x),
+          selX == 0u,
+        ),
+        select(
+          select(dDn.y, dUp.y, selY == 1u),
+          max(dUp.y, dDn.y),
+          selY == 0u,
+        ),
+        select(
+          select(dDn.z, dUp.z, selZ == 1u),
+          max(dUp.z, dDn.z),
+          selZ == 0u,
+        ),
+      );
+      let boxRd = length(dd);
+      if (kind == 1u) {
+        branchRd = boxRd;
+      } else {
+        branchRd = max(sfRd, sfSigma * boxRd);
+      }
+    }
+    let flr = absW * branchRd;
+    if (flr > 0.0 && flr >= best) {
+      continue;
+    }
+    let q = vec3f(
+      dot(params.lensM0, pre) + params.lensT0,
+      dot(params.lensM1, pre) + params.lensT1,
+      dot(params.lensM2, pre) + params.lensT2,
+    );
+    let factor = absW * sfSigma * params.lensParams.w;
+    let rq = length(q - params.boundCenter);
+    // The core never undercuts its own depth-0 sphere bound, so a branch
+    // whose scaled sphere certificate reaches the running min cannot
+    // advance it — an exact skip.
+    if (factor * (rq - params.boundingRadius) >= best) {
+      continue;
+    }
+    var innerCutoff = 0.0;
+    if (cutoff > 0.0) {
+      innerCutoff = min(best, cutoff) / factor;
+    }
+    var term = factor * surfaceDECore(q, innerCutoff, li);
+    term = max(term, flr);
+    if (term < best) {
+      best = term;
+      if (best <= visBound) {
+        return visBound;
+      }
+      if (cutoff > 0.0 && best < cutoff) {
+        return max(best, visBound);
+      }
+    }
+  }
+  return max(best, visBound);
+}`;
+
+  const bodyBlock = lens
+    ? `${descentBlock.replace("fn surfaceDE(", "fn surfaceDECore(")}
+
+// descendLens (surface-de.ts) — the fold FINAL lens's branch sweep
+// around the untouched core (fr-g58b's vocabulary, fr-55s1 stage B).
+${lensWrapText}`
+    : descentBlock;
+
   return /* wgsl */ `${headerText}
 
-${descentBlock}
+${bodyBlock}
 ${entry}
 `;
 }

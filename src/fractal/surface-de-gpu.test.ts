@@ -58,6 +58,21 @@ function affineFinalTransform(): Transform {
   };
 }
 
+/** Pure-spherefold FINAL transform (rotated/offset affine part, non-unit
+ * weight) — gives `SurfaceDE.foldFinal` a real, BUILT lens, so the packer's
+ * identity-final-under-the-lens contract and the 208+ block are pinned
+ * against `buildSurfaceDE`'s own output rather than a hand-crafted object
+ * (fr-55s1 stage B). */
+function spherefoldFinalTransform(): Transform {
+  return {
+    id: 98,
+    position: [0.12, -0.05, 0.08],
+    rotation: [0.3, 0.1, -0.2],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "spherefold", weight: 0.9 }],
+  };
+}
+
 /** Default kernel-generator options, overridable per test — mirrors
  * flame-gpu.test.ts's baseSpec() convention. */
 function kernelOpts(
@@ -74,8 +89,8 @@ function kernelOpts(
 }
 
 describe("packSurfaceGpuParams byte length", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (208 bytes, per the module doc)", () => {
-    expect(SURFACE_GPU_PARAMS_BYTES).toBe(208);
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (272 bytes since the fr-55s1 lens block, per the module doc)", () => {
+    expect(SURFACE_GPU_PARAMS_BYTES).toBe(272);
     const de = buildSurfaceDE(foldSystemTransforms());
     const buf = packSurfaceGpuParams(de, { itemCount: 5 });
     expect(buf).toBeInstanceOf(ArrayBuffer);
@@ -202,9 +217,127 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(view.getFloat32(156, true)).toBe(Math.fround(f.sigmaMin));
   });
 
-  it("throws when the DE has a foldFinal lens (out of spike scope)", () => {
+  it("round-trips a foldFinal lens's invM rows / invT / lensParams at the documented 208..271 offsets (fr-55s1 stage B)", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    // Synthetic, distinctive lens values — this pins the byte LAYOUT, not
+    // eligibility (the throw-free packing of a real lens system is the
+    // bench's job).
+    const withFoldFinal: SurfaceDE = {
+      ...de,
+      final: null,
+      foldFinal: {
+        invM: [1.5, 0.25, -0.5, 0.125, 2.5, 0.75, -0.25, 0.375, 3.5],
+        invT: [0.1, -0.2, 0.3],
+        sigmaMin: 0.7,
+        foldKind: 3,
+        invW: 2.5,
+        absW: 0.4,
+      },
+    };
+    const view = new DataView(
+      packSurfaceGpuParams(withFoldFinal, { itemCount: 1 }),
+    );
+    expect(view.getFloat32(208, true)).toBeCloseTo(1.5, 6);
+    expect(view.getFloat32(212, true)).toBeCloseTo(0.25, 6);
+    expect(view.getFloat32(216, true)).toBeCloseTo(-0.5, 6);
+    expect(view.getFloat32(220, true)).toBeCloseTo(0.1, 6);
+    expect(view.getFloat32(224, true)).toBeCloseTo(0.125, 6);
+    expect(view.getFloat32(228, true)).toBeCloseTo(2.5, 6);
+    expect(view.getFloat32(232, true)).toBeCloseTo(0.75, 6);
+    expect(view.getFloat32(236, true)).toBeCloseTo(-0.2, 6);
+    expect(view.getFloat32(240, true)).toBeCloseTo(-0.25, 6);
+    expect(view.getFloat32(244, true)).toBeCloseTo(0.375, 6);
+    expect(view.getFloat32(248, true)).toBeCloseTo(3.5, 6);
+    expect(view.getFloat32(252, true)).toBeCloseTo(0.3, 6);
+    expect(view.getFloat32(256, true)).toBe(3);
+    expect(view.getFloat32(260, true)).toBeCloseTo(2.5, 6);
+    expect(view.getFloat32(264, true)).toBeCloseTo(0.4, 6);
+    expect(view.getFloat32(268, true)).toBeCloseTo(0.7, 6);
+  });
+
+  it("zero-fills the whole 208..271 lens block when the DE has no foldFinal", () => {
+    const de = buildSurfaceDE(foldSystemTransforms(), affineFinalTransform());
+    const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
+    for (let off = 208; off < 272; off += 4) {
+      expect(view.getFloat32(off, true)).toBe(0);
+    }
+  });
+
+  it("packs a BUILT foldFinal system's core final as identity/1 and round-trips the built lens block (the wrapper alone applies the lens)", () => {
+    const de = buildSurfaceDE(
+      foldSystemTransforms(),
+      spherefoldFinalTransform(),
+    );
+    // buildSurfaceDE's invariant, load-bearing for the cores: under a
+    // foldFinal the affine `final` slot is null, so the packer's fallback
+    // hands the descent cores the identity lens and sigmaMin 1 — they run
+    // their no-lens arithmetic verbatim, exactly like the CPU cores under
+    // descendLens.
+    expect(de.final).toBeNull();
+    const lens = de.foldFinal;
+    if (!lens) throw new Error("expected a foldFinal lens");
+    const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
+
+    expect(view.getFloat32(96, true)).toBe(1);
+    expect(view.getFloat32(100, true)).toBe(0);
+    expect(view.getFloat32(104, true)).toBe(0);
+    expect(view.getFloat32(108, true)).toBe(0);
+    expect(view.getFloat32(112, true)).toBe(0);
+    expect(view.getFloat32(116, true)).toBe(1);
+    expect(view.getFloat32(120, true)).toBe(0);
+    expect(view.getFloat32(124, true)).toBe(0);
+    expect(view.getFloat32(128, true)).toBe(0);
+    expect(view.getFloat32(132, true)).toBe(0);
+    expect(view.getFloat32(136, true)).toBe(1);
+    expect(view.getFloat32(140, true)).toBe(0);
+    expect(view.getFloat32(156, true)).toBe(1); // finalSigmaMin
+
+    expect(view.getFloat32(208, true)).toBe(Math.fround(lens.invM[0]));
+    expect(view.getFloat32(212, true)).toBe(Math.fround(lens.invM[1]));
+    expect(view.getFloat32(216, true)).toBe(Math.fround(lens.invM[2]));
+    expect(view.getFloat32(220, true)).toBe(Math.fround(lens.invT[0]));
+    expect(view.getFloat32(224, true)).toBe(Math.fround(lens.invM[3]));
+    expect(view.getFloat32(228, true)).toBe(Math.fround(lens.invM[4]));
+    expect(view.getFloat32(232, true)).toBe(Math.fround(lens.invM[5]));
+    expect(view.getFloat32(236, true)).toBe(Math.fround(lens.invT[1]));
+    expect(view.getFloat32(240, true)).toBe(Math.fround(lens.invM[6]));
+    expect(view.getFloat32(244, true)).toBe(Math.fround(lens.invM[7]));
+    expect(view.getFloat32(248, true)).toBe(Math.fround(lens.invM[8]));
+    expect(view.getFloat32(252, true)).toBe(Math.fround(lens.invT[2]));
+    // lensParams — (foldKind, invW, absW, sigmaMin), the GLSL uLensParams
+    // order (module doc table).
+    expect(view.getFloat32(256, true)).toBe(lens.foldKind);
+    expect(view.getFloat32(260, true)).toBe(Math.fround(lens.invW));
+    expect(view.getFloat32(264, true)).toBe(Math.fround(lens.absW));
+    expect(view.getFloat32(268, true)).toBe(Math.fround(lens.sigmaMin));
+  });
+
+  it("throws when a footprint is combined with a foldFinal lens (the fr-55s1 cut boundary)", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const withFoldFinal: SurfaceDE = {
+      ...de,
+      final: null,
+      foldFinal: {
+        invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        invT: [0, 0, 0],
+        sigmaMin: 1,
+        foldKind: SURFACE_FOLD_BOXFOLD,
+        invW: 1,
+        absW: 1,
+      },
+    };
+    expect(() =>
+      packSurfaceGpuParams(withFoldFinal, { itemCount: 1, footprint: 0.01 }),
+    ).toThrow(/footprint/);
+    expect(() =>
+      packSurfaceGpuParams(withFoldFinal, { itemCount: 1, footprint: 0 }),
+    ).not.toThrow();
+  });
+
+  it("throws when foldFinal and final are both set — buildSurfaceDE's exclusivity invariant", () => {
+    const de = buildSurfaceDE(foldSystemTransforms(), affineFinalTransform());
+    expect(de.final).not.toBeNull();
+    const violating: SurfaceDE = {
       ...de,
       foldFinal: {
         invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
@@ -215,8 +348,8 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         absW: 1,
       },
     };
-    expect(() => packSurfaceGpuParams(withFoldFinal, { itemCount: 1 })).toThrow(
-      /foldFinal/,
+    expect(() => packSurfaceGpuParams(violating, { itemCount: 1 })).toThrow(
+      /exclusive/,
     );
   });
 });
@@ -878,6 +1011,92 @@ describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ mode: "shade", core: "affine" })),
     ).toThrow(/affine/);
+  });
+});
+
+describe("surfaceDeKernelWgsl fold-lens wrapper (lens, fr-55s1 stage B)", () => {
+  it("omitted and explicit lens:false produce identical source across every mode/variant/core — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
+      { mode: "eval", width: 4 },
+      { mode: "eval", core: "affine", width: 4 },
+      { mode: "march", width: 12 },
+      { mode: "march", rays: "unproject", width: 12 },
+      { mode: "march", core: "affine", width: 4 },
+      { mode: "shade", width: 12 },
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, lens: false }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("surfaceDECore");
+      expect(omitted).not.toContain("lensParams");
+    }
+  });
+
+  it("lens:true renames the descent body to surfaceDECore and emits the sweep wrapper as the one public surfaceDE, for BOTH cores", () => {
+    for (const core of ["fold", "affine"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ lens: true, core, width: core === "fold" ? 12 : 4 }),
+      );
+      // Exactly one renamed core, exactly one wrapper owning the public
+      // name — the mode entries' call sites resolve to the wrapper. The
+      // wrapper is emitted AFTER the core, declaration before use.
+      expect(wgsl.split("fn surfaceDECore(").length).toBe(2);
+      expect(wgsl.split("fn surfaceDE(").length).toBe(2);
+      expect(wgsl.indexOf("fn surfaceDECore(")).toBeLessThan(
+        wgsl.indexOf("fn surfaceDE("),
+      );
+      expect(wgsl).toContain("surfaceDECore(q, innerCutoff, li)");
+      // The lens params struct fields exist only under the lens.
+      expect(wgsl).toContain("lensParams: vec4f");
+      // The wrapper's sweep carries the oracle's prunes.
+      expect(wgsl).toContain("b += 26u");
+      expect(wgsl).toContain("factor * (rq - params.boundingRadius) >= best");
+    }
+    // Each core keeps its own body under the rename.
+    const fold = surfaceDeKernelWgsl(kernelOpts({ lens: true, width: 12 }));
+    expect(fold).toContain("fn frontierIx(");
+    expect(fold).not.toContain("fn refinedCert(");
+    const affine = surfaceDeKernelWgsl(
+      kernelOpts({ lens: true, core: "affine", width: 4 }),
+    );
+    expect(affine).toContain("fn refinedCert(");
+    expect(affine).not.toContain("fn frontierIx(");
+  });
+
+  it("keeps the wrapper out of the entry text — eval and march entries call surfaceDE exactly as without the lens", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const plain = surfaceDeKernelWgsl(kernelOpts({ mode, width: 12 }));
+      const lensed = surfaceDeKernelWgsl(
+        kernelOpts({ mode, width: 12, lens: true }),
+      );
+      const entryCall =
+        mode === "eval"
+          ? "surfaceDE(queries[i].xyz, params.cutoff, li)"
+          : "surfaceDE(ro + rd * t, eps, li)";
+      expect(plain).toContain(entryCall);
+      expect(lensed).toContain(entryCall);
+    }
+  });
+
+  it("lens with mode 'shade' throws — the hit-info argmin sweep and probe wrapper land with stage C", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", lens: true, width: 12 })),
+    ).toThrow(/stage C/);
+  });
+
+  it("lens composes with march rays 'unproject' — the app ray derivation needs nothing lens-specific beyond the wrapper", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject", lens: true, width: 12 }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    expect(wgsl).toContain("struct ShadeParams");
+    expect(wgsl).toContain("let d = surfaceDE(ro + rd * t, eps, li);");
+    expect(wgsl).toContain("fn surfaceDECore(");
   });
 });
 
