@@ -2332,6 +2332,71 @@ function surfaceAffineTwistFinal(): Transform {
   };
 }
 
+/** fr-55s1 stage B (M1a): the LENS_HASH archetype's FINAL —
+ * scripts/surface-fold.verify.mjs:52's fr-g58b lens verbatim (boxfold
+ * weight 0.55 over a rotated, offset, shrunk affine part). Sits over
+ * {@link surfaceAffineTetra}, so the M1 row pins the lens wrapper around
+ * the SAME affine core M0's affineTetra row pins bare. */
+function surfaceLensBoxfoldFinal(): Transform {
+  return {
+    id: 90,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "boxfold", weight: 0.55 }],
+  };
+}
+
+/** fr-55s1 stage B (M1b): a mandelbox FINAL at weight 1 — fr-zx34's field
+ * class (4-map affine base under a mandelbox lens) and the sweep's 81-branch
+ * worst case, so the agreement row covers the spherefold shell guard, the
+ * `b += 26` box-expansion skip and the per-s box re-triple in one system. */
+function surfaceLensMandelboxFinal(): Transform {
+  return {
+    id: 91,
+    position: [0.1, 0.05, -0.1],
+    rotation: [0.15, -0.2, 0.25],
+    scale: [0.85, 0.85, 0.85],
+    variations: [{ type: "mandelbox", weight: 1 }],
+  };
+}
+
+/** fr-55s1 stage B (M1c)'s BASE: the fr-5rvk two-map pure-boxfold pair
+ * (scripts/surface-fold.verify.mjs's BOXFOLD_HASH shape, also
+ * surface-de-gpu.test.ts's `foldSystemTransforms`) — a minimal eligible
+ * FOLD base, so the lens leg pins the wrapper around the fold core too. */
+function surfaceFoldBoxfoldPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [{ type: "boxfold", weight: 1 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    },
+  ];
+}
+
+/** fr-55s1 stage B (M1c): a spherefold FINAL over the boxfold pair — the
+ * 3-branch sweep (s0/s1/mid incl. the SPHEREFOLD_MID_MIN_R shell guard)
+ * seeding FOLD-core descents, `descendLens`'s other inner route. */
+function surfaceLensSpherefoldFinal(): Transform {
+  return {
+    id: 92,
+    position: [-0.05, 0.1, 0.08],
+    rotation: [0.1, 0.2, -0.15],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "spherefold", weight: 0.8 }],
+  };
+}
+
 /** A NEGATIVE-weight boxfold map beside a plain affine map: sign absorption
  * plus the mixed frontier where fold branches and affine children compete.
  * Mirrors scripts/harness-profiles.ts — keep in sync. */
@@ -4367,6 +4432,25 @@ async function runSurfaceDeSection(
       finalTransform: surfaceAffineTwistFinal(),
       symmetry: { order: 3, axis: "y" },
     },
+    // fr-55s1 stage B (M1) — the fold FINAL lens systems. `buildSurfaceDE`
+    // turns each fold-carrying final into `de.foldFinal`; the CPU calls
+    // below route through `descendLens` on their own, and the M1 leg
+    // compiles the kernel with `lens: true` around each system's core.
+    {
+      name: "lensBoxfoldOverAffine",
+      transforms: surfaceAffineTetra(),
+      finalTransform: surfaceLensBoxfoldFinal(),
+    },
+    {
+      name: "lensMandelboxOverAffine",
+      transforms: surfaceAffineTetra(),
+      finalTransform: surfaceLensMandelboxFinal(),
+    },
+    {
+      name: "lensOverFold",
+      transforms: surfaceFoldBoxfoldPair(),
+      finalTransform: surfaceLensSpherefoldFinal(),
+    },
   );
   const systems: SurfaceSystemState[] = [];
   for (const def of systemDefs) {
@@ -4385,9 +4469,14 @@ async function runSurfaceDeSection(
       // ladder, pinned against `estimateDistanceRefined`, which is what
       // the affine GLSL marches. Both at cutoff 0.
       const core = deHasFolds(de) ? "fold" : "affine";
+      // Lens systems size the uniform-box class from the LENSED visible
+      // ball — the set the DE actually describes (M1b's mandelbox lens
+      // GROWS the attractor: visR 2.12 vs base R 1.26, so a base-R box
+      // would leave the outer sheets unsampled). Pre-lens systems keep
+      // `boundingRadius`, freezing their query streams bit-for-bit.
       const queries = surfaceQueries(
         def.transforms,
-        de.boundingRadius,
+        de.foldFinal ? de.visibleBoundingRadius : de.boundingRadius,
         finalTransform,
         symmetry,
       );
@@ -4409,8 +4498,17 @@ async function runSurfaceDeSection(
     }
     render();
   }
-  const foldSystems = systems.filter((s) => s.core === "fold");
-  const affineSystems = systems.filter((s) => s.core === "affine");
+  // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
+  // (the wrapper is generated source), while the fold/affine legs share
+  // one pipeline per CONFIG — a lens system run through those pipelines
+  // would march the bare base attractor and disagree with its own oracle.
+  const foldSystems = systems.filter(
+    (s) => s.core === "fold" && s.de.foldFinal === null,
+  );
+  const affineSystems = systems.filter(
+    (s) => s.core === "affine" && s.de.foldFinal === null,
+  );
+  const lensSystems = systems.filter((s) => s.de.foldFinal !== null);
   if (systems.length === 0) {
     results.reason = "no eligible systems (see notes)";
     status(`skipped — ${results.reason}`);
@@ -4636,6 +4734,58 @@ async function runSurfaceDeSection(
         }
       }
       render();
+    }
+
+    // ----- M1 (fr-55s1 stage B): the fold-lens agreement leg — GATING -----
+    // One pipeline PER SYSTEM: `lens` wraps that system's own core
+    // (lensOverFold marches the width-12 fold frontier inside the sweep,
+    // the affine-based pair the width-4 ladder), and every row compares
+    // like against like — the `cpu` values above already routed through
+    // `descendLens`. Private frontier, stage 2 off: the shipped config.
+    // All lens rows GATE (affine by rule, fold at the oracle's width).
+    for (const sys of lensSystems) {
+      const cfg: SurfaceKernelConfig = {
+        core: sys.core,
+        variant: "private",
+        width:
+          sys.core === "fold"
+            ? SURFACE_FOLD_BEAM_WIDTH
+            : SURFACE_AFFINE_LADDER_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = `lens ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label} (${sys.name})…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: sys.core,
+          lens: true,
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        const { pipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label} ${sys.name}`,
+        );
+        status(`agreement: ${label} × ${sys.name}…`);
+        await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
+        const gpu = await runSurfaceEvalDispatch(device, pipeline, sys, cfg.wg);
+        results.agreement.push(compareSurfaceAgreement(sys, cfg, gpu));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(
+          `agreement ${label} ${sys.name}: ${describeError(e)}`,
+        );
+      }
+      render();
+      await new Promise<void>((resolve) => setTimeout(resolve));
     }
 
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
