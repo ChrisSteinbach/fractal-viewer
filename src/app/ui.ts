@@ -836,11 +836,13 @@ export class Ui {
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
 
-  // The surface render's status block (epic fr-7jlk): a hint paragraph plus
-  // one note line (degraded-march notice while active). The mode button
-  // itself carries the eligibility gate — see setSurfaceEligibility.
+  // The surface render's status block (epic fr-7jlk): a hint paragraph, a
+  // note line (degraded-march notice while active), and the trace-progress
+  // row (fr-zx34, see setSurfaceProgress). The mode button itself carries
+  // the eligibility gate — see setSurfaceEligibility.
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
+  private readonly surfaceProgress: HTMLElement;
   // The surface render's own settings block (fr-7jlk v2): lighting sliders
   // plus the base-color source/palette selects, the same solidControls
   // pattern one render mode over. surfacePaletteRow additionally gates on
@@ -1074,6 +1076,7 @@ export class Ui {
     this.solidStatus = this.byId("solidStatus");
     this.surfaceStatus = this.byId("surfaceStatus");
     this.surfaceNote = this.byId("surfaceNote");
+    this.surfaceProgress = this.byId("surfaceProgress");
     this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
@@ -2864,6 +2867,33 @@ export class Ui {
       this.surfaceNote.textContent = "";
       this.surfaceNote.classList.add("hidden");
     }
+  }
+
+  /**
+   * Reflect the surface trace's coverage (fr-zx34): heavy fold poses grind
+   * their preview/settle strip jobs for seconds to MINUTES, and the mode's
+   * verdict is to never give up on a frame — this row is what lets the
+   * user decide whether the pose is worth the wait. Same text-plus-underline
+   * idiom as {@link setFlameProgress}; `null` hides the row (instant
+   * renders and settled frames, the common case, never show it). Unlike
+   * the flame/solid rows it hides rather than parking at 0%, because
+   * most surface renders finish within a frame or two and a permanent
+   * "0%" would read as a stuck render. POSE-derived and polled from the
+   * render loop — never shares {@link setSurfaceEligibility}'s
+   * document-derived note element.
+   */
+  setSurfaceProgress(progress: { label: string; pct: number } | null): void {
+    if (progress === null) {
+      this.surfaceProgress.classList.add("hidden");
+      this.surfaceProgress.style.setProperty("--progress", "0%");
+      return;
+    }
+    this.surfaceProgress.textContent = `${progress.label} ${String(progress.pct)}%`;
+    this.surfaceProgress.style.setProperty(
+      "--progress",
+      `${String(progress.pct)}%`,
+    );
+    this.surfaceProgress.classList.remove("hidden");
   }
 
   /**

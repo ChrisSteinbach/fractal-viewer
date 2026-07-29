@@ -2906,6 +2906,14 @@ export class FractalScene {
    * queue — and repaint the canvas on its present-on-drain cadence. On
    * completion the job's accumulated GPU-busy cost feeds the governor
    * (fr-hith), and true is returned (no-op true when no job is running).
+   * However expensive the pose, the job runs to COMPLETION — the
+   * fr-24to/fr-zx34 verdict: an automatic give-up (bail, sub-floor
+   * rung, or spend/prediction truncation — two shipped rounds of the
+   * latter each clipped a completable heavy-lens preview) decides for
+   * the user what only the user can weigh, so the mode instead
+   * discloses {@link surfaceRenderProgress} and leaves the wait/move
+   * decision to them. Every submission stays strip-bounded and the
+   * partial presents keep the grind visible and interruptible.
    */
   stepSurfacePreview(): boolean {
     const job = this.surfacePreviewJob;
@@ -2955,6 +2963,41 @@ export class FractalScene {
    * holds the settle job off until it completes). */
   get surfacePreviewActive(): boolean {
     return this.surfacePreviewJob !== null;
+  }
+
+  /** Honest coverage of the in-flight surface trace, for main.ts's
+   * progress readout (fr-zx34's verdict: the mode never gives up on a
+   * frame — it reports progress and the USER decides whether the pose
+   * is worth the wait). Traced-and-measured pixels over the job's
+   * total: the preview job when one is mid-flight, else the settle
+   * job, else null (nothing grinding — settled, superseded, or not in
+   * surface mode). No time predictions here by design: two shipped
+   * rounds of prediction-driven truncation each misjudged a
+   * completable preview (fr-zx34); a moving percent lets the user
+   * read the rate themselves. */
+  surfaceRenderProgress(): {
+    phase: "preview" | "settle";
+    fraction: number;
+  } | null {
+    const preview = this.surfacePreviewJob;
+    if (preview) {
+      return {
+        phase: "preview",
+        fraction:
+          (preview.planner.plannedPx - preview.inFlightPx) /
+          Math.max(1, preview.planner.totalPx),
+      };
+    }
+    const settle = this.surfaceStripJob;
+    if (settle) {
+      return {
+        phase: "settle",
+        fraction:
+          (settle.planner.plannedPx - settle.inFlightPx) /
+          Math.max(1, settle.planner.totalPx),
+      };
+    }
+    return null;
   }
 
   /**

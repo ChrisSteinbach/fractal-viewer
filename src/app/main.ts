@@ -3209,6 +3209,9 @@ function main(): void {
       // planner must not greet the next session.
       scene.abandonSurfaceSettle();
       scene.abandonSurfacePreview();
+      // Progress is pose state, not document state (fr-zx34) — a dead
+      // session's percent must not greet the next one.
+      ui.setSurfaceProgress(null);
       // A grid still building for this session is nobody's business once
       // the session ends — drop it so its late arrival can't touch the
       // next mode's frame (fr-55r5 part 2). The next 3D session's request
@@ -5156,6 +5159,34 @@ function main(): void {
     }
   }
 
+  /**
+   * The fr-zx34 verdict's legibility affordance: honest coverage of the
+   * in-flight WebGL preview/settle strip job, so the user — not a
+   * prediction — decides whether a heavy pose is worth the wait. Called
+   * every tick of the WebGL strip path; null hides the row (instant
+   * renders and settled frames, the common case). The compute path
+   * presents progressively on its own cadence and converges in tens of
+   * seconds; wiring its pass counts into this row is a follow-up.
+   */
+  function syncSurfaceProgress(): void {
+    const progress = scene.surfaceRenderProgress();
+    if (progress === null) {
+      ui.setSurfaceProgress(null);
+      return;
+    }
+    // floor, not round — the fr-99z convention: never read "100%" while
+    // strips are still landing. Below 10% keep one decimal: a monster
+    // settle advances ~1%/min, and an integer row parked at "0%" for a
+    // minute reads as stuck — the exact ambiguity the row exists to
+    // remove.
+    const pctRaw = progress.fraction * 100;
+    const pct = pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
+    ui.setSurfaceProgress({
+      label: progress.phase === "preview" ? "Preview" : "Full detail",
+      pct,
+    });
+  }
+
   function tickRender(now: number, force: boolean): void {
     if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the volume is world-space: keep
@@ -5243,6 +5274,7 @@ function main(): void {
             surfaceSettlePending = false;
             scene.beginSurfaceSettle();
           }
+          syncSurfaceProgress();
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) surfaceSettled = true;
           } else if (recorderActive && !scene.surfacePreviewActive) {
