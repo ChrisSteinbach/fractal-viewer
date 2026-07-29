@@ -470,6 +470,36 @@ describe("packSurfaceGpuShadeMaps", () => {
   });
 });
 
+describe("surfaceGpuWorkgroupBytes core", () => {
+  it("returns 0 for core 'affine' even under sharedFrontier — its ladder declares no frontier arrays", () => {
+    expect(
+      surfaceGpuWorkgroupBytes({
+        core: "affine",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+      }),
+    ).toBe(0);
+  });
+
+  it("treats an omitted core as 'fold' — same bytes as an explicit fold core", () => {
+    const omitted = surfaceGpuWorkgroupBytes({
+      width: 12,
+      workgroupSize: 32,
+      sharedFrontier: true,
+    });
+    expect(omitted).toBe(14 * 12 * 32 * 4);
+    expect(
+      surfaceGpuWorkgroupBytes({
+        core: "fold",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+      }),
+    ).toBe(omitted);
+  });
+});
+
 describe("surfaceGpuWorkgroupBytes", () => {
   it("computes 14 * width * workgroupSize * 4 bytes when sharedFrontier is true", () => {
     expect(
@@ -739,6 +769,115 @@ describe("surfaceDeKernelWgsl shade probe width (shadeDeWidth, fr-p8bc)", () => 
     expect(
       surfaceDeKernelWgsl(kernelOpts({ mode: "eval", shadeDeWidth: 1 })),
     ).toBe(surfaceDeKernelWgsl(kernelOpts({ mode: "eval" })));
+  });
+});
+
+describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
+  it("omitted and explicit 'fold' produce identical source across every mode/variant — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
+      { mode: "eval", width: 4 },
+      { mode: "march", width: 12 },
+      { mode: "march", rays: "unproject", width: 12 },
+      { mode: "shade", width: 12 },
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, core: "fold" }),
+      );
+      expect(explicit).toBe(omitted);
+    }
+  });
+
+  it("keeps the fold descent's distinctive body under the default core, with no affine-ladder marker in sight", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "eval", width: 12 }));
+    // The fold frontier's identity: the unsorted worst-slot rescan and the
+    // region-floor prune, plus the frontier index helper.
+    expect(wgsl).toContain("fn frontierIx(");
+    expect(wgsl).toContain("fnWorstKey = -1e30;");
+    expect(wgsl).toContain(
+      "candFloor = max(candFloor, pScale * absW * branchRd);",
+    );
+    // …and none of the affine ladder's.
+    expect(wgsl).not.toContain("fn refinedCert(");
+    expect(wgsl).not.toContain("v1Live");
+  });
+
+  it("core 'affine' emits the width-4 refined ladder — refinedCert, A/B chains, fr-jkpn validity slots — and no fold frontier", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "affine" }),
+    );
+    expect(wgsl).toContain(
+      "fn refinedCert(img: vec3f, r: f32, childScale: f32) -> f32",
+    );
+    expect(wgsl).toContain(
+      "fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32",
+    );
+    expect(wgsl).toContain("for (var c = 0u; c < 4u; c++)");
+    for (const slot of ["aLive", "bLive", "v1Live", "v2Live"]) {
+      expect(wgsl).toContain(slot);
+    }
+    // No frontier: no arrays, no index helper, no workgroup storage.
+    expect(wgsl).not.toContain("frontierIx");
+    expect(wgsl).not.toContain("var<workgroup>");
+    expect(wgsl).not.toContain("array<f32,");
+    expect(wgsl).not.toContain("chainCount");
+  });
+
+  it("core 'affine' keeps the eval entry point and its bindings textually unchanged", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "affine" }),
+    );
+    expect(wgsl).toContain("fn evalQueries");
+    expect(wgsl).toContain(
+      "results[i] = surfaceDE(queries[i].xyz, params.cutoff, li);",
+    );
+    expect(wgsl).toContain("var<storage, read> queries: array<vec4f>;");
+  });
+
+  it("core 'affine' ignores width, sharedFrontier and bnbStage2 — all four produce identical source", () => {
+    const base = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "affine", width: 4 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine", width: 12 }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine", sharedFrontier: true }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine", bnbStage2: true }),
+      ),
+    ).toBe(base);
+  });
+
+  it("core 'affine' march mode swaps only the descent body — same marchRays entry, same ray/gate code", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject", core: "affine" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    expect(wgsl).toContain("let d = surfaceDE(ro + rd * t, eps, li);");
+    expect(wgsl).toContain("fn refinedCert(");
+    expect(wgsl).not.toContain("frontierIx");
+  });
+
+  it("core 'affine' still validates width, so a bad value is caught wherever it came from", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine", width: 0 })),
+    ).toThrow();
+  });
+
+  it("core 'affine' with mode 'shade' throws — its hit-info descent lands with stage C", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", core: "affine" })),
+    ).toThrow(/affine/);
   });
 });
 

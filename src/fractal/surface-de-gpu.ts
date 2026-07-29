@@ -22,6 +22,36 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
+ * TWO DESCENT CORES (`core`, fr-55s1 stage A). Which estimator a system
+ * is entitled to is decided by its BASE maps, exactly as on the CPU:
+ *
+ * - `core: "fold"` (the default, and every config that predates fr-55s1)
+ *   emits the width-`width` fold frontier above — `descendFold` refine=
+ *   false, the estimator the fold GLSL marches.
+ * - `core: "affine"` emits the width-4 REFINED ladder instead: A/B beam
+ *   chains plus fr-jkpn's V1/V2 validity slots, with fr-1z6p's
+ *   `refinedCert` on every escaped sibling — `surface-de.ts`'s `descend`
+ *   refine=TRUE, i.e. {@link estimateDistanceRefined}, which is what
+ *   `surface-material.ts`'s affine arm (its `#else` body, the f32
+ *   formulation this port follows line for line) marches. Reusing the
+ *   fold frontier for affine maps would NOT be the same estimator (width
+ *   12 vs the ladder's 4, no refinement), so a second body is the only
+ *   shape that keeps the term-for-term discipline.
+ *
+ * The two bodies share the public signature — `surfaceDE(pIn, cutoff,
+ * li)` — so the mode entry points below are textually identical either
+ * way, and they share the descent PROLOGUE text (lens, sphere bound,
+ * bail threshold, fr-3c0k depth cap) for the same reason `renameToProbe`
+ * exists: one text cannot drift from itself. `core: "affine"` IGNORES
+ * `width` (the ladder is fixed at the oracle's production `beamWidth`
+ * 4), `sharedFrontier` and `bnbStage2` (the unrolled ladder has no
+ * frontier arrays and no fold branches to bound), and it declares no
+ * workgroup storage ({@link surfaceGpuWorkgroupBytes} returns 0).
+ * fr-55s1 stage A gates it to mode "eval" + "march": mode "shade" needs
+ * an affine hit-info body, which arrives with stage C, so it THROWS
+ * rather than shading through the wrong descent. Only the eval leg is
+ * bench-pinned this stage.
+ *
  * TWO FRONTIER VARIANTS, selected at source-generation time so the bench
  * can A/B them with everything else held equal:
  *
@@ -208,6 +238,15 @@ export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 export interface SurfaceGpuKernelOptions {
   /** Which entry point (and binding interface) to generate. */
   mode: "eval" | "march" | "shade";
+  /** Which DESCENT BODY to emit (fr-55s1; module doc). "fold" (the
+   * default, and every pre-fr-55s1 config's byte-identical source) is the
+   * width-`width` fold frontier mirroring `estimateDistance`; "affine" is
+   * the fixed width-4 refined ladder mirroring `estimateDistanceRefined`
+   * — the estimator a FOLD-FREE base map set is entitled to. Pick it the
+   * way the CPU does, off `deHasFolds(de)`. Under "affine" the `width`,
+   * `sharedFrontier` and `bnbStage2` options are all inert, and mode
+   * "shade" throws (its hit-info body is stage C). */
+  core?: "fold" | "affine";
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -217,7 +256,9 @@ export interface SurfaceGpuKernelOptions {
    * Ignored outside march mode. */
   rays?: "pose" | "unproject";
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
-   * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. */
+   * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve.
+   * IGNORED under `core: "affine"`, whose ladder is fixed at 4 (still
+   * validated, so a bad value is caught wherever it came from). */
   width: number;
   /** Shade-mode only: frontier width for the shading PROBE evals — the
    * normal/shadow/AO taps in `shadeRays` (fr-p8bc; module doc). When set
@@ -228,22 +269,28 @@ export interface SurfaceGpuKernelOptions {
   shadeDeWidth?: number;
   /** Threads per workgroup. */
   workgroupSize: number;
-  /** Workgroup-shared (banked, transposed) frontier vs private arrays. */
+  /** Workgroup-shared (banked, transposed) frontier vs private arrays.
+   * Inert under `core: "affine"` — the unrolled ladder keeps its four
+   * chains in scalars, so there is no frontier to place. */
   sharedFrontier: boolean;
-  /** Include the fr-kidj stage-2 branch-and-bound skips (value no-ops). */
+  /** Include the fr-kidj stage-2 branch-and-bound skips (value no-ops).
+   * Inert under `core: "affine"` — the skips bound FOLD branch
+   * enumeration, and the affine ladder enumerates none. */
   bnbStage2: boolean;
 }
 
 /** Workgroup shared-memory bytes the generated kernel declares — what the
  * bench must cover via `maxComputeWorkgroupStorageSize` when it exceeds
- * the 16 384-byte WebGPU default. Zero for the private variant. */
+ * the 16 384-byte WebGPU default. Zero for the private variant, and zero
+ * for `core: "affine"` at any `sharedFrontier` (its ladder declares no
+ * frontier arrays at all — fr-55s1). */
 export function surfaceGpuWorkgroupBytes(
   opts: Pick<
     SurfaceGpuKernelOptions,
-    "width" | "workgroupSize" | "sharedFrontier"
+    "width" | "workgroupSize" | "sharedFrontier" | "core"
   >,
 ): number {
-  if (!opts.sharedFrontier) return 0;
+  if (!opts.sharedFrontier || opts.core === "affine") return 0;
   return SURFACE_GPU_FRONTIER_ARRAYS * opts.width * opts.workgroupSize * 4;
 }
 
@@ -461,6 +508,15 @@ export function packSurfaceGpuShadeMaps(
  */
 export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const { mode, width, workgroupSize, sharedFrontier, bnbStage2 } = opts;
+  // fr-55s1: which descent body. Absent means "fold", so every config
+  // that predates the option generates byte-identical source.
+  const core = opts.core ?? "fold";
+  if (core === "affine" && mode === "shade") {
+    throw new Error(
+      'surface-de-gpu: core "affine" has no shade body yet — its hit-info ' +
+        "descent lands with fr-55s1 stage C",
+    );
+  }
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -517,6 +573,20 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const ixBody = sharedFrontier
     ? `return slot * ${workgroupSize}u + li;`
     : `return slot;`;
+  // The fold frontier's storage and its index helper. `core: "affine"`
+  // declares NEITHER — its four chains live in scalars, which is also
+  // why its kernels need no workgroup budget at any `sharedFrontier`
+  // (fr-55s1; {@link surfaceGpuWorkgroupBytes}).
+  const frontierBlock =
+    core === "affine"
+      ? ""
+      : `
+${frontierDecls}
+
+fn frontierIx(slot: u32, li: u32) -> u32 {
+  ${ixBody}
+}
+`;
 
   // "pose" (the default) keeps the march arm's bench-baseline bytes;
   // "unproject" swaps only the ray derivation + dither (module doc).
@@ -1153,13 +1223,7 @@ struct GpuMap {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap>;
 ${io}
-
-${frontierDecls}
-
-fn frontierIx(slot: u32, li: u32) -> u32 {
-  ${ixBody}
-}
-
+${frontierBlock}
 fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
   return vec3f(
     dot(m.r0.xyz, x) + m.r0.w,
@@ -1180,18 +1244,16 @@ fn stepSector(v: vec3f) -> vec3f {
   return vec3f(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
 }`;
 
-  // ONE descent body template (fr-p8bc): the main surfaceDE below is
-  // this text verbatim; the probe descent is derived from the SAME text
-  // by token rename ({@link renameToProbe}) so the two descents cannot
-  // drift. Width is a REAL template parameter — small integer literals
-  // ("2u", "3u") collide with body constants, so a post-hoc width rename
-  // could never be safe.
-  const descentFnText = (
-    Wstr: string,
-    decls: string,
-  ): string => /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-${decls}
-  let q = vec3f(
+  // The descent PROLOGUE both cores open with (fr-55s1): the affine
+  // final lens, the depth-0 sphere bound, the fr-55r5 bail threshold and
+  // the fr-3c0k footprint depth cap are the same arithmetic on either
+  // estimator — one text, interpolated twice, for renameToProbe's
+  // reason: a body that is literally the same text cannot drift from
+  // itself. (The GLSL affine arm omits the depth cap; that was a Mesa
+  // link concession, not a semantic one — the CPU oracle caps both
+  // descents identically, and at the GLSL-parity footprint 0 the block
+  // is inert either way.)
+  const descentPrologue = /* wgsl */ `  let q = vec3f(
     dot(params.finalM0, pIn) + params.finalT0,
     dot(params.finalM1, pIn) + params.finalT1,
     dot(params.finalM2, pIn) + params.finalT2,
@@ -1213,7 +1275,20 @@ ${decls}
     );
     let floored = max(capF, ${FOOTPRINT_DEPTH_FLOOR}.0);
     maxDepth = min(params.maxDepth, u32(floored));
-  }
+  }`;
+
+  // ONE descent body template (fr-p8bc): the main surfaceDE below is
+  // this text verbatim; the probe descent is derived from the SAME text
+  // by token rename ({@link renameToProbe}) so the two descents cannot
+  // drift. Width is a REAL template parameter — small integer literals
+  // ("2u", "3u") collide with body constants, so a post-hoc width rename
+  // could never be safe.
+  const descentFnText = (
+    Wstr: string,
+    decls: string,
+  ): string => /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+${decls}
+${descentPrologue}
   var chainCount = 1u;
   fcX[frontierIx(0u, li)] = q.x;
   fcY[frontierIx(0u, li)] = q.y;
@@ -1546,11 +1621,335 @@ ${renameToProbe(
   ),
 )}`;
 
+  // The AFFINE core (fr-55s1 stage A): `descend`'s refine=TRUE path —
+  // {@link estimateDistanceRefined}, the estimator a fold-free base map
+  // set is entitled to — ported term for term from its GLSL mirror
+  // (`surface-material.ts`'s `#else` arm, the f32 formulation reference).
+  // FIXED width 4, exactly as that mirror hardcodes it: A/B are the beam
+  // chains (fr-v6yg), V1/V2 fr-jkpn's validity slots, which hold the
+  // level's rank-3/4 candidates ONLY while those stay in-sphere. Every
+  // escaped sibling folds fr-1z6p's REFINED certificate, under the
+  // oracle's laziness guard (refinement can only RAISE a certificate, so
+  // a fold whose plain certificate already fails to beat the running min
+  // is skipped whole — bit-exact). `opts.width`, `sharedFrontier` and
+  // `bnbStage2` are all inert here.
+  const affineDescentText = /* wgsl */ `// One extra Hutchinson level on a frozen escaped candidate's own
+// inverse image (the oracle's refinedCertValue, fr-1z6p): the
+// certificate becomes childScale * max(r - R, min_j sigmaMin_j *
+// (|invMap_j(img)| - R)) — never below the plain childScale * (r - R).
+// "Every map" means every (sector, base map) pair, which the fr-x029
+// sweep spells out where the expanded slot list used to.
+fn refinedCert(img: vec3f, r: f32, childScale: f32) -> f32 {
+  var inner = 1e30;
+  var sImg = img;
+  for (var k = 0u; k < params.symOrder; k++) {
+    if (k > 0u) {
+      sImg = stepSector(sImg);
+    }
+    for (var j = 0u; j < params.mapCount; j++) {
+      let m = maps[j];
+      let jImg = mapApply(m, sImg);
+      inner = min(
+        inner,
+        m.p0.x * (length(jImg - params.boundCenter) - params.boundingRadius),
+      );
+    }
+  }
+  return childScale * max(r - params.boundingRadius, inner);
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+${descentPrologue}
+  // Chain A starts at the (lensed) query; B idles until beam selection
+  // fills it. Each chain carries the contraction accumulated INCLUDING
+  // its own map and the radius it was selected at — scale * (r - R) is
+  // its terminal bound. The validity chains carry no R field: unlike A/B
+  // they never fold a terminal (see past the loop), and expansion
+  // re-derives every child radius.
+  var aQ = q;
+  var aScale = 1.0;
+  var aR = startR;
+  var aLive = true;
+  var bQ = vec3f(0.0);
+  var bScale = 1.0;
+  var bR = 0.0;
+  var bLive = false;
+  var v1Q = vec3f(0.0);
+  var v1Scale = 1.0;
+  var v1Live = false;
+  var v2Q = vec3f(0.0);
+  var v2Scale = 1.0;
+  var v2Live = false;
+  for (var depth = 0u; depth < maxDepth; depth++) {
+    if (!aLive && !bLive && !v1Live && !v2Live) {
+      break;
+    }
+    // The four smallest-key candidates this level, key-ascending. The
+    // sentinel r = 0 keeps empty slots out of every escaped-candidate
+    // fold below.
+    var c1Key = 1e30;
+    var c1Q = vec3f(0.0);
+    var c1Scale = 1.0;
+    var c1R = 0.0;
+    var c1Cert = 0.0;
+    var c2Key = 1e30;
+    var c2Q = vec3f(0.0);
+    var c2Scale = 1.0;
+    var c2R = 0.0;
+    var c2Cert = 0.0;
+    // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
+    // by everything the top-2 ladder evicts, so the pair holds exactly
+    // the level's third- and fourth-smallest keys.
+    var c3Key = 1e30;
+    var c3Q = vec3f(0.0);
+    var c3Scale = 1.0;
+    var c3R = 0.0;
+    var c3Cert = 0.0;
+    var c4Key = 1e30;
+    var c4Q = vec3f(0.0);
+    var c4Scale = 1.0;
+    var c4R = 0.0;
+    var c4Cert = 0.0;
+    for (var c = 0u; c < 4u; c++) {
+      var pQ = vec3f(0.0);
+      var pScale = 1.0;
+      if (c == 0u) {
+        if (!aLive) {
+          continue;
+        }
+        pQ = aQ;
+        pScale = aScale;
+      } else if (c == 1u) {
+        if (!bLive) {
+          continue;
+        }
+        pQ = bQ;
+        pScale = bScale;
+      } else if (c == 2u) {
+        if (!v1Live) {
+          continue;
+        }
+        pQ = v1Q;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) {
+          continue;
+        }
+        pQ = v2Q;
+        pScale = v2Scale;
+      }
+      // Sector sweep (fr-x029): the chain point turns one step per
+      // kaleidoscope sector and every BASE map is applied to it there,
+      // so the candidates — and their SECTOR-MAJOR enumeration order,
+      // the order the expanded slot list was built in — are exactly the
+      // ones the expansion produced, and the ladders below break ties
+      // the same way.
+      var sQ = pQ;
+      for (var k = 0u; k < params.symOrder; k++) {
+        if (k > 0u) {
+          sQ = stepSector(sQ);
+        }
+        for (var j = 0u; j < params.mapCount; j++) {
+          let m = maps[j];
+          let img = mapApply(m, sQ);
+          let r = length(img - params.boundCenter);
+          let key = pScale * (r - R);
+          let childScale = pScale * m.p0.x;
+          let cert = childScale * (r - R);
+          // Exactly one tuple leaves the top-2 ladder per candidate —
+          // the displaced runner-up, or the candidate itself. It spills
+          // into the rank-3/4 ladder or folds below; empty-slot
+          // sentinels flow through both harmlessly (key 1e30 never
+          // inserts, r = 0 never folds).
+          var eKey = key;
+          var eQ = img;
+          var eScale = childScale;
+          var eR = r;
+          var eCert = cert;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1Q = img;
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = key;
+            c2Q = img;
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
+          }
+          // Spill into the rank-3/4 ladder (unconditional at width 4);
+          // what THAT evicts — or the spilled tuple itself, when it
+          // beats neither slot — falls through to the fold below. The
+          // evicted KEY is dead past this point: only the folded fields
+          // (point, scale, radius, certificate) survive, and width 4 is
+          // fixed here, so there is no tKey.
+          if (eKey < c3Key) {
+            let tQ = c4Q;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c4Cert = c3Cert;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (eKey < c4Key) {
+            let tQ = c4Q;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+          // The tuple leaving the beam frontier: an escaped candidate
+          // folds its REFINED certificate (fr-1z6p closes the
+          // barely-escaped-sibling balloon), skipped whole when its
+          // PLAIN certificate cannot beat the running min anyway (the
+          // oracle's laziness guard, bit-exact); an in-sphere tuple
+          // carries no positive certificate — it can only get here past
+          // FOUR smaller keys, the shrunken fr-jkpn residual drop.
+          if (eR > R && eCert < best) {
+            best = min(best, refinedCert(eQ, eR, eScale));
+            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
+            // the folded certificate is FINALIZED (already refined) and
+            // best only falls from here, so once best is at or below
+            // sphereBound the return is pinned no matter how much
+            // further it falls, and short of that the settled verdict
+            // against the caller's cutoff cannot be lifted back either.
+            if (
+              best <= sphereBound ||
+              best * params.finalSigmaMin < bailBelow
+            ) {
+              return max(best, sphereBound) * params.finalSigmaMin;
+            }
+          }
+        }
+      }
+    }
+    // Promote: the best candidate continues as chain A, the runner-up as
+    // chain B; past the escape radius a candidate folds its terminal and
+    // dies instead (deeper refinement cannot improve the min). Ranks 3/4
+    // continue as validity chains ONLY while in-sphere; escaped, they
+    // fold the same refined certificate they would have folded without
+    // the slots.
+    aLive = false;
+    bLive = false;
+    v1Live = false;
+    v2Live = false;
+    if (c1Key < 1e29) {
+      if (c1R > params.escapeRadius) {
+        best = min(best, c1Cert);
+      } else {
+        aQ = c1Q;
+        aScale = c1Scale;
+        aR = c1R;
+        aLive = true;
+      }
+    }
+    if (c2Key < 1e29) {
+      if (c2R > params.escapeRadius) {
+        best = min(best, c2Cert);
+      } else {
+        bQ = c2Q;
+        bScale = c2Scale;
+        bR = c2R;
+        bLive = true;
+      }
+    }
+    if (c3Key < 1e29) {
+      if (c3R > R) {
+        if (c3Cert < best) {
+          best = min(best, refinedCert(c3Q, c3R, c3Scale));
+        }
+      } else {
+        v1Q = c3Q;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (c4Key < 1e29) {
+      if (c4R > R) {
+        if (c4Cert < best) {
+          best = min(best, refinedCert(c4Q, c4R, c4Scale));
+        }
+      } else {
+        v2Q = c4Q;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
+    // The same two exits covering the four promote folds in one test:
+    // each either wrote a SETTLED bound into best (refined at the two
+    // validity-slot sites, the deliberately plain escape-radius bound at
+    // the other two) or continued a chain. Deliberately NOT a break: the
+    // terminal bounds past the loop are folds the FULL descent only
+    // makes at the depth cap, and folding one here could drop best below
+    // a value that descent never reaches.
+    if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.finalSigmaMin;
+    }
+  }
+  // Terminal bound of the chains alive at the depth cap (the KIFS
+  // last-value formula): non-positive when the chain tracked the
+  // attractor all the way down. Validity chains fold NO cap terminal —
+  // deliberately asymmetric with A/B: in-sphere means inside the
+  // bounding SPHERE, not near the attractor, so their cap terminal is a
+  // vacuous negative bound (fr-jkpn measured folding them changing
+  // nothing, so the omission is on principle, not cost).
+  if (aLive) {
+    best = min(best, aScale * (aR - R));
+  }
+  if (bLive) {
+    best = min(best, bScale * (bR - R));
+  }
+  return max(best, sphereBound) * params.finalSigmaMin;
+}`;
+
+  const descentBlock =
+    core === "affine"
+      ? `// descend's refine=true path (surface-de.ts) — the estimator the
+// AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
+${affineDescentText}`
+      : `// descendFold's refine=false path (surface-de.ts), the estimator the
+// fold GLSL marches, in that mirror's f32 formulation.
+${descentFnText(W, privateDecls)}${probeDeFns}`;
+
   return /* wgsl */ `${headerText}
 
-// descendFold's refine=false path (surface-de.ts), the estimator the
-// fold GLSL marches, in that mirror's f32 formulation.
-${descentFnText(W, privateDecls)}${probeDeFns}
+${descentBlock}
 ${entry}
 `;
 }
