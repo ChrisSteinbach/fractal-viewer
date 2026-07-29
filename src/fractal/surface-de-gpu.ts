@@ -169,9 +169,14 @@ import type { Vec3 } from "./types";
  * true` wraps either core in `descendLens`'s branch sweep (THE
  * FOLD-LENS WRAPPER above), with the lens fields appended to the params
  * uniform. Footprint under a lens stays out ({@link
- * packSurfaceGpuParams} throws — the app path always passes 0), as does
- * shade mode under either lens or the affine core (hit-info bodies land
- * with stage C). Modes "eval" and "march" (rays "pose") are the fr-q1f8
+ * packSurfaceGpuParams} throws — the app path always passes 0). Stage C
+ * finished the shade half: a per-core hit-info descent (the affine one
+ * ports its GLSL twin's TRAJECTORY, colors only — the value side never
+ * steers the ladder), and under the lens the hit-info renames to
+ * `surfaceDEHitInfoCore` behind an argmin-sweep wrapper while the probe
+ * (fold core only — the affine core ignores `shadeDeWidth`, like its
+ * GLSL arm) gets the same sweep text renamed onto `surfaceDEProbeCore`.
+ * Modes "eval" and "march" (rays "pose") are the fr-q1f8
  * bench baselines (`src/app/gpu-bench/` pins them) and their generated
  * source is unchanged by the shade split; march rays "unproject" plus
  * mode "shade" are the GLSL tracer's mirror halves for the app
@@ -285,8 +290,9 @@ export interface SurfaceGpuKernelOptions {
    * the fixed width-4 refined ladder mirroring `estimateDistanceRefined`
    * — the estimator a FOLD-FREE base map set is entitled to. Pick it the
    * way the CPU does, off `deHasFolds(de)`. Under "affine" the `width`,
-   * `sharedFrontier` and `bnbStage2` options are all inert, and mode
-   * "shade" throws (its hit-info body is stage C). */
+   * `sharedFrontier`, `bnbStage2` and `shadeDeWidth` options are all
+   * inert (the ladder has one width and no branch fan to cheapen — the
+   * GLSL affine arm carries no probe either). */
   core?: "fold" | "affine";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
@@ -295,8 +301,9 @@ export interface SurfaceGpuKernelOptions {
    * — so the mode entries' call sites are untouched text. Absent or
    * false reproduces the no-lens source byte for byte. Branch kind and
    * count are RUNTIME params (one pipeline per session, GLSL parity).
-   * Mode "shade" throws under the lens until stage C lands its hit-info
-   * argmin + probe wrapper. */
+   * In shade mode the hit-info descent gets the same treatment (renamed
+   * core + argmin-sweep wrapper) and the probe, when emitted, its own
+   * renamed sweep — fr-55s1 stage C. */
   lens?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
@@ -598,22 +605,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // fr-55s1: which descent body. Absent means "fold", so every config
   // that predates the option generates byte-identical source.
   const core = opts.core ?? "fold";
-  if (core === "affine" && mode === "shade") {
-    throw new Error(
-      'surface-de-gpu: core "affine" has no shade body yet — its hit-info ' +
-        "descent lands with fr-55s1 stage C",
-    );
-  }
   // fr-55s1 stage B: absent means no lens, so every no-lens config
-  // generates byte-identical source.
+  // generates byte-identical source. Shade support for the affine core
+  // and the lens (hit-info bodies + probe composition) landed with
+  // stage C.
   const lens = opts.lens ?? false;
-  if (lens && mode === "shade") {
-    throw new Error(
-      "surface-de-gpu: the fold-lens wrapper has no shade support yet — " +
-        "its hit-info argmin sweep and probe wrapper land with fr-55s1 " +
-        "stage C",
-    );
-  }
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -630,8 +626,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   }
   // fr-p8bc: an active probe width means shade mode's normal/shadow/AO
   // taps call a second, narrower descent (module doc). Equal widths stay
-  // a single descent so the "off" state is byte-identical source.
+  // a single descent so the "off" state is byte-identical source. The
+  // AFFINE core ignores it (fr-55s1 stage C): its ladder has one width
+  // and no branch fan to cheapen — the GLSL affine arm carries no probe
+  // either — so the taps ride the full descent there.
   const probeWidth =
+    core === "fold" &&
     mode === "shade" &&
     opts.shadeDeWidth !== undefined &&
     opts.shadeDeWidth !== width
@@ -766,94 +766,11 @@ fn hash2(p: vec2f) -> f32 {
     }`
     : "";
 
-  const entry =
-    mode === "eval"
-      ? `
-@compute @workgroup_size(${workgroupSize})
-fn evalQueries(
-  @builtin(global_invocation_id) gid: vec3u,
-  @builtin(local_invocation_index) li: u32,
-) {
-  let i = gid.x;
-  if (i >= params.itemCount) {
-    return;
-  }
-  results[i] = surfaceDE(queries[i].xyz, params.cutoff, li);
-}`
-      : mode === "march"
-        ? `
-@compute @workgroup_size(${workgroupSize})
-fn marchRays(
-  @builtin(global_invocation_id) gid: vec3u,
-  @builtin(local_invocation_index) li: u32,
-) {
-  let slotI = gid.x;
-  if (slotI >= params.itemCount) {
-    return;
-  }
-  let ray = activeList[slotI];
-  var st = states[ray];
-  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {
-    return;
-  }
-  let px = ray % params.rasterWidth;
-  let py = ray / params.rasterWidth;
-${marchRd}
-  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
-  // exact arithmetic; recomputed per pass — cheaper than persisting).
-  let radius = params.visibleRadius * 1.02;
-  let bq = dot(ro, rd);
-  let cq = dot(ro, ro) - radius * radius;
-  let disc = bq * bq - cq;
-  if (disc < 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
-    return;
-  }
-  let sq = sqrt(disc);
-  let tFar = -bq + sq;
-  if (tFar <= 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
-    return;
-  }
-  var t = st.x;
-  if (t < 0.0) {
-    t = max(-bq - sq, 0.0);${marchDither}
-  }
-  var steps = u32(st.z);
-  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
-    if (t > tFar) {
-      st.y = ${SURFACE_GPU_RAY_MISS}.0;
-      break;
-    }
-    if (steps >= params.marchSteps) {
-      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
-      break;
-    }
-    let eps = max(params.pixelEps * t, params.hitFloorEps);
-    let d = surfaceDE(ro + rd * t, eps, li);
-    steps++;
-    if (d < eps) {
-      st.y = ${SURFACE_GPU_RAY_HIT}.0;
-      break;
-    }
-    t += d * params.stepScale;
-    st.w = d;
-  }
-  st.x = t;
-  st.z = f32(steps);
-  states[ray] = st;
-}`
-        : `
-struct SurfaceHitInfo {
-  firstChoice: i32,
-  trap: f32,
-  rings: f32,
-  sheets: f32,
-}
-
-// Fold hit-info descent (surface-material.ts's SURFACE_FOLDS shading
+  // Hit-info descent bodies (fr-55s1 stage C): one per core, selected
+  // like the value descents — and under the lens, renamed `…Core` with
+  // the argmin sweep wrapper owning the public name, exactly the value
+  // pair's move one function over.
+  const foldHitInfoText = /* wgsl */ `// Fold hit-info descent (surface-material.ts's SURFACE_FOLDS shading
 // overload, term for term): a GREEDY width-1 chain — at each level the
 // smallest floored-key candidate over every (sector, map, branch) triple
 // — feeding colors only, so no frontier arrays and no prunes. Plain
@@ -1058,7 +975,444 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
   return info;
+}`;
+
+  // Affine hit-info descent (surface-material.ts's affine shading
+  // overload, trajectory term for term): the width-4 refined ladder
+  // WITHOUT its value side — `best`/`refinedCert` never steer the ladder
+  // (keys route the beam, escape/bounding radii route the chains), and
+  // the fold twin above set the convention: the shading descent feeds
+  // colors only, so the value folds are trimmed rather than mirrored.
+  // Plain params.maxDepth on purpose, like the fold twin.
+  const affineHitInfoText = /* wgsl */ `// Affine hit-info descent (surface-material.ts's affine shading
+// overload): the width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn
+// rank-3/4 validity spill, sector-major enumeration — feeding colors
+// only (the value side never steers it; see the generator comment).
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let q = vec3f(
+    dot(params.finalM0, p) + params.finalT0,
+    dot(params.finalM1, p) + params.finalT1,
+    dot(params.finalM2, p) + params.finalT2,
+  );
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var trapAcc = 0.0;
+  var trapNorm = 0.0;
+  var trapW = 1.0;
+  let R = params.boundingRadius;
+  var aQ = q;
+  var aScale = 1.0;
+  var aLive = true;
+  var bQ = vec3f(0.0);
+  var bScale = 1.0;
+  var bLive = false;
+  var v1Q = vec3f(0.0);
+  var v1Scale = 1.0;
+  var v1Live = false;
+  var v2Q = vec3f(0.0);
+  var v2Scale = 1.0;
+  var v2Live = false;
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (!aLive && !bLive && !v1Live && !v2Live) {
+      break;
+    }
+    var c1Key = 1e30;
+    var c1Q = vec3f(0.0);
+    var c1Scale = 1.0;
+    var c1R = 0.0;
+    var c1Map = 0u;
+    var c2Key = 1e30;
+    var c2Q = vec3f(0.0);
+    var c2Scale = 1.0;
+    var c2R = 0.0;
+    var c3Key = 1e30;
+    var c3Q = vec3f(0.0);
+    var c3Scale = 1.0;
+    var c3R = 0.0;
+    var c4Key = 1e30;
+    var c4Q = vec3f(0.0);
+    var c4Scale = 1.0;
+    var c4R = 0.0;
+    for (var c = 0u; c < 4u; c++) {
+      var pQ = vec3f(0.0);
+      var pScale = 1.0;
+      if (c == 0u) {
+        if (!aLive) {
+          continue;
+        }
+        pQ = aQ;
+        pScale = aScale;
+      } else if (c == 1u) {
+        if (!bLive) {
+          continue;
+        }
+        pQ = bQ;
+        pScale = bScale;
+      } else if (c == 2u) {
+        if (!v1Live) {
+          continue;
+        }
+        pQ = v1Q;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) {
+          continue;
+        }
+        pQ = v2Q;
+        pScale = v2Scale;
+      }
+      // Sector sweep (fr-x029): sector-major enumeration, the expanded
+      // slot list's order, so ladder tie-breaks match the oracle's.
+      var sQ = pQ;
+      for (var k = 0u; k < params.symOrder; k++) {
+        if (k > 0u) {
+          sQ = stepSector(sQ);
+        }
+        for (var j = 0u; j < params.mapCount; j++) {
+          let m = maps[j];
+          let img = mapApply(m, sQ);
+          let r = length(img - params.boundCenter);
+          let key = pScale * (r - R);
+          let childScale = pScale * m.p0.x;
+          // Top-2 insert-shift; the displaced tuple (or the candidate
+          // itself) spills into the rank-3/4 ladder. Certificates are
+          // value-side and trimmed; radii flow through — the spill
+          // ladder routes on them.
+          var eKey = key;
+          var eQ = img;
+          var eScale = childScale;
+          var eR = r;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c1Key = key;
+            c1Q = img;
+            c1Scale = childScale;
+            c1R = r;
+            c1Map = j;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eScale = c2Scale;
+            eR = c2R;
+            c2Key = key;
+            c2Q = img;
+            c2Scale = childScale;
+            c2R = r;
+          }
+          if (eKey < c3Key) {
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Scale = eScale;
+            c3R = eR;
+          } else if (eKey < c4Key) {
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Scale = eScale;
+            c4R = eR;
+          }
+        }
+      }
+    }
+    if (depth == 0u) {
+      info.firstChoice = i32(c1Map);
+    }
+    trapAcc += trapW * shadeMaps[c1Map].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;
+    info.rings = min(info.rings, c1R / R);
+    info.sheets = min(info.sheets, abs(c1Q.y) / R);
+    aLive = false;
+    bLive = false;
+    v1Live = false;
+    v2Live = false;
+    if (c1Key < 1e29) {
+      if (c1R <= params.escapeRadius) {
+        aQ = c1Q;
+        aScale = c1Scale;
+        aLive = true;
+      }
+    }
+    if (c2Key < 1e29) {
+      if (c2R <= params.escapeRadius) {
+        bQ = c2Q;
+        bScale = c2Scale;
+        bLive = true;
+      }
+    }
+    if (c3Key < 1e29) {
+      if (c3R <= R) {
+        v1Q = c3Q;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (c4Key < 1e29) {
+      if (c4R <= R) {
+        v2Q = c4Q;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
+  }
+  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}`;
+
+  // Lens hit-info wrapper (fr-55s1 stage C — the GLSL lens hit overload
+  // term for term): re-run the branch sweep with FULL-width zero-cutoff
+  // core calls, tracking the ARGMIN branch's core query (identity-branch
+  // fallback, so a fully pruned loop — only reachable off-surface —
+  // still hands the core hit call a sane point), then fetch the shading
+  // extras from ONE core hit-info call on the winner. The shell guard
+  // plain-skips here: there is no caller cutoff and no visible pin in a
+  // shading call, exactly the GLSL's shape.
+  const lensHitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let kind = u32(params.lensParams.x);
+  let absW = params.lensParams.z;
+  let u = p * params.lensParams.y;
+  var best = 1e30;
+  var ru = 0.0;
+  var pre0 = vec3f(0.0);
+  var pre1 = vec3f(0.0);
+  var pre2 = vec3f(0.0);
+  var dUp = vec3f(0.0);
+  var dDn = vec3f(0.0);
+  var v = vec3f(0.0);
+  var sfSigma = 1.0;
+  var sfRd = 0.0;
+  var bestQ = vec3f(
+    dot(params.lensM0, u) + params.lensT0,
+    dot(params.lensM1, u) + params.lensT1,
+    dot(params.lensM2, u) + params.lensT2,
+  );
+  if (kind == 1u) {
+    pre0 = u;
+    pre1 = 2.0 - u;
+    pre2 = -2.0 - u;
+    dUp = max(u - 1.0, vec3f(0.0));
+    dDn = max(-1.0 - u, vec3f(0.0));
+  } else {
+    ru = length(u);
+  }
+  var branchCount = 81u;
+  if (kind == 1u) {
+    branchCount = 27u;
+  } else if (kind == 2u) {
+    branchCount = 3u;
+  }
+  for (var b = 0u; b < branchCount; b++) {
+    if (kind == 2u || (kind == 3u && b % 27u == 0u)) {
+      var s = b;
+      if (kind == 3u) {
+        s = b / 27u;
+      }
+      if (s == 0u) {
+        v = u;
+        sfSigma = 1.0;
+        sfRd = max(1.0 - ru, 0.0);
+      } else if (s == 1u) {
+        v = 0.25 * u;
+        sfSigma = 4.0;
+        sfRd = max(ru - 2.0, 0.0);
+      } else {
+        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          if (kind == 3u) {
+            b += 26u;
+          }
+          continue;
+        }
+        let invR2 = 1.0 / (ru * ru);
+        v = u * invR2;
+        sfSigma = ru;
+        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+      }
+      if (kind == 3u) {
+        pre0 = v;
+        pre1 = 2.0 - v;
+        pre2 = -2.0 - v;
+        dUp = max(v - 1.0, vec3f(0.0));
+        dDn = max(-1.0 - v, vec3f(0.0));
+      }
+    }
+    var pre: vec3f;
+    var branchRd: f32;
+    if (kind == 2u) {
+      pre = v;
+      branchRd = sfRd;
+    } else {
+      var bb = b;
+      if (kind == 3u) {
+        bb = b % 27u;
+      }
+      let selX = bb % 3u;
+      let selY = (bb / 3u) % 3u;
+      let selZ = bb / 9u;
+      pre = vec3f(
+        select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+        select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+        select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+      );
+      let dd = vec3f(
+        select(
+          select(dDn.x, dUp.x, selX == 1u),
+          max(dUp.x, dDn.x),
+          selX == 0u,
+        ),
+        select(
+          select(dDn.y, dUp.y, selY == 1u),
+          max(dUp.y, dDn.y),
+          selY == 0u,
+        ),
+        select(
+          select(dDn.z, dUp.z, selZ == 1u),
+          max(dUp.z, dDn.z),
+          selZ == 0u,
+        ),
+      );
+      let boxRd = length(dd);
+      if (kind == 1u) {
+        branchRd = boxRd;
+      } else {
+        branchRd = max(sfRd, sfSigma * boxRd);
+      }
+    }
+    let flr = absW * branchRd;
+    if (flr > 0.0 && flr >= best) {
+      continue;
+    }
+    let q = vec3f(
+      dot(params.lensM0, pre) + params.lensT0,
+      dot(params.lensM1, pre) + params.lensT1,
+      dot(params.lensM2, pre) + params.lensT2,
+    );
+    let factor = absW * sfSigma * params.lensParams.w;
+    let rq = length(q - params.boundCenter);
+    if (factor * (rq - params.boundingRadius) >= best) {
+      continue;
+    }
+    var term = factor * surfaceDECore(q, 0.0, li);
+    term = max(term, flr);
+    if (term < best) {
+      best = term;
+      bestQ = q;
+    }
+  }
+  return surfaceDEHitInfoCore(bestQ, li);
+}`;
+
+  const coreHitInfoText =
+    core === "affine" ? affineHitInfoText : foldHitInfoText;
+  const hitInfoText = lens
+    ? `${coreHitInfoText.replace(
+        "fn surfaceDEHitInfo(",
+        "fn surfaceDEHitInfoCore(",
+      )}
+
+// The lens hit-info argmin sweep (fr-55s1 stage C) — around the renamed
+// core hit-info, like the value pair below.
+${lensHitWrapText}`
+    : coreHitInfoText;
+
+  const entry =
+    mode === "eval"
+      ? `
+@compute @workgroup_size(${workgroupSize})
+fn evalQueries(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let i = gid.x;
+  if (i >= params.itemCount) {
+    return;
+  }
+  results[i] = surfaceDE(queries[i].xyz, params.cutoff, li);
+}`
+      : mode === "march"
+        ? `
+@compute @workgroup_size(${workgroupSize})
+fn marchRays(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_index) li: u32,
+) {
+  let slotI = gid.x;
+  if (slotI >= params.itemCount) {
+    return;
+  }
+  let ray = activeList[slotI];
+  var st = states[ray];
+  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {
+    return;
+  }
+  let px = ray % params.rasterWidth;
+  let py = ray / params.rasterWidth;
+${marchRd}
+  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
+  // exact arithmetic; recomputed per pass — cheaper than persisting).
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    return;
+  }
+  let sq = sqrt(disc);
+  let tFar = -bq + sq;
+  if (tFar <= 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    return;
+  }
+  var t = st.x;
+  if (t < 0.0) {
+    t = max(-bq - sq, 0.0);${marchDither}
+  }
+  var steps = u32(st.z);
+  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
+    if (t > tFar) {
+      st.y = ${SURFACE_GPU_RAY_MISS}.0;
+      break;
+    }
+    if (steps >= params.marchSteps) {
+      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+      break;
+    }
+    let eps = max(params.pixelEps * t, params.hitFloorEps);
+    let d = surfaceDE(ro + rd * t, eps, li);
+    steps++;
+    if (d < eps) {
+      st.y = ${SURFACE_GPU_RAY_HIT}.0;
+      break;
+    }
+    t += d * params.stepScale;
+    st.w = d;
+  }
+  st.x = t;
+  st.z = f32(steps);
+  states[ray] = st;
+}`
+        : `
+struct SurfaceHitInfo {
+  firstChoice: i32,
+  trap: f32,
+  rings: f32,
+  sheets: f32,
 }
+
+${hitInfoText}
 
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
@@ -2230,12 +2584,33 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   return max(best, visBound);
 }`;
 
+  // Under the lens the probe descent (when emitted) gets the main
+  // descent's exact treatment one name over: its body renames to
+  // `surfaceDEProbeCore` and a probe lens wrapper — the SAME sweep text,
+  // token-renamed like renameToProbe — owns `surfaceDEProbe` for the
+  // shading taps (fr-p8bc's probe discipline through the lens, fr-55s1
+  // stage C). One text, three names; none can drift.
+  const probeLensWrapText = lensWrapText
+    .replace("fn surfaceDE(", "fn surfaceDEProbe(")
+    .replace(
+      "surfaceDECore(q, innerCutoff, li)",
+      "surfaceDEProbeCore(q, innerCutoff, li)",
+    );
   const bodyBlock = lens
-    ? `${descentBlock.replace("fn surfaceDE(", "fn surfaceDECore(")}
+    ? `${descentBlock
+        .replace("fn surfaceDE(", "fn surfaceDECore(")
+        .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCore(")}
 
 // descendLens (surface-de.ts) — the fold FINAL lens's branch sweep
 // around the untouched core (fr-g58b's vocabulary, fr-55s1 stage B).
-${lensWrapText}`
+${lensWrapText}${
+        probeWidth === null
+          ? ""
+          : `
+
+// The probe taps' own lens sweep (fr-55s1 stage C) — same text, renamed.
+${probeLensWrapText}`
+      }`
     : descentBlock;
 
   return /* wgsl */ `${headerText}

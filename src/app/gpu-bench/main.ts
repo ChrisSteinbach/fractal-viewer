@@ -2081,9 +2081,19 @@ interface SurfaceDeResults {
   /** fr-tzdg leg A (gating) — absent until the leg runs; SkippedResult when
    * it could not run (the error is also in notes, and the verdict fails). */
   marchUnproject?: SurfaceUnprojectRow | SkippedResult;
+  /** fr-55s1 stage C: leg A over the lens field class
+   * (lensMandelboxOverAffine) — the affine core under the 81-branch
+   * mandelbox lens, marched by the app's exact ray derivation. Gates like
+   * {@link marchUnproject}. */
+  marchUnprojectLens?: SurfaceUnprojectRow | SkippedResult;
   /** fr-tzdg leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-55s1 stage C: leg B over the lens field class — the PRODUCTION
+   * SurfaceComputeRenderer on lensMandelboxOverAffine (affine core +
+   * 81-branch mandelbox lens, branch-scaled priors). Gates like
+   * {@link computeFrame} (zero hits on real hardware fails). */
+  computeFrameLens?: SurfaceComputeFrameRow | SkippedResult;
   /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
    * `surfaceShadeWidths` is empty (the default, silent) or every requested
    * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
@@ -2639,6 +2649,16 @@ function surfaceRayDir(pose: SurfaceGpuPose, px: number, py: number): Vec3 {
  * `estimateDistance` — the same sphere gate, cone-eps hit test, budget and
  * stepScale the kernel's marchRays runs, with the DE's eps passed as the
  * cutoff exactly like both of them. */
+/** The estimator a system's kernel marches (fr-55s1) — the freeze loop's
+ * routing, verbatim: fold base maps the plain descent, fold-free ones the
+ * refined ladder; both route a `foldFinal` through `descendLens`
+ * internally, so the march emulators stay one call either way. */
+function surfaceMarchEstimate(de: SurfaceDE, p: Vec3, eps: number): number {
+  return deHasFolds(de)
+    ? estimateDistance(de, p, eps)
+    : estimateDistanceRefined(de, p, eps);
+}
+
 function surfaceCpuMarch(
   de: SurfaceDE,
   ro: Vec3,
@@ -2662,7 +2682,7 @@ function surfaceCpuMarch(
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = estimateDistance(de, p, eps);
+    const d = surfaceMarchEstimate(de, p, eps);
     if (d < eps) return true;
     t += d * de.stepScale;
   }
@@ -2748,7 +2768,8 @@ function surfaceUnprojectRay(
  * continuous f64 loop ≡ the kernel's pass-bounded loop resumed on
  * `(t, steps)`; the check order — sphere exit, then budget, then eval — is
  * the kernel's). Ray derivation is the caller's; the loop itself stays
- * surfaceCpuMarch's: f64 accumulation, plain `estimateDistance`, the same
+ * surfaceCpuMarch's: f64 accumulation, {@link surfaceMarchEstimate} (the
+ * system's own core estimator since fr-55s1), the same
  * eps/hit-floor/stepScale. Pre-gate misses report `t = −1`, matching the
  * kernel's untouched `st.x` initialization.
  */
@@ -2777,7 +2798,7 @@ function surfaceCpuMarchState(
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = estimateDistance(de, p, eps);
+    const d = surfaceMarchEstimate(de, p, eps);
     steps++;
     if (d < eps) return { status: SURFACE_GPU_RAY_HIT, t };
     t += d * de.stepScale;
@@ -3531,7 +3552,15 @@ async function runSurfaceUnprojectLeg(
   const code = surfaceDeKernelWgsl({
     mode: "march",
     rays: "unproject",
-    width: SURFACE_FOLD_BEAM_WIDTH,
+    // fr-55s1 stage C: the system's own core + lens, the app renderer's
+    // exact derivation. mandelboxKifs keeps its byte-identical fold
+    // source (explicit fold core + lens:false are the pinned off state).
+    core: sys.core,
+    lens: sys.de.foldFinal !== null,
+    width:
+      sys.core === "fold"
+        ? SURFACE_FOLD_BEAM_WIDTH
+        : SURFACE_AFFINE_LADDER_WIDTH,
     workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
     sharedFrontier: false,
     bnbStage2: false,
@@ -3643,7 +3672,10 @@ async function runSurfaceUnprojectLeg(
       "Diverged trajectories and off-surface endpoints still fail.";
     const row: SurfaceUnprojectRow = {
       system: sys.name,
-      width: SURFACE_FOLD_BEAM_WIDTH,
+      width:
+        sys.core === "fold"
+          ? SURFACE_FOLD_BEAM_WIDTH
+          : SURFACE_AFFINE_LADDER_WIDTH,
       wg: SURFACE_COMPUTE_WORKGROUP_SIZE,
       rasterWidth: width,
       rasterHeight: height,
@@ -4891,6 +4923,45 @@ async function runSurfaceDeSection(
         }
         render();
       }
+
+      // fr-55s1 stage C: the same gate over the lens field class — the
+      // affine core under the 81-branch mandelbox lens, the exact kernel
+      // the app renderer compiles for fr-zx34's system shape. Same
+      // truncation/failure gating as the fold leg above.
+      const lensSys = lensSystems.find(
+        (s) => s.name === "lensMandelboxOverAffine",
+      );
+      if (!lensSys) {
+        results.marchUnprojectLens = {
+          skipped: "lensMandelboxOverAffine did not build (see notes)",
+        };
+        render();
+      } else {
+        try {
+          const row = await runSurfaceUnprojectLeg(
+            device,
+            lensSys,
+            acquired.software,
+            status,
+            activity,
+          );
+          results.marchUnprojectLens = row;
+          if (row.truncated) {
+            unprojFailed = true;
+            results.notes.push(
+              `march-unproject lens: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
+                "agreement not verifiable, failing the leg",
+            );
+          } else if (row.failures > 0) {
+            unprojFailed = true;
+          }
+        } catch (e) {
+          unprojFailed = true;
+          results.marchUnprojectLens = { skipped: describeError(e) };
+          results.notes.push(`march-unproject lens: ${describeError(e)}`);
+        }
+        render();
+      }
     }
 
     // ----- Timing protocol (march — the §3.7 measurement) -----
@@ -5155,6 +5226,49 @@ async function runSurfaceDeSection(
           frameFailed = true;
           results.computeFrame = { skipped: describeError(e) };
           results.notes.push(`compute frame: ${describeError(e)}`);
+        }
+      }
+      render();
+
+      // fr-55s1 stage C: the PRODUCTION renderer over the lens field
+      // class — lensMandelboxOverAffine through the same create/frame
+      // protocol (its DE derives core "affine" + lens:true and the
+      // branch-scaled priors inside the renderer). Same gates.
+      const lensSys = lensSystems.find(
+        (s) => s.name === "lensMandelboxOverAffine",
+      );
+      if (!lensSys) {
+        results.computeFrameLens = {
+          skipped: "lensMandelboxOverAffine did not build (see notes)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFrameLeg(
+            lensSys,
+            acquired.software,
+            dom,
+            status,
+            activity,
+          );
+          results.computeFrameLens = row;
+          if (row.counts.hit === 0 && !acquired.software) {
+            frameFailed = true;
+            results.notes.push(
+              "compute frame lens: zero hit rays on a real adapter — failing the leg",
+            );
+          }
+          if (row.truncated) {
+            results.notes.push(
+              `compute frame lens: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                (acquired.software
+                  ? " — accepted on a software adapter"
+                  : " — informational (only hit=0 or a null frame gate)"),
+            );
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrameLens = { skipped: describeError(e) };
+          results.notes.push(`compute frame lens: ${describeError(e)}`);
         }
       }
       render();

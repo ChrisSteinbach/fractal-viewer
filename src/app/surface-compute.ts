@@ -70,7 +70,11 @@ import {
   SURFACE_GPU_SHADE_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
-import { SURFACE_FOLD_BEAM_WIDTH, type SurfaceDE } from "../fractal/surface-de";
+import {
+  deHasFolds,
+  SURFACE_FOLD_BEAM_WIDTH,
+  type SurfaceDE,
+} from "../fractal/surface-de";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
@@ -471,6 +475,13 @@ export class SurfaceComputeRenderer {
         code: surfaceDeKernelWgsl({
           mode,
           rays: mode === "march" ? "unproject" : undefined,
+          // fr-55s1: the DE picks the descent core exactly as the CPU
+          // estimators route — fold base maps march the wide frontier,
+          // fold-free ones the width-4 refined ladder (width/shadeDeWidth
+          // are inert there) — and a fold FINAL lens wraps either core in
+          // descendLens's branch sweep.
+          core: deHasFolds(de) ? "fold" : "affine",
+          lens: de.foldFinal !== null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -903,7 +914,19 @@ export class SurfaceComputeRenderer {
     let shadeFreeQueue: number[] = [];
     let stepsThisPass = 1;
     let shadeHitCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
-    let shadeHitEmaUs = SURFACE_COMPUTE_INITIAL_HIT_SHADE_US;
+    // fr-55s1 stage D: a fold FINAL lens multiplies every march step and
+    // every shade probe by its branch sweep — 27 boxfold / 3 spherefold /
+    // 81 mandelbox branches around the core, discounted /8 for the
+    // prunes' measured-typical survival (surfaceDescentCostWeight's
+    // factor, surface-de.ts) — so first-slice/first-batch sizing starts
+    // from a proportionally raised prior and stays watchdog-safe before
+    // the EMAs take over.
+    const lensKind = this.de.foldFinal?.foldKind;
+    const lensCostScale =
+      lensKind === undefined
+        ? 1
+        : Math.max(1, (lensKind === 1 ? 27 : lensKind === 2 ? 3 : 81) / 8);
+    let shadeHitEmaUs = SURFACE_COMPUTE_INITIAL_HIT_SHADE_US * lensCostScale;
     let passes = 0;
     let gpuMs = 0;
     let marchGpuMs = 0;
@@ -980,7 +1003,7 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
-    let rayStepEmaUs = SURFACE_COMPUTE_INITIAL_RAY_STEP_US;
+    let rayStepEmaUs = SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale;
     let finalStates: Float32Array | null = null;
     outer: while (
       active.length > 0 ||
