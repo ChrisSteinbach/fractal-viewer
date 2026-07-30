@@ -54,7 +54,7 @@ function baseSpec(
 // byte-layout doc comment (byte offset / 4) — independent of that module's
 // own (private) offset constants, so a mistake in the implementation could
 // not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 60
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 64
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
@@ -66,6 +66,8 @@ const VAR_TYPES = 40; // byte 160, array<vec4u, 4>
 const VAR_COUNT = 56; // byte 224
 const HAS_POST = 57; // byte 228
 const CUM_WEIGHT = 58; // byte 232
+const COLOR_INDEX = 59; // byte 236
+const COLOR_SPEED = 60; // byte 240
 
 describe("packGpuSystem validation", () => {
   it("rejects systems with more than MAX_TRANSFORMS transforms, matching prepareChaosGame's message", () => {
@@ -362,6 +364,57 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
       expect(f32[s * F32_PER_SLOT + CUM_WEIGHT]).toBeCloseTo(expectedCum[s], 6);
     }
   });
+
+  it("resolves every slot's color pair to the value prepareChaosGame resolved for that BASE map", () => {
+    // Deliberately mixed: one map authors both fields, one only a speed, one
+    // neither — so the fallbacks are exercised on BOTH sides of the
+    // comparison. This is the anti-drift pin: the packer must resolve through
+    // the same derivedColorIndex/DEFAULT_COLOR_SPEED definitions the CPU
+    // oracle's PreparedChaosGame does, or a flame would color differently on
+    // GPU than on CPU (fr-hiyu).
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        colorIndex: 0.8,
+        colorSpeed: 0.3,
+      },
+      {
+        id: 1,
+        position: [-0.2, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        colorSpeed: 0.9,
+      },
+      {
+        id: 2,
+        position: [0, -0.2, 0.1],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    const symmetry: SymmetryParams = { order: 2, axis: "x" };
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    const packed = packGpuSystem({
+      transforms,
+      finalTransform: null,
+      symmetry,
+      palette: "spectrum",
+    });
+
+    const f32 = new Float32Array(packed.slots);
+    for (let s = 0; s < packed.transformCount; s++) {
+      const baseIdx = s % packed.baseTransformCount;
+      expect(f32[s * F32_PER_SLOT + COLOR_INDEX]).toBe(
+        Math.fround(prepared.colorIndex[baseIdx]),
+      );
+      expect(f32[s * F32_PER_SLOT + COLOR_SPEED]).toBe(
+        Math.fround(prepared.colorSpeed[baseIdx]),
+      );
+    }
+  });
 });
 
 describe("packGpuSystem colors", () => {
@@ -400,14 +453,125 @@ describe("packGpuSystem colors", () => {
       );
     }
   });
+});
 
-  it("sets colorDenom to baseTransformCount - 1, or 0 for a single-transform system", () => {
-    expect(
-      packGpuSystem(baseSpec({ transforms: makeTransforms(4) })).colorDenom,
-    ).toBe(3);
-    expect(
-      packGpuSystem(baseSpec({ transforms: makeTransforms(1) })).colorDenom,
-    ).toBe(0);
+// ---------------------------------------------------------------------------
+// fr-hiyu: the per-transform palette index + color speed the kernel's
+// structural walk blends with. The kernel reads them off the picked SLOT (no
+// `% baseTransformCount` fold and no `i / (n - 1)` division of its own), so
+// what these pin is the packer resolving absent fields exactly as
+// `prepareChaosGame` does and replicating a base map's pair across its
+// kaleidoscope copies.
+// ---------------------------------------------------------------------------
+
+describe("packGpuSystem color slots", () => {
+  it("packs a transform's authored colorIndex and colorSpeed verbatim", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.75,
+        colorSpeed: 0.2,
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.125,
+        colorSpeed: 1,
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    expect(f32[COLOR_INDEX]).toBe(0.75);
+    expect(f32[COLOR_SPEED]).toBe(Math.fround(0.2));
+    expect(f32[F32_PER_SLOT + COLOR_INDEX]).toBe(0.125);
+    expect(f32[F32_PER_SLOT + COLOR_SPEED]).toBe(1);
+  });
+
+  it("falls back to the even i/(n-1) spread and the 0.5 halfway speed when a transform authors neither", () => {
+    // Three maps with no color fields at all: derivedColorIndex spreads them
+    // 0, 0.5, 1 across the gradient and every speed is DEFAULT_COLOR_SPEED —
+    // the exact behavior hard-coded in the kernel before fr-hiyu.
+    const f32 = new Float32Array(
+      packGpuSystem(baseSpec({ transforms: makeTransforms(3) })).slots,
+    );
+    expect([0, 1, 2].map((s) => f32[s * F32_PER_SLOT + COLOR_INDEX])).toEqual([
+      0, 0.5, 1,
+    ]);
+    expect([0, 1, 2].map((s) => f32[s * F32_PER_SLOT + COLOR_SPEED])).toEqual([
+      0.5, 0.5, 0.5,
+    ]);
+  });
+
+  it("gives a lone map the 0.5 midpoint rather than a 0/0 spread", () => {
+    const f32 = new Float32Array(
+      packGpuSystem(baseSpec({ transforms: makeTransforms(1) })).slots,
+    );
+    expect(f32[COLOR_INDEX]).toBe(0.5);
+  });
+
+  it("resolves each field independently — an authored speed does not suppress the derived index, or vice versa", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorSpeed: 0.9, // index absent -> derived 0.
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.25, // speed absent -> 0.5.
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    expect(f32[COLOR_INDEX]).toBe(0);
+    expect(f32[COLOR_SPEED]).toBe(Math.fround(0.9));
+    expect(f32[F32_PER_SLOT + COLOR_INDEX]).toBe(0.25);
+    expect(f32[F32_PER_SLOT + COLOR_SPEED]).toBe(0.5);
+  });
+
+  it("writes the BASE map's pair into every kaleidoscope copy of it", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.25,
+        colorSpeed: 0.75,
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.5,
+        colorSpeed: 0.125,
+      },
+    ];
+    const packed = packGpuSystem(
+      baseSpec({ transforms, symmetry: { order: 3, axis: "y" } }),
+    );
+    expect(packed.transformCount).toBe(6);
+    const f32 = new Float32Array(packed.slots);
+    // Copy-major expansion, so slots 0/2/4 are base map 0 and 1/3/5 base map
+    // 1 — each copy colors as the map it is a copy of, which is what lets the
+    // kernel skip the CPU's `idx % baseTransformCount` fold.
+    for (const slot of [0, 2, 4]) {
+      expect(f32[slot * F32_PER_SLOT + COLOR_INDEX]).toBe(0.25);
+      expect(f32[slot * F32_PER_SLOT + COLOR_SPEED]).toBe(0.75);
+    }
+    for (const slot of [1, 3, 5]) {
+      expect(f32[slot * F32_PER_SLOT + COLOR_INDEX]).toBe(0.5);
+      expect(f32[slot * F32_PER_SLOT + COLOR_SPEED]).toBe(0.125);
+    }
   });
 });
 
@@ -484,7 +648,6 @@ describe("packGpuParams", () => {
       weighted: true,
       hasFinal: true,
       totalWeight: 9.5,
-      colorDenom: 3,
       numChains: 65536,
       ...overrides,
     };
@@ -508,8 +671,11 @@ describe("packGpuParams", () => {
     expect(u32[18]).toBe(1); // weighted
     expect(u32[19]).toBe(1); // hasFinal
     expect(f32[20]).toBeCloseTo(9.5, 6); // totalWeight
-    expect(f32[21]).toBe(3); // colorDenom
-    expect(u32[22]).toBe(65536); // numChains
+    expect(u32[21]).toBe(65536); // numChains
+    // Elements 22-23 are the struct's trailing pad — the two words WGSL's
+    // 16-byte struct alignment adds back after fr-hiyu removed colorDenom.
+    expect(u32[22]).toBe(0);
+    expect(u32[23]).toBe(0);
   });
 
   it("ignores the projection matrix's row 2 (clip Z)", () => {

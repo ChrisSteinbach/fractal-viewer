@@ -28,7 +28,11 @@
  * `project4.ts`'s `composeFlameProjection4`), same soft w-slice Gaussian
  * with the point-cloud ghost floor (0.06), same optional slice-relative
  * w-ramp recolor (fr-nn6 — an affine remap of `s` packed from
- * `project4.ts`'s `sliceColorRemap`, identity when off), and the same four
+ * `project4.ts`'s `sliceColorRemap`, identity when off), the same structural
+ * color walk over a per-slot palette index and blend speed (fr-hiyu —
+ * resolved host-side by {@link packGpuSystem4} through `chaos-game.ts`'s
+ * `derivedColorIndex`/`DEFAULT_COLOR_SPEED`, the very definitions
+ * `prepareChaosGame4` resolves the CPU oracle's with), and the same four
  * `FourDRenderColor` flavors (`color.ts`). Deliberate differences are the
  * 3D kernel's own, unchanged: f32 arithmetic instead of f64, and many
  * independent PCG32 chains instead of one mulberry32 orbit (each on its own
@@ -65,7 +69,11 @@ import type { FourDView } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
 import { composeAffine4 } from "./affine4";
-import { MAX_TRANSFORMS } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  MAX_TRANSFORMS,
+  derivedColorIndex,
+} from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
   HIST_U32_PER_BUCKET,
@@ -109,11 +117,13 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   96 negColor vec4f | 112 posColor vec4f (wRamp side colors, xyz; zero otherwise)
  *   128 width u32 | 132 height u32 | 136 transformCount u32 | 140 itersPerInvocation u32
  *   144 colorKind u32 ({@link KERNEL_COLOR_KIND}) | 148 weighted u32 | 152 hasFinal u32 | 156 numChains u32
- *   160 totalWeight f32 | 164 colorDenom f32 | 168 invWAmp f32 | 172 sliceOn u32
- *   176 sliceCenter f32 | 180 sliceWidth f32 | 184 minD f32 | 188 invRadiusRange f32
- *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the fr-nn6 remap —
+ *   160 totalWeight f32 | 164 invWAmp f32 | 168 sliceOn u32 | 172 sliceCenter f32
+ *   176 sliceWidth f32 | 180 minD f32 | 184 invRadiusRange f32
+ *   188 sliceColorShift f32 | 192 sliceColorInvScale f32 (the fr-nn6 remap —
  *   `sliceColorRemap`'s (shift, invScale); identity (0, 1) when off) |
- *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment)
+ *   196..207 trailing pad (WGSL rounds the struct to its 16-byte alignment,
+ *   which is why dropping fr-hiyu's dead `colorDenom` from the middle of this
+ *   block compacted the layout without shrinking {@link PARAMS4_BYTES})
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 224 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -123,7 +133,11 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   64 trans vec4f (t0..t3)
  *   80 varWeights array<vec4f, 4> | 144 varTypes array<vec4u, 4> (16 lanes of
  *   storage, 15 used — one per `VariationType` — the 16th left zeroed)
- *   208 varCount u32 | 212 cumWeight f32 | 216 pad | 220 pad
+ *   208 varCount u32 | 212 cumWeight f32
+ *   216 colorIndex f32 | 220 colorSpeed f32 (fr-hiyu's flam3 color pair, one
+ *   per transform — there are no symmetry copies here to replicate it across,
+ *   so the pair is simply the transform's own; it took the two trailing pads
+ *   this struct already carried, leaving {@link SLOT4_STRIDE_BYTES} unchanged)
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -178,7 +192,6 @@ struct Params {
   hasFinal: u32,
   numChains: u32,
   totalWeight: f32,
-  colorDenom: f32,
   invWAmp: f32,
   sliceOn: u32,
   sliceCenter: f32,
@@ -199,8 +212,8 @@ struct Slot {
   varTypes: array<vec4u, 4>,
   varCount: u32,
   cumWeight: f32,
-  _pad0: u32,
-  _pad1: u32,
+  colorIndex: f32,
+  colorSpeed: f32,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -399,15 +412,16 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
       idx = min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
     }
 
-    // Structural coloring: blend the color coordinate halfway toward this
-    // transform's slot BEFORE stepping, exactly like accumulateFlame4 —
-    // keyed on the RAW picked index (no symmetry copies to collapse).
+    // Structural coloring: blend the color coordinate toward this transform's
+    // palette slot, at this transform's own speed, BEFORE stepping — exactly
+    // accumulateFlame4's c = c * (1 - speed) + slot * speed (fr-hiyu), term for
+    // term, and consuming no RNG so the orbit stays identical either way.
+    // The pair is read straight off the picked slot: 4D has no symmetry copies,
+    // so there is not even a base-map fold to skip (the 3D kernel's own read is
+    // fold-free too, by packing rather than by dimension).
     if (params.colorKind == 0u) {
-      var slotCoord = 0.5;
-      if (params.colorDenom > 0.0) {
-        slotCoord = f32(idx) / params.colorDenom;
-      }
-      colorCoord = (colorCoord + slotCoord) * 0.5;
+      let speed = slots[idx].colorSpeed;
+      colorCoord = colorCoord * (1.0 - speed) + slots[idx].colorIndex * speed;
     }
 
     var np = applySlot(idx, pos, &rng);
@@ -531,8 +545,11 @@ const SLOT4_VAR_WEIGHTS = 20;
 const SLOT4_VAR_TYPES = 36;
 const SLOT4_VAR_COUNT = 52;
 const SLOT4_CUM_WEIGHT = 53;
-// Elements 54-55 are Slot's trailing pads, left at the ArrayBuffer's zero
-// default.
+/** fr-hiyu's flam3 color pair, one per transform (see
+ * {@link packGpuSystem4}) — the kernel's structural walk reads them straight
+ * off the picked slot. These are the two elements Slot4 previously padded. */
+const SLOT4_COLOR_INDEX = 54;
+const SLOT4_COLOR_SPEED = 55;
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -562,16 +579,15 @@ const PARAMS4_WEIGHTED = 37;
 const PARAMS4_HAS_FINAL = 38;
 const PARAMS4_NUM_CHAINS = 39;
 const PARAMS4_TOTAL_WEIGHT = 40;
-const PARAMS4_COLOR_DENOM = 41;
-const PARAMS4_INV_W_AMP = 42;
-const PARAMS4_SLICE_ON = 43;
-const PARAMS4_SLICE_CENTER = 44;
-const PARAMS4_SLICE_WIDTH = 45;
-const PARAMS4_MIN_D = 46;
-const PARAMS4_INV_RADIUS_RANGE = 47;
-const PARAMS4_SLICE_COLOR_SHIFT = 48;
-const PARAMS4_SLICE_COLOR_INV_SCALE = 49;
-// Elements 50-51 are the struct's trailing pad, left at the ArrayBuffer's
+const PARAMS4_INV_W_AMP = 41;
+const PARAMS4_SLICE_ON = 42;
+const PARAMS4_SLICE_CENTER = 43;
+const PARAMS4_SLICE_WIDTH = 44;
+const PARAMS4_MIN_D = 45;
+const PARAMS4_INV_RADIUS_RANGE = 46;
+const PARAMS4_SLICE_COLOR_SHIFT = 47;
+const PARAMS4_SLICE_COLOR_INV_SCALE = 48;
+// Elements 49-51 are the struct's trailing pad, left at the ArrayBuffer's
 // zero default.
 
 /**
@@ -606,10 +622,6 @@ export interface PackedGpuSystem4 {
   transformCount: number;
   weighted: boolean;
   totalWeight: number;
-  /** `transformCount - 1`, or `0` for a single-transform system — the
-   * structural mode's slot divisor, keyed on the RAW transform count
-   * (accumulateFlame4's own `colorDenom`; no symmetry copies to collapse). */
-  colorDenom: number;
   hasFinal: boolean;
 }
 
@@ -642,6 +654,15 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * ?? 1`, `cumWeight` the running sum, `weighted` true under the identical
  * `some(w !== 1) && total > 0 && finite` condition, so the kernel's
  * weighted/uniform pick branch agrees with the CPU's bit for bit.
+ *
+ * **Color slots** (fr-hiyu): each slot also carries the flam3 pair the
+ * kernel's structural walk blends with — `colorIndex` (the transform's own, or
+ * `chaos-game.ts`'s `derivedColorIndex(i, transformCount)` even spread) and
+ * `colorSpeed` (its own, or `DEFAULT_COLOR_SPEED`) — resolved through exactly
+ * the definitions `prepareChaosGame4` resolves `PreparedChaosGame4`'s with, on
+ * the same RAW transform count (4D has no symmetry copies to key back onto a
+ * base map). The final-lens slot is never picked, so its pair stays at the
+ * `ArrayBuffer`'s zero default.
  *
  * **Final transform**: one extra slot at index `transformCount` (never drawn
  * by the pick, which `params.transformCount` bounds) carrying the lens's
@@ -691,6 +712,10 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     writeSlot4Affine(slotF32, base, transforms4[i]);
     writeSlot4Variations(slotF32, slotU32, base, transforms4[i].variations);
     slotF32[base + SLOT4_CUM_WEIGHT] = cumWeights[i];
+    slotF32[base + SLOT4_COLOR_INDEX] =
+      transforms4[i].colorIndex ?? derivedColorIndex(i, transformCount);
+    slotF32[base + SLOT4_COLOR_SPEED] =
+      transforms4[i].colorSpeed ?? DEFAULT_COLOR_SPEED;
   }
 
   // The final-transform lens: one extra slot, never chosen by the pick
@@ -740,7 +765,6 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     transformCount,
     weighted,
     totalWeight,
-    colorDenom: transformCount > 1 ? transformCount - 1 : 0,
     hasFinal,
   };
 }
@@ -838,7 +862,6 @@ export interface GpuParams4Fields {
   weighted: boolean;
   hasFinal: boolean;
   totalWeight: number;
-  colorDenom: number;
   numChains: number;
   view: FourDView;
   color: FourDRenderColor;
@@ -868,6 +891,11 @@ export interface GpuParams4Fields {
  * (fr-nn6) — the identity (0, 1) unless the slice is on with the
  * slice-relative color option chosen, so they are packed unconditionally
  * (only the wRamp color kind reads them).
+ *
+ * There is deliberately no `colorDenom` here any more (fr-hiyu), for the same
+ * reason its 3D sibling lost one: the structural mode's gradient slot is a
+ * per-slot value {@link packGpuSystem4} resolves, not a uniform-wide `i /
+ * (n - 1)` division the kernel redoes per iteration.
  */
 export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   const { projection, view, color } = fields;
@@ -913,7 +941,6 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   u32[PARAMS4_HAS_FINAL] = fields.hasFinal ? 1 : 0;
   u32[PARAMS4_NUM_CHAINS] = fields.numChains;
   f32[PARAMS4_TOTAL_WEIGHT] = fields.totalWeight;
-  f32[PARAMS4_COLOR_DENOM] = fields.colorDenom;
   f32[PARAMS4_INV_W_AMP] = view.invWAmp;
   u32[PARAMS4_SLICE_ON] = view.sliceOn ? 1 : 0;
   f32[PARAMS4_SLICE_CENTER] = view.sliceCenter;

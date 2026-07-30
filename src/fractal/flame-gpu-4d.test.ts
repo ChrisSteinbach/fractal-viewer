@@ -64,6 +64,8 @@ const VAR_WEIGHTS = 20; // byte 80, array<vec4f, 4>
 const VAR_TYPES = 36; // byte 144, array<vec4u, 4>
 const VAR_COUNT = 52; // byte 208
 const CUM_WEIGHT = 53; // byte 212
+const COLOR_INDEX = 54; // byte 216
+const COLOR_SPEED = 55; // byte 220
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
@@ -290,6 +292,40 @@ describe("packGpuSystem4 parity with prepareChaosGame4", () => {
       );
     }
   });
+
+  it("resolves every slot's color pair to the value prepareChaosGame4 resolved for that transform", () => {
+    // Mixed on purpose — authored pair, speed only, neither — so the
+    // fallbacks run on BOTH sides. The anti-drift pin (fr-hiyu): pack through
+    // the same derivedColorIndex/DEFAULT_COLOR_SPEED definitions the CPU
+    // oracle's PreparedChaosGame4 uses, or a 4D flame colors differently on
+    // GPU than on CPU.
+    const transforms4: Transform4[] = [
+      {
+        position: [0.2, 0, 0, 0],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        colorIndex: 0.8,
+        colorSpeed: 0.3,
+      },
+      {
+        position: [-0.2, 0.1, 0, 0],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        colorSpeed: 0.9,
+      },
+      { position: [0, -0.2, 0.1, 0], scale: [0.5, 0.5, 0.5, 0.5] },
+    ];
+    const prepared = prepareChaosGame4(transforms4);
+    const packed = packGpuSystem4(baseSpec4({ transforms4 }));
+
+    const f32 = new Float32Array(packed.slots);
+    for (let i = 0; i < packed.transformCount; i++) {
+      expect(f32[i * F32_PER_SLOT4 + COLOR_INDEX]).toBe(
+        Math.fround(prepared.colorIndex[i]),
+      );
+      expect(f32[i * F32_PER_SLOT4 + COLOR_SPEED]).toBe(
+        Math.fround(prepared.colorSpeed[i]),
+      );
+    }
+  });
 });
 
 describe("packGpuSystem4 colors", () => {
@@ -376,14 +412,86 @@ describe("packGpuSystem4 colors", () => {
     const colorsU32 = new Uint32Array(packed.colors);
     expect(colorsU32.every((v) => v === 0)).toBe(true);
   });
+});
 
-  it("sets colorDenom to 0 for a single-transform system, transformCount - 1 otherwise", () => {
-    expect(
-      packGpuSystem4(baseSpec4({ transforms4: makeTransforms4(1) })).colorDenom,
-    ).toBe(0);
-    expect(
-      packGpuSystem4(baseSpec4({ transforms4: makeTransforms4(4) })).colorDenom,
-    ).toBe(3);
+// ---------------------------------------------------------------------------
+// fr-hiyu: the per-transform palette index + color speed the kernel's
+// structural walk blends with, packed per slot (the 3D twin's own color-slot
+// block, minus the kaleidoscope replication 4D has no copies for).
+// ---------------------------------------------------------------------------
+
+describe("packGpuSystem4 color slots", () => {
+  it("packs a transform's authored colorIndex and colorSpeed verbatim", () => {
+    const transforms4: Transform4[] = [
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        colorIndex: 0.75,
+        colorSpeed: 0.2,
+      },
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        colorIndex: 0.125,
+        colorSpeed: 1,
+      },
+    ];
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4 })).slots,
+    );
+    expect(f32[COLOR_INDEX]).toBe(0.75);
+    expect(f32[COLOR_SPEED]).toBe(Math.fround(0.2));
+    expect(f32[F32_PER_SLOT4 + COLOR_INDEX]).toBe(0.125);
+    expect(f32[F32_PER_SLOT4 + COLOR_SPEED]).toBe(1);
+  });
+
+  it("falls back to the even i/(n-1) spread and the 0.5 halfway speed when a transform authors neither", () => {
+    // Three maps with no color fields: derivedColorIndex spreads them 0, 0.5,
+    // 1 across the gradient and every speed is DEFAULT_COLOR_SPEED — the
+    // behavior the kernel hard-coded before fr-hiyu. Keyed on the RAW
+    // transform count: 4D has no symmetry copies to collapse.
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4: makeTransforms4(3) })).slots,
+    );
+    expect([0, 1, 2].map((s) => f32[s * F32_PER_SLOT4 + COLOR_INDEX])).toEqual([
+      0, 0.5, 1,
+    ]);
+    expect([0, 1, 2].map((s) => f32[s * F32_PER_SLOT4 + COLOR_SPEED])).toEqual([
+      0.5, 0.5, 0.5,
+    ]);
+  });
+
+  it("gives a lone map the 0.5 midpoint rather than a 0/0 spread", () => {
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4: makeTransforms4(1) })).slots,
+    );
+    expect(f32[COLOR_INDEX]).toBe(0.5);
+  });
+
+  it("resolves each field independently — an authored speed does not suppress the derived index, or vice versa", () => {
+    const transforms4: Transform4[] = [
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], colorSpeed: 0.9 },
+      { position: [0, 0, 0, 0], scale: [1, 1, 1, 1], colorIndex: 0.25 },
+    ];
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4 })).slots,
+    );
+    expect(f32[COLOR_INDEX]).toBe(0); // index absent -> derived 0.
+    expect(f32[COLOR_SPEED]).toBe(Math.fround(0.9));
+    expect(f32[F32_PER_SLOT4 + COLOR_INDEX]).toBe(0.25);
+    expect(f32[F32_PER_SLOT4 + COLOR_SPEED]).toBe(0.5); // speed absent -> 0.5.
+  });
+
+  it("leaves the final-lens slot's pair at zero — the pick never draws it", () => {
+    const finalTransform4: Transform4 = {
+      position: [0, 0, 0, 0],
+      scale: [1, 1, 1, 1],
+    };
+    const packed = packGpuSystem4(baseSpec4({ finalTransform4 }));
+    const f32 = new Float32Array(packed.slots);
+    const base = packed.transformCount * F32_PER_SLOT4;
+    expect(f32[base + COLOR_INDEX]).toBe(0);
+    expect(f32[base + COLOR_SPEED]).toBe(0);
   });
 });
 
@@ -470,15 +578,14 @@ describe("packGpuParams4", () => {
   const HAS_FINAL = 38;
   const NUM_CHAINS = 39;
   const TOTAL_WEIGHT = 40;
-  const COLOR_DENOM = 41;
-  const INV_W_AMP = 42;
-  const SLICE_ON = 43;
-  const SLICE_CENTER = 44;
-  const SLICE_WIDTH = 45;
-  const MIN_D = 46;
-  const INV_RADIUS_RANGE = 47;
-  const SLICE_COLOR_SHIFT = 48;
-  const SLICE_COLOR_INV_SCALE = 49;
+  const INV_W_AMP = 41;
+  const SLICE_ON = 42;
+  const SLICE_CENTER = 43;
+  const SLICE_WIDTH = 44;
+  const MIN_D = 45;
+  const INV_RADIUS_RANGE = 46;
+  const SLICE_COLOR_SHIFT = 47;
+  const SLICE_COLOR_INV_SCALE = 48;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -506,7 +613,6 @@ describe("packGpuParams4", () => {
       weighted: true,
       hasFinal: true,
       totalWeight: 9.5,
-      colorDenom: 3,
       numChains: 65536,
       view: VIEW,
       color: {
@@ -545,7 +651,6 @@ describe("packGpuParams4", () => {
     expect(u32[HAS_FINAL]).toBe(1);
     expect(u32[NUM_CHAINS]).toBe(65536);
     expect(f32[TOTAL_WEIGHT]).toBeCloseTo(9.5, 6);
-    expect(f32[COLOR_DENOM]).toBe(3);
     expect(f32[INV_W_AMP]).toBe(Math.fround(2.5));
     expect(u32[SLICE_ON]).toBe(1);
     expect(f32[SLICE_CENTER]).toBeCloseTo(0.25, 6);
@@ -554,6 +659,9 @@ describe("packGpuParams4", () => {
     // false, so sliceOn alone isn't enough to opt in (see sliceColorRemap).
     expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
+    // Elements 49-51 are the struct's trailing pad — the three words WGSL's
+    // 16-byte struct alignment leaves after fr-hiyu removed colorDenom.
+    for (const pad of [49, 50, 51]) expect(u32[pad]).toBe(0);
   });
 
   it("packs the slice-relative color remap (fr-nn6) into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {
