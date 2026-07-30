@@ -14,10 +14,31 @@
  * already isolated (or a browser where isolation can't work) never reloads;
  * the flame renderer just falls back to its postMessage-transfer mode.
  *
+ * That reload is not free: it silently discards anything the in-page
+ * session has accumulated beyond what the persisted scene already captures.
+ * The scene document survives the trip on its own — it lives in the `#v1=`
+ * hash and the reloaded page restores it verbatim — but session-only state
+ * does not, because it was never written there. `AppState.renderMode` is
+ * exactly this: it is session-only by design, so a first-visit user who
+ * picks a Flame-group preset, or switches render mode by hand, inside the
+ * reload window comes back in Points mode with no trace of the choice
+ * (fr-su3r). `registerServiceWorker` now takes an `onBeforeIsolationReload`
+ * hook, called in the instant before the reload fires, so the app can
+ * snapshot whatever session-only state the reload is about to destroy.
+ * Carrying that snapshot across the reload and restoring it afterward is the
+ * app's problem, not this module's; this module only guarantees the hook
+ * runs at the right moment, and that a failure inside it can never cost the
+ * page its isolation.
+ *
  * The registration call itself deliberately reproduces what
  * vite-plugin-pwa's auto-injected script did before this module took over
- * (`injectRegister: false` now) — a plain register on window load. Notably
- * it does NOT adopt the `virtual:pwa-register` module's autoUpdate client,
+ * (`injectRegister: false` now) — a plain register on window load — but that
+ * is true only of a page that ISN'T about to isolation-reload. A page that
+ * is skips the wait and registers immediately instead: that load is
+ * disposable anyway, so the sooner the worker claims it and the reload
+ * fires, the smaller the window in which user interaction can be lost
+ * (fr-su3r; see the branch at the end of `registerServiceWorker`). Notably
+ * neither path adopts the `virtual:pwa-register` module's autoUpdate client,
  * which force-reloads open pages whenever an updated worker activates: a new
  * deploy's worker (see sw/sw.ts) now waits rather than taking over, and this
  * module only ever hands control to it once the user asks (below). The only
@@ -62,11 +83,18 @@ function readAndClearReloadMarker(): boolean {
   }
 }
 
-function reloadForIsolation(): void {
+function reloadForIsolation(onBeforeIsolationReload?: () => void): void {
   try {
     sessionStorage.setItem(RELOADED_KEY, "1");
   } catch {
     return; // couldn't persist the loop guard — don't risk reloading forever.
+  }
+  try {
+    onBeforeIsolationReload?.();
+  } catch {
+    // The handoff is armed only once the reload is actually going to happen
+    // — but an app-side failure to capture state must never strand the page
+    // non-isolated. Isolation matters more than the carried state.
   }
   console.info(
     "Reloading once to activate cross-origin isolation (SharedArrayBuffer).",
@@ -74,19 +102,32 @@ function reloadForIsolation(): void {
   window.location.reload();
 }
 
+/** Options for `registerServiceWorker`; see its doc below for what each hook
+ * does and exactly when it runs. */
+export interface ServiceWorkerHooks {
+  onUpdateAvailable?: (acceptUpdate: () => void) => void;
+  onBeforeIsolationReload?: () => void;
+}
+
 /**
  * Register `sw.js` (production builds only — dev serves no service worker
  * and gets COOP/COEP straight from vite's dev-server headers instead) and,
  * when this page loaded non-isolated, arrange the one-time reload described
- * in the module doc. `onUpdateAvailable`, when given, is handed an
+ * in the module doc. `hooks.onUpdateAvailable`, when given, is handed an
  * `acceptUpdate` callback whenever a waiting (or replaced) worker is
  * detected; call it to apply the update, per the dance described above.
+ * `hooks.onBeforeIsolationReload`, when given, fires immediately before the
+ * isolation reload specifically — never the update reload — so the app can
+ * snapshot whatever session-only state that reload is about to destroy
+ * (fr-su3r); any throw out of it is swallowed, because isolation matters
+ * more than the carried state. The two live on one options object because
+ * there are now two unrelated optional callbacks to pass instead of one.
  */
-export function registerServiceWorker(
-  onUpdateAvailable?: (acceptUpdate: () => void) => void,
-): void {
+export function registerServiceWorker(hooks: ServiceWorkerHooks = {}): void {
   if (import.meta.env.DEV) return;
   if (!("serviceWorker" in navigator)) return; // e.g. Firefox private mode.
+
+  const { onUpdateAvailable, onBeforeIsolationReload } = hooks;
 
   let registration: ServiceWorkerRegistration | null = null;
   let updateReloadArranged = false;
@@ -127,7 +168,7 @@ export function registerServiceWorker(
     // request will be intercepted and served with COOP/COEP.
     navigator.serviceWorker.addEventListener(
       "controllerchange",
-      reloadForIsolation,
+      () => reloadForIsolation(onBeforeIsolationReload),
       { once: true },
     );
   } else if (onUpdateAvailable) {
@@ -149,7 +190,7 @@ export function registerServiceWorker(
     });
   }
 
-  window.addEventListener("load", () => {
+  const register = (): void => {
     navigator.serviceWorker
       .register("./sw.js", {
         scope: "./",
@@ -174,7 +215,7 @@ export function registerServiceWorker(
             reg.active &&
             !navigator.serviceWorker.controller
           ) {
-            reloadForIsolation();
+            reloadForIsolation(onBeforeIsolationReload);
             return;
           }
 
@@ -217,5 +258,18 @@ export function registerServiceWorker(
           console.error("Service worker registration failed:", error);
         },
       );
-  });
+  };
+
+  // A page that wants the isolation reload owes its initial load no
+  // bandwidth politeness: that load is disposable (the reload is about to
+  // throw it away), so registering right now instead of waiting for `load`
+  // only shrinks the window in which user interaction can be lost, and never
+  // costs anything a `load`-timed register wouldn't have (fr-su3r). That
+  // holds even in browsers where SW-injected COOP/COEP never actually
+  // isolates (the loop-guard case above): the same single wasted reload just
+  // happens sooner. A page that is already isolated keeps the original
+  // `load` timing unchanged, so SW install still doesn't compete with that
+  // load's bandwidth.
+  if (wantsIsolationReload) register();
+  else window.addEventListener("load", register);
 }
