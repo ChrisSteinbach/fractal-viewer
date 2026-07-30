@@ -70,7 +70,7 @@ import type {
 import { clampPhi, clampRadius, type CameraPose } from "./orbit";
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
-import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
@@ -440,9 +440,12 @@ function decodeWPlanes(
  * or `null` when anything is malformed so the caller rejects the whole scene.
  * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
  * optional and validated exactly as they encode (`w`'s own presence/clamp
- * contract is spelled out inline below, in {@link WExtension}'s terms). Shared
- * by the transform list (id = array index) and the final transform (id = 0)
- * so neither can drift — including the `w` (4D lens) support this adds.
+ * contract is spelled out inline below, in {@link WExtension}'s terms).
+ * `colorIndex` / `colorSpeed` (fr-hiyu) are optional too, but — unlike every
+ * other field here — a malformed value never rejects the whole scene; see
+ * their own block below for why. Shared by the transform list (id = array
+ * index) and the final transform (id = 0) so neither can drift — including
+ * the `w` (4D lens) support this adds.
  */
 function decodeTransform(raw: unknown, id: number): Transform | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -462,6 +465,25 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     const w = Number(tf.weight);
     if (!Number.isFinite(w)) return null;
     decoded.weight = clamp(w, 0.0001, 10000);
+  }
+  // colorIndex / colorSpeed: optional, [0, 1] (fr-hiyu). Unlike every other
+  // field in this function, a malformed value does NOT reject the whole
+  // scene — it just leaves the field absent, exactly as if it had never been
+  // supplied. Both are narrowly cosmetic (flame structural coloring only,
+  // and only under a gradient palette — see their Transform doc comments in
+  // types.ts), the same "never worth losing an otherwise-valid shared link
+  // over" spirit as colorGamma/glowBrightness/customPalette elsewhere in
+  // this file, just applied per-field here instead of per-block. `null` is
+  // special-cased like decodeWField's own guard above: `Number(null)` is
+  // `0`, a deceptively finite value that would otherwise silently turn an
+  // explicit `null` into a real color slot instead of leaving it absent.
+  if (tf.colorIndex !== undefined && tf.colorIndex !== null) {
+    const ci = Number(tf.colorIndex);
+    if (Number.isFinite(ci)) decoded.colorIndex = clamp(ci, 0, 1);
+  }
+  if (tf.colorSpeed !== undefined && tf.colorSpeed !== null) {
+    const cs = Number(tf.colorSpeed);
+    if (Number.isFinite(cs)) decoded.colorSpeed = clamp(cs, 0, 1);
   }
   // shear: optional. Present ⇒ must be a valid Vec3; absent stays undefined.
   if (tf.shear !== undefined) {
@@ -1018,6 +1040,8 @@ interface EncodedTransform {
   rotation: number[];
   scale: number[];
   weight?: number;
+  colorIndex?: number;
+  colorSpeed?: number;
   shear?: number[];
   variations?: { type: VariationType; weight: number }[];
   w?: WExtension;
@@ -1025,9 +1049,24 @@ interface EncodedTransform {
 
 /**
  * Encode one transform's persistent fields, dropping inert data so URLs stay
- * short: `id` (reassigned on decode), a weight of 1, an all-zero shear, and
- * zero-weight variations are all omitted. Shared by the transform list and
- * the final transform so their wire forms can't drift.
+ * short: `id` (reassigned on decode), a weight of 1, a colorSpeed of
+ * {@link DEFAULT_COLOR_SPEED}, an all-zero shear, and zero-weight variations
+ * are all omitted. Shared by the transform list and the final transform so
+ * their wire forms can't drift.
+ *
+ * `colorIndex` (fr-hiyu) is the one deliberate exception to the
+ * omit-the-default rule: it is written whenever present, regardless of
+ * value. Every other optional field here has one fixed default it can
+ * compare against (1 for weight, {@link DEFAULT_COLOR_SPEED} for colorSpeed,
+ * all-zero for shear); `colorIndex`'s absent-default is not a fixed value
+ * but `derivedColorIndex(i, n)` (`chaos-game.ts`) — a function of this map's
+ * index `i` AND the system's transform count `n`, neither of which this
+ * per-transform function has in hand (it runs once per transform, and is
+ * shared with the final transform, which has no index or transform count to
+ * speak of at all). With nothing to compare against, there is no default
+ * value to omit — an authored `colorIndex` is recorded verbatim, and it is
+ * `derivedColorIndex` at the READING end (`prepareChaosGame`) that supplies
+ * the fallback for a transform that never set one.
  *
  * `w` (the optional 4D extension — see {@link WExtension}) follows the same
  * "drop the identity" spirit, but keyed on ONE shared predicate rather than a
@@ -1052,6 +1091,16 @@ function encodeTransform(t: Transform): EncodedTransform {
     scale: t.scale.map(round4),
   };
   if (t.weight !== undefined && t.weight !== 1) e.weight = round4(t.weight);
+  // colorIndex: always written when present — see this function's doc
+  // comment for why there is no default value to omit it against.
+  if (t.colorIndex !== undefined) e.colorIndex = round4(t.colorIndex);
+  // colorSpeed: omitted at DEFAULT_COLOR_SPEED, mirroring weight's
+  // omit-the-default rule above — unlike colorIndex, colorSpeed's
+  // absent-default IS one fixed constant, so there IS something to compare
+  // against.
+  if (t.colorSpeed !== undefined && t.colorSpeed !== DEFAULT_COLOR_SPEED) {
+    e.colorSpeed = round4(t.colorSpeed);
+  }
   if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
   if (t.variations && t.variations.length > 0) {
     const active = t.variations

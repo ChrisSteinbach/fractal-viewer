@@ -7,7 +7,7 @@ import {
   toSnapshot,
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
-import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import {
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
@@ -1044,6 +1044,160 @@ describe("decodeScene transform w (4D extension)", () => {
       position: 0.3,
       shear: { yw: -0.75 },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-transform colorIndex / colorSpeed (fr-hiyu — flam3 xform color parity;
+// see fractal/types.ts's Transform.colorIndex/colorSpeed doc comments and
+// fractal/chaos-game.ts's DEFAULT_COLOR_SPEED/derivedColorIndex). colorSpeed
+// follows the weight/shear discipline (omit-the-default on encode); colorIndex
+// deliberately does NOT omit a default on encode — see encodeTransform's own
+// doc comment for why there is nothing to compare against. Both fields diverge
+// from weight/shear/variations/w on decode in one way: a malformed value never
+// rejects the whole scene, it just leaves the field absent (see
+// decodeTransform's colorIndex/colorSpeed block).
+// ---------------------------------------------------------------------------
+
+describe("decodeScene transform colorIndex / colorSpeed", () => {
+  it("round-trips both fields with their exact authored values", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorIndex: 0.75,
+          colorSpeed: 0.9,
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].colorIndex).toBeCloseTo(0.75, 4);
+    expect(result!.transforms[0].colorSpeed).toBeCloseTo(0.9, 4);
+  });
+
+  it("leaves both fields undefined when the payload never carried them", () => {
+    // baseSnapshot() has neither field.
+    const result = decodeScene(encodeScene(baseSnapshot()));
+    expect(result!.transforms[0].colorIndex).toBeUndefined();
+    expect(result!.transforms[0].colorSpeed).toBeUndefined();
+  });
+
+  it("does not persist a colorSpeed at the default, decoding it back as undefined", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorSpeed: DEFAULT_COLOR_SPEED,
+        },
+      ],
+    };
+    expect(
+      decodeScene(encodeScene(s))!.transforms[0].colorSpeed,
+    ).toBeUndefined();
+  });
+
+  it("emits a colorIndex of 0 in the wire payload — a meaningful authored value, not a falsy no-op", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorIndex: 0,
+        },
+      ],
+    };
+    const encoded = encodeScene(s);
+    const encodedTransforms = decodePayload(encoded).transforms as Record<
+      string,
+      unknown
+    >[];
+    expect(encodedTransforms[0].colorIndex).toBe(0);
+    expect(decodeScene(encoded)!.transforms[0].colorIndex).toBe(0);
+  });
+
+  it("clamps an out-of-range colorIndex/colorSpeed into [0, 1]", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorIndex: -3,
+          colorSpeed: 7,
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].colorIndex).toBe(0);
+    expect(result!.transforms[0].colorSpeed).toBe(1);
+  });
+
+  it("leaves colorIndex/colorSpeed absent for non-numeric garbage, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorIndex: "blue",
+          colorSpeed: "blue",
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].colorIndex).toBeUndefined();
+    expect(result!.transforms[0].colorSpeed).toBeUndefined();
+  });
+
+  it("leaves colorIndex/colorSpeed absent for an explicit null, rather than decoding Number(null)'s 0", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          colorIndex: null,
+          colorSpeed: null,
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].colorIndex).toBeUndefined();
+    expect(result!.transforms[0].colorSpeed).toBeUndefined();
+  });
+
+  it("round-trips both fields on the final transform too", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.25,
+        colorSpeed: 0.1,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.finalTransform!.colorIndex).toBeCloseTo(0.25, 4);
+    expect(result!.finalTransform!.colorSpeed).toBeCloseTo(0.1, 4);
   });
 });
 
