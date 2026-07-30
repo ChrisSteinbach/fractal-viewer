@@ -1029,13 +1029,26 @@ export function setTransforms(
  * `w` key at all — this spread then leaves an existing `w` block untouched.
  * Full replacement, never a field-by-field merge, happens only when the
  * caller actually supplies a `w`.
+ *
+ * The two optional structural-color fields (fr-hiyu) ride the same discipline: the
+ * editor emits `colorIndex`/`colorSpeed` only once their sliders have actually
+ * been moved, so this spread preserves absence — which is what keeps an
+ * unauthored map on its derived palette slot through any other edit.
  */
 export function updateTransform(
   state: AppState,
   index: number,
   geometry: Pick<
     Transform,
-    "position" | "rotation" | "scale" | "weight" | "shear" | "variations" | "w"
+    | "position"
+    | "rotation"
+    | "scale"
+    | "weight"
+    | "shear"
+    | "variations"
+    | "w"
+    | "colorIndex"
+    | "colorSpeed"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>

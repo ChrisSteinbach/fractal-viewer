@@ -806,6 +806,15 @@ summary.editor-group-title {
   font-variant-numeric: tabular-nums;
 }
 
+/* The Color group's rows (fr-hiyu) are labelled "Index"/"Speed", not with the
+   single-letter axis names the 12px column was sized for — the same escape the
+   variation rows take below. */
+.color-row .axis {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 42px;
+}
+
 /* Variation rows carry a full type name and a remove button, so the fixed
    12px axis column and 50px value column of the geometry rows don't fit. */
 .variation-row .axis {
@@ -883,6 +892,15 @@ summary.editor-group-title {
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* The same hint paragraph, tightened for use INSIDE an editor group (the
+   Color group's scope note, fr-hiyu): 12px of margin there would push the two
+   rows away from the title they belong to. Kept immediately after the base
+   rule — stylelint's no-descending-specificity wants the plainer selector
+   first. */
+.editor-group .flame-hint {
+  margin: 0 0 4px;
 }
 
 .flame-progress {

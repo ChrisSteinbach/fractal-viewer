@@ -201,6 +201,21 @@ morphs into place instead of snapping (see **Presets** below).
   degrees), and scale (X/Y/Z) give exact per-axis control on every device. The
   sliders track the guide box live and stay in sync with the drag gestures
   above.
+  - **Color → Index / Speed** (fr-hiyu) — the flam3 per-xform color pair, one
+    group below **Weight**. **Index** is the palette slot this map pulls the
+    flame's structural color coordinate toward; **Speed** is how far each pick
+    moves it (`0` keeps the incoming color — flam3's "symmetry" xform, which
+    shades without recoloring — and `1` snaps straight to the slot). They only
+    bite on a **Flame** or **Solid** render with a gradient palette active, and
+    the group says so. Both start on the value the renderer already uses — maps
+    spread evenly across the ramp in list order, at speed `0.50` — and stay
+    unset until you actually move a slider, so a scene saved before you touch
+    them is byte-identical to one saved after. Importing a `.flame`
+    (see [flame-interop.md](flame-interop.md)) fills them in from the file's
+    own `color` / `color_speed` attributes, which is what makes an imported
+    flame keep its authored color structure. The final transform has no Color
+    group: it is applied to every plotted point rather than _picked_, so it
+    never moves the coordinate.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
 - **Presets** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron

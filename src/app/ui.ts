@@ -1,5 +1,10 @@
 import { meanContraction } from "../fractal/affine4";
-import { effectiveSymmetryOrder, MAX_TRANSFORMS } from "../fractal/chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  derivedColorIndex,
+  effectiveSymmetryOrder,
+  MAX_TRANSFORMS,
+} from "../fractal/chaos-game";
 import {
   buildColorModeLUT,
   colorModeUsesGamma,
@@ -76,12 +81,22 @@ export type { Preset };
  * object when the working copy actually has one. */
 type Geometry = Pick<
   Transform,
-  "position" | "rotation" | "scale" | "weight" | "shear" | "variations" | "w"
+  | "position"
+  | "rotation"
+  | "scale"
+  | "weight"
+  | "shear"
+  | "variations"
+  | "w"
+  | "colorIndex"
+  | "colorSpeed"
 >;
 
-/** The final transform's geometry — the same, minus the selection weight, which
- * is meaningless for a map applied to every point. */
-type FinalGeometry = Omit<Geometry, "weight">;
+/** The final transform's geometry — the same, minus the fields that only mean
+ * something for a map the chaos game PICKS: the selection weight, and the two
+ * structural-color fields (fr-hiyu), which move the color coordinate on each
+ * pick. A lens applied to every plotted point has neither. */
+type FinalGeometry = Omit<Geometry, "weight" | "colorIndex" | "colorSpeed">;
 
 /** The current edit target: a transform index, the final transform, or none. */
 type EditTarget = number | "final" | null;
@@ -423,6 +438,29 @@ function variationSummary(t: Transform): string[] {
   return [`Var: ${active.map((v) => v.type).join(", ")}`];
 }
 
+/**
+ * The list row's structural-color lines (fr-hiyu) — one per field this map
+ * actually AUTHORS (`Transform.colorIndex` / `Transform.colorSpeed`), none for
+ * the overwhelmingly common map that authors neither.
+ *
+ * Presence alone is the test, where the weight line above also excludes the
+ * default value: an absent color field's default is not a constant but is
+ * DERIVED (`chaos-game.ts`'s `derivedColorIndex` spreads the map by its
+ * position in the system), so there is no fixed value to compare against —
+ * and an authored index that happens to equal today's derived slot is still
+ * authored, pinning that slot against a later add/remove that would move it.
+ */
+function colorSummary(t: Transform): string[] {
+  const lines: string[] = [];
+  if (t.colorIndex !== undefined) {
+    lines.push(`Color: ${t.colorIndex.toFixed(2)}`);
+  }
+  if (t.colorSpeed !== undefined) {
+    lines.push(`Color speed: ${t.colorSpeed.toFixed(2)}`);
+  }
+  return lines;
+}
+
 /** The list row's scale line: one number while uniform, the full triple
  * once any axis differs — an anisotropic or mirrored scale (fr-lca) would
  * otherwise masquerade as a plain uniform contraction. */
@@ -581,6 +619,26 @@ interface FourDControls {
   shearW: AxisControl[];
 }
 
+/**
+ * Live handles into the "Color" group's two rows (fr-hiyu), plus the fallback
+ * the Index row displays while the transform authors none.
+ */
+interface ColorControls {
+  /** The palette-slot row — `Transform.colorIndex`. */
+  index: AxisControl;
+  /** The blend-fraction row — `Transform.colorSpeed`. */
+  speed: AxisControl;
+  /**
+   * What the Index row shows while `colorIndex` is absent: `chaos-game.ts`'s
+   * {@link derivedColorIndex} for this map's slot in the system. Re-resolved
+   * on every sync rather than fixed at build time, because it depends on how
+   * many maps the SYSTEM has — an add or remove moves it without the
+   * selection moving. (Speed's fallback is the constant
+   * {@link DEFAULT_COLOR_SPEED}, so it needs no such slot here.)
+   */
+  derivedIndex: number;
+}
+
 /** One toggle in a {@link Ui.buildMirrorRow} "Mirror" row. */
 interface MirrorToggleSpec {
   /** Button text, e.g. "X" or "W". */
@@ -606,6 +664,16 @@ interface EditorState {
      * `undefined` exactly when the transform has none AND the user hasn't
      * touched the 4D group yet — see {@link Ui.mutateW}/{@link Ui.emitGeometry}. */
     w: WExtension | undefined;
+    /** Working copy of the transform's optional palette slot (fr-hiyu);
+     * `undefined` exactly when the transform authors none AND the user hasn't
+     * moved the Index slider yet — the same sparse discipline as `w` above,
+     * and for the same reason (see {@link Ui.emitGeometry}). The rows still
+     * DISPLAY the derived fallback meanwhile; only this working copy is
+     * empty. */
+    colorIndex: number | undefined;
+    /** Working copy of the transform's optional color speed (fr-hiyu) —
+     * {@link colorIndex}'s twin in every respect. */
+    colorSpeed: number | undefined;
   };
   controls: Record<Channel, AxisControl[]>;
   /** The Scale group's per-axis mirror toggles (fr-lca): pressed ⇔ that
@@ -613,6 +681,9 @@ interface EditorState {
   mirror: HTMLButtonElement[];
   /** The selection-weight control, or `null` for the final transform (no weight). */
   weightControl: AxisControl | null;
+  /** The "Color" group's rows (fr-hiyu), or `null` for the final transform —
+   * which is never PICKED, so it never moves the color coordinate. */
+  colorControls: ColorControls | null;
   /** Working copy of the transform's variation blend, edited in place. */
   variations: Variation[];
   /** Container the variation rows are (re)built into on add/remove. */
@@ -2937,6 +3008,7 @@ export class Ui {
             ...(t.weight !== undefined && t.weight !== 1
               ? [`Weight: ${t.weight.toFixed(2)}`]
               : []),
+            ...colorSummary(t),
             ...variationSummary(t),
           ],
           onClick: () => this.handlers?.onSelect(i),
@@ -2988,21 +3060,36 @@ export class Ui {
    * Show per-axis sliders for the selected transform, or clear them in camera
    * mode. Rebuilds when the selection changes; otherwise re-syncs the existing
    * sliders so drag edits and slider edits stay in step.
+   *
+   * `transformCount` is how many base maps the system holds — everything else
+   * the editor shows is a property of the transform itself, but the Color
+   * group's derived palette slot (fr-hiyu) is a property of the map's
+   * position among ALL of them (`chaos-game.ts`'s `derivedColorIndex`), so it
+   * has to be passed in rather than inferred here. Required, not defaulted:
+   * a silently-assumed count would render a plausible but wrong slot.
    */
-  renderTransformEditor(transform: Transform | null, target: EditTarget): void {
+  renderTransformEditor(
+    transform: Transform | null,
+    target: EditTarget,
+    transformCount: number,
+  ): void {
     if (!transform || target === null) {
       this.transformEditor.replaceChildren();
       this.editor = null;
       return;
     }
     if (!this.editor || this.editor.target !== target) {
-      this.buildEditor(transform, target);
+      this.buildEditor(transform, target, transformCount);
     } else {
-      this.syncEditor(transform);
+      this.syncEditor(transform, transformCount);
     }
   }
 
-  private buildEditor(transform: Transform, target: number | "final"): void {
+  private buildEditor(
+    transform: Transform,
+    target: number | "final",
+    transformCount: number,
+  ): void {
     this.transformEditor.replaceChildren();
 
     const heading = this.doc.createElement("h3");
@@ -3018,6 +3105,13 @@ export class Ui {
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
       w: cloneW(transform.w),
+      // Copied RAW, unresolved (fr-hiyu): `undefined` here is the transform's
+      // real state — "authors none, so the renderers derive it" — and keeping
+      // it that way is what lets an unrelated edit round-trip a map without
+      // materializing either key. The rows resolve for DISPLAY only; see
+      // buildColorControls.
+      colorIndex: transform.colorIndex,
+      colorSpeed: transform.colorSpeed,
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -3088,6 +3182,20 @@ export class Ui {
     // the final transform's editor omits it.
     const weightControl =
       target === "final" ? null : this.buildWeightControl(geometry.weight);
+    // Color sits directly below Weight and above Variations (fr-hiyu): the
+    // two per-map structural-color fields belong beside the other whole-map
+    // property the chaos game reads when it PICKS this map, not among the
+    // geometry channels. Omitted for the final transform for that same
+    // reason — see buildColorControls.
+    const colorControls =
+      target === "final"
+        ? null
+        : this.buildColorControls(
+            target,
+            transformCount,
+            geometry.colorIndex,
+            geometry.colorSpeed,
+          );
     const { list, add } = this.buildVariationsGroup();
     // Placed last (after Variations): a deliberate choice to leave the
     // existing layout for every ordinary (flat) transform undisturbed — this
@@ -3102,6 +3210,7 @@ export class Ui {
       controls,
       mirror,
       weightControl,
+      colorControls,
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
       variationAdd: add,
@@ -3182,6 +3291,136 @@ export class Ui {
     group.appendChild(row);
     this.transformEditor.appendChild(group);
 
+    return { slider, readout };
+  }
+
+  /**
+   * Build the "Color" group (fr-hiyu): the two per-map structural-color
+   * fields — the palette slot this map pulls the color coordinate toward
+   * (`Transform.colorIndex`, flam3's per-xform `color`) and how far each pick
+   * moves it (`Transform.colorSpeed`, flam3's `color_speed`). Both the flame
+   * and the solid render walk that coordinate when a gradient palette is
+   * active (`flame.ts` / `voxel.ts` and their 4D twins), so a system authored
+   * here colors identically in either.
+   *
+   * Both rows show the RESOLVED value, so the user reads what the renderer
+   * actually uses rather than a blank: the authored number when there is one,
+   * else the fallback the kernels themselves apply — `chaos-game.ts`'s
+   * {@link derivedColorIndex} and {@link DEFAULT_COLOR_SPEED}, called here
+   * rather than re-derived, so the editor cannot drift from the CPU oracle,
+   * the WGSL kernels, `morph.ts` or `.flame` export. Displaying a value is
+   * NOT authoring one: the transform keeps neither key until a slider
+   * actually moves (see {@link emitGeometry}), because `types.ts` makes
+   * absence load-bearing — it is what keeps existing saved scenes
+   * byte-identical and keeps morph/mutate/persist on their documented absent
+   * paths.
+   *
+   * Linear sliders, unlike the log-scaled weight above: both fields are
+   * positions in `[0, 1]` — a slot on the gradient and a blend fraction — not
+   * magnitudes spanning orders of magnitude. The `0.01` step matches the
+   * two-decimal readouts exactly, so the thumb never sits somewhere the
+   * number doesn't say.
+   *
+   * Built only for a numbered transform. The final transform is applied to
+   * every plotted point and is never PICKED, so it never moves the color
+   * coordinate — showing it a dead pair of sliders would be a lie, the same
+   * reason its editor omits the selection weight.
+   */
+  private buildColorControls(
+    target: number,
+    transformCount: number,
+    colorIndex: number | undefined,
+    colorSpeed: number | undefined,
+  ): ColorControls {
+    const group = this.doc.createElement("div");
+    group.className = "editor-group";
+
+    const title = this.doc.createElement("div");
+    title.className = "editor-group-title";
+    title.textContent = "Color";
+    group.appendChild(title);
+
+    // These two fields do nothing outside the structural-coloring path — a
+    // Flame or Solid render with a gradient palette active, the two that walk
+    // the color coordinate (`flame.ts`'s accumulateFlame and `voxel.ts`'s
+    // accumulateVoxels, plus their 4D twins) — and nothing else on screen
+    // would say so. The group is NOT hidden by render mode, though: it is
+    // document data that also arrives by `.flame` import, so it stays visible
+    // and editable wherever the user is, and a one-line note in the panel's
+    // existing hint idiom (the dim `.flame-hint` paragraph index.html uses
+    // for the render-mode and 4D notes) carries the caveat instead.
+    const hint = this.doc.createElement("p");
+    hint.className = "flame-hint";
+    hint.textContent =
+      "Flame and Solid renders with a gradient palette only: the ramp slot this map pulls toward, and how far each pick moves.";
+    group.appendChild(hint);
+
+    const derivedIndex = derivedColorIndex(target, transformCount);
+    const index = this.buildColorRow(
+      group,
+      "Index",
+      "Color index",
+      "Palette slot this map pulls the color toward. Unset ⇒ spread evenly by map order.",
+      colorIndex ?? derivedIndex,
+      (value) => this.onColorIndexInput(value),
+    );
+    const speed = this.buildColorRow(
+      group,
+      "Speed",
+      "Color speed",
+      "How far each pick moves the color toward this map's slot: 0 keeps the incoming color, 1 snaps to the slot.",
+      colorSpeed ?? DEFAULT_COLOR_SPEED,
+      (value) => this.onColorSpeedInput(value),
+    );
+
+    this.transformEditor.appendChild(group);
+    return { index, speed, derivedIndex };
+  }
+
+  /**
+   * One row of the {@link buildColorControls} group — the same shape as the
+   * per-axis rows and {@link buildWeightControl} (label, slider, live
+   * readout), with two differences the Color rows need: a `title` tooltip
+   * (each field's meaning is not guessable from a one-word label), and the
+   * `color-row` class that widens the label column, which is sized for
+   * single-letter axis names.
+   *
+   * Slider units ARE model units here (no `toSlider`/`fromSlider` pair like
+   * the weight and 4D rows carry) — both fields are already the `[0, 1]`
+   * numbers `Transform` stores.
+   */
+  private buildColorRow(
+    group: HTMLElement,
+    label: string,
+    ariaLabel: string,
+    title: string,
+    initial: number,
+    onInput: (value: number) => void,
+  ): AxisControl {
+    const row = this.doc.createElement("div");
+    row.className = "editor-row color-row";
+
+    const name = this.doc.createElement("span");
+    name.className = "axis";
+    name.textContent = label;
+
+    const slider = this.doc.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "1";
+    slider.step = "0.01";
+    slider.value = String(initial);
+    slider.setAttribute("aria-label", ariaLabel);
+    slider.title = title;
+
+    const readout = this.doc.createElement("span");
+    readout.className = "value";
+    readout.textContent = initial.toFixed(2);
+
+    slider.addEventListener("input", () => onInput(Number(slider.value)));
+
+    row.append(name, slider, readout);
+    group.appendChild(row);
     return { slider, readout };
   }
 
@@ -3595,7 +3834,7 @@ export class Ui {
     });
   }
 
-  private syncEditor(transform: Transform): void {
+  private syncEditor(transform: Transform, transformCount: number): void {
     const editor = this.editor;
     if (!editor) return;
     editor.geometry = {
@@ -3605,6 +3844,11 @@ export class Ui {
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
       w: cloneW(transform.w),
+      // Raw again (see buildEditor): an undo back past the first Color edit
+      // returns a transform with the keys gone, and the working copy has to
+      // forget them too or the next unrelated edit would write them back.
+      colorIndex: transform.colorIndex,
+      colorSpeed: transform.colorSpeed,
     };
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
@@ -3624,6 +3868,20 @@ export class Ui {
       const { weight } = editor.geometry;
       editor.weightControl.slider.value = String(weightToSlider(weight));
       editor.weightControl.readout.textContent = weight.toFixed(2);
+    }
+    // The `typeof` narrows what the group's existence already guarantees (it
+    // is built only for a numbered target) — and the derived slot is
+    // re-resolved rather than reused, because adding or removing a map moves
+    // every OTHER map's slot without moving the selection.
+    if (editor.colorControls && typeof editor.target === "number") {
+      const color = editor.colorControls;
+      color.derivedIndex = derivedColorIndex(editor.target, transformCount);
+      const index = editor.geometry.colorIndex ?? color.derivedIndex;
+      color.index.slider.value = String(index);
+      color.index.readout.textContent = index.toFixed(2);
+      const speed = editor.geometry.colorSpeed ?? DEFAULT_COLOR_SPEED;
+      color.speed.slider.value = String(speed);
+      color.speed.readout.textContent = speed.toFixed(2);
     }
     this.syncFourDControls();
 
@@ -3700,6 +3958,33 @@ export class Ui {
     this.emitGeometry();
   }
 
+  /**
+   * Author this map's palette slot (fr-hiyu). Writing the working copy is
+   * exactly what MATERIALIZES the optional field: until a slider fires this,
+   * the row has only been displaying `chaos-game.ts`'s derived slot and the
+   * transform carries no `colorIndex` key at all (see
+   * {@link buildColorControls} and {@link emitGeometry}).
+   */
+  private onColorIndexInput(value: number): void {
+    const editor = this.editor;
+    // The Color rows only exist for a numbered transform, so their controls
+    // are always present when this fires; the guard satisfies the nullable type.
+    if (!editor || !editor.colorControls) return;
+    editor.geometry.colorIndex = value;
+    editor.colorControls.index.readout.textContent = value.toFixed(2);
+    this.emitGeometry();
+  }
+
+  /** Author this map's color speed — {@link onColorIndexInput}'s twin, and
+   * likewise the only path that materializes the key. */
+  private onColorSpeedInput(value: number): void {
+    const editor = this.editor;
+    if (!editor || !editor.colorControls) return;
+    editor.geometry.colorSpeed = value;
+    editor.colorControls.speed.readout.textContent = value.toFixed(2);
+    this.emitGeometry();
+  }
+
   /** Push the editor's current geometry back to the matching handler — the final
    * transform gets no selection weight, a regular transform does. */
   private emitGeometry(): void {
@@ -3728,6 +4013,20 @@ export class Ui {
       this.handlers?.onTransformGeometry(editor.target, {
         ...base,
         weight: editor.geometry.weight,
+        // Sparse exactly like `w` above (fr-hiyu), and load-bearing for the
+        // same reason: these keys are emitted ONLY once the user has moved
+        // their slider. Selecting a map, dragging its guide box, or editing
+        // any other row leaves an unauthored map with NO colorIndex /
+        // colorSpeed key — `state.ts`'s updateTransform merges, so an absent
+        // key preserves absence, and absence is what keeps the derived slot
+        // (and every scene saved before this field existed) byte-identical
+        // through the round trip. See `types.ts`'s field docs.
+        ...(editor.geometry.colorIndex !== undefined
+          ? { colorIndex: editor.geometry.colorIndex }
+          : {}),
+        ...(editor.geometry.colorSpeed !== undefined
+          ? { colorSpeed: editor.geometry.colorSpeed }
+          : {}),
       });
     }
   }
