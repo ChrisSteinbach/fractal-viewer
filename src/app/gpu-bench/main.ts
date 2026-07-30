@@ -335,6 +335,17 @@ const SIERPINSKI_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
   lookAt: [0, 0.4, 0],
 };
 
+/** The preset re-centers Barnsley's coordinates (FERN_SCALE 0.3 around
+ * FERN_CENTER — see presets.ts), so the fern spans roughly ±0.75 x ±1.5
+ * around the origin; a straight-on close camera frames it fully. Shared by
+ * the two fern scenarios (`fern` and fr-hiyu's `xform-color`), which differ
+ * only in their color authoring — the same framing keeps them visually
+ * comparable in the bench's own screenshots. */
+const FERN_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
+  cameraPos: [0, 0, 4.2],
+  lookAt: [0, 0, 0],
+};
+
 /** A fixed w-mixing tumble shared by the 4D scenarios — three plane angles
  * chosen to genuinely rotate w into view (nonzero xw/yw/zw), so the
  * projected cloud, the signed-w signal, and therefore the wRamp/slice legs
@@ -487,6 +498,49 @@ function foldZoo4(): Transform[] {
   ];
 }
 
+/**
+ * fr-hiyu's authored flam3 color pairs, one per Barnsley map, in
+ * `FERN_MAPS` order (stem, frond, left leaflet, right leaflet — see
+ * presets.ts). NONE of them is what the absent fields resolve to:
+ * `derivedColorIndex` would spread four maps 0, 1/3, 2/3, 1 and
+ * `DEFAULT_COLOR_SPEED` would put every speed at 0.5, so all eight numbers
+ * here are off the fallback, and the speeds deliberately span the range the
+ * walk supports — 0, 0.35, 0.85, 1.
+ *
+ * Assigned against Barnsley's weights (1 / 85 / 7 / 7) rather than
+ * arbitrarily, so each one shows up in the render:
+ * - the STEM is the rarest map (1%) and SLAMS the coordinate to the
+ *   gradient's far end (speed 1), so the trunk keeps its own color despite
+ *   how seldom it is picked;
+ * - the FROND runs 85% of steps and relaxes toward the near end at 0.35 —
+ *   a few steps of memory rather than a snap, which is the continuous
+ *   gradient the flam3 walk exists for (and the arm most sensitive to the
+ *   blend's exact shape, since it compounds);
+ * - the LEFT leaflet PINS the coordinate (speed 0): geometry with no color
+ *   contribution at all, the sharpest CPU/GPU divergence detector in the
+ *   set — a kernel still blending at the old hard-coded 0.5 would drag the
+ *   coordinate to 0.55 on every left-leaflet pick and visibly wash the
+ *   gradient;
+ * - the RIGHT leaflet sits near the top of the range (0.85).
+ */
+const XFORM_COLOR_PAIRS: ReadonlyArray<
+  Required<Pick<Transform, "colorIndex" | "colorSpeed">>
+> = [
+  { colorIndex: 0.92, colorSpeed: 1 }, // f1 stem (weight 1)
+  { colorIndex: 0.08, colorSpeed: 0.35 }, // f2 frond (weight 85)
+  { colorIndex: 0.55, colorSpeed: 0 }, // f3 left leaflet (weight 7)
+  { colorIndex: 0.74, colorSpeed: 0.85 }, // f4 right leaflet (weight 7)
+];
+
+/** Barnsley's fern with {@link XFORM_COLOR_PAIRS} authored onto every map —
+ * the `xform-color` scenario's system (fr-hiyu). The geometry is the stock
+ * preset, deliberately: keeping it identical to the `fern` scenario's makes
+ * the two entries a controlled pair, differing in the color authoring and
+ * nothing else. */
+function xformColorFern(): Transform[] {
+  return barnsleyFern().map((t, i) => ({ ...t, ...XFORM_COLOR_PAIRS[i] }));
+}
+
 const SCENARIOS: ScenarioDef[] = [
   {
     kind: "3d",
@@ -504,11 +558,29 @@ const SCENARIOS: ScenarioDef[] = [
     finalTransform: null,
     symmetry: { order: 1, axis: "y" },
     paletteId: "ember",
-    // The preset re-centers Barnsley's coordinates (FERN_SCALE 0.3 around
-    // FERN_CENTER — see presets.ts), so the fern spans roughly ±0.75 x ±1.5
-    // around the origin; a straight-on close camera frames it fully.
-    cameraPos: [0, 0, 4.2],
-    lookAt: [0, 0, 0],
+    ...FERN_CAMERA,
+  },
+  {
+    kind: "3d",
+    name: "xform-color",
+    transforms: xformColorFern(),
+    finalTransform: null,
+    symmetry: { order: 1, axis: "y" },
+    // A gradient palette is load-bearing here: the color walk only runs on
+    // the structural (colorLUT / colorMode 1) path, so under "legacy" both
+    // engines would color per transform and the authored pairs would go
+    // entirely unread. "spectrum" spreads hue widely across the gradient, so
+    // a wrong slot reads as a hue shift rather than a shade of one hue.
+    paletteId: "spectrum",
+    ...FERN_CAMERA,
+    // Uniquely pins (fr-hiyu): the per-transform colorIndex/colorSpeed pair
+    // the kernels' structural walk reads off each Slot, and the walk formula
+    // itself at speeds either side of the old hard-coded 0.5. Every OTHER
+    // scenario here leaves both fields absent, so between them they only ever
+    // exercise the DERIVED fallback — a kernel that packed the pair and then
+    // ignored it (or kept dividing by a uniform colorDenom) would pass the
+    // whole suite without this entry. See xformColorFern for the values and
+    // why each was chosen.
   },
   {
     kind: "3d",

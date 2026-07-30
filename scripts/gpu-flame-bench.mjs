@@ -75,10 +75,20 @@ const REPO_ROOT = path.resolve(__dirname, "..");
  * doc); the normal case uses whatever port Vite actually reports. */
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_TIMEOUT_MS = 60_000;
-const BENCH_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Wait cap for the flame sweep — a HANG detector, not a budget: the run
+ * polls for `__BENCH_DONE__` and exits the moment it lands, so a cap set
+ * generously costs nothing on a healthy run and only avoids reporting a slow
+ * host as a failure. Raised from 10 to 20 minutes by fr-hiyu, which added a
+ * fourteenth scenario (`xform-color`): each scenario's fixed equal-N legs are
+ * ~50.3M iterations PER SIDE, which SwiftShader measured at ~45-50s apiece on
+ * a busy dev box — so thirteen already sat against the old 10-minute wall and
+ * the fourteenth crossed it, failing a sweep whose every scenario agreed.
+ */
+const BENCH_TIMEOUT_MS = 20 * 60_000;
 /** Wait cap when a surface flag is present — the surface timing matrix
  * (many kernel configs, multi-pass marches, a per-config wall cap of its
- * own) can legitimately run far past the flame sweep's 10 minutes. */
+ * own) can legitimately run far past the flame sweep's own wait. */
 const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
 /** Wait cap when the fr-p8bc shade A/B leg is requested on top: its
  * full-width BASELINE arms are the whole point of the comparison and

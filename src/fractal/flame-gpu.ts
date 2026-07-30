@@ -20,7 +20,10 @@
  * post-rotation step, same escape-reseed limit (written NaN-robustly for
  * f32: WGSL comparisons with NaN are false, so `!(all inside)` catches NaN
  * and ±inf alike), same final-transform adopt-only-if-finite lens, same
- * flam3 color-coordinate walk, same NDC → pixel bucketing. Deliberate
+ * flam3 color-coordinate walk (fr-hiyu: its per-map palette slot and blend
+ * speed ride the SLOT, resolved host-side by {@link packGpuSystem} through
+ * the very same `derivedColorIndex`/`DEFAULT_COLOR_SPEED` `prepareChaosGame`
+ * resolves the CPU oracle's with), same NDC → pixel bucketing. Deliberate
  * differences, measured and accepted in fr-53k's go/no-go
  * (`docs/spike-fr-53k-gpu-flame-accum.md`): f32 arithmetic instead of f64,
  * and many independent PCG32 chains instead of one mulberry32 orbit — each
@@ -57,7 +60,12 @@ import type { PaletteSpec } from "./palette";
 // statements (rather than merged into the type-only imports above) so the
 // authored imports above stay untouched.
 import { composeAffine, rotationMatrixXYZ } from "./affine";
-import { MAX_TRANSFORMS, effectiveSymmetryOrder } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  MAX_TRANSFORMS,
+  derivedColorIndex,
+  effectiveSymmetryOrder,
+} from "./chaos-game";
 import { transformColors } from "./color";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
@@ -120,16 +128,23 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f
  *   48 width u32 | 52 height u32 | 56 transformCount u32 | 60 baseTransformCount u32
  *   64 itersPerInvocation u32 | 68 colorMode u32 (0 legacy, 1 LUT) | 72 weighted u32 | 76 hasFinal u32
- *   80 totalWeight f32 | 84 colorDenom f32 | 88 numChains u32 | 92 pad
+ *   80 totalWeight f32 | 84 numChains u32 | 88..95 trailing pad (WGSL rounds
+ *   the struct to its own 16-byte alignment, so the two spare words are
+ *   unavoidable — declared explicitly rather than left implicit)
  *
- * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 240 stride);
+ * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 256 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
  * (read only when hasFinal = 1, never drawn by the transform pick):
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
  *   96 varWeights array<vec4f, 4> | 160 varTypes array<vec4u, 4> (16 lanes of
  *   storage, 15 used — one per {@link VariationType} — the 16th left zeroed)
- *   224 varCount u32 | 228 hasPost u32 | 232 cumWeight f32 | 236 pad
+ *   224 varCount u32 | 228 hasPost u32 | 232 cumWeight f32
+ *   236 colorIndex f32 | 240 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
+ *   exactly like cumWeight's base-map weight — so the kernel reads
+ *   `slots[idx]` with no modulo) | 244..255 trailing pad (three spare words
+ *   the 16-byte struct alignment demands once the pair grew the tail past 240)
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -143,7 +158,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 96;
-export const SLOT_STRIDE_BYTES = 240;
+export const SLOT_STRIDE_BYTES = 256;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
@@ -174,9 +189,9 @@ struct Params {
   weighted: u32,
   hasFinal: u32,
   totalWeight: f32,
-  colorDenom: f32,
   numChains: u32,
-  _pad: u32,
+  _pad0: u32,
+  _pad1: u32,
 }
 
 struct Slot {
@@ -191,7 +206,11 @@ struct Slot {
   varCount: u32,
   hasPost: u32,
   cumWeight: f32,
-  _pad: f32,
+  colorIndex: f32,
+  colorSpeed: f32,
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier.
@@ -391,16 +410,23 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
     } else {
       idx = min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
     }
+    // The BASE map this slot is a (possibly rotated) copy of — accumulateFlame's
+    // own idx % baseTransformCount, kept here as the legacy per-transform
+    // palette's lookup key at the bottom of the loop. The structural walk just
+    // below needs no such fold: packGpuSystem already wrote base map i's color
+    // pair into EVERY copy's slot (see the byte-layout doc).
     let baseIdx = idx % params.baseTransformCount;
 
-    // Structural coloring: blend the color coordinate halfway toward this
-    // transform's slot BEFORE stepping, exactly like accumulateFlame.
+    // Structural coloring: blend the color coordinate toward this transform's
+    // palette slot, at this transform's own speed, BEFORE stepping — exactly
+    // accumulateFlame's c = c * (1 - speed) + slot * speed (fr-hiyu), term for
+    // term, and consuming no RNG so the orbit stays identical either way. At
+    // the default speed 0.5 this is bit-identical to the halfway blend it
+    // replaces: halving is exact in binary FP, so both forms round exactly
+    // once, on the same sum.
     if (params.colorMode == 1u) {
-      var slotCoord = 0.5;
-      if (params.colorDenom > 0.0) {
-        slotCoord = f32(baseIdx) / params.colorDenom;
-      }
-      colorCoord = (colorCoord + slotCoord) * 0.5;
+      let speed = slots[idx].colorSpeed;
+      colorCoord = colorCoord * (1.0 - speed) + slots[idx].colorIndex * speed;
     }
 
     var np = applySlot(idx, pos, &rng);
@@ -461,7 +487,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 60.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 64.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -484,7 +510,13 @@ const SLOT_VAR_TYPES = 40;
 const SLOT_VAR_COUNT = 56;
 const SLOT_HAS_POST = 57;
 const SLOT_CUM_WEIGHT = 58;
-// Element 59 is Slot's trailing pad, left at the ArrayBuffer's zero default.
+/** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across its
+ * kaleidoscope copies (see {@link packGpuSystem}) — the kernel's structural
+ * walk reads them straight off the picked slot. */
+const SLOT_COLOR_INDEX = 59;
+const SLOT_COLOR_SPEED = 60;
+// Elements 61-63 are Slot's trailing pad, left at the ArrayBuffer's zero
+// default.
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
@@ -512,9 +544,8 @@ const PARAMS_COLOR_MODE = 17;
 const PARAMS_WEIGHTED = 18;
 const PARAMS_HAS_FINAL = 19;
 const PARAMS_TOTAL_WEIGHT = 20;
-const PARAMS_COLOR_DENOM = 21;
-const PARAMS_NUM_CHAINS = 22;
-// Element 23 is Params' trailing pad.
+const PARAMS_NUM_CHAINS = 21;
+// Elements 22-23 are Params' trailing pad.
 
 /**
  * `chaos-game.ts`'s private `symmetryRotation`, restated here since only
@@ -705,10 +736,6 @@ export interface PackedGpuSystem {
   baseTransformCount: number;
   weighted: boolean;
   totalWeight: number;
-  /** `baseTransformCount - 1`, or `0` for a single-transform system — the
-   * divisor `accumulateFlame` uses to map a base transform index to its
-   * `[0, 1]` gradient slot. */
-  colorDenom: number;
   colorMode: 0 | 1;
   hasFinal: boolean;
 }
@@ -741,6 +768,17 @@ export interface PackedGpuSystem {
  * `prepareChaosGame` uses (`some weight !== 1 && totalWeight > 0 &&
  * Number.isFinite(totalWeight)`) — so the kernel's weighted/uniform pick
  * branch agrees with the CPU's bit for bit.
+ *
+ * **Color slots** (fr-hiyu): every slot also carries the flam3 pair the
+ * kernel's structural walk blends with — `colorIndex` (the transform's own, or
+ * `derivedColorIndex(i, baseTransformCount)`'s even spread) and `colorSpeed`
+ * (its own, or `DEFAULT_COLOR_SPEED`). Both are resolved from the BASE map and
+ * written into EVERY copy of it, exactly as the weights are, which is what
+ * lets the kernel read `slots[idx]` with no `% baseTransformCount` fold —
+ * while still coloring each kaleidoscope copy as the map it is a copy of, the
+ * property `accumulateFlame` gets from indexing its own tables by `baseIdx`.
+ * The final-lens slot is never picked, so its pair stays at the
+ * `ArrayBuffer`'s zero default.
  *
  * **Final transform**: one extra slot at index `transformCount` (never drawn
  * by `pickIndex`, since `params.transformCount` bounds that search) carrying
@@ -790,6 +828,18 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
+  // Flame structural-coloring pair per BASE map (fr-hiyu), resolved through
+  // the SAME two definitions prepareChaosGame resolves the CPU oracle's with,
+  // so an absent field cannot mean one thing here and another there. The
+  // expansion below writes each base map's pair into every copy of it (see
+  // this function's doc).
+  const colorIndices = transforms.map(
+    (t, i) => t.colorIndex ?? derivedColorIndex(i, baseTransformCount),
+  );
+  const colorSpeeds = transforms.map(
+    (t) => t.colorSpeed ?? DEFAULT_COLOR_SPEED,
+  );
+
   // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
   // prepareChaosGame's identical loop shape.
   for (let k = 0; k < order; k++) {
@@ -805,6 +855,8 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
       writeSlotPost(slotF32, slotU32, base, post);
       writeSlotVariations(slotF32, slotU32, base, transforms[i].variations);
       slotF32[base + SLOT_CUM_WEIGHT] = cumWeights[s];
+      slotF32[base + SLOT_COLOR_INDEX] = colorIndices[i];
+      slotF32[base + SLOT_COLOR_SPEED] = colorSpeeds[i];
     }
   }
 
@@ -850,7 +902,6 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     baseTransformCount,
     weighted,
     totalWeight,
-    colorDenom: baseTransformCount > 1 ? baseTransformCount - 1 : 0,
     colorMode,
     hasFinal,
   };
@@ -922,7 +973,6 @@ export interface GpuParamsFields {
   weighted: boolean;
   hasFinal: boolean;
   totalWeight: number;
-  colorDenom: number;
   numChains: number;
 }
 
@@ -933,6 +983,13 @@ export interface GpuParamsFields {
  * (clip Z, `projection[8..11]`) is never read — exactly like
  * `accumulateFlame` (the histogram accumulates density, it doesn't
  * depth-sort).
+ *
+ * There is deliberately no `colorDenom` here any more (fr-hiyu): the gradient
+ * slot a base map maps to is no longer a uniform-wide `i / (n - 1)` division
+ * the kernel redoes per iteration, but a per-slot value {@link packGpuSystem}
+ * resolves — so the uniform lost the field rather than carrying a value with
+ * no reader. `baseTransformCount` stays: the legacy per-transform palette path
+ * still folds the picked slot back onto its base map with it.
  */
 export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   const buf = new ArrayBuffer(PARAMS_BYTES);
@@ -953,7 +1010,6 @@ export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   u32[PARAMS_WEIGHTED] = fields.weighted ? 1 : 0;
   u32[PARAMS_HAS_FINAL] = fields.hasFinal ? 1 : 0;
   f32[PARAMS_TOTAL_WEIGHT] = fields.totalWeight;
-  f32[PARAMS_COLOR_DENOM] = fields.colorDenom;
   u32[PARAMS_NUM_CHAINS] = fields.numChains;
   return buf;
 }
