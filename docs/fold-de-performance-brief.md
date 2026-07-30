@@ -447,3 +447,58 @@ and raises the spend ceiling to `SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS`
 fallback, and `formatGpuMinutes`' hours tier — needed once truncated-monster
 evidence started putting hour-scale predictions into refusal messages —
 is module-private again.
+
+## 7. The fold-lens compute port (2026-07-30 addendum, fr-55s1)
+
+fr-tzdg's routing left one fold class on the fragment path: FINAL-lens
+systems (`foldFinal` — fr-g58b's `descendLens`), excluded because the
+kernel had no lens vocabulary and `packSurfaceGpuParams` threw on it. That
+class is exactly where the WebGL path hurt most in the field (fr-zx34's
+Menger+mandelbox and 4-map mandelbox-lens reports: ~5.7-6.2s blocking lens
+link, minutes-class settles), so fr-55s1 cut escape/4D out and ported the
+lens.
+
+The port is two motions, both derivations rather than new estimators. The
+kernel gained a SECOND descent core — `core:"affine"`, the width-4 A/B +
+validity-slot REFINED ladder mirroring `estimateDistanceRefined`, the
+estimator lens-over-affine systems actually march (reusing the fold
+frontier for affine bases would not have been bit-equivalent: width 12 vs
+the ladder's 4, no refinement) — and a `lens:true` wrapper that renames
+whichever core to `surfaceDECore` and sweeps `descendLens`'s inverse fold
+branches around it (27/3/81 at runtime from the params uniform, one
+pipeline per session; every prune value-exact: region floors, scaled
+sphere certificates, the visible pin, the cutoff contract, the spherefold
+shell guard with the mandelbox `b += 26` skip). Shading follows the same
+rename discipline one function over: hit-info behind an argmin sweep,
+the fr-p8bc probe under the SAME sweep text renamed — one text, three
+names. Params grew 208→272 (0-207 frozen); footprint+lens is refused at
+pack time. The bench pins it end to end: three GATING lens agreement rows
+at ~2e-7 (the 81-branch mandelbox worst case included), a lens
+march-unproject leg (5184 rays, fail=0, hits 811/811 — and 3.5s of
+SwiftShader GPU where mandelboxKifs needs 229s: an 81-branch sweep over
+the affine ladder is ~65x cheaper than a fold-frontier monster), and the
+PRODUCTION renderer converging the lens frame (hit=811, 0 exhausted).
+
+Routing flipped to `deHasFolds(de) || foldFinal` with the priors scaled by
+branch-count/8 (`surfaceDescentCostWeight`'s factor) so first
+slices/batches stay watchdog-safe. Measured on the field shapes (Iris Xe,
+real driver, dev regime, same hash both arms): the fr-g58b archetype
+previews in 0.94s and settles the FULL 1280x720 frame in 9.4s (287
+passes, 0 exhausted) where the WebGL arm was 43% settled at 30s; the
+81-branch mandelbox field class previews in 1.5-2s at the governor's rung
+and settles in ~35-55s (thermally variable; 89% at t=30s cold) where the
+WebGL arm was 38% at 45s — a 2min+ class, before counting its silent lens
+link. No lens GLSL compiles at all on the compute route, so the ~79KB
+SURFACE_FOLD_LENS source and its link cliff are now fallback-only
+(`?surfacegl`, no-adapter, device-loss re-entry), which also lowers
+fr-otkf's stakes.
+
+One session-adjacent discovery folds in (fr-tmgf): a day of Surface
+renders had silently fallen back to software in the user's desktop
+browser (10-50x slower than an old phone; a fresh-profile probe got real
+Iris on both APIs, implicating the browser's own GPU-crash disablement,
+plausibly seeded by the fr-096u-era hangs). The surface progress row now
+names its engine — "Full detail · WebGPU 51%" / "· WebGL" — fed on the
+compute side by `onProgress` ray tallies, so "which tracer, and is it
+moving" never again requires the console. The full treatment (software-
+adapter warning, flame/solid parity) stays open as fr-tmgf.
