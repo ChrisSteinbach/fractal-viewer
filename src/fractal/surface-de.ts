@@ -2892,6 +2892,27 @@ function descendFold(
  * skips that sphere branch's whole box expansion), exactly as the iterated
  * sweep does.
  *
+ * BRANCH ORDER IS DELIBERATELY THE INDEX ORDER (fr-ybtq, measured
+ * 2026-07-30 — do not "fix" this without re-measuring). The prunes all
+ * test against the running `best`, so visiting a near-argmin branch first
+ * would strengthen every later one, and best-FIRST ordering (seed the
+ * sweep with the argmin of each branch's exact depth-0 lower bound
+ * `max(floor_c, factor_c·(rq_c − R))`, kept in six scalars, then sweep
+ * skipping it) was implemented in all of this function, its WGSL mirror
+ * and their tests, and REVERTED. It works as designed and still loses:
+ * core descents per call fell 4.46 -> 2.26 on the fr-55s1 lens archetype
+ * and 6.83 -> 5.94 on fr-ybtq's field class (9-15% of CPU wall,
+ * `scripts/lens-branch-cost.harness.ts`), but the real Iris Xe driver
+ * measured 1.46-1.54x SLOWER end to end (frame-lens 3425 -> 4986ms,
+ * unproj-lens 184 -> 283ms), because pricing all 81 branch preimages a
+ * second time costs the GPU more than the ~16% of descent transforms it
+ * saves — fr-kidj's stage-2 verdict, one level up. The survivors that
+ * remain after seeding are branches whose preimages land INSIDE the
+ * bounding ball, where the depth-0 sphere certificate is vacuous at ANY
+ * visit order, so ordering had already reached its ceiling. Cutting the
+ * sweep's remaining ~4.3x tax over the un-lensed system needs a stronger
+ * in-ball certificate, not a cheaper route to this one.
+ *
  * CUTOFF CONTRACT (fr-55r5's, honored verbatim): inner descents receive
  * `min(best, cutoff)/factor_c` when `cutoff > 0` — an inner value below
  * that line certifies its term below `min(best, cutoff)`, so any inexact
