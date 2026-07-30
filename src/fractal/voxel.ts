@@ -423,14 +423,18 @@ export function accumulateVoxels(
   // Structural coloring (fr-1kt, mirroring accumulateFlame's colorLUT path
   // from fr-6us): when colorLUT is supplied, `c` rides the orbit and indexes
   // the gradient; otherwise every `colorLUT !== undefined` branch below is
-  // skipped and the colorMode dispatch above runs unchanged. `colorDenom` is
-  // `n - 1` (0 for a single-transform system, which pins the coordinate at
-  // 0.5) — the divisor mapping a transform index to its [0, 1] color slot.
-  // Keyed on `baseTransformCount`, not the expanded transform count (fr-6im):
+  // skipped and the colorMode dispatch above runs unchanged. The per-map slot
+  // and blend speed were resolved once by `prepareChaosGame` (fr-hiyu) — a
+  // transform's authored `colorIndex`/`colorSpeed` or the derived even spread
+  // and 0.5 halfway blend hard-coded here before those fields existed — so a
+  // system authored for the flame colors IDENTICALLY in the solid render
+  // rather than reverting to the derived spread. Both are keyed on
+  // `baseTransformCount`, not the expanded transform count (fr-6im):
   // with symmetry, every rotated copy of a base map shares that map's slot,
   // so the gradient repeats around the kaleidoscope instead of smearing
   // continuously across copies that are geometrically the same map.
-  const colorDenom = baseTransformCount > 1 ? baseTransformCount - 1 : 0;
+  const colorSlots = prepared.colorIndex;
+  const colorSpeeds = prepared.colorSpeed;
   let c = grid.orbitColor;
 
   const minX = grid.bounds.min[0];
@@ -469,12 +473,14 @@ export function accumulateVoxels(
     // expanded `idx`, so it keeps meaning "logical map" (and stays in range
     // for `palette`, which is sized to the base count).
     const baseIdx = idx % baseTransformCount;
-    // Blend the color coordinate halfway toward this transform's slot. No
-    // rng is consumed, so the orbit (and `density`) stays identical to the
-    // no-colorLUT path.
+    // Blend the color coordinate toward this transform's slot at this
+    // transform's speed — `accumulateFlame`'s walk term for term (fr-hiyu),
+    // including its bit-for-bit reproduction of the old halfway blend at the
+    // default speed 0.5. No rng is consumed, so the orbit (and `density`)
+    // stays identical to the no-colorLUT path.
     if (colorLUT !== undefined) {
-      const slot = colorDenom > 0 ? baseIdx / colorDenom : 0.5;
-      c = (c + slot) * 0.5;
+      const speed = colorSpeeds[baseIdx];
+      c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;

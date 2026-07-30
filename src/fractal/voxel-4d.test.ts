@@ -1,7 +1,11 @@
 import { accumulateVoxels4, computeVoxelBounds4 } from "./voxel-4d";
 import { BOUNDS_MARGIN, BOUNDS_QUANTILE, createVoxelGrid } from "./voxel";
 import type { VoxelBounds } from "./voxel";
-import { WARMUP_ITERATIONS } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  WARMUP_ITERATIONS,
+  derivedColorIndex,
+} from "./chaos-game";
 import { plotPoint4, prepareChaosGame4, stepOrbit4 } from "./chaos-game-4d";
 import { rotationMatrix4, toTransform4 } from "./affine4";
 import {
@@ -825,5 +829,116 @@ describe("accumulateVoxels4 color kinds", () => {
     expect(grid.avgRGB[o]).toBe(lut[li]);
     expect(grid.avgRGB[o + 1]).toBe(lut[li + 1]);
     expect(grid.avgRGB[o + 2]).toBe(lut[li + 2]);
+  });
+});
+
+describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+  it("pins an all-absent accumulation exactly identical to the same system with every derived default authored explicitly", () => {
+    const base = pentatope().map(toTransform4);
+    const n = base.length;
+    const withDefaultsAuthored = base.map((t, i) => ({
+      ...t,
+      colorIndex: derivedColorIndex(i, n),
+      colorSpeed: DEFAULT_COLOR_SPEED,
+    }));
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(6);
+    const size = 8;
+    const iterations = 3000;
+
+    const absent = accumulateVoxels4(
+      prepareChaosGame4(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(13),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+    const explicit = accumulateVoxels4(
+      prepareChaosGame4(withDefaultsAuthored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(13),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+
+    expect(explicit.density).toEqual(absent.density);
+    expect(explicit.avgRGB).toEqual(absent.avgRGB);
+    expect(explicit.maxDensity).toBe(absent.maxDensity);
+    expect(explicit.orbitColor).toBe(absent.orbitColor);
+  });
+
+  it("authored colorIndex/colorSpeed never perturb the orbit: density and maxDensity match a derived render, same seed", () => {
+    const base = pentatope().map(toTransform4);
+    const colored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+      colorSpeed: 0.2,
+    }));
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(6);
+    const size = 8;
+    const iterations = 3000;
+
+    const plain = accumulateVoxels4(
+      prepareChaosGame4(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+    const withColors = accumulateVoxels4(
+      prepareChaosGame4(colored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+
+    expect(withColors.density).toEqual(plain.density);
+    expect(withColors.maxDensity).toBe(plain.maxDensity);
+  });
+
+  it("authored colorIndex genuinely changes the accumulated colors vs. the derived default", () => {
+    const base = pentatope().map(toTransform4);
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(6);
+    const size = 8;
+    const iterations = 3000;
+
+    const derived = accumulateVoxels4(
+      prepareChaosGame4(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+    const authored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+    }));
+    const withAuthored = accumulateVoxels4(
+      prepareChaosGame4(authored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "structural", lut },
+    );
+
+    expect(withAuthored.avgRGB).not.toEqual(derived.avgRGB);
   });
 });
