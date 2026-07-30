@@ -122,7 +122,14 @@ jobs:
   # cannot keep passing while verifying nothing.
   gpu-agreement:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A runaway guard, deliberately looser than the runner script's own wait
+    # cap (BENCH_TIMEOUT_MS, 20 min) so the script always trips FIRST and
+    # reports which scenario hung, instead of the job being killed with no
+    # verdict. Raised 30 -> 40 by fr-hiyu: setup (checkout, npm ci, Playwright
+    # + system deps) is several minutes on top of a sweep measured at ~16 min
+    # for its fourteen scenarios, which left the script's cap and the job's
+    # too close together to keep that ordering reliable.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
