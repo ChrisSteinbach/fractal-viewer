@@ -43,6 +43,7 @@
  *   order-1 side needs no fade (it has no copies), so it rides by reference.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
+import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import type {
   SymmetryParams,
   Transform,
@@ -108,7 +109,9 @@ function lerpRotation(a: Vec3, b: Vec3, t: number): Vec3 {
 }
 
 /** Absent-means-`fallback` scalar lerp, shared by every optional numeric
- * field (`weight`, `w.position`, each w-mixing plane): absent on both sides
+ * field (`weight`, `colorSpeed`, `w.position`, each w-mixing plane) — plus
+ * `colorIndex` (fr-hiyu), whose `fallback` is `derivedColorIndex(i, n)`
+ * rather than a constant (see {@link lerpTransforms}): absent on both sides
  * stays absent, otherwise both sides resolve through `fallback` and lerp. */
 function lerpOptional(
   a: number | undefined,
@@ -223,12 +226,17 @@ function lerpW(a: Transform, b: Transform, t: number): WExtension | undefined {
 
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
- * display-only — see the module header). */
+ * display-only — see the module header). `colorIndexFallback` is the
+ * absent-side default for `colorIndex` (fr-hiyu) — passed in rather than
+ * derived here, since it depends on the pair's INDEX and the system's map
+ * COUNT, neither of which this function knows; see {@link lerpTransforms}
+ * and {@link lerpFinalTransform} for the two callers' fallback choices. */
 function lerpTransformPair(
   a: Transform,
   b: Transform,
   t: number,
   id: number,
+  colorIndexFallback: number,
 ): Transform {
   const result: Transform = {
     id,
@@ -242,6 +250,22 @@ function lerpTransformPair(
 
   const weight = lerpOptional(a.weight, b.weight, 1, t);
   if (weight !== undefined) result.weight = weight;
+
+  const colorIndex = lerpOptional(
+    a.colorIndex,
+    b.colorIndex,
+    colorIndexFallback,
+    t,
+  );
+  if (colorIndex !== undefined) result.colorIndex = colorIndex;
+
+  const colorSpeed = lerpOptional(
+    a.colorSpeed,
+    b.colorSpeed,
+    DEFAULT_COLOR_SPEED,
+    t,
+  );
+  if (colorSpeed !== undefined) result.colorSpeed = colorSpeed;
 
   const variations = lerpVariations(a.variations, b.variations, t);
   if (variations !== undefined) result.variations = variations;
@@ -263,7 +287,18 @@ function phantomTransform(t: Transform): Transform {
 
 /** Pair `a`/`b`'s transforms by index, padding the shorter side with
  * {@link phantomTransform} copies of the longer side's surplus maps, and
- * lerp each pair. */
+ * lerp each pair. Each pair's `colorIndex` fallback (fr-hiyu) is
+ * `derivedColorIndex(i, length)` — the PAIRED length (after phantom
+ * padding), used for BOTH sides of the pair, never either side's own
+ * (possibly shorter) `transforms.length`. Two reasons: a
+ * {@link phantomTransform} is a copy of the OTHER side's own map, so both
+ * sides of a phantom pair must resolve through the SAME fallback or the
+ * padding stops lerping "bit-exactly, only the weight animating" — its
+ * documented contract; and each side's own count would place a surplus
+ * index outside its own `[0, 1]` spread entirely (e.g. index 3 of a 2-map
+ * system). This only ever shapes a MID-morph sample — {@link lerpSystem}
+ * returns `a`/`b` by reference at the endpoints, so a rendered system's own
+ * authored or derived colors are never touched by this choice. */
 function lerpTransforms(
   a: Transform[],
   b: Transform[],
@@ -274,7 +309,9 @@ function lerpTransforms(
   for (let i = 0; i < length; i++) {
     const left = i < a.length ? a[i] : phantomTransform(b[i]);
     const right = i < b.length ? b[i] : phantomTransform(a[i]);
-    result.push(lerpTransformPair(left, right, t, i));
+    result.push(
+      lerpTransformPair(left, right, t, i, derivedColorIndex(i, length)),
+    );
   }
   return result;
 }
@@ -324,22 +361,39 @@ function lerpSymmetry(
  * a lens, the other's endpoint is the identity map (carrying the present
  * side's id) so the lens fades in/out through {@link lerpTransformPair}'s
  * ordinary field rules; when both have one, they lerp directly with `b`'s
- * id.
+ * id. The final transform is never picked by the chaos game — it only bends
+ * a point at plot time — so its `colorIndex`/`colorSpeed` pair is inert
+ * (fr-hiyu); the lone-map fallback `derivedColorIndex(0, 1)` (`0.5`) is
+ * passed purely to satisfy {@link lerpTransformPair}'s signature, not
+ * because any renderer reads it.
  */
 function lerpFinalTransform(
   a: Transform | null,
   b: Transform | null,
   t: number,
 ): Transform | null {
+  const colorIndexFallback = derivedColorIndex(0, 1);
   if (a === null) {
     return b === null
       ? null
-      : lerpTransformPair(identityTransform(b.id), b, t, b.id);
+      : lerpTransformPair(
+          identityTransform(b.id),
+          b,
+          t,
+          b.id,
+          colorIndexFallback,
+        );
   }
   if (b === null) {
-    return lerpTransformPair(a, identityTransform(a.id), t, a.id);
+    return lerpTransformPair(
+      a,
+      identityTransform(a.id),
+      t,
+      a.id,
+      colorIndexFallback,
+    );
   }
-  return lerpTransformPair(a, b, t, b.id);
+  return lerpTransformPair(a, b, t, b.id, colorIndexFallback);
 }
 
 /**

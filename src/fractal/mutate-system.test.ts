@@ -291,3 +291,96 @@ describe("mutateSystem quality gate", () => {
     expect(passes).toBeGreaterThanOrEqual(28);
   });
 });
+
+describe("mutateSystem colorIndex/colorSpeed", () => {
+  it("leaves colorIndex and colorSpeed absent when the base carries neither", () => {
+    const base = system({ transforms: sierpinskiTetrahedron() });
+    const mutant = mutateSystem(base, mulberry32(4));
+    for (const t of mutant.transforms) {
+      expect("colorIndex" in t).toBe(false);
+      expect("colorSpeed" in t).toBe(false);
+    }
+  });
+
+  it("nudges both fields, staying within [0, 1], when the base carries both", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) => ({
+      ...t,
+      colorIndex: i / 3,
+      colorSpeed: 0.5,
+    }));
+    const base = system({ transforms });
+    for (let seed = 0; seed < 20; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      for (const t of mutant.transforms) {
+        expect(t.colorIndex).toBeGreaterThanOrEqual(0);
+        expect(t.colorIndex).toBeLessThanOrEqual(1);
+        expect(t.colorSpeed).toBeGreaterThanOrEqual(0);
+        expect(t.colorSpeed).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("keeps a fixed-seed mutant of a color-less base RNG-identical to before these fields existed", () => {
+    const base = system({ transforms: sierpinskiTetrahedron() });
+    const mutant = mutateSystem(base, mulberry32(42));
+    // Captured from this exact base/seed before colorIndex/colorSpeed
+    // jitter existed. jitterTransform's new jitters are gated on
+    // base.colorIndex/base.colorSpeed being present -- neither is, here --
+    // so they draw ZERO additional rng() calls, meaning every downstream
+    // draw (the remaining maps' jitter, the quality gate's scoreSystem
+    // probes) stays bit-identical and this snapshot is unchanged by the
+    // edit. A future change that shifted the RNG stream for a color-less
+    // base -- e.g. drawing before checking presence, or reordering jitters
+    // ahead of the `w` block -- would fail this test.
+    expect(mutant).toEqual({
+      transforms: [
+        {
+          id: 0,
+          position: [
+            0.027157446630299092, 0.747970223799348, 0.00425480674952268,
+          ],
+          rotation: [
+            0.02426490046083926, -0.012410265840590004, 0.08459179043769835,
+          ],
+          scale: [0.4818582395464182, 0.5099795723147691, 0.5292379718646407],
+          weight: 0.9861585275502875,
+        },
+        {
+          id: 1,
+          position: [
+            0.7191202421486378, -0.44843938592821364, 0.00011671803891659394,
+          ],
+          rotation: [
+            -0.060018303785473105, 0.09169412003830074, 0.05897701559588314,
+          ],
+          scale: [0.5149289614334702, 0.5088496718741954, 0.46030743615701797],
+          weight: 0.9853909618686885,
+        },
+        {
+          id: 2,
+          position: [
+            -0.4499539270997047, -0.43728704210370783, 0.5798850227892399,
+          ],
+          rotation: [
+            0.08096098221838474, -0.10770977608859539, 0.022157757729291905,
+          ],
+          scale: [0.47485512057319285, 0.5226837834529579, 0.5024268485046923],
+          weight: 0.7635618046624586,
+        },
+        {
+          id: 3,
+          position: [
+            -0.3255563225969672, -0.4288861206918955, -0.658016683422029,
+          ],
+          rotation: [
+            -0.07847874373197555, 0.08224515007808805, -0.002942419834434981,
+          ],
+          scale: [0.4629951370880008, 0.464111418761313, 0.5045279823429882],
+          weight: 1.0483647563960403,
+        },
+      ],
+      finalTransform: null,
+      symmetry: { order: 1, axis: "y" },
+    });
+  });
+});

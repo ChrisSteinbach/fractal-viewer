@@ -1,3 +1,4 @@
+import { derivedColorIndex } from "./chaos-game";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import type { Transform } from "./types";
@@ -313,5 +314,101 @@ describe("lerpSystem shear", () => {
     const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
     const mid = lerpSystem(a, b, 0.5);
     expect(mid.transforms[0].shear).toEqual([0.1, -0.05, 0.2]);
+  });
+});
+
+describe("lerpSystem colorIndex/colorSpeed", () => {
+  it("keeps both fields absent when both sides omit them", () => {
+    const a = system({ transforms: [transform()] });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].colorIndex).toBeUndefined();
+    expect(mid.transforms[0].colorSpeed).toBeUndefined();
+  });
+
+  it("lerps both fields to their midpoint when both sides author them", () => {
+    const a = system({
+      transforms: [transform({ colorIndex: 0.2, colorSpeed: 0.1 })],
+    });
+    const b = system({
+      transforms: [transform({ colorIndex: 0.8, colorSpeed: 0.9 })],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].colorIndex).toBeCloseTo(0.5, 10);
+    expect(mid.transforms[0].colorSpeed).toBeCloseTo(0.5, 10);
+  });
+
+  it("resolves an absent colorSpeed to DEFAULT_COLOR_SPEED (0.5) when only one side authors it", () => {
+    const a = system({ transforms: [transform({ colorSpeed: 0.9 })] });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].colorSpeed).toBe(0.7); // lerp(0.9, 0.5, 0.5) = 0.7
+  });
+
+  it("resolves an absent colorIndex through derivedColorIndex(i, n) when only one side authors it", () => {
+    const a = system({
+      transforms: [transform({ id: 0, colorIndex: 0.9 }), transform({ id: 1 })],
+    });
+    const b = system({
+      transforms: [
+        transform({ id: 0, position: [1, 1, 1] }),
+        transform({ id: 1, position: [1, 1, 1] }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    // b's map 0 has no colorIndex, so it resolves through the paired-length
+    // fallback derivedColorIndex(0, 2) = 0; lerp(0.9, 0, 0.5) = 0.45.
+    expect(mid.transforms[0].colorIndex).toBeCloseTo(0.45, 10);
+  });
+
+  it("returns a/b by reference at the endpoints with authored color fields intact", () => {
+    const a = system({
+      transforms: [transform({ colorIndex: 0.3, colorSpeed: 0.2 })],
+    });
+    const b = system({
+      transforms: [transform({ colorIndex: 0.7, colorSpeed: 0.8 })],
+    });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+  });
+
+  it("uses the PAIRED transform count, not either side's own count, for an overlapping pair's colorIndex fallback", () => {
+    const a = system({
+      // Own length 2 -- no colorIndex authored on either map.
+      transforms: [transform({ id: 0 }), transform({ id: 1 })],
+    });
+    const b = system({
+      // Own length 4 -- map 1 authors colorIndex, the rest don't.
+      transforms: [
+        transform({ id: 0, position: [1, 1, 1] }),
+        transform({ id: 1, position: [1, 1, 1], colorIndex: 0.6 }),
+        transform({ id: 2, position: [1, 1, 1] }),
+        transform({ id: 3, position: [1, 1, 1] }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    // Index 1 is a REAL pair on both sides (1 < min(2,4)), not phantom
+    // padding. a's own count is 2 (derivedColorIndex(1,2) would be 1), but
+    // the paired length is 4 (derivedColorIndex(1,4) = 1/3) -- the fallback
+    // must resolve through the latter.
+    const fallback = derivedColorIndex(1, 4);
+    expect(fallback).toBeCloseTo(1 / 3, 10);
+    expect(mid.transforms[1].colorIndex).toBeCloseTo(
+      fallback + (0.6 - fallback) * 0.5,
+      10,
+    );
+  });
+
+  it("keeps a phantom-padded pair's colorIndex pinned bit-exact across the whole morph", () => {
+    const a = system({ transforms: [transform({ id: 9 })] });
+    const surplus = transform({ id: 1, colorIndex: 0.42 });
+    const b = system({ transforms: [transform({ id: 9 }), surplus] });
+
+    // The padded pair (index 1) is phantomTransform(surplus) against surplus
+    // itself -- literally the same colorIndex on both sides -- so it lerps
+    // exactly, at every t, the same way its geometry does.
+    for (const t of [0.1, 0.5, 0.9]) {
+      expect(lerpSystem(a, b, t).transforms[1].colorIndex).toBe(0.42);
+    }
   });
 });

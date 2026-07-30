@@ -144,6 +144,29 @@ const W_SHEAR_JITTER = 0.05;
 /** `w.shear` clamp, mirroring `state.ts`'s `MIN`/`MAX_W_SHEAR` (`±2`). */
 const W_SHEAR_CLAMP = 2;
 
+/** Additive jitter half-range for `colorIndex`: `U(-0.05, 0.05)` (fr-hiyu) —
+ * matching {@link SHEAR_JITTER}'s magnitude, the closest precedent for a
+ * bounded `[0, 1]` authoring value rather than a free strength: a gentle
+ * nudge along the palette ramp, never enough to jump a map to a visibly
+ * different slot. */
+const COLOR_INDEX_JITTER = 0.05;
+/** `colorIndex` clamp: the field's own authored span, `[0, 1]` (see
+ * `Transform.colorIndex`, and `persist.ts`'s decoder, which clamps the same
+ * way) — not a UI slider constant, since the field's meaning (a position on
+ * the palette ramp) fixes its range directly. */
+const COLOR_INDEX_CLAMP_MIN = 0;
+const COLOR_INDEX_CLAMP_MAX = 1;
+
+/** Additive jitter half-range for `colorSpeed`: `U(-0.05, 0.05)` (fr-hiyu),
+ * matching {@link COLOR_INDEX_JITTER} — both are `[0, 1]`-authored blend
+ * controls, not free strengths, so the same small additive nudge fits
+ * either. */
+const COLOR_SPEED_JITTER = 0.05;
+/** `colorSpeed` clamp: the field's own authored span, `[0, 1]` (see
+ * `Transform.colorSpeed`), mirroring {@link COLOR_INDEX_CLAMP_MIN}/`_MAX`. */
+const COLOR_SPEED_CLAMP_MIN = 0;
+const COLOR_SPEED_CLAMP_MAX = 1;
+
 /**
  * How much wider every jitter half-range above gets on the grid's one
  * "wildcard" cell ({@link MutationOptions.wildcard}): `2.5x` reads as a
@@ -320,9 +343,9 @@ function jitterW(rng: Rng, base: WExtension, spread: number): WExtension {
  * ranges, scaled by `spread` (`1` for a plain cell, {@link WILDCARD_SPREAD}
  * for the wildcard cell). `id` is preserved (never reassigned — the map
  * identity a mutation grid cell shows must trace back to the base system's
- * own map), and every optional field (`shear`/`variations`/`w`) stays exactly
- * as present or absent as it is on `base` — no key is ever invented or
- * dropped.
+ * own map), and every optional field (`shear`/`variations`/`w`/`colorIndex`/
+ * `colorSpeed`) stays exactly as present or absent as it is on `base` — no
+ * key is ever invented or dropped.
  */
 function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
   const rotation: Vec3 = [
@@ -410,6 +433,27 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
     result.w = jitterW(rng, base.w, spread);
   }
 
+  // Placed AFTER every jitter above so a base map carrying neither field
+  // draws the exact same RNG sequence as it did before these fields existed
+  // (fr-hiyu) — every existing mutation-grid output stays byte-identical.
+  if (base.colorIndex !== undefined) {
+    result.colorIndex = clamp(
+      base.colorIndex +
+        uniform(rng, -COLOR_INDEX_JITTER * spread, COLOR_INDEX_JITTER * spread),
+      COLOR_INDEX_CLAMP_MIN,
+      COLOR_INDEX_CLAMP_MAX,
+    );
+  }
+
+  if (base.colorSpeed !== undefined) {
+    result.colorSpeed = clamp(
+      base.colorSpeed +
+        uniform(rng, -COLOR_SPEED_JITTER * spread, COLOR_SPEED_JITTER * spread),
+      COLOR_SPEED_CLAMP_MIN,
+      COLOR_SPEED_CLAMP_MAX,
+    );
+  }
+
   return result;
 }
 
@@ -463,9 +507,11 @@ function applyStructuralKick(
 
 /** Jitter the optional final-transform lens: ONLY its variation weights move
  * (via {@link jitterVariationWeight}, the same rule a base map's variations
- * follow); its affine fields (position/rotation/scale/shear) and `id` ride by
- * reference, untouched — the lens's warp can strengthen or weaken, but a
- * mutation never relocates or resizes it. Absent `variations` stays absent. */
+ * follow); its affine fields (position/rotation/scale/shear), `id`, and
+ * `colorIndex`/`colorSpeed` (fr-hiyu — inert on a lens the chaos game never
+ * picks, see `morph.ts`'s `lerpFinalTransform`) all ride by reference,
+ * untouched — the lens's warp can strengthen or weaken, but a mutation never
+ * relocates, resizes, or recolors it. Absent `variations` stays absent. */
 function jitterFinalTransform(
   rng: Rng,
   base: Transform,
@@ -518,11 +564,13 @@ function buildMutant(
  * per field — each clamp mirrors an editor slider's own bound, so a mutant
  * never lands outside what the manual editor could express). Maps are never
  * added or removed, and each keeps its base `id`; every optional field
- * (`shear`/`variations`/`w`, and each of `w`'s own subfields) stays exactly
- * as present or absent as it is on `base`, so a flat base system stays flat
- * and a purely-affine map stays purely affine. `symmetry` passes through
- * unchanged, and the final-transform lens (if any) only has its variation
- * weights nudged.
+ * (`shear`/`variations`/`w`, each of `w`'s own subfields, and `colorIndex`/
+ * `colorSpeed` — fr-hiyu) stays exactly as present or absent as it is on
+ * `base`, so a flat base system stays flat and a purely-affine map stays
+ * purely affine. `symmetry` passes through unchanged, and the
+ * final-transform lens (if any) only has its variation weights nudged (its
+ * own `colorIndex`/`colorSpeed`, like its affine fields, ride by reference —
+ * see {@link jitterFinalTransform}).
  *
  * `options.wildcard` widens every jitter range ({@link WILDCARD_SPREAD}) and
  * adds one structural kick on a single uniformly-chosen map (see
