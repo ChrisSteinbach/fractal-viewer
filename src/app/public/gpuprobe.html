@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WebGPU probe</title>
+<style>
+  body {
+    font: 16px/1.5 monospace;
+    background: #111;
+    color: #dfe;
+    margin: 1rem;
+  }
+  .bad {
+    color: #f88;
+  }
+  .ok {
+    color: #8f8;
+  }
+</style>
+<h2>Surface-compute acquisition probe</h2>
+<pre id="out">running…</pre>
+<script type="module">
+  const out = document.getElementById("out");
+  const lines = [];
+  const log = (s, cls) => {
+    lines.push(cls ? `<span class="${cls}">${s}</span>` : s);
+    out.innerHTML = lines.join("\n");
+  };
+  log(`userAgent: ${navigator.userAgent}`);
+  // Worker-context check FIRST (the flame path's context): some browsers
+  // expose WebGPU to workers but not the main thread.
+  try {
+    const workerSrc = `
+    onmessage = async () => {
+      try {
+        if (!("gpu" in navigator)) { postMessage({ gpu: false }); return; }
+        const a = await navigator.gpu.requestAdapter();
+        const i = a ? (a.info ?? {}) : null;
+        postMessage({ gpu: true, adapter: !!a, vendor: i?.vendor ?? "?", arch: i?.architecture ?? "?", fallback: a ? String(a.isFallbackAdapter ?? i?.isFallbackAdapter ?? "?") : "-" });
+      } catch (e) { postMessage({ gpu: "error", err: String(e) }); }
+    };`;
+    const w = new Worker(
+      URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })),
+    );
+    const res = await new Promise((resolve) => {
+      w.onmessage = (e) => resolve(e.data);
+      w.postMessage(0);
+      setTimeout(() => resolve({ gpu: "timeout" }), 5000);
+    });
+    w.terminate();
+    if (res.gpu === true) {
+      log(
+        `0. WORKER navigator.gpu: present — adapter ${res.adapter ? "OK" : "NULL"} (vendor=${res.vendor} arch=${res.arch} fallback=${res.fallback})`,
+        res.adapter ? "ok" : "bad",
+      );
+    } else {
+      log(
+        `0. WORKER navigator.gpu: ${res.gpu === false ? "ABSENT" : String(res.gpu)}${res.err ? " — " + res.err : ""}`,
+        "bad",
+      );
+    }
+  } catch (e) {
+    log(`0. WORKER check failed to run: ${e}`, "bad");
+  }
+  try {
+    if (!("gpu" in navigator)) {
+      log(
+        "1. navigator.gpu: ABSENT — supported() is false, WebGL by design here",
+        "bad",
+      );
+      throw 0;
+    }
+    log("1. navigator.gpu: present", "ok");
+    const hp = await navigator.gpu.requestAdapter({
+      powerPreference: "high-performance",
+    });
+    const def = await navigator.gpu.requestAdapter();
+    log(
+      `2. adapter(high-performance): ${hp ? "OK" : "NULL"}`,
+      hp ? "ok" : "bad",
+    );
+    log(
+      `   adapter(default):         ${def ? "OK" : "NULL"}`,
+      def ? "ok" : "bad",
+    );
+    const a = hp ?? def;
+    if (!a) {
+      log(
+        "→ requestAdapter returned null: this is the app's fallback trigger",
+        "bad",
+      );
+      throw 0;
+    }
+    const info = a.info ?? {};
+    log(
+      `   info: vendor=${info.vendor ?? "?"} arch=${info.architecture ?? "?"} device=${info.device ?? "?"} desc=${info.description ?? "?"}`,
+    );
+    log(
+      `   isFallbackAdapter: ${String(a.isFallbackAdapter ?? info.isFallbackAdapter ?? "?")}`,
+    );
+    log(
+      `   limits: storageBinding=${a.limits.maxStorageBufferBindingSize} bufferSize=${a.limits.maxBufferSize} wgStorage=${a.limits.maxComputeWorkgroupStorageSize} invocations=${a.limits.maxComputeInvocationsPerWorkgroup}`,
+    );
+    if (!hp) {
+      log(
+        "→ NOTE: the app requests high-performance specifically; a null THERE with default OK would explain the fallback",
+        "bad",
+      );
+    }
+    let device;
+    try {
+      device = await a.requestDevice({
+        requiredLimits: {
+          maxStorageBufferBindingSize: a.limits.maxStorageBufferBindingSize,
+          maxBufferSize: a.limits.maxBufferSize,
+        },
+      });
+      log("3. requestDevice(app's requiredLimits): OK", "ok");
+    } catch (e) {
+      log(`3. requestDevice FAILED: ${e}`, "bad");
+      throw 0;
+    }
+    device.lost.then((l) =>
+      log(`!! device lost: ${l.reason} — ${l.message}`, "bad"),
+    );
+    const mod = device.createShaderModule({
+      code: `
+    @group(0) @binding(0) var<storage, read_write> o: array<f32>;
+    @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3u) {
+      if (g.x < 4u) { o[g.x] = f32(g.x) * 2.5; }
+    }`,
+    });
+    const ci = await mod.getCompilationInfo();
+    const errs = ci.messages.filter((m) => m.type === "error");
+    log(
+      errs.length
+        ? `4. trivial kernel compile: ${errs.length} ERRORS`
+        : "4. trivial kernel compile: OK",
+      errs.length ? "bad" : "ok",
+    );
+    for (const m of errs)
+      log(`   ${m.lineNum}:${m.linePos} ${m.message}`, "bad");
+    log(
+      "\nVERDICT: acquisition chain OK to this point — if Surface still falls back, the failure is in the app's real kernel compile or later; report this screen.",
+      "ok",
+    );
+  } catch (e) {
+    if (e !== 0) log(`unexpected: ${e}`, "bad");
+    log(
+      "\nVERDICT: see first red line — that step is why Surface falls back to WebGL on this device.",
+    );
+  }
+</script>
