@@ -147,7 +147,9 @@ export interface PreparedChaosGame4 {
    * whole module carries: there is no symmetry expansion, so every slot IS a
    * base map and the raw picked index addresses this directly. Each entry is
    * the transform's own `colorIndex` or `chaos-game.ts`'s `derivedColorIndex`
-   * spread; read only by `flame-4d.ts`'s structural-coloring path.
+   * spread; read by the two structural-coloring hot loops this prepared
+   * object drives — `flame-4d.ts`'s `accumulateFlame4` and `voxel-4d.ts`'s
+   * `accumulateVoxels4`.
    */
   colorIndex: Float64Array;
   /**

@@ -40,10 +40,12 @@ export const MAX_TRANSFORMS = 256;
 const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
 
 /**
- * A transform's flame color speed when it authors none (`Transform.colorSpeed`
- * absent): the halfway blend `c ← (c + slot) / 2` that every flame render used
- * before the field existed (fr-hiyu). In flam3 terms this is `color_speed 0.5`
- * ⇔ the legacy `symmetry 0` — flam3's own default too.
+ * A transform's structural color speed when it authors none
+ * (`Transform.colorSpeed` absent): the halfway blend `c ← (c + slot) / 2` that
+ * every flame AND solid render used before the field existed (fr-hiyu — both
+ * walk the same coordinate; see `PreparedChaosGame.colorIndex`'s two readers).
+ * In flam3 terms this is `color_speed 0.5` ⇔ the legacy `symmetry 0` —
+ * flam3's own default too.
  */
 export const DEFAULT_COLOR_SPEED = 0.5;
 
@@ -177,15 +179,17 @@ export interface PreparedChaosGame {
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never by
    * the expanded slot: every kaleidoscope copy of a map colors as that map.
    * Each entry is the transform's own `colorIndex` when it authors one, else
-   * {@link derivedColorIndex}'s even spread. Read only by the flame
-   * accumulators' structural-coloring path (`flame.ts`), which is why this is
-   * resolved once here rather than re-derived per iteration.
+   * {@link derivedColorIndex}'s even spread. Read by the two structural-
+   * coloring hot loops this prepared object drives — `flame.ts`'s
+   * `accumulateFlame` and `voxel.ts`'s `accumulateVoxels`, which run the same
+   * walk over the same picks — which is why it is resolved once here rather
+   * than re-derived per iteration in each of them.
    */
   colorIndex: Float64Array;
   /**
    * Resolved flame color speed per BASE map (fr-hiyu), the companion to
    * {@link colorIndex}: the transform's own `colorSpeed` or
-   * {@link DEFAULT_COLOR_SPEED}. Same indexing, same single reader.
+   * {@link DEFAULT_COLOR_SPEED}. Same indexing, same two readers.
    */
   colorSpeed: Float64Array;
 }
