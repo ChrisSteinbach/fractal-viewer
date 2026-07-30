@@ -720,6 +720,47 @@ work, and the app then simply stays on the transfer fallback). The service
 worker lives in its own tiny TypeScript program (`src/app/sw/tsconfig.json`)
 because its WebWorker lib conflicts with the app's DOM lib.
 
+The reload is not free, though: anything the in-page session did inside
+that window is lost unless it already lives somewhere the reloaded page
+reads back on its own. The scene document does — `persist.ts` writes
+every edit into the `#v1=` hash and `fractal-viewer:scene` localStorage
+as it happens, so the reloaded page's boot restores it verbatim — but
+`AppState.renderMode` does not, because it is session-only by design
+(`state.ts`): a first-visit user who picked a Flame-group preset, or
+switched render mode by hand, inside the reload window used to come back
+in the Points explorer with no trace of the choice, because the restore
+is a plain scene load and the preset's render-mode hint never re-fires
+(fr-su3r). `registerServiceWorker` now takes an `onBeforeIsolationReload`
+hook, fired in the instant before the reload — never the update reload
+below — with any throw swallowed, since isolation matters more than the
+carried state. `main.ts`'s hook flushes the debounced edit session first, so
+the hash holds the CURRENT document rather than whatever survived the save
+delay, then writes the live render mode through `isolation-handoff.ts`'s
+`saveIsolationHandoff`: a one-load-wide sessionStorage bridge, distinct
+from but riding alongside the loop-guard marker above, that the next boot
+reads back with `consumeIsolationHandoff`'s read-and-clear — so no later,
+unrelated reload can re-arm a stale mode — and applies it once the boot
+cloud and the camera framing have settled. The same fix moves registration
+earlier too: a page that wants the isolation reload now registers immediately
+instead of waiting for `load`, because that load is disposable anyway,
+so the sooner the worker claims it and the reload fires, the smaller the
+window in which interaction can be lost; an already-isolated page keeps
+the original `load` timing, since it never reloads at all.
+
+Neither everyday local surface forced that window open before fr-su3r.
+`npm run dev` never reaches this code path at all — `register-sw.ts`
+registers no service worker in dev, which gets COOP/COEP natively from
+Vite's dev-server headers instead (above). `npm run preview` deliberately
+withholds those headers so the reload dance CAN fire against it
+(`vite.config.ts`), but the window it opens is real, unthrottled localhost
+timing, gone between registration and reload before a person — let alone a
+script — could act inside it. `scripts/isolation-reload.verify.mjs` is
+what actually closes that gap: it serves the production build over a
+plain static server with no COOP/COEP and deliberately delays `sw.js`'s
+response, widening the reload window on demand so an action taken inside
+it — like the render-mode switch this bug lost — can be reproduced and
+checked deterministically instead of by timing luck.
+
 A later deploy's worker no longer takes over an already-open tab uninvited —
 it waits, since `skipWaiting()` now only runs once a page posts the worker a
 `SKIP_WAITING` message. `register-sw.ts` detects that waiting worker (at

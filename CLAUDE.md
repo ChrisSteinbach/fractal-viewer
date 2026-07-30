@@ -29,6 +29,13 @@ Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
 Requires **Node.js 18+** (ES2022 target; developed on Node 22).
 
+Reproduce the COOP/COEP first-visit reload locally:
+`node scripts/isolation-reload.verify.mjs` (fr-su3r, not an npm script) —
+serves the production build over a plain static server with no COOP/COEP
+and a deliberately delayed `sw.js`, widening the reload window on demand;
+`npm run preview` can trigger the same dance, but only at real,
+easy-to-miss localhost timing.
+
 ## Pre-commit Hooks
 
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
@@ -580,7 +587,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     clock while the flame/solid/surface render converges (no frames
     captured), then dwell the step's holdMs on the converged still —
     authored clip length.
+  - `isolation-handoff.ts` — a session-only, sessionStorage, read-and-clear
+    bridge carrying `AppState.renderMode` across the cross-origin-isolation
+    reload (fr-su3r; see `register-sw.ts`). The scene document needs no such
+    bridge — `persist.ts` already round-trips it through the `#v1=` hash as
+    every edit happens — but `renderMode` is deliberately session-only
+    (`state.ts`), so it rides nothing across a reload on its own.
+    `saveIsolationHandoff` runs from the new `onBeforeIsolationReload` hook;
+    `consumeIsolationHandoff` reads it back once, early in the next boot.
   - `register-sw.ts` — service-worker registration + COOP/COEP bootstrap.
+    Takes an `onBeforeIsolationReload` hook (fr-su3r), fired the instant
+    before the isolation reload — never the update reload — so the app can
+    snapshot session state the reload is about to destroy (any throw
+    swallowed; isolation matters more). A page bound for that reload now
+    registers immediately instead of waiting for `load`, shrinking the
+    window in which interaction can be lost; an already-isolated page keeps
+    the original `load` timing.
   - `sw/sw.ts` — Workbox precache + COOP/COEP headers (own TS program).
 
 Core algorithm: the chaos game on an IFS — repeatedly apply a randomly chosen
