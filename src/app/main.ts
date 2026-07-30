@@ -73,6 +73,10 @@ import {
 } from "./scene";
 import { attachInteractions } from "./interactions";
 import { registerServiceWorker } from "./register-sw";
+import {
+  consumeIsolationHandoff,
+  saveIsolationHandoff,
+} from "./isolation-handoff";
 import { Ui } from "./ui";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import type { ViewPose } from "./history";
@@ -1737,19 +1741,12 @@ function main(): void {
 
     // A preset that declares a render-mode hint (fr-39y) enters its renderer
     // HERE, when its whole-system replacement actually lands — not at click
-    // time, when the camera still framed the previous attractor. The flame
-    // render freezes the camera into its projection snapshot at enter, so
-    // complete the just-started fit glide instantly and push it to the scene
-    // camera first; the solid render keeps its camera live, so it can keep
-    // gliding.
+    // time, when the camera still framed the previous attractor.
+    // enterLoadedRenderMode carries the camera discipline that entry needs.
     if (request.replaced && pendingRenderMode !== null) {
       const target = pendingRenderMode;
       pendingRenderMode = null;
-      if (target === "flame") {
-        cameraTween.finish();
-        scene.applyCamera(orbit);
-      }
-      switchRenderMode(target);
+      enterLoadedRenderMode(target);
     }
   }
 
@@ -3309,6 +3306,25 @@ function main(): void {
     if (target === "flame") flameSession.enter();
     else if (target === "solid") solidSession.enter();
     else if (target === "surface") surfaceSession.enter();
+  }
+
+  /**
+   * Enter `target` on behalf of a LOAD rather than the mode control: the
+   * flame render freezes the camera into its projection snapshot at enter, so
+   * complete any just-started fit glide instantly and push it to the scene
+   * camera first; the solid and surface renders keep their camera live and
+   * can keep gliding. Two callers, both of them a load that already knows
+   * which renderer it wants — a preset's render-mode hint landing with its
+   * cloud (applyCloudResult) and the isolation-reload handoff restoring the
+   * pre-reload mode at boot — which is why the camera discipline lives here
+   * once instead of at each site.
+   */
+  function enterLoadedRenderMode(target: RenderMode): void {
+    if (target === "flame") {
+      cameraTween.finish();
+      scene.applyCamera(orbit);
+    }
+    switchRenderMode(target);
   }
 
   // The lens has no guide box, so map its selection (like camera) to "nothing
@@ -4971,6 +4987,22 @@ function main(): void {
   if (bootCount < bootParams.numPoints) {
     cloudGenerator.request(bootParams);
   }
+  // The cross-origin-isolation reload's handoff (fr-su3r). On GitHub Pages a
+  // first-ever visit necessarily loads non-isolated, and register-sw.ts
+  // reloads it once as soon as the service worker takes control. Whatever the
+  // user authored inside that window comes back through the document above —
+  // but `renderMode` is session-only (state.ts) and would not, so a preset's
+  // render-mode hint or a manual mode switch chosen in there used to vanish
+  // with nothing to blame: the restore is a plain scene load, so the hint
+  // never re-fires. The page wrote its mode out on the way into the reload
+  // (see onBeforeIsolationReload at the end of main) and this reads it back,
+  // exactly once — a consume CLEARS, so no later load can re-arm it and no
+  // ordinary boot is affected. Applied HERE, after the boot cloud and the
+  // camera framing above, for the same reason the preset hint waits for its
+  // cloud: flame freezes the camera into its projection at enter and needs
+  // the framing settled first.
+  const isolationHandoff = consumeIsolationHandoff();
+  if (isolationHandoff) enterLoadedRenderMode(isolationHandoff.renderMode);
 
   // Drift and timeline playback are unavailable under reduced motion — no
   // motion means no show (fr-wavo, fr-8v41): both toggles disable
@@ -5468,8 +5500,25 @@ function main(): void {
     if (rendered) scene.render();
     if (!force) governResolution(now, rendered);
   }
+  // Service-worker registration closes the boot (fr-su3r moved it inside
+  // main): the isolation reload discards this page, so it is handed a
+  // callback that captures what the reloaded one cannot recover on its own —
+  // a flush so the document in the hash is the CURRENT one rather than
+  // whatever survived the save debounce, and the session-only render mode
+  // this boot's consumeIsolationHandoff reads back. Wiring it here rather
+  // than at module scope is what puts `state`/`editSession` in reach; the
+  // registration itself is unaffected by the later call, since register-sw
+  // schedules its own work off `load` (or immediately, when it already knows
+  // this page is about to reload for isolation).
+  registerServiceWorker({
+    onUpdateAvailable: showUpdateBanner,
+    onBeforeIsolationReload: () => {
+      editSession.flush();
+      saveIsolationHandoff({ renderMode: state.renderMode });
+    },
+  });
+
   animate();
 }
 
-registerServiceWorker(showUpdateBanner);
 main();
