@@ -26,6 +26,32 @@
     out.innerHTML = lines.join("\n");
   };
   log(`userAgent: ${navigator.userAgent}`);
+  // WebGL first — the Surface fallback tracer's engine. A software
+  // renderer string here (SwiftShader / llvmpipe) is the "desktop
+  // mysteriously 10-50x slower than a phone" class: the browser has
+  // disabled GPU acceleration for its own reasons (crash counters,
+  // blocklists) even though the hardware works in a fresh profile.
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl2") ?? c.getContext("webgl");
+    if (!gl) {
+      log("W. WebGL: NO CONTEXT", "bad");
+    } else {
+      const ext = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = ext
+        ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter(gl.RENDERER);
+      const soft = /swiftshader|llvmpipe|software|basic render/i.test(
+        String(renderer),
+      );
+      log(
+        `W. WebGL renderer: ${renderer}${soft ? " — SOFTWARE (expect 10-50x slow Surface/points)" : ""}`,
+        soft ? "bad" : "ok",
+      );
+    }
+  } catch (e) {
+    log(`W. WebGL check failed: ${e}`, "bad");
+  }
   // Worker-context check FIRST (the flame path's context): some browsers
   // expose WebGPU to workers but not the main thread.
   try {
