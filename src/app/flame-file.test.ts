@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { composeAffine } from "../fractal/affine";
-import { MAX_TRANSFORMS } from "../fractal/chaos-game";
+import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import { COLLECTION_CAP } from "./collection";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { decodeScene, toSnapshot } from "./persist";
@@ -359,6 +359,89 @@ describe("decodeFlameFile", () => {
       { type: "spherical", weight: 100 },
     ]);
   });
+
+  it("reads an xform's `color` attribute as its palette index", () => {
+    const xml = `<flame><xform weight="1" color="0.25" coefs="0.5 0 0 0.5 0 0"/><xform weight="1" color="0.8" coefs="0.5 0 0 0.5 0.2 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorIndex).toBe(0.25);
+    expect(snap.transforms[1].colorIndex).toBe(0.8);
+  });
+
+  it("converts the legacy `symmetry` attribute to a color speed", () => {
+    // speed = (1 - symmetry) / 2: flam3's default 0 is the halfway blend,
+    // 1 is a color-pinning "symmetry xform", -1 snaps straight to the slot.
+    const xml = `<flame>
+      <xform weight="1" symmetry="0" coefs="0.5 0 0 0.5 0 0"/>
+      <xform weight="1" symmetry="1" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" symmetry="-1" coefs="0.5 0 0 0.5 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    // persist.ts canonicalizes the default speed to absent — same meaning.
+    expect(snap.transforms[0].colorSpeed ?? DEFAULT_COLOR_SPEED).toBe(0.5);
+    expect(snap.transforms[1].colorSpeed).toBe(0);
+    expect(snap.transforms[2].colorSpeed).toBe(1);
+  });
+
+  it("reads the modern `color_speed` attribute directly", () => {
+    const xml = `<flame><xform weight="1" color_speed="0.3" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorSpeed).toBe(0.3);
+  });
+
+  it("prefers `color_speed` over the legacy `symmetry` when both are present", () => {
+    // symmetry="0" would be speed 0.5; the modern attribute wins in either
+    // attribute order, so a hand-edited file can't flip the reading.
+    const xml = `<flame>
+      <xform weight="1" symmetry="0" color_speed="0.9" coefs="0.5 0 0 0.5 0 0"/>
+      <xform weight="1" color_speed="0.9" symmetry="0" coefs="0.5 0 0 0.5 0.2 0"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorSpeed).toBe(0.9);
+    expect(snap.transforms[1].colorSpeed).toBe(0.9);
+  });
+
+  it("clamps out-of-range color attributes into [0, 1]", () => {
+    const xml = `<flame>
+      <xform weight="1" color="1.7" color_speed="4" coefs="0.5 0 0 0.5 0 0"/>
+      <xform weight="1" color="-0.3" symmetry="-9" coefs="0.5 0 0 0.5 0.2 0"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorIndex).toBe(1);
+    expect(snap.transforms[0].colorSpeed).toBe(1);
+    expect(snap.transforms[1].colorIndex).toBe(0);
+    expect(snap.transforms[1].colorSpeed).toBe(1); // (1 + 9) / 2, clamped
+  });
+
+  it("leaves the color keys absent for unparseable color attributes", () => {
+    const xml = `<flame><xform weight="1" color="wat" color_speed="" symmetry="NaN" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorIndex).toBeUndefined();
+    expect(snap.transforms[0].colorSpeed).toBeUndefined();
+  });
+
+  it("falls back to `symmetry` when `color_speed` is unparseable", () => {
+    const xml = `<flame><xform weight="1" color_speed="wat" symmetry="1" coefs="0.5 0 0 0.5 0 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorSpeed).toBe(0);
+  });
+
+  it("imports an xform with no color attributes with both keys absent", () => {
+    // Absent ⇒ the derived slot and DEFAULT_COLOR_SPEED apply at render time;
+    // storing a value here would freeze what should stay derived.
+    const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><xform weight="1" coefs="0.5 0 0 0.5 0.2 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].colorIndex).toBeUndefined();
+    expect(snap.transforms[0].colorSpeed).toBeUndefined();
+    expect(snap.transforms[1].colorIndex).toBeUndefined();
+    expect(snap.transforms[1].colorSpeed).toBeUndefined();
+  });
+
+  it("imports a finalxform's color attributes onto the final transform", () => {
+    const xml = `<flame><xform weight="1" coefs="0.5 0 0 0.5 0 0"/><finalxform color="0.4" color_speed="0" coefs="1 0 0 1 0 0"/></flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.finalTransform?.colorIndex).toBe(0.4);
+    expect(snap.finalTransform?.colorSpeed).toBe(0);
+  });
 });
 
 describe("encodeFlameFile → decodeFlameFile round trip", () => {
@@ -579,6 +662,168 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     expect(last[0]).toBeCloseTo(0, 3);
     expect(last[1]).toBeCloseTo(0, 3);
     expect(last[2]).toBeCloseTo(1, 3);
+  });
+
+  it("round-trips authored per-transform color index and speed", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        colorIndex: 0.15,
+        colorSpeed: 0.9,
+      },
+      {
+        id: 1,
+        position: [-0.2, -0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+        colorIndex: 0.75,
+        colorSpeed: 0,
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "authored-color");
+    const back = loadFirstScene(xml);
+    expect(back.transforms[0].colorIndex).toBe(0.15);
+    expect(back.transforms[0].colorSpeed).toBe(0.9);
+    expect(back.transforms[1].colorIndex).toBe(0.75);
+    expect(back.transforms[1].colorSpeed).toBe(0);
+  });
+
+  it("writes both spellings of color speed, consistently", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        colorSpeed: 0.25,
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "both-spellings");
+    // symmetry = 1 - 2·speed, so a reader that prefers either attribute
+    // reconstructs the same 0.25.
+    expect(xml).toContain('color_speed="0.25" symmetry="0.5"');
+  });
+
+  it("writes the derived color slot and default speed explicitly when a system authors none", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+      {
+        id: 1,
+        position: [0, -0.2, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+      },
+      {
+        id: 2,
+        position: [-0.3, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.45, 0.45, 0],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "derived-color");
+    // The even spread i/(n-1) over three maps, at the 0.5 halfway blend —
+    // exactly what the render resolves for an unauthored system.
+    expect(xml).toContain('color="0" color_speed="0.5" symmetry="0"');
+    expect(xml).toContain('color="0.5" color_speed="0.5" symmetry="0"');
+    expect(xml).toContain('color="1" color_speed="0.5" symmetry="0"');
+
+    // …and it re-imports as those same values, now explicit: same rendered
+    // colors, one round trip later.
+    const back = loadFirstScene(xml);
+    expect(back.transforms.map((t) => t.colorIndex)).toEqual([0, 0.5, 1]);
+    // The speed round-trips through persist.ts's canonicalization, which
+    // drops a stored DEFAULT_COLOR_SPEED as the default it is.
+    expect(
+      back.transforms.map((t) => t.colorSpeed ?? DEFAULT_COLOR_SPEED),
+    ).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("writes a lone map's derived middle slot", () => {
+    // derivedColorIndex(0, 1) is 0.5, not 0: there is no spread to speak of,
+    // and 0.5 is the slot the render actually uses.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "lone-map");
+    expect(xml).toContain('color="0.5"');
+  });
+
+  it("gives every baked kaleidoscope copy its base map's color", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        colorIndex: 0.1,
+      },
+      {
+        id: 1,
+        position: [-0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+        colorIndex: 0.9,
+      },
+    ];
+    const source = snapshotWith({
+      transforms,
+      symmetry: { order: 3, axis: "z" },
+    });
+
+    const { xml } = encodeFlameFile(source, "kaleido-color");
+    // Six xforms, k-major: each copy colors as the map it copies — flame.ts's
+    // `idx % baseTransformCount` invariant in flam3's vocabulary.
+    const colors = [...xml.matchAll(/<xform [^>]*\bcolor="([^"]*)"/g)].map(
+      (m) => Number(m[1]),
+    );
+    expect(colors).toEqual([0.1, 0.9, 0.1, 0.9, 0.1, 0.9]);
+  });
+
+  it("pins the exported finalxform's color speed to 0 (our lens never recolors)", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+    ];
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0.3],
+      scale: [0.8, 0.8, 0],
+      colorIndex: 0.4,
+    };
+    const source = snapshotWith({ transforms, finalTransform });
+
+    const { xml } = encodeFlameFile(source, "final-color");
+    // flam3 blends through its final xform at color_speed (default 0.5),
+    // which would shift every plotted point's color; ours does not.
+    expect(xml).toContain(
+      '<finalxform color="0.4" color_speed="0" symmetry="1"',
+    );
   });
 });
 

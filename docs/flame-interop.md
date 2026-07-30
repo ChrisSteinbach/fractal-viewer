@@ -8,7 +8,7 @@ through the same panel buttons and drag-drop as the JSON scene files
 
 ## Why the mapping is mostly exact
 
-Three facts line the two vocabularies up better than they first appear:
+Four facts line the two vocabularies up better than they first appear:
 
 1. **The affine group matches.** A flame xform's `coefs="a b c d e f"` is an
    arbitrary 2D affine map (`x' = a·x + c·y + e`, `y' = b·x + d·y + f` —
@@ -42,6 +42,30 @@ Three facts line the two vocabularies up better than they first appear:
 
 3. **The lens matches.** flam3's `<finalxform>` is applied at plot time and
    never fed back into the orbit — precisely our `finalTransform`.
+
+4. **The per-xform color matches (fr-hiyu).** A flame xform's `color` is a
+   palette _coordinate_, not an RGB triple: the slot the orbit's color
+   coordinate is pulled toward whenever that map is picked, at the map's
+   `color_speed` (`c ← c·(1 - speed) + color·speed`). That is exactly
+   `Transform.colorIndex` / `Transform.colorSpeed` — same `[0, 1]` range, same
+   blend, same "keyed on the base map, so every kaleidoscope copy colors as
+   the map it copies" rule (`flame.ts`'s `accumulateFlame`). flam3's older
+   spelling of the speed is the deprecated `symmetry` attribute:
+
+   ```
+   color_speed = (1 - symmetry) / 2        symmetry = 1 - 2·color_speed
+   ```
+
+   The conversion checks out on both landmarks: flam3's default `symmetry="0"`
+   is speed `0.5` — `chaos-game.ts`'s `DEFAULT_COLOR_SPEED`, and the halfway
+   blend every flame render hard-coded before the fields existed — and a
+   flam3 "symmetry xform" (`symmetry="1"`, which shades without recoloring)
+   is speed `0`, our pinned coordinate.
+
+   Both attributes are optional in both directions: an imported xform that
+   carries neither leaves the keys absent, so the derived even spread
+   (`derivedColorIndex`) and `DEFAULT_COLOR_SPEED` apply and the file renders
+   as it always did.
 
 ## A deliberate deviation: the fold family isn't flam3's
 
@@ -89,7 +113,9 @@ more valuable property to protect.
 | `weight ≤ 0` xform                                   | **skipped + warning**                                                                               |
 | `chaos` (xaos)                                       | **ignored + warning** (no xaos in the chaos game)                                                   |
 | `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                     |
-| `color`, `symmetry`/`color_speed`                    | ignored (our color modes are global, not per-xform indices)                                         |
+| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]` (fr-hiyu); absent ⇒ key omitted                         |
+| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                  |
+| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                |
 | `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                   |
 | palette (`<palette>` hex block or `<color>` entries) | downsampled onto an 8-stop `CustomPalette`; `flame.paletteId` and `rampPaletteId` become `"custom"` |
 | `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                   |
@@ -117,7 +143,8 @@ already passed `decodeScene` — a returned scene is genuinely loadable.
 The export writes the system's **XY shadow**:
 
 - Exact for z-flat systems — in particular, anything that was imported from a
-  `.flame` round-trips exactly (up to 4-decimal rounding).
+  `.flame` round-trips exactly (up to 4-decimal rounding), the one exception
+  being a final xform's color speed (see below).
 - A genuinely 3D system (any map whose composed affine writes z: `m₂₀`,
   `m₂₁`, or `t_z` nonzero) or 4D system exports its projection with a
   warning. The 2D dynamics is the shadow of the 3D dynamics only when the
@@ -132,8 +159,31 @@ The export writes the system's **XY shadow**:
   kaleidoscopes flatten with a warning.
 - `finalTransform` → `<finalxform>`; variations pass through by name (merged
   by type — XML attributes must be unique); weights pass through as-is.
-- Per-xform `color` indices are spread `i / (n - 1)` and the 256-entry
-  palette block is the scene's resolved gradient palette
+- Per-xform colors are written **resolved** (fr-hiyu): a map's authored
+  `colorIndex`/`colorSpeed`, else the same fallbacks the render resolves
+  through — `derivedColorIndex`'s even spread `i / (n - 1)` (`0.5` for a lone
+  map) and `DEFAULT_COLOR_SPEED`. The file therefore states what we draw
+  rather than what we store, and re-importing an export reproduces the same
+  colors as explicit values. Each baked kaleidoscope copy carries its **base**
+  map's color, matching the render's `idx % baseTransformCount` rule.
+- The speed is written in **both** spellings — `color_speed="s"` and
+  `symmetry="1 - 2·s"`, which is flam3's own legacy-format formula (see
+  "Verified conventions"). flam3 writes one or the other depending on target
+  version; writing both is the superset that satisfies either reader
+  generation (flam3 and Fractorium read `color_speed`; older Apophysis builds
+  only knew `symmetry`). They agree by construction, so no reader can be
+  misled by preferring either, and flam3's document-ordered parser lands on
+  the same value whichever it sees last. Its one side effect lines up: that
+  parser also derives `animate` from `symmetry`, so a `color_speed="0"` map
+  writes `symmetry="1"` and is left out of rotational animation — exactly as
+  a flam3 symmetry xform should be.
+- `<finalxform>` is written with `color_speed="0"`. flam3 blends the color
+  coordinate _through_ its final xform (at a default speed of 0.5, which
+  would pull every plotted point halfway toward that slot and shift the whole
+  image); our lens is applied at plot time and never recolors, so speed 0 is
+  the value that makes a flam3 render agree with ours. The final map's own
+  `colorIndex` still rides along, inert, for tools that display it.
+- The 256-entry palette block is the scene's resolved gradient palette
   (`resolvePalette` → `buildPaletteLUT`), or the per-transform hues laid out
   as equal blocks for the `"legacy"` palette.
 - The header frames the image from a short seeded chaos probe's trimmed 2D
@@ -144,8 +194,10 @@ The export writes the system's **XY shadow**:
 ## Known losses (by design)
 
 - z / w structure (projection — warned).
-- Per-xform palette coordinates and color speed (import).
 - Xaos, animation/motion attributes, per-xform opacity.
+- A final xform's color blending (export — our lens doesn't recolor, so the
+  export pins its `color_speed` to 0 rather than reproducing an imported
+  one; see the export notes above).
 - `post` on nonlinear xforms (import — warned).
 - The ~90 flam3/Apophysis variations we don't implement (import — warned,
   aggregated). The affine skeleton still imports, which often preserves the
@@ -164,6 +216,16 @@ The export writes the system's **XY shadow**:
   translation `(e, f)` — i.e. `x' = a·x + c·y + e`, `y' = b·x + d·y + f`.
   This matches flam3's parser (`c[0][0] c[0][1] c[1][0] c[1][1] c[2][0]
 c[2][1]`) and Apophysis' writer; both tools agree, y-up, no flips.
-- The xform `symmetry` attribute is _color speed_, not geometric symmetry.
+- The xform `symmetry` attribute is _color speed_, not geometric symmetry —
+  the pre-2.8 spelling `color_speed`/`animate` superseded. Read from flam3's
+  own source: its parser loops the attribute list in document order
+  (`for (cur_att = att_ptr; cur_att; cur_att = cur_att->next)`) and maps
+  `symmetry` to `color_speed = (1 - value) / 2` **plus**
+  `animate = value > 0 ? 0 : 1`, while `color_speed` and `animate` each also
+  parse directly. So flam3 has no name precedence between the two — last
+  attribute wins — and its writer (`flam3_print_xform`) emits
+  `symmetry = 1 - 2·color_speed` for the legacy format, `color_speed`
+  otherwise. We prefer `color_speed` on import (order-independent) and write
+  both, consistently, on export.
 - `weight` is a relative pick probability, like ours.
 - flam3's default `brightness` is 4 ↔ our default `exposure` is 1.
