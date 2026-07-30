@@ -479,6 +479,19 @@ SwiftShader GPU where mandelboxKifs needs 229s: an 81-branch sweep over
 the affine ladder is ~65x cheaper than a fold-frontier monster), and the
 PRODUCTION renderer converging the lens frame (hit=811, 0 exhausted).
 
+Those unproject numbers are SwiftShader's. On the REAL Iris driver the
+same leg reads hits 812/811 with one status mismatch, and the fold-pair
+leg 81/82 with one — a red verdict that stood unnoticed from this
+session until fr-7tl3, because the leg had only ever been read on
+software. Both are silhouette flips: ray 1384's CPU march comes within
+2% of eps at t=5.3092 where the GPU accepts at t=5.3090 (2e-4 apart,
+tolerance 1.31e-2), ray 1312's CPU march accepts at 99.4% of eps where
+the GPU skims past. The gate now excludes exactly that shape as
+`silhouetteFlips` — closest approach at the hitting side's `t`, within
+1.5x either side of `d/eps == 1` — and reads verdict=pass on the real
+driver. The lesson generalizes past this bead: a surface-kernel verdict
+taken only on SwiftShader is not evidence about the driver that ships.
+
 Routing flipped to `deHasFolds(de) || foldFinal` with the priors scaled by
 branch-count/8 (`surfaceDescentCostWeight`'s factor) so first
 slices/batches stay watchdog-safe. Measured on the field shapes (Iris Xe,

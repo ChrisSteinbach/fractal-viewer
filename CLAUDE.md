@@ -150,7 +150,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     and footprint+lens is refused at pack time (descendLens's per-branch
     innerFootprint would need a core signature change; the app passes 0).
     M1 lens rows gate at ~2e-7 (81-branch mandelbox worst case included);
-    the field class marched 5184 unproject rays fail=0, hits 811/811.
+    the field class marched 5184 unproject rays fail=0, hits 812/811 —
+    that leg and the fold-pair leg each carry ONE status mismatch on the
+    real Iris driver where SwiftShader has none (fr-7tl3), excluded as
+    `silhouetteFlips`: the two marches reached the same point on the same
+    trajectory and straddled `d < eps` by 0.6%/2% of eps, which the older
+    same-terminal-`t` rule could never recognize because a miss runs on to
+    the sphere exit while a hit stops at the surface. Re-verify surface
+    kernel changes on `--display=:0`, not SwiftShader alone.
     Modes:
     `eval` (per-query distances) and `march` (bounded-dispatch ray march,
     host-compacted active list) are the fr-q1f8 bench baselines,
