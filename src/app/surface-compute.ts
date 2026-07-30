@@ -163,10 +163,13 @@ export interface SurfaceComputeFrameOptions {
   budgetMs?: number;
   /** Progressive present: called with a full-frame RGBA snapshot at most
    * every `progressIntervalMs` while rays are still marching. `done` /
-   * `total` are ray tallies (terminal AND shaded vs the frame's rays) —
-   * the fr-tmgf disclosure hook: main.ts drives the surface progress row
-   * from them, so a compute settle reports honest coverage the way the
-   * WebGL strip path's `surfaceRenderProgress()` does. */
+   * `total` are ray-work tallies — a ray credits HALF on going terminal
+   * (its march is done) and the rest once its pixel is shaded (fr-tdft:
+   * shaded-only counting displayed a heavy frame's whole first march
+   * sweep as 0%). The fr-tmgf disclosure hook: main.ts drives the
+   * surface progress row from them, so a compute settle reports honest
+   * coverage the way the WebGL strip path's `surfaceRenderProgress()`
+   * does. `done` may be fractional. */
   onProgress?: (pixels: Uint8Array, done: number, total: number) => void;
   progressIntervalMs?: number;
 }
@@ -1003,11 +1006,17 @@ export class SurfaceComputeRenderer {
         return false;
       }
       lastProgress = performance.now();
-      opts.onProgress(
-        partial,
-        rays - active.length - shadeHitQueue.length - shadeFreeQueue.length,
-        rays,
-      );
+      // fr-tdft: terminal-but-unshaded rays count HALF. Counting only
+      // shaded rays displayed a heavy frame's whole first march sweep as
+      // "0%" for a minute of honest work (the parked-at-0 anti-pattern
+      // the progress row exists to kill), then read the cheap miss-drain
+      // as a 10%/s sprint. A ray now credits half on going terminal
+      // (march done) and the other half when its pixel is shaded —
+      // monotone by construction (active only shrinks; queues only move
+      // rays toward shaded), 1.0 exactly at frame completion.
+      const terminal = rays - active.length;
+      const queued = shadeHitQueue.length + shadeFreeQueue.length;
+      opts.onProgress(partial, terminal - 0.5 * queued, rays);
       return true;
     };
 
