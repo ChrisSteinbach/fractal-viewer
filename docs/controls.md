@@ -467,13 +467,28 @@ morphs into place instead of snapping (see **Presets** below).
   state it persists across reloads and shared links, exactly like **4D
   Color**. The camera orbits the projection as usual, and Points / Point
   Size / Regenerate / guides / Save PNG stay live, as do the transform list
-  and every transform's editor; **Color Mode**, **Color Contrast**, **Depth
-  Style**, the Flame/Solid Render entries, and **Symmetry** all hide, since
-  none of them reach the 4D shader path. The tumble/slice view is
-  session-only (never persisted) and resets to a fresh baseline only when the
-  system flips from flat to non-flat, or a whole new system replaces it
-  (preset load / Surprise Me) — never on a later edit, so an in-progress
-  tumble/slice survives ordinary parameter tweaks. See
+  and every transform's editor — and so does the render-mode switch: Flame,
+  Solid, and Surface all render a non-flat system on their own 4D paths
+  (fr-5b3/fr-4wd for the flame and solid accumulators, fr-vxoj for the
+  tracer; the Surface button still gates on distance-estimator eligibility
+  exactly as it does for a flat system, see **◈ Surface** above). Flame and
+  Solid _freeze_ the view they start from — one snapshot of the rotor, the
+  slice window, and the **4D Color** choice, held for the render's whole
+  life — so the tumble parks and this section's sliders hide until you
+  return to Points. Surface instead keeps the rotor and W slice live per
+  frame, so the auto-tumble goes on turning under the tracer and the
+  Shift-drag / Shift-wheel gestures above still steer it (its tumble/slice
+  sliders hide with the rest all the same). What does drop out of the panel
+  is the flat-only look controls: **Color Mode** and **Depth Style** are
+  superseded in place by **4D Color** and **Depth fade** above, **Color
+  Contrast** goes with them (it tunes the height / radius / position ramps,
+  none of which are in play once 4D Color owns the coloring), and
+  **Symmetry** hides because the 4D chaos game has no symmetry parameter at
+  all. The tumble/slice view is session-only (never persisted) and resets to
+  a fresh baseline only when the system flips from flat to non-flat, or a
+  whole new system replaces it (preset load / Surprise Me) — never on a
+  later edit, so an in-progress tumble/slice survives ordinary parameter
+  tweaks. See
   [4d-exploration.md](4d-exploration.md) for the design.
 
 ## Sharing & persistence

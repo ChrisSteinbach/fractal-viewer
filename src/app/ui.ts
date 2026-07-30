@@ -1577,12 +1577,14 @@ export class Ui {
     // projection or its own w-driven coloring) hide; their 4D look siblings
     // (the 4D Color and depth-fade rows) swap into the same Appearance slots
     // (fr-15g), and the 4D View section's tumble/slice block replaces the 3D
-    // View block. All three render modes stay available while
-    // non-flat (fr-5b3/fr-4wd): the flame/solid renders snapshot the frozen
-    // 4D view and run their own 4D accumulators. The tumble/slice block hides
-    // while a render is active for the same reason the editing controls do —
+    // View block. All four render modes stay available while
+    // non-flat: the flame/solid renders snapshot the frozen 4D view and run
+    // their own 4D accumulators (fr-5b3/fr-4wd), and the surface tracer poses
+    // the 4D attractor live (fr-vxoj). The tumble/slice block hides while a
+    // render is active for the same reason the editing controls do —
     // the view (rotor + slice) is frozen into the render's worker snapshot,
-    // so its controls couldn't affect it.
+    // so its controls couldn't affect it. That last argument does NOT hold
+    // for a live 4D surface session (fr-b30z tracks the gap).
     const nonFlat = systemIsNonFlat(state);
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
