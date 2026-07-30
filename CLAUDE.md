@@ -128,7 +128,23 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). Modes:
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). TWO descent
+    cores since fr-55s1: `core:"affine"` emits the width-4 A/B +
+    fr-jkpn-validity-slot REFINED ladder (mirrors
+    `estimateDistanceRefined`, the affine GLSL's estimator; width/
+    sharedFrontier/bnbStage2/shadeDeWidth inert) beside the fold
+    frontier, picked off `deHasFolds` exactly like the CPU; and
+    `lens:true` wraps EITHER core in `descendLens`'s fold-FINAL branch
+    sweep — the body token-renames to `surfaceDECore` (hit-info to
+    `surfaceDEHitInfoCore` behind the argmin sweep, probe to
+    `surfaceDEProbeCore` under the same sweep text renamed) and the
+    wrapper owns the public names, entries untouched; params grew
+    208→272 (0-207 frozen) with the lens block zero-filled when absent,
+    and footprint+lens is refused at pack time (descendLens's per-branch
+    innerFootprint would need a core signature change; the app passes 0).
+    M1 lens rows gate at ~2e-7 (81-branch mandelbox worst case included);
+    the field class marched 5184 unproject rays fail=0, hits 811/811.
+    Modes:
     `eval` (per-query distances) and `march` (bounded-dispatch ray march,
     host-compacted active list) are the fr-q1f8 bench baselines,
     byte-identical since the spike; `march` + `rays:"unproject"` swaps the
@@ -352,7 +368,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     heavy-lens preview, the first a 20-map Menger-lens preview 62% done
     with ~2.5s left. Final verdict, the user's: no automatic give-up —
     `surfaceRenderProgress()` + the surface progress row ("Preview 43%" /
-    "Full detail 0.4%", one decimal under 10%, hidden when idle) disclose
+    "Full detail 0.4%", one decimal under 10%, hidden when idle; since
+    fr-tmgf the label names its engine — "· WebGL" / "· WebGPU", the
+    compute side fed by onProgress ray tallies) disclose
     honest coverage and the user decides; at true monsters the preview may
     grind minutes, settle never arming, safely (120/120 pings, 0s stalled
     — the bounded-strip pump, not truncation, carries safety). Save-PNG's
@@ -490,9 +508,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     boxfold pairs 509-987ms (baseline 695-1296ms) with frames identical
     within session noise, and resolves ~2.3x more mandelboxKifs frame
     per equal window (crease pixels stay march-bound; compute owns fold
-    sessions where an adapter exists, fr-tzdg). The fold-lens variant
-    deliberately carries no probe (its ~79KB source sits at the
-    resolveVariantArms cliff; fr-otkf tracks the lens port).
+    AND fold-lens sessions where an adapter exists, fr-tzdg + fr-55s1).
+    The fold-lens variant deliberately carries no probe (its ~79KB source
+    sits at the resolveVariantArms cliff; fr-otkf tracks the lens port —
+    lower stakes now that SURFACE_FOLD_LENS is the no-adapter/`?surfacegl`
+    fallback rather than the lens session's primary tracer).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
@@ -505,10 +525,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     guaranteed 224 fragment uniform vectors), and there is no kaleidoscope to
     expand, so 24 slots means 24 transforms.
   - `surface-compute.ts` — WebGPU compute renderer for FOLD 3D surface
-    sessions (fr-tzdg): fold 3D IFS systems (deHasFolds, no foldFinal)
-    PREFER it when an adapter exists — no fold GLSL ever compiles (the
-    ~25s Mesa link / fr-096u entry hazards never engage), no grid request
-    (gridless by decision, measured). Owns the device (bench acquisition
+    sessions (fr-tzdg): systems with base-map folds OR a fold FINAL lens
+    (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks the kernel
+    core and the lens wrapper, and the two first-sizing priors scale by
+    the lens branch count 27/3/81 ÷ 8) PREFER it when an adapter exists
+    — no fold GLSL ever compiles (the ~25s Mesa link / ~5.7s lens link /
+    fr-096u entry hazards never engage), no grid request (gridless by
+    decision, measured). MEASURED (fr-55s1, Iris Xe real driver, dev
+    regime): the fr-g58b lens archetype previews in 0.94s and settles a
+    full 1280x720 frame in 9.4s (0 exhausted) where the WebGL A/B of the
+    same hash was 43% settled at 30s; the 81-branch mandelbox field
+    class settles in ~35-55s (thermally variable) vs a 2min+ WebGL
+    grind. Owns the device (bench acquisition
     idioms + flame-backend error taxonomy) and the frame loop: march
     slices sized from a measured per-ray·step EMA + shade batches sized
     in HIT units (fr-p8bc: terminal rays queue by status — misses are
