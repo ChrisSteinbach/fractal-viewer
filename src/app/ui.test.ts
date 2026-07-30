@@ -267,6 +267,35 @@ describe("Ui.renderTransformList", () => {
     expect(buttons[1].textContent).toContain("Scale: [0.54, -0.50, 0.46]");
     expect(buttons[2].textContent).toContain("Scale: 0.50");
   });
+
+  it("lists the structural-color fields only for a map that authors them (fr-hiyu)", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        colorIndex: 0.25,
+        colorSpeed: 0,
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    ui.renderTransformList(transforms, null, null);
+
+    const buttons = transformButtons();
+    expect(buttons[1].textContent).toContain("Color: 0.25");
+    expect(buttons[1].textContent).toContain("Color speed: 0.00");
+    // The second map rides the derived slot and the default speed, which are
+    // not authoring — nothing to report, exactly like an omitted weight.
+    expect(buttons[2].textContent).not.toContain("Color");
+  });
 });
 
 describe("Ui.updateLabels", () => {
@@ -1419,10 +1448,11 @@ describe("Ui record video button", () => {
 });
 
 describe("Ui.renderTransformEditor", () => {
-  it("builds position, rotation, scale, weight, and variation controls for the selection", () => {
+  it("builds position, rotation, scale, weight, color, and variation controls for the selection", () => {
+    const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor(defaultTransforms()[0], 0);
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
 
     expect(editorGroupTitles()).toEqual([
       "Position",
@@ -1430,6 +1460,7 @@ describe("Ui.renderTransformEditor", () => {
       "Scale",
       "Shear",
       "Weight",
+      "Color",
       "Variations",
       "4D",
       "Position W",
@@ -1437,11 +1468,12 @@ describe("Ui.renderTransformEditor", () => {
       "Rotation W",
       "Shear W",
     ]);
-    // 12 axis sliders (4 channels × 3) + 1 weight slider + 8 in the 4D group
-    // (Position W, Scale W, 3 Rotation W, 3 Shear W — always built, just
-    // collapsed for a w-less transform like this one); a plain transform has
-    // no variations, so the Variations group adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(21);
+    // 12 axis sliders (4 channels × 3) + 1 weight slider + 2 color sliders
+    // (Index, Speed) + 8 in the 4D group (Position W, Scale W, 3 Rotation W,
+    // 3 Shear W — always built, just collapsed for a w-less transform like
+    // this one); a plain transform has no variations, so the Variations group
+    // adds no range sliders (just a menu).
+    expect(editorSliders()).toHaveLength(23);
   });
 
   it("shows the stored rotation radians as degrees", () => {
@@ -1455,6 +1487,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     expect(editorSlider("Rotation Y").value).toBe("45");
@@ -1472,6 +1505,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     const rotationY = editorSlider("Rotation Y");
@@ -1500,6 +1534,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     const scaleX = editorSlider("Scale X");
@@ -1523,6 +1558,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.54, -0.5, 0.46],
       },
       0,
+      1,
     );
 
     expect(editorSlider("Scale Y").value).toBe("0.5");
@@ -1547,6 +1583,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.54, -0.5, 0.46],
       },
       0,
+      1,
     );
 
     const scaleY = editorSlider("Scale Y");
@@ -1569,6 +1606,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     mirrorButton("Mirror Scale X").click();
@@ -1594,6 +1632,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [-0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     mirrorButton("Mirror Scale X").click();
@@ -1614,9 +1653,9 @@ describe("Ui.renderTransformEditor", () => {
       rotation: [0, 0, 0],
       scale: [0.5, 0.5, 0.5],
     };
-    ui.renderTransformEditor(base, 0);
+    ui.renderTransformEditor(base, 0, 1);
     // Same index → no rebuild, just a re-sync (guide-box drag / undo path).
-    ui.renderTransformEditor({ ...base, scale: [0.5, -0.5, 0.5] }, 0);
+    ui.renderTransformEditor({ ...base, scale: [0.5, -0.5, 0.5] }, 0, 1);
 
     expect(mirrorButton("Mirror Scale Y").getAttribute("aria-pressed")).toBe(
       "true",
@@ -1637,6 +1676,7 @@ describe("Ui.renderTransformEditor", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     const shearXY = editorSlider("Shear XY");
@@ -1661,6 +1701,7 @@ describe("Ui.renderTransformEditor", () => {
         weight: 1,
       },
       0,
+      1,
     );
 
     const weight = editorSlider("Weight");
@@ -1683,23 +1724,158 @@ describe("Ui.renderTransformEditor", () => {
       rotation: [0, 0, 0],
       scale: [0.5, 0.5, 0.5],
     };
-    ui.renderTransformEditor(base, 0);
+    ui.renderTransformEditor(base, 0, 1);
     // Same index → no rebuild; a drag moved X, so that slider should follow.
-    ui.renderTransformEditor({ ...base, position: [1, 0, 0] }, 0);
+    ui.renderTransformEditor({ ...base, position: [1, 0, 0] }, 0, 1);
 
     expect(editorSlider("Position X").value).toBe("1");
   });
 
   it("clears the editor in camera mode", () => {
+    const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor(defaultTransforms()[0], 0);
-    expect(editorSliders()).toHaveLength(21);
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
+    expect(editorSliders()).toHaveLength(23);
 
-    ui.renderTransformEditor(null, null);
+    ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
       0,
     );
+  });
+});
+
+describe("Ui transform color editor (fr-hiyu)", () => {
+  /** A map that authors neither optional color field — the overwhelmingly
+   * common case, and the one whose absence has to survive every round trip. */
+  const unauthored: Transform = {
+    id: 1,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  it("shows the derived palette slot for a map that authors none", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // Map 1 of a four-map system: chaos-game.ts spreads the slots evenly, so
+    // this one falls on 1/3 — the value the flame kernels themselves use.
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    expect(editorReadout("Color index").textContent).toBe("0.33");
+    expect(Number(editorSlider("Color index").value)).toBeCloseTo(1 / 3, 2);
+  });
+
+  it("shows the default color speed for a map that authors none", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    expect(editorReadout("Color speed").textContent).toBe("0.50");
+  });
+
+  it("shows an authored palette slot instead of the derived one", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...unauthored, colorIndex: 0.8 }, 1, 4);
+
+    expect(editorReadout("Color index").textContent).toBe("0.80");
+  });
+
+  it("omits the Color group for the final transform", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // The lens is applied to every plotted point and is never PICKED, so it
+    // never moves the color coordinate — a pair of sliders here would be dead.
+    ui.renderTransformEditor({ ...unauthored, id: 0 }, "final", 4);
+
+    expect(editorGroupTitles()).not.toContain("Color");
+    expect(
+      document.querySelector(
+        "#transformEditor input[aria-label='Color index']",
+      ),
+    ).toBeNull();
+  });
+
+  it("authors colorIndex on the transform when the Index slider moves", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    const index = editorSlider("Color index");
+    index.value = "0.75";
+    index.dispatchEvent(new Event("input"));
+
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.colorIndex).toBe(0.75);
+    expect(editorReadout("Color index").textContent).toBe("0.75");
+  });
+
+  it("authors colorSpeed independently of the palette slot", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    const speed = editorSlider("Color speed");
+    speed.value = "0";
+    speed.dispatchEvent(new Event("input"));
+
+    // Pinning the coordinate (flam3's "symmetry" xform) must not drag the
+    // still-derived slot along into the document.
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry.colorSpeed).toBe(0);
+    expect(geometry).not.toHaveProperty("colorIndex");
+  });
+
+  it("leaves both color keys absent when an unrelated axis is edited", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    const positionX = editorSlider("Position X");
+    positionX.value = "0.4";
+    positionX.dispatchEvent(new Event("input"));
+
+    // Absence is load-bearing (types.ts): displaying the derived slot must
+    // never materialize it, or every edited scene would start carrying color
+    // fields it never authored — and would stop tracking the derived spread.
+    const geometry = vi.mocked(handlers.onTransformGeometry).mock.calls[0][1];
+    expect(geometry).not.toHaveProperty("colorIndex");
+    expect(geometry).not.toHaveProperty("colorSpeed");
+  });
+
+  it("emits nothing when a transform is merely selected and deselected", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(unauthored, 1, 4);
+    ui.renderTransformEditor(null, null, 4);
+
+    expect(handlers.onTransformGeometry).not.toHaveBeenCalled();
+  });
+
+  it("returns the Index row to the derived slot when an undo drops the key", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor({ ...unauthored, colorIndex: 0.8 }, 1, 4);
+    // Same index → no rebuild, just a re-sync (the undo / guide-drag path).
+    ui.renderTransformEditor(unauthored, 1, 4);
+
+    expect(editorReadout("Color index").textContent).toBe("0.33");
+  });
+
+  it("re-resolves the derived slot when the system's map count changes", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(unauthored, 1, 4);
+    // A map was removed elsewhere in the system: the selection didn't move,
+    // but map 1 of 3 now sits halfway along the ramp instead of a third.
+    ui.renderTransformEditor(unauthored, 1, 3);
+
+    expect(editorReadout("Color index").textContent).toBe("0.50");
   });
 });
 
@@ -1764,7 +1940,7 @@ describe("Ui final transform", () => {
   it("edits the final transform without a selection-weight control", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor(lens, "final");
+    ui.renderTransformEditor(lens, "final", 1);
 
     // Same channels as a transform, but no Weight group — a selection weight is
     // meaningless for a map applied to every point. The 4D group is still
@@ -1787,7 +1963,7 @@ describe("Ui final transform", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(lens, "final");
+    ui.renderTransformEditor(lens, "final", 1);
 
     const scaleX = editorSlider("Scale X");
     scaleX.value = "1.5";
@@ -1827,7 +2003,7 @@ describe("Ui variation editor", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(plain, 0);
+    ui.renderTransformEditor(plain, 0, 1);
 
     const select = addSelect();
     select.value = "spherical";
@@ -1849,6 +2025,7 @@ describe("Ui variation editor", () => {
     ui.renderTransformEditor(
       { ...plain, variations: [{ type: "swirl", weight: 1 }] },
       0,
+      1,
     );
 
     const slider = editorSlider("Variation swirl");
@@ -1867,6 +2044,7 @@ describe("Ui variation editor", () => {
     ui.renderTransformEditor(
       { ...plain, variations: [{ type: "bubble", weight: 1 }] },
       0,
+      1,
     );
 
     const remove = document.querySelector<HTMLButtonElement>(
@@ -1886,6 +2064,7 @@ describe("Ui variation editor", () => {
     ui.renderTransformEditor(
       { ...plain, variations: [{ type: "spherical", weight: 1 }] },
       0,
+      1,
     );
 
     const options = Array.from(
@@ -1920,21 +2099,21 @@ describe("Ui 4D group", () => {
   it("renders closed for a transform with no w block", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor(flat, 0);
+    ui.renderTransformEditor(flat, 0, 1);
     expect(fourDDetails().open).toBe(false);
   });
 
   it("renders open for a transform that already has a w block", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0, 1);
     expect(fourDDetails().open).toBe(true);
   });
 
   it("gives the final transform's editor the 4D group too", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor(flat, "final");
+    ui.renderTransformEditor(flat, "final", 1);
     expect(document.querySelector("#transformEditor details")).not.toBeNull();
   });
 
@@ -1942,7 +2121,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(flat, 0);
+    ui.renderTransformEditor(flat, 0, 1);
 
     const positionW = editorSlider("Position W");
     positionW.value = "0.75";
@@ -1956,7 +2135,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { position: 0.5 } }, 0, 1);
 
     const positionW = editorSlider("Position W");
     positionW.value = "0";
@@ -1970,7 +2149,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(flat, 0);
+    ui.renderTransformEditor(flat, 0, 1);
 
     const rotationXW = editorSlider("Rotation XW");
     rotationXW.value = "90";
@@ -1986,7 +2165,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(flat, 0);
+    ui.renderTransformEditor(flat, 0, 1);
 
     const shearXW = editorSlider("Shear XW");
     shearXW.value = "1.2";
@@ -1999,7 +2178,7 @@ describe("Ui 4D group", () => {
   it("shows the derived mean scale with an auto marker until Scale W is moved", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0, 1);
 
     // (0.2 + 0.5 + 0.8) / 3 = 0.5
     expect(editorSlider("Scale W").value).toBe("0.5");
@@ -2010,7 +2189,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0, 1);
 
     const scaleW = editorSlider("Scale W");
     scaleW.value = "0.9";
@@ -2024,7 +2203,7 @@ describe("Ui 4D group", () => {
   it("tracks the derived Scale W live as the 3D scale changes while still auto", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0);
+    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0, 1);
 
     const scaleX = editorSlider("Scale X");
     scaleX.value = "1"; // mean now (1 + 0.5 + 0.5) / 3 = 0.6667
@@ -2038,7 +2217,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0);
+    ui.renderTransformEditor({ ...flat, scale: [0.5, 0.5, 0.5] }, 0, 1);
 
     const scaleW = editorSlider("Scale W");
     scaleW.value = "0.9";
@@ -2056,7 +2235,7 @@ describe("Ui 4D group", () => {
   it("renders a mirrored (negative) Scale W as a magnitude slider with the Mirror W toggle pressed", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0, 1);
 
     expect(editorSlider("Scale W").value).toBe("0.5");
     expect(editorReadout("Scale W").textContent).toBe("-0.50");
@@ -2069,7 +2248,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0, 1);
 
     const scaleW = editorSlider("Scale W");
     scaleW.value = "0.9";
@@ -2084,7 +2263,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, w: { scale: 0.9 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: 0.9 } }, 0, 1);
 
     mirrorButton("Mirror Scale W").click();
 
@@ -2102,7 +2281,7 @@ describe("Ui 4D group", () => {
     const ui = new Ui(document);
     ui.bind(handlers);
     // (0.2 + 0.5 + 0.8) / 3 = 0.5, shown as "0.50 (auto)" until touched.
-    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0);
+    ui.renderTransformEditor({ ...flat, scale: [0.2, 0.5, 0.8] }, 0, 1);
 
     mirrorButton("Mirror Scale W").click();
 
@@ -2118,7 +2297,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0, 1);
 
     mirrorButton("Mirror Scale W").click();
 
@@ -2132,9 +2311,9 @@ describe("Ui 4D group", () => {
   it("re-syncs the Mirror W toggle when the selection's w.scale changes externally", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, w: { scale: 0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: 0.5 } }, 0, 1);
     // Same index → no rebuild, just a re-sync (undo / external edit path).
-    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { scale: -0.5 } }, 0, 1);
 
     expect(mirrorButton("Mirror Scale W").getAttribute("aria-pressed")).toBe(
       "true",
@@ -2147,7 +2326,7 @@ describe("Ui 4D group", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
-    ui.renderTransformEditor(flat, 0);
+    ui.renderTransformEditor(flat, 0, 1);
 
     const positionX = editorSlider("Position X");
     positionX.value = "1";
@@ -2160,11 +2339,11 @@ describe("Ui 4D group", () => {
   it("re-syncs the 4D sliders when the transform changes under the same selection", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    ui.renderTransformEditor({ ...flat, w: { position: 0.2 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { position: 0.2 } }, 0, 1);
     // Same index → no rebuild; reflects an external change to w (e.g. a
     // preset swap wouldn't hit this path, but a stable-selection re-render
     // should still pick up whatever the current transform carries).
-    ui.renderTransformEditor({ ...flat, w: { position: 0.9 } }, 0);
+    ui.renderTransformEditor({ ...flat, w: { position: 0.9 } }, 0, 1);
 
     expect(editorSlider("Position W").value).toBe("0.9");
   });
@@ -4227,6 +4406,7 @@ describe("panel accordion sections (fr-zoi)", () => {
         scale: [0.5, 0.5, 0.5],
       },
       0,
+      1,
     );
 
     const editorDetails = document.querySelector<HTMLDetailsElement>(

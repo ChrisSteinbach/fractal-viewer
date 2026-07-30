@@ -3358,7 +3358,10 @@ function main(): void {
         : sel === "final"
           ? (state.finalTransform ?? null)
           : state.transforms[sel];
-    ui.renderTransformEditor(editing, sel);
+    // The map count rides along because the editor's derived palette slot
+    // (fr-hiyu) is a property of the map's position among ALL the base maps,
+    // not of the map itself.
+    ui.renderTransformEditor(editing, sel, state.transforms.length);
     refreshSurfaceEligibility();
   }
 
@@ -4835,7 +4838,11 @@ function main(): void {
         state.selectedTransform,
         state.finalTransform ?? null,
       );
-      ui.renderTransformEditor(state.transforms[index], index);
+      ui.renderTransformEditor(
+        state.transforms[index],
+        index,
+        state.transforms.length,
+      );
       if (state.autoUpdate) regenScheduler.schedule();
     },
     fourDView: () => viewIs4D,
