@@ -338,6 +338,22 @@ describe("embedTransform3", () => {
       embedTransform3(transform({ variations: [] })).variations,
     ).toBeUndefined();
   });
+
+  it("carries authored colorIndex/colorSpeed onto the lifted Transform4 (fr-hiyu)", () => {
+    const embedded = embedTransform3(
+      transform({ colorIndex: 0.75, colorSpeed: 0.2 }),
+    );
+    expect(embedded.colorIndex).toBe(0.75);
+    expect(embedded.colorSpeed).toBe(0.2);
+  });
+
+  it("leaves colorIndex/colorSpeed absent when the source has neither (no key invented)", () => {
+    const embedded = embedTransform3(transform({}));
+    expect(embedded.colorIndex).toBeUndefined();
+    expect(embedded.colorSpeed).toBeUndefined();
+    expect("colorIndex" in embedded).toBe(false);
+    expect("colorSpeed" in embedded).toBe(false);
+  });
 });
 
 describe("isFlatTransform", () => {

@@ -1,6 +1,12 @@
 import { applyAffine4, composeAffine4 } from "./affine4";
 import type { Affine4 } from "./affine4";
-import { ESCAPE_LIMIT, MAX_TRANSFORMS, WARMUP_ITERATIONS } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  ESCAPE_LIMIT,
+  MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  derivedColorIndex,
+} from "./chaos-game";
 import { composeVariations4 } from "./variations4";
 import type { VariationBlend4 } from "./variations4";
 import type { IterationRng, Rng } from "./rng";
@@ -135,6 +141,21 @@ export interface PreparedChaosGame4 {
   cumulative: Float64Array;
   /** Sum of all transform weights. */
   totalWeight: number;
+  /**
+   * Resolved flame palette slot per transform (fr-hiyu) — `chaos-game.ts`'s
+   * `PreparedChaosGame.colorIndex` with the one structural difference this
+   * whole module carries: there is no symmetry expansion, so every slot IS a
+   * base map and the raw picked index addresses this directly. Each entry is
+   * the transform's own `colorIndex` or `chaos-game.ts`'s `derivedColorIndex`
+   * spread; read only by `flame-4d.ts`'s structural-coloring path.
+   */
+  colorIndex: Float64Array;
+  /**
+   * Resolved flame color speed per transform (fr-hiyu), the companion to
+   * {@link colorIndex}: the transform's own `colorSpeed` or `chaos-game.ts`'s
+   * `DEFAULT_COLOR_SPEED`.
+   */
+  colorSpeed: Float64Array;
 }
 
 /**
@@ -194,6 +215,17 @@ export function prepareChaosGame4(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
+  // Flame structural-coloring slots (fr-hiyu) — `prepareChaosGame`'s block
+  // with `transformCount` for its `baseTransformCount`, there being no
+  // kaleidoscope copies here to collapse back to a base map.
+  const colorIndex = new Float64Array(transformCount);
+  const colorSpeed = new Float64Array(transformCount);
+  for (let i = 0; i < transformCount; i++) {
+    colorIndex[i] =
+      transforms[i].colorIndex ?? derivedColorIndex(i, transformCount);
+    colorSpeed[i] = transforms[i].colorSpeed ?? DEFAULT_COLOR_SPEED;
+  }
+
   return {
     affines,
     variations,
@@ -203,6 +235,8 @@ export function prepareChaosGame4(
     weighted,
     cumulative,
     totalWeight,
+    colorIndex,
+    colorSpeed,
   };
 }
 

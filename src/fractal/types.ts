@@ -70,6 +70,29 @@ export interface Transform {
    */
   weight?: number;
   /**
+   * Optional palette index in `[0, 1]` — flam3's per-xform `color` (fr-hiyu).
+   * The gradient slot a flame render's structural color coordinate is pulled
+   * toward whenever this map is picked (see `flame.ts`'s `accumulateFlame`).
+   * Omitted ⇒ DERIVED: `chaos-game.ts`'s `derivedColorIndex` spreads map
+   * `i` of `n` evenly across the ramp (`i / (n - 1)`, or `0.5` when `n === 1`)
+   * — exactly the hard-derived slot every flame rendered before this field
+   * existed, so an absent value is byte-for-byte the old behaviour. Read by
+   * the two renders that walk a structural color coordinate — the flame
+   * (`flame.ts`/`flame-4d.ts` and their WGSL twins) and the solid voxel grid
+   * (`voxel.ts`/`voxel-4d.ts`) — and only with a gradient palette active.
+   */
+  colorIndex?: number;
+  /**
+   * Optional color speed in `[0, 1]` — flam3's per-xform `color_speed` (the
+   * legacy `symmetry` attribute is `1 - 2·speed`); fr-hiyu. How far the
+   * structural color coordinate moves toward {@link colorIndex} on each pick:
+   * `c ← c·(1 - speed) + colorIndex·speed`. `0` pins the coordinate (flam3's
+   * "symmetry" xforms, which shade without recoloring), `1` snaps it straight
+   * to the slot. Omitted ⇒ `chaos-game.ts`'s `DEFAULT_COLOR_SPEED` (`0.5`), the halfway
+   * blend every flame used before this field existed.
+   */
+  colorSpeed?: number;
+  /**
    * Optional shear `[xy, xz, yz]`, a unit upper-triangular factor `U` applied as
    * `M = R · diag(scale) · U`. Rotation + per-axis scale alone can only produce
    * orthogonal-column maps; shear supplies the remaining 3 degrees of freedom,
@@ -322,6 +345,20 @@ export interface Transform4 {
    * {@link Transform.weight}. Omitted ⇒ 1.
    */
   weight?: number;
+  /**
+   * Palette index for the 4D flame's structural coloring, mirroring
+   * {@link Transform.colorIndex} exactly (fr-hiyu). Omitted ⇒ the derived
+   * even spread. Carried across the 3D → 4D lift by `affine4.ts`'s
+   * `embedTransform3`, so a `Transform` that authors one keeps it in every
+   * 4D render.
+   */
+  colorIndex?: number;
+  /**
+   * Color speed for the 4D flame's structural coloring, mirroring
+   * {@link Transform.colorSpeed} exactly (fr-hiyu). Omitted ⇒
+   * `chaos-game.ts`'s `DEFAULT_COLOR_SPEED`.
+   */
+  colorSpeed?: number;
 }
 
 /** Axis-aligned extent of a 4D point cloud (the 4D analogue of {@link Bounds}). */

@@ -1,5 +1,9 @@
 import { accumulateFlame4 } from "./flame-4d";
-import { WARMUP_ITERATIONS } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  WARMUP_ITERATIONS,
+  derivedColorIndex,
+} from "./chaos-game";
 import { plotPoint4, prepareChaosGame4, stepOrbit4 } from "./chaos-game-4d";
 import { rotationMatrix4, toTransform4 } from "./affine4";
 import {
@@ -554,6 +558,127 @@ describe("accumulateFlame4 color kinds", () => {
     expect(hist.sumRGB[o]).toBe(lut[li]);
     expect(hist.sumRGB[o + 1]).toBe(lut[li + 1]);
     expect(hist.sumRGB[o + 2]).toBe(lut[li + 2]);
+  });
+});
+
+describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+  it("pins an all-absent render exactly identical to the same system with every derived default authored explicitly", () => {
+    const base = pentatope().map(toTransform4);
+    const n = base.length;
+    const withDefaultsAuthored = base.map((t, i) => ({
+      ...t,
+      colorIndex: derivedColorIndex(i, n),
+      colorSpeed: DEFAULT_COLOR_SPEED,
+    }));
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 3000;
+
+    const absent = accumulateFlame4(
+      prepareChaosGame4(base),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(13),
+      { kind: "structural", lut },
+    );
+    const explicit = accumulateFlame4(
+      prepareChaosGame4(withDefaultsAuthored),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(13),
+      { kind: "structural", lut },
+    );
+
+    expect(Array.from(explicit.hits)).toEqual(Array.from(absent.hits));
+    expect(Array.from(explicit.sumRGB)).toEqual(Array.from(absent.sumRGB));
+    expect(explicit.maxHits).toBe(absent.maxHits);
+    expect(explicit.orbitColor).toBe(absent.orbitColor);
+  });
+
+  it("colorSpeed: 0 pins the color coordinate at its 0.5 start for every point, whichever map fires", () => {
+    const transforms = pentatope()
+      .map(toTransform4)
+      .map((t) => ({ ...t, colorSpeed: 0 }));
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 3000;
+
+    const hist = accumulateFlame4(
+      prepareChaosGame4(transforms),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(6),
+      { kind: "structural", lut },
+    );
+
+    // Speed 0 never blends c toward a map's slot, and escape-reseed resets it
+    // to 0.5 too, so it stays exactly 0.5 the entire run — every accumulated
+    // point took the LUT sample at c = 0.5, regardless of which map fired.
+    expect(hist.orbitColor).toBe(0.5);
+    const li = 128 * 3; // (0.5 * 256) | 0 = 128.
+    const totalHits = hist.hits.reduce((a, b) => a + b, 0);
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    for (let i = 0; i < width * height; i++) {
+      sumR += hist.sumRGB[i * 3];
+      sumG += hist.sumRGB[i * 3 + 1];
+      sumB += hist.sumRGB[i * 3 + 2];
+    }
+    expect(sumR).toBeCloseTo(lut[li] * totalHits, 6);
+    expect(sumG).toBeCloseTo(lut[li + 1] * totalHits, 6);
+    expect(sumB).toBeCloseTo(lut[li + 2] * totalHits, 6);
+  });
+
+  it("authored colorIndex/colorSpeed never perturb the orbit: hits match a derived render, same seed", () => {
+    const base = pentatope().map(toTransform4);
+    const colored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+      colorSpeed: 0.2,
+    }));
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 3000;
+
+    const plain = accumulateFlame4(
+      prepareChaosGame4(base),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(4),
+      { kind: "structural", lut },
+    );
+    const withColors = accumulateFlame4(
+      prepareChaosGame4(colored),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(4),
+      { kind: "structural", lut },
+    );
+
+    expect(Array.from(withColors.hits)).toEqual(Array.from(plain.hits));
+    expect(withColors.maxHits).toBe(plain.maxHits);
   });
 });
 

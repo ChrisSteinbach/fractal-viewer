@@ -1,6 +1,8 @@
 import {
+  DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
+  derivedColorIndex,
   effectiveSymmetryOrder,
   plotPoint,
   prepareChaosGame,
@@ -320,6 +322,62 @@ describe("prepareChaosGame", () => {
     expect(() => prepareChaosGame(makeTransforms(MAX_TRANSFORMS + 1))).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("derivedColorIndex", () => {
+  it("spreads evenly across the ramp for n >= 2", () => {
+    expect(derivedColorIndex(0, 3)).toBe(0);
+    expect(derivedColorIndex(1, 3)).toBe(0.5);
+    expect(derivedColorIndex(2, 3)).toBe(1);
+  });
+
+  it("pins the midpoint for a lone map (n === 1)", () => {
+    expect(derivedColorIndex(0, 1)).toBe(0.5);
+  });
+
+  it("pins the midpoint for n === 0 too (documented fallback, not a spread)", () => {
+    expect(derivedColorIndex(0, 0)).toBe(0.5);
+  });
+});
+
+describe("prepareChaosGame flame color resolution (fr-hiyu)", () => {
+  it("resolves an all-absent system to the derived spread and DEFAULT_COLOR_SPEED", () => {
+    const prepared = prepareChaosGame(makeTransforms(4));
+    expect(Array.from(prepared.colorIndex)).toEqual([0, 1 / 3, 2 / 3, 1]);
+    expect(Array.from(prepared.colorSpeed)).toEqual([
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+    ]);
+  });
+
+  it("resolves authored values per-map, deriving only where a map leaves them absent", () => {
+    const transforms = makeTransforms(3);
+    transforms[0] = { ...transforms[0], colorIndex: 0.9, colorSpeed: 0.1 };
+    const prepared = prepareChaosGame(transforms);
+    expect(prepared.colorIndex[0]).toBe(0.9);
+    expect(prepared.colorSpeed[0]).toBe(0.1);
+    expect(prepared.colorIndex[1]).toBe(derivedColorIndex(1, 3));
+    expect(prepared.colorIndex[2]).toBe(derivedColorIndex(2, 3));
+    expect(prepared.colorSpeed[1]).toBe(DEFAULT_COLOR_SPEED);
+    expect(prepared.colorSpeed[2]).toBe(DEFAULT_COLOR_SPEED);
+  });
+
+  it("keys colorIndex/colorSpeed on baseTransformCount, not the symmetry-expanded transformCount", () => {
+    const prepared = prepareChaosGame(makeTransforms(2), null, {
+      order: 4,
+      axis: "y",
+    });
+    expect(prepared.transformCount).toBe(8);
+    expect(prepared.baseTransformCount).toBe(2);
+    expect(prepared.colorIndex).toHaveLength(2);
+    expect(prepared.colorSpeed).toHaveLength(2);
+    expect(Array.from(prepared.colorIndex)).toEqual([
+      derivedColorIndex(0, 2),
+      derivedColorIndex(1, 2),
+    ]);
   });
 });
 

@@ -40,6 +40,33 @@ export const MAX_TRANSFORMS = 256;
 const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
 
 /**
+ * A transform's flame color speed when it authors none (`Transform.colorSpeed`
+ * absent): the halfway blend `c ← (c + slot) / 2` that every flame render used
+ * before the field existed (fr-hiyu). In flam3 terms this is `color_speed 0.5`
+ * ⇔ the legacy `symmetry 0` — flam3's own default too.
+ */
+export const DEFAULT_COLOR_SPEED = 0.5;
+
+/**
+ * The palette slot a transform falls back on when it authors no
+ * `Transform.colorIndex` (fr-hiyu): map `index` of `count` spread evenly over
+ * the `[0, 1]` gradient, `0.5` for a lone map (there is no "spread" to speak
+ * of, and `0 / 0` would not be one). This is the ONE definition of that
+ * derived slot — {@link prepareChaosGame}, `chaos-game-4d.ts`'s
+ * {@link import("./chaos-game-4d").prepareChaosGame4}, both WGSL packers
+ * (`flame-gpu.ts` / `flame-gpu-4d.ts`), `morph.ts`'s absent-side fallback and
+ * the transform editor's readout all resolve through it, so a flame's colors
+ * cannot drift between the CPU oracle, the GPU kernel and the UI.
+ *
+ * `count` is the number of BASE maps (3D: `PreparedChaosGame.baseTransformCount`
+ * — every kaleidoscope copy of a map shares its slot; 4D: the raw transform
+ * count, there being no symmetry there).
+ */
+export function derivedColorIndex(index: number, count: number): number {
+  return count > 1 ? index / (count - 1) : 0.5;
+}
+
+/**
  * Largest symmetry order `<= requestedOrder` (and always `>= 1`) whose
  * expanded transform count (`order * baseTransformCount`) fits within
  * {@link MAX_TRANSFORMS} — the same "ask for N, get the largest N that fits"
@@ -145,6 +172,22 @@ export interface PreparedChaosGame {
    * nothing to rotate. See {@link stepOrbit}.
    */
   postRotations: (number[] | null)[];
+  /**
+   * Resolved flame palette slot per BASE map (fr-hiyu) — length
+   * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never by
+   * the expanded slot: every kaleidoscope copy of a map colors as that map.
+   * Each entry is the transform's own `colorIndex` when it authors one, else
+   * {@link derivedColorIndex}'s even spread. Read only by the flame
+   * accumulators' structural-coloring path (`flame.ts`), which is why this is
+   * resolved once here rather than re-derived per iteration.
+   */
+  colorIndex: Float64Array;
+  /**
+   * Resolved flame color speed per BASE map (fr-hiyu), the companion to
+   * {@link colorIndex}: the transform's own `colorSpeed` or
+   * {@link DEFAULT_COLOR_SPEED}. Same indexing, same single reader.
+   */
+  colorSpeed: Float64Array;
 }
 
 /**
@@ -250,6 +293,19 @@ export function prepareChaosGame(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
+  // Flame structural-coloring slots (fr-hiyu), resolved per BASE map — the
+  // kaleidoscope copies deliberately get no entries of their own, since
+  // `flame.ts` looks them up by `idx % baseTransformCount`. An all-absent
+  // system resolves to exactly the `i / (n - 1)` slot and `0.5` speed the
+  // accumulator hard-derived before these fields existed.
+  const colorIndex = new Float64Array(baseTransformCount);
+  const colorSpeed = new Float64Array(baseTransformCount);
+  for (let i = 0; i < baseTransformCount; i++) {
+    colorIndex[i] =
+      transforms[i].colorIndex ?? derivedColorIndex(i, baseTransformCount);
+    colorSpeed[i] = transforms[i].colorSpeed ?? DEFAULT_COLOR_SPEED;
+  }
+
   return {
     affines,
     variations,
@@ -261,6 +317,8 @@ export function prepareChaosGame(
     cumulative,
     totalWeight,
     postRotations,
+    colorIndex,
+    colorSpeed,
   };
 }
 

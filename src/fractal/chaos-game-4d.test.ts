@@ -5,9 +5,11 @@ import {
   toTransform4,
 } from "./affine4";
 import {
+  DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
+  derivedColorIndex,
   runChaosGame,
 } from "./chaos-game";
 import {
@@ -421,6 +423,45 @@ describe("prepareChaosGame4", () => {
     expect(() => prepareChaosGame4(makeMaps(MAX_TRANSFORMS + 1))).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("prepareChaosGame4 flame color resolution (fr-hiyu)", () => {
+  it("resolves an all-absent system to the derived spread and DEFAULT_COLOR_SPEED", () => {
+    const prepared = prepareChaosGame4(makeMaps(4));
+    expect(Array.from(prepared.colorIndex)).toEqual([0, 1 / 3, 2 / 3, 1]);
+    expect(Array.from(prepared.colorSpeed)).toEqual([
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+      DEFAULT_COLOR_SPEED,
+    ]);
+  });
+
+  it("resolves authored values per-transform, deriving only where one leaves them absent", () => {
+    const maps = makeMaps(3);
+    maps[0] = { ...maps[0], colorIndex: 0.9, colorSpeed: 0.1 };
+    const prepared = prepareChaosGame4(maps);
+    expect(prepared.colorIndex[0]).toBe(0.9);
+    expect(prepared.colorSpeed[0]).toBe(0.1);
+    expect(prepared.colorIndex[1]).toBe(derivedColorIndex(1, 3));
+    expect(prepared.colorIndex[2]).toBe(derivedColorIndex(2, 3));
+    expect(prepared.colorSpeed[1]).toBe(DEFAULT_COLOR_SPEED);
+    expect(prepared.colorSpeed[2]).toBe(DEFAULT_COLOR_SPEED);
+  });
+
+  it("keys the resolved arrays on the raw transform count (4D has no symmetry expansion)", () => {
+    const prepared = prepareChaosGame4(makeMaps(5));
+    expect(prepared.transformCount).toBe(5);
+    expect(prepared.colorIndex).toHaveLength(5);
+    expect(prepared.colorSpeed).toHaveLength(5);
+    expect(Array.from(prepared.colorIndex)).toEqual([
+      derivedColorIndex(0, 5),
+      derivedColorIndex(1, 5),
+      derivedColorIndex(2, 5),
+      derivedColorIndex(3, 5),
+      derivedColorIndex(4, 5),
+    ]);
   });
 });
 

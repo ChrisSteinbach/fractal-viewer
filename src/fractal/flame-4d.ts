@@ -22,9 +22,10 @@
  * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
- * slot every step, reset on escape-reseed — except keyed on the RAW picked
- * transform index (4D has no kaleidoscope symmetry, hence no base-map
- * modulo to recover). The other three reproduce whichever `FourDColorMode`
+ * palette slot at that transform's color speed every step (fr-hiyu; both
+ * resolved by `prepareChaosGame4`), reset on escape-reseed — except keyed on
+ * the RAW picked transform index (4D has no kaleidoscope symmetry, hence no
+ * base-map modulo to recover). The other three reproduce whichever `FourDColorMode`
  * the point-cloud explorer had active when the render started: `"wRamp"`
  * mirrors the diverging rotated-w ramp `scene.ts`'s `FOUR_D_VERTEX` paints
  * in-shader (`color.ts`'s `wRampColor`); `"transform"` and `"radius"` mirror
@@ -103,20 +104,20 @@ export function accumulateFlame4(
     );
   }
 
-  const { affines, variations, finalAffine, finalWarp, transformCount } =
-    prepared;
+  const { affines, variations, finalAffine, finalWarp } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
   // Structural coloring (mirrors accumulateFlame's colorLUT path exactly —
   // see FourDRenderColor's doc): `structural` gates both the per-step update below
   // and the escape-reseed reset, hoisted once rather than re-checking
-  // `color.kind` twice per iteration. `colorDenom` is `n - 1` (0 for a
-  // single-transform system, which pins the coordinate at 0.5) — keyed on
-  // the raw `transformCount` since 4D has no symmetry-expanded copies to
-  // collapse back to a base index.
+  // `color.kind` twice per iteration. The per-map slot and blend speed were
+  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the raw picked
+  // index since 4D has no symmetry-expanded copies to collapse back to a base
+  // index.
   const structural = color.kind === "structural";
-  const colorDenom = transformCount > 1 ? transformCount - 1 : 0;
+  const colorSlots = prepared.colorIndex;
+  const colorSpeeds = prepared.colorSpeed;
   let c = hist.orbitColor;
 
   let x: number;
@@ -175,13 +176,15 @@ export function accumulateFlame4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
-    // Blend the color coordinate halfway toward this transform's slot,
-    // BEFORE applying its affine — mirrors accumulateFlame's ordering
-    // exactly. No rng is consumed, so the orbit (and `hits`) is identical
-    // whether or not structural coloring is in play.
+    // Blend the color coordinate toward this transform's slot at this
+    // transform's speed, BEFORE applying its affine — mirrors
+    // accumulateFlame's formula and ordering exactly, including its
+    // bit-for-bit reproduction of the pre-fr-hiyu halfway blend at the default
+    // speed 0.5 (see the argument there). No rng is consumed, so the orbit
+    // (and `hits`) is identical whether or not structural coloring is in play.
     if (structural) {
-      const slot = colorDenom > 0 ? idx / colorDenom : 0.5;
-      c = (c + slot) * 0.5;
+      const speed = colorSpeeds[idx];
+      c = c * (1 - speed) + colorSlots[idx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;

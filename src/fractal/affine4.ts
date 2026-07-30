@@ -295,6 +295,10 @@ export function embedTransform3(t: Transform): Transform4 {
     embedded.variations = t.variations.map((v) => ({ ...v }));
   }
   if (t.weight !== undefined) embedded.weight = t.weight;
+  // The flame color-authoring pair (fr-hiyu) rides along untouched: absent
+  // stays absent, so a 4D render derives the same slot the 3D one does.
+  if (t.colorIndex !== undefined) embedded.colorIndex = t.colorIndex;
+  if (t.colorSpeed !== undefined) embedded.colorSpeed = t.colorSpeed;
   return embedded;
 }
 
