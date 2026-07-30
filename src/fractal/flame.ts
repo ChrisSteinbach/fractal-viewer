@@ -194,8 +194,11 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * `colorLUT` (a `256 * 3` interleaved RGB table from `palette.ts`'s
  * `buildPaletteLUT`) to switch to flam3-style structural coloring instead: a
  * color coordinate `c` in `[0, 1]` rides along the orbit — initialised to
- * `0.5` and, each step, blended halfway toward the picked transform's slot
- * (`c = (c + i / (n - 1)) / 2`, or `0.5` for a single-transform system) — and
+ * `0.5` and, each step, blended toward the picked transform's palette slot
+ * (`c ← c·(1 - speed) + slot·speed`, both resolved per base map by
+ * `prepareChaosGame` from the transform's optional `colorIndex`/`colorSpeed`
+ * — absent ⇒ the even spread `i / (n - 1)` and speed `0.5`, i.e. the halfway
+ * blend this had hard-coded before fr-hiyu) — and
  * the LUT color at `c` is accumulated, so color flows continuously along the
  * structure. Updating `c` consumes NO `rng`, so a given seed produces the
  * byte-identical *orbit* (and thus identical `hits`) whether or not a
@@ -257,13 +260,16 @@ export function accumulateFlame(
   // Structural coloring (fr-6us): when a colorLUT is supplied, `c` rides the
   // orbit and indexes the gradient; otherwise every `colorLUT !== undefined`
   // branch below is skipped and the per-transform `palette` path runs
-  // unchanged. `colorDenom` is `n - 1` (0 for a single-transform system, which
-  // pins the coordinate at 0.5) — the divisor mapping a transform index to its
-  // [0, 1] color slot. Keyed on `baseTransformCount`, not `transformCount`
-  // (fr-6im): with symmetry, every rotated copy of a base map shares that
-  // map's slot, so the gradient repeats around the kaleidoscope instead of
-  // smearing continuously across copies that are geometrically the same map.
-  const colorDenom = baseTransformCount > 1 ? baseTransformCount - 1 : 0;
+  // unchanged. The per-map slot and blend speed were resolved once by
+  // `prepareChaosGame` (fr-hiyu) — a transform's authored `colorIndex`/
+  // `colorSpeed`, or the derived even spread and 0.5 halfway blend that were
+  // hard-coded here before those fields existed. Both are keyed on
+  // `baseTransformCount`, not `transformCount` (fr-6im): with symmetry, every
+  // rotated copy of a base map shares that map's slot, so the gradient repeats
+  // around the kaleidoscope instead of smearing continuously across copies
+  // that are geometrically the same map.
+  const colorSlots = prepared.colorIndex;
+  const colorSpeeds = prepared.colorSpeed;
   let c = hist.orbitColor;
 
   let x: number;
@@ -309,11 +315,20 @@ export function accumulateFlame(
     // legacy `palette` lookup at the bottom of the loop) uses this, never the
     // raw expanded `idx`.
     const baseIdx = idx % baseTransformCount;
-    // Blend the color coordinate halfway toward this transform's slot. No rng
-    // is consumed, so the orbit (and `hits`) stays identical to the legacy path.
+    // Blend the color coordinate toward this transform's slot, at this
+    // transform's speed (fr-hiyu). At the default speed 0.5 this reproduces the
+    // halfway `(c + slot) / 2` blend it replaces BIT FOR BIT for every normal
+    // `c` — halving is exact in binary floating point, so `c/2 + slot/2` and
+    // `(c + slot)/2` round identically (verified over 5e6 random pairs in both
+    // f64 and f32, the latter being what the WGSL kernels compute in). The two
+    // forms can only diverge once `c` has decayed into the SUBNORMAL range,
+    // which needs ~1075 consecutive picks of a slot-0 map, and even then both
+    // forms index LUT entry 0 — so the rendered image is identical regardless.
+    // No rng is consumed, so the orbit (and `hits`) stays identical to the
+    // legacy path.
     if (colorLUT !== undefined) {
-      const slot = colorDenom > 0 ? baseIdx / colorDenom : 0.5;
-      c = (c + slot) * 0.5;
+      const speed = colorSpeeds[baseIdx];
+      c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;

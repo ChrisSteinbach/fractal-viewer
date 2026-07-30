@@ -14,7 +14,13 @@ import type {
   Mat4,
   TonemapParams,
 } from "./flame";
-import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  derivedColorIndex,
+  plotPoint,
+  prepareChaosGame,
+  stepOrbit,
+} from "./chaos-game";
 import { transformColors } from "./color";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
@@ -574,6 +580,225 @@ describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
   });
 });
 
+describe("accumulateFlame structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+  it("pins an all-absent render exactly identical to the same system with every derived default authored explicitly", () => {
+    const base = sierpinskiTetrahedron();
+    const n = base.length;
+    const withDefaultsAuthored = base.map((t, i) => ({
+      ...t,
+      colorIndex: derivedColorIndex(i, n),
+      colorSpeed: DEFAULT_COLOR_SPEED,
+    }));
+    const palette = transformColors(n);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 48;
+    const height = 48;
+    const iterations = 4000;
+
+    const absent = accumulateFlame(
+      prepareChaosGame(base),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(17),
+      palette,
+      undefined,
+      colorLUT,
+    );
+    const explicit = accumulateFlame(
+      prepareChaosGame(withDefaultsAuthored),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(17),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    expect(Array.from(explicit.hits)).toEqual(Array.from(absent.hits));
+    expect(Array.from(explicit.sumRGB)).toEqual(Array.from(absent.sumRGB));
+    expect(explicit.maxHits).toBe(absent.maxHits);
+    expect(explicit.orbitColor).toBe(absent.orbitColor);
+  });
+
+  it("colorSpeed: 0 pins the color coordinate at its 0.5 start for every point, whichever map fires", () => {
+    const transforms = sierpinskiTetrahedron().map((t) => ({
+      ...t,
+      colorSpeed: 0,
+    }));
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 3000;
+
+    const hist = accumulateFlame(
+      prepareChaosGame(transforms),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(5),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    // Speed 0 never blends c toward a map's slot, and escape-reseed resets it
+    // to 0.5 too, so it stays exactly 0.5 the entire run — every accumulated
+    // point took the LUT sample at c = 0.5, regardless of which map fired.
+    expect(hist.orbitColor).toBe(0.5);
+    const li = 128 * 3; // (0.5 * 256) | 0 = 128.
+    const totalHits = hist.hits.reduce((a, b) => a + b, 0);
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    for (let i = 0; i < width * height; i++) {
+      sumR += hist.sumRGB[i * 3];
+      sumG += hist.sumRGB[i * 3 + 1];
+      sumB += hist.sumRGB[i * 3 + 2];
+    }
+    expect(sumR).toBeCloseTo(colorLUT[li] * totalHits, 6);
+    expect(sumG).toBeCloseTo(colorLUT[li + 1] * totalHits, 6);
+    expect(sumB).toBeCloseTo(colorLUT[li + 2] * totalHits, 6);
+  });
+
+  it("colorSpeed: 1 snaps the coordinate straight to the picked map's colorIndex every step", () => {
+    const base = sierpinskiTetrahedron();
+    const n = base.length;
+    const transforms = base.map((t) => ({ ...t, colorSpeed: 1 }));
+    const prepared = prepareChaosGame(transforms);
+    const palette = transformColors(n);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const iterations = 3000;
+
+    const hist = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      16,
+      16,
+      iterations,
+      mulberry32(23),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    // Reference: the same orbit, but c snaps straight to the picked map's
+    // (derived, since none is authored here) slot every step, instead of
+    // blending halfway toward it.
+    const rng = mulberry32(23);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    let c = 0.5;
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      c = derivedColorIndex(s.index, n);
+    }
+
+    expect(hist.orbitColor).toBe(c);
+  });
+
+  it("authored colorIndex genuinely changes the accumulated colors vs. the derived default", () => {
+    const base = sierpinskiTetrahedron();
+    const palette = transformColors(base.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 4000;
+
+    const derived = accumulateFlame(
+      prepareChaosGame(base),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(9),
+      palette,
+      undefined,
+      colorLUT,
+    );
+    // Deliberately NOT the derived spread (i / (n - 1)) for any map.
+    const authored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+    }));
+    const withAuthored = accumulateFlame(
+      prepareChaosGame(authored),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(9),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    expect(Array.from(withAuthored.sumRGB)).not.toEqual(
+      Array.from(derived.sumRGB),
+    );
+  });
+
+  it("authored colorIndex/colorSpeed never perturb the orbit: hits and maxHits match a derived render, same seed", () => {
+    const base = sierpinskiTetrahedron();
+    const colored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+      colorSpeed: 0.15,
+    }));
+    const palette = transformColors(base.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 32;
+    const height = 32;
+    const iterations = 4000;
+
+    const plain = accumulateFlame(
+      prepareChaosGame(base),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(9),
+      palette,
+      undefined,
+      colorLUT,
+    );
+    const withColors = accumulateFlame(
+      prepareChaosGame(colored),
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(9),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    expect(Array.from(withColors.hits)).toEqual(Array.from(plain.hits));
+    expect(withColors.maxHits).toBe(plain.maxHits);
+  });
+});
+
 /**
  * `TonemapParams` at the neutral collapse point (gamma: 1, vibrancy: 1) — see
  * "collapses to the neutral tonemap" below. `gammaThreshold` is
@@ -831,6 +1056,112 @@ describe("accumulateFlame with symmetry (fr-6im)", () => {
     expect(Array.from(withSymmetry.hits)).not.toEqual(
       Array.from(withoutSymmetry.hits),
     );
+  });
+
+  it("colors every rotated copy as its base map's authored colorIndex/colorSpeed, not its own", () => {
+    const authoredColor = [
+      { index: 0.9, speed: 0.8 },
+      { index: 0.1, speed: 0.3 },
+    ];
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.05, -0.05],
+        rotation: [0.1, 0.2, 0.05],
+        scale: [0.5, 0.5, 0.5],
+        colorIndex: authoredColor[0].index,
+        colorSpeed: authoredColor[0].speed,
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.05, 0.1],
+        rotation: [0, 0.1, 0.2],
+        scale: [0.5, 0.5, 0.5],
+        colorIndex: authoredColor[1].index,
+        colorSpeed: authoredColor[1].speed,
+      },
+    ];
+    const prepared = prepareChaosGame(transforms, null, {
+      order: 3,
+      axis: "y",
+    });
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 48;
+    const height = 48;
+    const iterations = 4000;
+
+    const actual = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      iterations,
+      mulberry32(31),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    // Reference loop: same orbit, c blended using the BASE map's authored
+    // colorIndex/colorSpeed — stepOrbit already resolves `s.index` to the
+    // base map regardless of which rotated copy actually fired, so if
+    // accumulateFlame ever keyed the blend on the expanded slot instead, this
+    // would diverge (or, past the resolved arrays' length, produce NaN).
+    const rng = mulberry32(31);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    let c = 0.5;
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const a = authoredColor[s.index];
+      c = c * (1 - a.speed) + a.index * a.speed;
+      // No final transform in this system, so plotPoint(prepared, ...) would
+      // return [x, y, z] unchanged while touching no rng — skip the no-op call.
+      const cw =
+        ORTHOGRAPHIC[12] * x +
+        ORTHOGRAPHIC[13] * y +
+        ORTHOGRAPHIC[14] * z +
+        ORTHOGRAPHIC[15];
+      if (cw <= 0) continue;
+      const cx =
+        ORTHOGRAPHIC[0] * x +
+        ORTHOGRAPHIC[1] * y +
+        ORTHOGRAPHIC[2] * z +
+        ORTHOGRAPHIC[3];
+      const cy =
+        ORTHOGRAPHIC[4] * x +
+        ORTHOGRAPHIC[5] * y +
+        ORTHOGRAPHIC[6] * z +
+        ORTHOGRAPHIC[7];
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      expected.sumRGB[o] += colorLUT[li];
+      expected.sumRGB[o + 1] += colorLUT[li + 1];
+      expected.sumRGB[o + 2] += colorLUT[li + 2];
+    }
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.orbitColor).toBe(c);
   });
 });
 
