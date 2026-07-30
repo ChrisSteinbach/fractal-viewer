@@ -180,6 +180,23 @@ function parseArgs(argv) {
   return args;
 }
 
+/** One `unproj`/`unproj-lens` row (fr-tzdg leg A / fr-55s1 stage C),
+ * formatted for stdout — shared by both legs in printSurfaceSummary below,
+ * which differ only in which system built and which label prefixes the
+ * line. */
+function formatSurfaceUnprojectRow(label, row) {
+  return (
+    `  ${label} ${row.system} w${row.width} wg${row.wg} ${row.rasterWidth}x${row.rasterHeight}: ` +
+    `rays=${row.rays} statusMm=${row.statusMismatches} boundary=${row.boundaryFlips} ` +
+    `silhouette=${row.silhouetteFlips} ` +
+    `graze=${row.hitTGrazes} hitTFail=${row.hitTFailures} ` +
+    `maxAbsT=${row.maxAbsT.toExponential(2)} ` +
+    `fail=${row.failures} hits=${row.gpuHits}/${row.cpuHits}(gpu/cpu) ` +
+    `gpu=${row.gpuMs.toFixed(0)}ms passes=${row.passes}` +
+    (row.truncated ? " TRUNCATED" : "")
+  );
+}
+
 /** One line per agreement row and per timing config — the compact stdout
  * view of results.surfaceDe (the full JSON still lands in results.json). */
 function printSurfaceSummary(surfaceDe) {
@@ -238,15 +255,7 @@ function printSurfaceSummary(surfaceDe) {
     if (mu.skipped) {
       console.log(`  unproj: skipped — ${mu.skipped}`);
     } else {
-      console.log(
-        `  unproj ${mu.system} w${mu.width} wg${mu.wg} ${mu.rasterWidth}x${mu.rasterHeight}: ` +
-          `rays=${mu.rays} statusMm=${mu.statusMismatches} boundary=${mu.boundaryFlips} ` +
-          `graze=${mu.hitTGrazes} hitTFail=${mu.hitTFailures} ` +
-          `maxAbsT=${mu.maxAbsT.toExponential(2)} ` +
-          `fail=${mu.failures} hits=${mu.gpuHits}/${mu.cpuHits}(gpu/cpu) ` +
-          `gpu=${mu.gpuMs.toFixed(0)}ms passes=${mu.passes}` +
-          (mu.truncated ? " TRUNCATED" : ""),
-      );
+      console.log(formatSurfaceUnprojectRow("unproj", mu));
     }
   }
   // fr-55s1 stage C: leg A over the lens field class.
@@ -255,15 +264,7 @@ function printSurfaceSummary(surfaceDe) {
     if (mul.skipped) {
       console.log(`  unproj-lens: skipped — ${mul.skipped}`);
     } else {
-      console.log(
-        `  unproj-lens ${mul.system} w${mul.width} wg${mul.wg} ${mul.rasterWidth}x${mul.rasterHeight}: ` +
-          `rays=${mul.rays} statusMm=${mul.statusMismatches} boundary=${mul.boundaryFlips} ` +
-          `graze=${mul.hitTGrazes} hitTFail=${mul.hitTFailures} ` +
-          `maxAbsT=${mul.maxAbsT.toExponential(2)} ` +
-          `fail=${mul.failures} hits=${mul.gpuHits}/${mul.cpuHits}(gpu/cpu) ` +
-          `gpu=${mul.gpuMs.toFixed(0)}ms passes=${mul.passes}` +
-          (mul.truncated ? " TRUNCATED" : ""),
-      );
+      console.log(formatSurfaceUnprojectRow("unproj-lens", mul));
     }
   }
   // fr-tzdg leg B: the end-to-end SurfaceComputeRenderer frame.

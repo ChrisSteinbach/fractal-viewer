@@ -2040,6 +2040,25 @@ interface SurfaceUnprojectRow {
    * f32-vs-f64 noise at the hit floor / sphere exit / budget edge, not ray
    * or estimator disagreement. */
   boundaryFlips: number;
+  /** Status mismatches where exactly one side HIT, excluded from the gate
+   * per {@link boundaryFlipRule} clause (c): the CPU march's own closest
+   * approach lands at the hitting side's `t` (same trajectory, same point)
+   * within a factor of {@link SURFACE_SILHOUETTE_RATIO_BAND} of the
+   * acceptance threshold, so which side of `d < eps` each arithmetic landed
+   * on is f32-vs-f64 noise rather than estimator disagreement. Kept apart
+   * from {@link boundaryFlips} — that rule proves same trajectory via a
+   * shared terminal `t`, which a hit-vs-miss pair can never have, since the
+   * miss runs on to the sphere exit. Measured: 1 ray per leg on Iris Xe
+   * (0.6% and 2% of eps from the threshold).
+   *
+   * READ THE COUNT, not just the verdict. Each flip is individually noise,
+   * but the rule excuses them one ray at a time and cannot see a pattern:
+   * an eps or hit-floor that differed between the two sides would flip
+   * every silhouette ray in the SAME direction and still be excluded here,
+   * showing up only as a count in the dozens against a `gpuHits`/`cpuHits`
+   * imbalance to match. That is why this is its own field rather than
+   * folded into {@link boundaryFlips}. */
+  silhouetteFlips: number;
   /** The exclusion rule, verbatim, so the row is self-reporting. */
   boundaryFlipRule: string;
   /** Max |gpuT − cpuT| over rays where BOTH sides hit — grazes included,
@@ -2057,8 +2076,8 @@ interface SurfaceUnprojectRow {
    * `max(2e-4·R, 2e-3·max(|cpuT|, 0.05·R))` — AND whose GPU endpoint the
    * oracle could NOT confirm on-surface: real disagreement. */
   hitTFailures: number;
-  /** `(statusMismatches − boundaryFlips) + hitTFailures` — any nonzero
-   * fails the section. */
+  /** `(statusMismatches − boundaryFlips − silhouetteFlips) + hitTFailures` —
+   * any nonzero fails the section. */
   failures: number;
   gpuHits: number;
   cpuHits: number;
@@ -2186,6 +2205,18 @@ const SURFACE_CLOUD_POINTS = 100_000;
  * like the harness emulators do (fold-cost-split.harness.ts's convention)
  * rather than importing the three-laden material module. */
 const SURFACE_MARCH_STEPS = 160;
+/** How many un-excluded status mismatches a march-unproject row describes
+ * ray-by-ray before it stops printing (fr-7tl3). Sized for the handful of
+ * silhouette rays a healthy leg produces, not for a broken kernel. */
+const SURFACE_MISMATCH_DIAG_CAP = 8;
+/** How far the CPU march's closest approach may sit from the acceptance
+ * threshold — as a factor either side of `d / eps == 1` — and still count
+ * as a silhouette flip rather than a real disagreement (fr-7tl3). Matches
+ * the `1.5·eps` convention the both-hit graze branch already uses, and
+ * discriminates sharply: the two measured flips read 0.994 and 1.02, while
+ * a solid hit the other side never approached, or a genuinely empty ray,
+ * reads orders of magnitude away. */
+const SURFACE_SILHOUETTE_RATIO_BAND = 1.5;
 
 /** poseRays pose (scripts/fold-cost-split.harness.ts): off-axis orbit
  * angles deliberately not aligned to any coordinate plane or mandelboxKifs's
@@ -2875,6 +2906,136 @@ function surfaceCpuMarchState(
     if (d < eps) return { status: SURFACE_GPU_RAY_HIT, t };
     t += d * de.stepScale;
   }
+}
+
+function surfaceRayStatusName(status: number): string {
+  if (status === SURFACE_GPU_RAY_HIT) return "HIT";
+  if (status === SURFACE_GPU_RAY_MISS) return "MISS";
+  if (status === SURFACE_GPU_RAY_EXHAUSTED) return "EXHAUSTED";
+  if (status === SURFACE_GPU_RAY_ACTIVE) return "ACTIVE";
+  return `?${String(status)}`;
+}
+
+/**
+ * {@link surfaceCpuMarchState}'s loop run for its CLOSEST APPROACH instead
+ * of its terminal event: the smallest `d / eps` the march ever sampled, and
+ * where. A ray that misses by f64 noise reports a ratio just above 1 — the
+ * signature of a silhouette graze, where the two sides' f32 trajectories
+ * legitimately disagree about whether the surface was touched. A genuinely
+ * empty ray reports a ratio orders of magnitude above it.
+ *
+ * This is what the silhouetteFlips exclusion GATES on (fr-7tl3), not merely
+ * what a row prints: a terminal `t` says where a march stopped, and for a
+ * hit-vs-miss pair those places are unrelated by construction, but the
+ * closest approach says where it came NEAREST — the one place both sides
+ * can be compared. `tAtMin` is therefore the evidence that two marches
+ * tracked the same trajectory, and `minRatio` the evidence that the
+ * acceptance test itself was the marginal quantity.
+ */
+function surfaceCpuMarchApproach(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  pixelEps: number,
+  maxSteps: number,
+): { minRatio: number; tAtMin: number } {
+  const radius = de.visibleBoundingRadius * 1.02;
+  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+  const disc = b * b - c;
+  if (disc < 0) return { minRatio: Infinity, tAtMin: -1 };
+  const sq = Math.sqrt(disc);
+  const tFar = -b + sq;
+  if (tFar <= 0) return { minRatio: Infinity, tAtMin: -1 };
+  let t = Math.max(-b - sq, 0);
+  let minRatio = Infinity;
+  let tAtMin = -1;
+  for (let steps = 0; steps < maxSteps && t <= tFar; steps++) {
+    const eps = Math.max(
+      pixelEps * t,
+      de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
+    );
+    const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
+    const d = surfaceMarchEstimate(de, p, eps);
+    const ratio = d / eps;
+    if (ratio < minRatio) {
+      minRatio = ratio;
+      tAtMin = t;
+    }
+    if (d < eps) break;
+    t += d * de.stepScale;
+  }
+  return { minRatio, tAtMin };
+}
+
+/**
+ * fr-7tl3: what a status mismatch the boundary rule did not cover prints
+ * about ITSELF — whether it went on to be excluded as a silhouette flip or
+ * to fail the gate (the caller tags which). The aggregate counters name a
+ * count, never a ray, so the first move on a red verdict used to be
+ * re-deriving the ray by hand from the leg's pose; this puts its index,
+ * direction, both terminal states, and the two pieces of evidence that
+ * distinguish a silhouette flip from a diverged trajectory on the record
+ * instead:
+ *
+ * - `oracle` — the CPU oracle's distance at the HITTING side's endpoint,
+ *   relative to that endpoint's own acceptance eps (the same question the
+ *   both-hit graze branch asks). Below ~1.5 the hitting side stopped on a
+ *   genuine surface point, so the other side merely stepped past it.
+ * - `approach` — the caller's already-computed {@link surfaceCpuMarchApproach}
+ *   result (closest approach in eps units), supplied rather than recomputed
+ *   here — the caller already needed it for the silhouetteFlips test. Just
+ *   above 1 means the f64 march came within rounding of a hit.
+ */
+function describeSurfaceUnprojectMismatch(
+  de: SurfaceDE,
+  ro: Vec3,
+  rd: Vec3,
+  pixelEps: number,
+  approach: { minRatio: number; tAtMin: number },
+  info: {
+    ray: number;
+    px: number;
+    py: number;
+    gpuStatus: number;
+    gpuT: number;
+    cpuStatus: number;
+    cpuT: number;
+    tol: number;
+  },
+): string {
+  const hitT =
+    info.gpuStatus === SURFACE_GPU_RAY_HIT
+      ? info.gpuT
+      : info.cpuStatus === SURFACE_GPU_RAY_HIT
+        ? info.cpuT
+        : -1;
+  let oracle = "n/a (neither side hit)";
+  if (hitT >= 0) {
+    const p: Vec3 = [
+      ro[0] + rd[0] * hitT,
+      ro[1] + rd[1] * hitT,
+      ro[2] + rd[2] * hitT,
+    ];
+    const eps = Math.max(
+      pixelEps * hitT,
+      de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
+    );
+    const d = estimateDistance(de, p, eps * 1.5);
+    const side = info.gpuStatus === SURFACE_GPU_RAY_HIT ? "gpu" : "cpu";
+    oracle =
+      `${side} endpoint d/eps=${(d / eps).toExponential(2)} ` +
+      `(d=${d.toExponential(2)} eps=${eps.toExponential(2)})`;
+  }
+  return (
+    `ray=${String(info.ray)} px=${String(info.px)},${String(info.py)} ` +
+    `gpu=${surfaceRayStatusName(info.gpuStatus)}@t=${info.gpuT.toExponential(4)} ` +
+    `cpu=${surfaceRayStatusName(info.cpuStatus)}@t=${info.cpuT.toExponential(4)} ` +
+    `|dt|=${Math.abs(info.gpuT - info.cpuT).toExponential(2)} tol=${info.tol.toExponential(2)} ` +
+    `rd=[${rd.map((v) => v.toFixed(6)).join(",")}] ` +
+    `oracle: ${oracle} ` +
+    `approach: minD/eps=${approach.minRatio.toExponential(2)}@t=${approach.tAtMin.toExponential(4)}`
+  );
 }
 
 /** Every SURFACE_SANITY_STRIDE-th pixel in both axes, as ray indices. */
@@ -3740,7 +3901,11 @@ async function runSurfaceUnprojectLeg(
       "trajectory, terminal event reclassified by f32/f64 noise; (b) " +
       "hitTGrazes — both-hit rays over that t tolerance whose GPU endpoint " +
       "the CPU oracle confirms on-surface (estimateDistance(ro + rd·tGpu) " +
-      "< 1.5·eps(tGpu)): a silhouette graze resolved to a different sheet. " +
+      "< 1.5·eps(tGpu)): a silhouette graze resolved to a different sheet; " +
+      "(c) silhouetteFlips — one-side-HIT status mismatch whose CPU closest " +
+      "approach lands within the hit-t tolerance of the hitting side's t AND " +
+      "within 1.5x either side of d/eps == 1: same trajectory, same point, " +
+      "acceptance decided by f32-vs-f64 rounding. " +
       "Diverged trajectories and off-surface endpoints still fail.";
     const row: SurfaceUnprojectRow = {
       system: sys.name,
@@ -3754,6 +3919,7 @@ async function runSurfaceUnprojectLeg(
       rays,
       statusMismatches: 0,
       boundaryFlips: 0,
+      silhouetteFlips: 0,
       boundaryFlipRule,
       maxAbsT: 0,
       hitTGrazes: 0,
@@ -3799,6 +3965,12 @@ async function runSurfaceUnprojectLeg(
     }
 
     const R = sys.de.boundingRadius;
+    // fr-7tl3: every mismatch past the boundary rule describes itself,
+    // tagged with the verdict it received — the excluded ones too, so a run
+    // can confirm the silhouette rule fired on the rays it was meant to and
+    // not on others. Capped: a whole-feature divergence would otherwise
+    // print thousands of lines to say one thing.
+    const mismatchDiagnostics: string[] = [];
     for (let ray = 0; ray < rays; ray++) {
       const gpuStatus = outcome.states[ray * 4 + 1];
       const gpuT = outcome.states[ray * 4];
@@ -3811,6 +3983,62 @@ async function runSurfaceUnprojectLeg(
         row.statusMismatches++;
         if (ct >= 0 && gpuT >= 0 && Math.abs(gpuT - ct) <= tol) {
           row.boundaryFlips++;
+        } else {
+          // fr-7tl3: boundaryFlips cannot catch a hit-vs-miss pair — it
+          // compares terminal t, but a miss runs on to the sphere exit
+          // while a hit stops at the surface, so that gap is always huge.
+          // Ask instead whether the CPU march's own CLOSEST APPROACH (not
+          // just its terminal event) lands at the hitting side's t: same
+          // trajectory, same point, disagreeing only about which side of
+          // d < eps that point fell on. Measured on real Iris Xe hardware:
+          // GPU MISS / CPU HIT on foldSpherefoldPair (minD/eps=9.94e-1 at
+          // the CPU hit's own t) and GPU HIT / CPU MISS on
+          // lensMandelboxOverAffine (minD/eps=1.02e+0, 2e-4 from the GPU
+          // hit's t) — both silhouette flips, not estimator disagreement.
+          const px = ray % width;
+          const py = Math.floor(ray / width);
+          const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+          const approach = surfaceCpuMarchApproach(
+            sys.de,
+            ro,
+            rd,
+            pose.pixelEps,
+            SURFACE_MARCH_STEPS,
+          );
+          const hitT =
+            gpuStatus === SURFACE_GPU_RAY_HIT
+              ? gpuT
+              : cs === SURFACE_GPU_RAY_HIT
+                ? ct
+                : -1;
+          const silhouette =
+            hitT >= 0 &&
+            Math.abs(approach.tAtMin - hitT) <= tol &&
+            approach.minRatio <= SURFACE_SILHOUETTE_RATIO_BAND &&
+            approach.minRatio >= 1 / SURFACE_SILHOUETTE_RATIO_BAND;
+          if (silhouette) row.silhouetteFlips++;
+          if (mismatchDiagnostics.length < SURFACE_MISMATCH_DIAG_CAP) {
+            mismatchDiagnostics.push(
+              (silhouette ? "silhouette (excluded) " : "FAILS ") +
+                describeSurfaceUnprojectMismatch(
+                  sys.de,
+                  ro,
+                  rd,
+                  pose.pixelEps,
+                  approach,
+                  {
+                    ray,
+                    px,
+                    py,
+                    gpuStatus,
+                    gpuT,
+                    cpuStatus: cs,
+                    cpuT: ct,
+                    tol,
+                  },
+                ),
+            );
+          }
         }
       } else if (gpuStatus === SURFACE_GPU_RAY_HIT) {
         const err = Math.abs(gpuT - ct);
@@ -3845,10 +4073,18 @@ async function runSurfaceUnprojectLeg(
         }
       }
     }
-    row.failures = row.statusMismatches - row.boundaryFlips + row.hitTFailures;
+    row.failures =
+      row.statusMismatches -
+      row.boundaryFlips -
+      row.silhouetteFlips +
+      row.hitTFailures;
+    for (const diag of mismatchDiagnostics) {
+      console.info(`[surface-bench] march-unproject: mismatch — ${diag}`);
+    }
     console.info(
       `[surface-bench] march-unproject: compared — statusMm=${String(row.statusMismatches)} ` +
-        `boundary=${String(row.boundaryFlips)} graze=${String(row.hitTGrazes)} ` +
+        `boundary=${String(row.boundaryFlips)} silhouette=${String(row.silhouetteFlips)} ` +
+        `graze=${String(row.hitTGrazes)} ` +
         `hitTFail=${String(row.hitTFailures)} ` +
         `maxAbsT=${row.maxAbsT.toExponential(2)} fail=${String(row.failures)}`,
     );
