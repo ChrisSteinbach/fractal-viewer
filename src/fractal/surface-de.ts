@@ -2913,6 +2913,54 @@ function descendFold(
  * sweep's remaining ~4.3x tax over the un-lensed system needs a stronger
  * in-ball certificate, not a cheaper route to this one.
  *
+ * AND THE STRONGER IN-BALL CERTIFICATE IS AT ITS CEILING TOO (fr-sm95,
+ * measured 2026-07-30 — the sentence above sends a reader here, so read
+ * this before building one). The strongest in-ball certificate that
+ * exists is a conservative distance floor over the BASE attractor,
+ * sampled at each branch preimage: `surface-grid.ts` prices its cells
+ * with a FULL descent at the cell center, so nothing short of an exact
+ * `dist(q_c, A)` beats one by more than a cell radius. Wired in as a
+ * fourth prune (`factor_c · floor_grid(q_c) >= best`, NEAREST fetch, the
+ * grid built over the same transforms with no final) and measured on the
+ * three systems of `scripts/lens-branch-cost.harness.ts` — core descents
+ * per call, then transforms per call, at the harness pose and at the 0.6x
+ * framing where the class costs 2-3x more per ray:
+ *
+ *   lensMandelboxIdentityOverDefault  6.83 -> 3.71 (262 -> 170)
+ *     at 0.6x                         7.57 -> 2.97 (356 -> 211), 1.68x wall
+ *   lensMandelboxOverTetra            4.46 -> 4.33 (195 -> 190)
+ *     at 0.6x                         3.68 -> 3.33 (158 -> 145), 1.12x wall
+ *   lensBoxfoldOverTetra              2.34 -> 2.31 ( 44 ->  43)
+ *     at 0.6x                         1.15 -> 1.10 ( 91 ->  91), 0.98x wall
+ *
+ * ONE system pays — fr-ybtq's field class — and it pays MORE the closer
+ * the camera gets: gridless survivors RISE across that sweep (6.83 ->
+ * 7.57) while pruned ones FALL (3.71 -> 2.97). The fr-55s1 archetype and
+ * the boxfold lens get 3-12% and nothing, and would still pay the fetch.
+ * Neither grid resolution nor cube reach is the limit: 32 and 64 agree
+ * within 0.1 descents, and inflating the cover to 2x/4x the descent ball
+ * moves nothing monotonically (4.27 -> 4.12 -> 4.26). What the floors
+ * cannot kill are branches whose preimages sit genuinely NEAR the base
+ * attractor, where a floor is zero by construction — real candidates for
+ * the min, not waste. So most of the ~4.3x tax is what a lens with
+ * several preimages near its own attractor simply COSTS.
+ *
+ * NOT LANDED, and the shape of the refusal matters as much as the
+ * numbers. Unlike the three prunes above, this one is SOUND BUT NOT
+ * VALUE-EXACT: a floor bounds the TRUE distance, which the core's return
+ * only under-estimates, so a pruned branch's exact term can sit below
+ * `best` and a grid-carrying DE returns `>=` the gridless one (measured 0
+ * deviation over 12,000 points at cutoff 0 — the inexactness is
+ * structural, not frequent). Every mirror not sampling the same floors is
+ * therefore a DIFFERENT estimator, which is a fourth mirror's worth of
+ * obligation for a win one system in three can spend — against a lineage
+ * where fr-kidj's stage 2 and fr-ybtq's ordering were both CPU-positive
+ * and measured NET NEGATIVE on the real Iris driver, and where this trade
+ * adds divergent memory traffic where those two added ALU. If it is ever
+ * revisited: the field class is where the prize is, `bd show fr-sm95`
+ * carries the full tables and the plumbing map, and fr-7tl3 has to go
+ * green first or the GPU A/B that would decide it cannot be read.
+ *
  * CUTOFF CONTRACT (fr-55r5's, honored verbatim): inner descents receive
  * `min(best, cutoff)/factor_c` when `cutoff > 0` — an inner value below
  * that line certifies its term below `min(best, cutoff)`, so any inexact
