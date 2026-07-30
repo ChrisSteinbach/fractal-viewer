@@ -315,8 +315,11 @@ function colorModeCode(mode: ColorMode): number {
  * `buildPaletteLUT`) to switch to flam3-style structural coloring instead,
  * taking over from `colorMode`/`palette` entirely: a color coordinate `c` in
  * `[0, 1]` rides along the orbit — initialised to `0.5` and, each step,
- * blended halfway toward the picked transform's slot (`c = (c + i / (n - 1))
- * / 2`, or `0.5` for a single-transform system) — and the LUT color at `c` is
+ * blended toward the picked transform's palette slot at that transform's own
+ * color speed (`c ← c·(1 - speed) + slot·speed`, both resolved per base map
+ * by `prepareChaosGame` from the optional `colorIndex`/`colorSpeed` — absent
+ * ⇒ the even spread `i / (n - 1)` and speed `0.5`, i.e. the halfway blend
+ * this had hard-coded before fr-hiyu) — and the LUT color at `c` is
  * painted into the voxel's running mean, so color flows continuously along
  * the structure instead of in flat per-mode regions. Updating `c` consumes NO
  * `rng`, so a given seed produces the byte-identical orbit (and thus
