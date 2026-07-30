@@ -369,7 +369,8 @@ mode** axis (fr-39y): a session-only `renderMode: "points" | "flame" |
 into the points explorer), switched from a single segmented control at the
 top of the panel, so any pair of them is a direct switch, never a round-trip
 through the explorer. A preset can declare the mode it was authored to
-showcase (`PRESET_RENDER_HINTS` — the "Flame" optgroup's Radiolarian/Swirl),
+showcase (`PRESET_RENDER_HINTS` — the "Flame" optgroup's
+Radiolarian/Swirl/Dyed Spiral),
 which `main.ts` applies when the freshly loaded system's cloud lands,
 snapping the camera fit first so the flame's frozen projection frames the
 new attractor. The flame and solid renders each run in their own Web Worker

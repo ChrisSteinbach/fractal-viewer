@@ -1,6 +1,10 @@
 import { composeAffine } from "./affine";
 import { toTransform4 } from "./affine4";
-import { runChaosGame } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  derivedColorIndex,
+  runChaosGame,
+} from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import {
   appendTransform,
@@ -33,6 +37,7 @@ import {
   sixteenCellWireframe,
   spiral,
   swirlFlame,
+  dyedSpiral,
   tesseract,
   tesseractWireframe,
   twentyFourCellFlake,
@@ -828,10 +833,13 @@ describe("PRESET_RENDER_HINTS", () => {
   // compositions whose payoff lives in the flame render, not the live point
   // cloud (see their own docs) — loading one switches the app into that
   // renderer (fr-39y).
-  it("hints radiolarian, swirl, and mandelbox as flame showcases", () => {
+  it("hints radiolarian, swirl, mandelbox, and dyedSpiral as flame showcases", () => {
     expect(PRESET_RENDER_HINTS.radiolarian).toBe("flame");
     expect(PRESET_RENDER_HINTS.swirl).toBe("flame");
     expect(PRESET_RENDER_HINTS.mandelbox).toBe("flame");
+    // dyedSpiral's whole payload is a gradient-palette color structure, which
+    // only the structural (colorLUT) path reads at all.
+    expect(PRESET_RENDER_HINTS.dyedSpiral).toBe("flame");
   });
 
   // mandelboxKifs is the pure-fold twin whose payoff lives in the fold
@@ -846,5 +854,54 @@ describe("PRESET_RENDER_HINTS", () => {
     for (const key of Object.keys(PRESET_RENDER_HINTS)) {
       expect(PRESET_NAMES).toContain(key);
     }
+  });
+});
+
+describe("dyedSpiral (per-transform flame color showcase, fr-hiyu)", () => {
+  // The preset exists to demonstrate what the DERIVED spread cannot express,
+  // so these pin its authored intent rather than its geometry: an edit that
+  // quietly dropped the color pair would still render a pretty spiral, just a
+  // meaningless rainbow one, and no other test would notice.
+  it("gives its two arm maps the SAME palette slot", () => {
+    const [armA, armB] = dyedSpiral();
+
+    expect(armA.colorIndex).toBeDefined();
+    expect(armB.colorIndex).toBe(armA.colorIndex);
+    // And that shared slot is genuinely off the spread those two indices
+    // would otherwise get (0 and 1/3 across four maps).
+    expect(armA.colorIndex).not.toBe(derivedColorIndex(0, 4));
+    expect(armA.colorIndex).not.toBe(derivedColorIndex(1, 4));
+  });
+
+  it("snaps its core map toward a far-off slot", () => {
+    const core = dyedSpiral()[2];
+
+    expect(core.colorSpeed).toBeGreaterThan(DEFAULT_COLOR_SPEED);
+    // Far enough from the arms' shared slot to read as contrast, not drift.
+    expect(
+      Math.abs(core.colorIndex! - dyedSpiral()[0].colorIndex!),
+    ).toBeGreaterThan(0.4);
+  });
+
+  it("pins its dust map's color coordinate and authors no slot for it", () => {
+    const dust = dyedSpiral()[3];
+
+    // flam3's "symmetry xform": it never moves the coordinate, so its scatter
+    // inherits whatever color arrived.
+    expect(dust.colorSpeed).toBe(0);
+    // A slot would be decoration — at speed 0 it is never read.
+    expect(dust.colorIndex).toBeUndefined();
+  });
+
+  it("converges to a bounded attractor", () => {
+    const { positions, count, bounds } = runChaosGame(
+      dyedSpiral(),
+      4000,
+      mulberry32(7),
+    );
+
+    expect(count).toBeGreaterThan(0);
+    for (const v of positions) expect(Number.isFinite(v)).toBe(true);
+    expect(bounds.maxR).toBeLessThan(20);
   });
 });

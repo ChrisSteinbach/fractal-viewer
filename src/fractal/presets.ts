@@ -537,6 +537,91 @@ export function swirlFlame(): Transform[] {
   ]);
 }
 
+/** The slot the two {@link dyedSpiral} arm maps SHARE — the whole point of
+ * that preset, and the one thing the derived spread cannot express. Named
+ * rather than repeated so the two maps cannot drift apart by a typo. */
+const DYED_ARM_SLOT = 0.62;
+
+/**
+ * "Dyed Spiral" — the showcase for per-transform flame color (fr-hiyu). A
+ * four-map spiral whose palette structure is AUTHORED rather than derived, so
+ * color follows where a point CAME FROM instead of where its map happens to
+ * sit in the transform list.
+ *
+ * Every other preset leaves `colorIndex`/`colorSpeed` absent and so gets the
+ * even spread `i / (n - 1)` blended halfway on every pick: one hue per map, in
+ * list order, and no way to say anything else. This one says three things that
+ * spread cannot:
+ *
+ * - The two ARM maps SHARE {@link DYED_ARM_SLOT}. They are geometrically
+ *   distinct — counter-rotating, differently scaled, different tilt — but read
+ *   as one color family, so the eye groups them as a single braided structure
+ *   instead of two rival hues. Under the derived spread they would be forced
+ *   to slots 0 and 1/3.
+ * - The CORE map takes a far-off slot at `colorSpeed: 0.9`: a point landing
+ *   there SNAPS almost fully to its color rather than drifting toward it, so
+ *   the center reads as a hard-edged bloom against the arms rather than a
+ *   gradient into them.
+ * - The DUST map sits at `colorSpeed: 0` — flam3's "symmetry xform". It never
+ *   moves the color coordinate at all, so its wide, low-weight scatter
+ *   inherits whatever color the orbit already carried: texture everywhere,
+ *   tinting nothing. That is the behaviour the old fixed halfway blend made
+ *   impossible, and it is why the map's own `colorIndex` is deliberately left
+ *   ABSENT — at speed 0 the slot is never read, so authoring one would be
+ *   decoration.
+ *
+ * The color pair only bites on the structural (gradient-palette) path, so
+ * flame is its showcase ({@link PRESET_RENDER_HINTS}); under the `"legacy"`
+ * palette it falls back to flat per-map hues like any other system.
+ */
+export function dyedSpiral(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.36, 0.24, 0],
+      rotation: [0, 0, 0.55],
+      scale: [0.72, 0.72, 0.72],
+      colorIndex: DYED_ARM_SLOT,
+      variations: [
+        { type: "swirl", weight: 1 },
+        { type: "linear", weight: 0.25 },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.58, -0.34, 0.12],
+      rotation: [0.22, 0, -1.5],
+      scale: [0.5, 0.5, 0.5],
+      colorIndex: DYED_ARM_SLOT,
+      variations: [
+        { type: "swirl", weight: 1 },
+        { type: "linear", weight: 0.25 },
+      ],
+    },
+    {
+      id: 2,
+      position: [0, -0.04, 0],
+      rotation: [0, 0, 0.9],
+      scale: [0.42, 0.42, 0.42],
+      weight: 0.9,
+      colorIndex: 0.05,
+      colorSpeed: 0.9,
+    },
+    {
+      id: 3,
+      position: [0.02, 0.3, -0.08],
+      rotation: [0, 0.4, 0.3],
+      scale: [0.56, 0.56, 0.56],
+      weight: 0.5,
+      colorSpeed: 0,
+      variations: [
+        { type: "linear", weight: 1 },
+        { type: "swirl", weight: 0.3 },
+      ],
+    },
+  ];
+}
+
 /**
  * "Mandelbox" — an eight-map fold lattice built on the `mandelbox` variation
  * (fr-p7nu), the box-fold + sphere-fold composite behind the escape-time
@@ -1029,6 +1114,7 @@ const PRESETS = {
   curling: curlingFern,
   radiolarian,
   swirl: swirlFlame,
+  dyedSpiral,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
@@ -1083,6 +1169,7 @@ export const PRESET_RENDER_HINTS: Partial<
 > = {
   radiolarian: "flame",
   swirl: "flame",
+  dyedSpiral: "flame",
   mandelbox: "flame",
   // The pure-fold twin exists to showcase the fold-branch surface descent
   // (fr-5rvk) — as a point cloud it under-delivers the same way the flame
