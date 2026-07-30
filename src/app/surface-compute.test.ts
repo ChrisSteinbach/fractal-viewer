@@ -12,6 +12,7 @@ import {
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+  surfaceComputeProgressDone,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -162,5 +163,110 @@ describe("nextShadeHitEmaUs", () => {
     let ema = 108_000;
     for (let i = 0; i < 30; i++) ema = nextShadeHitEmaUs(ema, 1_000);
     expect(ema).toBeLessThan(1_100);
+  });
+});
+
+describe("surfaceComputeProgressDone", () => {
+  it("reads zero at frame start, before any dispatch", () => {
+    expect(
+      surfaceComputeProgressDone({
+        rays: 100,
+        active: 100,
+        shadeQueued: 0,
+        sweepSteps: 0,
+        sliced: 0,
+        stepsThisPass: 1,
+        marchSteps: 160,
+      }),
+    ).toBe(0);
+  });
+
+  it("accrues continuous march credit mid-sweep — the in-sphere first sweep no longer parks at 0", () => {
+    // 40 of the 100 active rays are sliced into the current 8-step pass:
+    // 0.5 * 40 * (8/160) of the march half; the rest hold the (zero)
+    // completed-sweep fraction.
+    expect(
+      surfaceComputeProgressDone({
+        rays: 100,
+        active: 100,
+        shadeQueued: 0,
+        sweepSteps: 0,
+        sliced: 40,
+        stepsThisPass: 8,
+        marchSteps: 160,
+      }),
+    ).toBe(1);
+  });
+
+  it("credits terminal-but-unshaded rays half — the shipped fr-tdft behavior unchanged", () => {
+    expect(
+      surfaceComputeProgressDone({
+        rays: 100,
+        active: 0,
+        shadeQueued: 60,
+        sweepSteps: 20,
+        sliced: 0,
+        stepsThisPass: 8,
+        marchSteps: 160,
+      }),
+    ).toBe(70);
+  });
+
+  it("reaches exactly the ray total at frame completion", () => {
+    expect(
+      surfaceComputeProgressDone({
+        rays: 100,
+        active: 0,
+        shadeQueued: 0,
+        sweepSteps: 40,
+        sliced: 0,
+        stepsThisPass: 8,
+        marchSteps: 160,
+      }),
+    ).toBe(100);
+  });
+
+  it("caps a marching ray's credit at the terminal half once steps meet the budget", () => {
+    // sweepSteps (200) may legitimately exceed marchSteps (160) while the
+    // last exhausted rays drain: 90 terminal rays plus 10 active rays
+    // capped at 0.5 each, never more.
+    expect(
+      surfaceComputeProgressDone({
+        rays: 100,
+        active: 10,
+        shadeQueued: 0,
+        sweepSteps: 200,
+        sliced: 0,
+        stepsThisPass: 8,
+        marchSteps: 160,
+      }),
+    ).toBe(95);
+  });
+
+  it("is continuous across a sweep boundary — dispatched-ray credit equals next sweep's base credit", () => {
+    // A fully-dispatched sweep (sliced === active) folding stepsThisPass
+    // into sweepSteps must not move the number when no rays terminated:
+    // the monotonicity seam the doc comment argues for.
+    const preBoundary = surfaceComputeProgressDone({
+      rays: 100,
+      active: 50,
+      shadeQueued: 20,
+      sweepSteps: 8,
+      sliced: 50,
+      stepsThisPass: 8,
+      marchSteps: 160,
+    });
+    const postBoundary = surfaceComputeProgressDone({
+      rays: 100,
+      active: 50,
+      shadeQueued: 20,
+      sweepSteps: 16,
+      sliced: 0,
+      stepsThisPass: 8,
+      marchSteps: 160,
+    });
+    expect(preBoundary).toBe(42.5);
+    expect(postBoundary).toBe(42.5);
+    expect(preBoundary).toBe(postBoundary);
   });
 });

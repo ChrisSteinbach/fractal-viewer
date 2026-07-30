@@ -163,10 +163,10 @@ export interface SurfaceComputeFrameOptions {
   budgetMs?: number;
   /** Progressive present: called with a full-frame RGBA snapshot at most
    * every `progressIntervalMs` while rays are still marching. `done` /
-   * `total` are ray-work tallies — a ray credits HALF on going terminal
-   * (its march is done) and the rest once its pixel is shaded (fr-tdft:
-   * shaded-only counting displayed a heavy frame's whole first march
-   * sweep as 0%). The fr-tmgf disclosure hook: main.ts drives the
+   * `total` are ray-work tallies from `surfaceComputeProgressDone`
+   * (fr-tdft): a ray's march half accrues CONTINUOUSLY with its consumed
+   * steps and lands in full on going terminal; the shade half lands once
+   * its pixel is shaded. The fr-tmgf disclosure hook: main.ts drives the
    * surface progress row from them, so a compute settle reports honest
    * coverage the way the WebGL strip path's `surfaceRenderProgress()`
    * does. `done` may be fractional. */
@@ -376,6 +376,56 @@ export function resampleSurfacePixels(
     }
   }
   return out;
+}
+
+/**
+ * Ray-work `done` tally for a settle's progress report (fr-tdft).
+ *
+ * A ray's unit of progress splits half march, half shade: the march half
+ * accrues CONTINUOUSLY as the ray consumes its step budget, lands in
+ * full on going terminal, and the shade half lands when the pixel is
+ * shaded. Counting only shaded rays displayed a heavy frame's whole
+ * first march sweep as 0% for a minute of honest work, then read the
+ * cheap miss-drain as a sprint; crediting only TERMINAL rays (the first
+ * fr-tdft fix) still parked a fully in-sphere pose at a low pct through
+ * its long first sweep — no ray terminates until deep into the step
+ * budget, so the sweep's real work stayed invisible. Sub-ray credit is
+ * exact host-side bookkeeping, no extra readback: the kernel's march
+ * loop breaks only on terminal transitions, so a still-ACTIVE ray has
+ * consumed exactly the steps the host issued to it (`sweepSteps`, plus
+ * `stepsThisPass` for the `sliced` rays the current sweep has already
+ * dispatched), never more than `marchSteps` by the exhaustion rule.
+ *
+ * Monotone by construction: step fractions only grow (capped at 1, and
+ * a marching ray's credit never exceeds the terminal half), `active`
+ * only shrinks, queues only move rays toward shaded; exactly `rays` at
+ * frame completion.
+ */
+export function surfaceComputeProgressDone(tally: {
+  /** Frame ray total. */
+  rays: number;
+  /** Rays still on the active list. Mid-sweep this includes rays whose
+   * terminal status hasn't been read back yet — they credit as marching,
+   * an undercount that resolves upward at the sweep's end. */
+  active: number;
+  /** Terminal rays queued for a shade batch, hits and misses alike. */
+  shadeQueued: number;
+  /** March steps every active ray received from COMPLETED sweeps. */
+  sweepSteps: number;
+  /** Active rays the current sweep has already dispatched — they hold
+   * `stepsThisPass` steps beyond `sweepSteps`. */
+  sliced: number;
+  /** Steps the current sweep issues per dispatched ray. */
+  stepsThisPass: number;
+  /** Per-ray march budget (`spec.marchSteps`). */
+  marchSteps: number;
+}): number {
+  const budget = Math.max(1, tally.marchSteps);
+  const before = Math.min(1, tally.sweepSteps / budget);
+  const after = Math.min(1, (tally.sweepSteps + tally.stepsThisPass) / budget);
+  const marching =
+    0.5 * (tally.sliced * after + (tally.active - tally.sliced) * before);
+  return tally.rays - tally.active - 0.5 * tally.shadeQueued + marching;
 }
 
 const WHITE_LUT = new Uint8Array(256 * 4).fill(255);
@@ -920,6 +970,13 @@ export class SurfaceComputeRenderer {
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
     let stepsThisPass = 1;
+    // fr-tdft sub-ray credit bookkeeping: march steps issued to every
+    // surviving active ray by COMPLETED sweeps, and how many of the
+    // current sweep's rays have been dispatched so far (those hold
+    // stepsThisPass steps more). Exact for still-active rays — the
+    // kernel's march loop exits early only on terminal transitions.
+    let sweepSteps = 0;
+    let sweepSliced = 0;
     let shadeHitCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
     // fr-55s1 stage D: a fold FINAL lens multiplies every march step and
     // every shade probe by its branch sweep — 27 boxfold / 3 spherefold /
@@ -1006,17 +1063,22 @@ export class SurfaceComputeRenderer {
         return false;
       }
       lastProgress = performance.now();
-      // fr-tdft: terminal-but-unshaded rays count HALF. Counting only
-      // shaded rays displayed a heavy frame's whole first march sweep as
-      // "0%" for a minute of honest work (the parked-at-0 anti-pattern
-      // the progress row exists to kill), then read the cheap miss-drain
-      // as a 10%/s sprint. A ray now credits half on going terminal
-      // (march done) and the other half when its pixel is shaded —
-      // monotone by construction (active only shrinks; queues only move
-      // rays toward shaded), 1.0 exactly at frame completion.
-      const terminal = rays - active.length;
-      const queued = shadeHitQueue.length + shadeFreeQueue.length;
-      opts.onProgress(partial, terminal - 0.5 * queued, rays);
+      // fr-tdft: march credit accrues per consumed step, shade credit on
+      // shaded pixels — surfaceComputeProgressDone owns the formula and
+      // the monotonicity argument.
+      opts.onProgress(
+        partial,
+        surfaceComputeProgressDone({
+          rays,
+          active: active.length,
+          shadeQueued: shadeHitQueue.length + shadeFreeQueue.length,
+          sweepSteps,
+          sliced: sweepSliced,
+          stepsThisPass,
+          marchSteps: spec.marchSteps,
+        }),
+        rays,
+      );
       return true;
     };
 
@@ -1061,6 +1123,7 @@ export class SurfaceComputeRenderer {
             (marchMs * 1000) / (slice.length * Math.max(1, stepsThisPass));
           rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
           offset += chunk;
+          sweepSliced = offset;
           if (!(await maybePresent())) return null;
         }
         const stateCopy = new Float32Array(
@@ -1088,6 +1151,10 @@ export class SurfaceComputeRenderer {
         // between).
         const sweptWhole =
           marchChunkFor(rayStepEmaUs, stepsThisPass) >= active.length;
+        // Every surviving ray consumed this sweep's steps; must land
+        // BEFORE stepsThisPass may grow for the next sweep.
+        sweepSteps += stepsThisPass;
+        sweepSliced = 0;
         active = Uint32Array.from(next);
         if (sweptWhole) stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
       }
