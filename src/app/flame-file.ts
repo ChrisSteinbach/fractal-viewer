@@ -25,6 +25,13 @@
  *    flam3's; see `docs/flame-interop.md` for the round-trip consequences.
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
  *    the orbit — exactly our `finalTransform`.
+ *  - An xform's `color` is a palette COORDINATE, not an RGB triple: the slot
+ *    a flame's structural color coordinate is pulled toward whenever the map
+ *    is picked, at the map's `color_speed` (deprecated spelling: `symmetry
+ *    = 1 - 2·speed`). Those are exactly `Transform.colorIndex` /
+ *    `Transform.colorSpeed` (fr-hiyu) — same `[0, 1]` range, same blend
+ *    `c ← c·(1 - speed) + color·speed` (`flame.ts`'s `accumulateFlame`) — so
+ *    a file's authored color structure crosses in both directions.
  *
  * Import (`decodeFlameFile`) is a never-throwing trust boundary in the same
  * mold as `scene-file.ts`'s `decodeImportFile`: anything unusable becomes
@@ -39,7 +46,10 @@
  * and a warned flattening for genuinely 3D/4D ones. Kaleidoscope copies are
  * baked into explicit xforms (composed into `coefs` for affine maps, a
  * `post` rotation for nonlinear ones), which is also how flam3's own
- * symmetry macro materializes.
+ * symmetry macro materializes. Per-xform colors are written RESOLVED — a
+ * map's authored `colorIndex`/`colorSpeed` or the fallbacks the render itself
+ * resolves through — so the file states what we draw rather than what we
+ * store.
  *
  * DOM note: this module uses `DOMParser`, so unlike `scene-file.ts` it is
  * browser-tied (tests run under jsdom); that is why it lives in `src/app/`
@@ -48,7 +58,9 @@
 import { composeAffine, rotationMatrixXYZ } from "../fractal/affine";
 import { isFlatTransform } from "../fractal/affine4";
 import {
+  DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  derivedColorIndex,
   effectiveSymmetryOrder,
   runChaosGame,
 } from "../fractal/chaos-game";
@@ -114,9 +126,11 @@ const VARIATION_NAMES = new Set<string>(VARIATION_TYPES);
 /**
  * Standard xform attributes that are NOT variation weights and need no
  * warning when skipped: either handled elsewhere in this module (`weight`,
- * `coefs`, `post`, `opacity`, `chaos`) or genuinely inert for us (color
- * blending speed, animation flags, editor labels). Anything outside this
- * set and {@link VARIATION_NAMES} is reported as an unsupported feature.
+ * `coefs`, `post`, `opacity`, `chaos`, and — since fr-hiyu — the per-xform
+ * color trio `color` / `color_speed` / `symmetry`) or genuinely inert for us
+ * (animation flags, editor labels, `var_color`'s per-variation color
+ * weighting). Anything outside this set and {@link VARIATION_NAMES} is
+ * reported as an unsupported feature.
  */
 const KNOWN_XFORM_ATTRS = new Set([
   "weight",
@@ -190,6 +204,45 @@ function attrNumber(el: Element, name: string): number | undefined {
   if (raw === null) return undefined;
   const n = Number.parseFloat(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Clamp into `[0, 1]` — the range `Transform.colorIndex` and
+ * `Transform.colorSpeed` are both defined on. */
+function clampUnit(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * One xform's color speed, in whichever spelling the file uses: flam3's
+ * modern `color_speed`, else the deprecated `symmetry` it superseded
+ * (`speed = (1 - symmetry) / 2` — flam3's own conversion). `undefined` when
+ * neither attribute is present or parseable, which leaves
+ * `Transform.colorSpeed` absent so `chaos-game.ts`'s
+ * {@link DEFAULT_COLOR_SPEED} applies.
+ *
+ * The conversion checks out on its fixed point: flam3's default
+ * `symmetry="0"` is speed `0.5` — exactly {@link DEFAULT_COLOR_SPEED}, and
+ * exactly the halfway blend every flame render hard-coded before fr-hiyu. Its
+ * other landmark agrees too: a flam3 "symmetry xform" (`symmetry="1"`, which
+ * shades without recoloring) is speed `0`, our pinned coordinate.
+ *
+ * `color_speed` WINS when both are present. That is a choice, not a copy of
+ * flam3: its parser walks the attribute list in DOCUMENT ORDER
+ * (`parser.c`'s `for (cur_att = att_ptr; cur_att; cur_att = cur_att->next)`,
+ * with `symmetry` assigning `color_speed = (1 - value) / 2` and `color_speed`
+ * assigning it directly), so whichever attribute comes LAST wins there and
+ * there is no name precedence to mirror. What flam3 does have is writers that
+ * emit the two consistently — its own `flam3_print_xform` writes one or the
+ * other, never a disagreeing pair, and so do we — so the question only arises
+ * for a hand-edited file, where preferring the attribute that superseded the
+ * other is the reading attribute order can't flip.
+ */
+function xformColorSpeed(el: Element): number | undefined {
+  const modern = attrNumber(el, "color_speed");
+  if (modern !== undefined) return clampUnit(modern);
+  const legacy = attrNumber(el, "symmetry");
+  if (legacy !== undefined) return clampUnit((1 - legacy) / 2);
+  return undefined;
 }
 
 /**
@@ -419,6 +472,18 @@ function xformToTransform(
   };
   if (Math.abs(shear) > 1e-9) transform.shear = [shear, 0, 0];
   if (variations.length > 0) transform.variations = variations;
+
+  // Per-xform color (fr-hiyu): `color` is the palette slot and
+  // `color_speed`/`symmetry` the blend rate — our `colorIndex`/`colorSpeed`
+  // outright (see the module doc). Store only what the file actually says: an
+  // absent or malformed attribute leaves the key OFF, so `chaos-game.ts`'s
+  // derived even spread / DEFAULT_COLOR_SPEED apply and the import renders
+  // exactly as it did before this module read the attributes at all.
+  const colorIndex = attrNumber(el, "color");
+  if (colorIndex !== undefined) transform.colorIndex = clampUnit(colorIndex);
+  const colorSpeed = xformColorSpeed(el);
+  if (colorSpeed !== undefined) transform.colorSpeed = colorSpeed;
+
   return { transform, weight };
 }
 
@@ -699,6 +764,28 @@ function isAffineBlend(merged: Map<VariationType, number>): boolean {
   return true;
 }
 
+/**
+ * A resolved color speed written in BOTH of flam3's spellings: the modern
+ * `color_speed` and the deprecated `symmetry = 1 - 2·speed` it superseded
+ * (the exact inverse of {@link xformColorSpeed}'s import conversion).
+ *
+ * Writing both is deliberate, and the formula is flam3's own: its
+ * `flam3_print_xform` emits `symmetry="1 - 2·color_speed"` when writing the
+ * legacy (pre-2.8) format and `color_speed` otherwise. Emitting BOTH is the
+ * superset that satisfies either reader generation — flam3 and Fractorium
+ * read `color_speed`, older Apophysis builds only ever knew `symmetry` — and
+ * because the pair agrees by construction, flam3's document-ordered parser
+ * (see {@link xformColorSpeed}) reaches the same speed whichever it sees
+ * last. The one side effect is welcome: that parser also derives its animate
+ * flag from `symmetry` (`animate = value > 0 ? 0 : 1`), so a
+ * `color_speed="0"` map — flam3's own "symmetry xform", which shades without
+ * recoloring — writes `symmetry="1"` and is correctly left out of rotational
+ * animation, while every other speed keeps `animate` set.
+ */
+function colorSpeedAttrs(speed: number): string {
+  return ` color_speed="${fmt(speed)}" symmetry="${fmt(1 - 2 * speed)}"`;
+}
+
 /** Variation attributes for an xform: the merged list, or `linear="1"` for a
  * purely affine map (flam3 xforms need at least one variation term). */
 function variationAttrs(merged: Map<VariationType, number>): string {
@@ -848,7 +935,15 @@ export function encodeFlameFile(
       const affine = affines[i];
       const merged = mergedVariations(t);
       const weight = t.weight ?? 1;
-      const color = n === 1 ? 0 : i / (n - 1);
+      // The map's RESOLVED palette slot and blend speed (fr-hiyu): what it
+      // authors, else the same fallbacks the render resolves through
+      // (`chaos-game.ts`'s `prepareChaosGame`), so the file always states
+      // outright what we draw. Both key on the BASE map index `i`, never the
+      // emitted xform count — every kaleidoscope copy below colors as the map
+      // it copies, which is `flame.ts`'s `idx % baseTransformCount` invariant
+      // expressed in flam3's vocabulary.
+      const color = t.colorIndex ?? derivedColorIndex(i, n);
+      const colorSpeed = t.colorSpeed ?? DEFAULT_COLOR_SPEED;
 
       let coefs: Coefs2D;
       let post = "";
@@ -872,6 +967,7 @@ export function encodeFlameFile(
 
       xforms.push(
         `    <xform weight="${fmt(weight)}" color="${fmt(color)}"` +
+          `${colorSpeedAttrs(colorSpeed)}` +
           `${variationAttrs(merged)} coefs="${coefsAttr(coefs)}"${post}/>`,
       );
     }
@@ -879,8 +975,17 @@ export function encodeFlameFile(
 
   if (finalAffine !== null && s.finalTransform) {
     const merged = mergedVariations(s.finalTransform);
+    // The lens does not recolor (fr-hiyu): `flame.ts` walks the color
+    // coordinate on the BASE map it picked and applies `finalTransform` at
+    // plot time only. flam3 DOES blend through its final xform, at
+    // `color_speed` — defaulting to 0.5, which would pull every plotted point
+    // halfway toward this slot and shift the whole image — so the export pins
+    // the speed to 0, the one value that makes a flam3 render agree with ours.
+    // The authored slot still rides along, inert, for tools that display it.
+    const color = s.finalTransform.colorIndex ?? 0;
     xforms.push(
-      `    <finalxform color="0"${variationAttrs(merged)}` +
+      `    <finalxform color="${fmt(color)}"${colorSpeedAttrs(0)}` +
+        `${variationAttrs(merged)}` +
         ` coefs="${coefsAttr(affineToCoefs(finalAffine.m, finalAffine.t))}"/>`,
     );
   }
