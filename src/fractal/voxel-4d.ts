@@ -292,19 +292,19 @@ export function accumulateVoxels4(
   view: FourDView,
   color: FourDRenderColor,
 ): VoxelGrid {
-  const { affines, variations, finalAffine, finalWarp, transformCount } =
-    prepared;
+  const { affines, variations, finalAffine, finalWarp } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
 
   // Structural coloring (mirrors accumulateFlame4's colorLUT path exactly —
   // see FourDRenderColor's doc): `structural` gates both the per-step update
-  // below and the escape-reseed reset. `colorDenom` is `n - 1` (0 for a
-  // single-transform system, which pins the coordinate at 0.5) — keyed on
-  // the raw `transformCount`, since 4D has no symmetry-expanded copies to
-  // collapse back to a base index.
+  // below and the escape-reseed reset. The per-map slot and blend speed were
+  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the raw picked
+  // index since 4D has no symmetry-expanded copies to collapse back to a base
+  // index — so a 4D system authored for the flame colors identically here.
   const structural = color.kind === "structural";
-  const colorDenom = transformCount > 1 ? transformCount - 1 : 0;
+  const colorSlots = prepared.colorIndex;
+  const colorSpeeds = prepared.colorSpeed;
   let c = grid.orbitColor;
 
   const minX = grid.bounds.min[0];
@@ -351,13 +351,14 @@ export function accumulateVoxels4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
-    // Blend the color coordinate halfway toward this transform's slot,
-    // BEFORE applying its affine — mirrors accumulateFlame4's ordering
-    // exactly. No rng is consumed, so the orbit (and `density`) is identical
-    // whether or not structural coloring is in play.
+    // Blend the color coordinate toward this transform's slot at this
+    // transform's speed, BEFORE applying its affine — mirrors
+    // accumulateFlame4's formula and ordering exactly. No rng is consumed, so
+    // the orbit (and `density`) is identical whether or not structural
+    // coloring is in play.
     if (structural) {
-      const slot = colorDenom > 0 ? idx / colorDenom : 0.5;
-      c = (c + slot) * 0.5;
+      const speed = colorSpeeds[idx];
+      c = c * (1 - speed) + colorSlots[idx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;

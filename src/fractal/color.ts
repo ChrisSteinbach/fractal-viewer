@@ -692,8 +692,11 @@ export function dimColorsExcept(
  *
  * - `"structural"`: the cosine-palette path, identical semantics to
  *   `accumulateFlame`'s `colorLUT` mode — an orbit-riding coordinate `c`
- *   blended halfway toward the picked transform's `idx / (n - 1)` slot every
- *   step (escape-reseed resets it to `0.5`), indexing `lut` (a `256 * 3`
+ *   blended toward the picked transform's palette slot at that transform's own
+ *   color speed every step (fr-hiyu: `c ← c·(1 - speed) + slot·speed`, both
+ *   resolved by `prepareChaosGame4` from the optional `colorIndex`/
+ *   `colorSpeed`, absent ⇒ the derived `idx / (n - 1)` spread and a halfway
+ *   `0.5`), escape-reseed resetting it to `0.5`, indexing `lut` (a `256 * 3`
  *   `buildPaletteLUT` table). Keyed on the RAW picked transform index rather
  *   than a base-map index: 4D has no kaleidoscope symmetry (fr-6im is 3D
  *   only — see `chaos-game-4d.ts`'s `PreparedChaosGame4`), so there is no

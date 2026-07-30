@@ -7,7 +7,13 @@ import {
   voxelTextureData,
 } from "./voxel";
 import type { VoxelBounds } from "./voxel";
-import { plotPoint, prepareChaosGame, stepOrbit } from "./chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  derivedColorIndex,
+  plotPoint,
+  prepareChaosGame,
+  stepOrbit,
+} from "./chaos-game";
 import {
   UNIFORM_POINT_COLOR,
   buildColorModeLUT,
@@ -872,6 +878,120 @@ describe("accumulateVoxels structural coloring (colorLUT, fr-1kt)", () => {
     expect(colored.density).toEqual(legacy.density);
     // ...but the accumulated colors differ (gradient vs colorMode ramp).
     expect(colored.avgRGB).not.toEqual(legacy.avgRGB);
+  });
+});
+
+describe("accumulateVoxels structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+  it("pins an all-absent accumulation exactly identical to the same system with every derived default authored explicitly", () => {
+    const base = sierpinskiTetrahedron();
+    const n = base.length;
+    const withDefaultsAuthored = base.map((t, i) => ({
+      ...t,
+      colorIndex: derivedColorIndex(i, n),
+      colorSpeed: DEFAULT_COLOR_SPEED,
+    }));
+    const palette = transformColors(n);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 3000;
+
+    const absent = accumulateVoxels(
+      prepareChaosGame(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(17),
+      palette,
+      "transform",
+      colorLUT,
+    );
+    const explicit = accumulateVoxels(
+      prepareChaosGame(withDefaultsAuthored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(17),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    expect(explicit.density).toEqual(absent.density);
+    expect(explicit.avgRGB).toEqual(absent.avgRGB);
+    expect(explicit.maxDensity).toBe(absent.maxDensity);
+    expect(explicit.orbitColor).toBe(absent.orbitColor);
+  });
+
+  it("authored colorIndex/colorSpeed never perturb the orbit: density and maxDensity match a derived render, same seed", () => {
+    const base = sierpinskiTetrahedron();
+    const colored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+      colorSpeed: 0.15,
+    }));
+    const palette = transformColors(base.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 3000;
+
+    const plain = accumulateVoxels(
+      prepareChaosGame(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(9),
+      palette,
+      "transform",
+      colorLUT,
+    );
+    const withColors = accumulateVoxels(
+      prepareChaosGame(colored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(9),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    expect(withColors.density).toEqual(plain.density);
+    expect(withColors.maxDensity).toBe(plain.maxDensity);
+  });
+
+  it("authored colorIndex genuinely changes the accumulated colors vs. the derived default", () => {
+    const base = sierpinskiTetrahedron();
+    const palette = transformColors(base.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 3000;
+
+    const derived = accumulateVoxels(
+      prepareChaosGame(base),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(9),
+      palette,
+      "transform",
+      colorLUT,
+    );
+    const authored = base.map((t, i) => ({
+      ...t,
+      colorIndex: (i + 1) / (base.length + 1),
+    }));
+    const withAuthored = accumulateVoxels(
+      prepareChaosGame(authored),
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(9),
+      palette,
+      "transform",
+      colorLUT,
+    );
+
+    expect(withAuthored.avgRGB).not.toEqual(derived.avgRGB);
   });
 });
 
