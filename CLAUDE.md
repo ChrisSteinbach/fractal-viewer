@@ -75,7 +75,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement harness.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
-    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade.
+    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
+    (skipped, parked by reference, on a non-flat sample).
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved
     exactly; `wildcard` option adds structural kicks. Quality-gated by

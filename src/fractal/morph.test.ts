@@ -285,6 +285,36 @@ describe("lerpSystem symmetry", () => {
   });
 });
 
+describe("lerpSystem symmetry on a non-flat sample", () => {
+  it("carries the departing side's kaleidoscope unchanged, by reference, at an early sample of a flat -> 4D morph", () => {
+    const a = system({
+      transforms: [transform()],
+      symmetry: { order: 6, axis: "z" },
+    });
+    const b = system({
+      transforms: [transform({ w: { position: 0.5 } })],
+      symmetry: { order: 5, axis: "y" },
+    });
+    // b's transform carries a genuine w block, so lerpW returns a live w for
+    // EVERY 0 < t < 1 sample (it only stays undefined when both sides are
+    // flat) -- every intermediate is already on the 4D path, which has no
+    // kaleidoscope stage at all, so the crossfade below must never run.
+    expect(lerpSystem(a, b, 0.1).symmetry).toBe(a.symmetry);
+  });
+
+  it("carries the arriving side's kaleidoscope unchanged, by reference, at a late sample of a flat -> 4D morph", () => {
+    const a = system({
+      transforms: [transform()],
+      symmetry: { order: 6, axis: "z" },
+    });
+    const b = system({
+      transforms: [transform({ w: { position: 0.5 } })],
+      symmetry: { order: 5, axis: "y" },
+    });
+    expect(lerpSystem(a, b, 0.9).symmetry).toBe(b.symmetry);
+  });
+});
+
 describe("lerpSystem weight", () => {
   it("keeps weight absent when both sides omit it", () => {
     const a = system({ transforms: [transform()] });

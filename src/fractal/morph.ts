@@ -39,10 +39,16 @@
  *   `a`'s fades out over the first half (`blend` 1 -> 0, see
  *   `SymmetryParams.blend`) and `b`'s fades in over the second — continuous
  *   at the midpoint, where both ends sit at blend 0 (bit-identical to order
- *   1, per `prepareChaosGame`). A matching pair stays untouched, and an
- *   order-1 side needs no fade (it has no copies), so it rides by reference.
+ *   1, per `prepareChaosGame`). A matching pair stays untouched, an
+ *   order-1 side needs no fade (it has no copies), and a non-flat sample
+ *   skips the crossfade too (no kaleidoscope renders in 4D) — all three
+ *   ride by reference (fr-5gxn).
  */
-import { isFlatTransform, meanContraction } from "./affine4";
+import {
+  isFlatTransform,
+  meanContraction,
+  systemPartsAreNonFlat,
+} from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import type {
   SymmetryParams,
@@ -335,12 +341,21 @@ function identityTransform(id: number): Transform {
  * side's own strength resolves through `blend ?? 1`, which is what lets a
  * CHAINED morph (morph-tween.ts) depart from a mid-fade sample without its
  * kaleidoscope popping back to full first.
+ *
+ * A NON-FLAT sample (fr-5gxn) skips the crossfade entirely and rides `a`/`b`
+ * by reference, same as a matching pair: the 4D chaos game has no
+ * post-rotation stage, so the blend computed below would just be discarded
+ * unread — and fading it anyway would leave a parked (non-rendering)
+ * kaleidoscope with a decayed `blend` for no visual gain. Same reasoning as
+ * {@link lerpW}'s flat-flat guard, one field over.
  */
 function lerpSymmetry(
   a: SymmetryParams,
   b: SymmetryParams,
   t: number,
+  nonFlat: boolean,
 ): SymmetryParams {
+  if (nonFlat) return t < 0.5 ? a : b;
   if (a.order === b.order && a.axis === b.axis) {
     return t < 0.5 ? a : b;
   }
@@ -411,9 +426,16 @@ export function lerpSystem(
 ): MorphSystem {
   if (t <= 0) return a;
   if (t >= 1) return b;
+  const transforms = lerpTransforms(a.transforms, b.transforms, t);
+  const finalTransform = lerpFinalTransform(
+    a.finalTransform,
+    b.finalTransform,
+    t,
+  );
+  const nonFlat = systemPartsAreNonFlat(transforms, finalTransform);
   return {
-    transforms: lerpTransforms(a.transforms, b.transforms, t),
-    finalTransform: lerpFinalTransform(a.finalTransform, b.finalTransform, t),
-    symmetry: lerpSymmetry(a.symmetry, b.symmetry, t),
+    transforms,
+    finalTransform,
+    symmetry: lerpSymmetry(a.symmetry, b.symmetry, t, nonFlat),
   };
 }
