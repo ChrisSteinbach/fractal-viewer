@@ -59,7 +59,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
     weights continuously.
   - `chaos-game-4d.ts` — 4D twin (`runChaosGame4`), same loop unrolled to four
-    coords. No kaleidoscope symmetry by design.
+    coords. Kaleidoscope copies rotate in a PLANE, optionally with a `twist`
+    (a double rotation — `affine4.ts`'s `symmetryRotation4`, which reproduces
+    the 3D `symmetryRotation` entry for entry on the w-free planes).
   - `color.ts` — HSL→RGB and five color-mode palettes.
     `buildColorModeLUT`/`writePaletteRampColor` is the ONE ramp definition the
     explorer, solid render, and legend share (4D radius mode included).
