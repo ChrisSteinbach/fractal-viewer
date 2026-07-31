@@ -11,7 +11,7 @@ function system(overrides: Partial<MorphSystem> = {}): MorphSystem {
   return {
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     ...overrides,
   };
 }
@@ -66,9 +66,9 @@ describe("mutateSystem structure preservation", () => {
   });
 
   it("passes symmetry through value-equal, untouched", () => {
-    const base = system({ symmetry: { order: 4, axis: "y" } });
+    const base = system({ symmetry: { order: 4, plane: "xz" } });
     const mutant = mutateSystem(base, mulberry32(5));
-    expect(mutant.symmetry).toEqual({ order: 4, axis: "y" });
+    expect(mutant.symmetry).toEqual({ order: 4, plane: "xz" });
   });
 
   it("keeps a null finalTransform null", () => {
@@ -177,7 +177,7 @@ describe("mutateSystem flatness", () => {
   it("keeps a non-flat (4D) base system non-flat", () => {
     const base = system({
       transforms: doubleRotation(),
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     });
     expect(systemIsFlat(base.transforms)).toBe(false);
     const mutant = mutateSystem(base, mulberry32(17));
@@ -245,7 +245,7 @@ describe("mutateSystem wildcard structural kick", () => {
     // regardless of which map the seed picks.
     const base = system({
       transforms: doubleRotation(),
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     });
     const mutant = mutateSystem(base, mulberry32(2), { wildcard: true });
 
@@ -380,7 +380,7 @@ describe("mutateSystem colorIndex/colorSpeed", () => {
         },
       ],
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     });
   });
 });

@@ -26,14 +26,14 @@ import type {
 import {
   COLOR_MODES,
   FOUR_D_COLOR_MODES,
-  SYMMETRY_AXES,
+  SYMMETRY_PLANES,
   VARIATION_TYPES,
 } from "../fractal/types";
 import type {
   ColorMode,
   FourDColorMode,
-  SymmetryAxis,
   SymmetryParams,
+  SymmetryPlane,
   Transform,
   Variation,
   VariationType,
@@ -45,7 +45,7 @@ import {
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_PALETTE,
-  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_PLANE,
   MAX_W_ANGLE,
   MAX_W_POSITION,
   MAX_W_SCALE,
@@ -288,8 +288,21 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
  */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
 
-/** Exact set of valid SymmetryAxis values. */
-const VALID_SYMMETRY_AXES = new Set<string>(SYMMETRY_AXES);
+/** Exact set of valid SymmetryPlane values. */
+const VALID_SYMMETRY_PLANES = new Set<string>(SYMMETRY_PLANES);
+
+/**
+ * The pre-fr-q0h6 `symmetry.axis` vocabulary, as the plane each axis named
+ * from the other side (a simple rotation ABOUT an axis is a rotation IN the
+ * orthogonal plane). Every mapping is the SAME matrix, same sign — see
+ * `chaos-game.ts`'s `symmetryRotation` — so a legacy document decoded through
+ * this table renders bit-identically to what it always rendered.
+ */
+const LEGACY_AXIS_PLANE: Readonly<Record<string, SymmetryPlane>> = {
+  x: "yz",
+  y: "xz",
+  z: "xy",
+};
 
 /** Exact set of valid SurfaceColorSource values (fr-7jlk). */
 const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
@@ -822,7 +835,7 @@ function decodeSolidParams(
  * default, while a present-but-malformed (non-finite) value rejects the
  * whole scene. Finite values are clamped into range.
  *
- * `colorSource` is a QUIET-fallback enum, like `symmetry.axis` (see
+ * `colorSource` is a QUIET-fallback enum, like `symmetry.plane` (see
  * {@link decodeSymmetry}): an unrecognized or missing value decodes to
  * `"transform"` rather than rejecting the scene — a base-color choice is
  * cosmetic, not worth losing an otherwise-valid shared link over.
@@ -868,7 +881,7 @@ function decodeSurfaceParams(
   }
 
   // colorSource (fr-7jlk): unknown or missing quietly becomes "transform" —
-  // the same quiet-fallback contract as symmetry.axis just below.
+  // the same quiet-fallback contract as symmetry.plane just below.
   const colorSource: SurfaceColorSource =
     typeof s.colorSource === "string" &&
     VALID_SURFACE_COLOR_SOURCES.has(s.colorSource)
@@ -904,32 +917,63 @@ function decodeSurfaceParams(
  * malformed field never rejects the whole scene: `order` coerces and clamps
  * (an out-of-range or non-finite request quietly becomes the nearest valid
  * value, the same spirit as `weight`'s clamp) and an unrecognized/missing
- * `axis` quietly becomes `"y"` (the same quiet-fallback `flame.paletteId`
+ * `plane` quietly becomes `"xz"` (the same quiet-fallback `flame.paletteId`
  * uses for an unknown enum, generalized to this field too) — a kaleidoscope
- * order/axis is cosmetic geometry, not a value worth losing an otherwise-
+ * order/plane is cosmetic geometry, not a value worth losing an otherwise-
  * valid shared link over. An absent block, or a block missing a field,
- * defaults quietly to `{ order: 1, axis: "y" }`; order 1 is the
+ * defaults quietly to `{ order: 1, plane: "xz" }`; order 1 is the
  * unreplicated system.
+ *
+ * ## Reading a pre-fr-q0h6 document
+ *
+ * The field was `axis: "x" | "y" | "z"` before fr-q0h6. This decoder is the
+ * migration, and it is the ONLY one — nothing downstream ever sees an `axis`
+ * again:
+ *
+ * - a modern `plane` wins whenever it is present and recognized;
+ * - otherwise a legacy `axis` maps through {@link LEGACY_AXIS_PLANE}
+ *   (`x → yz`, `y → xz`, `z → xy` — the same rotation named the other way,
+ *   matrix for matrix, so nothing a legacy document renders moves);
+ * - anything else — an unknown plane, an unknown axis, neither field at all
+ *   — falls back to `"xz"`, which is exactly what the legacy default axis
+ *   `"y"` meant, so the fallback did not change meaning either.
+ *
+ * `twist` (fr-q0h6, the second angle of a 4D double rotation) coerces to an
+ * integer and clamps into `[0, order)` against the ALREADY-clamped order,
+ * defaulting to `0` — a simple rotation, which is what every document
+ * written before this field existed decodes to.
  */
 function decodeSymmetry(raw: unknown): SymmetryParams {
   if (typeof raw !== "object" || raw === null) {
-    return { order: PARAM.symmetryOrder.default, axis: DEFAULT_SYMMETRY_AXIS };
+    return {
+      order: PARAM.symmetryOrder.default,
+      plane: DEFAULT_SYMMETRY_PLANE,
+    };
   }
   const s = raw as Record<string, unknown>;
 
   let order = PARAM.symmetryOrder.default;
   const rawOrder = Number(s.order);
   if (Number.isFinite(rawOrder)) order = rawOrder;
+  order = clampToSpec(PARAM.symmetryOrder, order);
 
-  const axis: SymmetryAxis =
-    typeof s.axis === "string" && VALID_SYMMETRY_AXES.has(s.axis)
-      ? (s.axis as SymmetryAxis)
-      : DEFAULT_SYMMETRY_AXIS;
+  const plane: SymmetryPlane =
+    typeof s.plane === "string" && VALID_SYMMETRY_PLANES.has(s.plane)
+      ? (s.plane as SymmetryPlane)
+      : typeof s.axis === "string" && s.axis in LEGACY_AXIS_PLANE
+        ? LEGACY_AXIS_PLANE[s.axis]
+        : DEFAULT_SYMMETRY_PLANE;
 
-  return {
-    order: clampToSpec(PARAM.symmetryOrder, order),
-    axis,
-  };
+  // Copy k's second angle is 2*pi*k*twist/order, so `order` twists is a full
+  // turn and the value is only ever meaningful below it; clamped (not
+  // reduced) for the same reason `order` is — a nonsense request becomes the
+  // nearest sane value rather than costing the scene.
+  let twist = PARAM.symmetryTwist.default;
+  const rawTwist = Number(s.twist);
+  if (Number.isFinite(rawTwist)) twist = rawTwist;
+  twist = Math.min(clampToSpec(PARAM.symmetryTwist, twist), order - 1);
+
+  return twist === 0 ? { order, plane } : { order, plane, twist };
 }
 
 /**
@@ -1245,7 +1289,11 @@ export function encodeScene(s: SceneSnapshot): string {
     },
     symmetry: {
       order: Math.round(s.symmetry.order),
-      axis: s.symmetry.axis,
+      plane: s.symmetry.plane,
+      // Written only when nonzero (fr-q0h6), so an ordinary simple-rotation
+      // document's encoded form gains nothing but the renamed field — the
+      // same absent-means-identity discipline as finalTransform/weight/shear.
+      ...(s.symmetry.twist ? { twist: Math.round(s.symmetry.twist) } : {}),
     },
     // Always written, like symmetry — a small, always-present setting, not a
     // per-transform optional feature like finalTransform/weight/shear.
@@ -1330,7 +1378,9 @@ export function encodeScene(s: SceneSnapshot): string {
  * top level, falling back to {@link DEFAULT_RAMP_PALETTE} instead. Likewise,
  * symmetry.order clamps to [{@link MIN_SYMMETRY_ORDER},
  * {@link MAX_SYMMETRY_ORDER}] and an
- * unrecognized/missing symmetry.axis falls back to `"y"` — neither ever
+ * unrecognized/missing symmetry.plane falls back to `"xz"` (the plane the
+ * legacy default axis `"y"` named), and symmetry.twist clamps into
+ * `[0, order)` — none of these ever
  * rejects the scene on malformed input (see {@link decodeSymmetry}). Same
  * spirit for glowBrightness: it clamps to [{@link MIN_GLOW_BRIGHTNESS},
  * {@link MAX_GLOW_BRIGHTNESS}], falling back to
@@ -1338,7 +1388,7 @@ export function encodeScene(s: SceneSnapshot): string {
  * rejecting the scene. colorGamma (fr-8sk) follows the identical contract:
  * clamps to [{@link MIN_COLOR_GAMMA}, {@link MAX_COLOR_GAMMA}], falling back
  * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
- * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.axis
+ * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.plane
  * and shares its quiet fallback: absent or unrecognized values become
  * {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade (fr-3e0)
  * follows showGuides's boolean-coercion contract: any truthy value is on,
@@ -1478,7 +1528,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     colorGamma = clampToSpec(PARAM.colorGamma, colorGamma);
 
     // fourDColor (fr-d47): how the 4D projection colors points. Same quiet-
-    // fallback contract as symmetry.axis / flame.paletteId, NOT colorMode's
+    // fallback contract as symmetry.plane / flame.paletteId, NOT colorMode's
     // strict reject: an absent or unrecognized value falls back to the
     // default blue/orange ramp — a 4D palette choice is cosmetic, not worth
     // losing an otherwise-valid shared link over.

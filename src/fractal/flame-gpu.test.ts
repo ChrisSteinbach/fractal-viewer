@@ -44,7 +44,7 @@ function baseSpec(
   return {
     transforms: makeTransforms(2),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     palette: "legacy",
     ...overrides,
   };
@@ -137,7 +137,7 @@ describe("packGpuSystem slot layout (byte-layout pinning)", () => {
     return {
       transforms: LAYOUT_TRANSFORMS,
       finalTransform: LAYOUT_FINAL,
-      symmetry: { order: 2, axis: "y" },
+      symmetry: { order: 2, plane: "xz" },
       palette: "legacy",
     };
   }
@@ -344,7 +344,7 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
         weight: 1,
       },
     ];
-    const symmetry: SymmetryParams = { order: 3, axis: "z" };
+    const symmetry: SymmetryParams = { order: 3, plane: "xy" };
     const prepared = prepareChaosGame(transforms, null, symmetry);
     const packed = packGpuSystem({
       transforms,
@@ -395,7 +395,7 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
         scale: [0.5, 0.5, 0.5],
       },
     ];
-    const symmetry: SymmetryParams = { order: 2, axis: "x" };
+    const symmetry: SymmetryParams = { order: 2, plane: "yz" };
     const prepared = prepareChaosGame(transforms, null, symmetry);
     const packed = packGpuSystem({
       transforms,
@@ -557,7 +557,7 @@ describe("packGpuSystem color slots", () => {
       },
     ];
     const packed = packGpuSystem(
-      baseSpec({ transforms, symmetry: { order: 3, axis: "y" } }),
+      baseSpec({ transforms, symmetry: { order: 3, plane: "xz" } }),
     );
     expect(packed.transformCount).toBe(6);
     const f32 = new Float32Array(packed.slots);

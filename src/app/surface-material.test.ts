@@ -16,8 +16,8 @@ import type { Vec3 } from "../fractal/types";
  * The tracer itself is verified by running the app, but its kaleidoscope
  * PACKER is pinned here (fr-x029). The descent sweeps symmetry sectors
  * instead of expanding them into map slots, so the whole kaleidoscope
- * crosses into GLSL as three scalars — an order, an AXIS CODE, and one
- * (cos, sin) step. An axis mapped to the wrong int, or a step of the wrong
+ * crosses into GLSL as three scalars — an order, a PLANE CODE, and one
+ * (cos, sin) step. A plane mapped to the wrong int, or a step of the wrong
  * sign, rotates the estimator's sectors away from the plotted attractor and
  * is invisible until someone loads a kaleidoscope in a browser. These are
  * pure uniform reads: no GL context involved.
@@ -46,7 +46,7 @@ function de3(
   maps: SurfaceDEMap[],
   symmetry: SurfaceDE["symmetry"] = {
     order: 1,
-    axis: "y",
+    plane: "xz",
     stepCos: 1,
     stepSin: 0,
   },
@@ -96,19 +96,19 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     expect(center.z).toBe(0);
   });
 
-  it("codes the x axis as 0, y as 1 and z as 2", () => {
+  it("codes the yz plane as 0, xz as 1 and xy as 2 — the frozen pre-fr-q0h6 axis codes", () => {
     const material = createSurfaceMaterial();
-    for (const [axis, code] of [
-      ["x", 0],
-      ["y", 1],
-      ["z", 2],
+    for (const [plane, code] of [
+      ["yz", 0],
+      ["xz", 1],
+      ["xy", 2],
     ] as const) {
       setSurfaceSystem(
         material,
-        de3([map3()], { order: 5, axis, stepCos: 1, stepSin: 0 }),
+        de3([map3()], { order: 5, plane, stepCos: 1, stepSin: 0 }),
         [black],
       );
-      expect(material.uniforms.uSymAxis.value).toBe(code);
+      expect(material.uniforms.uSymPlane.value).toBe(code);
     }
   });
 
@@ -116,7 +116,7 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     const material = createSurfaceMaterial();
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 6,
-      axis: "z",
+      plane: "xy",
     });
     setSurfaceSystem(material, de, [black, black, black, black]);
     const u = material.uniforms;
@@ -138,7 +138,7 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     // 4 base maps x order 9 = 36 copies: refused outright before fr-x029.
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 9,
-      axis: "y",
+      plane: "xz",
     });
     expect(() =>
       setSurfaceSystem(material, de, [black, black, black, black]),

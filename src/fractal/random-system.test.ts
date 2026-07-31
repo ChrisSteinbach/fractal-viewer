@@ -316,7 +316,7 @@ describe("randomSystem's symmetry roll (fr-d61)", () => {
       expect(Number.isInteger(symmetry.order)).toBe(true);
       expect(symmetry.order).toBeGreaterThanOrEqual(2);
       expect(symmetry.order).toBeLessThanOrEqual(6);
-      expect(symmetry.axis).toBe("y");
+      expect(symmetry.plane).toBe("xz");
     }
     const fraction = symmetryHits / flatSystemsSeen;
     // Generous band around the 0.3 design target (SYMMETRY_PROBABILITY):

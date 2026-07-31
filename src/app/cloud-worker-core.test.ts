@@ -28,7 +28,7 @@ function cloudRequest(overrides: Partial<CloudRequest> = {}): CloudRequest {
     finalTransform: null,
     numPoints: 500,
     seed: 42,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     fourD: false,
     colorMode: "transform",
     colorGamma: 1,
@@ -169,7 +169,7 @@ describe("generateCloud 3D", () => {
   });
 
   it("passes symmetry through to runChaosGame, differing from the order-1 output", () => {
-    const req = cloudRequest({ symmetry: { order: 3, axis: "y" } });
+    const req = cloudRequest({ symmetry: { order: 3, plane: "xz" } });
     const result = as3D(generateCloud(req));
 
     const direct = runChaosGame(

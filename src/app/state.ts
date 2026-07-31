@@ -18,7 +18,7 @@ import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
   FourDColorMode,
-  SymmetryAxis,
+  SymmetryPlane,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
@@ -674,7 +674,26 @@ export const MIN_SYMMETRY_ORDER = 1;
  * ceiling than the slider widget does.
  */
 export const MAX_SYMMETRY_ORDER = 12;
-export const DEFAULT_SYMMETRY_AXIS: SymmetryAxis = "y";
+/**
+ * The plane the kaleidoscope turns in by default (fr-q0h6). `"xz"` is the
+ * pre-fr-q0h6 default axis `"y"` under the new vocabulary — the SAME rotation
+ * (see `chaos-game.ts`'s `symmetryRotation`), so this default did not move
+ * when the field was renamed. Both the fresh-session default AND
+ * `persist.ts`'s decode fallback for an absent/unrecognized `plane` (and for
+ * an unrecognized legacy `axis`).
+ */
+export const DEFAULT_SYMMETRY_PLANE: SymmetryPlane = "xz";
+/**
+ * The kaleidoscope's default TWIST (fr-q0h6): `0`, a simple rotation — what
+ * every document written before the field existed means, and the only value
+ * the 3D paths ever see. Ranges `[0, MAX_SYMMETRY_ORDER - 1]` because copy
+ * `k`'s second angle is `2π·k·twist / order`, so `order` twists is a full
+ * turn and only values below the order are distinct; `persist.ts` tightens
+ * the ceiling to the DOCUMENT's own order on decode.
+ */
+export const DEFAULT_SYMMETRY_TWIST = 0;
+export const MIN_SYMMETRY_TWIST = 0;
+export const MAX_SYMMETRY_TWIST = MAX_SYMMETRY_ORDER - 1;
 /**
  * Manual brightness multiplier for the glow render style (fr-8b1), applied on
  * top of the density-adaptive auto-exposure computed every frame in
@@ -927,6 +946,12 @@ export const PARAM = defineParams({
     default: DEFAULT_SYMMETRY_ORDER,
     round: true,
   },
+  symmetryTwist: {
+    min: MIN_SYMMETRY_TWIST,
+    max: MAX_SYMMETRY_TWIST,
+    default: DEFAULT_SYMMETRY_TWIST,
+    round: true,
+  },
   glowBrightness: {
     min: MIN_GLOW_BRIGHTNESS,
     max: MAX_GLOW_BRIGHTNESS,
@@ -981,7 +1006,7 @@ export function initialState(panelOpen: boolean): AppState {
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     },
     renderMode: "points",
-    symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
+    symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
 }
@@ -1084,7 +1109,7 @@ export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
  * Set how the 4D projection colors points (fr-d47). Not clamped — it is an
  * enum (see `fractal/types.ts`'s `FourDColorMode`), and the UI only offers
  * valid values (persistence validates untrusted input in `decodeScene`), like
- * {@link setSymmetryAxis}.
+ * {@link setSymmetryPlane}.
  */
 export function setFourDColor(
   state: AppState,
@@ -1640,7 +1665,11 @@ export function setCustomPaletteStops(
  * panel's gating, and the legend can never drift apart.
  */
 export function systemIsNonFlat(state: AppState): boolean {
-  return systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null);
+  return systemPartsAreNonFlat(
+    state.transforms,
+    state.finalTransform ?? null,
+    state.symmetry,
+  );
 }
 
 /**
@@ -1660,13 +1689,43 @@ export function setSymmetryOrder(state: AppState, order: number): AppState {
 }
 
 /**
- * Set the axis the kaleidoscope's copies rotate about. Not clamped — it is
- * an enum (see `fractal/types.ts`'s `SymmetryAxis`), and the UI only offers
+ * Set the plane the kaleidoscope's copies rotate in. Not clamped — it is
+ * an enum (see `fractal/types.ts`'s `SymmetryPlane`), and the UI only offers
  * valid values (persistence validates untrusted input in `decodeScene`), like
  * {@link setFlamePaletteId}.
+ *
+ * A `w`-plane makes the system 4D (`affine4.ts`'s `symmetryIsNonFlat`), so
+ * this is one of the few settings that can flip {@link systemIsNonFlat}
+ * without touching a transform.
  */
-export function setSymmetryAxis(state: AppState, axis: SymmetryAxis): AppState {
-  return { ...state, symmetry: { ...state.symmetry, axis } };
+export function setSymmetryPlane(
+  state: AppState,
+  plane: SymmetryPlane,
+): AppState {
+  return { ...state, symmetry: { ...state.symmetry, plane } };
+}
+
+/**
+ * Set the kaleidoscope's twist — the second angle of a 4D double rotation, in
+ * sectors (see `SymmetryParams.twist`). Rounded and clamped like
+ * {@link setSymmetryOrder}, then additionally capped at the CURRENT order's
+ * last distinct value (`order - 1`): `order` twists is a full turn, so higher
+ * values only restate lower ones. `0` — a simple rotation — is stored as an
+ * ABSENT field, so a system that never twists keeps the exact object shape it
+ * had before the field existed.
+ *
+ * Like {@link setSymmetryPlane}, a nonzero twist makes the system 4D.
+ */
+export function setSymmetryTwist(state: AppState, twist: number): AppState {
+  const clamped = Math.min(
+    clampToSpec(PARAM.symmetryTwist, twist),
+    state.symmetry.order - 1,
+  );
+  const { twist: _dropped, ...rest } = state.symmetry;
+  return {
+    ...state,
+    symmetry: clamped === 0 ? rest : { ...rest, twist: clamped },
+  };
 }
 
 /**

@@ -36,7 +36,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
-  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
@@ -141,7 +141,7 @@ function baseSnapshot(): SceneSnapshot {
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
     },
-    symmetry: { order: DEFAULT_SYMMETRY_ORDER, axis: DEFAULT_SYMMETRY_AXIS },
+    symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
   };
 }
@@ -1682,7 +1682,7 @@ describe("decodeScene solid params", () => {
 // Surface render params (fr-7jlk — same "absent defaults quietly, malformed
 // numeric field rejects" contract as the flame/solid blocks above; unlike
 // those numeric fields, `colorSource` is a QUIET-fallback enum, like
-// symmetry.axis, not a reject-the-scene field)
+// symmetry.plane, not a reject-the-scene field)
 // ---------------------------------------------------------------------------
 
 describe("decodeScene surface params", () => {
@@ -2351,10 +2351,10 @@ describe("decodeScene symmetry", () => {
   it("round-trips a non-default order and axis", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
-      symmetry: { order: 6, axis: "z" },
+      symmetry: { order: 6, plane: "xy" },
     };
     const result = decodeScene(encodeScene(s));
-    expect(result!.symmetry).toEqual({ order: 6, axis: "z" });
+    expect(result!.symmetry).toEqual({ order: 6, plane: "xy" });
   });
 
   it("defaults quietly when the symmetry block is absent entirely", () => {
@@ -2373,7 +2373,7 @@ describe("decodeScene symmetry", () => {
     expect(result).not.toBeNull();
     expect(result!.symmetry).toEqual({
       order: DEFAULT_SYMMETRY_ORDER,
-      axis: DEFAULT_SYMMETRY_AXIS,
+      plane: DEFAULT_SYMMETRY_PLANE,
     });
   });
 
@@ -2382,7 +2382,7 @@ describe("decodeScene symmetry", () => {
     // geometry, not corruption — the scene survives.
     const raw = {
       ...baseSnapshot(),
-      symmetry: { order: "nonsense", axis: "y" },
+      symmetry: { order: "nonsense", plane: "xz" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
@@ -2390,31 +2390,110 @@ describe("decodeScene symmetry", () => {
   });
 
   it("clamps an out-of-range order above the maximum down to the max", () => {
-    const raw = { ...baseSnapshot(), symmetry: { order: 999, axis: "y" } };
+    const raw = { ...baseSnapshot(), symmetry: { order: 999, plane: "xz" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.symmetry.order).toBe(MAX_SYMMETRY_ORDER);
   });
 
   it("clamps an out-of-range order below the minimum up to the min", () => {
-    const raw = { ...baseSnapshot(), symmetry: { order: -5, axis: "y" } };
+    const raw = { ...baseSnapshot(), symmetry: { order: -5, plane: "xz" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.symmetry.order).toBe(MIN_SYMMETRY_ORDER);
   });
 
   it("rounds a fractional order to the nearest integer", () => {
-    const raw = { ...baseSnapshot(), symmetry: { order: 4.6, axis: "y" } };
+    const raw = { ...baseSnapshot(), symmetry: { order: 4.6, plane: "xz" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.symmetry.order).toBe(5);
   });
 
-  it("falls back to y for an unrecognized axis instead of rejecting the scene", () => {
+  it("falls back to xz for an unrecognized legacy axis instead of rejecting the scene", () => {
     // Unlike every other block, an unknown axis does NOT nuke the whole
     // scene — mirrors flame.paletteId's fallback behavior.
     const raw = { ...baseSnapshot(), symmetry: { order: 3, axis: "w" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result).not.toBeNull();
-    expect(result!.symmetry.axis).toBe("y");
+    expect(result!.symmetry.plane).toBe("xz");
     expect(result!.transforms).toHaveLength(1);
+  });
+
+  // ——— fr-q0h6: the axis -> plane migration ———
+
+  it("reads a legacy axis: y document as the xz plane", () => {
+    const raw = { ...baseSnapshot(), symmetry: { order: 3, axis: "y" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry).toEqual({ order: 3, plane: "xz" });
+  });
+
+  it("reads the other two legacy axes as the planes they named", () => {
+    for (const [axis, plane] of [
+      ["x", "yz"],
+      ["z", "xy"],
+    ] as const) {
+      const raw = { ...baseSnapshot(), symmetry: { order: 4, axis } };
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(result!.symmetry.plane).toBe(plane);
+    }
+  });
+
+  it("prefers a modern plane over a legacy axis when both are present", () => {
+    const raw = {
+      ...baseSnapshot(),
+      symmetry: { order: 3, plane: "yz", axis: "z" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.plane).toBe("yz");
+  });
+
+  it("falls back to xz for an unrecognized plane", () => {
+    const raw = { ...baseSnapshot(), symmetry: { order: 3, plane: "qq" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.plane).toBe("xz");
+  });
+
+  it("defaults a document carrying no symmetry block at all", () => {
+    const raw = { ...baseSnapshot() };
+    delete (raw as Record<string, unknown>).symmetry;
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry).toEqual({
+      order: DEFAULT_SYMMETRY_ORDER,
+      plane: DEFAULT_SYMMETRY_PLANE,
+    });
+  });
+
+  it("round-trips a nonzero twist", () => {
+    const decoded = decodeScene(
+      encodeScene({
+        ...baseSnapshot(),
+        symmetry: { order: 5, plane: "yz", twist: 2 },
+      }),
+    );
+    expect(decoded!.symmetry).toEqual({ order: 5, plane: "yz", twist: 2 });
+  });
+
+  it("writes plane, and omits twist from the encoded form when it is zero", () => {
+    const payload = decodePayload(
+      encodeScene({ ...baseSnapshot(), symmetry: { order: 5, plane: "yz" } }),
+    );
+    expect(payload.symmetry).toEqual({ order: 5, plane: "yz" });
+  });
+
+  it("clamps a twist into [0, order) and coerces it to an integer", () => {
+    const raw = {
+      ...baseSnapshot(),
+      symmetry: { order: 4, plane: "xz", twist: 9.6 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.symmetry.twist).toBe(3);
+  });
+
+  it("drops a malformed twist to a simple rotation", () => {
+    const raw = {
+      ...baseSnapshot(),
+      symmetry: { order: 4, plane: "xz", twist: "nope" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect("twist" in result!.symmetry).toBe(false);
   });
 });
 
@@ -2557,7 +2636,7 @@ describe("decodeScene fourDColor", () => {
   });
 
   it("falls back to wBlueOrange for an unrecognized fourDColor instead of rejecting the scene", () => {
-    // Like symmetry.axis / flame.paletteId, an unrecognized value does NOT
+    // Like symmetry.plane / flame.paletteId, an unrecognized value does NOT
     // nuke the whole scene — a 4D palette choice is cosmetic, not worth
     // losing an otherwise-valid shared link over.
     const raw = { ...baseSnapshot(), fourDColor: "neon" };

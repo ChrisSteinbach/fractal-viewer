@@ -28,6 +28,7 @@ import {
 } from "../fractal/voxel";
 import type { VoxelBounds, VoxelGrid } from "../fractal/voxel";
 import { accumulateVoxels4, computeVoxelBounds4 } from "../fractal/voxel-4d";
+import { planeHasW } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
@@ -47,7 +48,7 @@ import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
   FourDColorMode,
-  SymmetryAxis,
+  SymmetryPlane,
   Transform,
   Transform4,
   Vec3,
@@ -115,7 +116,7 @@ export type VoxelWorkerCommand =
       maxVoxels?: number;
       /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
       order: number;
-      axis: SymmetryAxis;
+      plane: SymmetryPlane;
       /**
        * Optional 4D solid render (fr-4wd, mirroring the flame's fr-5b3):
        * present when the explorer was in 4D mode when the render was
@@ -179,7 +180,7 @@ export type VoxelWorkerCommand =
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setPalette"; palette: PaletteSpec }
-  | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
+  | { type: "setSymmetry"; order: number; plane: SymmetryPlane };
 
 /** Worker → main thread. */
 export type VoxelWorkerEvent =
@@ -448,7 +449,7 @@ export class VoxelWorkerSession {
    * order slider fires "input" continuously while dragging, and can report
    * the same integer step's value more than once in a row). */
   private symmetryOrder = 1;
-  private symmetryAxis: SymmetryAxis = "y";
+  private symmetryPlane: SymmetryPlane = "xz";
 
   /** The effective (post-budget-clamp) resolution the grid was created at. */
   private effectiveResolution = 0;
@@ -520,7 +521,7 @@ export class VoxelWorkerSession {
         this.setPalette(command.palette);
         break;
       case "setSymmetry":
-        this.setSymmetry(command.order, command.axis);
+        this.setSymmetry(command.order, command.plane);
         break;
     }
   }
@@ -529,13 +530,20 @@ export class VoxelWorkerSession {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.symmetryOrder = cmd.order;
-    this.symmetryAxis = cmd.axis;
+    this.symmetryPlane = cmd.plane;
     // Built unconditionally, mirroring flame-worker-core's own `start`: even
     // in a 4D session these still arrive (the main thread always sends
     // both) but are simply unused.
     this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
-      order: cmd.order,
-      axis: cmd.axis,
+      // A 4D kaleidoscope (fr-q0h6: a w-plane, or a twist — which does not
+      // cross this 3D-only wire at all) has no 3D expansion, and authoring
+      // one makes the SYSTEM non-flat, so this unconditionally-built 3D
+      // prepare goes unread exactly as it does in any other 4D session (the
+      // same fact `setSymmetry`'s is4D guard rests on). Ask for the identity
+      // rather than a rotation matrix that does not exist — `cmd.fourD` can't
+      // decide it here, since it trails the arrival of the 4D cloud.
+      order: planeHasW(cmd.plane) ? 1 : cmd.order,
+      plane: cmd.plane,
     });
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
@@ -659,7 +667,7 @@ export class VoxelWorkerSession {
     this.startAccumulation();
   }
 
-  private setSymmetry(order: number, axis: SymmetryAxis): void {
+  private setSymmetry(order: number, plane: SymmetryPlane): void {
     if (!this.hasGeometry()) return; // no active session yet.
     // Symmetry (fr-6im) is 3D-only: the UI hides the control while a 4D
     // session is active, but guard here too rather than trust that. A 4D
@@ -667,13 +675,13 @@ export class VoxelWorkerSession {
     // there is nothing for this command to actually do — mirrors
     // flame-worker-core's own `setSymmetry` guard.
     if (this.is4D) return;
-    if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
+    if (order === this.symmetryOrder && plane === this.symmetryPlane) return;
     this.symmetryOrder = order;
-    this.symmetryAxis = axis;
+    this.symmetryPlane = plane;
     this.prepared = prepareChaosGame(
       this.baseTransforms,
       this.baseFinalTransform,
-      { order, axis },
+      { order, plane },
     );
     // Symmetry changes the attractor's spatial extent — a kaleidoscope can be
     // considerably wider than the base system — so the bounds pilot has to

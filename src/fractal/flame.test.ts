@@ -857,7 +857,7 @@ describe("accumulateFlame with symmetry (fr-6im)", () => {
     };
     const prepared = prepareChaosGame(transforms, finalTransform, {
       order: 4,
-      axis: "y",
+      plane: "xz",
     });
     const palette = transformColors(transforms.length);
     const width = 64;
@@ -943,7 +943,7 @@ describe("accumulateFlame with symmetry (fr-6im)", () => {
     };
     const prepared = prepareChaosGame(transforms, finalTransform, {
       order: 3,
-      axis: "z",
+      plane: "xy",
     });
     const palette = transformColors(transforms.length);
     const colorLUT = buildPaletteLUT("spectrum");
@@ -1044,7 +1044,7 @@ describe("accumulateFlame with symmetry (fr-6im)", () => {
       palette,
     );
     const withSymmetry = accumulateFlame(
-      prepareChaosGame(transforms, null, { order: 5, axis: "x" }),
+      prepareChaosGame(transforms, null, { order: 5, plane: "yz" }),
       ORTHOGRAPHIC,
       width,
       height,
@@ -1083,7 +1083,7 @@ describe("accumulateFlame with symmetry (fr-6im)", () => {
     ];
     const prepared = prepareChaosGame(transforms, null, {
       order: 3,
-      axis: "y",
+      plane: "xz",
     });
     const palette = transformColors(transforms.length);
     const colorLUT = buildPaletteLUT("spectrum");

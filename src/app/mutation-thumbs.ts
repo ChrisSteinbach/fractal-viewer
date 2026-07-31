@@ -27,7 +27,11 @@
  * style — which is what keeps a busy fractal legible at only
  * {@link THUMB_POINTS} points and a handful of dozen pixels across.
  */
-import { systemIsFlat, toTransform4 } from "../fractal/affine4";
+import {
+  symmetryIsNonFlat,
+  systemIsFlat,
+  toTransform4,
+} from "../fractal/affine4";
 import { runChaosGame } from "../fractal/chaos-game";
 import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import { transformColors } from "../fractal/color";
@@ -103,7 +107,13 @@ export function renderSystemThumb(
   let transformIndices: Uint8Array;
   let count: number;
 
-  if (systemIsFlat(transforms)) {
+  // Routed on the SYSTEM's flatness, symmetry included (fr-q0h6): a
+  // kaleidoscope turning in a w-plane (or carrying a twist) is 4D structure
+  // with no 3D expansion, so it belongs on the 4D branch below exactly as a
+  // transform's w block does. Every pre-fr-q0h6 symmetry is w-free and
+  // twist-free, so `symmetryIsNonFlat` is false for all of them and this
+  // routes identically to the bare `systemIsFlat` test it replaces.
+  if (systemIsFlat(transforms) && !symmetryIsNonFlat(symmetry)) {
     const result = runChaosGame(
       transforms,
       THUMB_POINTS,

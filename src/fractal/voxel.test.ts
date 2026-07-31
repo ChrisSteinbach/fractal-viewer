@@ -629,7 +629,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
       rotation: [0, 0.3, 0],
       scale: [1, 1, 1],
     };
-    const symmetry = { order: 4 as const, axis: "y" as const };
+    const symmetry = { order: 4 as const, plane: "xz" as const };
     const palette = transformColors(transforms.length);
     const bounds = unitishBounds(3);
     const size = 8;
@@ -695,7 +695,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
       rotation: [0, 0.3, 0],
       scale: [1, 1, 1],
     };
-    const symmetry = { order: 4 as const, axis: "y" as const };
+    const symmetry = { order: 4 as const, plane: "xz" as const };
     const palette = transformColors(transforms.length);
     const colorLUT = buildPaletteLUT("ember");
     if (!colorLUT) throw new Error("ember should have a LUT");
@@ -783,7 +783,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
       palette,
     );
     const withSymmetry = accumulateVoxels(
-      prepareChaosGame(transforms, null, { order: 5, axis: "x" }),
+      prepareChaosGame(transforms, null, { order: 5, plane: "yz" }),
       createVoxelGrid(size, bounds),
       iterations,
       mulberry32(1),

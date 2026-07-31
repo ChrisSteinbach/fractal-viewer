@@ -16,7 +16,7 @@ function system(overrides: Partial<MorphSystem> = {}): MorphSystem {
   return {
     transforms: [transform()],
     finalTransform: null,
-    symmetry: { order: 1, axis: "x" },
+    symmetry: { order: 1, plane: "yz" },
     ...overrides,
   };
 }

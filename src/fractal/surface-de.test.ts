@@ -32,7 +32,7 @@ import {
   sierpinskiTetrahedron,
 } from "./presets";
 import { mulberry32 } from "./rng";
-import type { SymmetryAxis, Transform, Vec3 } from "./types";
+import type { SymmetryPlane, Transform, Vec3 } from "./types";
 
 /** Minimal contracting map for the eligibility-table tests below, merged
  * with each test's own overrides. */
@@ -107,10 +107,10 @@ function mulMat3(a: number[], b: number[]): number[] {
  * the sweep landed.
  */
 function expandedReference(de: SurfaceDE): SurfaceDE {
-  const { order, axis } = de.symmetry;
+  const { order, plane } = de.symmetry;
   const maps: SurfaceDEMap[] = [];
   for (let k = 0; k < order; k++) {
-    const rot = symmetryRotation(axis, (2 * Math.PI * k) / order);
+    const rot = symmetryRotation(plane, (2 * Math.PI * k) / order);
     const rotT = transpose3(rot);
     for (const base of de.maps) {
       const [gx, gy, gz] = base.bnbDir;
@@ -139,18 +139,18 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
   return {
     ...de,
     maps,
-    symmetry: { order: 1, axis, stepCos: 1, stepSin: 0 },
+    symmetry: { order: 1, plane, stepCos: 1, stepSin: 0 },
   };
 }
 
 /** Walk `p` through `k` sector steps exactly as the descent's sweep does. */
 function sectorPoint(de: SurfaceDE, k: number, p: Vec3): Vec3 {
-  const { axis, stepCos: c, stepSin: s } = de.symmetry;
+  const { plane, stepCos: c, stepSin: s } = de.symmetry;
   let out: Vec3 = [p[0], p[1], p[2]];
   for (let n = 0; n < k; n++) {
     const [x, y, z] = out;
-    if (axis === "x") out = [x, c * y + s * z, -s * y + c * z];
-    else if (axis === "y") out = [c * x - s * z, y, s * x + c * z];
+    if (plane === "yz") out = [x, c * y + s * z, -s * y + c * z];
+    else if (plane === "xz") out = [c * x - s * z, y, s * x + c * z];
     else out = [c * x + s * y, -s * x + c * y, z];
   }
   return out;
@@ -532,18 +532,43 @@ describe("estimateDistance beam descent (fr-v6yg)", () => {
 describe("buildSurfaceDE with kaleidoscope symmetry", () => {
   it("keeps one map slot per base transform instead of expanding by order", () => {
     const transforms = sierpinskiTetrahedron();
-    const de = buildSurfaceDE(transforms, null, { order: 3, axis: "z" });
+    const de = buildSurfaceDE(transforms, null, { order: 3, plane: "xy" });
     expect(de.maps).toHaveLength(4);
     expect(de.maps.map((m) => m.baseIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("refuses a 4D kaleidoscope rather than descending it as a 3D one (fr-q0h6)", () => {
+    // A w-plane (or a twist) makes the SYSTEM 4D, so it routes to
+    // surface-de-4d.ts; reaching this 3D builder with one is a routing bug.
+    expect(() =>
+      buildSurfaceDE(sierpinskiTetrahedron(), null, { order: 3, plane: "zw" }),
+    ).toThrow(/no 3D descent/);
+    expect(() =>
+      buildSurfaceDE(sierpinskiTetrahedron(), null, {
+        order: 3,
+        plane: "xy",
+        twist: 1,
+      }),
+    ).toThrow(/no 3D descent/);
+  });
+
+  it("still accepts a w-plane at order 1, which turns nothing", () => {
+    // Order 1 is the identity for any plane, so such a document is flat and
+    // must keep working — the sweep is a single unrotated pass.
+    const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
+      order: 1,
+      plane: "zw",
+    });
+    expect(de.symmetry.order).toBe(1);
   });
 
   it("carries the kaleidoscope as sector data the descent sweeps", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 3,
-      axis: "z",
+      plane: "xy",
     });
     expect(de.symmetry.order).toBe(3);
-    expect(de.symmetry.axis).toBe("z");
+    expect(de.symmetry.plane).toBe("xy");
     expect(de.symmetry.stepCos).toBeCloseTo(Math.cos((2 * Math.PI) / 3), 12);
     expect(de.symmetry.stepSin).toBeCloseTo(Math.sin((2 * Math.PI) / 3), 12);
   });
@@ -559,7 +584,7 @@ describe("buildSurfaceDE with kaleidoscope symmetry", () => {
     // swept set has to be the plotted set.
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 200,
-      axis: "y",
+      plane: "xz",
     });
     expect(de.symmetry.order).toBe(64);
   });
@@ -568,7 +593,7 @@ describe("buildSurfaceDE with kaleidoscope symmetry", () => {
 describe("estimateDistance with kaleidoscope symmetry", () => {
   it("stays within 0.08 of the symmetric attractor for points sampled on it", () => {
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -607,7 +632,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
   it("reproduces the expansion's estimate for an order-3 z kaleidoscope", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 3,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     expect(de.maps).toHaveLength(4);
@@ -625,7 +650,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
   it("reproduces the expansion's estimate for an order-5 y kaleidoscope", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 5,
-      axis: "y",
+      plane: "xz",
     });
     const reference = expandedReference(de);
     const rng = mulberry32(99);
@@ -641,7 +666,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
   it("reproduces the expansion's estimate for an order-6 x kaleidoscope", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 6,
-      axis: "x",
+      plane: "yz",
     });
     const reference = expandedReference(de);
     const rng = mulberry32(2024);
@@ -660,7 +685,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
     // chain reaches different branches than the production beam does.
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 5,
-      axis: "z",
+      plane: "xy",
     });
     const narrow = { ...de, beamWidth: 1 } as const;
     const reference = { ...expandedReference(de), beamWidth: 1 } as const;
@@ -674,16 +699,16 @@ describe("sector sweep agreement with the symmetry expansion", () => {
     }
   });
 
-  it("never over-estimates the expansion's bound on any supported axis", () => {
+  it("never over-estimates the expansion's bound in any supported plane", () => {
     // The direction that matters: an estimate ABOVE the reference's is a
     // march that steps through a surface. Asserted one-sided across every
-    // axis and a spread of orders, on both estimators.
-    const table: { order: number; axis: SymmetryAxis }[] = [
-      { order: 2, axis: "x" },
-      { order: 3, axis: "y" },
-      { order: 4, axis: "z" },
-      { order: 5, axis: "x" },
-      { order: 6, axis: "y" },
+    // plane and a spread of orders, on both estimators.
+    const table: { order: number; plane: SymmetryPlane }[] = [
+      { order: 2, plane: "yz" },
+      { order: 3, plane: "xz" },
+      { order: 4, plane: "xy" },
+      { order: 5, plane: "yz" },
+      { order: 6, plane: "xz" },
     ];
     for (const symmetry of table) {
       const de = buildSurfaceDE(sierpinskiTetrahedron(), null, symmetry);
@@ -708,7 +733,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
   it("agrees with the expansion on hit decisions at march epsilons", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 5,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     const rng = mulberry32(808);
@@ -735,7 +760,7 @@ describe("sector sweep agreement with the symmetry expansion", () => {
     for (const blend of [0, 0.35, 1]) {
       const de = buildSurfaceDE(transforms, null, {
         order: 4,
-        axis: "y",
+        plane: "xz",
         blend,
       });
       expect(de.symmetry.order).toBe(4);
@@ -764,10 +789,10 @@ describe("sector sweep agreement with the symmetry expansion", () => {
     // pinned here so the "blend never moves the swept geometry" claim above
     // cannot be misread as "blend is inert".
     const transforms = sierpinskiTetrahedron();
-    const full = buildSurfaceDE(transforms, null, { order: 4, axis: "y" });
+    const full = buildSurfaceDE(transforms, null, { order: 4, plane: "xz" });
     const faded = buildSurfaceDE(transforms, null, {
       order: 4,
-      axis: "y",
+      plane: "xz",
       blend: 0,
     });
     expect(faded.boundingRadius).not.toBeCloseTo(full.boundingRadius, 3);
@@ -790,7 +815,7 @@ describe("sector sweep at the wedge boundaries", () => {
     const order = 6;
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     for (let k = 0; k < order; k++) {
@@ -811,7 +836,7 @@ describe("sector sweep at the wedge boundaries", () => {
     const order = 6;
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     for (let k = 0; k < order; k++) {
@@ -832,7 +857,7 @@ describe("sector sweep at the wedge boundaries", () => {
     const order = 8;
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     const rng = mulberry32(4242);
@@ -854,7 +879,7 @@ describe("sector sweep at the wedge boundaries", () => {
     // and the candidate ladder sees exact ties. Validity is what has to
     // hold there — never a bound above the true distance — and it does.
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 7, axis: "z" } as const;
+    const symmetry = { order: 7, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -887,7 +912,7 @@ describe("sector sweep at the wedge boundaries", () => {
     // the phenomenon observable regardless of how tight the fit gets).
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 5,
-      axis: "z",
+      plane: "xy",
     });
     const reference = expandedReference(de);
     const zLo = de.boundCenter[2] - de.boundingRadius;
@@ -910,7 +935,7 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
   // budget: the class the mode used to refuse outright. The sweep carries it
   // in 4 slots, so the only question left is whether the estimate is any
   // good.
-  const beyondCap = { order: 8, axis: "z" } as const;
+  const beyondCap = { order: 8, plane: "xy" } as const;
 
   it("builds in base-sized slots where the expansion would have overflowed", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, beyondCap);
@@ -1020,7 +1045,7 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
 describe("estimateDistanceRefined cutoff on a swept kaleidoscope", () => {
   // fr-55r5's contract has to survive the sweep: the early-out exits sit
   // inside the loop the sector sweep now wraps.
-  const symmetry = { order: 8, axis: "z" } as const;
+  const symmetry = { order: 8, plane: "xy" } as const;
 
   it("returns the full-descent value whenever the result clears the cutoff", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, symmetry);
@@ -1197,7 +1222,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     // The 1e-6 tolerance is the deep-descent fp-noise allowance the beam
     // tests above document.
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const R = de.boundingRadius;
     const cloud = runChaosGame(
@@ -1520,7 +1545,7 @@ describe("estimateDistanceRefined early-out cutoff", () => {
 
   it("holds both properties on a kaleidoscope-expanded sierpinski, where every level folds rotated copies too", () => {
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -1784,7 +1809,7 @@ describe("estimateDistanceRefined sphere-floor pin (fr-zkt2)", () => {
 
   it("keeps both cutoff properties on a kaleidoscope-swept sierpinski when probes are biased outside the bounding sphere", () => {
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -1868,7 +1893,7 @@ describe("SurfaceDEMap inverse contract", () => {
     // order, where the expansion baked them into one composed matrix.
     const transforms = sierpinskiTetrahedron();
     const order = 3;
-    const de = buildSurfaceDE(transforms, null, { order, axis: "z" });
+    const de = buildSurfaceDE(transforms, null, { order, plane: "xy" });
     const point: Vec3 = [0.3, -0.2, 0.5];
 
     for (const [baseIndex, k] of [
@@ -2439,7 +2464,7 @@ describe("spherefold mid-branch guard (fr-5rvk)", () => {
 describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)", () => {
   it("stays a sound bound under a kaleidoscope sweep combined with pure-fold maps", () => {
     const transforms = pureBoxfoldPair();
-    const symmetry = { order: 3, axis: "y" } as const;
+    const symmetry = { order: 3, plane: "xz" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -2653,7 +2678,7 @@ describe("descendFold frontier kept set (fr-2v0y)", () => {
 
   it("agrees slot-for-slot with the replay under a kaleidoscope sweep over a pure-boxfold pair", () => {
     const transforms = pureBoxfoldPair();
-    const symmetry = { order: 3, axis: "y" } as const;
+    const symmetry = { order: 3, plane: "xz" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
@@ -2943,7 +2968,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
 
   it("stays sound under a kaleidoscope sweep beneath the lens", () => {
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const final = boxfoldFinal();
     const de = buildSurfaceDE(transforms, final, symmetry);
     const cloud = runChaosGame(

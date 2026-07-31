@@ -29,7 +29,7 @@ describe("renderSystemThumb", () => {
     const system: MorphSystem = {
       transforms: sierpinskiTetrahedron(),
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(1));
@@ -45,7 +45,7 @@ describe("renderSystemThumb", () => {
     const system: MorphSystem = {
       transforms: mengerSponge(),
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const first = renderSystemThumb(system, size, mulberry32(7));
@@ -59,7 +59,7 @@ describe("renderSystemThumb", () => {
     const system: MorphSystem = {
       transforms: sierpinskiTetrahedron(),
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(3));
@@ -72,12 +72,12 @@ describe("renderSystemThumb", () => {
     const a: MorphSystem = {
       transforms: sierpinskiTetrahedron(),
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
     const b: MorphSystem = {
       transforms: mengerSponge(),
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const bufferA = renderSystemThumb(a, size, mulberry32(11));
@@ -110,7 +110,7 @@ describe("renderSystemThumb", () => {
         },
       ],
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(5));
@@ -139,7 +139,7 @@ describe("renderSystemThumb", () => {
     const system: MorphSystem = {
       transforms,
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(9));
@@ -160,7 +160,7 @@ describe("renderSystemThumb", () => {
         },
       ],
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(13));
@@ -179,7 +179,7 @@ describe("renderSystemThumb", () => {
     const system: MorphSystem = {
       transforms: [],
       finalTransform: null,
-      symmetry: { order: 1, axis: "y" },
+      symmetry: { order: 1, plane: "xz" },
     };
 
     const buffer = renderSystemThumb(system, size, mulberry32(2));
