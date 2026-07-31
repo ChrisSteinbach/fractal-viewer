@@ -1831,7 +1831,7 @@ export class Ui {
     // status blocks (fr-374p: a mode container may hold only accordion
     // sections) rather than inside #explorerControls.
     if (nonFlat && state.symmetry.order > 1) {
-      this.symmetryInactiveNote.textContent = `Kaleidoscope symmetry (${state.symmetry.order}-fold about ${state.symmetry.axis.toUpperCase()}) is inactive in 4D — the setting is kept and returns when the system is 3D again.`;
+      this.symmetryInactiveNote.textContent = `Kaleidoscope symmetry (${state.symmetry.order}-fold in ${state.symmetry.plane.toUpperCase()}) is inactive in 4D — the setting is kept and returns when the system is 3D again.`;
       this.symmetryInactiveNote.classList.remove("hidden");
     } else {
       this.symmetryInactiveNote.textContent = "";

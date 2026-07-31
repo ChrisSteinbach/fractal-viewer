@@ -1,4 +1,8 @@
-import type { ColorMode, FourDColorMode, SymmetryAxis } from "../fractal/types";
+import type {
+  ColorMode,
+  FourDColorMode,
+  SymmetryPlane,
+} from "../fractal/types";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import type { PaletteSelection } from "../fractal/palette";
@@ -47,7 +51,7 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
-  setSymmetryAxis,
+  setSymmetryPlane,
   setSymmetryOrder,
 } from "./state";
 import type {
@@ -291,14 +295,14 @@ export function applyScalarControl(
 
 /** The symmetry controls reshape the live point cloud (and any active
  * flame/solid render), not just a render-only setting — shared by the order
- * slider and the axis select, whose handlers were identical twins before the
+ * slider and the plane select, whose handlers were identical twins before the
  * table (fr-dig). */
 const symmetryEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
   const command = {
     type: "setSymmetry",
     order: state.symmetry.order,
-    axis: state.symmetry.axis,
+    plane: state.symmetry.plane,
   } as const;
   fx.postFlame(command);
   fx.postVoxel(command);
@@ -549,11 +553,14 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: symmetryEffect,
   },
   {
+    // The plane the kaleidoscope turns in (fr-q0h6, renamed from the axis it
+    // turned about). Still `view: "flat"` and still offering only the three
+    // w-free planes — the w-planes arrive with the 4D kaleidoscope itself.
     kind: "select",
-    id: "symmetryAxis",
+    id: "symmetryPlane",
     view: "flat",
-    read: (s) => s.symmetry.axis,
-    apply: (s, raw) => setSymmetryAxis(s, raw as SymmetryAxis),
+    read: (s) => s.symmetry.plane,
+    apply: (s, raw) => setSymmetryPlane(s, raw as SymmetryPlane),
     effect: symmetryEffect,
   },
   // ——— 4D look (non-flat systems only; the rows live in the Appearance

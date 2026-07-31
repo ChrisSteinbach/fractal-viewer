@@ -8,9 +8,11 @@ import {
   prepareChaosGame,
   runChaosGame,
   stepOrbit,
+  symmetryRotation,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
+import { rotationMatrix4 } from "./affine4";
 import { composeVariations } from "./variations";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
@@ -368,7 +370,7 @@ describe("prepareChaosGame flame color resolution (fr-hiyu)", () => {
   it("keys colorIndex/colorSpeed on baseTransformCount, not the symmetry-expanded transformCount", () => {
     const prepared = prepareChaosGame(makeTransforms(2), null, {
       order: 4,
-      axis: "y",
+      plane: "xz",
     });
     expect(prepared.transformCount).toBe(8);
     expect(prepared.baseTransformCount).toBe(2);
@@ -485,6 +487,117 @@ describe("driving stepOrbit/plotPoint by hand", () => {
   });
 });
 
+describe("symmetryRotation", () => {
+  /** The upper-left 3x3 of a row-major 4x4 — the block a 4D rotation shares
+   * with its 3D counterpart. */
+  function upper3(m: number[]): number[] {
+    return [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
+  }
+
+  /** ENTRY-FOR-ENTRY equality, `-0` and `+0` counted equal: several of these
+   * matrices carry a `-0` where the other carries `+0` (`-c*f` with `f = 0`
+   * against a literal `0`), which is the same number for every purpose that
+   * matters here — no arithmetic can tell them apart downstream. */
+  function expectSameMatrix(actual: number[], expected: number[]): void {
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i] + 0).toBe(expected[i] + 0);
+    }
+  }
+
+  const ANGLES = [0.3, 1.1, 2.4, -0.7, (2 * Math.PI) / 5];
+
+  // ——— fr-q0h6: the axis -> plane migration is BIT-EXACT ———
+  //
+  // Every pre-fr-q0h6 document names an axis; persist.ts maps it to a plane.
+  // These three pin that the plane produces the SAME matrix the axis did, so
+  // no existing document's kaleidoscope moves by so much as an ulp.
+
+  it("reproduces the legacy x axis exactly as the yz plane", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(
+        symmetryRotation("yz", angle),
+        rotationMatrixXYZ(angle, 0, 0),
+      );
+    }
+  });
+
+  it("reproduces the legacy y axis — the default — exactly as the xz plane", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(
+        symmetryRotation("xz", angle),
+        rotationMatrixXYZ(0, angle, 0),
+      );
+    }
+  });
+
+  it("reproduces the legacy z axis exactly as the xy plane", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(
+        symmetryRotation("xy", angle),
+        rotationMatrixXYZ(0, 0, angle),
+      );
+    }
+  });
+
+  // ——— The one sign that is NOT affine4.ts's R_ab ———
+  //
+  // A trap for the 4D generator this vocabulary exists for. "Rotation about
+  // +y" carries +z toward +x, i.e. R_zx = R_xz(-angle) — which is exactly the
+  // `xz: -ry` embedTransform3 already writes. Pinned in both directions so a
+  // later phase cannot flip either convention silently.
+
+  it("agrees with rotationMatrix4's yz and xy factors sign for sign", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(
+        symmetryRotation("yz", angle),
+        upper3(rotationMatrix4({ yz: angle })),
+      );
+      expectSameMatrix(
+        symmetryRotation("xy", angle),
+        upper3(rotationMatrix4({ xy: angle })),
+      );
+    }
+  });
+
+  it("is rotationMatrix4's xz factor at the NEGATED angle, not the same one", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(
+        symmetryRotation("xz", angle),
+        upper3(rotationMatrix4({ xz: -angle })),
+      );
+    }
+    // And genuinely differs from the un-negated factor, so the assertion
+    // above is not vacuously true at some symmetric angle.
+    const off = symmetryRotation("xz", 1.1);
+    const same = upper3(rotationMatrix4({ xz: 1.1 }));
+    expect(off[2]).toBeCloseTo(-same[2], 12);
+    expect(off[2]).not.toBeCloseTo(same[2], 6);
+  });
+
+  it("refuses a w-plane, which has no 3x3", () => {
+    for (const plane of ["xw", "yw", "zw"] as const) {
+      expect(() => symmetryRotation(plane, 0.5)).toThrow(/mixes w/);
+    }
+  });
+});
+
+describe("prepareChaosGame symmetry planes", () => {
+  it("refuses to expand a w-plane kaleidoscope, which has no 3x3 (fr-q0h6)", () => {
+    expect(() =>
+      prepareChaosGame(makeTransforms(2), null, { order: 3, plane: "yw" }),
+    ).toThrow(/mixes w/);
+  });
+
+  it("accepts a w-plane at order 1, where no copy is ever rotated", () => {
+    const prepared = prepareChaosGame(makeTransforms(2), null, {
+      order: 1,
+      plane: "yw",
+    });
+    expect(prepared.postRotations).toEqual([null, null]);
+  });
+});
+
 describe("effectiveSymmetryOrder", () => {
   it("returns the requested order unchanged when it fits", () => {
     expect(effectiveSymmetryOrder(5, 10)).toBe(5);
@@ -539,7 +652,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
     const withDefault = prepareChaosGame(twoMaps);
     const explicitOrderOne = prepareChaosGame(twoMaps, null, {
       order: 1,
-      axis: "z",
+      plane: "xy",
     });
     expect(explicitOrderOne.transformCount).toBe(withDefault.transformCount);
     expect(explicitOrderOne.baseTransformCount).toBe(
@@ -551,7 +664,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
   });
 
   it("expands to order * n slots, k-major, sharing each copy's base affine/variation by reference", () => {
-    const prepared = prepareChaosGame(twoMaps, null, { order: 3, axis: "y" });
+    const prepared = prepareChaosGame(twoMaps, null, { order: 3, plane: "xz" });
     expect(prepared.transformCount).toBe(6);
     expect(prepared.baseTransformCount).toBe(2);
     // Copy 0 (slots 0-1) is always unrotated.
@@ -571,7 +684,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
     expect(effectiveSymmetryOrder(20, 20)).toBe(12);
     const prepared = prepareChaosGame(transforms, null, {
       order: 20,
-      axis: "y",
+      plane: "xz",
     });
     expect(prepared.transformCount).toBe(12 * 20);
   });
@@ -581,7 +694,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
     // [4,5]=k2. Force the single pickIndex draw onto slot 3 (k=1, base map
     // 1 — the one with a variation) via a fixed rng() in [3/6, 4/6).
     const order = 3;
-    const prepared = prepareChaosGame(twoMaps, null, { order, axis: "y" });
+    const prepared = prepareChaosGame(twoMaps, null, { order, plane: "xz" });
     const rng = fixedRng(0.55); // floor(0.55 * 6) === 3
     const x = 0.2;
     const y = -0.15;
@@ -608,7 +721,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
 
   it("rotates a pure-affine slot's output too — post is never baked into the affine", () => {
     const order = 4;
-    const prepared = prepareChaosGame(twoMaps, null, { order, axis: "z" });
+    const prepared = prepareChaosGame(twoMaps, null, { order, plane: "xy" });
     // transformCount = 8: slots [0,1]=k0 [2,3]=k1 [4,5]=k2 [6,7]=k3. Force
     // slot 6 (k=3, base map 0 — pure affine) via rng() in [6/8, 7/8).
     const rng = fixedRng(0.8);
@@ -650,7 +763,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
     ];
     const result = runChaosGame(weighted, 8000, mulberry32(5), null, {
       order: 4,
-      axis: "y",
+      plane: "xz",
     });
     let zero = 0;
     for (const idx of result.transformIndices) if (idx === 0) zero++;
@@ -664,7 +777,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
   it("keeps every recorded transform index a valid BASE index, never an expanded slot", () => {
     const prepared = prepareChaosGame(sierpinskiTetrahedron(), null, {
       order: 5,
-      axis: "x",
+      plane: "yz",
     });
     const rng = mulberry32(21);
     let x = 0.1;
@@ -691,7 +804,7 @@ describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
       3000,
       mulberry32(3),
       null,
-      { order: 6, axis: "y" },
+      { order: 6, plane: "xz" },
     );
     for (const v of symmetric.positions) expect(Number.isFinite(v)).toBe(true);
     expect(Array.from(symmetric.positions)).not.toEqual(
@@ -879,7 +992,7 @@ describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => 
         variations: [{ type: "swirl", weight: 1 }],
       },
     ];
-    const symmetry = { order: 3, axis: "y" } as const;
+    const symmetry = { order: 3, plane: "xz" } as const;
     const numPoints = 700;
     const seed = 21;
 
@@ -1106,7 +1219,7 @@ describe("symmetry blend (fr-eykn)", () => {
   function negativeXShare(order: number, blend?: number): number {
     const result = runChaosGame(offAxisSystem(), 6000, mulberry32(11), null, {
       order,
-      axis: "y",
+      plane: "xz",
       ...(blend === undefined ? {} : { blend }),
     });
     let negative = 0;
@@ -1119,7 +1232,7 @@ describe("symmetry blend (fr-eykn)", () => {
   it("renders blend 0 bit-identically to order 1", () => {
     const faded = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
       order: 5,
-      axis: "y",
+      plane: "xz",
       blend: 0,
     });
     const orderOne = runChaosGame(offAxisSystem(), 3000, mulberry32(3));
@@ -1131,12 +1244,12 @@ describe("symmetry blend (fr-eykn)", () => {
   it("renders blend 1 identically to an absent blend — the full kaleidoscope", () => {
     const explicit = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
       order: 5,
-      axis: "y",
+      plane: "xz",
       blend: 1,
     });
     const absent = runChaosGame(offAxisSystem(), 3000, mulberry32(3), null, {
       order: 5,
-      axis: "y",
+      plane: "xz",
     });
     expect(explicit.positions).toEqual(absent.positions);
     expect(explicit.transformIndices).toEqual(absent.transformIndices);
@@ -1153,18 +1266,18 @@ describe("symmetry blend (fr-eykn)", () => {
   it("clamps blend outside 0..1 instead of corrupting the weight table", () => {
     const over = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
       order: 3,
-      axis: "y",
+      plane: "xz",
       blend: 7,
     });
     const full = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
       order: 3,
-      axis: "y",
+      plane: "xz",
     });
     expect(over.positions).toEqual(full.positions);
 
     const under = runChaosGame(offAxisSystem(), 2000, mulberry32(7), null, {
       order: 3,
-      axis: "y",
+      plane: "xz",
       blend: -2,
     });
     const off = runChaosGame(offAxisSystem(), 2000, mulberry32(7));

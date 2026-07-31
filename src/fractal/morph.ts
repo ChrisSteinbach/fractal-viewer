@@ -34,7 +34,7 @@
  *   never flips `systemIsFlat` mid-morph for no visual gain.
  * - Negative scale lerps straight through zero on purpose: the momentary
  *   planar collapse is the correct mirror fold-through, not a case to dodge.
- * - `symmetry`'s order/axis are discrete and cannot interpolate, but its
+ * - `symmetry`'s order/plane/twist are discrete and cannot interpolate, but its
  *   VISUAL WEIGHT can (fr-eykn): when the two sides' kaleidoscopes differ,
  *   `a`'s fades out over the first half (`blend` 1 -> 0, see
  *   `SymmetryParams.blend`) and `b`'s fades in over the second — continuous
@@ -330,8 +330,8 @@ function identityTransform(id: number): Transform {
 }
 
 /**
- * `symmetry` for a morph (fr-eykn): a matching pair (same order and axis —
- * `blend` deliberately ignored, it's a morph artifact, not an identity)
+ * `symmetry` for a morph (fr-eykn): a matching pair (same order, plane and
+ * twist — `blend` deliberately ignored, it's a morph artifact, not an identity)
  * rides through untouched; a differing pair CROSSFADES — the departing
  * kaleidoscope's rotated copies thin to nothing over the first half
  * (`blend`: own strength -> 0), the arriving one's grow from nothing over
@@ -348,6 +348,12 @@ function identityTransform(id: number): Transform {
  * unread — and fading it anyway would leave a parked (non-rendering)
  * kaleidoscope with a decayed `blend` for no visual gain. Same reasoning as
  * {@link lerpW}'s flat-flat guard, one field over.
+ *
+ * `twist` (fr-q0h6) rides each side's own branch untouched — a crossfade
+ * fades one kaleidoscope OUT and the other IN, so each half is still that
+ * side's own group, twist included. It joins the identity comparison for the
+ * same reason `plane` does: two kaleidoscopes of equal order that turn
+ * differently are not the same kaleidoscope.
  */
 function lerpSymmetry(
   a: SymmetryParams,
@@ -356,19 +362,31 @@ function lerpSymmetry(
   nonFlat: boolean,
 ): SymmetryParams {
   if (nonFlat) return t < 0.5 ? a : b;
-  if (a.order === b.order && a.axis === b.axis) {
+  if (
+    a.order === b.order &&
+    a.plane === b.plane &&
+    (a.twist ?? 0) === (b.twist ?? 0)
+  ) {
     return t < 0.5 ? a : b;
   }
   if (t < 0.5) {
     if (a.order === 1) return a;
     return {
       order: a.order,
-      axis: a.axis,
+      plane: a.plane,
+      // Absent stays absent (never an explicit `undefined`), so a plain
+      // simple-rotation sample is the same object shape it always was.
+      ...(a.twist ? { twist: a.twist } : {}),
       blend: (a.blend ?? 1) * (1 - 2 * t),
     };
   }
   if (b.order === 1) return b;
-  return { order: b.order, axis: b.axis, blend: (b.blend ?? 1) * (2 * t - 1) };
+  return {
+    order: b.order,
+    plane: b.plane,
+    ...(b.twist ? { twist: b.twist } : {}),
+    blend: (b.blend ?? 1) * (2 * t - 1),
+  };
 }
 
 /**
@@ -432,7 +450,24 @@ export function lerpSystem(
     b.finalTransform,
     t,
   );
-  const nonFlat = systemPartsAreNonFlat(transforms, finalTransform);
+  // The interpolated PARTS' flatness — deliberately not the sample's full
+  // flatness, which since fr-q0h6 also depends on the symmetry
+  // (`symmetryIsNonFlat`). NO_SYMMETRY is the identity for that predicate, so
+  // this is exactly the value this line computed before fr-q0h6, and the
+  // fr-5gxn guard below keeps behaving exactly as it did.
+  //
+  // TODO(fr-q0h6 P6): the ordering hazard. `lerpSymmetry` consumes flatness,
+  // and flatness now consumes symmetry — feeding the widened predicate's
+  // result in here would be circular (symmetry -> flatness -> symmetry).
+  // Phase 6 removes the fr-5gxn `nonFlat` guard from `lerpSymmetry` (a 4D
+  // kaleidoscope renders by then, so there is nothing to skip the crossfade
+  // for), at which point `lerpSymmetry` takes no flatness at all and the
+  // cycle dissolves — symmetry is simply computed, and any caller that wants
+  // the SAMPLE's flatness derives it from the finished parts + symmetry.
+  const nonFlat = systemPartsAreNonFlat(transforms, finalTransform, {
+    order: 1,
+    plane: "xz",
+  });
   return {
     transforms,
     finalTransform,

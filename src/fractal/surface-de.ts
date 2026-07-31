@@ -1,10 +1,10 @@
 import { composeAffine } from "./affine";
-import { isFlatTransform } from "./affine4";
+import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { effectiveSymmetryOrder, runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import type {
-  SymmetryAxis,
   SymmetryParams,
+  SymmetryPlane,
   Transform,
   Variation,
   Vec3,
@@ -138,14 +138,14 @@ import type {
  *
  * SYMMETRY: SECTOR SWEEP, NOT A WEDGE FOLD (fr-x029). A kaleidoscope of
  * order `n` replicates every base map `f_i` into `n` copies `g_k . f_i`,
- * where `g_k` is the rotation by `2*pi*k/n` about `symmetry.axis` applied
+ * where `g_k` is the rotation by `2*pi*k/n` in `symmetry.plane` applied
  * AFTER the base map (`chaos-game.ts`'s `postRotations`). Those copies used
  * to be MATERIALISED: {@link buildSurfaceDE} emitted `n * m` composed
  * inverse maps and the GLSL mirror carried them in fixed 24-slot uniform
  * arrays, so high orders on multi-map systems were gated out of the mode
  * entirely by a slot budget. {@link SurfaceDE.maps} now holds the `m` BASE
  * inverses only, and the descent walks the `n` sectors by rotating each
- * chain point ONE step (`Rot_axis(-2*pi/n)`, the copy rotation's transpose)
+ * chain point ONE step (`Rot_plane(-2*pi/n)`, the copy rotation's transpose)
  * per sector — `inv(M_i) . Rot_k^T . q` re-associated as
  * `inv(M_i) . (Rot_k^T . q)`. The uniform arrays are base-sized for ANY
  * order, while the candidate set, its enumeration ORDER (sector-major,
@@ -526,7 +526,7 @@ const FOLD_VARIATION_TYPES: ReadonlySet<string> = new Set([
 
 /** `prepareChaosGame`'s no-symmetry default, duplicated here because it is
  * private there; order 1 is the identity expansion for any axis. */
-const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
+const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 
 /** Smallest/largest singular value of a map's linear part. */
 export interface MapSigmas {
@@ -614,8 +614,9 @@ export interface SurfaceSymmetry {
    * transform list, exactly as `prepareChaosGame` clamps it. `1` = no
    * kaleidoscope, and the descent then skips sector rotation entirely. */
   order: number;
-  /** Axis the sectors turn about. */
-  axis: SymmetryAxis;
+  /** Coordinate plane the sectors turn in — one of the three w-free planes
+   * (`xy`/`xz`/`yz`), the only ones this 3D descent has a rotation for. */
+  plane: SymmetryPlane;
   /** `cos`/`sin` of ONE forward sector step `2*pi/order`. The descent walks
    * sectors incrementally off these — no per-sector transcendental, and the
    * GLSL mirror gets the pair as a single `vec2` uniform instead of an
@@ -623,6 +624,36 @@ export interface SurfaceSymmetry {
   stepCos: number;
   stepSin: number;
 }
+
+/**
+ * {@link SurfaceSymmetry.plane} as the shader int both surface backends
+ * branch on — the GLSL `uSymPlane` uniform (`surface-material.ts`) and the
+ * WGSL `params.symPlane` word (`surface-de-gpu.ts`), which is why it lives
+ * here rather than in either of them: one numeric contract, one definition,
+ * no drift.
+ *
+ * The three codes are FROZEN at the values the pre-fr-q0h6 axis codes had
+ * (`x = 0`, `y = 1`, `z = 2`), which is the same statement one vocabulary
+ * over — "about x" is "in the yz plane" — so a migrated document packs the
+ * identical byte and neither shader body's branch order moved.
+ *
+ * The `w`-plane entries exist only because ORDER 1 is the identity for any
+ * plane, so a document may legitimately REMEMBER a `w`-plane while its
+ * kaleidoscope is off and still be flat (`affine4.ts`'s `symmetryIsNonFlat`);
+ * such a `SurfaceDE` reaches the shaders with `order: 1`, where the sweep is
+ * a single unrotated pass and this code is never read. At any order that
+ * would read it, {@link buildSurfaceDE} has already thrown.
+ */
+export const SYM_PLANE_CODE: Readonly<
+  Record<SurfaceSymmetry["plane"], number>
+> = {
+  yz: 0,
+  xz: 1,
+  xy: 2,
+  xw: 0,
+  yw: 1,
+  zw: 2,
+};
 
 /** Everything the marcher needs, precomputed: the wire format the GLSL
  * uniforms are packed from. */
@@ -923,18 +954,25 @@ function inverse3(m: number[]): number[] {
 
 /**
  * One sector step of the kaleidoscope sweep (fr-x029): turn `(x, y, z)`
- * BACKWARD by `2*pi/order` about `axis`, writing into `out` so the descent's
+ * BACKWARD by `2*pi/order` in `plane`, writing into `out` so the descent's
  * hot loop never allocates.
  *
- * This is the TRANSPOSE of `chaos-game.ts`'s `symmetryRotation(axis, +step)`
+ * This is the TRANSPOSE of `chaos-game.ts`'s `symmetryRotation(plane, +step)`
  * — copy `k` rotates forward after its base map, so descending through that
  * copy un-rotates first — and `symmetryRotation` is `rotationMatrixXYZ` with
- * a single nonzero Euler angle, i.e. the plain right-handed rotation about
- * that axis. Transposing flips the sign of `sin` alone, which is why one
- * `(cos, sin)` pair of the FORWARD step drives every sector.
+ * a single nonzero Euler angle, i.e. the plain right-handed rotation fixing
+ * the plane's complementary axis. Transposing flips the sign of `sin` alone,
+ * which is why one `(cos, sin)` pair of the FORWARD step drives every sector.
+ *
+ * The three branches are the fr-q0h6 rename of the legacy `x`/`y`/`z` axis
+ * branches — `yz`/`xz`/`xy` in that same order, same arithmetic — so the
+ * swept group is bit-identically the one this always swept. A `w`-plane never
+ * reaches here (the 3D surface descent is only built for flat systems); the
+ * `else` keeps the pre-fr-q0h6 branchless shape rather than paying a throw in
+ * the descent's hot loop, and {@link buildSurfaceDE} rejects one up front.
  */
 function stepSector(
-  axis: SymmetryAxis,
+  plane: SymmetryPlane,
   c: number,
   s: number,
   x: number,
@@ -942,11 +980,11 @@ function stepSector(
   z: number,
   out: number[],
 ): void {
-  if (axis === "x") {
+  if (plane === "yz") {
     out[0] = x;
     out[1] = c * y + s * z;
     out[2] = -s * y + c * z;
-  } else if (axis === "y") {
+  } else if (plane === "xz") {
     out[0] = c * x - s * z;
     out[1] = y;
     out[2] = s * x + c * z;
@@ -977,6 +1015,16 @@ export function buildSurfaceDE(
   if (analysis.status === "ineligible") {
     throw new Error(
       `system has no surface distance estimator: ${analysis.reasons.join("; ")}`,
+    );
+  }
+  // A w-plane (or a twist) makes the SYSTEM 4D — `affine4.ts`'s
+  // `symmetryIsNonFlat` — so it routes to `surface-de-4d.ts`, never here.
+  // Loud, like the over-cap map count the material refuses: reaching this
+  // 3D builder with a 4D kaleidoscope is a routing bug, not a degrade.
+  if (symmetryIsNonFlat(symmetry)) {
+    throw new Error(
+      `surface-de: a 4D kaleidoscope (plane "${symmetry.plane}", twist ` +
+        `${symmetry.twist ?? 0}) has no 3D descent — route to the 4D tracer`,
     );
   }
 
@@ -1055,17 +1103,19 @@ export function buildSurfaceDE(
   // the same convention, so the choice is a pure tightness win and no
   // system can regress to a looser bound than it shipped with.
   const fit = fitEnclosingBall(probe.positions);
-  // A kaleidoscope attractor is exactly n-fold symmetric about the axis,
-  // so its true smallest enclosing ball is CENTERED ON the axis — but the
-  // raw fit of a finite sample lands epsilon off it, and that epsilon
-  // breaks the descent's exact on-axis sector ties (the sweep tests pin
-  // that tie behavior). Project the center onto the axis and re-measure
+  // A kaleidoscope attractor is exactly n-fold symmetric about the FIXED
+  // AXIS of its rotation plane — the one coordinate the plane leaves alone
+  // (plane `yz` fixes x, `xz` fixes y, `xy` fixes z) — so its true smallest
+  // enclosing ball is CENTERED ON that axis. But the raw fit of a finite
+  // sample lands epsilon off it, and that epsilon breaks the descent's exact
+  // on-axis sector ties (the sweep tests pin that tie behavior). Project the
+  // center onto the axis (zero the two IN-PLANE coordinates) and re-measure
   // the enclosing radius with one exact pass over the cloud.
   if (order > 1) {
-    if (symmetry.axis === "x") {
+    if (symmetry.plane === "yz") {
       fit.center[1] = 0;
       fit.center[2] = 0;
-    } else if (symmetry.axis === "y") {
+    } else if (symmetry.plane === "xz") {
       fit.center[0] = 0;
       fit.center[2] = 0;
     } else {
@@ -1192,7 +1242,7 @@ export function buildSurfaceDE(
     maps,
     symmetry: {
       order,
-      axis: symmetry.axis,
+      plane: symmetry.plane,
       // Exact at order 1 (cos 2pi = 1, sin 2pi = 0 only up to rounding), so
       // the descent's order-1 short circuit is what actually guarantees
       // bit-identical non-kaleidoscope behavior, not these two numbers.
@@ -1462,7 +1512,7 @@ function refinedCertValue(
   r: number,
   childScale: number,
 ): number {
-  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const { order, plane, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
   let inner = Infinity;
@@ -1471,7 +1521,7 @@ function refinedCertValue(
   let sz = iz;
   for (let k = 0; k < order; k++) {
     if (k > 0) {
-      stepSector(axis, stepCos, stepSin, sx, sy, sz, CERT_SWEEP);
+      stepSector(plane, stepCos, stepSin, sx, sy, sz, CERT_SWEEP);
       sx = CERT_SWEEP[0];
       sy = CERT_SWEEP[1];
       sz = CERT_SWEEP[2];
@@ -1720,7 +1770,7 @@ function descend(
   // Kaleidoscope sectors swept around the base maps (fr-x029) — `order` 1
   // leaves every `k > 0` branch below dead, so a system without symmetry
   // runs the pre-sweep arithmetic unchanged.
-  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const { order, plane, stepCos, stepSin } = de.symmetry;
   const sweep = [0, 0, 0];
 
   const R = de.boundingRadius;
@@ -1856,7 +1906,7 @@ function descend(
       let sZ = pZ;
       for (let k = 0; k < order; k++) {
         if (k > 0) {
-          stepSector(axis, stepCos, stepSin, sX, sY, sZ, sweep);
+          stepSector(plane, stepCos, stepSin, sX, sY, sZ, sweep);
           sX = sweep[0];
           sY = sweep[1];
           sZ = sweep[2];
@@ -2308,7 +2358,7 @@ function descendFold(
     finalScale = f.sigmaMin;
   }
 
-  const { order, axis, stepCos, stepSin } = de.symmetry;
+  const { order, plane, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
@@ -2346,7 +2396,7 @@ function descendFold(
       const invPScale = 1 / pScale;
       for (let k = 0; k < order; k++) {
         if (k > 0) {
-          stepSector(axis, stepCos, stepSin, sX, sY, sZ, FOLD_SWEEP);
+          stepSector(plane, stepCos, stepSin, sX, sY, sZ, FOLD_SWEEP);
           sX = FOLD_SWEEP[0];
           sY = FOLD_SWEEP[1];
           sZ = FOLD_SWEEP[2];

@@ -5,7 +5,9 @@ import {
   embedTransform3,
   isFlatTransform,
   meanContraction,
+  planeHasW,
   rotationMatrix4,
+  symmetryIsNonFlat,
   systemIsFlat,
   systemPartsAreNonFlat,
   toTransform4,
@@ -14,7 +16,8 @@ import { runChaosGame4 } from "./chaos-game-4d";
 import { defaultFinalTransform, defaultTransforms } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Affine4 } from "./affine4";
-import type { Transform, Transform4 } from "./types";
+import { SYMMETRY_PLANES } from "./types";
+import type { SymmetryParams, Transform, Transform4 } from "./types";
 
 const HALF_PI = Math.PI / 2;
 
@@ -448,22 +451,88 @@ describe("systemIsFlat", () => {
 });
 
 describe("systemPartsAreNonFlat", () => {
+  /** The identity kaleidoscope: order 1, so it contributes nothing to the
+   * predicate whatever plane it names (see `symmetryIsNonFlat`). */
+  const noSymmetry: SymmetryParams = { order: 1, plane: "xz" };
+
   it("is false for flat transforms with no final transform", () => {
-    expect(systemPartsAreNonFlat(defaultTransforms(), null)).toBe(false);
+    expect(systemPartsAreNonFlat(defaultTransforms(), null, noSymmetry)).toBe(
+      false,
+    );
   });
 
   it("is true when any transform carries a non-trivial w block", () => {
     const transforms = defaultTransforms();
     const nonFlat: Transform = { ...transforms[0], w: { position: 0.5 } };
-    expect(systemPartsAreNonFlat([nonFlat, ...transforms.slice(1)], null)).toBe(
-      true,
-    );
+    expect(
+      systemPartsAreNonFlat(
+        [nonFlat, ...transforms.slice(1)],
+        null,
+        noSymmetry,
+      ),
+    ).toBe(true);
   });
 
   it("is true when the final transform carries a non-trivial w block", () => {
     const transforms = defaultTransforms();
     const lens = { ...defaultFinalTransform(), w: { position: 0.5 } };
-    expect(systemPartsAreNonFlat(transforms, lens)).toBe(true);
+    expect(systemPartsAreNonFlat(transforms, lens, noSymmetry)).toBe(true);
+  });
+
+  it("is true when the kaleidoscope alone turns in a w-plane (fr-q0h6)", () => {
+    expect(
+      systemPartsAreNonFlat(defaultTransforms(), null, {
+        order: 3,
+        plane: "zw",
+      }),
+    ).toBe(true);
+  });
+
+  it("is true when the kaleidoscope alone carries a twist (fr-q0h6)", () => {
+    expect(
+      systemPartsAreNonFlat(defaultTransforms(), null, {
+        order: 5,
+        plane: "xz",
+        twist: 2,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("symmetryIsNonFlat", () => {
+  it("is false for the identity order, whatever plane or twist it names", () => {
+    for (const plane of SYMMETRY_PLANES) {
+      expect(symmetryIsNonFlat({ order: 1, plane })).toBe(false);
+      expect(symmetryIsNonFlat({ order: 1, plane, twist: 3 })).toBe(false);
+    }
+  });
+
+  it("is false for the three w-free planes with no twist", () => {
+    for (const plane of ["xy", "xz", "yz"] as const) {
+      expect(symmetryIsNonFlat({ order: 6, plane })).toBe(false);
+      expect(symmetryIsNonFlat({ order: 6, plane, twist: 0 })).toBe(false);
+    }
+  });
+
+  it("is true for each w-plane at order > 1", () => {
+    for (const plane of ["xw", "yw", "zw"] as const) {
+      expect(symmetryIsNonFlat({ order: 2, plane })).toBe(true);
+    }
+  });
+
+  it("is true for a nonzero twist in a w-free plane at order > 1", () => {
+    expect(symmetryIsNonFlat({ order: 4, plane: "xy", twist: 1 })).toBe(true);
+  });
+});
+
+describe("planeHasW", () => {
+  it("splits the six planes into the three that mix w and the three that do not", () => {
+    expect(SYMMETRY_PLANES.filter(planeHasW)).toEqual(["xw", "yw", "zw"]);
+    expect(SYMMETRY_PLANES.filter((p) => !planeHasW(p))).toEqual([
+      "xy",
+      "xz",
+      "yz",
+    ]);
   });
 });
 

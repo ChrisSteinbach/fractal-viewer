@@ -6,6 +6,7 @@ import {
   SPHEREFOLD_MID_MIN_R,
   SURFACE_FOLD_BEAM_WIDTH,
   SURFACE_FOLD_NONE,
+  SYM_PLANE_CODE,
 } from "../fractal/surface-de";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
@@ -117,14 +118,6 @@ export const SURFACE_GRID_SKIP_CAP = 256;
  * gates on that count before entering the mode, so {@link setSurfaceSystem}
  * treats overflow as a bug, not a degrade. */
 export const SURFACE_MAX_MAPS = 24;
-
-/** `SurfaceSymmetry.axis` as the shader's `uSymAxis` code. The GLSL sector
- * step branches on an int, so the axis crosses the boundary as one. */
-const SYM_AXIS_CODE: Record<SurfaceDE["symmetry"]["axis"], number> = {
-  x: 0,
-  y: 1,
-  z: 2,
-};
 
 const SURFACE_VERTEX = /* glsl */ `
   out vec2 vUv;
@@ -597,8 +590,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * 1 leaves the sweep a single pass with no rotation, which is what keeps
    * non-symmetric systems bit-identical to the pre-sweep tracer. */
   uniform int uSymOrder;
-  /** Symmetry axis: 0 = x, 1 = y, 2 = z. */
-  uniform int uSymAxis;
+  /** Symmetry plane: 0 = yz, 1 = xz, 2 = xy (surface-de.ts's SYM_PLANE_CODE
+   * — the pre-fr-q0h6 axis codes, renamed and not renumbered). */
+  uniform int uSymPlane;
   /** cos/sin of ONE forward sector step 2*PI/uSymOrder. Sectors are walked
    * incrementally off this pair, so no per-sector transcendental — and no
    * order-sized uniform table the budget could not carry. */
@@ -711,18 +705,18 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   }
 
   /** One sector step of the kaleidoscope sweep (the oracle's stepSector):
-   * turn a point BACKWARD by 2*PI/uSymOrder about the symmetry axis. That
+   * turn a point BACKWARD by 2*PI/uSymOrder in the symmetry plane. That
    * is the transpose of the rotation copy k applies AFTER its base map, so
-   * descending through the copy un-rotates first; transposing a single-axis
+   * descending through the copy un-rotates first; transposing a single-plane
    * rotation flips the sign of sin alone, which is why one (cos, sin) pair
    * of the FORWARD step drives every sector. */
   vec3 stepSector(vec3 p) {
     float c = uSymStep.x;
     float s = uSymStep.y;
-    if (uSymAxis == 0) {
+    if (uSymPlane == 0) {
       return vec3(p.x, c * p.y + s * p.z, -s * p.y + c * p.z);
     }
-    if (uSymAxis == 1) {
+    if (uSymPlane == 1) {
       return vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
     }
     return vec3(c * p.x + s * p.y, -s * p.x + c * p.y, p.z);
@@ -2471,7 +2465,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       },
       uMapCount: { value: 0 },
       uSymOrder: { value: 1 },
-      uSymAxis: { value: 1 },
+      uSymPlane: { value: 1 },
       uSymStep: { value: new THREE.Vector2(1, 0) },
       uBoundingRadius: { value: 1 },
       uBoundCenter: { value: new THREE.Vector3() },
@@ -2605,7 +2599,7 @@ export function setSurfaceSystem(
   // The kaleidoscope the descent sweeps instead of expanding (fr-x029):
   // three scalars where every extra order used to cost `maps.length` slots.
   u.uSymOrder.value = de.symmetry.order;
-  u.uSymAxis.value = SYM_AXIS_CODE[de.symmetry.axis];
+  u.uSymPlane.value = SYM_PLANE_CODE[de.symmetry.plane];
   (u.uSymStep.value as THREE.Vector2).set(
     de.symmetry.stepCos,
     de.symmetry.stepSin,
@@ -2786,7 +2780,7 @@ export function setEscapeSystem(
   (u.uTrapIndex.value as number[])[0] = 0;
   u.uMapCount.value = 1;
   u.uSymOrder.value = 1;
-  u.uSymAxis.value = 1;
+  u.uSymPlane.value = 1;
   (u.uSymStep.value as THREE.Vector2).set(1, 0);
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.boundingRadius * 2;

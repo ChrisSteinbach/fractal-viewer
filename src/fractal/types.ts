@@ -198,29 +198,56 @@ export interface Bounds {
 }
 
 /**
- * Axes {@link SymmetryParams} can rotate copies about. This array is the
- * single source of truth for both the {@link SymmetryAxis} type and the
- * persistence validator (`VALID_SYMMETRY_AXES` in `persist.ts`), so adding an
- * axis is one edit and the runtime guard can never silently drift from the
- * type.
+ * Coordinate planes {@link SymmetryParams} can rotate copies IN. This array is
+ * the single source of truth for both the {@link SymmetryPlane} type and the
+ * persistence validator (`VALID_SYMMETRY_PLANES` in `persist.ts`), so the
+ * runtime guard can never silently drift from the type.
+ *
+ * The names — and their index pairs — are exactly {@link Rotation4}'s six
+ * planes: in 4D you rotate IN a plane, not ABOUT an axis (a simple rotation
+ * fixes the orthogonal complement, an axis in 3D but a whole plane in 4D).
+ * The three w-free planes (`xy`/`xz`/`yz`) are the ones that also have a 3x3,
+ * and they are what the pre-fr-q0h6 `SymmetryAxis` named from the other side:
+ * axis `x` = plane `yz`, axis `y` = plane `xz`, axis `z` = plane `xy`. See
+ * `chaos-game.ts`'s `symmetryRotation` for the migration's exact matrices
+ * (including the one sign the `R_ab` convention does NOT share with
+ * "rotation about +y").
  */
-export const SYMMETRY_AXES = ["x", "y", "z"] as const;
+export const SYMMETRY_PLANES = ["xy", "xz", "yz", "xw", "yw", "zw"] as const;
 
-/** One axis a kaleidoscope's rotated copies can turn about. */
-export type SymmetryAxis = (typeof SYMMETRY_AXES)[number];
+/** One coordinate plane a kaleidoscope's rotated copies turn in. */
+export type SymmetryPlane = (typeof SYMMETRY_PLANES)[number];
 
 /**
  * Rotational/mirror symmetry (fr-6im): replicate the whole transform set
- * `order` times, each copy rotated by an additional `2π / order` about
- * `axis`, producing a kaleidoscope — see `chaos-game.ts`'s
- * `prepareChaosGame`. `order: 1` is the identity regardless of `axis`: today's
- * system, unreplicated.
+ * `order` times, each copy rotated by an additional `2π / order` in
+ * `plane`, producing a kaleidoscope — see `chaos-game.ts`'s
+ * `prepareChaosGame`. `order: 1` is the identity regardless of
+ * `plane`/`twist`: today's system, unreplicated — which is why
+ * `affine4.ts`'s {@link import("./affine4").symmetryIsNonFlat} can never
+ * force an order-1 system into 4D.
  */
 export interface SymmetryParams {
   /** Number of rotated copies, including the unrotated original. `1` = off. */
   order: number;
-  /** Axis the copies are rotated about. */
-  axis: SymmetryAxis;
+  /** Coordinate plane the copies are rotated in. */
+  plane: SymmetryPlane;
+  /**
+   * The SECOND angle of a 4D double rotation (fr-q0h6), as an integer number
+   * of sectors: copy `k` additionally turns by `2π·k·twist / order` in the
+   * plane ORTHOGONAL to {@link plane} (`xy`↔`zw`, `xz`↔`yw`, `xw`↔`yz`) —
+   * implied by the choice of `plane`, never a second field. `0` (and absent,
+   * the default) is a SIMPLE rotation, which is what every pre-fr-q0h6
+   * document has and what the 3D paths are the only consumers of; `1` and
+   * `order - 1` are the left/right ISOCLINIC cases. Holding the first angle
+   * at exactly `2π / order` is WLOG — reindexing `k` reaches every cyclic
+   * subgroup of order `n` — so one integer covers the whole family.
+   *
+   * A nonzero twist rotates the attractor OUT of the `w = 0` hyperplane, so
+   * it makes the SYSTEM non-flat (`affine4.ts`'s `symmetryIsNonFlat`) exactly
+   * as a `w`-plane does.
+   */
+  twist?: number;
   /**
    * Strength of the rotated copies, `0..1` (fr-eykn): a weight multiplier on
    * every copy-`k>0` slot's selection probability (`prepareChaosGame`), so

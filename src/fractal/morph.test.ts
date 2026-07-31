@@ -17,7 +17,7 @@ function system(overrides: Partial<MorphSystem> = {}): MorphSystem {
   return {
     transforms: [transform()],
     finalTransform: null,
-    symmetry: { order: 1, axis: "x" },
+    symmetry: { order: 1, plane: "yz" },
     ...overrides,
   };
 }
@@ -212,18 +212,18 @@ describe("lerpSystem finalTransform", () => {
 
 describe("lerpSystem symmetry", () => {
   it("keeps a matching kaleidoscope untouched (by reference) across the whole morph", () => {
-    const a = system({ symmetry: { order: 4, axis: "y" } });
-    const b = system({ symmetry: { order: 4, axis: "y" } });
+    const a = system({ symmetry: { order: 4, plane: "xz" } });
+    const b = system({ symmetry: { order: 4, plane: "xz" } });
     expect(lerpSystem(a, b, 0.25).symmetry).toBe(a.symmetry);
     expect(lerpSystem(a, b, 0.75).symmetry).toBe(b.symmetry);
   });
 
   it("fades a departing kaleidoscope out over the first half when the target has none", () => {
-    const a = system({ symmetry: { order: 6, axis: "z" } });
-    const b = system({ symmetry: { order: 1, axis: "x" } });
+    const a = system({ symmetry: { order: 6, plane: "xy" } });
+    const b = system({ symmetry: { order: 1, plane: "yz" } });
     expect(lerpSystem(a, b, 0.25).symmetry).toEqual({
       order: 6,
-      axis: "z",
+      plane: "xy",
       blend: 0.5,
     });
     // From the midpoint on, the order-1 target rides by reference — nothing
@@ -233,41 +233,41 @@ describe("lerpSystem symmetry", () => {
   });
 
   it("fades an arriving kaleidoscope in over the second half when the source has none", () => {
-    const a = system({ symmetry: { order: 1, axis: "x" } });
-    const b = system({ symmetry: { order: 5, axis: "y" } });
+    const a = system({ symmetry: { order: 1, plane: "yz" } });
+    const b = system({ symmetry: { order: 5, plane: "xz" } });
     expect(lerpSystem(a, b, 0.25).symmetry).toBe(a.symmetry);
     expect(lerpSystem(a, b, 0.75).symmetry).toEqual({
       order: 5,
-      axis: "y",
+      plane: "xz",
       blend: 0.5,
     });
     // The blend closes to the full kaleidoscope as t -> 1 (t = 1 itself
     // returns `b` by reference via lerpSystem's endpoint rule).
     expect(lerpSystem(a, b, 0.9).symmetry).toEqual({
       order: 5,
-      axis: "y",
+      plane: "xz",
       blend: expect.closeTo(0.8),
     });
   });
 
   it("crossfades two differing kaleidoscopes through blend 0 at the midpoint", () => {
-    const a = system({ symmetry: { order: 2, axis: "x" } });
-    const b = system({ symmetry: { order: 6, axis: "z" } });
+    const a = system({ symmetry: { order: 2, plane: "yz" } });
+    const b = system({ symmetry: { order: 6, plane: "xy" } });
     expect(lerpSystem(a, b, 0.3).symmetry).toEqual({
       order: 2,
-      axis: "x",
+      plane: "yz",
       blend: expect.closeTo(0.4),
     });
     // Continuous at the midpoint: both sides sit at blend 0, which
     // prepareChaosGame renders bit-identically to order 1.
     expect(lerpSystem(a, b, 0.5).symmetry).toEqual({
       order: 6,
-      axis: "z",
+      plane: "xy",
       blend: 0,
     });
     expect(lerpSystem(a, b, 0.7).symmetry).toEqual({
       order: 6,
-      axis: "z",
+      plane: "xy",
       blend: expect.closeTo(0.4),
     });
   });
@@ -275,11 +275,11 @@ describe("lerpSystem symmetry", () => {
   it("departs from a mid-fade sample's own strength on a chained morph, never popping back to full", () => {
     // A chained restart's `from` is the in-flight morph's live sample
     // (morph-tween.ts), whose kaleidoscope may already be half-faded.
-    const a = system({ symmetry: { order: 4, axis: "y", blend: 0.6 } });
-    const b = system({ symmetry: { order: 1, axis: "x" } });
+    const a = system({ symmetry: { order: 4, plane: "xz", blend: 0.6 } });
+    const b = system({ symmetry: { order: 1, plane: "yz" } });
     expect(lerpSystem(a, b, 0.25).symmetry).toEqual({
       order: 4,
-      axis: "y",
+      plane: "xz",
       blend: expect.closeTo(0.3),
     });
   });
@@ -289,11 +289,11 @@ describe("lerpSystem symmetry on a non-flat sample", () => {
   it("carries the departing side's kaleidoscope unchanged, by reference, at an early sample of a flat -> 4D morph", () => {
     const a = system({
       transforms: [transform()],
-      symmetry: { order: 6, axis: "z" },
+      symmetry: { order: 6, plane: "xy" },
     });
     const b = system({
       transforms: [transform({ w: { position: 0.5 } })],
-      symmetry: { order: 5, axis: "y" },
+      symmetry: { order: 5, plane: "xz" },
     });
     // b's transform carries a genuine w block, so lerpW returns a live w for
     // EVERY 0 < t < 1 sample (it only stays undefined when both sides are
@@ -305,11 +305,11 @@ describe("lerpSystem symmetry on a non-flat sample", () => {
   it("carries the arriving side's kaleidoscope unchanged, by reference, at a late sample of a flat -> 4D morph", () => {
     const a = system({
       transforms: [transform()],
-      symmetry: { order: 6, axis: "z" },
+      symmetry: { order: 6, plane: "xy" },
     });
     const b = system({
       transforms: [transform({ w: { position: 0.5 } })],
-      symmetry: { order: 5, axis: "y" },
+      symmetry: { order: 5, plane: "xz" },
     });
     expect(lerpSystem(a, b, 0.9).symmetry).toBe(b.symmetry);
   });

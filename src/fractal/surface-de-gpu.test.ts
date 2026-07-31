@@ -120,15 +120,15 @@ describe("packSurfaceGpuParams field round-trip (doc offsets)", () => {
     expect(view.getUint32(52, true)).toBe(de.maxDepth);
   });
 
-  it("maps symmetry axis x/y/z to symAxis 0/1/2 at offset 44", () => {
-    for (const [axis, expected] of [
-      ["x", 0],
-      ["y", 1],
-      ["z", 2],
+  it("maps symmetry plane yz/xz/xy to symPlane 0/1/2 at offset 44 — the frozen pre-fr-q0h6 axis codes", () => {
+    for (const [plane, expected] of [
+      ["yz", 0],
+      ["xz", 1],
+      ["xy", 2],
     ] as const) {
       const de = buildSurfaceDE(foldSystemTransforms(), null, {
         order: 1,
-        axis,
+        plane,
       });
       const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
       expect(view.getUint32(44, true)).toBe(expected);

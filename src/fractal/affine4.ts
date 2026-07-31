@@ -1,6 +1,8 @@
 import type {
   Rotation4,
   Shear4,
+  SymmetryParams,
+  SymmetryPlane,
   Transform,
   Transform4,
   Vec3,
@@ -412,13 +414,49 @@ export function systemIsFlat(transforms: readonly Transform[]): boolean {
  * and `morph.ts`'s `lerpSymmetry` routes a morph SAMPLE's own flatness on
  * it — not the live document's — so a flat↔4D pair takes the 4D path
  * exactly when the interpolated maps first carry live `w` blocks.
+ *
+ * Since fr-q0h6 the `symmetry` is a THIRD input, on the same footing as the
+ * transforms: a kaleidoscope turning in a `w`-plane (or with a twist) is 4D
+ * structure just as surely as a map's `w` block is — see
+ * {@link symmetryIsNonFlat}. Required, not optional, precisely so a caller
+ * that holds a symmetry cannot silently drop it; the identity
+ * (`{ order: 1, … }`) contributes nothing, which is what makes passing one
+ * safe where a call site deliberately means "the parts alone".
  */
 export function systemPartsAreNonFlat(
   transforms: readonly Transform[],
   finalTransform: Transform | null,
+  symmetry: SymmetryParams,
 ): boolean {
   return (
     !systemIsFlat(transforms) ||
-    (finalTransform !== null && !isFlatTransform(finalTransform))
+    (finalTransform !== null && !isFlatTransform(finalTransform)) ||
+    symmetryIsNonFlat(symmetry)
+  );
+}
+
+/** Whether a {@link SymmetryPlane} mixes the fourth coordinate — the three
+ * planes that have no 3x3 and so cannot be handed to a 3D dispatch (fr-q0h6).
+ * `xy`/`xz`/`yz` are w-free; `xw`/`yw`/`zw` are not. */
+export function planeHasW(plane: SymmetryPlane): boolean {
+  return plane === "xw" || plane === "yw" || plane === "zw";
+}
+
+/**
+ * Whether a kaleidoscope by itself makes a system 4D (fr-q0h6): a `w`-plane
+ * rotation, or a nonzero {@link SymmetryParams.twist} (the second angle of a
+ * double rotation, taken in the plane orthogonal to the chosen one — always a
+ * `w`-plane when the chosen one is w-free), moves the copies OUT of the
+ * `w = 0` hyperplane, so such a system genuinely is 4D.
+ *
+ * ORDER 1 IS THE IDENTITY for any plane and any twist — one unrotated copy,
+ * nothing turning — so it can never force 4D however the other fields are
+ * set. That is what keeps a document that merely REMEMBERS a plane/twist
+ * while its kaleidoscope is off exactly as flat as it was.
+ */
+export function symmetryIsNonFlat(symmetry: SymmetryParams): boolean {
+  return (
+    symmetry.order > 1 &&
+    (planeHasW(symmetry.plane) || (symmetry.twist ?? 0) !== 0)
   );
 }
