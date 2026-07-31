@@ -7,10 +7,11 @@ import {
   meanContraction,
   rotationMatrix4,
   systemIsFlat,
+  systemPartsAreNonFlat,
   toTransform4,
 } from "./affine4";
 import { runChaosGame4 } from "./chaos-game-4d";
-import { defaultTransforms } from "./presets";
+import { defaultFinalTransform, defaultTransforms } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Affine4 } from "./affine4";
 import type { Transform, Transform4 } from "./types";
@@ -443,6 +444,26 @@ describe("systemIsFlat", () => {
       i === 2 ? { ...t, w: { position: 0.2 } } : t,
     );
     expect(systemIsFlat(withW)).toBe(false);
+  });
+});
+
+describe("systemPartsAreNonFlat", () => {
+  it("is false for flat transforms with no final transform", () => {
+    expect(systemPartsAreNonFlat(defaultTransforms(), null)).toBe(false);
+  });
+
+  it("is true when any transform carries a non-trivial w block", () => {
+    const transforms = defaultTransforms();
+    const nonFlat: Transform = { ...transforms[0], w: { position: 0.5 } };
+    expect(systemPartsAreNonFlat([nonFlat, ...transforms.slice(1)], null)).toBe(
+      true,
+    );
+  });
+
+  it("is true when the final transform carries a non-trivial w block", () => {
+    const transforms = defaultTransforms();
+    const lens = { ...defaultFinalTransform(), w: { position: 0.5 } };
+    expect(systemPartsAreNonFlat(transforms, lens)).toBe(true);
   });
 });
 

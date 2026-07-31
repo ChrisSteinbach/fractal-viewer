@@ -52,7 +52,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
     Three.js conventions.
   - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
-    3D→4D), `systemIsFlat` predicate (derived from transforms, never stored).
+    3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
+    transforms, never stored).
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope

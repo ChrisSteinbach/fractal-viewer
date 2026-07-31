@@ -1,4 +1,4 @@
-import { isFlatTransform, systemIsFlat } from "../fractal/affine4";
+import { systemPartsAreNonFlat } from "../fractal/affine4";
 import { appendTransform, defaultTransforms } from "../fractal/presets";
 import { isLegacyPositionAxisColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
@@ -1641,26 +1641,6 @@ export function setCustomPaletteStops(
  */
 export function systemIsNonFlat(state: AppState): boolean {
   return systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null);
-}
-
-/**
- * {@link systemIsNonFlat}'s underlying formula over bare system parts, for a
- * caller holding a system that is not the live document: a replace-load
- * morph's per-frame samples (fr-a04l) route their generation requests on the
- * SAMPLED system's own flatness, so a flat↔4D morph flips to the 4D path
- * exactly when the interpolated maps first carry live `w` blocks — not when
- * the document does. `null` means "no final transform", matching
- * `MorphSystem`/`CloudRequest`'s vocabulary; the live document's optional
- * field maps through `?? null` above, so there is still exactly one formula.
- */
-export function systemPartsAreNonFlat(
-  transforms: readonly Transform[],
-  finalTransform: Transform | null,
-): boolean {
-  return (
-    !systemIsFlat(transforms) ||
-    (finalTransform !== null && !isFlatTransform(finalTransform))
-  );
 }
 
 /**

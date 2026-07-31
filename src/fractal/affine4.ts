@@ -395,3 +395,30 @@ export function isFlatTransform(t: Transform): boolean {
 export function systemIsFlat(transforms: readonly Transform[]): boolean {
   return transforms.every(isFlatTransform);
 }
+
+/**
+ * THE formula for whether a system takes the 4D path: non-flat when any
+ * numbered transform is (see {@link systemIsFlat}), or when an ENABLED
+ * final-transform lens is — checked exactly like any numbered transform. A
+ * disabled lens (`finalTransform` `null`, matching `MorphSystem`/
+ * `CloudRequest`'s vocabulary) is not part of the system, so it never makes
+ * an otherwise-flat system read as non-flat.
+ *
+ * The one formula every caller shares, so the routing decision, the panel's
+ * gating, and the legend can never drift apart: `state.ts`'s
+ * `systemIsNonFlat` is its `AppState` front door; `main.ts`'s `cloudParams`
+ * stamps the result onto every generation request; `ui.ts`'s `updateLabels`
+ * gates the panel on it (then hands the one result on to `updateLegend`);
+ * and `morph.ts`'s `lerpSymmetry` routes a morph SAMPLE's own flatness on
+ * it — not the live document's — so a flat↔4D pair takes the 4D path
+ * exactly when the interpolated maps first carry live `w` blocks.
+ */
+export function systemPartsAreNonFlat(
+  transforms: readonly Transform[],
+  finalTransform: Transform | null,
+): boolean {
+  return (
+    !systemIsFlat(transforms) ||
+    (finalTransform !== null && !isFlatTransform(finalTransform))
+  );
+}
