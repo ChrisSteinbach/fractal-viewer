@@ -697,16 +697,17 @@ export function dimColorsExcept(
  *   resolved by `prepareChaosGame4` from the optional `colorIndex`/
  *   `colorSpeed`, absent ⇒ the derived `idx / (n - 1)` spread and a halfway
  *   `0.5`), escape-reseed resetting it to `0.5`, indexing `lut` (a `256 * 3`
- *   `buildPaletteLUT` table). Keyed on the RAW picked transform index rather
- *   than a base-map index: 4D has no kaleidoscope symmetry (fr-6im is 3D
- *   only — see `chaos-game-4d.ts`'s `PreparedChaosGame4`), so there is no
- *   expanded-copy modulo to recover.
+ *   `buildPaletteLUT` table). Keyed on the BASE map index
+ *   (`idx % baseTransformCount`, fr-q0h6) exactly like the 3D path, so every
+ *   kaleidoscope copy of a map shares that map's slot; equal to the picked
+ *   index at symmetry order 1.
  * - `"wRamp"`: the diverging rotated-w ramp ({@link wRampColor}) evaluated on
  *   the per-point normalized signed-w signal `s` — the "legacy" dispatch for
  *   whichever `wBlueOrange`/`wPurpleGreen`/`wCyanMagenta` mode the explorer
  *   had active.
- * - `"transform"`: `palette[idx]` (the picked transform's hue, from
- *   {@link transformColors}) — the "legacy" dispatch for the explorer's "By
+ * - `"transform"`: `palette[baseIdx]` (the picked transform's hue, from
+ *   {@link transformColors}, keyed on the same base-map index) — the "legacy"
+ *   dispatch for the explorer's "By
  *   Transform" 4D color mode ({@link buildColors4}'s `"transform"` branch),
  *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
  *   mirrors `buildColors4`).

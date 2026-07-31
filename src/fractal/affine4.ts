@@ -130,6 +130,81 @@ export function rotationMatrix4(rotation: Rotation4): number[] {
 }
 
 /**
+ * The coordinate plane ORTHOGONAL to each {@link SymmetryPlane} — the plane a
+ * {@link SymmetryParams.twist} turns in, implied by the choice of plane rather
+ * than authored (see the type's doc). The three pairs are the only way to split
+ * four coordinates into two disjoint planes: `xy`↔`zw`, `xz`↔`yw`, `xw`↔`yz`.
+ */
+const COMPLEMENT_PLANE: Readonly<Record<SymmetryPlane, SymmetryPlane>> = {
+  xy: "zw",
+  zw: "xy",
+  xz: "yw",
+  yw: "xz",
+  xw: "yz",
+  yz: "xw",
+};
+
+/**
+ * The sign each symmetry plane's angle carries into {@link rotationMatrix4} —
+ * `+1` everywhere except `xz`, which is `−1`.
+ *
+ * NOT arbitrary, and the one thing in this module most worth getting right:
+ * `chaos-game.ts`'s 3D `symmetryRotation` builds its kaleidoscope out of
+ * {@link import("./affine").rotationMatrixXYZ}, whose `RY` is the rotation
+ * ABOUT the `+y` axis — right-handed, so it carries `+z` toward `+x`, i.e.
+ * `R_zx(θ) = R_xz(−θ)`. `R_ab` here rotates `+a` toward `+b`, so the `xz`
+ * plane (and only it) needs the negated angle to name the same rotation. This
+ * is exactly the `xz: -ry` {@link embedTransform3} already writes, for exactly
+ * this reason — one convention in the codebase, not two.
+ *
+ * Load-bearing beyond bookkeeping: a cyclic group `{R^k}` is sign-agnostic on
+ * its own (`{R^-k}` is the same set, so a SIMPLE rotation plots the same
+ * attractor either way), but a twist PAIRS two planes' angles, so their
+ * relative sign changes the group — and a flat system's 3D↔4D slot
+ * correspondence depends on the absolute one. Get it wrong and a flat
+ * system's kaleidoscope MIRRORS the moment a `w` block routes it through the
+ * 4D path.
+ */
+const PLANE_SIGN: Readonly<Record<SymmetryPlane, number>> = {
+  xy: 1,
+  xz: -1,
+  yz: 1,
+  xw: 1,
+  yw: 1,
+  zw: 1,
+};
+
+/**
+ * Row-major 4x4 rotation for kaleidoscope copy `k` of a {@link SymmetryParams}
+ * (fr-q0h6): `angle` in the chosen `plane`, plus `angle · twist` in the plane
+ * orthogonal to it — the second angle of a 4D DOUBLE rotation, which has no 3D
+ * counterpart. The 4D twin of `chaos-game.ts`'s `symmetryRotation`, and what
+ * `chaos-game-4d.ts`'s `prepareChaosGame4` rotates its expanded copies by.
+ *
+ * Both angles go through {@link PLANE_SIGN}, so on the three `w`-free planes
+ * this reproduces the 3D `symmetryRotation`'s 3x3 ENTRY FOR ENTRY (pinned by
+ * `chaos-game-4d.test.ts`) with the `w` row and column left exactly
+ * `[0, 0, 0, 1]` — a flat system's kaleidoscope is the same kaleidoscope on
+ * either path, which is the whole point of the vocabulary being shared.
+ *
+ * `twist = 0` — the default, every pre-fr-q0h6 document, and everything the 3D
+ * paths can express — emits a SINGLE factor: the complement's angle is exactly
+ * `0`, which {@link rotationMatrix4} skips rather than multiplying in as an
+ * identity, so the untouched rows stay bit-exact.
+ */
+export function symmetryRotation4(
+  plane: SymmetryPlane,
+  angle: number,
+  twist = 0,
+): number[] {
+  const other = COMPLEMENT_PLANE[plane];
+  const rotation: Rotation4 = {};
+  rotation[plane] = PLANE_SIGN[plane] * angle;
+  rotation[other] = PLANE_SIGN[other] * angle * twist;
+  return rotationMatrix4(rotation);
+}
+
+/**
  * Compose a {@link Transform4} into an {@link Affine4}
  * (`M = R · diag(scale) · U`). Each column `c` of the rotation is scaled by
  * `scale[c]` — the exact column-scaling pattern of `affine.ts`'s `composeAffine`
