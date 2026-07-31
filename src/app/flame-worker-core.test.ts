@@ -869,6 +869,25 @@ describe("FlameWorkerSession setSymmetry", () => {
     ).not.toThrow();
     expect(events).toHaveLength(0);
   });
+
+  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated (fr-q0h6)", () => {
+    // A live symmetry edit can turn a flat system 4D under a render session
+    // whose dimension was fixed at start. `symmetryRotation` THROWS on a
+    // w-plane, so without the symmetry3D guard this would kill the worker.
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({ order: 1, plane: "xz", iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+
+    expect(() =>
+      session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 }),
+    ).not.toThrow();
+    scheduler.drain();
+
+    // Still renders — the restart ran, and to the same budget.
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2680,22 +2699,47 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(Array.from(last.image).some((v) => v !== 0)).toBe(true);
   });
 
-  it("setSymmetry on a 4D session is a no-op: no restart, no new backend, no estimating event", () => {
+  it("setSymmetry on a 4D session restarts accumulation, exactly like the 3D path (fr-q0h6)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+    const framesBefore = progressEvents(events).length;
+
+    // A w-plane with a twist: the genuinely 4D kaleidoscope, which the 3D
+    // path cannot even represent.
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
+    scheduler.step();
+    const afterOneStep = progressEvents(events);
+    expect(afterOneStep.length).toBe(framesBefore + 1); // a genuinely NEW event landed.
+    expect(afterOneStep.at(-1)!.iterationsDone).toBe(10); // one chunk's worth -> iterationsDone was reset to 0.
+
+    scheduler.drain();
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+  });
+
+  it("setSymmetry on a 4D session still no-ops when order, plane and twist are unchanged", () => {
     const { session, events, scheduler } = harness();
     session.handle(
-      startCommand({ fourD: defaultFourD(), iterationsBudget: 20 }),
+      startCommand({
+        fourD: defaultFourD(),
+        iterationsBudget: 20,
+        order: 3,
+        plane: "zw",
+        twist: 1,
+      }),
     );
     scheduler.drain();
     const framesBefore = progressEvents(events).length;
     const backendsBefore = backendEvents(events).length;
-    const estimatingBefore = estimatingEvents(events).length;
     expect(backendsBefore).toBeGreaterThan(0);
 
-    session.handle({ type: "setSymmetry", order: 3, plane: "xy" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
 
     expect(progressEvents(events)).toHaveLength(framesBefore); // no new frame.
     expect(backendEvents(events)).toHaveLength(backendsBefore); // no restart -> no new backend.
-    expect(estimatingEvents(events)).toHaveLength(estimatingBefore); // never re-ran the adaptive pass.
   });
 
   it("setPalette on a 4D session restarts accumulation and still produces progress", () => {

@@ -303,6 +303,9 @@ const symmetryEffect: ControlEffect = (state, fx) => {
     type: "setSymmetry",
     order: state.symmetry.order,
     plane: state.symmetry.plane,
+    // fr-q0h6: only a 4D session can express a twist, but the command shape
+    // is one wire — a 3D session simply prepares w-free copies from it.
+    twist: state.symmetry.twist ?? 0,
   } as const;
   fx.postFlame(command);
   fx.postVoxel(command);

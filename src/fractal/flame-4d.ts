@@ -7,8 +7,8 @@
  * instead of the 3D path's 16-coefficient camera matrix.
  *
  * Like `accumulateFlame`, this hand-inlines `stepOrbit4`'s pick/affine/
- * variation/escape-reseed body and `plotPoint4`'s lens into one
- * allocation-free loop — the same GC-pressure argument applies at the
+ * variation/symmetry-post-rotation/escape-reseed body and `plotPoint4`'s lens
+ * into one allocation-free loop — the same GC-pressure argument applies at the
  * hundreds-of-millions-of-iterations scale a converged flame needs. Only the
  * warmup loop (not hot) calls the real, non-inlined `stepOrbit4`.
  *
@@ -104,7 +104,8 @@ export function accumulateFlame4(
     );
   }
 
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
   const { baseTransformCount } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
@@ -219,6 +220,23 @@ export function accumulateFlame4(
       ny = q[1];
       nz = q[2];
       nw = q[3];
+    }
+
+    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
+    // `null` (order 1, and every unrotated copy-0 slot at any order) skips
+    // this, so the orbit stays byte-identical to the pre-symmetry loop
+    // exactly where there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz + post[3] * nw;
+      const ry = post[4] * nx + post[5] * ny + post[6] * nz + post[7] * nw;
+      const rz = post[8] * nx + post[9] * ny + post[10] * nz + post[11] * nw;
+      const rw = post[12] * nx + post[13] * ny + post[14] * nz + post[15] * nw;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+      nw = rw;
     }
 
     if (

@@ -312,6 +312,10 @@ interface ScenarioDef4D {
   name: string;
   system: () => Transform[];
   finalTransform: Transform | null;
+  /** Kaleidoscope symmetry (fr-q0h6 lit the 4D path) — spelled out per
+   * scenario exactly like {@link ScenarioDef3D.symmetry}, so an order-1 leg
+   * says so rather than defaulting silently. */
+  symmetry: SymmetryParams;
   rotation: Rotation4;
   paletteId: FlamePaletteId;
   colorMode: FourDColorMode;
@@ -664,6 +668,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "hyperfern-structural",
     system: hyperfern,
     finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "ember", // non-legacy => structural LUT coloring.
     colorMode: "wBlueOrange", // ignored under a non-legacy palette.
@@ -677,6 +682,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "doublerot-wramp-slice",
     system: doubleRotation,
     finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "wBlueOrange", // wRamp, computed in-shader on the GPU side.
@@ -695,6 +701,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "hyperfern-transform",
     system: hyperfern,
     finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "transform",
@@ -708,6 +715,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "doublerot-radius",
     system: doubleRotation,
     finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "radius",
@@ -726,6 +734,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "variation-zoo-4d",
     system: variationZoo4,
     finalTransform: variationZooLens(),
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "wBlueOrange",
@@ -743,6 +752,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "fold-zoo-4d",
     system: foldZoo4,
     finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "wBlueOrange",
@@ -759,6 +769,33 @@ const SCENARIOS: ScenarioDef[] = [
     // Uniquely pins (fr-p7nu): the three Mandelbox fold variations in the 4D
     // WGSL kernel, run over genuinely 4D orbits via foldZoo4's w-mixing
     // blocks (see its doc) — the full 4D radius/box fold, not a w = 0 slice.
+  },
+  {
+    kind: "4d",
+    name: "kaleido-4d",
+    system: hyperfern,
+    finalTransform: null,
+    // A genuinely 4D kaleidoscope: a w-plane AND a nonzero twist, so copy k
+    // is a DOUBLE rotation (two orthogonal planes turning at once) — the
+    // case that has no 3D counterpart at all. Order 4 with a 4-map system
+    // packs 16 expanded slots, well inside MAX_TRANSFORMS.
+    symmetry: { order: 4, plane: "zw", twist: 1 },
+    rotation: BENCH_TUMBLE,
+    // "transform" coloring is load-bearing here: it is the ONE color kind
+    // that folds a picked slot back onto its base map, so a kernel that
+    // dropped the fold would paint each copy a different hue while the CPU
+    // oracle repeats the base palette around the kaleidoscope.
+    paletteId: "legacy",
+    colorMode: "transform",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // Uniquely pins (fr-q0h6): the 4D kernel's symmetry expansion — Slot4's
+    // four post-rotation rows and `hasPost`, the copy-major slot order and
+    // its inherited weights/color pair, and Params4's `baseTransformCount`
+    // fold. Every other 4D scenario here is order 1, where all of that is
+    // zero-filled and inert.
   },
 ];
 
@@ -1022,16 +1059,21 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
   const transforms4 = def.system().map(toTransform4);
   const final4 =
     def.finalTransform === null ? null : toTransform4(def.finalTransform);
-  const prepared4: PreparedChaosGame4 = prepareChaosGame4(transforms4, final4);
+  const prepared4: PreparedChaosGame4 = prepareChaosGame4(
+    transforms4,
+    final4,
+    def.symmetry,
+  );
   // Lensed cloud: the view (bounds/center/radius statistics below) derives
   // from the explorer cloud exactly the way the app's own explorer cloud
   // does — through the final-transform lens when the scenario has one, not
-  // the pre-lens orbit.
+  // the pre-lens orbit — and through the kaleidoscope, which widens it.
   const cloud = runChaosGame4(
     transforms4,
     EXPLORER_CLOUD_POINTS,
     mulberry32(SEED),
     final4,
+    def.symmetry,
   );
   const rotor = rotationMatrix4(def.rotation);
   const b = cloud.bounds;
@@ -1109,6 +1151,9 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
       createGpuFlameBackend4({
         transforms4,
         finalTransform4: final4,
+        order: def.symmetry.order,
+        plane: def.symmetry.plane,
+        twist: def.symmetry.twist ?? 0,
         projection,
         view,
         color,
