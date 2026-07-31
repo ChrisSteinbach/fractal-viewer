@@ -998,6 +998,7 @@ export class Ui {
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
   private readonly symmetrySection: HTMLElement;
+  private readonly symmetryInactiveNote: HTMLElement;
 
   /**
    * The table-driven scalar controls (see control-spec.ts's SCALAR_CONTROLS),
@@ -1214,6 +1215,7 @@ export class Ui {
     this.fourDDepthFadeRow = this.byId("fourDDepthFadeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
     this.symmetrySection = this.byId("symmetrySection");
+    this.symmetryInactiveNote = this.byId("symmetryInactiveNote");
     for (const spec of SCALAR_CONTROLS) {
       this.scalars.set(spec.id, {
         spec,
@@ -1817,6 +1819,24 @@ export class Ui {
     this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
     this.symmetrySection.classList.toggle("hidden", nonFlat);
+    // fr-5gxn: the 4D chaos game has no post-rotation stage (chaos-game-4d.ts),
+    // so kaleidoscope symmetry is inert while any transform is non-flat. The
+    // value is deliberately preserved rather than reset (see AppState.symmetry),
+    // so this note is the only thing that tells the user it stopped applying.
+    // It's a statement about the DOCUMENT, not the active render mode — the
+    // kaleidoscope is equally parked (and equally live in the shared #v1= URL)
+    // in flame, solid, and surface, so unlike symmetrySection it doesn't gate
+    // on `rendering`. Status text, not an editing control, so — like
+    // surfaceNote — it lives above the accordion with the other floating
+    // status blocks (fr-374p: a mode container may hold only accordion
+    // sections) rather than inside #explorerControls.
+    if (nonFlat && state.symmetry.order > 1) {
+      this.symmetryInactiveNote.textContent = `Kaleidoscope symmetry (${state.symmetry.order}-fold about ${state.symmetry.axis.toUpperCase()}) is inactive in 4D — the setting is kept and returns when the system is 3D again.`;
+      this.symmetryInactiveNote.classList.remove("hidden");
+    } else {
+      this.symmetryInactiveNote.textContent = "";
+      this.symmetryInactiveNote.classList.add("hidden");
+    }
     // The manual brightness override only means anything for the glow render
     // style, so — like the flame/solid sub-panels above — it's hidden whenever
     // that style isn't the active one (and always while non-flat, since

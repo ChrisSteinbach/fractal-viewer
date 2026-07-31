@@ -537,7 +537,11 @@ morphs into place instead of snapping (see **Presets** below).
   Contrast** goes with them (it tunes the height / radius / position ramps,
   none of which are in play once 4D Color owns the coloring), and
   **Symmetry** hides because the 4D chaos game has no symmetry parameter at
-  all. The tumble/slice view is session-only (never persisted) and resets to
+  all — an authored kaleidoscope isn't discarded, though: it stays in the
+  document and in the shared link, inert, and returns the moment the system
+  is 3D again. A note at the top of the panel says so while it's parked
+  (fr-5gxn). The
+  tumble/slice view is session-only (never persisted) and resets to
   a fresh baseline only when the system flips from flat to non-flat, or a
   whole new system replaces it (preset load / Surprise Me) — never on a
   later edit, so an in-progress tumble/slice survives ordinary parameter

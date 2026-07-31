@@ -974,6 +974,18 @@ summary.editor-group-title {
   line-height: 1.4;
 }
 
+/* fr-5gxn: a standalone panel-level notice, not a note tucked under a
+   nearby control — unlike flameBackendNote/surfaceNote, whose
+   .flame-note-info -6px hugs the hint/progress block directly above them,
+   this one lives in the floating status block above the accordion
+   (index.html, alongside undoRedoRow/flameStatus/solidStatus/surfaceStatus)
+   with no fixed predecessor of its own, so it needs margin on both edges
+   rather than a tuck upward — matching .flame-progress's own top/bottom
+   spacing (above) rather than .flame-note-info's. */
+#symmetryInactiveNote {
+  margin: 10px 0 14px;
+}
+
 /* Custom palette gradient editor (fr-55k): shown under a palette <select>
    once it's set to Custom — a live strip preview, one color swatch per
    stop, and the add/remove-stop buttons. */
