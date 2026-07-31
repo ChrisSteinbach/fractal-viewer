@@ -2530,6 +2530,7 @@ describe("Ui render mode switch (fr-39y)", () => {
       "flameStatus",
       "solidStatus",
       "surfaceStatus",
+      "symmetryInactiveNote",
     ]) {
       const position = byId(floatingId).compareDocumentPosition(firstSection!);
       expect(
@@ -4446,11 +4447,15 @@ describe("Ui symmetry controls", () => {
     return document.getElementById("symmetryNote");
   }
 
-  it("reflects order and axis into the slider, label, and select", () => {
+  function inactiveNote(): HTMLElement | null {
+    return document.getElementById("symmetryInactiveNote");
+  }
+
+  it("reflects order and plane into the slider, label, and select", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      symmetry: { order: 5, axis: "z" },
+      symmetry: { order: 5, plane: "xy" },
     });
 
     expect(
@@ -4461,8 +4466,8 @@ describe("Ui symmetry controls", () => {
       "5-fold",
     );
     expect(
-      (document.getElementById("symmetryAxis") as HTMLSelectElement).value,
-    ).toBe("z");
+      (document.getElementById("symmetryPlane") as HTMLSelectElement).value,
+    ).toBe("xy");
   });
 
   it("applies the order slider's value to state.symmetry.order on input", () => {
@@ -4479,23 +4484,25 @@ describe("Ui symmetry controls", () => {
     expect(current().symmetry.order).toBe(6);
   });
 
-  it("applies the selected axis to state.symmetry.axis on change", () => {
+  it("applies the selected plane to state.symmetry.plane on change", () => {
     const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
 
-    const select = document.getElementById("symmetryAxis") as HTMLSelectElement;
-    select.value = "x";
+    const select = document.getElementById(
+      "symmetryPlane",
+    ) as HTMLSelectElement;
+    select.value = "yz";
     select.dispatchEvent(new Event("change"));
 
-    expect(current().symmetry.axis).toBe("x");
+    expect(current().symmetry.plane).toBe("yz");
   });
 
   it("hides the reduction note when the requested order fits under the transform limit", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      symmetry: { order: 9, axis: "y" },
+      symmetry: { order: 9, plane: "xz" },
     });
 
     expect(note()?.classList.contains("hidden")).toBe(true);
@@ -4513,12 +4520,72 @@ describe("Ui symmetry controls", () => {
     ui.updateLabels({
       ...initialState(true),
       transforms: manyTransforms,
-      symmetry: { order: 9, axis: "y" },
+      symmetry: { order: 9, plane: "xz" },
     });
 
     expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe(
       "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
+    );
+  });
+
+  // fr-5gxn: the value is kept but inert while non-flat (ui.ts hides
+  // #symmetrySection itself), so this note is the only thing on screen that
+  // still tells the user their kaleidoscope is parked rather than gone.
+  it("shows the inactive note naming the order and plane for a non-flat system with a 6-fold kaleidoscope", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 6, plane: "xz" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
+    expect(inactiveNote()?.textContent).toBe(
+      "Kaleidoscope symmetry (6-fold in XZ) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
+    );
+  });
+
+  it("shows no inactive note for a non-flat system with symmetry order 1", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 1, plane: "xz" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
+    expect(inactiveNote()?.textContent).toBe("");
+  });
+
+  it("shows no inactive note for a flat system with a 6-fold kaleidoscope", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 6, plane: "xz" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
+    expect(inactiveNote()?.textContent).toBe("");
+  });
+
+  // fr-5gxn: the note is a statement about the document — the kaleidoscope
+  // is equally parked, and equally live in the shared #v1= URL, no matter
+  // what's rendering — not about the active render mode, so unlike
+  // symmetrySection (which lives inside the Points-only explorer panel) it
+  // keeps showing under a flame/solid/surface render exactly as in Points.
+  it("keeps showing the inactive note for a non-flat 6-fold system while a render is active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 6, plane: "xz" },
+      renderMode: "flame",
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
+    expect(inactiveNote()?.textContent).toBe(
+      "Kaleidoscope symmetry (6-fold in XZ) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
     );
   });
 });

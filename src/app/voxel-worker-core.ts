@@ -28,6 +28,7 @@ import {
 } from "../fractal/voxel";
 import type { VoxelBounds, VoxelGrid } from "../fractal/voxel";
 import { accumulateVoxels4, computeVoxelBounds4 } from "../fractal/voxel-4d";
+import { symmetryIsNonFlat } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
@@ -47,7 +48,8 @@ import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
   FourDColorMode,
-  SymmetryAxis,
+  SymmetryParams,
+  SymmetryPlane,
   Transform,
   Transform4,
   Vec3,
@@ -113,9 +115,12 @@ export type VoxelWorkerCommand =
        * Omitted, the session falls back to the phone-safe floor.
        */
       maxVoxels?: number;
-      /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
+      /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6, which is also why
+       * `twist` rides along — the second angle of a 4D double rotation, which
+       * only the 4D path can express). Absent `twist` means 0. */
       order: number;
-      axis: SymmetryAxis;
+      plane: SymmetryPlane;
+      twist?: number;
       /**
        * Optional 4D solid render (fr-4wd, mirroring the flame's fr-5b3):
        * present when the explorer was in 4D mode when the render was
@@ -179,7 +184,13 @@ export type VoxelWorkerCommand =
     }
   | { type: "setIterationsBudget"; iterations: number }
   | { type: "setPalette"; palette: PaletteSpec }
-  | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
+  | {
+      type: "setSymmetry";
+      order: number;
+      plane: SymmetryPlane;
+      /** See the `start` command's own `twist` (fr-q0h6). */
+      twist?: number;
+    };
 
 /** Worker → main thread. */
 export type VoxelWorkerEvent =
@@ -443,12 +454,22 @@ export class VoxelWorkerSession {
    * main thread resending the whole transform list. */
   private baseTransforms: Transform[] = [];
   private baseFinalTransform: Transform | null = null;
-  /** The symmetry actually baked into `this.prepared` right now — lets
-   * setSymmetry no-op a repeat value instead of restarting for nothing (the
-   * order slider fires "input" continuously while dragging, and can report
-   * the same integer step's value more than once in a row). */
+  /** The raw 4D transform set from the last "start"'s `fourD` block —
+   * retained for the same reason as the 3D pair above: setSymmetry re-runs
+   * `prepareChaosGame4` over it with the NEW symmetry (fr-q0h6). Empty for a
+   * 3D session. */
+  private baseTransforms4: Transform4[] = [];
+  private baseFinalTransform4: Transform4 | null = null;
+  /** The symmetry actually baked into `this.prepared` (or, in a 4D session,
+   * `this.prepared4`) right now — lets setSymmetry no-op a repeat value
+   * instead of restarting for nothing (the order slider fires "input"
+   * continuously while dragging, and can report the same integer step's value
+   * more than once in a row). */
   private symmetryOrder = 1;
-  private symmetryAxis: SymmetryAxis = "y";
+  private symmetryPlane: SymmetryPlane = "xz";
+  /** The second angle of a 4D double rotation (fr-q0h6) — 0 for every 3D
+   * session, which cannot express one. */
+  private symmetryTwist = 0;
 
   /** The effective (post-budget-clamp) resolution the grid was created at. */
   private effectiveResolution = 0;
@@ -520,23 +541,47 @@ export class VoxelWorkerSession {
         this.setPalette(command.palette);
         break;
       case "setSymmetry":
-        this.setSymmetry(command.order, command.axis);
+        this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
     }
+  }
+
+  /** The session's live kaleidoscope as the one object every consumer wants
+   * (fr-q0h6) — mirrors flame-worker-core's own `symmetry()`. */
+  private symmetry(): SymmetryParams {
+    return {
+      order: this.symmetryOrder,
+      plane: this.symmetryPlane,
+      twist: this.symmetryTwist,
+    };
+  }
+
+  /** {@link symmetry} as the 3D `prepareChaosGame` can express it — see
+   * flame-worker-core's `symmetry3D` for the full argument (a 4D
+   * kaleidoscope has no 3D expansion, and `symmetryRotation` throws on a
+   * w-plane rather than degrade). */
+  private symmetry3D(): SymmetryParams {
+    const symmetry = this.symmetry();
+    return symmetryIsNonFlat(symmetry)
+      ? { order: 1, plane: symmetry.plane }
+      : symmetry;
   }
 
   private start(cmd: Extract<VoxelWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.symmetryOrder = cmd.order;
-    this.symmetryAxis = cmd.axis;
+    this.symmetryPlane = cmd.plane;
+    this.symmetryTwist = cmd.twist ?? 0;
     // Built unconditionally, mirroring flame-worker-core's own `start`: even
     // in a 4D session these still arrive (the main thread always sends
-    // both) but are simply unused.
-    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
-      order: cmd.order,
-      axis: cmd.axis,
-    });
+    // both) but are simply unused. See `symmetry3D` for the
+    // 4D-kaleidoscope case.
+    this.prepared = prepareChaosGame(
+      cmd.transforms,
+      cmd.finalTransform,
+      this.symmetry3D(),
+    );
     this.palette = transformColors(cmd.transforms.length);
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
@@ -554,9 +599,12 @@ export class VoxelWorkerSession {
     this.is4D = cmd.fourD !== undefined;
     if (cmd.fourD) {
       const fourD = cmd.fourD;
+      this.baseTransforms4 = fourD.transforms4;
+      this.baseFinalTransform4 = fourD.finalTransform4;
       this.prepared4 = prepareChaosGame4(
         fourD.transforms4,
         fourD.finalTransform4,
+        this.symmetry(),
       );
       // The rotor is frozen for the whole session — built once here, unlike
       // the flame session's projection4 there is no camera to fold on top:
@@ -575,6 +623,8 @@ export class VoxelWorkerSession {
       this.fourDRadiusMax = fourD.radiusMax;
       this.fourDRampPalette = fourD.rampPalette;
     } else {
+      this.baseTransforms4 = [];
+      this.baseFinalTransform4 = null;
       this.prepared4 = null;
       this.rotorProj4 = null;
       this.fourDView = null;
@@ -631,7 +681,11 @@ export class VoxelWorkerSession {
       case "transform":
         return {
           kind: "transform",
-          palette: transformColors(this.prepared4?.transformCount ?? 0),
+          // BASE maps, not the symmetry-EXPANDED slot count (fr-q0h6):
+          // `accumulateVoxels4` indexes this by `idx % baseTransformCount`,
+          // so every kaleidoscope copy takes the color of the map it copies
+          // — and the hues stay put when the kaleidoscope's order changes.
+          palette: transformColors(this.prepared4?.baseTransformCount ?? 0),
         };
       case "radius":
         return {
@@ -659,34 +713,58 @@ export class VoxelWorkerSession {
     this.startAccumulation();
   }
 
-  private setSymmetry(order: number, axis: SymmetryAxis): void {
+  /** Live kaleidoscope change. Both dimensions rebuild their own prepared
+   * game (fr-q0h6 gave the 4D path `postRotations`/base-map bookkeeping of
+   * its own, so this is no longer 3D-only), re-pilot their bounds, and
+   * restart the accumulation — mirrors flame-worker-core's own
+   * `setSymmetry`, plus the bounds pass the flame has no counterpart for. */
+  private setSymmetry(
+    order: number,
+    plane: SymmetryPlane,
+    twist: number,
+  ): void {
     if (!this.hasGeometry()) return; // no active session yet.
-    // Symmetry (fr-6im) is 3D-only: the UI hides the control while a 4D
-    // session is active, but guard here too rather than trust that. A 4D
-    // session has no `postRotations`/base-map bookkeeping to rebuild, so
-    // there is nothing for this command to actually do — mirrors
-    // flame-worker-core's own `setSymmetry` guard.
-    if (this.is4D) return;
-    if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
+    if (
+      order === this.symmetryOrder &&
+      plane === this.symmetryPlane &&
+      twist === this.symmetryTwist
+    ) {
+      return;
+    }
     this.symmetryOrder = order;
-    this.symmetryAxis = axis;
-    this.prepared = prepareChaosGame(
-      this.baseTransforms,
-      this.baseFinalTransform,
-      { order, axis },
-    );
+    this.symmetryPlane = plane;
+    this.symmetryTwist = twist;
+    if (this.is4D) {
+      this.prepared4 = prepareChaosGame4(
+        this.baseTransforms4,
+        this.baseFinalTransform4,
+        this.symmetry(),
+      );
+    } else {
+      this.prepared = prepareChaosGame(
+        this.baseTransforms,
+        this.baseFinalTransform,
+        this.symmetry3D(),
+      );
+    }
     // Symmetry changes the attractor's spatial extent — a kaleidoscope can be
     // considerably wider than the base system — so the bounds pilot has to
     // rerun too, not just the accumulation (unlike setIterationsBudget above,
     // which never touches geometry). Reuses `this.rng` where it currently
     // sits, same as `start()` uses it fresh — a restart was never meant to be
     // bit-for-bit replayable against the original seed, only internally
-    // consistent from here on.
-    this.bounds = computeVoxelBounds(
-      this.prepared,
-      this.rng,
-      this.boundsSamples,
-    );
+    // consistent from here on. The 4D pilot is the same one `start` runs,
+    // through the frozen rotor/view (a 4D kaleidoscope widens the PROJECTED
+    // cloud exactly as a 3D one widens the raw attractor).
+    this.bounds = this.is4D
+      ? computeVoxelBounds4(
+          this.prepared4!,
+          this.rotorProj4!,
+          this.fourDView!,
+          this.rng,
+          this.boundsSamples,
+        )
+      : computeVoxelBounds(this.prepared!, this.rng, this.boundsSamples);
     this.startAccumulation();
   }
 

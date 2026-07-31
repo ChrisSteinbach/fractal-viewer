@@ -9,8 +9,8 @@
  * `PreparedChaosGame4` and `project4.ts`'s `RotorProjection4`/`FourDView`).
  *
  * Mirrors `flame-4d.ts`'s `accumulateFlame4` for the hand-inlined hot loop
- * (pick/affine/warp/escape-reseed, the frozen rotor projection, the
- * structural color coordinate) and `voxel.ts`'s `accumulateVoxels` for the
+ * (pick/affine/warp/symmetry post-rotation/escape-reseed, the frozen rotor
+ * projection, the structural color coordinate) and `voxel.ts`'s `accumulateVoxels` for the
  * voxel-grid bucketing and running-mean color — see each function's doc
  * below for the specific deviations from those two templates.
  */
@@ -232,8 +232,9 @@ export function computeVoxelBounds4(
  * module's doc). The 4D twin of `voxel.ts`'s `accumulateVoxels`, driving
  * `chaos-game-4d.ts`'s `PreparedChaosGame4` and hand-inlining
  * `stepOrbit4`/`plotPoint4`'s bodies exactly like `flame-4d.ts`'s
- * `accumulateFlame4` does (pick/affine/warp/escape-reseed, resetting the
- * structural color coordinate `c` to `0.5` on an escape-reseed) — see that
+ * `accumulateFlame4` does (pick/affine/warp/symmetry post-rotation/
+ * escape-reseed, resetting the structural color coordinate `c` to `0.5` on an
+ * escape-reseed) — see that
  * function for the full picture of the hot loop this mirrors.
  *
  * **Projection**: each plotted (post-lens) 4D point is projected through
@@ -264,8 +265,8 @@ export function computeVoxelBounds4(
  * **Coloring** dispatches on {@link FourDRenderColor} exactly like
  * `accumulateFlame4`: `"structural"` indexes `color.lut` at the orbit-riding
  * coordinate `c`; `"wRamp"` calls {@link wRampColor}; `"transform"` is
- * `color.palette[idx]` (the RAW picked transform index — 4D has no
- * kaleidoscope symmetry, so no base-map modulo to recover), falling back to
+ * `color.palette[baseIdx]` (the BASE map index — every kaleidoscope copy
+ * colors as the map it copies, fr-q0h6), falling back to
  * `[1, 1, 1]` for an out-of-range index; `"radius"` indexes `color.lut` at
  * the plotted point's 4D Euclidean distance from `color.center`, normalized
  * over `[color.minD, color.maxD]` with the same round-to-nearest 256-step
@@ -292,16 +293,18 @@ export function accumulateVoxels4(
   view: FourDView,
   color: FourDRenderColor,
 ): VoxelGrid {
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
 
   // Structural coloring (mirrors accumulateFlame4's colorLUT path exactly —
   // see FourDRenderColor's doc): `structural` gates both the per-step update
   // below and the escape-reseed reset. The per-map slot and blend speed were
-  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the raw picked
-  // index since 4D has no symmetry-expanded copies to collapse back to a base
-  // index — so a 4D system authored for the flame colors identically here.
+  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the BASE map
+  // index (fr-q0h6) so every kaleidoscope copy shares its map's slot — so a
+  // 4D system authored for the flame colors identically here.
   const structural = color.kind === "structural";
   const colorSlots = prepared.colorIndex;
   const colorSpeeds = prepared.colorSpeed;
@@ -351,14 +354,19 @@ export function accumulateVoxels4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
+    // The BASE map this slot is a (possibly rotated) copy of (fr-q0h6) — see
+    // PreparedChaosGame4.baseTransformCount. Equal to `idx` at symmetry order
+    // 1. Anything keyed to "which logical map" (the color slot below, and the
+    // `palette` lookup further down) uses this, never the raw expanded `idx`.
+    const baseIdx = idx % baseTransformCount;
     // Blend the color coordinate toward this transform's slot at this
     // transform's speed, BEFORE applying its affine — mirrors
     // accumulateFlame4's formula and ordering exactly. No rng is consumed, so
     // the orbit (and `density`) is identical whether or not structural
     // coloring is in play.
     if (structural) {
-      const speed = colorSpeeds[idx];
-      c = c * (1 - speed) + colorSlots[idx] * speed;
+      const speed = colorSpeeds[baseIdx];
+      c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;
@@ -384,6 +392,23 @@ export function accumulateVoxels4(
       ny = q[1];
       nz = q[2];
       nw = q[3];
+    }
+
+    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
+    // `null` (order 1, and every unrotated copy-0 slot at any order) skips
+    // this, so the orbit stays byte-identical to the pre-symmetry loop
+    // exactly where there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz + post[3] * nw;
+      const ry = post[4] * nx + post[5] * ny + post[6] * nz + post[7] * nw;
+      const rz = post[8] * nx + post[9] * ny + post[10] * nz + post[11] * nw;
+      const rw = post[12] * nx + post[13] * ny + post[14] * nz + post[15] * nw;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+      nw = rw;
     }
 
     if (
@@ -506,7 +531,7 @@ export function accumulateVoxels4(
         break;
       }
       case "transform": {
-        const rgb = color.palette[idx] ?? FALLBACK_COLOR;
+        const rgb = color.palette[baseIdx] ?? FALLBACK_COLOR;
         r = rgb[0];
         g = rgb[1];
         b = rgb[2];

@@ -194,6 +194,8 @@
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
       </div>
 
+      <p id="symmetryInactiveNote" class="flame-note-info hidden"></p>
+
       <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way
            snapshots of what's on screen. The scene-document traffic (link,
            JSON file, .flame, import) lives in the Share section below. -->
@@ -681,11 +683,11 @@
             />
           </label>
           <label class="select-label">
-            Axis
-            <select id="symmetryAxis">
-              <option value="x">X</option>
-              <option value="y" selected>Y</option>
-              <option value="z">Z</option>
+            Plane
+            <select id="symmetryPlane">
+              <option value="xy">XY</option>
+              <option value="xz" selected>XZ</option>
+              <option value="yz">YZ</option>
             </select>
           </label>
           <p id="symmetryNote" class="flame-note hidden"></p>

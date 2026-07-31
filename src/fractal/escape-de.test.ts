@@ -110,7 +110,7 @@ describe("analyzeEscapeSystem eligibility (fr-kltj)", () => {
     expect(
       analyzeEscapeSystem([canonicalMandelbox()], null, {
         order: 3,
-        axis: "y",
+        plane: "xz",
       }).reasons,
     ).toEqual(["kaleidoscope symmetry (unsupported in escape-time mode)"]);
   });

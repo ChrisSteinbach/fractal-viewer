@@ -23,7 +23,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
-  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   FLAME_ITERATION_DETENTS,
   initialState,
@@ -108,11 +108,11 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
-  setSymmetryAxis,
+  setSymmetryPlane,
+  setSymmetryTwist,
   setSymmetryOrder,
   setTransforms,
   systemIsNonFlat,
-  systemPartsAreNonFlat,
   updateTransform,
 } from "./state";
 import {
@@ -220,7 +220,7 @@ describe("initialState", () => {
     const state = initialState(true);
     expect(state.symmetry).toEqual({
       order: DEFAULT_SYMMETRY_ORDER,
-      axis: DEFAULT_SYMMETRY_AXIS,
+      plane: DEFAULT_SYMMETRY_PLANE,
     });
   });
 
@@ -1232,28 +1232,6 @@ describe("systemIsNonFlat", () => {
   });
 });
 
-describe("systemPartsAreNonFlat", () => {
-  it("is false for flat transforms with no final transform", () => {
-    expect(systemPartsAreNonFlat(initialState(true).transforms, null)).toBe(
-      false,
-    );
-  });
-
-  it("is true when any transform carries a non-trivial w block", () => {
-    const { transforms } = initialState(true);
-    const nonFlat: Transform = { ...transforms[0], w: { position: 0.5 } };
-    expect(systemPartsAreNonFlat([nonFlat, ...transforms.slice(1)], null)).toBe(
-      true,
-    );
-  });
-
-  it("is true when the final transform carries a non-trivial w block", () => {
-    const { transforms } = initialState(true);
-    const lens = { ...defaultFinalTransform(), w: { position: 0.5 } };
-    expect(systemPartsAreNonFlat(transforms, lens)).toBe(true);
-  });
-});
-
 describe("setSymmetryOrder", () => {
   it("sets the replica count immutably", () => {
     const state = initialState(true);
@@ -1278,29 +1256,65 @@ describe("setSymmetryOrder", () => {
     );
   });
 
-  it("leaves the axis and the rest of state untouched", () => {
+  it("leaves the plane and the rest of state untouched", () => {
     const state = initialState(true);
     const next = setSymmetryOrder(state, 6);
-    expect(next.symmetry.axis).toBe(state.symmetry.axis);
+    expect(next.symmetry.plane).toBe(state.symmetry.plane);
     expect(next.transforms).toBe(state.transforms);
     expect(next.flame).toBe(state.flame);
   });
 });
 
-describe("setSymmetryAxis", () => {
-  it("sets the axis immutably", () => {
+describe("setSymmetryPlane", () => {
+  it("sets the plane immutably", () => {
     const state = initialState(true);
-    const next = setSymmetryAxis(state, "x");
-    expect(next.symmetry.axis).toBe("x");
-    expect(state.symmetry.axis).toBe(DEFAULT_SYMMETRY_AXIS);
+    const next = setSymmetryPlane(state, "yz");
+    expect(next.symmetry.plane).toBe("yz");
+    expect(state.symmetry.plane).toBe(DEFAULT_SYMMETRY_PLANE);
   });
 
   it("leaves the order and the rest of state untouched", () => {
     const state = initialState(true);
-    const next = setSymmetryAxis(state, "z");
+    const next = setSymmetryPlane(state, "xy");
     expect(next.symmetry.order).toBe(state.symmetry.order);
     expect(next.transforms).toBe(state.transforms);
     expect(next.flame).toBe(state.flame);
+  });
+
+  it("makes the system non-flat when the plane mixes w", () => {
+    const state = setSymmetryOrder(initialState(true), 4);
+    expect(systemIsNonFlat(state)).toBe(false);
+    expect(systemIsNonFlat(setSymmetryPlane(state, "zw"))).toBe(true);
+  });
+
+  it("leaves an order-1 system flat even in a w-plane", () => {
+    const state = initialState(true);
+    expect(state.symmetry.order).toBe(1);
+    expect(systemIsNonFlat(setSymmetryPlane(state, "zw"))).toBe(false);
+  });
+});
+
+describe("setSymmetryTwist", () => {
+  it("stores a twist immutably", () => {
+    const state = setSymmetryOrder(initialState(true), 6);
+    const next = setSymmetryTwist(state, 2);
+    expect(next.symmetry.twist).toBe(2);
+    expect(state.symmetry.twist).toBeUndefined();
+  });
+
+  it("caps the twist at the current order's last distinct value", () => {
+    const state = setSymmetryOrder(initialState(true), 4);
+    expect(setSymmetryTwist(state, 9).symmetry.twist).toBe(3);
+  });
+
+  it("drops a zero twist to an absent field", () => {
+    const state = setSymmetryTwist(setSymmetryOrder(initialState(true), 6), 2);
+    expect("twist" in setSymmetryTwist(state, 0).symmetry).toBe(false);
+  });
+
+  it("makes the system non-flat at order > 1", () => {
+    const state = setSymmetryOrder(initialState(true), 5);
+    expect(systemIsNonFlat(setSymmetryTwist(state, 1))).toBe(true);
   });
 });
 

@@ -1,6 +1,8 @@
 import type {
   Rotation4,
   Shear4,
+  SymmetryParams,
+  SymmetryPlane,
   Transform,
   Transform4,
   Vec3,
@@ -125,6 +127,81 @@ export function rotationMatrix4(rotation: Rotation4): number[] {
     result = result === null ? factor : multiply4(result, factor);
   }
   return result ?? identity4();
+}
+
+/**
+ * The coordinate plane ORTHOGONAL to each {@link SymmetryPlane} — the plane a
+ * {@link SymmetryParams.twist} turns in, implied by the choice of plane rather
+ * than authored (see the type's doc). The three pairs are the only way to split
+ * four coordinates into two disjoint planes: `xy`↔`zw`, `xz`↔`yw`, `xw`↔`yz`.
+ */
+const COMPLEMENT_PLANE: Readonly<Record<SymmetryPlane, SymmetryPlane>> = {
+  xy: "zw",
+  zw: "xy",
+  xz: "yw",
+  yw: "xz",
+  xw: "yz",
+  yz: "xw",
+};
+
+/**
+ * The sign each symmetry plane's angle carries into {@link rotationMatrix4} —
+ * `+1` everywhere except `xz`, which is `−1`.
+ *
+ * NOT arbitrary, and the one thing in this module most worth getting right:
+ * `chaos-game.ts`'s 3D `symmetryRotation` builds its kaleidoscope out of
+ * {@link import("./affine").rotationMatrixXYZ}, whose `RY` is the rotation
+ * ABOUT the `+y` axis — right-handed, so it carries `+z` toward `+x`, i.e.
+ * `R_zx(θ) = R_xz(−θ)`. `R_ab` here rotates `+a` toward `+b`, so the `xz`
+ * plane (and only it) needs the negated angle to name the same rotation. This
+ * is exactly the `xz: -ry` {@link embedTransform3} already writes, for exactly
+ * this reason — one convention in the codebase, not two.
+ *
+ * Load-bearing beyond bookkeeping: a cyclic group `{R^k}` is sign-agnostic on
+ * its own (`{R^-k}` is the same set, so a SIMPLE rotation plots the same
+ * attractor either way), but a twist PAIRS two planes' angles, so their
+ * relative sign changes the group — and a flat system's 3D↔4D slot
+ * correspondence depends on the absolute one. Get it wrong and a flat
+ * system's kaleidoscope MIRRORS the moment a `w` block routes it through the
+ * 4D path.
+ */
+const PLANE_SIGN: Readonly<Record<SymmetryPlane, number>> = {
+  xy: 1,
+  xz: -1,
+  yz: 1,
+  xw: 1,
+  yw: 1,
+  zw: 1,
+};
+
+/**
+ * Row-major 4x4 rotation for kaleidoscope copy `k` of a {@link SymmetryParams}
+ * (fr-q0h6): `angle` in the chosen `plane`, plus `angle · twist` in the plane
+ * orthogonal to it — the second angle of a 4D DOUBLE rotation, which has no 3D
+ * counterpart. The 4D twin of `chaos-game.ts`'s `symmetryRotation`, and what
+ * `chaos-game-4d.ts`'s `prepareChaosGame4` rotates its expanded copies by.
+ *
+ * Both angles go through {@link PLANE_SIGN}, so on the three `w`-free planes
+ * this reproduces the 3D `symmetryRotation`'s 3x3 ENTRY FOR ENTRY (pinned by
+ * `chaos-game-4d.test.ts`) with the `w` row and column left exactly
+ * `[0, 0, 0, 1]` — a flat system's kaleidoscope is the same kaleidoscope on
+ * either path, which is the whole point of the vocabulary being shared.
+ *
+ * `twist = 0` — the default, every pre-fr-q0h6 document, and everything the 3D
+ * paths can express — emits a SINGLE factor: the complement's angle is exactly
+ * `0`, which {@link rotationMatrix4} skips rather than multiplying in as an
+ * identity, so the untouched rows stay bit-exact.
+ */
+export function symmetryRotation4(
+  plane: SymmetryPlane,
+  angle: number,
+  twist = 0,
+): number[] {
+  const other = COMPLEMENT_PLANE[plane];
+  const rotation: Rotation4 = {};
+  rotation[plane] = PLANE_SIGN[plane] * angle;
+  rotation[other] = PLANE_SIGN[other] * angle * twist;
+  return rotationMatrix4(rotation);
 }
 
 /**
@@ -394,4 +471,67 @@ export function isFlatTransform(t: Transform): boolean {
  */
 export function systemIsFlat(transforms: readonly Transform[]): boolean {
   return transforms.every(isFlatTransform);
+}
+
+/**
+ * THE formula for whether a system takes the 4D path: non-flat when any
+ * numbered transform is (see {@link systemIsFlat}), or when an ENABLED
+ * final-transform lens is — checked exactly like any numbered transform. A
+ * disabled lens (`finalTransform` `null`, matching `MorphSystem`/
+ * `CloudRequest`'s vocabulary) is not part of the system, so it never makes
+ * an otherwise-flat system read as non-flat.
+ *
+ * The one formula every caller shares, so the routing decision, the panel's
+ * gating, and the legend can never drift apart: `state.ts`'s
+ * `systemIsNonFlat` is its `AppState` front door; `main.ts`'s `cloudParams`
+ * stamps the result onto every generation request; `ui.ts`'s `updateLabels`
+ * gates the panel on it (then hands the one result on to `updateLegend`);
+ * and `morph.ts`'s `lerpSymmetry` routes a morph SAMPLE's own flatness on
+ * it — not the live document's — so a flat↔4D pair takes the 4D path
+ * exactly when the interpolated maps first carry live `w` blocks.
+ *
+ * Since fr-q0h6 the `symmetry` is a THIRD input, on the same footing as the
+ * transforms: a kaleidoscope turning in a `w`-plane (or with a twist) is 4D
+ * structure just as surely as a map's `w` block is — see
+ * {@link symmetryIsNonFlat}. Required, not optional, precisely so a caller
+ * that holds a symmetry cannot silently drop it; the identity
+ * (`{ order: 1, … }`) contributes nothing, which is what makes passing one
+ * safe where a call site deliberately means "the parts alone".
+ */
+export function systemPartsAreNonFlat(
+  transforms: readonly Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+): boolean {
+  return (
+    !systemIsFlat(transforms) ||
+    (finalTransform !== null && !isFlatTransform(finalTransform)) ||
+    symmetryIsNonFlat(symmetry)
+  );
+}
+
+/** Whether a {@link SymmetryPlane} mixes the fourth coordinate — the three
+ * planes that have no 3x3 and so cannot be handed to a 3D dispatch (fr-q0h6).
+ * `xy`/`xz`/`yz` are w-free; `xw`/`yw`/`zw` are not. */
+export function planeHasW(plane: SymmetryPlane): boolean {
+  return plane === "xw" || plane === "yw" || plane === "zw";
+}
+
+/**
+ * Whether a kaleidoscope by itself makes a system 4D (fr-q0h6): a `w`-plane
+ * rotation, or a nonzero {@link SymmetryParams.twist} (the second angle of a
+ * double rotation, taken in the plane orthogonal to the chosen one — always a
+ * `w`-plane when the chosen one is w-free), moves the copies OUT of the
+ * `w = 0` hyperplane, so such a system genuinely is 4D.
+ *
+ * ORDER 1 IS THE IDENTITY for any plane and any twist — one unrotated copy,
+ * nothing turning — so it can never force 4D however the other fields are
+ * set. That is what keeps a document that merely REMEMBERS a plane/twist
+ * while its kaleidoscope is off exactly as flat as it was.
+ */
+export function symmetryIsNonFlat(symmetry: SymmetryParams): boolean {
+  return (
+    symmetry.order > 1 &&
+    (planeHasW(symmetry.plane) || (symmetry.twist ?? 0) !== 0)
+  );
 }

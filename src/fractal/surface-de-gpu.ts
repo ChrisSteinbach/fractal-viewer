@@ -1,6 +1,7 @@
 import {
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
+  SYM_PLANE_CODE,
   type SurfaceDE,
 } from "./surface-de";
 import type { Vec3 } from "./types";
@@ -189,7 +190,7 @@ import type { Vec3 } from "./types";
  *          16  f32  escapeRadius          20  f32 stepScale
  *          24  f32  visibleRadius         28  f32 slowestSigma
  *          32  f32  stepCos               36  f32 stepSin
- *          40  u32  symOrder              44  u32 symAxis (0=x,1=y,2=z)
+ *          40  u32  symOrder              44  u32 symPlane (0=yz,1=xz,2=xy)
  *          48  u32  mapCount              52  u32 maxDepth
  *          56  u32  itemCount             60  u32 stepsThisPass
  *          64  f32  cutoff                68  f32 footprint (0 = off)
@@ -439,11 +440,7 @@ export function packSurfaceGpuParams(
   view.setFloat32(32, de.symmetry.stepCos, true);
   view.setFloat32(36, de.symmetry.stepSin, true);
   view.setUint32(40, de.symmetry.order, true);
-  view.setUint32(
-    44,
-    de.symmetry.axis === "x" ? 0 : de.symmetry.axis === "y" ? 1 : 2,
-    true,
-  );
+  view.setUint32(44, SYM_PLANE_CODE[de.symmetry.plane], true);
   view.setUint32(48, de.maps.length, true);
   view.setUint32(52, run.maxDepth ?? de.maxDepth, true);
   view.setUint32(56, run.itemCount, true);
@@ -1633,7 +1630,7 @@ struct Params {
   stepCos: f32,
   stepSin: f32,
   symOrder: u32,
-  symAxis: u32,
+  symPlane: u32,
   mapCount: u32,
   maxDepth: u32,
   itemCount: u32,
@@ -1697,10 +1694,10 @@ fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
 fn stepSector(v: vec3f) -> vec3f {
   let c = params.stepCos;
   let s = params.stepSin;
-  if (params.symAxis == 0u) {
+  if (params.symPlane == 0u) {
     return vec3f(v.x, c * v.y + s * v.z, -s * v.y + c * v.z);
   }
-  if (params.symAxis == 1u) {
+  if (params.symPlane == 1u) {
     return vec3f(c * v.x - s * v.z, v.y, s * v.x + c * v.z);
   }
   return vec3f(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);

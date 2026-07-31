@@ -18,7 +18,7 @@ function params(overrides: Partial<CloudParams> = {}): CloudParams {
     finalTransform: null,
     numPoints: 10,
     seed: 1,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     fourD: false,
     colorMode: "transform",
     colorGamma: 1,

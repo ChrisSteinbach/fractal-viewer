@@ -501,7 +501,7 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     ];
     const source = snapshotWith({
       transforms,
-      symmetry: { order: 3, axis: "z" },
+      symmetry: { order: 3, plane: "xy" },
     });
 
     const { xml, warnings } = encodeFlameFile(source, "kaleido-affine");
@@ -541,7 +541,7 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     ];
     const source = snapshotWith({
       transforms,
-      symmetry: { order: 2, axis: "z" },
+      symmetry: { order: 2, plane: "xy" },
     });
 
     const { xml } = encodeFlameFile(source, "kaleido-nonlinear");
@@ -788,7 +788,7 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     ];
     const source = snapshotWith({
       transforms,
-      symmetry: { order: 3, axis: "z" },
+      symmetry: { order: 3, plane: "xy" },
     });
 
     const { xml } = encodeFlameFile(source, "kaleido-color");
@@ -857,7 +857,7 @@ describe("encodeFlameFile warnings", () => {
     expect(warnings.some((w) => /4D structure/i.test(w))).toBe(true);
   });
 
-  it("warns when a non-z-axis kaleidoscope exports as its flat shadow", () => {
+  it("warns when a kaleidoscope outside the XY plane exports as its flat shadow", () => {
     const transforms: Transform[] = [
       {
         id: 0,
@@ -868,10 +868,30 @@ describe("encodeFlameFile warnings", () => {
     ];
     const source = snapshotWith({
       transforms,
-      symmetry: { order: 2, axis: "x" },
+      symmetry: { order: 2, plane: "yz" },
     });
-    const { warnings } = encodeFlameFile(source, "x-kaleido");
-    expect(warnings.some((w) => /x\/y/i.test(w))).toBe(true);
+    const { warnings } = encodeFlameFile(source, "yz-kaleido");
+    expect(warnings.some((w) => /outside the XY plane/i.test(w))).toBe(true);
+  });
+
+  it("drops a 4D kaleidoscope with a warning instead of refusing the export", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+    ];
+    const source = snapshotWith({
+      transforms,
+      symmetry: { order: 3, plane: "zw" },
+    });
+    const { xml, warnings } = encodeFlameFile(source, "zw-kaleido");
+    expect(warnings.some((w) => /4D kaleidoscope/i.test(w))).toBe(true);
+    // One xform, not three copies: the kaleidoscope dropped rather than
+    // emitting rotations the XY projection cannot express.
+    expect(xml.match(/<xform /g)).toHaveLength(1);
   });
 
   it("has no warnings for a z-flat system with default symmetry", () => {

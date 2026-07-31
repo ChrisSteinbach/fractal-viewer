@@ -238,20 +238,20 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
-      const command = { type: "setSymmetry", order: 4, axis: "y" };
+      const command = { type: "setSymmetry", order: 4, plane: "xz", twist: 0 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
 
-    it("symmetryAxis effect posts the identical setSymmetry shape to both render workers", () => {
-      const spec = specById("symmetryAxis");
+    it("symmetryPlane effect posts the identical setSymmetry shape to both render workers", () => {
+      const spec = specById("symmetryPlane");
       const previous = initialState(true);
-      const state = applyScalarControl(previous, spec, "x");
+      const state = applyScalarControl(previous, spec, "yz");
       const fx = mockEffects();
 
       spec.effect?.(state, fx, previous);
 
-      const command = { type: "setSymmetry", order: 1, axis: "x" };
+      const command = { type: "setSymmetry", order: 1, plane: "yz", twist: 0 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
@@ -832,8 +832,8 @@ describe("table policy", () => {
         "colorGammaSlider",
         "colorMode",
         "renderStyle",
-        "symmetryAxis",
         "symmetryOrderSlider",
+        "symmetryPlane",
       ].sort(),
     );
     expect(nonFlatIds).toEqual(["fourDColor", "fourDDepthFadeToggle"].sort());

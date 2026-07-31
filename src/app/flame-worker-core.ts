@@ -55,6 +55,7 @@ import type {
   Mat4,
   TonemapParams,
 } from "../fractal/flame";
+import { symmetryIsNonFlat } from "../fractal/affine4";
 import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
@@ -78,7 +79,8 @@ import type { Rng } from "../fractal/rng";
 import { FlamePerfMeter } from "./flame-perf";
 import type {
   FourDColorMode,
-  SymmetryAxis,
+  SymmetryParams,
+  SymmetryPlane,
   Transform,
   Transform4,
   Vec3,
@@ -152,9 +154,12 @@ export type FlameWorkerCommand =
        * payload.
        */
       palette: PaletteSpec;
-      /** Kaleidoscope symmetry (fr-6im) — see chaos-game.ts's prepareChaosGame. */
+      /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6, which is also why
+       * `twist` rides along — the second angle of a 4D double rotation, which
+       * only the 4D path can express). Absent `twist` means 0. */
       order: number;
-      axis: SymmetryAxis;
+      plane: SymmetryPlane;
+      twist?: number;
       /**
        * Optional 4D flame render (fr-5b3): present when the explorer was in
        * 4D mode when the render was entered. When present, the session
@@ -255,7 +260,13 @@ export type FlameWorkerCommand =
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
   | { type: "setEstimatorCurve"; estimatorCurve: number }
   | { type: "setPalette"; palette: PaletteSpec }
-  | { type: "setSymmetry"; order: number; axis: SymmetryAxis };
+  | {
+      type: "setSymmetry";
+      order: number;
+      plane: SymmetryPlane;
+      /** See the `start` command's own `twist` (fr-q0h6). */
+      twist?: number;
+    };
 
 /** Worker → main thread. */
 export type FlameWorkerEvent =
@@ -666,7 +677,7 @@ export interface GpuBackendRequest {
   finalTransform: Transform | null;
   /** Kaleidoscope symmetry (fr-6im) — see `chaos-game.ts`'s `prepareChaosGame`. */
   order: number;
-  axis: SymmetryAxis;
+  plane: SymmetryPlane;
   /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue;
    * since fr-55k may also be a self-contained `CustomPalette` payload. */
   palette: PaletteSpec;
@@ -702,14 +713,20 @@ export interface GpuBackendRequest {
  * packers consume. `projection`, `view`, and `color` are the SAME objects
  * the CPU oracle (`accumulateFlame4`, via `Cpu4DFlameBackend`) takes, so
  * the two engines cannot disagree on what is being rendered. There is no
- * symmetry (`order`/`axis`) and no `palette`: 4D has no kaleidoscope
- * symmetry, and the palette dispatch is already resolved into `color` by
- * the session's own `buildFourDColor`.
+ * `palette`: its dispatch is already resolved into `color` by the session's
+ * own `buildFourDColor`.
  */
 export interface GpuBackendRequest4 {
-  /** The raw 4D transform set — see `FlameWorkerSession.baseTransforms4`. */
+  /** The raw (un-rotated, un-symmetried) 4D transform set — see
+   * `FlameWorkerSession.baseTransforms4`. */
   transforms4: Transform4[];
   finalTransform4: Transform4 | null;
+  /** Kaleidoscope symmetry (fr-q0h6) — see `chaos-game-4d.ts`'s
+   * `prepareChaosGame4`. Flattened exactly like {@link GpuBackendRequest}'s
+   * `order`/`plane`, plus the `twist` only a 4D rotation can carry. */
+  order: number;
+  plane: SymmetryPlane;
+  twist: number;
   /** The 20-coefficient composed rotor+camera affine (`project4.ts`'s
    * `composeFlameProjection4`), row-major 4x5 — the same array
    * `accumulateFlame4` takes. */
@@ -958,13 +975,17 @@ export class FlameWorkerSession {
    * `baseTransforms` for `GpuBackendRequest`. Empty for a 3D session. */
   private baseTransforms4: Transform4[] = [];
   private baseFinalTransform4: Transform4 | null = null;
-  /** The symmetry actually baked into `this.prepared` right now — lets
-   * setSymmetry no-op a repeat value instead of restarting for nothing (the
-   * order slider fires "input" continuously while dragging, and can report
-   * the same integer step's value more than once in a row — the same class of
-   * problem computeEffectiveSupersample's restart guard handles). */
+  /** The symmetry actually baked into `this.prepared` (or, in a 4D session,
+   * `this.prepared4`) right now — lets setSymmetry no-op a repeat value
+   * instead of restarting for nothing (the order slider fires "input"
+   * continuously while dragging, and can report the same integer step's value
+   * more than once in a row — the same class of problem
+   * computeEffectiveSupersample's restart guard handles). */
   private symmetryOrder = 1;
-  private symmetryAxis: SymmetryAxis = "y";
+  private symmetryPlane: SymmetryPlane = "xz";
+  /** The second angle of a 4D double rotation (fr-q0h6) — 0 for every 3D
+   * session, which cannot express one. */
+  private symmetryTwist = 0;
   private rng: Rng = Math.random;
 
   /** The current accumulation's engine (fr-npb) — `null` between a
@@ -1220,20 +1241,54 @@ export class FlameWorkerSession {
         this.setPalette(command.palette);
         break;
       case "setSymmetry":
-        this.setSymmetry(command.order, command.axis);
+        this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
     }
+  }
+
+  /** The session's live kaleidoscope as the one object every consumer wants
+   * (fr-q0h6): `prepareChaosGame`/`prepareChaosGame4`, `symmetryIsNonFlat`,
+   * and the GPU packer all take a {@link SymmetryParams}, so the three
+   * retained scalars are reassembled here rather than at each call site. */
+  private symmetry(): SymmetryParams {
+    return {
+      order: this.symmetryOrder,
+      plane: this.symmetryPlane,
+      twist: this.symmetryTwist,
+    };
+  }
+
+  /**
+   * {@link symmetry} as the 3D `prepareChaosGame` can express it: a 4D
+   * kaleidoscope (fr-q0h6 — a w-plane, or a twist) has no 3D expansion at
+   * all, and `chaos-game.ts`'s `symmetryRotation` THROWS on a w-plane rather
+   * than degrade, so the 3D prepare is asked for the identity instead.
+   * Authoring one also makes the SYSTEM non-flat, so in a 4D session that
+   * prepare goes unread anyway (`prepared4` carries the real kaleidoscope);
+   * in a 3D session — a live command that turned a flat system 4D under a
+   * render that can no longer follow it — an unreplicated render beats a
+   * crashed worker.
+   */
+  private symmetry3D(): SymmetryParams {
+    const symmetry = this.symmetry();
+    return symmetryIsNonFlat(symmetry)
+      ? { order: 1, plane: symmetry.plane }
+      : symmetry;
   }
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
     this.symmetryOrder = cmd.order;
-    this.symmetryAxis = cmd.axis;
-    this.prepared = prepareChaosGame(cmd.transforms, cmd.finalTransform, {
-      order: cmd.order,
-      axis: cmd.axis,
-    });
+    this.symmetryPlane = cmd.plane;
+    this.symmetryTwist = cmd.twist ?? 0;
+    // Built unconditionally (see `symmetry3D` for the 4D-kaleidoscope case):
+    // even in a 4D session this still arrives, and is simply unused.
+    this.prepared = prepareChaosGame(
+      cmd.transforms,
+      cmd.finalTransform,
+      this.symmetry3D(),
+    );
     this.projection = cmd.projection;
     this.palette = transformColors(cmd.transforms.length);
     // null for "legacy" — accumulateFlame then colors by transform (palette).
@@ -1247,6 +1302,7 @@ export class FlameWorkerSession {
       this.prepared4 = prepareChaosGame4(
         fourD.transforms4,
         fourD.finalTransform4,
+        this.symmetry(),
       );
       // Resolution-independent (NDC-based), like the 3D path's own
       // `projection` — built once here and reused across every
@@ -1353,7 +1409,12 @@ export class FlameWorkerSession {
       case "transform":
         return {
           kind: "transform",
-          palette: transformColors(this.prepared4?.transformCount ?? 0),
+          // BASE maps, not the symmetry-EXPANDED slot count (fr-q0h6):
+          // `accumulateFlame4` (and the GPU kernel) index this by
+          // `idx % baseTransformCount`, so every kaleidoscope copy takes the
+          // color of the map it copies — and the hues stay put when the
+          // kaleidoscope's order changes.
+          palette: transformColors(this.prepared4?.baseTransformCount ?? 0),
         };
       case "radius":
         return {
@@ -1564,21 +1625,38 @@ export class FlameWorkerSession {
     );
   }
 
-  private setSymmetry(order: number, axis: SymmetryAxis): void {
+  /** Live kaleidoscope change. Both dimensions rebuild their own prepared
+   * game (fr-q0h6 gave the 4D path `postRotations`/base-map bookkeeping of
+   * its own, so this is no longer 3D-only) and restart the accumulation. */
+  private setSymmetry(
+    order: number,
+    plane: SymmetryPlane,
+    twist: number,
+  ): void {
     if (!this.hasGeometry()) return; // no active session yet.
-    // Symmetry (fr-6im) is 3D-only: the UI hides the control while a 4D
-    // session is active, but guard here too rather than trust that. A 4D
-    // session has no `postRotations`/base-map bookkeeping to rebuild, so
-    // there is nothing for this command to actually do.
-    if (this.is4D) return;
-    if (order === this.symmetryOrder && axis === this.symmetryAxis) return;
+    if (
+      order === this.symmetryOrder &&
+      plane === this.symmetryPlane &&
+      twist === this.symmetryTwist
+    ) {
+      return;
+    }
     this.symmetryOrder = order;
-    this.symmetryAxis = axis;
-    this.prepared = prepareChaosGame(
-      this.baseTransforms,
-      this.baseFinalTransform,
-      { order, axis },
-    );
+    this.symmetryPlane = plane;
+    this.symmetryTwist = twist;
+    if (this.is4D) {
+      this.prepared4 = prepareChaosGame4(
+        this.baseTransforms4,
+        this.baseFinalTransform4,
+        this.symmetry(),
+      );
+    } else {
+      this.prepared = prepareChaosGame(
+        this.baseTransforms,
+        this.baseFinalTransform,
+        this.symmetry3D(),
+      );
+    }
     // The accumulated color sums (and the slot layout itself) assume the OLD
     // geometry — symmetry changes which slots exist, not just a tone-map
     // parameter — so, like setPalette, this can't be re-applied to the
@@ -1885,7 +1963,7 @@ export class FlameWorkerSession {
       transforms: this.baseTransforms,
       finalTransform: this.baseFinalTransform,
       order: this.symmetryOrder,
-      axis: this.symmetryAxis,
+      plane: this.symmetryPlane,
       palette: this.paletteSpec,
       projection: this.projection!,
       width: this.accumWidth,
@@ -1905,6 +1983,9 @@ export class FlameWorkerSession {
     return {
       transforms4: this.baseTransforms4,
       finalTransform4: this.baseFinalTransform4,
+      order: this.symmetryOrder,
+      plane: this.symmetryPlane,
+      twist: this.symmetryTwist,
       projection: this.projection4!,
       view: this.fourDView!,
       color: this.fourDColor!,

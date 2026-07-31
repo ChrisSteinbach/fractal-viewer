@@ -1,4 +1,4 @@
-import { toTransform4 } from "../fractal/affine4";
+import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
@@ -98,7 +98,7 @@ import { createResolutionGovernor } from "./resolution-governor";
 import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
-  DEFAULT_SYMMETRY_AXIS,
+  DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   initialState,
   removeTransform,
@@ -108,10 +108,9 @@ import {
   setPanelOpen,
   setPositionAxisColors,
   setRenderMode,
-  setSymmetryAxis,
+  setSymmetryPlane,
   setSymmetryOrder,
   setTransforms,
-  systemPartsAreNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
@@ -1601,7 +1600,7 @@ function main(): void {
           : state.numPoints,
       seed: morph?.seed ?? rollSeed(),
       symmetry,
-      fourD: systemPartsAreNonFlat(transforms, finalTransform),
+      fourD: systemPartsAreNonFlat(transforms, finalTransform, symmetry),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
       // Resolved here (not the bare selection) — the "custom" sentinel has
@@ -1989,8 +1988,8 @@ function main(): void {
 
   // The base map whose landing the replay's hop cursor is sitting on
   // (fr-01kf), read off the displayed result's per-point transformIndices —
-  // base-map indexed on both paths (3D folds kaleidoscope copies back to
-  // their base map; 4D has no symmetry), exactly like by-transform coloring,
+  // base-map indexed on both paths (each folds its kaleidoscope copies back
+  // to their base map — fr-q0h6), exactly like by-transform coloring,
   // so the index lines up with the guide boxes. Null when the buffer isn't
   // there to ask (a replay can only have started over an arrived cloud, but
   // the poll shares frames with landings — stay defensive, not clever).
@@ -2441,7 +2440,8 @@ function main(): void {
         estimatorCurve: state.flame.estimatorCurve,
         palette: resolvePalette(state.flame.paletteId, state.customPalette),
         order: state.symmetry.order,
-        axis: state.symmetry.axis,
+        plane: state.symmetry.plane,
+        twist: state.symmetry.twist ?? 0,
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
@@ -2612,7 +2612,8 @@ function main(): void {
           window.matchMedia("(pointer: coarse)").matches,
         ),
         order: state.symmetry.order,
-        axis: state.symmetry.axis,
+        plane: state.symmetry.plane,
+        twist: state.symmetry.twist ?? 0,
         // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
         fourD: fourDRenderSnapshot(),
       });
@@ -2981,7 +2982,11 @@ function main(): void {
       let computeDe: SurfaceDE | null = null;
       try {
         if (
-          systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null)
+          systemPartsAreNonFlat(
+            state.transforms,
+            state.finalTransform ?? null,
+            state.symmetry,
+          )
         ) {
           // A 4D system: the slice-mode tracer (fr-vxoj), marching the
           // w = sliceCenter cross-section of the rotor-posed attractor.
@@ -3396,7 +3401,13 @@ function main(): void {
     // tracer's admission ticket. Routed on the DOCUMENT's flatness (the
     // same predicate cloudParams stamps on generation requests), never the
     // async-cached viewIs4D flag: this gate must track edits synchronously.
-    if (systemPartsAreNonFlat(state.transforms, state.finalTransform ?? null)) {
+    if (
+      systemPartsAreNonFlat(
+        state.transforms,
+        state.finalTransform ?? null,
+        state.symmetry,
+      )
+    ) {
       const analysis = analyzeSurfaceSystem4(
         state.transforms,
         state.finalTransform ?? null,
@@ -3984,14 +3995,14 @@ function main(): void {
         // never multiplies a fresh surprise in a way its quality gate never
         // probed. regenerate() (via applyEdit "always") reads state.symmetry
         // for both the point cloud and the flame worker's restart payload,
-        // and refreshUi() syncs the slider/axis controls.
+        // and refreshUi() syncs the slider/plane controls.
         state = setSymmetryOrder(
           state,
           sys.symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
         );
-        state = setSymmetryAxis(
+        state = setSymmetryPlane(
           state,
-          sys.symmetry?.axis ?? DEFAULT_SYMMETRY_AXIS,
+          sys.symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
         );
       },
       "always",
@@ -4062,7 +4073,7 @@ function main(): void {
       // Mutation preserves symmetry, so this re-applies the same values —
       // kept for uniformity with the other replace-load paths.
       state = setSymmetryOrder(state, candidate.symmetry.order);
-      state = setSymmetryAxis(state, candidate.symmetry.axis);
+      state = setSymmetryPlane(state, candidate.symmetry.plane);
     }, "always");
     // A mutated system is no longer the polytope a preset's scaffold
     // illustrated — clear it, like rollSurpriseSystem.

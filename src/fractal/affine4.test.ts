@@ -5,15 +5,21 @@ import {
   embedTransform3,
   isFlatTransform,
   meanContraction,
+  planeHasW,
   rotationMatrix4,
+  symmetryIsNonFlat,
+  symmetryRotation4,
   systemIsFlat,
+  systemPartsAreNonFlat,
   toTransform4,
 } from "./affine4";
+import { symmetryRotation } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
-import { defaultTransforms } from "./presets";
+import { defaultFinalTransform, defaultTransforms } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Affine4 } from "./affine4";
-import type { Transform, Transform4 } from "./types";
+import { SYMMETRY_PLANES } from "./types";
+import type { SymmetryParams, Transform, Transform4 } from "./types";
 
 const HALF_PI = Math.PI / 2;
 
@@ -158,6 +164,111 @@ describe("rotationMatrix4 vs. the 3D convention", () => {
       // touches w.
       expect([m[12], m[13], m[14], m[15]]).toEqual([0, 0, 0, 1]);
       expect([m[3], m[7], m[11], m[15]]).toEqual([0, 0, 0, 1]);
+    }
+  });
+});
+
+describe("symmetryRotation4", () => {
+  /** ENTRY-FOR-ENTRY equality, `-0` and `+0` counted equal — the same
+   * comparison `chaos-game.test.ts` pins the 3D migration with, for the same
+   * reason: these matrices carry a `-0` where the other carries `+0`
+   * (`-c*f` with `f = 0` against a literal `0`), which no arithmetic
+   * downstream can tell apart. */
+  function expectSameMatrix(actual: number[], expected: number[]): void {
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i] + 0).toBe(expected[i] + 0);
+    }
+  }
+
+  const ANGLES = [0.3, 1.1, 2.4, -0.7, (2 * Math.PI) / 5];
+
+  // ——— THE pin: a flat system's kaleidoscope is the SAME kaleidoscope on
+  // either path ———
+  //
+  // A w-free plane with no twist is exactly what the 3D chaos game can
+  // express, so `symmetryRotation4` must reproduce `chaos-game.ts`'s
+  // `symmetryRotation` there — not up to a rotation of the same order (a
+  // cyclic group is sign-agnostic on its own), but entry for entry, because
+  // the 3D↔4D SLOT correspondence depends on the absolute sign. Failing this
+  // means the PLANE_SIGN table is wrong.
+
+  it("reproduces the 3D symmetryRotation entry for entry on every w-free plane", () => {
+    for (const plane of ["xy", "xz", "yz"] as const) {
+      for (const angle of ANGLES) {
+        expectSameMatrix(
+          upperLeft3x3(symmetryRotation4(plane, angle, 0)),
+          symmetryRotation(plane, angle),
+        );
+      }
+    }
+  });
+
+  it("leaves w exactly untouched on a w-free plane at twist 0 (a single factor, never a product)", () => {
+    for (const plane of ["xy", "xz", "yz"] as const) {
+      for (const angle of ANGLES) {
+        const m = symmetryRotation4(plane, angle, 0);
+        expect([m[12], m[13], m[14], m[15]]).toEqual([0, 0, 0, 1]);
+        expect([m[3], m[7], m[11]]).toEqual([0, 0, 0]);
+      }
+    }
+  });
+
+  it("negates only the xz angle against rotationMatrix4's own R_ab", () => {
+    for (const angle of ANGLES) {
+      expectSameMatrix(symmetryRotation4("yz", angle), rotationMatrix4({ yz: angle })); // prettier-ignore
+      expectSameMatrix(symmetryRotation4("xy", angle), rotationMatrix4({ xy: angle })); // prettier-ignore
+      expectSameMatrix(symmetryRotation4("xz", angle), rotationMatrix4({ xz: -angle })); // prettier-ignore
+    }
+    // And genuinely differs from the un-negated factor, so the xz assertion
+    // above is not vacuously true at some symmetric angle.
+    const negated = symmetryRotation4("xz", 1.1);
+    const plain = rotationMatrix4({ xz: 1.1 });
+    expect(negated[2]).toBeCloseTo(-plain[2], 12);
+    expect(negated[2]).not.toBeCloseTo(plain[2], 6);
+  });
+
+  it("turns the ORTHOGONAL plane by angle * twist, each plane paired with its complement", () => {
+    // xy↔zw, xz↔yw, xw↔yz — the only way to split four coordinates into two
+    // disjoint planes. The twist angle carries the complement's own sign, so
+    // `yw` reads +, and `xz` (as a complement, under plane `yw`) reads −.
+    expectSameMatrix(
+      symmetryRotation4("xy", 0.4, 2),
+      rotationMatrix4({ xy: 0.4, zw: 0.8 }),
+    );
+    expectSameMatrix(
+      symmetryRotation4("xz", 0.4, 2),
+      rotationMatrix4({ xz: -0.4, yw: 0.8 }),
+    );
+    expectSameMatrix(
+      symmetryRotation4("yw", 0.4, 2),
+      rotationMatrix4({ yw: 0.4, xz: -0.8 }),
+    );
+    expectSameMatrix(
+      symmetryRotation4("xw", 0.4, 2),
+      rotationMatrix4({ xw: 0.4, yz: 0.8 }),
+    );
+  });
+
+  it("moves the w = 0 hyperplane off itself with a twist, where twist 0 never does", () => {
+    const simple = symmetryRotation4("xy", 0.4, 0);
+    const twisted = symmetryRotation4("xy", 0.4, 1);
+    // A point in the w = 0 slice: the simple rotation keeps it there, the
+    // isoclinic twist lifts it out (the zw factor carries z into w).
+    expect(apply(simple, [0.3, -0.2, 0.5, 0])[3]).toBe(0);
+    expect(Math.abs(apply(twisted, [0.3, -0.2, 0.5, 0])[3])).toBeGreaterThan(
+      0.1,
+    );
+  });
+
+  it("is the identity at angle 0 whatever the twist (copy 0 of any kaleidoscope)", () => {
+    expectSameMatrix(symmetryRotation4("zw", 0, 3), rotationMatrix4({}));
+  });
+
+  it("accepts the w-planes the 3D symmetryRotation refuses", () => {
+    for (const plane of ["xw", "yw", "zw"] as const) {
+      expect(() => symmetryRotation(plane, 0.5)).toThrow(/mixes w/);
+      expect(symmetryRotation4(plane, 0.5)).toHaveLength(16);
     }
   });
 });
@@ -443,6 +554,92 @@ describe("systemIsFlat", () => {
       i === 2 ? { ...t, w: { position: 0.2 } } : t,
     );
     expect(systemIsFlat(withW)).toBe(false);
+  });
+});
+
+describe("systemPartsAreNonFlat", () => {
+  /** The identity kaleidoscope: order 1, so it contributes nothing to the
+   * predicate whatever plane it names (see `symmetryIsNonFlat`). */
+  const noSymmetry: SymmetryParams = { order: 1, plane: "xz" };
+
+  it("is false for flat transforms with no final transform", () => {
+    expect(systemPartsAreNonFlat(defaultTransforms(), null, noSymmetry)).toBe(
+      false,
+    );
+  });
+
+  it("is true when any transform carries a non-trivial w block", () => {
+    const transforms = defaultTransforms();
+    const nonFlat: Transform = { ...transforms[0], w: { position: 0.5 } };
+    expect(
+      systemPartsAreNonFlat(
+        [nonFlat, ...transforms.slice(1)],
+        null,
+        noSymmetry,
+      ),
+    ).toBe(true);
+  });
+
+  it("is true when the final transform carries a non-trivial w block", () => {
+    const transforms = defaultTransforms();
+    const lens = { ...defaultFinalTransform(), w: { position: 0.5 } };
+    expect(systemPartsAreNonFlat(transforms, lens, noSymmetry)).toBe(true);
+  });
+
+  it("is true when the kaleidoscope alone turns in a w-plane (fr-q0h6)", () => {
+    expect(
+      systemPartsAreNonFlat(defaultTransforms(), null, {
+        order: 3,
+        plane: "zw",
+      }),
+    ).toBe(true);
+  });
+
+  it("is true when the kaleidoscope alone carries a twist (fr-q0h6)", () => {
+    expect(
+      systemPartsAreNonFlat(defaultTransforms(), null, {
+        order: 5,
+        plane: "xz",
+        twist: 2,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("symmetryIsNonFlat", () => {
+  it("is false for the identity order, whatever plane or twist it names", () => {
+    for (const plane of SYMMETRY_PLANES) {
+      expect(symmetryIsNonFlat({ order: 1, plane })).toBe(false);
+      expect(symmetryIsNonFlat({ order: 1, plane, twist: 3 })).toBe(false);
+    }
+  });
+
+  it("is false for the three w-free planes with no twist", () => {
+    for (const plane of ["xy", "xz", "yz"] as const) {
+      expect(symmetryIsNonFlat({ order: 6, plane })).toBe(false);
+      expect(symmetryIsNonFlat({ order: 6, plane, twist: 0 })).toBe(false);
+    }
+  });
+
+  it("is true for each w-plane at order > 1", () => {
+    for (const plane of ["xw", "yw", "zw"] as const) {
+      expect(symmetryIsNonFlat({ order: 2, plane })).toBe(true);
+    }
+  });
+
+  it("is true for a nonzero twist in a w-free plane at order > 1", () => {
+    expect(symmetryIsNonFlat({ order: 4, plane: "xy", twist: 1 })).toBe(true);
+  });
+});
+
+describe("planeHasW", () => {
+  it("splits the six planes into the three that mix w and the three that do not", () => {
+    expect(SYMMETRY_PLANES.filter(planeHasW)).toEqual(["xw", "yw", "zw"]);
+    expect(SYMMETRY_PLANES.filter((p) => !planeHasW(p))).toEqual([
+      "xy",
+      "xz",
+      "yz",
+    ]);
   });
 });
 

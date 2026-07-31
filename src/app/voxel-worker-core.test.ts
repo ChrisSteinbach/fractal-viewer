@@ -30,7 +30,7 @@ function startCommand(
     iterationsBudget: 500,
     seed: 1,
     order: 1,
-    axis: "y",
+    plane: "xz",
     ...overrides,
   };
 }
@@ -404,7 +404,7 @@ describe("VoxelWorkerSession setSymmetry", () => {
   it("runs to completion and reports the final grid when order > 1", () => {
     const { session, events, scheduler } = harness();
     session.handle(
-      startCommand({ order: 3, axis: "y", iterationsBudget: 500 }),
+      startCommand({ order: 3, plane: "xz", iterationsBudget: 500 }),
     );
     scheduler.drain();
 
@@ -418,13 +418,13 @@ describe("VoxelWorkerSession setSymmetry", () => {
   it("restarts accumulation from zero when the order actually changes", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 100 });
     session.handle(
-      startCommand({ order: 1, axis: "y", iterationsBudget: 400 }),
+      startCommand({ order: 1, plane: "xz", iterationsBudget: 400 }),
     );
     scheduler.step();
     const gridsBeforeRestart = gridEvents(events).length;
     expect(gridEvents(events).at(-1)!.iterationsDone).toBe(100);
 
-    session.handle({ type: "setSymmetry", order: 3, axis: "y" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "xz" });
     scheduler.step();
     const afterOneStep = gridEvents(events);
     expect(afterOneStep.length).toBe(gridsBeforeRestart + 1); // a genuinely NEW event landed, not just a re-send.
@@ -437,13 +437,13 @@ describe("VoxelWorkerSession setSymmetry", () => {
   it("restarts accumulation when only the axis changes (order held constant)", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 100 });
     session.handle(
-      startCommand({ order: 3, axis: "y", iterationsBudget: 400 }),
+      startCommand({ order: 3, plane: "xz", iterationsBudget: 400 }),
     );
     scheduler.step();
     const gridsBeforeRestart = gridEvents(events).length;
     expect(gridEvents(events).at(-1)!.iterationsDone).toBe(100);
 
-    session.handle({ type: "setSymmetry", order: 3, axis: "z" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "xy" });
     scheduler.step();
     const afterOneStep = gridEvents(events);
     expect(afterOneStep.length).toBe(gridsBeforeRestart + 1);
@@ -453,12 +453,12 @@ describe("VoxelWorkerSession setSymmetry", () => {
   it("does not restart when order and axis are unchanged (no-op guard)", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 100 });
     session.handle(
-      startCommand({ order: 3, axis: "y", iterationsBudget: 200 }),
+      startCommand({ order: 3, plane: "xz", iterationsBudget: 200 }),
     );
     scheduler.drain();
     const gridsAtCompletion = gridEvents(events).length;
 
-    session.handle({ type: "setSymmetry", order: 3, axis: "y" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "xz" });
     // No restart -> no fresh accumulation, so no new grid event fires from a
     // no-op command with nothing scheduled.
     expect(gridEvents(events)).toHaveLength(gridsAtCompletion);
@@ -467,9 +467,26 @@ describe("VoxelWorkerSession setSymmetry", () => {
   it("is a no-op and does not throw when sent before any start", () => {
     const { session, events } = harness();
     expect(() =>
-      session.handle({ type: "setSymmetry", order: 3, axis: "y" }),
+      session.handle({ type: "setSymmetry", order: 3, plane: "xz" }),
     ).not.toThrow();
     expect(events).toHaveLength(0);
+  });
+
+  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated (fr-q0h6)", () => {
+    // A live symmetry edit can turn a flat system 4D under a render session
+    // whose dimension was fixed at start. `symmetryRotation` THROWS on a
+    // w-plane, so without the symmetry3D guard this would kill the worker.
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ order: 1, plane: "xz" }));
+    scheduler.drain();
+
+    expect(() =>
+      session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 }),
+    ).not.toThrow();
+    scheduler.drain();
+
+    // Still renders — the restart ran, and to the same budget.
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(500);
   });
 });
 
@@ -621,16 +638,42 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(last.texture.some((b) => b > 0)).toBe(true);
   });
 
-  it("setSymmetry on a 4D session is a no-op: no bounds re-run, no restart", () => {
-    const { session, events, scheduler } = harness();
+  it("setSymmetry on a 4D session restarts accumulation and re-emits a grid (fr-q0h6)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 50 });
     session.handle(
       startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
+    );
+    scheduler.drain();
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const gridsBefore = gridEvents(events).length;
+
+    // A w-plane with a twist: the genuinely 4D kaleidoscope, which the 3D
+    // path cannot even represent.
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
+    scheduler.drain();
+
+    // A finished render emits no more grids on its own; that it climbs back
+    // to the budget AND emits new grids proves it reset to zero and re-ran.
+    expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+  });
+
+  it("setSymmetry on a 4D session still no-ops when order, plane and twist are unchanged", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        iterationsBudget: 200,
+        order: 3,
+        plane: "zw",
+        twist: 1,
+      }),
     );
     scheduler.drain();
     const gridsBefore = gridEvents(events).length;
     const notesBefore = noteEvents(events).length;
 
-    session.handle({ type: "setSymmetry", order: 3, axis: "z" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
 
     // No restart -> no new grid/resolutionNote from a no-op command with
     // nothing scheduled.

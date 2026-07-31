@@ -548,22 +548,32 @@ const PARAMS_NUM_CHAINS = 21;
 // Elements 22-23 are Params' trailing pad.
 
 /**
- * `chaos-game.ts`'s private `symmetryRotation`, restated here since only
- * `rotationMatrixXYZ` (not that helper) is exported: one nonzero Euler angle
- * on the requested axis, matching `prepareChaosGame`'s per-copy post-rotation
- * exactly.
+ * `chaos-game.ts`'s `symmetryRotation`, restated here (a deliberate
+ * restatement — see the module doc's "restated, not imported" note): one
+ * nonzero Euler angle for the requested w-free plane, matching
+ * `prepareChaosGame`'s per-copy post-rotation exactly, including the plane →
+ * Euler mapping fr-q0h6's axis migration pins there (`yz`/`xz`/`xy` ← the
+ * legacy `x`/`y`/`z`, same matrices, same signs).
+ *
+ * Throws on a `w`-plane for the same reason the oracle does: this kernel is
+ * the 3D flame's, and a 4D symmetry routes to `flame-gpu-4d.ts` instead.
  */
 function symmetryPostRotation(
-  axis: SymmetryParams["axis"],
+  plane: SymmetryParams["plane"],
   angle: number,
 ): number[] {
-  switch (axis) {
-    case "x":
+  switch (plane) {
+    case "yz":
       return rotationMatrixXYZ(angle, 0, 0);
-    case "y":
+    case "xz":
       return rotationMatrixXYZ(0, angle, 0);
-    case "z":
+    case "xy":
       return rotationMatrixXYZ(0, 0, angle);
+    default:
+      throw new Error(
+        `symmetryPostRotation: "${plane}" mixes w and has no 3x3 — a 4D ` +
+          `symmetry plane must route to the 4D kernel`,
+      );
   }
 }
 
@@ -759,7 +769,7 @@ export interface PackedGpuSystem {
  * packed instance — a deliberate, harmless redundancy that mirrors
  * `prepareChaosGame` sharing one composed affine/variation BY REFERENCE
  * across copies), plus copy `k`'s post-rotation: `null`/zeroed for `k = 0`,
- * `rotationMatrixXYZ` about `symmetry.axis` by `2π·k / order` otherwise (see
+ * `rotationMatrixXYZ` in `symmetry.plane` by `2π·k / order` otherwise (see
  * {@link symmetryPostRotation}) — `hasPost` is set only in the latter case.
  *
  * **Weights**: slot `s`'s weight is `transforms[s % baseTransformCount]
@@ -846,7 +856,7 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     const post =
       k === 0
         ? null
-        : symmetryPostRotation(symmetry.axis, (2 * Math.PI * k) / order);
+        : symmetryPostRotation(symmetry.plane, (2 * Math.PI * k) / order);
     for (let i = 0; i < baseTransformCount; i++) {
       const s = k * baseTransformCount + i;
       const base = s * F32_PER_SLOT;

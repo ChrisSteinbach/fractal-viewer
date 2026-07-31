@@ -7,8 +7,8 @@
  * instead of the 3D path's 16-coefficient camera matrix.
  *
  * Like `accumulateFlame`, this hand-inlines `stepOrbit4`'s pick/affine/
- * variation/escape-reseed body and `plotPoint4`'s lens into one
- * allocation-free loop — the same GC-pressure argument applies at the
+ * variation/symmetry-post-rotation/escape-reseed body and `plotPoint4`'s lens
+ * into one allocation-free loop — the same GC-pressure argument applies at the
  * hundreds-of-millions-of-iterations scale a converged flame needs. Only the
  * warmup loop (not hot) calls the real, non-inlined `stepOrbit4`.
  *
@@ -23,9 +23,9 @@
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
  * palette slot at that transform's color speed every step (fr-hiyu; both
- * resolved by `prepareChaosGame4`), reset on escape-reseed — except keyed on
- * the RAW picked transform index (4D has no kaleidoscope symmetry, hence no
- * base-map modulo to recover). The other three reproduce whichever `FourDColorMode`
+ * resolved by `prepareChaosGame4`), reset on escape-reseed, and keyed on the
+ * BASE map index (`idx % baseTransformCount`) so a kaleidoscope copy colors as
+ * the map it copies. The other three reproduce whichever `FourDColorMode`
  * the point-cloud explorer had active when the render started: `"wRamp"`
  * mirrors the diverging rotated-w ramp `scene.ts`'s `FOUR_D_VERTEX` paints
  * in-shader (`color.ts`'s `wRampColor`); `"transform"` and `"radius"` mirror
@@ -104,7 +104,9 @@ export function accumulateFlame4(
     );
   }
 
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
+  const { baseTransformCount } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
@@ -112,9 +114,11 @@ export function accumulateFlame4(
   // see FourDRenderColor's doc): `structural` gates both the per-step update below
   // and the escape-reseed reset, hoisted once rather than re-checking
   // `color.kind` twice per iteration. The per-map slot and blend speed were
-  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the raw picked
-  // index since 4D has no symmetry-expanded copies to collapse back to a base
-  // index.
+  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on
+  // `baseTransformCount` exactly like accumulateFlame's (fr-q0h6): with
+  // symmetry, every rotated copy of a base map shares that map's slot, so the
+  // gradient repeats around the kaleidoscope instead of smearing continuously
+  // across copies that are geometrically the same map.
   const structural = color.kind === "structural";
   const colorSlots = prepared.colorIndex;
   const colorSpeeds = prepared.colorSpeed;
@@ -176,6 +180,12 @@ export function accumulateFlame4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
+    // The BASE map this slot is a (possibly rotated) copy of (fr-q0h6) — see
+    // PreparedChaosGame4.baseTransformCount. Equal to `idx` at symmetry order
+    // 1. Anything keyed to "which logical map" (the color slot below, and the
+    // `palette` lookup at the bottom of the loop) uses this, never the raw
+    // expanded `idx`.
+    const baseIdx = idx % baseTransformCount;
     // Blend the color coordinate toward this transform's slot at this
     // transform's speed, BEFORE applying its affine — mirrors
     // accumulateFlame's formula and ordering exactly, including its
@@ -183,8 +193,8 @@ export function accumulateFlame4(
     // speed 0.5 (see the argument there). No rng is consumed, so the orbit
     // (and `hits`) is identical whether or not structural coloring is in play.
     if (structural) {
-      const speed = colorSpeeds[idx];
-      c = c * (1 - speed) + colorSlots[idx] * speed;
+      const speed = colorSpeeds[baseIdx];
+      c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
     const aff = affines[idx];
     const m = aff.m;
@@ -210,6 +220,23 @@ export function accumulateFlame4(
       ny = q[1];
       nz = q[2];
       nw = q[3];
+    }
+
+    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
+    // `null` (order 1, and every unrotated copy-0 slot at any order) skips
+    // this, so the orbit stays byte-identical to the pre-symmetry loop
+    // exactly where there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz + post[3] * nw;
+      const ry = post[4] * nx + post[5] * ny + post[6] * nz + post[7] * nw;
+      const rz = post[8] * nx + post[9] * ny + post[10] * nz + post[11] * nw;
+      const rw = post[12] * nx + post[13] * ny + post[14] * nz + post[15] * nw;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+      nw = rw;
     }
 
     if (
@@ -318,7 +345,7 @@ export function accumulateFlame4(
         break;
       }
       case "transform": {
-        const rgb = color.palette[idx] ?? FALLBACK_COLOR;
+        const rgb = color.palette[baseIdx] ?? FALLBACK_COLOR;
         r = rgb[0];
         g = rgb[1];
         b = rgb[2];

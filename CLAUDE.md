@@ -52,13 +52,16 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
     Three.js conventions.
   - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
-    3D→4D), `systemIsFlat` predicate (derived from transforms, never stored).
+    3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
+    transforms, never stored).
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
     weights continuously.
   - `chaos-game-4d.ts` — 4D twin (`runChaosGame4`), same loop unrolled to four
-    coords. No kaleidoscope symmetry by design.
+    coords. Kaleidoscope copies rotate in a PLANE, optionally with a `twist`
+    (a double rotation — `affine4.ts`'s `symmetryRotation4`, which reproduces
+    the 3D `symmetryRotation` entry for entry on the w-free planes).
   - `color.ts` — HSL→RGB and five color-mode palettes.
     `buildColorModeLUT`/`writePaletteRampColor` is the ONE ramp definition the
     explorer, solid render, and legend share (4D radius mode included).
@@ -74,7 +77,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement harness.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
-    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade.
+    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
+    (skipped, parked by reference, on a non-flat sample).
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved
     exactly; `wildcard` option adds structural kicks. Quality-gated by
@@ -229,7 +233,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     untouched.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
-    `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
+    `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
   - `variations.ts` — fifteen nonlinear flame variations as pure functions: a
     dozen classics plus the Mandelbox fold family (`boxfold`/`spherefold`/
     `mandelbox`, fr-p7nu); `composeVariations` blends a transform's weighted

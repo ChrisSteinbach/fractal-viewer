@@ -996,7 +996,7 @@ export async function createGpuFlameBackend(
   const packed = packGpuSystem({
     transforms: request.transforms,
     finalTransform: request.finalTransform,
-    symmetry: { order: request.order, axis: request.axis },
+    symmetry: { order: request.order, plane: request.plane },
     palette: request.palette,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
@@ -1050,6 +1050,11 @@ export async function createGpuFlameBackend4(
   const packed = packGpuSystem4({
     transforms4: request.transforms4,
     finalTransform4: request.finalTransform4,
+    symmetry: {
+      order: request.order,
+      plane: request.plane,
+      twist: request.twist,
+    },
     color: request.color,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS — same warmup contract as
@@ -1062,6 +1067,7 @@ export async function createGpuFlameBackend4(
       width: request.width,
       height: request.height,
       transformCount: packed.transformCount,
+      baseTransformCount: packed.baseTransformCount,
       itersPerInvocation: WARMUP_ITERATIONS,
       weighted: packed.weighted,
       hasFinal: packed.hasFinal,
