@@ -3755,10 +3755,13 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("threeDControls").classList.contains("hidden")).toBe(true);
   });
 
-  // The 4D view (rotor + slice) is frozen into an active render's worker
-  // snapshot (main.ts's fourDRenderSnapshot), so its controls hide during a
-  // render exactly like the editing controls do.
-  it("hides the 4D tumble/slice controls while a render is active on a non-flat system", () => {
+  // Flame and solid freeze the 4D view (rotor + slice) into their active
+  // render's worker snapshot (main.ts's fourDRenderSnapshot), so its controls
+  // hide during those FROZEN renders exactly like the editing controls do.
+  // A live 4D surface session is different (fr-b30z): its tracer re-poses
+  // the view every frame instead of freezing it — see the "Ui 4D surface
+  // session controls" tests below.
+  it("hides the 4D tumble/slice controls while a FROZEN render is active on a non-flat system", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
 
@@ -3853,6 +3856,108 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(document.getElementById("helpTitle")?.textContent).toBe(
       "4D Projection",
     );
+  });
+});
+
+// A live 4D surface session (fr-b30z) is the one case where the 4D View
+// block's tumble/slice controls stay meaningful DURING a render: unlike
+// flame/solid, which freeze the rotor/slice into a worker snapshot, the
+// surface tracer re-poses the rotor and re-marches the w slice every frame
+// (main.ts's setSurface4View), so the sliders are the only controls that
+// reach it. The cross-section itself is unconditional in that mode —
+// `sliceOn` never reaches the tracer (main.ts pushes only `sliceCenter` into
+// setSurface4View) — so the on/off toggle would be a lie there, while the
+// position slider is the mode's defining control; slice-relative color only
+// remaps the w-depth palette the tracer doesn't have, so it hides too.
+describe("Ui 4D surface session controls (fr-b30z)", () => {
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  it("keeps the 4D View block visible for a non-flat system in surface mode", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDControls").classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the W-slice on/off toggle in a live 4D surface session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceToggleRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the slice position slider in a live 4D surface session even with the toggle unchecked", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDSliceToggle") as HTMLInputElement).checked = false;
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
+  });
+
+  // fourDColorNeedsAttribute (color.ts) is false for the w-depth modes, so
+  // "wBlueOrange" is a value the baked-mode gate alone would SHOW — asserting
+  // it in both modes here makes the surface-only hide the visible contrast,
+  // not a restatement of the fr-nn6 baked-mode gate covered above.
+  it("hides slice-relative color in a live 4D surface session", () => {
+    const ui = new Ui(document);
+    const nonFlat = {
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      fourDColor: "wBlueOrange" as const,
+    };
+
+    ui.updateLabels(nonFlat);
+    expect(el("fourDSliceRelColorRow").classList.contains("hidden")).toBe(
+      false,
+    );
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+    expect(el("fourDSliceRelColorRow").classList.contains("hidden")).toBe(true);
+  });
+
+  // main.ts's syncFourDSliceUi path: a timeline pose glide can land while the
+  // panel is already showing a live surface session, calling setFourDSlice
+  // directly rather than going through updateLabels. It must not re-hide the
+  // position slider out from under that session.
+  it("keeps the slice position slider visible when a pose glide lands mid-surface-session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.setFourDSlice(false, 0.4, false);
+
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
+    expect((el("fourDSliceSlider") as HTMLInputElement).value).toBe("0.4");
+  });
+
+  it("restores the normal points-mode slice behavior after leaving surface mode", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDSliceToggle") as HTMLInputElement).checked = false;
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.updateLabels(nonFlat);
+
+    expect(el("fourDSliceToggleRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
+  });
+
+  // Guards against the gate keying on render mode alone rather than the
+  // non-flat predicate main.ts actually routes a surface session on.
+  it("keeps the 4D block hidden for a flat system in surface mode", () => {
+    const ui = new Ui(document);
+
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" as const });
+
+    expect(el("fourDControls").classList.contains("hidden")).toBe(true);
   });
 });
 
