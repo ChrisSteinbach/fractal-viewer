@@ -77,9 +77,16 @@ export interface Transform {
    * `i` of `n` evenly across the ramp (`i / (n - 1)`, or `0.5` when `n === 1`)
    * — exactly the hard-derived slot every flame rendered before this field
    * existed, so an absent value is byte-for-byte the old behaviour. Read by
-   * the two renders that walk a structural color coordinate — the flame
-   * (`flame.ts`/`flame-4d.ts` and their WGSL twins) and the solid voxel grid
-   * (`voxel.ts`/`voxel-4d.ts`) — and only with a gradient palette active.
+   * the flame (`flame.ts`/`flame-4d.ts` and their WGSL twins) and the solid
+   * voxel grid (`voxel.ts`/`voxel-4d.ts`), the two renders that walk a
+   * structural color coordinate, and — since fr-c6yd — the surface tracer's
+   * orbit-trap coordinate under its "Palette" color source, which reads this
+   * slot rather than walking it (`src/app/surface-slots.ts`'s
+   * `surfaceTrapIndices`, whose own fallback spread agrees with
+   * `derivedColorIndex` at every `n > 1` but parks a lone map at the ramp
+   * start rather than mid-ramp). All three read it only with a gradient
+   * palette active, and in all three an absent value renders exactly as it
+   * did before this field existed.
    */
   colorIndex?: number;
   /**
@@ -89,7 +96,10 @@ export interface Transform {
    * `c ← c·(1 - speed) + colorIndex·speed`. `0` pins the coordinate (flam3's
    * "symmetry" xforms, which shade without recoloring), `1` snaps it straight
    * to the slot. Omitted ⇒ `chaos-game.ts`'s `DEFAULT_COLOR_SPEED` (`0.5`), the halfway
-   * blend every flame used before this field existed.
+   * blend every flame used before this field existed. Unlike {@link colorIndex},
+   * this has no surface-tracer counterpart, since the surface descends a map
+   * rather than picking one, leaving no per-pick coordinate for a speed to
+   * move (see `src/app/surface-slots.ts`).
    */
   colorSpeed?: number;
   /**
