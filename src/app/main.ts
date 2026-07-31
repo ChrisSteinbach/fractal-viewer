@@ -26,6 +26,7 @@ import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
 } from "../fractal/surface-de-4d";
+import { surfaceSlotColors, surfaceTrapIndices } from "./surface-slots";
 import { SURFACE_MAX_MAPS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 import {
@@ -137,7 +138,7 @@ import {
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
-import type { Bounds, Vec3, Vec4 } from "../fractal/types";
+import type { Bounds, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -2636,26 +2637,6 @@ function main(): void {
     },
   });
 
-  // Per-slot colors for the surface tracer: each slot takes its BASE map's
-  // "By Transform" color (transformColors), the same keying the explorer's
-  // own coloring uses. Slot inputs shared by the 3D and 4D tracers: both DE
-  // shapes carry per-slot baseIndex, which is all the coloring keys on. Both
-  // are base maps 1:1 now — 4D has no kaleidoscope, and 3D sweeps its
-  // sectors rather than expanding them into slots (fr-x029), so a
-  // kaleidoscope copy is shaded by the base map it sweeps around.
-  function surfaceSlotColors(de: { maps: { baseIndex: number }[] }): Vec3[] {
-    const palette = transformColors(state.transforms.length);
-    return de.maps.map((m) => palette[m.baseIndex]);
-  }
-
-  // Per-slot orbit-trap palette coordinates: base map i of n spreads evenly
-  // over [0, 1] — the flame's `paletteIndex(i, n)` idea, keyed by baseIndex
-  // so every sector shares its base map's coordinate.
-  function surfaceTrapIndices(de: { maps: { baseIndex: number }[] }): number[] {
-    const denom = Math.max(1, state.transforms.length - 1);
-    return de.maps.map((m) => m.baseIndex / denom);
-  }
-
   // The surface render session (epic fr-7jlk): sphere-trace the attractor as
   // an implicit surface against the analytic distance estimator. No worker
   // and no accumulation — buildSurfaceDE is pure math (analytic inverses +
@@ -2756,8 +2737,8 @@ function main(): void {
   function beginSurfaceComputeGate(token: number, de: SurfaceDE): void {
     SurfaceComputeRenderer.create(
       de,
-      surfaceSlotColors(de),
-      surfaceTrapIndices(de),
+      surfaceSlotColors(state.transforms, de.maps),
+      surfaceTrapIndices(state.transforms, de.maps),
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -3003,8 +2984,8 @@ function main(): void {
           );
           scene.setSurfaceSystem4(
             de,
-            surfaceSlotColors(de),
-            surfaceTrapIndices(de),
+            surfaceSlotColors(state.transforms, de.maps),
+            surfaceTrapIndices(state.transforms, de.maps),
           );
           scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
           surfaceSessionIs4D = true;
@@ -3076,8 +3057,8 @@ function main(): void {
           } else {
             scene.setSurfaceSystem(
               de,
-              surfaceSlotColors(de),
-              surfaceTrapIndices(de),
+              surfaceSlotColors(state.transforms, de.maps),
+              surfaceTrapIndices(state.transforms, de.maps),
             );
             // Kick the empty-space grid build (fr-55r5 part 2). Async and
             // optional: the session renders gridless until it lands, and a

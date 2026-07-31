@@ -121,6 +121,7 @@ import type {
   SurfaceComputeFrame,
   SurfaceComputeFrameSpec,
 } from "../surface-compute";
+import { surfaceSlotColors, surfaceTrapIndices } from "../surface-slots";
 
 // ---------------------------------------------------------------------------
 // Window surface for the headless runner
@@ -3221,9 +3222,10 @@ interface SurfaceSystemState {
    * exactly as `surface-de.ts`'s own estimators route (fr-55s1). */
   core: "fold" | "affine";
   de: SurfaceDE;
-  /** The authored transform count behind `de` — what the app keys
-   * `transformColors` on (fr-tzdg leg B copies that keying). */
-  transformCount: number;
+  /** The authored system behind `de`, passed to `surface-slots.ts`'s
+   * `surfaceSlotColors`/`surfaceTrapIndices` so the bench shades with the
+   * app's exact keying rather than a copy of it. */
+  transforms: Transform[];
   queries: Vec3[];
   cpu: number[];
   buffers?: {
@@ -4153,9 +4155,11 @@ function drawSurfaceComputeFrame(
  * PRODUCTION `SurfaceComputeRenderer` — its own device, its own march/shade
  * pipelines, the app's host loop — at full-tier knobs, presented onto the
  * section's canvas (progressively, like the app's settle presents). Colors
- * and trap indices copy main.ts's keying: each slot takes its BASE map's
- * "By Transform" color, trap coordinate `baseIndex / (n − 1)`. Throws on
- * renderer-creation failure or a null frame — the caller fails the section.
+ * and trap indices come from `surface-slots.ts`'s `surfaceSlotColors`/
+ * `surfaceTrapIndices` — the same helpers `main.ts` calls — so slot keying
+ * (a map's "By Transform" color; its authored `colorIndex`, else the even
+ * spread) matches the app exactly. Throws on renderer-creation failure or a
+ * null frame — the caller fails the section.
  */
 async function runSurfaceComputeFrameLeg(
   sys: SurfaceSystemState,
@@ -4171,10 +4175,8 @@ async function runSurfaceComputeFrameLeg(
     : SURFACE_FRAME_BUDGET_MS;
   const pose = buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
-  const palette = transformColors(sys.transformCount);
-  const colors = sys.de.maps.map((m) => palette[m.baseIndex]);
-  const denom = Math.max(1, sys.transformCount - 1);
-  const trapIndices = sys.de.maps.map((m) => m.baseIndex / denom);
+  const colors = surfaceSlotColors(sys.transforms, sys.de.maps);
+  const trapIndices = surfaceTrapIndices(sys.transforms, sys.de.maps);
 
   activity.setState("gpu", "Surface compute frame (app path)");
   status("compute frame: creating SurfaceComputeRenderer…");
@@ -4480,12 +4482,11 @@ async function runSurfaceShadeAbLeg(
     : SURFACE_SHADE_AB_BUDGET_MS;
 
   // Same per-slot color/trap keying as leg B (runSurfaceComputeFrameLeg) —
-  // both renderers shade the SAME de.maps, so every arm stays byte-identical
-  // apart from shadeDeWidth.
-  const palette = transformColors(mbox.transformCount);
-  const colors = mbox.de.maps.map((m) => palette[m.baseIndex]);
-  const denom = Math.max(1, mbox.transformCount - 1);
-  const trapIndices = mbox.de.maps.map((m) => m.baseIndex / denom);
+  // both call surface-slots.ts's surfaceSlotColors/surfaceTrapIndices over
+  // the SAME de.maps, so every arm stays byte-identical apart from
+  // shadeDeWidth.
+  const colors = surfaceSlotColors(mbox.transforms, mbox.de.maps);
+  const trapIndices = surfaceTrapIndices(mbox.transforms, mbox.de.maps);
 
   const poses: { name: "standard" | "near"; distFactor: number }[] = [
     { name: "standard", distFactor: SURFACE_POSE_DIST_FACTOR },
@@ -4829,7 +4830,7 @@ async function runSurfaceDeSection(
         name: def.name,
         core,
         de,
-        transformCount: def.transforms.length,
+        transforms: def.transforms,
         queries,
         cpu,
       });
