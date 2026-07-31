@@ -685,8 +685,12 @@ function main(): void {
       const showcase = replayShowcase;
       replayShowcase = null;
       if (showcase.motionWasOn !== null) {
-        if (showcase.fourD) fourDView.tumbleOn = showcase.motionWasOn;
-        else autoOrbitOn = showcase.motionWasOn;
+        if (showcase.fourD) {
+          fourDView.tumbleOn = showcase.motionWasOn;
+          // Put the help box's motion wording back with it (fr-k9nx) — the
+          // showcase forced it on without the user's checkbox knowing.
+          ui.setFourDTumbleActive(showcase.motionWasOn);
+        } else autoOrbitOn = showcase.motionWasOn;
       }
       refreshGuides();
       if (showcase.color || spotlightWasShowing) {
@@ -1356,6 +1360,11 @@ function main(): void {
     pushFourDSlice();
     ui.resetFourDSlice();
     ui.resetFourDTumble(fourDView.tumbleOn);
+    // The reset can PARK the tumble (reduced motion, or a sticky "off"
+    // choice), and the help box opens by naming the motion (fr-k9nx). The
+    // flatness flip that brings us here painted that box BEFORE the reset ran
+    // — against the outgoing view's flag — so it owes a repaint now.
+    ui.updateLabels(state);
   }
 
   // Restore a saved 4D view pose (fr-pnek) — resetFourDView's document-
@@ -4319,6 +4328,10 @@ function main(): void {
           if (fourD) {
             motionWasOn = fourDView.tumbleOn;
             fourDView.tumbleOn = true;
+            // A showcase write never touches the user's checkbox, so the help
+            // box's motion wording is told separately (fr-k9nx) — the
+            // updateLabels below repaints it.
+            ui.setFourDTumbleActive(true);
           } else {
             motionWasOn = autoOrbitOn;
             autoOrbitOn = true;
@@ -4813,6 +4826,10 @@ function main(): void {
     // across fresh-visit resets (fr-g98).
     onFourDTumbleToggle: (checked) => {
       fourDView.setTumbleUserChoice(checked);
+      // The canvas help box opens by naming the motion (fr-k9nx), so a pause
+      // has to reach it — ui.ts has already recorded the flag, this is the
+      // repaint. The panel's own row visibility is ui.ts's own business.
+      ui.updateLabels(state);
       // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
       // the user flips — tumble or orbit — becomes the one shared choice both
       // seed from on the next reload. Separate viewer-prefs key, never the

@@ -174,10 +174,21 @@
       </div>
 
       <div id="surfaceStatus" class="hidden">
+        <!-- fr-gtdp: the cost range is the whole story here, so the hint tells
+             it. "Renders instantly" was true of the escape-time and light fold
+             systems and flatly false of the mandelbox class, which the readout
+             directly below this paragraph would then be caught reporting at
+             "Full detail · WebGL 0.4%" — a render the user had just been told
+             was already done reads as a hung one. The dropped "stays fully
+             orbitable" was the same overclaim one notch quieter: you CAN orbit
+             a monster, but every move buys another grinding preview, and the
+             sentence that replaced it says so by describing the move. -->
         <p class="flame-hint">
           The attractor as a true implicit surface, ray-marched live from a
-          distance estimator — zoom in and detail keeps resolving. Renders
-          instantly and stays fully orbitable.
+          distance estimator — zoom in and detail keeps resolving. Every move
+          traces a quick preview that sharpens to full detail once you settle: a
+          moment for most systems, minutes or more for fold-heavy ones like
+          Mandelbox KIFS. The readout below says how far along it is.
         </p>
         <p id="surfaceNote" class="flame-note-info hidden"></p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>

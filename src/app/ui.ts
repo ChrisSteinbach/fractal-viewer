@@ -976,6 +976,17 @@ export class Ui {
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
+  /** Is the projection ACTUALLY tumbling right now (main.ts's
+   * `fourDView.tumbleOn`, whose default this matches)? Mirrored here because
+   * the canvas help box names the motion (fr-k9nx) and would otherwise claim
+   * a tumble that is parked. Deliberately not the checkbox — unlike `sliceOn`
+   * (see updateLabels' syncFourDSliceRows call), the control is not the truth:
+   * a build replay's showcase forces the tumble on for its duration WITHOUT
+   * touching the user's control (main.ts's replayShowcase), and the help box
+   * describes the canvas, not the panel. Kept in step by
+   * {@link setFourDTumbleActive}, {@link resetFourDTumble}, and the toggle's
+   * own change handler. */
+  private fourDTumbleActive = true;
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
    * in the Appearance section: exactly one of the pair shows, and
@@ -1506,6 +1517,9 @@ export class Ui {
       // same "row hides with its toggle" pattern as the slice below (tumble
       // state is session-only and never enters AppState).
       this.fourDTumbleRow.classList.toggle("hidden", !on);
+      // Set BEFORE the handler: main.ts answers this one with an
+      // updateLabels, which reads the flag to word the help box (fr-k9nx).
+      this.fourDTumbleActive = on;
       handlers.onFourDTumbleToggle(on);
     });
     this.fourDTumbleSpeedSlider.addEventListener("input", () => {
@@ -1652,6 +1666,17 @@ export class Ui {
     this.fourDTumbleRow.classList.toggle("hidden", !on);
     this.fourDTumbleSpeedSlider.value = "1";
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
+    this.fourDTumbleActive = on;
+  }
+
+  /** Mirror a tumble on/off that did NOT come from the panel control — today
+   * only the build replay's showcase, which forces the projection to tumble
+   * for the replay and puts the prior flag back afterwards without ever
+   * touching the user's checkbox (fr-k9nx; see {@link fourDTumbleActive}).
+   * Wording-only: callers refresh the help box with the {@link updateLabels}
+   * they already run. */
+  setFourDTumbleActive(on: boolean): void {
+    this.fourDTumbleActive = on;
   }
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
@@ -1907,16 +1932,24 @@ export class Ui {
       // selected in the (still-live) list, so the canvas gesture is always
       // this one; only the panel's own editor responds to the selection.
       this.helpTitle.textContent = "4D Projection";
+      // The opening line describes the cloud rather than a gesture, so it has
+      // to track the tumble (fr-k9nx): a parked projection that still claimed
+      // to be tumbling read as a broken view, and the paused wording points
+      // back at the control that parked it just as the running one introduces
+      // the motion.
+      const subject = this.fourDTumbleActive
+        ? "Auto-tumbling 4D IFS"
+        : "4D IFS (tumble paused)";
       this.setHelpLines(
         this.mouse
           ? [
-              "Auto-tumbling 4D IFS",
+              subject,
               "Drag: Orbit",
               "Scroll: Zoom",
               "Shift-drag: Turn XW/YW",
               "Shift-scroll: Turn ZW",
             ]
-          : ["Auto-tumbling 4D IFS", "1 finger: Rotate", "2 fingers: Pan/Zoom"],
+          : [subject, "1 finger: Rotate", "2 fingers: Pan/Zoom"],
       );
     } else if (state.selectedTransform === null) {
       this.helpTitle.textContent = "Camera Mode";
