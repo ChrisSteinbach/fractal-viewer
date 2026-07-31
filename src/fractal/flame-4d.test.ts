@@ -24,7 +24,7 @@ import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Transform4, Vec4 } from "./types";
+import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
  * scale 0 collapses the linear part to zero, so `applyAffine4` (and thus
@@ -679,6 +679,229 @@ describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSp
 
     expect(Array.from(withColors.hits)).toEqual(Array.from(plain.hits));
     expect(withColors.maxHits).toBe(plain.maxHits);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Kaleidoscope symmetry (fr-q0h6) — the 4D twin of flame.test.ts's
+// "accumulateFlame with symmetry" block.
+// ---------------------------------------------------------------------------
+
+/** A flat (w-collapsing) three-map system: `scale[3] = 0` and no w
+ * translation, so after one step every orbit point sits EXACTLY on the
+ * `w = 0` hyperplane. That exactness is what lets the w-plane test below
+ * assert on integer-vs-fractional slice weights rather than on a tolerance. */
+function flatSystem4(): Transform4[] {
+  return [
+    { position: [0.3, 0.2, 0.1, 0], scale: [0.5, 0.5, 0.5, 0] },
+    { position: [-0.3, 0.1, -0.2, 0], scale: [0.5, 0.5, 0.5, 0] },
+    { position: [0.1, -0.3, 0.25, 0], scale: [0.5, 0.5, 0.5, 0] },
+  ];
+}
+
+describe("accumulateFlame4 with symmetry (fr-q0h6)", () => {
+  it("matches the stepOrbit4/plotPoint4 oracle when the prepared system has rotated copies", () => {
+    // The oracle test at the top of this file, but with a genuinely 4D
+    // kaleidoscope prepared in: stepOrbit4 already rotates a picked slot's
+    // full affine + variation output, so if accumulateFlame4's hand-inlined
+    // loop ever drifts from that — its post-rotation block or its BASE-index
+    // handling — this is what catches it.
+    const transforms4 = weightedPentatope();
+    const prepared = prepareChaosGame4(transforms4, null, {
+      order: 3,
+      plane: "zw",
+      twist: 1,
+    });
+    const palette = transformColors(transforms4.length);
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const seed = 42;
+
+    const actual = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(seed),
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createFlameHistogram(width, height);
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      const [px, py] = plotPoint4(prepared, x, y, z, w, rng);
+      // FLAT_PROJECTION is `(x, y, z, w, 1) -> (x, y, z, w)` verbatim, so
+      // clipW is 1 and the bucket math reduces to x/y directly.
+      const col = Math.floor((px + 1) * 0.5 * width);
+      const row = Math.floor((1 - py) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      // step.index is already the BASE map (see chaos-game-4d.ts's
+      // stepOrbit4), so this indexes `palette` — sized to transforms4.length,
+      // NOT the expanded slot count — exactly like the no-symmetry oracle.
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+    }
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitW).toBe(w);
+  });
+
+  it("order 1 renders byte-identically to omitting symmetry, whatever the plane and twist", () => {
+    const transforms4 = weightedPentatope();
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(transforms4.length),
+    };
+    const run = (prepared: ReturnType<typeof prepareChaosGame4>) =>
+      accumulateFlame4(
+        prepared,
+        FLAT_PROJECTION,
+        FLAT_VIEW,
+        32,
+        32,
+        2000,
+        mulberry32(7),
+        color,
+      );
+
+    const omitted = run(prepareChaosGame4(transforms4));
+    const orderOne = run(
+      prepareChaosGame4(transforms4, null, {
+        order: 1,
+        plane: "zw",
+        twist: 3,
+      }),
+    );
+
+    expect(Array.from(orderOne.hits)).toEqual(Array.from(omitted.hits));
+    expect(Array.from(orderOne.sumRGB)).toEqual(Array.from(omitted.sumRGB));
+    expect(orderOne.maxHits).toBe(omitted.maxHits);
+    expect(orderOne.orbit).toEqual(omitted.orbit);
+    expect(orderOne.orbitW).toBe(omitted.orbitW);
+    expect(orderOne.orbitColor).toBe(omitted.orbitColor);
+  });
+
+  it("an order-4 kaleidoscope occupies more buckets than the same system unreplicated", () => {
+    const transforms4 = flatSystem4();
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(transforms4.length),
+    };
+    const run = (prepared: ReturnType<typeof prepareChaosGame4>) =>
+      accumulateFlame4(
+        prepared,
+        FLAT_PROJECTION,
+        FLAT_VIEW,
+        64,
+        64,
+        20000,
+        mulberry32(11),
+        color,
+      );
+    const occupied = (hits: Float64Array) =>
+      Array.from(hits).filter((h) => h > 0).length;
+
+    const plain = run(prepareChaosGame4(transforms4));
+    const kaleido = run(
+      prepareChaosGame4(transforms4, null, { order: 4, plane: "xy" }),
+    );
+
+    expect(occupied(kaleido.hits)).toBeGreaterThan(occupied(plain.hits));
+    expect(Array.from(kaleido.hits)).not.toEqual(Array.from(plain.hits));
+  });
+
+  it("colors every kaleidoscope copy as the BASE map it copies, never as an expanded slot", () => {
+    // Two maps, two saturated palette entries and NO third: an accumulator
+    // that indexed `palette` by the expanded slot (0..5 at order 3) would
+    // fall through to accumulateFlame4's white FALLBACK_COLOR and light the
+    // blue channel, which the base palette can never do.
+    const transforms4 = flatSystem4().slice(0, 2);
+    const palette: Vec3[] = [
+      [1, 0, 0],
+      [0, 1, 0],
+    ];
+    const hist = accumulateFlame4(
+      prepareChaosGame4(transforms4, null, { order: 3, plane: "xy" }),
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      32,
+      32,
+      20000,
+      mulberry32(3),
+      { kind: "transform", palette },
+    );
+
+    expect(hist.maxHits).toBeGreaterThan(0);
+    for (let i = 0; i < hist.hits.length; i++) {
+      const o = i * 3;
+      expect(hist.sumRGB[o + 2]).toBe(0); // no white fallback ever fired.
+      // Every hit contributed exactly one saturated channel, so red + green
+      // accounts for the bucket's whole hit count.
+      expect(hist.sumRGB[o] + hist.sumRGB[o + 1]).toBe(hist.hits[i]);
+    }
+  });
+
+  it("a w-plane moves density off the w = 0 slice; a w-free plane leaves it exactly on it", () => {
+    // flatSystem4 collapses w to exactly 0, and FLAT_PROJECTION's sRaw row is
+    // w verbatim, so under a narrow slice centered at 0 every in-slice point
+    // weighs exactly 1 — every bucket an integer. A zw-plane copy turns z
+    // into w, which no other mechanism in this render can do.
+    const transforms4 = flatSystem4();
+    const slice: FourDView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0,
+      sliceWidth: 0.05,
+      sliceRelativeColor: false,
+    };
+    const run = (plane: "xy" | "zw") =>
+      accumulateFlame4(
+        prepareChaosGame4(transforms4, null, { order: 4, plane }),
+        FLAT_PROJECTION,
+        slice,
+        48,
+        48,
+        20000,
+        mulberry32(5),
+        { kind: "transform", palette: transformColors(transforms4.length) },
+      );
+
+    const wFree = run("xy");
+    const wPlane = run("zw");
+
+    expect(wFree.maxHits).toBeGreaterThan(0);
+    expect(Array.from(wFree.hits).every(Number.isInteger)).toBe(true);
+    expect(Array.from(wPlane.hits).some((h) => !Number.isInteger(h))).toBe(
+      true,
+    );
   });
 });
 

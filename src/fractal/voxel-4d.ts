@@ -9,8 +9,8 @@
  * `PreparedChaosGame4` and `project4.ts`'s `RotorProjection4`/`FourDView`).
  *
  * Mirrors `flame-4d.ts`'s `accumulateFlame4` for the hand-inlined hot loop
- * (pick/affine/warp/escape-reseed, the frozen rotor projection, the
- * structural color coordinate) and `voxel.ts`'s `accumulateVoxels` for the
+ * (pick/affine/warp/symmetry post-rotation/escape-reseed, the frozen rotor
+ * projection, the structural color coordinate) and `voxel.ts`'s `accumulateVoxels` for the
  * voxel-grid bucketing and running-mean color — see each function's doc
  * below for the specific deviations from those two templates.
  */
@@ -232,8 +232,9 @@ export function computeVoxelBounds4(
  * module's doc). The 4D twin of `voxel.ts`'s `accumulateVoxels`, driving
  * `chaos-game-4d.ts`'s `PreparedChaosGame4` and hand-inlining
  * `stepOrbit4`/`plotPoint4`'s bodies exactly like `flame-4d.ts`'s
- * `accumulateFlame4` does (pick/affine/warp/escape-reseed, resetting the
- * structural color coordinate `c` to `0.5` on an escape-reseed) — see that
+ * `accumulateFlame4` does (pick/affine/warp/symmetry post-rotation/
+ * escape-reseed, resetting the structural color coordinate `c` to `0.5` on an
+ * escape-reseed) — see that
  * function for the full picture of the hot loop this mirrors.
  *
  * **Projection**: each plotted (post-lens) 4D point is projected through
@@ -292,7 +293,8 @@ export function accumulateVoxels4(
   view: FourDView,
   color: FourDRenderColor,
 ): VoxelGrid {
-  const { affines, variations, finalAffine, finalWarp } = prepared;
+  const { affines, variations, postRotations, finalAffine, finalWarp } =
+    prepared;
   const { baseTransformCount } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
@@ -390,6 +392,23 @@ export function accumulateVoxels4(
       ny = q[1];
       nz = q[2];
       nw = q[3];
+    }
+
+    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
+    // `null` (order 1, and every unrotated copy-0 slot at any order) skips
+    // this, so the orbit stays byte-identical to the pre-symmetry loop
+    // exactly where there is nothing to rotate.
+    const post = postRotations[idx];
+    if (post !== null) {
+      const rx = post[0] * nx + post[1] * ny + post[2] * nz + post[3] * nw;
+      const ry = post[4] * nx + post[5] * ny + post[6] * nz + post[7] * nw;
+      const rz = post[8] * nx + post[9] * ny + post[10] * nz + post[11] * nw;
+      const rw = post[12] * nx + post[13] * ny + post[14] * nz + post[15] * nw;
+      nx = rx;
+      ny = ry;
+      nz = rz;
+      nw = rw;
     }
 
     if (

@@ -1988,8 +1988,8 @@ function main(): void {
 
   // The base map whose landing the replay's hop cursor is sitting on
   // (fr-01kf), read off the displayed result's per-point transformIndices —
-  // base-map indexed on both paths (3D folds kaleidoscope copies back to
-  // their base map; 4D has no symmetry), exactly like by-transform coloring,
+  // base-map indexed on both paths (each folds its kaleidoscope copies back
+  // to their base map — fr-q0h6), exactly like by-transform coloring,
   // so the index lines up with the guide boxes. Null when the buffer isn't
   // there to ask (a replay can only have started over an arrived cloud, but
   // the poll shares frames with landings — stay defensive, not clever).
@@ -2441,6 +2441,7 @@ function main(): void {
         palette: resolvePalette(state.flame.paletteId, state.customPalette),
         order: state.symmetry.order,
         plane: state.symmetry.plane,
+        twist: state.symmetry.twist ?? 0,
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
@@ -2612,6 +2613,7 @@ function main(): void {
         ),
         order: state.symmetry.order,
         plane: state.symmetry.plane,
+        twist: state.symmetry.twist ?? 0,
         // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
         fourD: fourDRenderSnapshot(),
       });

@@ -13,7 +13,7 @@ import {
   packGpuSystem4,
 } from "./flame-gpu-4d";
 import type { GpuFlameSystemSpec4, GpuParams4Fields } from "./flame-gpu-4d";
-import { composeAffine4 } from "./affine4";
+import { composeAffine4, symmetryRotation4 } from "./affine4";
 import { prepareChaosGame4 } from "./chaos-game-4d";
 import { MAX_TRANSFORMS } from "./chaos-game";
 import {
@@ -25,7 +25,7 @@ import {
 import { createFlameHistogram } from "./flame";
 import { mulberry32 } from "./rng";
 import { VARIATION_TYPES } from "./types";
-import type { Transform4, Vec3, Vec4 } from "./types";
+import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
 
 function makeTransforms4(count: number): Transform4[] {
@@ -45,6 +45,7 @@ function baseSpec4(
   return {
     transforms4: makeTransforms4(2),
     finalTransform4: null,
+    symmetry: { order: 1, plane: "xz" },
     color: { kind: "wRamp", side: { neg: [0, 0, 0], pos: [0, 0, 0] } },
     ...overrides,
   };
@@ -54,25 +55,30 @@ function baseSpec4(
 // flame-gpu-4d.ts's byte-layout doc comment (byte offset / 4) — independent
 // of that module's own (private) offset constants, so a mistake in the
 // implementation could not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 56
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 76
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
 const ROW_W = 12; // byte 48
 const TRANS = 16; // byte 64
-const VAR_WEIGHTS = 20; // byte 80, array<vec4f, 4>
-const VAR_TYPES = 36; // byte 144, array<vec4u, 4>
-const VAR_COUNT = 52; // byte 208
-const CUM_WEIGHT = 53; // byte 212
-const COLOR_INDEX = 54; // byte 216
-const COLOR_SPEED = 55; // byte 220
+const POST_X = 20; // byte 80
+const POST_Y = 24; // byte 96
+const POST_Z = 28; // byte 112
+const POST_W = 32; // byte 128
+const VAR_WEIGHTS = 36; // byte 144, array<vec4f, 4>
+const VAR_TYPES = 52; // byte 208, array<vec4u, 4>
+const VAR_COUNT = 68; // byte 272
+const HAS_POST = 69; // byte 276
+const CUM_WEIGHT = 70; // byte 280
+const COLOR_INDEX = 71; // byte 284
+const COLOR_SPEED = 72; // byte 288
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(208);
-    expect(SLOT4_STRIDE_BYTES).toBe(224);
+    expect(SLOT4_STRIDE_BYTES).toBe(304);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
-    expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(140);
+    expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
   });
 
@@ -328,6 +334,176 @@ describe("packGpuSystem4 parity with prepareChaosGame4", () => {
   });
 });
 
+describe("packGpuSystem4 symmetry expansion (fr-q0h6)", () => {
+  /** Two visibly distinct base maps, so a slot that took the wrong base
+   * transform's affine is obvious from row 0 alone. */
+  function twoBaseMaps(): Transform4[] {
+    return [
+      { position: [0.1, 0.2, 0.3, 0.4], scale: [2, 3, 4, 5] },
+      { position: [-0.4, -0.5, -0.6, -0.7], scale: [6, 7, 8, 9] },
+    ];
+  }
+
+  const SYMMETRY: SymmetryParams = { order: 3, plane: "zw", twist: 1 };
+
+  it("expands to order * baseTransformCount slots (3 * 2 = 6), plus one final slot", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: twoBaseMaps(), symmetry: SYMMETRY }),
+    );
+    expect(packed.transformCount).toBe(6);
+    expect(packed.baseTransformCount).toBe(2);
+    expect(packed.slots.byteLength).toBe(7 * SLOT4_STRIDE_BYTES);
+  });
+
+  it("writes each expanded slot's affine rows from its BASE transform, copy-major, with the post-rotation kept separate", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: twoBaseMaps(), symmetry: SYMMETRY }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    // Slots 0/2/4 are base map 0, 1/3/5 base map 1 — a copy's rotation is
+    // NEVER baked into its affine rows, only into its post rows, so every
+    // copy of a map carries that map's rows verbatim.
+    for (const slot of [0, 2, 4]) {
+      const base = slot * F32_PER_SLOT4;
+      expect(f32[base + ROW_X]).toBe(2);
+      expect(f32[base + ROW_Y + 1]).toBe(3);
+      expect(f32[base + TRANS]).toBe(Math.fround(0.1));
+    }
+    for (const slot of [1, 3, 5]) {
+      const base = slot * F32_PER_SLOT4;
+      expect(f32[base + ROW_X]).toBe(6);
+      expect(f32[base + ROW_Y + 1]).toBe(7);
+      expect(f32[base + TRANS]).toBe(Math.fround(-0.4));
+    }
+  });
+
+  it("sets hasPost and all four post rows only for the rotated copies (k > 0), from symmetryRotation4", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: twoBaseMaps(), symmetry: SYMMETRY }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const u32 = new Uint32Array(packed.slots);
+
+    // Copy 0 (slots 0, 1) is never rotated — hasPost and all sixteen post
+    // lanes stay at the ArrayBuffer's zero default, mirroring
+    // prepareChaosGame4's null.
+    for (const slot of [0, 1]) {
+      const base = slot * F32_PER_SLOT4;
+      expect(u32[base + HAS_POST]).toBe(0);
+      for (const row of [POST_X, POST_Y, POST_Z, POST_W]) {
+        for (let c = 0; c < 4; c++) expect(f32[base + row + c]).toBe(0);
+      }
+    }
+
+    // Copies 1 and 2 carry symmetryRotation4's DOUBLE rotation (a zw plane
+    // plus its orthogonal xy complement, at twist 1) — the case with no 3D
+    // counterpart at all.
+    for (const k of [1, 2]) {
+      const expected = symmetryRotation4("zw", (2 * Math.PI * k) / 3, 1);
+      for (const i of [0, 1]) {
+        const base = (k * 2 + i) * F32_PER_SLOT4;
+        expect(u32[base + HAS_POST]).toBe(1);
+        for (let c = 0; c < 4; c++) {
+          expect(f32[base + POST_X + c]).toBeCloseTo(expected[c], 6);
+          expect(f32[base + POST_Y + c]).toBeCloseTo(expected[4 + c], 6);
+          expect(f32[base + POST_Z + c]).toBeCloseTo(expected[8 + c], 6);
+          expect(f32[base + POST_W + c]).toBeCloseTo(expected[12 + c], 6);
+        }
+      }
+    }
+  });
+
+  it("leaves hasPost 0 on the final-transform lens slot — a lens never rotates", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({
+        transforms4: twoBaseMaps(),
+        symmetry: SYMMETRY,
+        finalTransform4: { position: [0.7, 0.8, 0.9, 1], scale: [1, 1, 1, 1] },
+      }),
+    );
+    const u32 = new Uint32Array(packed.slots);
+    expect(u32[packed.transformCount * F32_PER_SLOT4 + HAS_POST]).toBe(0);
+  });
+
+  it("matches prepareChaosGame4's expanded counts, weights and cumWeight lanes", () => {
+    const transforms4: Transform4[] = [
+      { position: [0.2, 0, 0, 0], scale: [0.5, 0.5, 0.5, 0.5], weight: 2 },
+      { position: [-0.2, 0.1, 0, 0], scale: [0.6, 0.5, 0.4, 0.4], weight: 5 },
+      { position: [0, -0.2, 0.1, 0], scale: [0.4, 0.4, 0.4, 0.4], weight: 1 },
+    ];
+    const symmetry: SymmetryParams = { order: 3, plane: "xw" };
+    const prepared = prepareChaosGame4(transforms4, null, symmetry);
+    const packed = packGpuSystem4(baseSpec4({ transforms4, symmetry }));
+
+    expect(packed.transformCount).toBe(prepared.transformCount);
+    expect(packed.baseTransformCount).toBe(prepared.baseTransformCount);
+    expect(packed.weighted).toBe(prepared.weighted);
+    expect(packed.totalWeight).toBe(prepared.totalWeight);
+
+    const f32 = new Float32Array(packed.slots);
+    const expectedCum = Array.from(prepared.cumulative);
+    for (let s = 0; s < packed.transformCount; s++) {
+      expect(f32[s * F32_PER_SLOT4 + CUM_WEIGHT]).toBeCloseTo(
+        expectedCum[s],
+        6,
+      );
+    }
+  });
+
+  it("replicates each BASE map's color pair across every copy of it, so the kernel needs no modulo", () => {
+    const transforms4: Transform4[] = [
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        colorIndex: 0.25,
+        colorSpeed: 0.75,
+      },
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        colorIndex: 0.5,
+        colorSpeed: 0.125,
+      },
+    ];
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4, symmetry: { order: 3, plane: "yw" } }),
+    );
+    expect(packed.transformCount).toBe(6);
+    const f32 = new Float32Array(packed.slots);
+    for (const slot of [0, 2, 4]) {
+      expect(f32[slot * F32_PER_SLOT4 + COLOR_INDEX]).toBe(0.25);
+      expect(f32[slot * F32_PER_SLOT4 + COLOR_SPEED]).toBe(0.75);
+    }
+    for (const slot of [1, 3, 5]) {
+      expect(f32[slot * F32_PER_SLOT4 + COLOR_INDEX]).toBe(0.5);
+      expect(f32[slot * F32_PER_SLOT4 + COLOR_SPEED]).toBe(0.125);
+    }
+  });
+
+  it("packs order 1 (any plane, any twist) byte-identically to the pre-symmetry buffers", () => {
+    const transforms4 = twoBaseMaps();
+    const plain = packGpuSystem4(
+      baseSpec4({ transforms4, symmetry: { order: 1, plane: "xz" } }),
+    );
+    const twisted = packGpuSystem4(
+      baseSpec4({ transforms4, symmetry: { order: 1, plane: "zw", twist: 3 } }),
+    );
+    expect(new Uint8Array(twisted.slots)).toEqual(new Uint8Array(plain.slots));
+    expect(twisted.transformCount).toBe(2);
+    expect(twisted.baseTransformCount).toBe(2);
+  });
+
+  it("clamps the effective order to fit MAX_TRANSFORMS, exactly like prepareChaosGame4", () => {
+    const transforms4 = makeTransforms4(100);
+    const symmetry: SymmetryParams = { order: 5, plane: "zw" };
+    const packed = packGpuSystem4(baseSpec4({ transforms4, symmetry }));
+    expect(packed.transformCount).toBe(
+      prepareChaosGame4(transforms4, null, symmetry).transformCount,
+    );
+    expect(packed.transformCount).toBe(200); // order 5 -> 2 (2 * 100 <= 256).
+  });
+});
+
 describe("packGpuSystem4 colors", () => {
   it("sizes colors as 256 * 16 bytes", () => {
     const packed = packGpuSystem4(baseSpec4());
@@ -572,20 +748,21 @@ describe("packGpuParams4", () => {
   const WIDTH = 32;
   const HEIGHT = 33;
   const TRANSFORM_COUNT = 34;
-  const ITERS_PER_INVOCATION = 35;
-  const COLOR_KIND = 36;
-  const WEIGHTED = 37;
-  const HAS_FINAL = 38;
-  const NUM_CHAINS = 39;
-  const TOTAL_WEIGHT = 40;
-  const INV_W_AMP = 41;
-  const SLICE_ON = 42;
-  const SLICE_CENTER = 43;
-  const SLICE_WIDTH = 44;
-  const MIN_D = 45;
-  const INV_RADIUS_RANGE = 46;
-  const SLICE_COLOR_SHIFT = 47;
-  const SLICE_COLOR_INV_SCALE = 48;
+  const BASE_TRANSFORM_COUNT = 35;
+  const ITERS_PER_INVOCATION = 36;
+  const COLOR_KIND = 37;
+  const WEIGHTED = 38;
+  const HAS_FINAL = 39;
+  const NUM_CHAINS = 40;
+  const TOTAL_WEIGHT = 41;
+  const INV_W_AMP = 42;
+  const SLICE_ON = 43;
+  const SLICE_CENTER = 44;
+  const SLICE_WIDTH = 45;
+  const MIN_D = 46;
+  const INV_RADIUS_RANGE = 47;
+  const SLICE_COLOR_SHIFT = 48;
+  const SLICE_COLOR_INV_SCALE = 49;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -609,6 +786,7 @@ describe("packGpuParams4", () => {
       width: 640,
       height: 480,
       transformCount: 12,
+      baseTransformCount: 4,
       itersPerInvocation: 256,
       weighted: true,
       hasFinal: true,
@@ -644,6 +822,7 @@ describe("packGpuParams4", () => {
     expect(u32[WIDTH]).toBe(640);
     expect(u32[HEIGHT]).toBe(480);
     expect(u32[TRANSFORM_COUNT]).toBe(12);
+    expect(u32[BASE_TRANSFORM_COUNT]).toBe(4);
     expect(u32[ITERS_PER_INVOCATION]).toBe(256);
     expect(ITERS_PER_INVOCATION * 4).toBe(PARAMS4_ITERS_OFFSET_BYTES);
     expect(u32[COLOR_KIND]).toBe(KERNEL_COLOR_KIND.wRamp);
@@ -659,9 +838,10 @@ describe("packGpuParams4", () => {
     // false, so sliceOn alone isn't enough to opt in (see sliceColorRemap).
     expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
-    // Elements 49-51 are the struct's trailing pad — the three words WGSL's
-    // 16-byte struct alignment leaves after fr-hiyu removed colorDenom.
-    for (const pad of [49, 50, 51]) expect(u32[pad]).toBe(0);
+    // Elements 50-51 are the struct's trailing pad — the two words WGSL's
+    // 16-byte struct alignment still leaves after fr-q0h6's
+    // baseTransformCount took the third.
+    for (const pad of [50, 51]) expect(u32[pad]).toBe(0);
   });
 
   it("packs the slice-relative color remap (fr-nn6) into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {

@@ -20,8 +20,11 @@
  *
  * Parity with `accumulateFlame4` (see that function and `chaos-game-4d.ts`'s
  * `stepOrbit4`): same uniform/weighted transform pick, same 4x4+t affine →
- * blended-`variations4` step (NO symmetry post-rotation — kaleidoscope
- * symmetry is 3D-only, see `PreparedChaosGame4`'s doc), same escape-reseed
+ * blended-`variations4` → kaleidoscope post-rotation step (fr-q0h6 — the 4D
+ * symmetry expansion `prepareChaosGame4` performs, packed here exactly as
+ * `flame-gpu.ts` packs the 3D one: copy-major slots `k · baseTransformCount +
+ * i`, each carrying its copy's 4x4 rotation and a `hasPost` flag), same
+ * escape-reseed
  * limit over all four coordinates (NaN-robust for f32, like the 3D kernel),
  * same final-transform adopt-only-if-finite lens, same 20-coefficient
  * rotor+camera projection rows (`clipX`/`clipY`/`clipW`/`sRaw` — see
@@ -59,7 +62,7 @@
  * on readback instead ({@link convertGpuDisplayHistogram4}).
  */
 import type { Rng } from "./rng";
-import type { Transform4 } from "./types";
+import type { SymmetryParams, Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram } from "./flame";
 import type { FourDRenderColor } from "./color";
@@ -68,11 +71,12 @@ import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
-import { composeAffine4 } from "./affine4";
+import { composeAffine4, symmetryRotation4 } from "./affine4";
 import {
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
   derivedColorIndex,
+  effectiveSymmetryOrder,
 } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
@@ -115,29 +119,43 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
  *   96 negColor vec4f | 112 posColor vec4f (wRamp side colors, xyz; zero otherwise)
- *   128 width u32 | 132 height u32 | 136 transformCount u32 | 140 itersPerInvocation u32
- *   144 colorKind u32 ({@link KERNEL_COLOR_KIND}) | 148 weighted u32 | 152 hasFinal u32 | 156 numChains u32
- *   160 totalWeight f32 | 164 invWAmp f32 | 168 sliceOn u32 | 172 sliceCenter f32
- *   176 sliceWidth f32 | 180 minD f32 | 184 invRadiusRange f32
- *   188 sliceColorShift f32 | 192 sliceColorInvScale f32 (the fr-nn6 remap —
+ *   128 width u32 | 132 height u32 | 136 transformCount u32 | 140 baseTransformCount u32
+ *   144 itersPerInvocation u32 | 148 colorKind u32 ({@link KERNEL_COLOR_KIND}) | 152 weighted u32 | 156 hasFinal u32
+ *   160 numChains u32 | 164 totalWeight f32 | 168 invWAmp f32 | 172 sliceOn u32
+ *   176 sliceCenter f32 | 180 sliceWidth f32 | 184 minD f32 | 188 invRadiusRange f32
+ *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the fr-nn6 remap —
  *   `sliceColorRemap`'s (shift, invScale); identity (0, 1) when off) |
- *   196..207 trailing pad (WGSL rounds the struct to its 16-byte alignment,
+ *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment,
  *   which is why dropping fr-hiyu's dead `colorDenom` from the middle of this
- *   block compacted the layout without shrinking {@link PARAMS4_BYTES})
+ *   block compacted the layout without shrinking {@link PARAMS4_BYTES} — and
+ *   why fr-q0h6's `baseTransformCount` grew it back into the same 208 bytes
+ *   rather than past them)
  *
- * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 224 stride);
+ * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 304 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
- * (read only when hasFinal = 1, never drawn by the transform pick). NO
- * symmetry post-rotation rows — kaleidoscope symmetry is 3D-only:
+ * (read only when hasFinal = 1, never drawn by the transform pick). The
+ * post-rotation rows sit where the 3D Slot's do — right after the affine
+ * block, before the variation lanes — but are FOUR full rows, every lane
+ * used (a 4D symmetry copy is a 4x4, where 3D's is a 3x3 in three vec4s
+ * with a spare `.w`):
  *   0 rowX vec4f (m0..m3) | 16 rowY (m4..m7) | 32 rowZ (m8..m11) | 48 rowW (m12..m15)
  *   64 trans vec4f (t0..t3)
- *   80 varWeights array<vec4f, 4> | 144 varTypes array<vec4u, 4> (16 lanes of
+ *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
+ *   144 varWeights array<vec4f, 4> | 208 varTypes array<vec4u, 4> (16 lanes of
  *   storage, 15 used — one per `VariationType` — the 16th left zeroed)
- *   208 varCount u32 | 212 cumWeight f32
- *   216 colorIndex f32 | 220 colorSpeed f32 (fr-hiyu's flam3 color pair, one
- *   per transform — there are no symmetry copies here to replicate it across,
- *   so the pair is simply the transform's own; it took the two trailing pads
- *   this struct already carried, leaving {@link SLOT4_STRIDE_BYTES} unchanged)
+ *   272 varCount u32 | 276 hasPost u32 | 280 cumWeight f32
+ *   284 colorIndex f32 | 288 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
+ *   exactly like cumWeight's base-map weight — so the kernel reads
+ *   `slots[idx]` with no modulo) | 292..303 trailing pad
+ *
+ * The stride arithmetic (fr-q0h6): the pre-symmetry 224 was exactly 14 x 16
+ * with no slack — fr-hiyu's color pair had already taken this struct's last
+ * two pad words — so the four `vec4f` rows (+64) and `hasPost` (+4) had
+ * nowhere to hide. 224 + 68 = 292 bytes of content, and WGSL rounds a struct
+ * up to its own alignment (16, from the `vec4f`s), so 292 -> 304 with three
+ * trailing pad words. Repurposing a lane instead was not available: unlike
+ * the 3D rows, a 4D post-rotation row has no unused `.w`.
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -159,12 +177,12 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * `convertGpuHistogram`.
  */
 export const PARAMS4_BYTES = 208;
-export const SLOT4_STRIDE_BYTES = 224;
+export const SLOT4_STRIDE_BYTES = 304;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
  * `PARAMS_ITERS_OFFSET_BYTES`. */
-export const PARAMS4_ITERS_OFFSET_BYTES = 140;
+export const PARAMS4_ITERS_OFFSET_BYTES = 144;
 
 export const FLAME_GPU_KERNEL_4D_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
@@ -186,6 +204,7 @@ struct Params {
   width: u32,
   height: u32,
   transformCount: u32,
+  baseTransformCount: u32,
   itersPerInvocation: u32,
   colorKind: u32,
   weighted: u32,
@@ -208,12 +227,20 @@ struct Slot {
   rowZ: vec4f,
   rowW: vec4f,
   trans: vec4f,
+  postX: vec4f,
+  postY: vec4f,
+  postZ: vec4f,
+  postW: vec4f,
   varWeights: array<vec4f, 4>,
   varTypes: array<vec4u, 4>,
   varCount: u32,
+  hasPost: u32,
   cumWeight: f32,
   colorIndex: f32,
   colorSpeed: f32,
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -339,7 +366,7 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
 
 // One slot's full map: 4x4 affine + translation, then the weighted variation
 // blend (left to right, so stochastic variations consume the RNG in list
-// order). No symmetry post-rotation — 4D has none. Mirrors accumulateFlame4's
+// order), then the kaleidoscope post-rotation. Mirrors accumulateFlame4's
 // inlined stepOrbit4 body.
 fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
   let s = slots[slotIdx];
@@ -361,6 +388,14 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
       acc += w * applyVariation(ty, a, rng);
     }
     q = acc;
+  }
+  if (s.hasPost == 1u) {
+    q = vec4f(
+      dot(s.postX, q),
+      dot(s.postY, q),
+      dot(s.postZ, q),
+      dot(s.postW, q),
+    );
   }
   return q;
 }
@@ -389,7 +424,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   for (var n = 0u; n < params.itersPerInvocation; n++) {
     // --- pickIndex4 (chaos-game-4d.ts): uniform draw, or weighted lower
     // bound over cumulative weights — identical to the 3D kernel's pick
-    // (the pick has no dimension), minus the base-map modulo (no symmetry).
+    // (the pick has no dimension), over the symmetry-EXPANDED slots.
     var idx: u32;
     let r = rand01(&rng);
     if (params.weighted == 1u) {
@@ -416,9 +451,9 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
     // palette slot, at this transform's own speed, BEFORE stepping — exactly
     // accumulateFlame4's c = c * (1 - speed) + slot * speed (fr-hiyu), term for
     // term, and consuming no RNG so the orbit stays identical either way.
-    // The pair is read straight off the picked slot: 4D has no symmetry copies,
-    // so there is not even a base-map fold to skip (the 3D kernel's own read is
-    // fold-free too, by packing rather than by dimension).
+    // The pair is read straight off the picked slot with no base-map fold —
+    // packGpuSystem4 writes each BASE map's pair into every kaleidoscope copy
+    // of it, exactly as the 3D packer does (fr-q0h6).
     if (params.colorKind == 0u) {
       let speed = slots[idx].colorSpeed;
       colorCoord = colorCoord * (1.0 - speed) + slots[idx].colorIndex * speed;
@@ -500,8 +535,11 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
               );
               rgb = vec3u(round(wRampColor(sc) * ${COLOR_FIXED_POINT_SCALE}.0));
             }
-            case 2u: { // transform: the picked transform's palette entry.
-              rgb = colors[idx].xyz;
+            case 2u: { // transform: the picked slot's BASE map palette entry
+              // (fr-q0h6) — accumulateFlame4's own color.palette[baseIdx], so
+              // every kaleidoscope copy colors as the map it copies. Equal to
+              // idx at symmetry order 1.
+              rgb = colors[idx % params.baseTransformCount].xyz;
             }
             default: { // 3u, radius: 4D distance from center4, LUT-ramped.
               let d4 = distance(pp, params.center4);
@@ -532,24 +570,33 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 56.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 76.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
 const SLOT4_ROW_W = 12;
 const SLOT4_TRANS = 16;
+/** The four rows of a kaleidoscope copy's 4x4 post-rotation (fr-q0h6) —
+ * every lane used, unlike the 3D Slot's three rows with a spare `.w`. */
+const SLOT4_POST_X = 20;
+const SLOT4_POST_Y = 24;
+const SLOT4_POST_Z = 28;
+const SLOT4_POST_W = 32;
 /** `varWeights: array<vec4f, 4>` — 16 lanes of storage, 15 used (one per
  * `VariationType`; the 16th stays zeroed) — contiguous lanes, same
  * flattening argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
-const SLOT4_VAR_WEIGHTS = 20;
-const SLOT4_VAR_TYPES = 36;
-const SLOT4_VAR_COUNT = 52;
-const SLOT4_CUM_WEIGHT = 53;
-/** fr-hiyu's flam3 color pair, one per transform (see
- * {@link packGpuSystem4}) — the kernel's structural walk reads them straight
- * off the picked slot. These are the two elements Slot4 previously padded. */
-const SLOT4_COLOR_INDEX = 54;
-const SLOT4_COLOR_SPEED = 55;
+const SLOT4_VAR_WEIGHTS = 36;
+const SLOT4_VAR_TYPES = 52;
+const SLOT4_VAR_COUNT = 68;
+const SLOT4_HAS_POST = 69;
+const SLOT4_CUM_WEIGHT = 70;
+/** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across
+ * its kaleidoscope copies (see {@link packGpuSystem4}) — the kernel's
+ * structural walk reads them straight off the picked slot. */
+const SLOT4_COLOR_INDEX = 71;
+const SLOT4_COLOR_SPEED = 72;
+// Elements 73-75 are Slot4's trailing pad, left at the ArrayBuffer's zero
+// default.
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -570,24 +617,25 @@ const PARAMS4_POS_COLOR = 28;
 const PARAMS4_WIDTH = 32;
 const PARAMS4_HEIGHT = 33;
 const PARAMS4_TRANSFORM_COUNT = 34;
+const PARAMS4_BASE_TRANSFORM_COUNT = 35;
 // Reuse the exported byte offset (rather than a fresh literal) so the two
 // can never silently drift apart — the one field the driver rewrites
 // mid-session, same discipline as flame-gpu.ts.
 const PARAMS4_ITERS_PER_INVOCATION = PARAMS4_ITERS_OFFSET_BYTES / 4;
-const PARAMS4_COLOR_KIND = 36;
-const PARAMS4_WEIGHTED = 37;
-const PARAMS4_HAS_FINAL = 38;
-const PARAMS4_NUM_CHAINS = 39;
-const PARAMS4_TOTAL_WEIGHT = 40;
-const PARAMS4_INV_W_AMP = 41;
-const PARAMS4_SLICE_ON = 42;
-const PARAMS4_SLICE_CENTER = 43;
-const PARAMS4_SLICE_WIDTH = 44;
-const PARAMS4_MIN_D = 45;
-const PARAMS4_INV_RADIUS_RANGE = 46;
-const PARAMS4_SLICE_COLOR_SHIFT = 47;
-const PARAMS4_SLICE_COLOR_INV_SCALE = 48;
-// Elements 49-51 are the struct's trailing pad, left at the ArrayBuffer's
+const PARAMS4_COLOR_KIND = 37;
+const PARAMS4_WEIGHTED = 38;
+const PARAMS4_HAS_FINAL = 39;
+const PARAMS4_NUM_CHAINS = 40;
+const PARAMS4_TOTAL_WEIGHT = 41;
+const PARAMS4_INV_W_AMP = 42;
+const PARAMS4_SLICE_ON = 43;
+const PARAMS4_SLICE_CENTER = 44;
+const PARAMS4_SLICE_WIDTH = 45;
+const PARAMS4_MIN_D = 46;
+const PARAMS4_INV_RADIUS_RANGE = 47;
+const PARAMS4_SLICE_COLOR_SHIFT = 48;
+const PARAMS4_SLICE_COLOR_INV_SCALE = 49;
+// Elements 50-51 are the struct's trailing pad, left at the ArrayBuffer's
 // zero default.
 
 /**
@@ -601,25 +649,35 @@ const PARAMS4_SLICE_COLOR_INV_SCALE = 48;
 export interface GpuFlameSystemSpec4 {
   transforms4: Transform4[];
   finalTransform4: Transform4 | null;
+  /** Kaleidoscope symmetry (fr-q0h6) — see `chaos-game-4d.ts`'s
+   * `prepareChaosGame4`, whose expansion this packer restates. Order 1 (any
+   * plane, any twist) packs exactly one unrotated copy of each base map, i.e.
+   * the pre-symmetry buffers byte for byte. */
+  symmetry: SymmetryParams;
   color: FourDRenderColor;
 }
 
 /**
  * {@link packGpuSystem4}'s result: the packed GPU buffers plus the scalar
  * fields {@link packGpuParams4} needs to describe them — the 4D counterpart
- * of flame-gpu.ts's `PackedGpuSystem`, minus everything symmetry-related
- * (no `baseTransformCount`, no `colorMode`: the color dispatch is
- * {@link KERNEL_COLOR_KIND}, derived from the {@link FourDRenderColor} both
- * packers consume).
+ * of flame-gpu.ts's `PackedGpuSystem`, minus its `colorMode` (the color
+ * dispatch here is {@link KERNEL_COLOR_KIND}, derived from the
+ * {@link FourDRenderColor} both packers consume).
  */
 export interface PackedGpuSystem4 {
-  /** `(transformCount + 1) * SLOT4_STRIDE_BYTES` — one slot per transform,
-   * plus the final-transform lens slot. */
+  /** `(transformCount + 1) * SLOT4_STRIDE_BYTES` — one slot per expanded
+   * (copy, base transform) pair, plus the final-transform lens slot. */
   slots: ArrayBuffer;
   /** flame-gpu.ts's `COLORS_BYTES` — always the full 256-entry table,
    * however many entries are actually meaningful (zeros for wRamp). */
   colors: ArrayBuffer;
+  /** Expanded slot count feeding the kernel's pick — `order *
+   * baseTransformCount`. */
   transformCount: number;
+  /** `transforms4.length`: the number of BASE (un-rotated) maps, which the
+   * kernel folds a picked slot back onto for the `"transform"` color mode
+   * (fr-q0h6). Equal to `transformCount` at symmetry order 1. */
+  baseTransformCount: number;
   weighted: boolean;
   totalWeight: number;
   hasFinal: boolean;
@@ -645,77 +703,115 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * Throws `RangeError` if `transforms4.length` exceeds `MAX_TRANSFORMS` —
  * same check and message shape as `prepareChaosGame4`.
  *
- * **Slots**: slot `i` holds `composeAffine4(transforms4[i])`'s 4x4 rows +
- * translation and the transform's own variation lanes (flame-gpu.ts's
- * `packVariations` filter — `Variation[]` is dimension-free data). There is
- * no symmetry expansion and no post-rotation rows: 4D has neither.
+ * **Expansion** (fr-q0h6) mirrors `prepareChaosGame4` exactly: `order =
+ * effectiveSymmetryOrder(symmetry.order, baseTransformCount)`, then slot `k *
+ * baseTransformCount + i` (copy-major: every copy's base maps together, copy
+ * 0 first) holds base map `i`'s affine rows + translation and its OWN
+ * variation lanes (flame-gpu.ts's `packVariations` filter — `Variation[]` is
+ * dimension-free data), plus copy `k`'s post-rotation: zeroed for `k = 0`,
+ * `affine4.ts`'s `symmetryRotation4(symmetry.plane, 2π·k / order,
+ * symmetry.twist)` otherwise — the very generator `prepareChaosGame4` rotates
+ * its own copies by, imported rather than restated. `hasPost` is set only in
+ * the latter case.
  *
- * **Weights**: mirror `prepareChaosGame4` exactly — `transforms4[i].weight
- * ?? 1`, `cumWeight` the running sum, `weighted` true under the identical
- * `some(w !== 1) && total > 0 && finite` condition, so the kernel's
- * weighted/uniform pick branch agrees with the CPU's bit for bit.
+ * **Weights**: mirror `prepareChaosGame4`'s expanded table — slot `s`'s
+ * weight is `transforms4[s % baseTransformCount].weight ?? 1` (every copy of
+ * a base map shares its weight), `cumWeight` the running sum, `weighted` true
+ * under the identical `some(w !== 1) && total > 0 && finite` condition, so
+ * the kernel's weighted/uniform pick branch agrees with the CPU's bit for
+ * bit. `symmetry.blend` is deliberately NOT applied, exactly as the 3D packer
+ * ignores it: it is a morph artifact that never reaches a render worker.
  *
  * **Color slots** (fr-hiyu): each slot also carries the flam3 pair the
  * kernel's structural walk blends with — `colorIndex` (the transform's own, or
- * `chaos-game.ts`'s `derivedColorIndex(i, transformCount)` even spread) and
+ * `chaos-game.ts`'s `derivedColorIndex(i, baseTransformCount)` even spread) and
  * `colorSpeed` (its own, or `DEFAULT_COLOR_SPEED`) — resolved through exactly
- * the definitions `prepareChaosGame4` resolves `PreparedChaosGame4`'s with, on
- * the same RAW transform count (4D has no symmetry copies to key back onto a
- * base map). The final-lens slot is never picked, so its pair stays at the
- * `ArrayBuffer`'s zero default.
+ * the definitions `prepareChaosGame4` resolves `PreparedChaosGame4`'s with,
+ * from the BASE map and written into EVERY copy of it, which is what lets the
+ * kernel read `slots[idx]` with no `% baseTransformCount` fold while still
+ * coloring each kaleidoscope copy as the map it copies. The final-lens slot
+ * is never picked, so its pair stays at the `ArrayBuffer`'s zero default.
  *
  * **Final transform**: one extra slot at index `transformCount` (never drawn
  * by the pick, which `params.transformCount` bounds) carrying the lens's
- * affine + variations. Absent ⇒ the slot stays zeroed and `hasFinal` is
- * `false`.
+ * affine + variations, with `hasPost` left at 0 (a lens never rotates).
+ * Absent ⇒ the slot stays zeroed and `hasFinal` is `false`.
  *
  * **Colors** dispatch on `color.kind` ({@link FourDRenderColor}):
  * `"structural"`/`"radius"` pack the 256-entry `color.lut` gradient;
- * `"transform"` packs `color.palette` (one entry per transform, padded with
- * the white {@link FALLBACK_COLOR} if the palette somehow runs short —
- * mirroring `accumulateFlame4`'s own fallback); `"wRamp"` leaves the table
- * zeroed (its color is computed in-shader from the projected s). Every
- * channel goes through `writeColorEntry`'s fixed-point scale.
+ * `"transform"` packs `color.palette` (one entry per BASE map — the kernel
+ * folds a picked slot back with `idx % baseTransformCount` — padded with the
+ * white {@link FALLBACK_COLOR} if the palette somehow runs short, mirroring
+ * `accumulateFlame4`'s own fallback); `"wRamp"` leaves the table zeroed (its
+ * color is computed in-shader from the projected s). Every channel goes
+ * through `writeColorEntry`'s fixed-point scale.
  */
 export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
-  const { transforms4, finalTransform4, color } = spec;
+  const { transforms4, finalTransform4, symmetry, color } = spec;
   if (transforms4.length > MAX_TRANSFORMS) {
     throw new RangeError(
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms4.length}`,
     );
   }
 
-  const transformCount = transforms4.length;
+  const baseTransformCount = transforms4.length;
+  const order = effectiveSymmetryOrder(symmetry.order, baseTransformCount);
+  const transformCount = order * baseTransformCount;
   const hasFinal = finalTransform4 !== null;
 
   const slots = new ArrayBuffer((transformCount + 1) * SLOT4_STRIDE_BYTES);
   const slotF32 = new Float32Array(slots);
   const slotU32 = new Uint32Array(slots);
 
-  // Selection weights — same rule as prepareChaosGame4 (which the CPU oracle
-  // accumulateFlame4 drives through pickIndex4): weight ?? 1 per transform,
-  // running cumulative sum, weighted only for a genuinely non-uniform system.
-  const weights = transforms4.map((t) => t.weight ?? 1);
+  // Selection weights over the EXPANDED slots (never the final slot, which
+  // the pick never draws) — same rule as prepareChaosGame4 (which the CPU
+  // oracle accumulateFlame4 drives through pickIndex4): each slot inherits
+  // its base map's weight, defaulting to 1, and only a genuinely non-uniform
+  // system takes the weighted branch.
+  const weights = new Array<number>(transformCount);
+  for (let s = 0; s < transformCount; s++) {
+    weights[s] = transforms4[s % baseTransformCount].weight ?? 1;
+  }
   let totalWeight = 0;
   const cumWeights = new Float64Array(transformCount);
-  for (let i = 0; i < transformCount; i++) {
-    totalWeight += weights[i];
-    cumWeights[i] = totalWeight;
+  for (let s = 0; s < transformCount; s++) {
+    totalWeight += weights[s];
+    cumWeights[s] = totalWeight;
   }
   const weighted =
     weights.some((w) => w !== 1) &&
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
-  for (let i = 0; i < transformCount; i++) {
-    const base = i * F32_PER_SLOT4;
-    writeSlot4Affine(slotF32, base, transforms4[i]);
-    writeSlot4Variations(slotF32, slotU32, base, transforms4[i].variations);
-    slotF32[base + SLOT4_CUM_WEIGHT] = cumWeights[i];
-    slotF32[base + SLOT4_COLOR_INDEX] =
-      transforms4[i].colorIndex ?? derivedColorIndex(i, transformCount);
-    slotF32[base + SLOT4_COLOR_SPEED] =
-      transforms4[i].colorSpeed ?? DEFAULT_COLOR_SPEED;
+  // Flame structural-coloring pair per BASE map (fr-hiyu), resolved through
+  // the SAME two definitions prepareChaosGame4 resolves the CPU oracle's
+  // with. The expansion below writes each base map's pair into every copy of
+  // it (see this function's doc).
+  const colorIndices = transforms4.map(
+    (t, i) => t.colorIndex ?? derivedColorIndex(i, baseTransformCount),
+  );
+  const colorSpeeds = transforms4.map(
+    (t) => t.colorSpeed ?? DEFAULT_COLOR_SPEED,
+  );
+
+  // Copy-major expansion: copy 0 (unrotated) first, then copy 1, etc. — see
+  // prepareChaosGame4's identical loop shape.
+  const twist = symmetry.twist ?? 0;
+  for (let k = 0; k < order; k++) {
+    const post =
+      k === 0
+        ? null
+        : symmetryRotation4(symmetry.plane, (2 * Math.PI * k) / order, twist);
+    for (let i = 0; i < baseTransformCount; i++) {
+      const s = k * baseTransformCount + i;
+      const base = s * F32_PER_SLOT4;
+      writeSlot4Affine(slotF32, base, transforms4[i]);
+      writeSlot4Post(slotF32, slotU32, base, post);
+      writeSlot4Variations(slotF32, slotU32, base, transforms4[i].variations);
+      slotF32[base + SLOT4_CUM_WEIGHT] = cumWeights[s];
+      slotF32[base + SLOT4_COLOR_INDEX] = colorIndices[i];
+      slotF32[base + SLOT4_COLOR_SPEED] = colorSpeeds[i];
+    }
   }
 
   // The final-transform lens: one extra slot, never chosen by the pick
@@ -748,7 +844,9 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       break;
     }
     case "transform": {
-      for (let i = 0; i < transformCount; i++) {
+      // One entry per BASE map — accumulateFlame4 indexes its own palette by
+      // `idx % baseTransformCount`, and the kernel folds identically.
+      for (let i = 0; i < baseTransformCount; i++) {
         const [r, g, b] = color.palette[i] ?? FALLBACK_COLOR;
         writeColorEntry(colorsU32, i, r, g, b);
       }
@@ -763,6 +861,7 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     slots,
     colors,
     transformCount,
+    baseTransformCount,
     weighted,
     totalWeight,
     hasFinal,
@@ -788,6 +887,30 @@ function writeSlot4Affine(
     f32[base + SLOT4_ROW_W + c] = m[12 + c];
     f32[base + SLOT4_TRANS + c] = t[c];
   }
+}
+
+/**
+ * Write a kaleidoscope copy's post-rotation rows and set `hasPost` — the 4D
+ * twin of flame-gpu.ts's `writeSlotPost`, with four FULL rows instead of
+ * three xyz ones. `post === null` (copy 0, or any copy at symmetry order 1)
+ * leaves postX/Y/Z/W and `hasPost` at the `ArrayBuffer`'s zero default —
+ * exactly the kernel's "no rotation" case, mirroring `prepareChaosGame4`'s
+ * `null` for the same slots.
+ */
+function writeSlot4Post(
+  f32: Float32Array,
+  u32: Uint32Array,
+  base: number,
+  post: number[] | null,
+): void {
+  if (post === null) return;
+  for (let c = 0; c < 4; c++) {
+    f32[base + SLOT4_POST_X + c] = post[c];
+    f32[base + SLOT4_POST_Y + c] = post[4 + c];
+    f32[base + SLOT4_POST_Z + c] = post[8 + c];
+    f32[base + SLOT4_POST_W + c] = post[12 + c];
+  }
+  u32[base + SLOT4_HAS_POST] = 1;
 }
 
 /**
@@ -857,7 +980,11 @@ export interface GpuParams4Fields {
   projection: Float64Array;
   width: number;
   height: number;
+  /** The EXPANDED slot count the pick searches — `PackedGpuSystem4`'s own. */
   transformCount: number;
+  /** The BASE map count the kernel folds a picked slot onto for the
+   * `"transform"` color mode (fr-q0h6) — `PackedGpuSystem4`'s own. */
+  baseTransformCount: number;
   itersPerInvocation: number;
   weighted: boolean;
   hasFinal: boolean;
@@ -935,6 +1062,7 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   u32[PARAMS4_WIDTH] = fields.width;
   u32[PARAMS4_HEIGHT] = fields.height;
   u32[PARAMS4_TRANSFORM_COUNT] = fields.transformCount;
+  u32[PARAMS4_BASE_TRANSFORM_COUNT] = fields.baseTransformCount;
   u32[PARAMS4_ITERS_PER_INVOCATION] = fields.itersPerInvocation;
   u32[PARAMS4_COLOR_KIND] = KERNEL_COLOR_KIND[color.kind];
   u32[PARAMS4_WEIGHTED] = fields.weighted ? 1 : 0;

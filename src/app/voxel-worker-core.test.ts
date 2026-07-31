@@ -471,6 +471,23 @@ describe("VoxelWorkerSession setSymmetry", () => {
     ).not.toThrow();
     expect(events).toHaveLength(0);
   });
+
+  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated (fr-q0h6)", () => {
+    // A live symmetry edit can turn a flat system 4D under a render session
+    // whose dimension was fixed at start. `symmetryRotation` THROWS on a
+    // w-plane, so without the symmetry3D guard this would kill the worker.
+    const { session, events, scheduler } = harness();
+    session.handle(startCommand({ order: 1, plane: "xz" }));
+    scheduler.drain();
+
+    expect(() =>
+      session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 }),
+    ).not.toThrow();
+    scheduler.drain();
+
+    // Still renders — the restart ran, and to the same budget.
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(500);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -621,16 +638,42 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(last.texture.some((b) => b > 0)).toBe(true);
   });
 
-  it("setSymmetry on a 4D session is a no-op: no bounds re-run, no restart", () => {
-    const { session, events, scheduler } = harness();
+  it("setSymmetry on a 4D session restarts accumulation and re-emits a grid (fr-q0h6)", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 50 });
     session.handle(
       startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
+    );
+    scheduler.drain();
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+    const gridsBefore = gridEvents(events).length;
+
+    // A w-plane with a twist: the genuinely 4D kaleidoscope, which the 3D
+    // path cannot even represent.
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
+    scheduler.drain();
+
+    // A finished render emits no more grids on its own; that it climbs back
+    // to the budget AND emits new grids proves it reset to zero and re-ran.
+    expect(gridEvents(events).length).toBeGreaterThan(gridsBefore);
+    expect(gridEvents(events).at(-1)!.iterationsDone).toBe(200);
+  });
+
+  it("setSymmetry on a 4D session still no-ops when order, plane and twist are unchanged", () => {
+    const { session, events, scheduler } = harness();
+    session.handle(
+      startCommand({
+        fourD: defaultFourD(),
+        iterationsBudget: 200,
+        order: 3,
+        plane: "zw",
+        twist: 1,
+      }),
     );
     scheduler.drain();
     const gridsBefore = gridEvents(events).length;
     const notesBefore = noteEvents(events).length;
 
-    session.handle({ type: "setSymmetry", order: 3, plane: "xy" });
+    session.handle({ type: "setSymmetry", order: 3, plane: "zw", twist: 1 });
 
     // No restart -> no new grid/resolutionNote from a no-op command with
     // nothing scheduled.

@@ -238,7 +238,7 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
-      const command = { type: "setSymmetry", order: 4, plane: "xz" };
+      const command = { type: "setSymmetry", order: 4, plane: "xz", twist: 0 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
@@ -251,7 +251,7 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
-      const command = { type: "setSymmetry", order: 1, plane: "yz" };
+      const command = { type: "setSymmetry", order: 1, plane: "yz", twist: 0 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
