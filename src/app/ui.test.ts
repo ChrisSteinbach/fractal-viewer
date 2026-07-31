@@ -2530,6 +2530,7 @@ describe("Ui render mode switch (fr-39y)", () => {
       "flameStatus",
       "solidStatus",
       "surfaceStatus",
+      "symmetryInactiveNote",
     ]) {
       const position = byId(floatingId).compareDocumentPosition(firstSection!);
       expect(
@@ -4446,6 +4447,10 @@ describe("Ui symmetry controls", () => {
     return document.getElementById("symmetryNote");
   }
 
+  function inactiveNote(): HTMLElement | null {
+    return document.getElementById("symmetryInactiveNote");
+  }
+
   it("reflects order and axis into the slider, label, and select", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -4519,6 +4524,66 @@ describe("Ui symmetry controls", () => {
     expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe(
       "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
+    );
+  });
+
+  // fr-5gxn: the value is kept but inert while non-flat (ui.ts hides
+  // #symmetrySection itself), so this note is the only thing on screen that
+  // still tells the user their kaleidoscope is parked rather than gone.
+  it("shows the inactive note naming the order and axis for a non-flat system with a 6-fold kaleidoscope", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 6, axis: "y" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
+    expect(inactiveNote()?.textContent).toBe(
+      "Kaleidoscope symmetry (6-fold about Y) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
+    );
+  });
+
+  it("shows no inactive note for a non-flat system with symmetry order 1", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 1, axis: "y" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
+    expect(inactiveNote()?.textContent).toBe("");
+  });
+
+  it("shows no inactive note for a flat system with a 6-fold kaleidoscope", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 6, axis: "y" },
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
+    expect(inactiveNote()?.textContent).toBe("");
+  });
+
+  // fr-5gxn: the note is a statement about the document — the kaleidoscope
+  // is equally parked, and equally live in the shared #v1= URL, no matter
+  // what's rendering — not about the active render mode, so unlike
+  // symmetrySection (which lives inside the Points-only explorer panel) it
+  // keeps showing under a flame/solid/surface render exactly as in Points.
+  it("keeps showing the inactive note for a non-flat 6-fold system while a render is active", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      symmetry: { order: 6, axis: "y" },
+      renderMode: "flame",
+    });
+
+    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
+    expect(inactiveNote()?.textContent).toBe(
+      "Kaleidoscope symmetry (6-fold about Y) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
     );
   });
 });
