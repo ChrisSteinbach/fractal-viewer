@@ -942,6 +942,7 @@ export class Ui {
   // same non-flatness, not a separate on/off the user toggles.
   private readonly fourDControls: HTMLElement;
   private readonly fourDSliceToggle: HTMLInputElement;
+  private readonly fourDSliceToggleRow: HTMLElement;
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
@@ -950,6 +951,11 @@ export class Ui {
   // modes — the remap only touches the w-ramp palettes (see updateLabels).
   private readonly fourDSliceRelColorToggle: HTMLInputElement;
   private readonly fourDSliceRelColorRow: HTMLElement;
+  /** True while the panel is showing a LIVE 4D surface session (fr-b30z):
+   * a non-flat system in Surface mode, where the tracer re-poses the rotor
+   * and re-marches the w slice every frame. It changes what the slice block
+   * means, so {@link syncFourDSliceRows} keys on it — see updateLabels. */
+  private fourDSurfaceLive = false;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
   // the slice controls above.
   private readonly fourDTumbleToggle: HTMLInputElement;
@@ -1160,6 +1166,7 @@ export class Ui {
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
+    this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
@@ -1494,7 +1501,7 @@ export class Ui {
       // The position slider only means anything while the slice is on — a
       // pure view reveal, so the UI owns it (slice state is session-only and
       // never enters AppState).
-      this.fourDSliceRow.classList.toggle("hidden", !on);
+      this.syncFourDSliceRows(on);
       handlers.onFourDSliceToggle(on);
     });
     this.fourDSliceSlider.addEventListener("input", () => {
@@ -1549,10 +1556,31 @@ export class Ui {
    * does. */
   setFourDSlice(on: boolean, center: number, relColor: boolean): void {
     this.fourDSliceToggle.checked = on;
-    this.fourDSliceRow.classList.toggle("hidden", !on);
+    this.syncFourDSliceRows(on);
     this.fourDSliceSlider.value = String(center);
     this.fourDSliceLabel.textContent = center.toFixed(2);
     this.fourDSliceRelColorToggle.checked = relColor;
+  }
+
+  /**
+   * Show or hide the slice sub-rows for the mode the panel is in. Normally
+   * the position slider rides the W-slice toggle — a pure view reveal the UI
+   * owns, since slice state is session-only and never enters AppState.
+   *
+   * A LIVE 4D surface session (fr-b30z) has no such choice to offer. That
+   * tracer marches a `w = w0` cross-section unconditionally — `sliceOn`
+   * never reaches it (main.ts pushes only `sliceCenter` into
+   * `setSurface4View`) — so the toggle would be a lie, while the position
+   * slider is the mode's defining parameter and the one control that makes
+   * its continuous family of 3D fractals reachable. Hide the toggle, show
+   * the slider regardless.
+   */
+  private syncFourDSliceRows(on: boolean): void {
+    this.fourDSliceToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
+    this.fourDSliceRow.classList.toggle(
+      "hidden",
+      !this.fourDSurfaceLive && !on,
+    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -1603,13 +1631,6 @@ export class Ui {
       if (spec.label && label) label.textContent = spec.label.text(state);
     }
     this.syncCustomPaletteEditors(state);
-    // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
-    // its row hides under the baked fr-d47 modes — the same single source of
-    // truth (color.ts) the shader's bake-vs-uniform dispatch keys on.
-    this.fourDSliceRelColorRow.classList.toggle(
-      "hidden",
-      fourDColorNeedsAttribute(state.fourDColor),
-    );
 
     const effectiveOrder = effectiveSymmetryOrder(
       state.symmetry.order,
@@ -1651,12 +1672,19 @@ export class Ui {
     // View block. All four render modes stay available while
     // non-flat: the flame/solid renders snapshot the frozen 4D view and run
     // their own 4D accumulators (fr-5b3/fr-4wd), and the surface tracer poses
-    // the 4D attractor live (fr-vxoj). The tumble/slice block hides while a
-    // render is active for the same reason the editing controls do —
-    // the view (rotor + slice) is frozen into the render's worker snapshot,
-    // so its controls couldn't affect it. That last argument does NOT hold
-    // for a live 4D surface session (fr-b30z tracks the gap).
+    // the 4D attractor live (fr-vxoj). The tumble/slice block hides under the
+    // FROZEN renders for the same reason the editing controls do — the view
+    // (rotor + slice) is baked into their worker snapshot, so its controls
+    // couldn't affect it — but NOT under a live 4D surface session (fr-b30z),
+    // where the tracer re-poses and re-marches every frame and those are the
+    // only controls that reach it.
     const nonFlat = systemIsNonFlat(state);
+    const frozenRender =
+      state.renderMode === "flame" || state.renderMode === "solid";
+    // A non-flat system in Surface mode is always the 4D tracer: the session
+    // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
+    // ahead of the flat-only escape-time and fold/affine paths.
+    this.fourDSurfaceLive = nonFlat && state.renderMode === "surface";
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
@@ -1693,7 +1721,21 @@ export class Ui {
       "hidden",
       state.renderMode !== "surface",
     );
-    this.fourDControls.classList.toggle("hidden", !nonFlat || rendering);
+    this.fourDControls.classList.toggle("hidden", !nonFlat || frozenRender);
+    // The slice sub-rows read differently in a live surface session — see
+    // syncFourDSliceRows. `sliceOn` is session-only view state the UI owns,
+    // so the checkbox itself is the truth to re-apply here.
+    this.syncFourDSliceRows(this.fourDSliceToggle.checked);
+    // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
+    // its row hides under the baked fr-d47 modes — the same single source of
+    // truth (color.ts) the shader's bake-vs-uniform dispatch keys on — and
+    // under a live surface session, whose tracer has no w ramp at all (its
+    // color sources are by-transform / palette / height / 4D radius / rings /
+    // sheets, none of which the remap touches).
+    this.fourDSliceRelColorRow.classList.toggle(
+      "hidden",
+      this.fourDSurfaceLive || fourDColorNeedsAttribute(state.fourDColor),
+    );
     // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
     // the 4D block: exactly one of the two shows outside a render. It hides
     // during renders for the same frozen-view reason (the flame freezes the

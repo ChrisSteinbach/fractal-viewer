@@ -472,7 +472,13 @@ morphs into place instead of snapping (see **Presets** below).
   speed** scales its rate from 0.1× to 3×. **W slice** carves a soft Gaussian
   cross-section out of the cloud (the rest stays as ghost context), its
   position slider sweeping along w — each position is a genuinely different
-  3D fractal. **Slice-relative color** (fr-nn6, shown while the slice is on
+  3D fractal. That's the point cloud's picture specifically: a Surface
+  session (fr-b30z) keeps the same slider live but positions a hard,
+  zero-thickness cross-section instead — the tracer marches exactly that w,
+  with no ghost context and no soft window around it. Since fr-33yb the
+  slider lands on the same physical hyperplane in both views, normalized to
+  the cloud's rotated-w support at the current rotation rather than a raw
+  world-w value. **Slice-relative color** (fr-nn6, shown while the slice is on
   and a W-Depth palette is active) recenters the diverging ramp on the slice
   window: inside the slice everything sits near one w, so the faithful
   whole-cloud ramp renders a slice at 0 almost entirely in the palette's
@@ -501,10 +507,17 @@ morphs into place instead of snapping (see **Presets** below).
   life — so the tumble parks and this section's sliders hide until you
   return to Points. Surface instead keeps the rotor and W slice live per
   frame, so the auto-tumble goes on turning under the tracer and the
-  Shift-drag / Shift-wheel gestures above still steer it (its tumble/slice
-  sliders hide with the rest all the same). What does drop out of the panel
-  is the flat-only look controls: **Color Mode** and **Depth Style** are
-  superseded in place by **4D Color** and **Depth fade** above, **Color
+  Shift-drag / Shift-wheel gestures above still steer it — and this
+  section's own controls stay reachable there too (fr-b30z), rather than
+  hiding with the rest: **Auto-tumble (XY+ZW)** and **Tumble speed** behave
+  exactly as in Points, and the **W slice** position slider stays live and
+  shown unconditionally, since the tracer marches a cross-section every
+  frame regardless of any toggle. The **W slice** on/off checkbox hides
+  anyway — there's no off state left for it to mean — and so does
+  **Slice-relative color**, since the tracer has no w-ramp palette for it to
+  remap. What does drop out of the panel is the flat-only look controls:
+  **Color Mode** and **Depth Style** are superseded in place by **4D
+  Color** and **Depth fade** above, **Color
   Contrast** goes with them (it tunes the height / radius / position ramps,
   none of which are in play once 4D Color owns the coloring), and
   **Symmetry** hides because the 4D chaos game has no symmetry parameter at
