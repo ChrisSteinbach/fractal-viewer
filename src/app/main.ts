@@ -1,4 +1,4 @@
-import { toTransform4 } from "../fractal/affine4";
+import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
@@ -111,7 +111,6 @@ import {
   setSymmetryAxis,
   setSymmetryOrder,
   setTransforms,
-  systemPartsAreNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
