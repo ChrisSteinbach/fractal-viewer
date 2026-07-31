@@ -2272,8 +2272,25 @@ export class FractalScene {
    * paused tumble included, and equality keeps render-on-demand honest.
    * `m` is the row-major world rotor from `fourDView.matrix()`; the packer
    * transposes it into the tracer's inverse-rotor uniform.
+   *
+   * `sliceCenter` arrives in the SIGNED NORMALIZED rotated-w units the slice
+   * slider spans — the same [-1, 1] the cloud shader compares against
+   * `q.w * uInvWAmp4` and the flame/solid slice windows share — while the
+   * tracer's `uW0` is a LITERAL world w (it marches `vec4(p, uW0)` and gates
+   * the visible ball against the attractor's own 4D radius). fr-33yb: those
+   * two readings put one slider position on two different hyperplanes, so
+   * the conversion happens HERE, through {@link updateWAmp4}'s own
+   * `wSupport` — one expression defines the convention and there is nothing
+   * left to drift.
+   *
+   * Before the first 4D cloud upload the half-extents are still zero, so the
+   * amplitude is 0 and the tracer marches `w = 0` — the centered slice a
+   * fresh visit means anyway — and the cloud's arrival re-packs by itself,
+   * since the guard below compares the CONVERTED w0 (a half-extent change
+   * that moves the plane is a change).
    */
-  setSurface4View(m: number[], w0: number): void {
+  setSurface4View(m: number[], sliceCenter: number): void {
+    const w0 = sliceCenter * wSupport(m, this.fourDHalfExtents);
     const prev = this.surface4Rot;
     let changed = this.surface4W0 !== w0;
     for (let i = 0; i < 16 && !changed; i++) {

@@ -533,13 +533,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     lower stakes now that SURFACE_FOLD_LENS is the no-adapter/`?surfacegl`
     fallback rather than the lens session's primary tracer).
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
-    `w = sliceCenter` slice of the rotor-posed 4D attractor, mirroring
+    `w = w0` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
     certificates + width-4 beam — the fr-beck-measured ghost eliminator
     plus fr-jkpn's validity slots).
     Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
-    unlike flame/solid-4D's frozen snapshot; 24-map cap, matching 3D's — the
-    per-map arrays ride a std140 uniform BLOCK (fr-dqlq: 2688 bytes of the
+    unlike flame/solid-4D's frozen snapshot — the slider is normalized
+    rotated-w, and `scene.ts`'s `setSurface4View` converts it to the
+    tracer's world `uW0` through `wSupport` (fr-33yb), so one slider
+    position is one hyperplane across every mode; 24-map cap, matching 3D's —
+    the per-map arrays ride a std140 uniform BLOCK (fr-dqlq: 2688 bytes of the
     guaranteed 16KB, where default-block arrays would have taken 192 of the
     guaranteed 224 fragment uniform vectors), and there is no kaleidoscope to
     expand, so 24 slots means 24 transforms.
