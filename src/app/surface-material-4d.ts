@@ -33,6 +33,27 @@ import { lightDirection } from "./voxel-material";
  * an isometry — distances, march steps, and gradients all survive the lift
  * unchanged.
  *
+ * The slice has a THICKNESS since fr-wa6o. With `uSliceHalfW > 0` the query
+ * stops being the point `(p, uW0)` and becomes the SEGMENT spanning
+ * `|w - uW0| <= uSliceHalfW` over `p`, so what the tracer marches is a
+ * SLAB's projected shadow rather than a single cross-section — thin
+ * structure that a zero-thickness plane can only ever catch edge-on reads
+ * as solid. Affine maps take segments to segments, which is why the whole
+ * descent generalizes term for term: one extra `vec4` beside every chain's
+ * and candidate's point (moved by each inverse map's LINEAR part alone —
+ * translations slide a segment's centre, never its extent),
+ * {@link segmentRadius} wherever the point path took `length`, and a
+ * visible-ball gate widened to the slab's most generous `|w|`. The bound
+ * only loosens, by at most `uSliceHalfW`, and its zero set is exactly the
+ * shadow being marched; the validity argument in full is the SLAB QUERIES
+ * section of `surface-de-4d.ts`'s module doc, whose `halfExtent` parameter
+ * this mirrors. `uSliceHalfW == 0` — the shipped default — renders today's
+ * frame value for value: `segmentRadius` degenerates to `length`, and a
+ * zero extent stays zero through any linear map. Cost, honestly: the
+ * `segment` flag each body hoists is dynamically uniform across a draw, so
+ * the propagation branches are free when the slab is off, but the extra
+ * `vec4` per slot is live register pressure either way.
+ *
  * Hits are shaded in the same vocabulary as the 3D surface tracer and the
  * solid raymarcher — DE-gradient normals, Lambert diffuse + Blinn-Phong
  * specular, a soft penumbra shadow ray toward the light, DE-probed ambient
@@ -172,6 +193,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * slider through wSupport on the way here (fr-33yb). Backticks would end
    * this template literal, so this whole GLSL source names code plainly. */
   uniform float uW0;
+  /** HALF-THICKNESS of the marched SLAB, a literal world w in the view
+   * frame — the same units and the same frame as uW0 (fr-wa6o). 0 is the
+   * zero-thickness hyperplane this tracer shipped with, and every term
+   * below collapses to that path's arithmetic bit for bit (see
+   * segmentRadius); above 0 each query becomes the SEGMENT the slab
+   * |w - uW0| less than or equal to uSliceHalfW cuts over the queried 3D
+   * point, so the render shows the slab's whole shadow rather than one
+   * cross-section. The validity argument — affine maps take segments to
+   * segments, so every chain carries one extra vec4 and every ball
+   * certificate reads a segment radius — is the SLAB QUERIES section of
+   * surface-de-4d.ts's module doc, which this shader mirrors. */
+  uniform float uSliceHalfW;
   /** Base-color source: 0 = by-transform (uMapColorSigma.xyz), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -211,16 +244,57 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
   }
 
+  /** Distance from the ORIGIN to the segment q + s*e, s in [-1, 1] — the
+   * slab query's stand-in for length(q) at every radius, escape test and
+   * ball certificate the descent computes (fr-wa6o; the oracle's own
+   * segmentRadius, and the SLAB QUERIES section of surface-de-4d.ts's
+   * module doc). s is the segment's own parameter at closest approach: the
+   * unconstrained minimizer of the squared length is -dot(q, e) / dot(e, e),
+   * and clamping it to the segment's ends turns the infinite LINE's distance
+   * (which undershoots, and by more than the slab justifies) into the
+   * segment's exact one.
+   *
+   * At e = 0 this returns length(q) bit for bit — ee = 0 takes the guarded
+   * s = 0 branch and q + 0*e is q exactly — which is what lets the whole
+   * thickness feature ship defaulting to uSliceHalfW = 0 with the
+   * zero-thickness path unchanged value for value.
+   *
+   * OVERFLOW TAIL — this body's, and the one the oracle's f64 note is
+   * about. chainScale * length(e) stays at or under uSliceHalfW at every
+   * level (the module doc's bound), so ee only overflows highp float once
+   * length(e) passes its square-root ceiling of ~1.8e19 — which takes a
+   * chainScale below uSliceHalfW / 1.8e19, sixteen orders of magnitude
+   * under the feature resolution uMaxDepth is sized from, where
+   * certificates are numerically dead. There ee saturates to infinity, s
+   * divides to 0, and this degrades to length(q): an overshoot of a term
+   * already indistinguishable from zero. */
+  float segmentRadius(vec4 q, vec4 e) {
+    float ee = dot(e, e);
+    float s = ee > 0.0 ? clamp(-dot(q, e) / ee, -1.0, 1.0) : 0.0;
+    return length(q + s * e);
+  }
+
   /** One extra Hutchinson level on a frozen escaped candidate's own inverse
    * image (the oracle's refinedCert): the certificate becomes
    * childScale * max(r - R, min_k sigmaMin_k * (|invMap_k(img)| - R)) —
    * never below the base childScale * (r - R). fr-beck measured this exact
-   * refinement eliminating every march ghost. */
-  float refinedCert4(vec4 img, float r, float childScale) {
+   * refinement eliminating every march ghost.
+   *
+   * imgExt is the candidate's segment half-extent (fr-wa6o), carried
+   * through each inner map by its LINEAR part alone and turning that
+   * |invMap_k(img)| into a segment radius; zero — the point query — leaves
+   * every term above unchanged. The segment flag is recomputed from
+   * uSliceHalfW here rather than passed, because a free function sees no
+   * caller scope; it is the same dynamically-uniform test the descent
+   * bodies hoist, so both branches cost nothing across a draw. */
+  float refinedCert4(vec4 img, vec4 imgExt, float r, float childScale) {
+    bool segment = uSliceHalfW > 0.0;
     float inner = 1e30;
     for (int k = 0; k < uMapCount; k++) {
       vec4 kImg = uInvM[k] * img + uInvT[k];
-      inner = min(inner, uMapColorSigma[k].w * (length(kImg) - uBoundingRadius));
+      vec4 kExt = segment ? uInvM[k] * imgExt : vec4(0.0);
+      float rk = segmentRadius(kImg, kExt);
+      inner = min(inner, uMapColorSigma[k].w * (rk - uBoundingRadius));
     }
     return childScale * max(r - uBoundingRadius, inner);
   }
@@ -286,14 +360,50 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * factor per level and dip under the floor); provably dead on
    * isotropic invariant-ball maps, where certificates never dip (see
    * the oracle's paragraph).
+   *
+   * SLAB QUERIES (fr-wa6o), mirroring the oracle's halfExtent parameter.
+   * The query is no longer the single point (p, uW0) but the SEGMENT it
+   * spans through the slab of half-thickness uSliceHalfW — the part of
+   * |w - uW0| less than or equal to uSliceHalfW sitting over p — so the
+   * marched object is the slab's shadow rather than one cross-section.
+   * Affine maps take segments to segments, so the whole descent carries
+   * one extra vec4 beside each chain's and candidate's point, pushed
+   * through the inverse map's LINEAR part alone (a translation slides a
+   * segment's centre and leaves its extent alone), and every |q| - R ball
+   * certificate becomes segmentRadius(q, ext) - R. Beam, validity slots,
+   * refined certificates, terminal KIFS bound, depth-0 sphere floor, final
+   * lens and both early exits are structurally untouched; the bound only
+   * loosens, by at most uSliceHalfW (see the oracle's HOW MUCH THE BOUND
+   * CAN LOSE), and the zero set is exactly the shadow being marched, so
+   * nothing new can go unsound. Cost: uSliceHalfW greater than 0 is the
+   * segment flag each body hoists, DYNAMICALLY UNIFORM across a draw, so
+   * the propagation branches cost nothing when the slab is off — but the
+   * extra vec4 per chain, candidate, eviction and image slot is live
+   * register pressure either way, the one price this pays unconditionally.
+   * At uSliceHalfW == 0 every value here is today's, bit for bit:
+   * segmentRadius degenerates to length, and a zero extent stays zero
+   * through any linear map.
    */
   float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
     // distances and gradients survive the lift untouched; then the final
     // lens, exactly as the oracle's prologue.
     vec4 q = uInvRotor * vec4(p, uW0);
+    // The query's half-extent, carried alongside the point down every
+    // chain (fr-wa6o). Zero — the shipped slider position — is the point
+    // query this tracer shipped with, and every term below collapses to it
+    // exactly (see segmentRadius). The slab's half-extent in the ATTRACTOR
+    // frame: a w displacement of uSliceHalfW in the view frame is
+    // uSliceHalfW times the inverse rotor's w column.
+    bool segment = uSliceHalfW > 0.0;
+    vec4 ext = segment ? uInvRotor[3] * uSliceHalfW : vec4(0.0);
     q = uFinalInvM * q + uFinalInvT;
-    float startR = length(q);
+    // The lens carries the extent by its LINEAR part alone — uFinalInvT
+    // slides the segment's centre and leaves its extent untouched.
+    if (segment) {
+      ext = uFinalInvM * ext;
+    }
+    float startR = segmentRadius(q, ext);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     // The value below which this descent may stop (the oracle bailBelow).
@@ -306,12 +416,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // Chain slot A starts at the (lensed) query; slot B idles until beam
     // selection fills it. Each chain carries the contraction accumulated
-    // INCLUDING its own map and the radius it was selected at.
+    // INCLUDING its own map and the radius it was selected at, plus (since
+    // fr-wa6o) its own segment half-extent — one vec4 where the oracle
+    // unrolls a 4-element buffer.
     vec4 aQ = q;
+    vec4 aExt = ext;
     float aScale = 1.0;
     float aR = startR;
     bool aLive = true;
     vec4 bQ = vec4(0.0);
+    vec4 bExt = vec4(0.0);
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
@@ -321,9 +435,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // and expansion re-derives every child radius, so the selection
     // radius is dead weight once occupancy is decided.
     vec4 v1Q = vec4(0.0);
+    vec4 v1Ext = vec4(0.0);
     float v1Scale = 1.0;
     bool v1Live = false;
     vec4 v2Q = vec4(0.0);
+    vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
     for (int depth = 0; depth < uMaxDepth; depth++) {
@@ -335,11 +451,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       // fold below.
       float c1Key = 1e30;
       vec4 c1Q = vec4(0.0);
+      vec4 c1Ext = vec4(0.0);
       float c1Scale = 1.0;
       float c1R = 0.0;
       float c1Cert = 0.0;
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
+      vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
@@ -348,45 +466,56 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       // the level's third- and fourth-smallest keys.
       float c3Key = 1e30;
       vec4 c3Q = vec4(0.0);
+      vec4 c3Ext = vec4(0.0);
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
+      vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
+        vec4 pExt = vec4(0.0);
         float pScale = 1.0;
         if (c == 0) {
           if (!aLive) {
             continue;
           }
           pQ = aQ;
+          pExt = aExt;
           pScale = aScale;
         } else if (c == 1) {
           if (!bLive) {
             continue;
           }
           pQ = bQ;
+          pExt = bExt;
           pScale = bScale;
         } else if (c == 2) {
           if (!v1Live) {
             continue;
           }
           pQ = v1Q;
+          pExt = v1Ext;
           pScale = v1Scale;
         } else {
           if (!v2Live) {
             continue;
           }
           pQ = v2Q;
+          pExt = v2Ext;
           pScale = v2Scale;
         }
         for (int j = 0; j < uMapCount; j++) {
           vec4 img = uInvM[j] * pQ + uInvT[j];
-          float r = length(img);
+          // uInvM[j] carries no translation — uInvT[j] is a separate
+          // member — so this IS the inverse map's linear part, all a
+          // segment's half-extent ever sees (fr-wa6o).
+          vec4 imgExt = segment ? uInvM[j] * pExt : vec4(0.0);
+          float r = segmentRadius(img, imgExt);
           float key = pScale * (r - uBoundingRadius);
           float childScale = pScale * uMapColorSigma[j].w;
           float cert = childScale * (r - uBoundingRadius);
@@ -397,33 +526,39 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // folds).
           float eKey = key;
           vec4 eQ = img;
+          vec4 eExt = imgExt;
           float eScale = childScale;
           float eR = r;
           float eCert = cert;
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
+            eExt = c2Ext;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = c1Key;
             c2Q = c1Q;
+            c2Ext = c1Ext;
             c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
             c1Key = key;
             c1Q = img;
+            c1Ext = imgExt;
             c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
+            eExt = c2Ext;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = key;
             c2Q = img;
+            c2Ext = imgExt;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
@@ -433,37 +568,46 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // neither slot) falls through to the fold below.
           if (eKey < c3Key) {
             // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive; width 4
-            // is hardcoded here, so there is no tKey.
+            // fields (point, extent, scale, radius, certificate) survive;
+            // width 4 is hardcoded here, so there is no tKey — and the
+            // oracle's width-3/4 'extra' conditionals collapse with it (its
+            // ternary here always takes the c4 arm).
             vec4 tQ = c4Q;
+            vec4 tExt = c4Ext;
             float tScale = c4Scale;
             float tR = c4R;
             float tCert = c4Cert;
             c4Key = c3Key;
             c4Q = c3Q;
+            c4Ext = c3Ext;
             c4Scale = c3Scale;
             c4R = c3R;
             c4Cert = c3Cert;
             c3Key = eKey;
             c3Q = eQ;
+            c3Ext = eExt;
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
             eQ = tQ;
+            eExt = tExt;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
           } else if (eKey < c4Key) {
             vec4 tQ = c4Q;
+            vec4 tExt = c4Ext;
             float tScale = c4Scale;
             float tR = c4R;
             float tCert = c4Cert;
             c4Key = eKey;
             c4Q = eQ;
+            c4Ext = eExt;
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
             eQ = tQ;
+            eExt = tExt;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
@@ -476,7 +620,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // carries no positive certificate — it can only get here past
           // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
           if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert4(eQ, eR, eScale));
+            best = min(best, refinedCert4(eQ, eExt, eR, eScale));
             // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
             // the folded certificate is FINALIZED (already refined), and
             // best only falls from here. Once best is at or below
@@ -507,6 +651,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           best = min(best, c1Cert);
         } else {
           aQ = c1Q;
+          aExt = c1Ext;
           aScale = c1Scale;
           aR = c1R;
           aLive = true;
@@ -517,6 +662,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           best = min(best, c2Cert);
         } else {
           bQ = c2Q;
+          bExt = c2Ext;
           bScale = c2Scale;
           bR = c2R;
           bLive = true;
@@ -525,10 +671,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (c3Key < 1e29) {
         if (c3R > uBoundingRadius) {
           if (c3Cert < best) {
-            best = min(best, refinedCert4(c3Q, c3R, c3Scale));
+            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
           }
         } else {
           v1Q = c3Q;
+          v1Ext = c3Ext;
           v1Scale = c3Scale;
           v1Live = true;
         }
@@ -536,10 +683,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (c4Key < 1e29) {
         if (c4R > uBoundingRadius) {
           if (c4Cert < best) {
-            best = min(best, refinedCert4(c4Q, c4R, c4Scale));
+            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
           }
         } else {
           v2Q = c4Q;
+          v2Ext = c4Ext;
           v2Scale = c4Scale;
           v2Live = true;
         }
@@ -627,6 +775,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * structure, and it rendered one flat hue.) It follows the per-level
    * best candidate and stops when every chain has escaped. Called ONCE
    * per hit; the march itself uses the plain overload.
+   *
+   * The fr-wa6o slab query rides here identically — same extent prologue,
+   * same vec4 per chain, candidate and eviction slot, same segmentRadius
+   * at every ball certificate — because lockstep with the plain overload
+   * IS the contract; only the extras above are extra. Of those, rings
+   * inherits the segment radius (it reads c1R, which is one), while sheets
+   * keeps reading the chain centre's y: shading, not distance.
    */
   float surfaceDE(
     vec3 p,
@@ -636,15 +791,26 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     out float sheets
   ) {
     vec4 q = uInvRotor * vec4(p, uW0);
+    // The slab query's half-extent (fr-wa6o), exactly as the plain
+    // overload's prologue derives it — see that body's doc comment.
+    bool segment = uSliceHalfW > 0.0;
+    vec4 ext = segment ? uInvRotor[3] * uSliceHalfW : vec4(0.0);
     q = uFinalInvM * q + uFinalInvT;
-    float startR = length(q);
+    // The lens carries the extent by its LINEAR part alone — uFinalInvT
+    // slides the segment's centre and leaves its extent untouched.
+    if (segment) {
+      ext = uFinalInvM * ext;
+    }
+    float startR = segmentRadius(q, ext);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     vec4 aQ = q;
+    vec4 aExt = ext;
     float aScale = 1.0;
     float aR = startR;
     bool aLive = true;
     vec4 bQ = vec4(0.0);
+    vec4 bExt = vec4(0.0);
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
@@ -654,9 +820,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // and expansion re-derives every child radius, so the selection
     // radius is dead weight once occupancy is decided.
     vec4 v1Q = vec4(0.0);
+    vec4 v1Ext = vec4(0.0);
     float v1Scale = 1.0;
     bool v1Live = false;
     vec4 v2Q = vec4(0.0);
+    vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
     firstChoice = 0;
@@ -672,12 +840,14 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       }
       float c1Key = 1e30;
       vec4 c1Q = vec4(0.0);
+      vec4 c1Ext = vec4(0.0);
       float c1Scale = 1.0;
       float c1R = 0.0;
       float c1Cert = 0.0;
       int c1Map = 0;
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
+      vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
@@ -686,45 +856,56 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       // the level's third- and fourth-smallest keys.
       float c3Key = 1e30;
       vec4 c3Q = vec4(0.0);
+      vec4 c3Ext = vec4(0.0);
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
+      vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
+        vec4 pExt = vec4(0.0);
         float pScale = 1.0;
         if (c == 0) {
           if (!aLive) {
             continue;
           }
           pQ = aQ;
+          pExt = aExt;
           pScale = aScale;
         } else if (c == 1) {
           if (!bLive) {
             continue;
           }
           pQ = bQ;
+          pExt = bExt;
           pScale = bScale;
         } else if (c == 2) {
           if (!v1Live) {
             continue;
           }
           pQ = v1Q;
+          pExt = v1Ext;
           pScale = v1Scale;
         } else {
           if (!v2Live) {
             continue;
           }
           pQ = v2Q;
+          pExt = v2Ext;
           pScale = v2Scale;
         }
         for (int j = 0; j < uMapCount; j++) {
           vec4 img = uInvM[j] * pQ + uInvT[j];
-          float r = length(img);
+          // uInvM[j] carries no translation — uInvT[j] is a separate
+          // member — so this IS the inverse map's linear part, all a
+          // segment's half-extent ever sees (fr-wa6o).
+          vec4 imgExt = segment ? uInvM[j] * pExt : vec4(0.0);
+          float r = segmentRadius(img, imgExt);
           float key = pScale * (r - uBoundingRadius);
           float childScale = pScale * uMapColorSigma[j].w;
           float cert = childScale * (r - uBoundingRadius);
@@ -735,22 +916,26 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // folds).
           float eKey = key;
           vec4 eQ = img;
+          vec4 eExt = imgExt;
           float eScale = childScale;
           float eR = r;
           float eCert = cert;
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
+            eExt = c2Ext;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = c1Key;
             c2Q = c1Q;
+            c2Ext = c1Ext;
             c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
             c1Key = key;
             c1Q = img;
+            c1Ext = imgExt;
             c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
@@ -758,11 +943,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
+            eExt = c2Ext;
             eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = key;
             c2Q = img;
+            c2Ext = imgExt;
             c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
@@ -772,37 +959,46 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // neither slot) falls through to the fold below.
           if (eKey < c3Key) {
             // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive; width 4
-            // is hardcoded here, so there is no tKey.
+            // fields (point, extent, scale, radius, certificate) survive;
+            // width 4 is hardcoded here, so there is no tKey — and the
+            // oracle's width-3/4 'extra' conditionals collapse with it (its
+            // ternary here always takes the c4 arm).
             vec4 tQ = c4Q;
+            vec4 tExt = c4Ext;
             float tScale = c4Scale;
             float tR = c4R;
             float tCert = c4Cert;
             c4Key = c3Key;
             c4Q = c3Q;
+            c4Ext = c3Ext;
             c4Scale = c3Scale;
             c4R = c3R;
             c4Cert = c3Cert;
             c3Key = eKey;
             c3Q = eQ;
+            c3Ext = eExt;
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
             eQ = tQ;
+            eExt = tExt;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
           } else if (eKey < c4Key) {
             vec4 tQ = c4Q;
+            vec4 tExt = c4Ext;
             float tScale = c4Scale;
             float tR = c4R;
             float tCert = c4Cert;
             c4Key = eKey;
             c4Q = eQ;
+            c4Ext = eExt;
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
             eQ = tQ;
+            eExt = tExt;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
@@ -815,7 +1011,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           // carries no positive certificate — it can only get here past
           // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
           if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert4(eQ, eR, eScale));
+            best = min(best, refinedCert4(eQ, eExt, eR, eScale));
           }
         }
       }
@@ -826,6 +1022,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, c1R / uBoundingRadius);
+      // Under a slab query (fr-wa6o) rings rides the SEGMENT radius, since
+      // c1R is one; sheets keeps reading the segment's CENTRE y by design —
+      // a shading extra, not part of the distance contract, and a coordinate
+      // is what the plane trap wants.
       sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
       aLive = false;
       bLive = false;
@@ -836,6 +1036,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           best = min(best, c1Cert);
         } else {
           aQ = c1Q;
+          aExt = c1Ext;
           aScale = c1Scale;
           aR = c1R;
           aLive = true;
@@ -846,6 +1047,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           best = min(best, c2Cert);
         } else {
           bQ = c2Q;
+          bExt = c2Ext;
           bScale = c2Scale;
           bR = c2R;
           bLive = true;
@@ -854,10 +1056,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (c3Key < 1e29) {
         if (c3R > uBoundingRadius) {
           if (c3Cert < best) {
-            best = min(best, refinedCert4(c3Q, c3R, c3Scale));
+            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
           }
         } else {
           v1Q = c3Q;
+          v1Ext = c3Ext;
           v1Scale = c3Scale;
           v1Live = true;
         }
@@ -865,10 +1068,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       if (c4Key < 1e29) {
         if (c4R > uBoundingRadius) {
           if (c4Cert < best) {
-            best = min(best, refinedCert4(c4Q, c4R, c4Scale));
+            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
           }
         } else {
           v2Q = c4Q;
+          v2Ext = c4Ext;
           v2Scale = c4Scale;
           v2Live = true;
         }
@@ -918,10 +1122,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
     vec3 ro = uCamPos;
 
-    // The 3D ball the w = uW0 slice of the visible 4D set can occupy:
-    // |(p, uW0)| <= uVisibleRadius implies |p| <= this (rotation preserves
-    // the 4D norm). Empty when the slice sits past the visible radius.
-    float sliceVisR = sqrt(max(uVisibleRadius * uVisibleRadius - uW0 * uW0, 0.0));
+    // The 3D ball the marched w-SLAB of the visible 4D set can occupy:
+    // |(p, w)| <= uVisibleRadius implies |p| <= this (rotation preserves
+    // the 4D norm), taken at the slab's most generous w — the |w| in
+    // [|uW0| - uSliceHalfW, |uW0| + uSliceHalfW] closest to 0, since a
+    // smaller |w| leaves a wider 3D ball (fr-wa6o). Empty when the whole
+    // slab sits past the visible radius. At uSliceHalfW == 0 this is
+    // abs(uW0) squared, the zero-thickness value bit for bit.
+    float sliceMinW = max(abs(uW0) - uSliceHalfW, 0.0);
+    float sliceVisR =
+      sqrt(max(uVisibleRadius * uVisibleRadius - sliceMinW * sliceMinW, 0.0));
 
     // Entry/exit against the origin-centered sphere bounding the slice's
     // visible set (small margin so silhouettes right at the bound aren't
@@ -1171,6 +1381,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uFinalSigmaMin: { value: 1 },
       uInvRotor: { value: new THREE.Matrix4() },
       uW0: { value: 0 },
+      uSliceHalfW: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -1303,13 +1514,19 @@ export function setSurfaceSystem4(
  * inverse is exactly its transpose — so `uInvRotor` is set from the SAME 16
  * numbers with rows and columns swapped (a column-reordered `Matrix4.set`,
  * since `set` itself always fills row-major). `w0` is the marched slice's
- * w-coordinate, uploaded verbatim. No dirty-check here: like
- * {@link setSurfaceSystem4}, this is a pure packer — `scene.ts` owns
- * render-needed bookkeeping. */
+ * w-coordinate, uploaded verbatim, and `sliceHalfW` its HALF-THICKNESS in
+ * the same units and the same frame (fr-wa6o): 0 marches the zero-thickness
+ * hyperplane this tracer shipped with, value for value, and anything above
+ * turns every descent query into the segment the slab cuts over its point
+ * (see `uSliceHalfW`'s declaration). Both ride the same call because they
+ * describe one hyperslab and `scene.ts` derives them from one slider
+ * position. No dirty-check here: like {@link setSurfaceSystem4}, this is a
+ * pure packer — `scene.ts` owns render-needed bookkeeping. */
 export function setSurfaceView4(
   material: THREE.ShaderMaterial,
   rotor: number[],
   w0: number,
+  sliceHalfW: number,
 ): void {
   const u = material.uniforms;
   const invRotor = u.uInvRotor.value as THREE.Matrix4;
@@ -1332,4 +1549,5 @@ export function setSurfaceView4(
     rotor[15],
   );
   u.uW0.value = w0;
+  u.uSliceHalfW.value = sliceHalfW;
 }
