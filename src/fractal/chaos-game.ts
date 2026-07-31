@@ -60,9 +60,10 @@ export const DEFAULT_COLOR_SPEED = 0.5;
  * the transform editor's readout all resolve through it, so a flame's colors
  * cannot drift between the CPU oracle, the GPU kernel and the UI.
  *
- * `count` is the number of BASE maps (3D: `PreparedChaosGame.baseTransformCount`
- * — every kaleidoscope copy of a map shares its slot; 4D: the raw transform
- * count, there being no symmetry there).
+ * `count` is the number of BASE maps — `PreparedChaosGame.baseTransformCount`
+ * in 3D and `PreparedChaosGame4.baseTransformCount` in 4D (fr-q0h6 gave the
+ * 4D path its own kaleidoscope): every rotated copy of a map shares that
+ * map's slot, in either dimension.
  */
 export function derivedColorIndex(index: number, count: number): number {
   return count > 1 ? index / (count - 1) : 0.5;

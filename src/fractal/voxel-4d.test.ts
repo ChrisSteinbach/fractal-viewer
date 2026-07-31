@@ -20,7 +20,7 @@ import { composeRotorProjection4 } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Transform4, Vec4 } from "./types";
+import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
  * scale 0 collapses the linear part to zero, so every orbit step (including
@@ -940,5 +940,239 @@ describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorS
     );
 
     expect(withAuthored.avgRGB).not.toEqual(derived.avgRGB);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Kaleidoscope symmetry (fr-q0h6) — the 4D twin of voxel.test.ts's own
+// symmetry block, and flame-4d.test.ts's line for line.
+// ---------------------------------------------------------------------------
+
+/** A flat (w-collapsing) three-map system: `scale[3] = 0` and no w
+ * translation, so after one step every orbit point sits EXACTLY on the
+ * `w = 0` hyperplane. That exactness is what lets the w-plane test below
+ * assert on integer-vs-fractional slice weights rather than on a tolerance.
+ * Mirrors `flame-4d.test.ts`'s fixture of the same name. */
+function flatSystem4(): Transform4[] {
+  return [
+    { position: [0.3, 0.2, 0.1, 0], scale: [0.5, 0.5, 0.5, 0] },
+    { position: [-0.3, 0.1, -0.2, 0], scale: [0.5, 0.5, 0.5, 0] },
+    { position: [0.1, -0.3, 0.25, 0], scale: [0.5, 0.5, 0.5, 0] },
+  ];
+}
+
+describe("accumulateVoxels4 with symmetry (fr-q0h6)", () => {
+  it("matches the stepOrbit4/plotPoint4 oracle when the prepared system has rotated copies", () => {
+    // The oracle test at the top of this file, but with a genuinely 4D
+    // kaleidoscope prepared in: stepOrbit4 already rotates a picked slot's
+    // full affine + variation output, so if accumulateVoxels4's hand-inlined
+    // loop ever drifts from that — its post-rotation block or its BASE-index
+    // handling — this is what catches it.
+    const transforms4 = weightedPentatope();
+    const prepared = prepareChaosGame4(transforms4, null, {
+      order: 3,
+      plane: "zw",
+      twist: 1,
+    });
+    const palette = transformColors(transforms4.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 2000;
+    const seed = 42;
+
+    const actual = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(seed),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createVoxelGrid(size, bounds);
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      // FLAT_ROTOR_PROJ is `(x, y, z, w, 1) -> (x, y, z, w)` verbatim, so the
+      // projected point is the plotted point's own xyz.
+      const [px, py, pz] = plotPoint4(prepared, x, y, z, w, rng);
+
+      const bx = Math.floor((px - bounds.min[0]) * invCell);
+      if (bx < 0 || bx >= size) continue;
+      const by = Math.floor((py - bounds.min[1]) * invCell);
+      if (by < 0 || by >= size) continue;
+      const bz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (bz < 0 || bz >= size) continue;
+
+      const bucket = bz * size * size + by * size + bx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      // step.index is already the BASE map (see chaos-game-4d.ts's
+      // stepOrbit4), so this indexes `palette` — sized to transforms4.length,
+      // NOT the expanded slot count — exactly like the no-symmetry oracle.
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      const invWeight = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * invWeight;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * invWeight;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * invWeight;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitW).toBe(w);
+    // Not a vacuous comparison of all-zero grids.
+    expect(actual.maxDensity).toBeGreaterThan(0);
+  });
+
+  it("order 1 accumulates byte-identically to omitting symmetry, whatever the plane and twist", () => {
+    const transforms4 = weightedPentatope();
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(transforms4.length),
+    };
+    const run = (prepared: ReturnType<typeof prepareChaosGame4>) =>
+      accumulateVoxels4(
+        prepared,
+        createVoxelGrid(size, bounds),
+        2000,
+        mulberry32(7),
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+      );
+
+    const omitted = run(prepareChaosGame4(transforms4));
+    const orderOne = run(
+      prepareChaosGame4(transforms4, null, {
+        order: 1,
+        plane: "zw",
+        twist: 3,
+      }),
+    );
+
+    expect(orderOne.density).toEqual(omitted.density);
+    expect(orderOne.avgRGB).toEqual(omitted.avgRGB);
+    expect(orderOne.maxDensity).toBe(omitted.maxDensity);
+    expect(orderOne.orbit).toEqual(omitted.orbit);
+    expect(orderOne.orbitW).toBe(omitted.orbitW);
+    expect(orderOne.orbitColor).toBe(omitted.orbitColor);
+  });
+
+  it("an order-4 kaleidoscope occupies more voxels than the same system unreplicated", () => {
+    const transforms4 = flatSystem4();
+    const bounds = unitishBounds(1.5);
+    const size = 16;
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(transforms4.length),
+    };
+    const run = (prepared: ReturnType<typeof prepareChaosGame4>) =>
+      accumulateVoxels4(
+        prepared,
+        createVoxelGrid(size, bounds),
+        20000,
+        mulberry32(11),
+        FLAT_ROTOR_PROJ,
+        FLAT_VIEW,
+        color,
+      );
+    const occupied = (density: Float32Array) =>
+      Array.from(density).filter((d) => d > 0).length;
+
+    const plain = run(prepareChaosGame4(transforms4));
+    const kaleido = run(
+      prepareChaosGame4(transforms4, null, { order: 4, plane: "xy" }),
+    );
+
+    expect(occupied(kaleido.density)).toBeGreaterThan(occupied(plain.density));
+    expect(kaleido.density).not.toEqual(plain.density);
+  });
+
+  it("colors every kaleidoscope copy as the BASE map it copies, never as an expanded slot", () => {
+    // Two maps, two saturated palette entries and NO third: an accumulator
+    // that indexed `palette` by the expanded slot (0..5 at order 3) would
+    // fall through to accumulateVoxels4's white FALLBACK_COLOR and light the
+    // blue channel, which the base palette can never do.
+    const transforms4 = flatSystem4().slice(0, 2);
+    const palette: Vec3[] = [
+      [1, 0, 0],
+      [0, 1, 0],
+    ];
+    const grid = accumulateVoxels4(
+      prepareChaosGame4(transforms4, null, { order: 3, plane: "xy" }),
+      createVoxelGrid(16, unitishBounds(1.5)),
+      20000,
+      mulberry32(3),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "transform", palette },
+    );
+
+    expect(grid.maxDensity).toBeGreaterThan(0);
+    for (let i = 0; i < grid.density.length; i++) {
+      if (grid.density[i] === 0) continue;
+      const o = i * 3;
+      expect(grid.avgRGB[o + 2]).toBe(0); // no white fallback ever fired.
+      // Every hit contributed exactly one saturated channel, so the running
+      // mean's red and green shares sum to exactly 1.
+      expect(grid.avgRGB[o] + grid.avgRGB[o + 1]).toBeCloseTo(1, 6);
+    }
+  });
+
+  it("a w-plane moves density off the w = 0 slice; a w-free plane leaves it exactly on it", () => {
+    // flatSystem4 collapses w to exactly 0, and FLAT_ROTOR_PROJ's sRaw row is
+    // w verbatim, so under a narrow slice centered at 0 every surviving point
+    // weighs exactly 1 — every voxel an integer. A zw-plane copy turns z into
+    // w, which no other mechanism in this render can do.
+    const transforms4 = flatSystem4();
+    const slice: FourDView = {
+      invWAmp: 1,
+      sliceOn: true,
+      sliceCenter: 0,
+      sliceWidth: 0.05,
+      sliceRelativeColor: false,
+    };
+    const run = (plane: "xy" | "zw") =>
+      accumulateVoxels4(
+        prepareChaosGame4(transforms4, null, { order: 4, plane }),
+        createVoxelGrid(16, unitishBounds(1.5)),
+        20000,
+        mulberry32(5),
+        FLAT_ROTOR_PROJ,
+        slice,
+        { kind: "transform", palette: transformColors(transforms4.length) },
+      );
+
+    const wFree = run("xy");
+    const wPlane = run("zw");
+
+    expect(wFree.maxDensity).toBeGreaterThan(0);
+    expect(Array.from(wFree.density).every(Number.isInteger)).toBe(true);
+    expect(Array.from(wPlane.density).some((d) => !Number.isInteger(d))).toBe(
+      true,
+    );
   });
 });
