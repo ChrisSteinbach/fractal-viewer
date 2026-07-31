@@ -2886,6 +2886,7 @@ describe("decodeScene fourD", () => {
         },
         sliceOn: true,
         sliceCenter: 0.35,
+        sliceThickness: 0,
         sliceRelColor: true,
       },
     };
@@ -3120,6 +3121,100 @@ describe("decodeScene fourD", () => {
     expect(result!.fourD!.sliceCenter).toBeCloseTo(0.2, 4);
   });
 
+  // Slab thickness (fr-wa6o) is the one field in this block that does NOT
+  // follow sliceCenter's all-or-nothing rule: every document written before
+  // the slider existed carries no such key, so absent/malformed defaults to
+  // 0 — the zero-thickness cross-section those documents were framed with —
+  // instead of dropping the whole pose.
+  it("round-trips the slice slab's thickness", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      fourD: {
+        pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceThickness: 0.28,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+
+    expect(result!.fourD!.sliceThickness).toBeCloseTo(0.28, 4);
+  });
+
+  it("keeps a pose saved before the thickness slider existed, reading it as a zero-thickness slice", () => {
+    // The regression that matters: a hand-built payload with every fr-pnek
+    // field but no `sliceThickness` key at all — exactly what every shared
+    // link and saved scene from before fr-wa6o looks like.
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: true,
+        sliceCenter: 0.4,
+        sliceRelColor: true,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceThickness).toBe(0);
+    expect(result!.fourD!.sliceCenter).toBeCloseTo(0.4, 4);
+  });
+
+  it("defaults a non-numeric sliceThickness to 0 rather than dropping the pose", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceThickness: "thick",
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.fourD).not.toBeUndefined();
+    expect(result!.fourD!.sliceThickness).toBe(0);
+  });
+
+  it("clamps an out-of-range sliceThickness down to the slider's 0.5 maximum", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceThickness: 9,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.fourD!.sliceThickness).toBe(0.5);
+  });
+
+  it("clamps a negative sliceThickness up to 0 — a slab has no negative half-width", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceThickness: -3,
+        sliceRelColor: false,
+      },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.fourD!.sliceThickness).toBe(0);
+  });
+
   it("renormalizes a non-unit rotor pair to unit length", () => {
     const raw = {
       ...baseSnapshot(),
@@ -3147,6 +3242,7 @@ describe("fromSnapshot fourD", () => {
         pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
         sliceOn: true,
         sliceCenter: 0.2,
+        sliceThickness: 0,
         sliceRelColor: false,
       },
     };

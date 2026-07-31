@@ -555,6 +555,9 @@ export class FractalScene {
    * short-circuits the dirty flag exactly like {@link setRot4} (fr-py7z). */
   private readonly surface4Rot = new Array<number>(16).fill(NaN);
   private surface4W0 = NaN;
+  /** Last slab half-thickness pushed alongside {@link surface4W0} (fr-wa6o),
+   * in the same world w units — part of the same equality guard. */
+  private surface4HalfW = NaN;
   /** The 3D empty-space-skipping grid texture (fr-55r5 part 2) the march
    * samples before paying a descent, or null while none is uploaded —
    * gridless marching is always correct, just slower. Owned here (created
@@ -2283,24 +2286,40 @@ export class FractalScene {
    * `wSupport` — one expression defines the convention and there is nothing
    * left to drift.
    *
+   * `sliceThickness` (fr-wa6o) is the slab's HALF-thickness and rides the
+   * identical normalized→world conversion — one `wSupport` call feeds both —
+   * so the slab's two edges land on real hyperplanes the position slider
+   * could itself have selected, rather than on a plane pair whose spacing
+   * drifts with the rotation. A thickness change dirties the frame exactly
+   * like a centre change does (it is in the same equality guard below).
+   *
    * Before the first 4D cloud upload the half-extents are still zero, so the
    * amplitude is 0 and the tracer marches `w = 0` — the centered slice a
-   * fresh visit means anyway — and the cloud's arrival re-packs by itself,
-   * since the guard below compares the CONVERTED w0 (a half-extent change
-   * that moves the plane is a change).
+   * fresh visit means anyway, with a zero-thickness slab, which is the
+   * cross-section every 4D surface render was before fr-wa6o — and the
+   * cloud's arrival re-packs by itself, since the guard below compares the
+   * CONVERTED w0/half-thickness (a half-extent change that moves the plane
+   * is a change).
    */
-  setSurface4View(m: number[], sliceCenter: number): void {
-    const w0 = sliceCenter * wSupport(m, this.fourDHalfExtents);
+  setSurface4View(
+    m: number[],
+    sliceCenter: number,
+    sliceThickness: number,
+  ): void {
+    const support = wSupport(m, this.fourDHalfExtents);
+    const w0 = sliceCenter * support;
+    const halfW = sliceThickness * support;
     const prev = this.surface4Rot;
-    let changed = this.surface4W0 !== w0;
+    let changed = this.surface4W0 !== w0 || this.surface4HalfW !== halfW;
     for (let i = 0; i < 16 && !changed; i++) {
       if (prev[i] !== m[i]) changed = true;
     }
     if (!changed) return;
     for (let i = 0; i < 16; i++) prev[i] = m[i];
     this.surface4W0 = w0;
+    this.surface4HalfW = halfW;
     this.renderNeeded = true;
-    packSurfaceView4(this.surfaceMaterial4, m, w0);
+    packSurfaceView4(this.surfaceMaterial4, m, w0, halfW);
   }
 
   /**

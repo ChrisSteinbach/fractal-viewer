@@ -147,6 +147,7 @@ describe("EditSession view pose across a replace (fr-uf3, fr-gq99)", () => {
     pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
     sliceOn: true,
     sliceCenter: 0.25,
+    sliceThickness: 0,
     sliceRelColor: false,
   };
   // Same camera halves as poseS0/poseS1, but pose4D also carries a 4D half

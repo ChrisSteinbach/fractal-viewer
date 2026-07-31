@@ -1004,6 +1004,16 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
  * `sliceRelColor` coerce with `Boolean(...)`, the same contract
  * `showGuides`/`fourDDepthFade` use elsewhere in this file — absent
  * coerces to off.
+ *
+ * `sliceThickness` (fr-wa6o) is the one field here that DOESN'T follow
+ * `sliceCenter`'s all-or-nothing rule, and deliberately so: every document
+ * written before that slider existed carries no such key at all, and those
+ * poses must keep decoding. So it takes the TOLERANT contract
+ * `glowBrightness`/`colorGamma` use — coerce, and fall back to 0 (the
+ * zero-thickness cross-section those documents were framed with) for
+ * anything absent or non-finite — then clamps to `[0, 0.5]`, the
+ * thickness slider's own range (see index.html's
+ * `fourDSliceThicknessSlider`).
  */
 function decodeFourDPose(raw: unknown): FourDPose | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
@@ -1017,10 +1027,16 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
   if (typeof sliceCenter !== "number" || !Number.isFinite(sliceCenter))
     return undefined;
 
+  const rawThickness = Number(f.sliceThickness);
+  const sliceThickness = Number.isFinite(rawThickness)
+    ? clamp(rawThickness, 0, 0.5)
+    : 0;
+
   return {
     pair,
     sliceOn: Boolean(f.sliceOn),
     sliceCenter: clamp(sliceCenter, -1, 1),
+    sliceThickness,
     sliceRelColor: Boolean(f.sliceRelColor),
   };
 }
@@ -1174,6 +1190,7 @@ export function encodeScene(s: SceneSnapshot): string {
       q: number[];
       sliceOn: boolean;
       sliceCenter: number;
+      sliceThickness: number;
       sliceRelColor: boolean;
     };
   } = {
@@ -1267,15 +1284,19 @@ export function encodeScene(s: SceneSnapshot): string {
   // snapshot (which never carries a 4D pose either — see SceneSnapshot.fourD's
   // doc) stays byte-identical. Wire form flattens the rotor pair to p/q (URL
   // compactness — no nested `pair` object). Quaternion components +
-  // sliceCenter are rounded to 4 decimals like every other float in this
-  // file: the resulting angle error is far below visibility, and the decoder
-  // renormalizes the pair anyway.
+  // sliceCenter/sliceThickness are rounded to 4 decimals like every other
+  // float in this file: the resulting angle error is far below visibility,
+  // and the decoder renormalizes the pair anyway. sliceThickness (fr-wa6o)
+  // is written unconditionally, like the two booleans beside it — its
+  // absence is what a pre-fr-wa6o document looks like, and the decoder
+  // already reads that as 0.
   if (s.fourD) {
     payload.fourD = {
       p: s.fourD.pair.p.map(round4),
       q: s.fourD.pair.q.map(round4),
       sliceOn: s.fourD.sliceOn,
       sliceCenter: round4(s.fourD.sliceCenter),
+      sliceThickness: round4(s.fourD.sliceThickness),
       sliceRelColor: s.fourD.sliceRelColor,
     };
   }
@@ -1348,7 +1369,10 @@ export function encodeScene(s: SceneSnapshot): string {
  * soft w-slice window (see {@link FourDPose}), the 4D sibling of `camera`
  * just above. Same policy as `camera`, including its stricter no-coercion
  * stance on the numeric fields (see {@link decodeFourDPose}): absent or
- * malformed never rejects the scene, it just decodes to `undefined`.
+ * malformed never rejects the scene, it just decodes to `undefined`. Its
+ * one tolerant field is `sliceThickness` (fr-wa6o), which defaults to 0
+ * rather than dropping the pose — every document written before that
+ * slider existed lacks the key entirely.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;

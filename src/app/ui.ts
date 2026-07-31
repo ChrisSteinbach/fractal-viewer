@@ -234,6 +234,13 @@ export interface UiHandlers {
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
+  /** The 4D slice-thickness slider moved (fr-wa6o): `value` is the slab's
+   * HALF-thickness in the same normalized rotated-w units as
+   * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row is
+   * shown exactly in a live 4D surface session (see
+   * {@link Ui.syncFourDSliceRows}), whose tracer renders everything within
+   * that much of the slice plane instead of the plane alone. */
+  onFourDSliceThicknessInput: (value: number) => void;
   /** The slice-relative color option (fr-nn6) was toggled — recenter the
    * w-ramp color modes' diverging palette on the slice window. Session-only
    * view state, exactly like the slice toggle/position above. */
@@ -946,6 +953,13 @@ export class Ui {
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
+  // Slice thickness (fr-wa6o): lives inside fourDSliceRow like the rel-color
+  // row below, but with the OPPOSITE surface gate — a slab only means
+  // something to the tracer that marches one, so its row shows exactly in a
+  // live 4D surface session (see syncFourDSliceRows).
+  private readonly fourDSliceThicknessRow: HTMLElement;
+  private readonly fourDSliceThicknessSlider: HTMLInputElement;
+  private readonly fourDSliceThicknessLabel: HTMLElement;
   // Slice-relative color (fr-nn6): lives inside fourDSliceRow (so it hides
   // with the slice), with its own row element hidden for the baked fr-d47
   // modes — the remap only touches the w-ramp palettes (see updateLabels).
@@ -1170,6 +1184,9 @@ export class Ui {
     this.fourDSliceRow = this.byId("fourDSliceRow");
     this.fourDSliceSlider = this.byId("fourDSliceSlider");
     this.fourDSliceLabel = this.byId("fourDSliceLabel");
+    this.fourDSliceThicknessRow = this.byId("fourDSliceThicknessRow");
+    this.fourDSliceThicknessSlider = this.byId("fourDSliceThicknessSlider");
+    this.fourDSliceThicknessLabel = this.byId("fourDSliceThicknessLabel");
     this.fourDSliceRelColorToggle = this.byId("fourDSliceRelColorToggle");
     this.fourDSliceRelColorRow = this.byId("fourDSliceRelColorRow");
     this.threeDControls = this.byId("threeDControls");
@@ -1509,6 +1526,11 @@ export class Ui {
       this.fourDSliceLabel.textContent = value.toFixed(2);
       handlers.onFourDSliceInput(value);
     });
+    this.fourDSliceThicknessSlider.addEventListener("input", () => {
+      const value = Number(this.fourDSliceThicknessSlider.value);
+      this.fourDSliceThicknessLabel.textContent = value.toFixed(2);
+      handlers.onFourDSliceThicknessInput(value);
+    });
     this.fourDSliceRelColorToggle.addEventListener("change", () =>
       handlers.onFourDSliceRelColorToggle(
         this.fourDSliceRelColorToggle.checked,
@@ -1553,12 +1575,20 @@ export class Ui {
    * restored document's saved 4D pose, applied to the view out from under
    * the UI (main.ts's applyFourDPose), keeps the panel truthful. The
    * position row shows/hides with the toggle exactly as its change handler
-   * does. */
-  setFourDSlice(on: boolean, center: number, relColor: boolean): void {
+   * does; `thickness` (fr-wa6o) rides along, since a saved pose carries one
+   * whether or not the session it lands in is showing that row. */
+  setFourDSlice(
+    on: boolean,
+    center: number,
+    relColor: boolean,
+    thickness: number,
+  ): void {
     this.fourDSliceToggle.checked = on;
     this.syncFourDSliceRows(on);
     this.fourDSliceSlider.value = String(center);
     this.fourDSliceLabel.textContent = center.toFixed(2);
+    this.fourDSliceThicknessSlider.value = String(thickness);
+    this.fourDSliceThicknessLabel.textContent = thickness.toFixed(2);
     this.fourDSliceRelColorToggle.checked = relColor;
   }
 
@@ -1569,11 +1599,16 @@ export class Ui {
    *
    * A LIVE 4D surface session (fr-b30z) has no such choice to offer. That
    * tracer marches a `w = w0` cross-section unconditionally — `sliceOn`
-   * never reaches it (main.ts pushes only `sliceCenter` into
-   * `setSurface4View`) — so the toggle would be a lie, while the position
-   * slider is the mode's defining parameter and the one control that makes
-   * its continuous family of 3D fractals reachable. Hide the toggle, show
-   * the slider regardless.
+   * never reaches it (main.ts pushes only `sliceCenter`/`sliceThickness`
+   * into `setSurface4View`) — so the toggle would be a lie, while the
+   * position slider is the mode's defining parameter and the one control
+   * that makes its continuous family of 3D fractals reachable. Hide the
+   * toggle, show the slider regardless.
+   *
+   * The thickness slider (fr-wa6o) is that toggle's exact complement: the
+   * slab it widens is a property of the tracer's own distance estimator, so
+   * it shows ONLY in a live surface session. The point cloud's slice has a
+   * fixed Gaussian width of its own that this control does not touch.
    */
   private syncFourDSliceRows(on: boolean): void {
     this.fourDSliceToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
@@ -1581,14 +1616,20 @@ export class Ui {
       "hidden",
       !this.fourDSurfaceLive && !on,
     );
+    this.fourDSliceThicknessRow.classList.toggle(
+      "hidden",
+      !this.fourDSurfaceLive,
+    );
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
    * a slice left behind by the previous visit never silently applies. The
    * slice-relative color option (fr-nn6) resets with it: it's slice view
-   * state, and the fresh-visit default is the faithful whole-cloud ramp. */
+   * state, and the fresh-visit default is the faithful whole-cloud ramp.
+   * So does the slab thickness (fr-wa6o), whose fresh-visit default is the
+   * zero-thickness cross-section. */
   resetFourDSlice(): void {
-    this.setFourDSlice(false, 0, false);
+    this.setFourDSlice(false, 0, false, 0);
   }
 
   /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`

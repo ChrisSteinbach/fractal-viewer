@@ -26,8 +26,9 @@ import { smoothstep } from "./orbit";
  * `normalizeRotorPair` — so this class exposes the pair only indirectly — via
  * `matrix()`, `reset()`, `tick()`, `rotate()`, and (fr-pnek) `pose()` /
  * `applyPose()` — unlike `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/
- * `sliceRelColor`, which are plain session data with no invariant to protect,
- * so the animate loop and UI handlers read and write them directly. One
+ * `sliceThickness`/`sliceRelColor`, which are plain session data with no
+ * invariant to protect, so the animate loop and UI handlers read and write
+ * them directly. One
  * exception since fr-g98: the UI's tumble CHECKBOX flows through
  * `setTumbleUserChoice`, not a bare `tumbleOn` write, because a manual toggle
  * must also be remembered as the sticky choice that future `reset()`s
@@ -94,6 +95,11 @@ export interface FourDPose {
   pair: RotorPair;
   sliceOn: boolean;
   sliceCenter: number;
+  /** Slab half-thickness in the same normalized rotated-w units as
+   * {@link FourDView.sliceThickness} (fr-wa6o); 0 for every pose saved
+   * before the control existed, which is exactly the cross-section those
+   * documents were framed with. */
+  sliceThickness: number;
   sliceRelColor: boolean;
 }
 
@@ -128,6 +134,10 @@ export class FourDView {
   sliceOn: boolean = false;
   /** Slice window center in w. */
   sliceCenter: number = 0;
+  /** Slab half-thickness in the same normalized rotated-w units as
+   * {@link sliceCenter}; 0 is the zero-thickness cross-section every 4D
+   * surface render was before fr-wa6o. */
+  sliceThickness: number = 0;
   /** Recolor the w-ramp modes relative to the slice window? */
   sliceRelColor: boolean = false;
 
@@ -149,6 +159,7 @@ export class FourDView {
     }
     this.sliceOn = false;
     this.sliceCenter = 0;
+    this.sliceThickness = 0;
     this.sliceRelColor = false;
   }
 
@@ -204,12 +215,12 @@ export class FourDView {
   }
 
   /** Snapshot the current view as a persistable {@link FourDPose} (fr-pnek):
-   * the rotor pair plus the three slice fields — everything `applyPose`
-   * needs to reproduce this exact framing later (a save, a share link, a
-   * timeline keyframe). The quaternions are deep-copied into fresh arrays:
-   * the private `pair` must never leak by reference, or a caller mutating
-   * the snapshot (or a later `rotateInPlane`/`applyPose` call on THIS view)
-   * could corrupt it. */
+   * the rotor pair plus the four slice fields (thickness since fr-wa6o) —
+   * everything `applyPose` needs to reproduce this exact framing later (a
+   * save, a share link, a timeline keyframe). The quaternions are
+   * deep-copied into fresh arrays: the private `pair` must never leak by
+   * reference, or a caller mutating the snapshot (or a later
+   * `rotateInPlane`/`applyPose` call on THIS view) could corrupt it. */
   pose(): FourDPose {
     return {
       pair: {
@@ -218,6 +229,7 @@ export class FourDView {
       },
       sliceOn: this.sliceOn,
       sliceCenter: this.sliceCenter,
+      sliceThickness: this.sliceThickness,
       sliceRelColor: this.sliceRelColor,
     };
   }
@@ -230,7 +242,7 @@ export class FourDView {
    * stays valid however the pose arrived (a JSON round trip, a hand-authored
    * timeline). If normalization fails — defensive only; a decoded pose has
    * already passed this same check once, in persist.ts — the current pair is
-   * left untouched rather than clobbered with garbage. The three slice
+   * left untouched rather than clobbered with garbage. The four slice
    * fields are set from `pose` UNCONDITIONALLY, independent of whether the
    * pair validated. Never touches `tumbleOn`/`tumbleSpeed`/
    * `tumbleUserChoice` — auto-motion is excluded from `FourDPose` by design
@@ -240,13 +252,15 @@ export class FourDView {
     if (normalized) this.pair = normalized;
     this.sliceOn = pose.sliceOn;
     this.sliceCenter = pose.sliceCenter;
+    this.sliceThickness = pose.sliceThickness;
     this.sliceRelColor = pose.sliceRelColor;
   }
 }
 
 /** In-flight rotor/slice glide (fr-pnek): a directed smoothstep to a SAVED
  * {@link FourDPose} — the 4D sibling of `camera-tween.ts`'s `PoseTween`. Only
- * the rotor and the slice CENTER are interpolated over the glide; `sliceOn`/
+ * the rotor and the two continuous slice scalars — CENTER and, since
+ * fr-wa6o, THICKNESS — are interpolated over the glide; `sliceOn`/
  * `sliceRelColor` apply from the target immediately (see
  * `FourDTween.advance`) since a binary can't fade partway. */
 interface FourDGlide {
@@ -254,6 +268,7 @@ interface FourDGlide {
   durationMs: number;
   fromPair: RotorPair;
   fromCenter: number;
+  fromThickness: number;
   to: FourDPose;
 }
 
@@ -312,31 +327,34 @@ export class FourDTween {
       durationMs,
       fromPair: this.view.pose().pair,
       fromCenter: this.view.sliceCenter,
+      fromThickness: this.view.sliceThickness,
       to: pose,
     };
   }
 
   /**
    * Advance the in-flight glide (a no-op when idle). Interpolates the rotor
-   * by `slerpRotorPair` and the slice CENTER by linear lerp, both under the
-   * smoothstep of elapsed/durationMs; `sliceOn`/`sliceRelColor` are taken
-   * from the TARGET from the very first frame — a binary can't fade, so the
-   * arriving keyframe's slice on/off and relative-color state establish
-   * immediately while only its center and the rotor's orientation glide.
-   * Clears itself once it reaches the target (`t >= 1`: the final
-   * `applyPose` call has already landed the exact target). Called once per
-   * animation frame by main.ts — like `CameraTween.advance` — only while the
-   * 4D view is showing.
+   * by `slerpRotorPair` and the slice CENTER and THICKNESS by linear lerp,
+   * all under the smoothstep of elapsed/durationMs; `sliceOn`/
+   * `sliceRelColor` are taken from the TARGET from the very first frame — a
+   * binary can't fade, so the arriving keyframe's slice on/off and
+   * relative-color state establish immediately while only its continuous
+   * scalars and the rotor's orientation glide. Clears itself once it reaches
+   * the target (`t >= 1`: the final `applyPose` call has already landed the
+   * exact target). Called once per animation frame by main.ts — like
+   * `CameraTween.advance` — only while the 4D view is showing.
    */
   advance(): void {
     if (!this.glide) return;
-    const { startMs, durationMs, fromPair, fromCenter, to } = this.glide;
+    const { startMs, durationMs, fromPair, fromCenter, fromThickness, to } =
+      this.glide;
     const t = smoothstep((this.now() - startMs) / durationMs);
     this.view.applyPose({
       pair: slerpRotorPair(fromPair, to.pair, t),
       sliceOn: to.sliceOn,
       sliceRelColor: to.sliceRelColor,
       sliceCenter: fromCenter + (to.sliceCenter - fromCenter) * t,
+      sliceThickness: fromThickness + (to.sliceThickness - fromThickness) * t,
     });
     if (t >= 1) this.glide = null;
   }

@@ -175,7 +175,9 @@ morphs into place instead of snapping (see **Presets** below).
   keeps rotating the hidden planes, and the **W slice** slider sweeps the
   cut through the shape in real time. (The slice toggle's ghosting is a
   point-cloud affair; the surface mode always marches the current slice
-  position.) Anisotropic (non-uniformly scaled) maps are a
+  position.) A **Slice thickness** slider (fr-wa6o) sits under it, giving
+  that cut some depth — see the 4D section below. Anisotropic
+  (non-uniformly scaled) maps are a
   softer case: the button stays enabled, but the mode's own status note
   warns that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its own
@@ -478,7 +480,19 @@ morphs into place instead of snapping (see **Presets** below).
   with no ghost context and no soft window around it. Since fr-33yb the
   slider lands on the same physical hyperplane in both views, normalized to
   the cloud's rotated-w support at the current rotation rather than a raw
-  world-w value. **Slice-relative color** (fr-nn6, shown while the slice is on
+  world-w value. **Slice thickness** (fr-wa6o, Surface sessions only) gives
+  that razor-thin cut some depth: at 0 — where it starts — the render is
+  the pure cross-section described above, everything exactly at one w;
+  raise it and the tracer instead renders everything lying within that much
+  of the slice plane on either side, all of it projected down into the same
+  3D view. Thin-to-medium settings are where the interesting shapes live —
+  a hair of thickness thickens a wispy cross-section into something solid
+  and reveals how the structure leans through w, while the top of the range
+  (0.5 = half the shape's w-extent to each side, so the whole thing when
+  centered) piles so much of the object into one image that the detail
+  fills in. It is not free: a thicker slab is more surface for the marcher
+  to find, so expect the preview and the full-detail pass to take longer as
+  you widen it. **Slice-relative color** (fr-nn6, shown while the slice is on
   and a W-Depth palette is active) recenters the diverging ramp on the slice
   window: inside the slice everything sits near one w, so the faithful
   whole-cloud ramp renders a slice at 0 almost entirely in the palette's
@@ -512,7 +526,9 @@ morphs into place instead of snapping (see **Presets** below).
   hiding with the rest: **Auto-tumble (XY+ZW)** and **Tumble speed** behave
   exactly as in Points, and the **W slice** position slider stays live and
   shown unconditionally, since the tracer marches a cross-section every
-  frame regardless of any toggle. The **W slice** on/off checkbox hides
+  frame regardless of any toggle — joined there by **Slice thickness**
+  (fr-wa6o), which is that tracer's control alone and appears nowhere else.
+  The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
   remap. What does drop out of the panel is the flat-only look controls:
