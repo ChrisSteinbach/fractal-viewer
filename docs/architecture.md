@@ -417,7 +417,10 @@ its optional `colorSpeed` says how far the coordinate travels toward it
 (`c ← c·(1 - speed) + colorIndex·speed`). Absent, they derive to the even spread
 `i / (n - 1)` and a halfway `0.5` — the fixed behaviour that predated the fields,
 bit for bit — so authored color structure survives a `.flame` round trip while
-every existing scene renders unchanged. The sentinel `"legacy"` palette opts out of the gradient
+every existing scene renders unchanged. The surface render's orbit-trap
+palette source reads that same authored `colorIndex` (fr-c6yd); `colorSpeed`,
+a per-pick quantity, stops at the flame and the solid grid — the surface has
+no pick to carry it. The sentinel `"legacy"` palette opts out of the gradient
 for a flat per-transform hue. The same palettes serve the solid render — and,
 since fr-3b6, the explorer's height/radius ramp recolor (see **Color modes**).
 A user-authored **custom palette** (fr-55k) joins the presets as 2–8 evenly

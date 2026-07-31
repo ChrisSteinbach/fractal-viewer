@@ -187,8 +187,14 @@ morphs into place instead of snapping (see **Presets** below).
   source only, fading how quickly deeper descent levels blend into the trap
   color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
   Every one of them is a plain shader input, so dragging any of them
-  re-renders instantly with nothing to restart. **Save PNG** captures it at
-  the chosen **Capture size** exactly like the solid render — a fresh,
+  re-renders instantly with nothing to restart. The orbit-trap Palette source
+  also takes each map's ramp slot from its authored **Color → Index** (see
+  **Edit Transform N**) where one is set, spreading maps evenly across the
+  gradient otherwise — that one is document data rather than a live shader
+  input, so author it in the explorer and then enter the mode. A map's
+  per-transform **Speed** does nothing here, and is not the **Color speed**
+  slider above, which fades descent levels rather than picks. **Save PNG**
+  captures it at the chosen **Capture size** exactly like the solid render — a fresh,
   higher-resolution trace, not an upscale — and ★ Save to collection /
   📍 Add keyframe tag the saved
   entry with the Surface mode exactly like Flame/Solid, so loading it, or a
@@ -205,9 +211,12 @@ morphs into place instead of snapping (see **Presets** below).
     group below **Weight**. **Index** is the palette slot this map pulls the
     flame's structural color coordinate toward; **Speed** is how far each pick
     moves it (`0` keeps the incoming color — flam3's "symmetry" xform, which
-    shades without recoloring — and `1` snaps straight to the slot). They only
-    bite on a **Flame** or **Solid** render with a gradient palette active, and
-    the group says so. Both start on the value the renderer already uses — maps
+    shades without recoloring — and `1` snaps straight to the slot). **Index**
+    bites on a **Flame** or **Solid** render, and also the **Surface** render's
+    orbit-trap **Palette** color source; **Speed** stays **Flame**/**Solid**
+    only — the surface descends a map rather than picking one, so there's no
+    per-pick travel there for Speed to control. All of it needs a gradient
+    palette active. Both start on the value the renderer already uses — maps
     spread evenly across the ramp in list order, at speed `0.50` — and stay
     unset until you actually move a slider, so a scene saved before you touch
     them is byte-identical to one saved after. Importing a `.flame`

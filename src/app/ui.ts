@@ -3300,8 +3300,12 @@ export class Ui {
    * (`Transform.colorIndex`, flam3's per-xform `color`) and how far each pick
    * moves it (`Transform.colorSpeed`, flam3's `color_speed`). Both the flame
    * and the solid render walk that coordinate when a gradient palette is
-   * active (`flame.ts` / `voxel.ts` and their 4D twins), so a system authored
-   * here colors identically in either.
+   * active (`flame.ts` / `voxel.ts` and their 4D twins); the surface render
+   * reads the same `colorIndex` slot too, under its orbit-trap "Palette"
+   * color source, but `colorSpeed` never reaches it — the surface descends a
+   * map rather than picking one, so it has nothing to walk with. A system
+   * authored here colors identically in all three, wherever a gradient
+   * palette applies.
    *
    * Both rows show the RESOLVED value, so the user reads what the renderer
    * actually uses rather than a blank: the authored number when there is one,
@@ -3340,19 +3344,23 @@ export class Ui {
     title.textContent = "Color";
     group.appendChild(title);
 
-    // These two fields do nothing outside the structural-coloring path — a
-    // Flame or Solid render with a gradient palette active, the two that walk
-    // the color coordinate (`flame.ts`'s accumulateFlame and `voxel.ts`'s
-    // accumulateVoxels, plus their 4D twins) — and nothing else on screen
-    // would say so. The group is NOT hidden by render mode, though: it is
-    // document data that also arrives by `.flame` import, so it stays visible
-    // and editable wherever the user is, and a one-line note in the panel's
-    // existing hint idiom (the dim `.flame-hint` paragraph index.html uses
-    // for the render-mode and 4D notes) carries the caveat instead.
+    // The two fields do not share one reach (fr-c6yd). Index also steers a
+    // Surface render, but only under its Palette (orbit-trap) color source —
+    // `surface-slots.ts`'s `surfaceTrapIndices` reads the authored slot there
+    // without walking it, since the surface descends a map rather than picking
+    // one. Speed stays narrower: it only moves the coordinate in a Flame or
+    // Solid render with a gradient palette active, the two that actually walk
+    // it (`flame.ts`'s accumulateFlame and `voxel.ts`'s accumulateVoxels, plus
+    // their 4D twins) — and nothing else on screen would say so. The group is
+    // NOT hidden by render mode, though: it is document data that also arrives
+    // by `.flame` import, so it stays visible and editable wherever the user
+    // is, and a one-line note in the panel's existing hint idiom (the dim
+    // `.flame-hint` paragraph index.html uses for the render-mode and 4D
+    // notes) carries the caveat instead.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
     hint.textContent =
-      "Flame and Solid renders with a gradient palette only: the ramp slot this map pulls toward, and how far each pick moves.";
+      "Gradient palettes only: Index is the ramp slot this map pulls toward, in Flame, Solid and Surface's Palette source; Speed is how far each pick moves — Flame and Solid only.";
     group.appendChild(hint);
 
     const derivedIndex = derivedColorIndex(target, transformCount);

@@ -476,6 +476,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     at 32, never skipped; the result's own `resolution`/`halfExtent` are what
     was actually built.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
+  - `surface-slots.ts` — the two per-slot shading inputs every surface tracer
+    takes (per-slot "By Transform" colors, orbit-trap palette coordinates),
+    keyed on `baseIndex` into the DOCUMENT's transforms. Honors an authored
+    `Transform.colorIndex` (fr-c6yd), else the surface's own even spread —
+    pure, shared by `main.ts` and `gpu-bench/` so neither drifts from it.
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
     oracle discipline as `flame-gpu.ts`; BASE maps packed into fixed-size

@@ -54,14 +54,32 @@ export function surfaceSlotColors(
  * speed" slider) and uses the normalized result as the LUT coordinate — but
  * only under the "Palette" color source; every other source ignores them.
  *
- * Base map `i` of `n` spreads evenly over the ramp — the flame's
- * `paletteIndex(i, n)` idea, keyed by `baseIndex` so every sector shares its
- * base map's coordinate.
+ * A map's authored {@link Transform.colorIndex} wins (fr-c6yd), so the flam3
+ * per-xform `color` that already steers the flame and solid renders steers
+ * this one too, imported `.flame` files included. Absent — the documented
+ * meaning of the optional field — the slot falls back to the even spread over
+ * the authored maps that the surface has always used, leaving every existing
+ * scene byte-identical.
+ *
+ * That fallback is written here rather than delegating to `chaos-game.ts`'s
+ * `derivedColorIndex` on purpose: the two agree for every `n > 1` and diverge
+ * at `n === 1`, where the flame's convention parks a lone map mid-ramp (`0.5`)
+ * and the surface's parks it at the ramp start (`0`). Adopting the flame's
+ * would repaint every existing single-map surface scene — and a single map is
+ * exactly the fold shape this mode exists for. Authoring a `colorIndex` is now
+ * the way to move such a system off slot 0, which is the point of fr-c6yd.
+ *
+ * There is deliberately no `colorSpeed` twin. That field is how far a PICK
+ * moves the structural color coordinate, and the surface never picks a map —
+ * it descends one. The Surface Look panel's own "Color speed" slider is a
+ * different quantity entirely (per-descent-level trap decay).
  */
 export function surfaceTrapIndices(
   transforms: readonly Transform[],
   maps: readonly SurfaceSlot[],
 ): number[] {
   const denom = Math.max(1, transforms.length - 1);
-  return maps.map((m) => m.baseIndex / denom);
+  return maps.map(
+    (m) => transforms[m.baseIndex].colorIndex ?? m.baseIndex / denom,
+  );
 }
