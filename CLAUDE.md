@@ -52,7 +52,8 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `affine.ts` — Euler-XYZ rotation matrix + TRS compose/apply, matched to
     Three.js conventions.
   - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
-    3D→4D), `systemIsFlat` predicate (derived from transforms, never stored).
+    3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
+    transforms, never stored).
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
@@ -74,7 +75,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement harness.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
-    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade.
+    weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
+    (skipped, parked by reference, on a non-flat sample).
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved
     exactly; `wildcard` option adds structural kicks. Quality-gated by
