@@ -74,6 +74,15 @@ describe("FourDView", () => {
       expect(view.tumbleOn).toBe(true);
       expect(view.tumbleSpeed).toBe(1);
     });
+
+    it("returns a widened slice slab to the zero-thickness cross-section (fr-wa6o)", () => {
+      const view = new FourDView();
+      view.sliceThickness = 0.3;
+
+      view.reset(false);
+
+      expect(view.sliceThickness).toBe(0);
+    });
   });
 
   describe("setTumbleUserChoice", () => {
@@ -295,6 +304,17 @@ describe("FourDView", () => {
       expect(view.sliceRelColor).toBe(true);
     });
 
+    it("round-trips the slice slab's thickness through pose()/applyPose() (fr-wa6o)", () => {
+      const source = new FourDView();
+      source.reset(false);
+      source.sliceThickness = 0.32;
+
+      const target = new FourDView();
+      target.applyPose(source.pose());
+
+      expect(target.sliceThickness).toBe(0.32);
+    });
+
     it("restores a pose captured from a different view instance", () => {
       const source = new FourDView();
       source.reset(false);
@@ -348,6 +368,7 @@ describe("FourDView", () => {
         pair: { p: [0, 0, 0, 0], q: [0, 0, 0, 0] },
         sliceOn: true,
         sliceCenter: 0.9,
+        sliceThickness: 0,
         sliceRelColor: true,
       };
 
@@ -388,6 +409,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
 
@@ -413,6 +435,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
 
@@ -435,6 +458,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
 
@@ -456,6 +480,60 @@ describe("FourDTween", () => {
     expect(tween.active).toBe(true);
   });
 
+  it("interpolates the slice thickness partway through a normal glide (fr-wa6o)", () => {
+    const view = new FourDView();
+    view.reset(false); // sliceThickness 0
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: identityRotorPair(),
+      sliceOn: false,
+      sliceCenter: 0,
+      sliceThickness: 0.4,
+      sliceRelColor: false,
+    };
+
+    tween.glideToPose(targetPose, 1000);
+    clock = 500;
+    tween.advance();
+
+    // smoothstep(0.5) = 0.5, so the slab is half as thick as its target —
+    // the same continuous lerp sliceCenter gets, not a jump to the target.
+    expect(view.sliceThickness).toBeCloseTo(0.2);
+    expect(tween.active).toBe(true);
+  });
+
+  it("glides the slice thickness from a widened slab back down to a target cross-section (fr-wa6o)", () => {
+    const view = new FourDView();
+    view.reset(false);
+    view.sliceThickness = 0.5;
+    let clock = 0;
+    const tween = new FourDTween(
+      view,
+      () => clock,
+      () => false,
+    );
+    const targetPose: FourDPose = {
+      pair: identityRotorPair(),
+      sliceOn: false,
+      sliceCenter: 0,
+      sliceThickness: 0,
+      sliceRelColor: false,
+    };
+
+    tween.glideToPose(targetPose, 1000);
+    clock = 500;
+    tween.advance();
+
+    // The glide starts from the LIVE thickness, not from zero: halfway down
+    // from 0.5 is 0.25.
+    expect(view.sliceThickness).toBeCloseTo(0.25);
+  });
+
   it("lands exactly on the target at/after the glide's duration", () => {
     const view = new FourDView();
     view.reset(false);
@@ -469,6 +547,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
 
@@ -494,6 +573,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
     tween.glideToPose(targetPose, 1000);
@@ -524,6 +604,7 @@ describe("FourDTween", () => {
       pair: rotateInPlane(identityRotorPair(), "xy", 0.8),
       sliceOn: true,
       sliceCenter: 0.5,
+      sliceThickness: 0,
       sliceRelColor: true,
     };
     tween.glideToPose(targetPose, 1000);

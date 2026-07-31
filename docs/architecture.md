@@ -659,6 +659,28 @@ Shift-drag, and slice sweeps all keep working inside the mode), where
 flame/solid-4D freeze theirs at session start because a pose change would
 invalidate their accumulated content.
 
+That slice has a **thickness** (fr-wa6o). At the shipped default of 0 it is
+the zero-thickness hyperplane described above, value for value. Above 0 the
+query stops being the point `(p, w0)` and becomes the SEGMENT spanning
+`|w - w0| <= h`, so the mode renders the projected shadow of a SLAB
+`A ∩ {|w - w0| <= h}` rather than a cross-section — the same contract, one
+dimension of the query thickened: a conservative lower bound whose zero set
+is exactly "the segment meets the attractor". It works because affine maps
+take segments to segments, so the descent carries one extra 4-vector (the
+segment's half-extent, moved by each inverse map's linear part alone) and
+every `|q| - R` ball certificate becomes a segment-to-centre distance; the
+beam, the validity slots, the refined certificates, the terminal bound, the
+sphere floor and the final-transform lens are all structurally untouched.
+The extent GROWS down the descent — inverse maps expand — but only as fast
+as the chain's contraction shrinks (`chainScale · |e| <= h`), so a slab
+certificate sits within `h` of the point certificate it replaces and the
+bound never degenerates. The slider is deliberately capped at half the
+attractor's w-support: a sphere tracer stops at the first surface, so an
+unbounded thickness would render only the projection's outer silhouette —
+which is what SOLID mode already is. What the slab buys over Solid is
+analytic detail with no grid ceiling, and the interesting regime is
+thin-to-medium.
+
 ## Render workers & cross-origin isolation
 
 Two of the app's three on-demand renders — the fractal-flame still and the

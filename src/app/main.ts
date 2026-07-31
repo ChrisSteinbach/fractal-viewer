@@ -1329,8 +1329,11 @@ function main(): void {
   }
 
   // Push the current soft-slice view state to the scene shader. Shared by
-  // resetFourDView() and the three slice handlers, all of which mutate a
-  // fourDView slice field and then re-upload the trio.
+  // resetFourDView() and the three slice handlers that have a POINT-CLOUD
+  // meaning — on/center/relative-color — each of which mutates a fourDView
+  // slice field and then re-uploads the trio. The fourth, slab thickness
+  // (fr-wa6o), deliberately does not come here: it is surface-tracer-only,
+  // and the cloud's slice has a fixed Gaussian width of its own.
   function pushFourDSlice(): void {
     scene.setFourDSlice(
       fourDView.sliceOn,
@@ -1378,6 +1381,7 @@ function main(): void {
       fourDView.sliceOn,
       fourDView.sliceCenter,
       fourDView.sliceRelColor,
+      fourDView.sliceThickness,
     );
   }
 
@@ -2987,7 +2991,11 @@ function main(): void {
             surfaceSlotColors(state.transforms, de.maps),
             surfaceTrapIndices(state.transforms, de.maps),
           );
-          scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
+          scene.setSurface4View(
+            fourDView.matrix(),
+            fourDView.sliceCenter,
+            fourDView.sliceThickness,
+          );
           surfaceSessionIs4D = true;
           // No grid for the 4D tracer (the live rotor/slice would
           // invalidate one per frame) — and a still-building 3D grid from
@@ -4784,6 +4792,15 @@ function main(): void {
       fourDView.sliceCenter = value;
       pushFourDSlice();
     },
+    // Slab thickness (fr-wa6o) is the one slice field with NO point-cloud
+    // meaning — the cloud's own slice is a fixed-width Gaussian — so it
+    // deliberately skips pushFourDSlice(). Its only consumer is the 4D
+    // surface tracer, which animate()'s per-frame setSurface4View push picks
+    // it up from on the very next frame.
+    onFourDSliceThicknessInput: (value) => {
+      releaseFourDPoseControl();
+      fourDView.sliceThickness = value;
+    },
     onFourDSliceRelColorToggle: (checked) => {
       releaseFourDPoseControl();
       fourDView.sliceRelColor = checked;
@@ -5272,7 +5289,11 @@ function main(): void {
         const dt4 = Math.min((now - lastMotionTickMs) / 1000, 0.1);
         lastMotionTickMs = now;
         advanceFourDPose(dt4);
-        scene.setSurface4View(fourDView.matrix(), fourDView.sliceCenter);
+        scene.setSurface4View(
+          fourDView.matrix(),
+          fourDView.sliceCenter,
+          fourDView.sliceThickness,
+        );
       }
       if (surfaceSession.hasFirstFrame) {
         // The interaction tier split (fr-5ne3; strips fr-sjff): an

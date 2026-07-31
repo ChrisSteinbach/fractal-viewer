@@ -82,6 +82,7 @@ function noopHandlers(): UiHandlers {
     onAutoOrbitSpeedInput: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
+    onFourDSliceThicknessInput: vi.fn(),
     onFourDSliceRelColorToggle: vi.fn(),
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
@@ -3932,10 +3933,64 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
     ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
 
-    ui.setFourDSlice(false, 0.4, false);
+    ui.setFourDSlice(false, 0.4, false, 0);
 
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
     expect((el("fourDSliceSlider") as HTMLInputElement).value).toBe("0.4");
+  });
+
+  // The slice-thickness slider (fr-wa6o) is the exact complement of the
+  // W-slice on/off toggle above: the slab it widens is a property of the
+  // tracer's own distance estimator, so it appears only where that tracer
+  // runs. Points' slice is a fixed-width Gaussian this control never touches.
+  it("shows the slice thickness slider in a live 4D surface session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceThicknessRow").classList.contains("hidden")).toBe(
+      false,
+    );
+  });
+
+  it("hides the slice thickness slider for a 4D point-cloud view with the slice on", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDSliceToggle") as HTMLInputElement).checked = true;
+
+    ui.updateLabels(nonFlat);
+
+    // The slice row itself is open here — only the thickness sub-row hides,
+    // so this can't pass by the whole block being hidden.
+    expect(el("fourDSliceRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDSliceThicknessRow").classList.contains("hidden")).toBe(
+      true,
+    );
+  });
+
+  it("re-hides the slice thickness slider after leaving surface mode", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.updateLabels(nonFlat);
+
+    expect(el("fourDSliceThicknessRow").classList.contains("hidden")).toBe(
+      true,
+    );
+  });
+
+  it("keeps the slice thickness slider visible when a pose glide lands mid-surface-session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.setFourDSlice(false, 0, false, 0.25);
+
+    expect(el("fourDSliceThicknessRow").classList.contains("hidden")).toBe(
+      false,
+    );
   });
 
   it("restores the normal points-mode slice behavior after leaving surface mode", () => {
@@ -3990,6 +4045,45 @@ describe("Ui 4D slice controls (fr-6x2)", () => {
 
     expect(handlers.onFourDSliceInput).toHaveBeenCalledWith(-0.35);
     expect(el("fourDSliceLabel").textContent).toBe("-0.35");
+  });
+
+  it("fires onFourDSliceThicknessInput with the slider's numeric value and updates the label", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = el("fourDSliceThicknessSlider") as HTMLInputElement;
+
+    slider.value = "0.25";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(handlers.onFourDSliceThicknessInput).toHaveBeenCalledWith(0.25);
+    expect(el("fourDSliceThicknessLabel").textContent).toBe("0.25");
+  });
+
+  it("setFourDSlice syncs the thickness slider and its label to a restored pose", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.setFourDSlice(false, 0, false, 0.3);
+
+    expect((el("fourDSliceThicknessSlider") as HTMLInputElement).value).toBe(
+      "0.3",
+    );
+    expect(el("fourDSliceThicknessLabel").textContent).toBe("0.30");
+  });
+
+  it("resetFourDSlice returns the thickness slider to a zero-thickness slice", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const slider = el("fourDSliceThicknessSlider") as HTMLInputElement;
+    slider.value = "0.4";
+    slider.dispatchEvent(new Event("input"));
+
+    ui.resetFourDSlice();
+
+    expect(slider.value).toBe("0");
+    expect(el("fourDSliceThicknessLabel").textContent).toBe("0.00");
   });
 
   it("resetFourDSlice unchecks the toggle, hides the row, and recenters the slider", () => {

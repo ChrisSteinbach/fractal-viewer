@@ -191,6 +191,7 @@ describe("SceneHistory view pose (fr-uf3, fr-gq99)", () => {
       pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
       sliceOn: true,
       sliceCenter: 0.25,
+      sliceThickness: 0,
       sliceRelColor: false,
     };
     const poseWithFourD: ViewPose = { camera: poseA.camera, fourD };
