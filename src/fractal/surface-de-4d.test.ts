@@ -16,10 +16,12 @@ import {
   doubleRotation,
   pentatope,
   sixteenCellFlake,
+  tesseract,
   twentyFourCellFlake,
 } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Transform4, Vec4 } from "./types";
+import { clamp } from "./vec";
 
 /** Minimal contracting 4D-analysis map for the eligibility-table tests
  * below, merged with each test's own overrides — mirrors `surface-de.test.ts`'s
@@ -86,6 +88,45 @@ function nearestDistance4(cloud: ChaosGame4Result, p: Vec4): number {
     const dy = positions[i * 3 + 1] - p[1];
     const dz = positions[i * 3 + 2] - p[2];
     const dw = w[i] - p[3];
+    const d2 = dx * dx + dy * dy + dz * dz + dw * dw;
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best);
+}
+
+/** Brute-force nearest 4D distance from the SEGMENT `{q + s·e : s in
+ * [-1, 1]}` to any point of a sampled point set — the segment twin of
+ * {@link nearestDistance4}, ground truth for the slab estimators'
+ * lower-bound property (fr-wa6o). Takes raw parallel arrays rather than a
+ * {@link ChaosGame4Result} so the same helper covers both a plain sampled
+ * cloud (`cloud.positions, cloud.w, cloud.count`) and one pushed through a
+ * final-transform lens, which has no `ChaosGame4Result` of its own to build.
+ * Per point `a`, the segment's own closest-approach parameter is the
+ * unconstrained minimizer of `|q + s·e - a|²`, `s = dot(a - q, e) /
+ * dot(e, e)`, clamped to the segment's ends — the brute-force twin of the
+ * module under test's own `segmentRadius`. */
+function nearestSegmentDistance4(
+  positions: Float32Array,
+  w: Float32Array,
+  count: number,
+  q: Vec4,
+  e: Vec4,
+): number {
+  const ee = e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + e[3] * e[3];
+  let best = Infinity;
+  for (let i = 0; i < count; i++) {
+    const ax = positions[i * 3] - q[0];
+    const ay = positions[i * 3 + 1] - q[1];
+    const az = positions[i * 3 + 2] - q[2];
+    const aw = w[i] - q[3];
+    const s =
+      ee > 0
+        ? clamp((ax * e[0] + ay * e[1] + az * e[2] + aw * e[3]) / ee, -1, 1)
+        : 0;
+    const dx = q[0] + s * e[0] - positions[i * 3];
+    const dy = q[1] + s * e[1] - positions[i * 3 + 1];
+    const dz = q[2] + s * e[2] - positions[i * 3 + 2];
+    const dw = q[3] + s * e[3] - w[i];
     const d2 = dx * dx + dy * dy + dz * dz + dw * dw;
     if (d2 < best) best = d2;
   }
@@ -1408,6 +1449,374 @@ describe("estimateDistance4Refined sphere-floor pin (fr-zkt2)", () => {
         if (value !== full) earlyExits++;
       }
     }
+    expect(earlyExits).toBeGreaterThan(0);
+  });
+});
+
+// -----------------------------------------------------------------------
+// Slab queries (fr-wa6o): both estimators take an optional `halfExtent`
+// that turns the query point into the SEGMENT `p ± halfExtent`, marching a
+// SLAB of half-thickness h rather than a zero-thickness hyperplane — see
+// the module doc's SLAB QUERIES section. Same "conservative bound, exact
+// zero set" contract as the point query, just looser; `halfExtent = null`
+// (or all-zero) must reproduce the point-query path exactly.
+// -----------------------------------------------------------------------
+
+describe("slab queries: a null or all-zero half-extent matches the point-query path exactly (fr-wa6o gate-in guarantee)", () => {
+  it("holds for both estimators across the validityQueries mix on pentatope", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of validityQueries(cloud)) {
+      const base = estimateDistance4(de, q);
+      expect(estimateDistance4(de, q, null)).toBe(base);
+      expect(estimateDistance4(de, q, [0, 0, 0, 0])).toBe(base);
+
+      const refined = estimateDistance4Refined(de, q);
+      expect(estimateDistance4Refined(de, q, 0, null)).toBe(refined);
+      expect(estimateDistance4Refined(de, q, 0, [0, 0, 0, 0])).toBe(refined);
+    }
+  });
+
+  it("holds through doubleRotation's 127-level descent, where any accumulated drift in the carried extent would show up first", () => {
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const q of jitteredQueries(cloud, 30)) {
+      const base = estimateDistance4(de, q);
+      expect(estimateDistance4(de, q, null)).toBe(base);
+      expect(estimateDistance4(de, q, [0, 0, 0, 0])).toBe(base);
+
+      const refined = estimateDistance4Refined(de, q);
+      expect(estimateDistance4Refined(de, q, 0, null)).toBe(refined);
+      expect(estimateDistance4Refined(de, q, 0, [0, 0, 0, 0])).toBe(refined);
+    }
+  });
+});
+
+describe("slab validity: the estimate never exceeds the true distance from the segment to the attractor (fr-wa6o)", () => {
+  // Thicknesses as suggested on the bead; measured (this suite): 0
+  // violations for both estimators across all four systems below, over 120
+  // (query, thickness) combinations each.
+  it("holds for pentatope across three thicknesses", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const h of [0.02, 0.08, 0.25]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (const q of jitteredQueries(cloud, 40)) {
+        const truth = nearestSegmentDistance4(
+          cloud.positions,
+          cloud.w,
+          cloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-9,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-9);
+      }
+    }
+  });
+
+  it("holds for tesseract across three thicknesses", () => {
+    const transforms = tesseract();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const h of [0.02, 0.08, 0.25]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (const q of jitteredQueries(cloud, 40)) {
+        const truth = nearestSegmentDistance4(
+          cloud.positions,
+          cloud.w,
+          cloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-9,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-9);
+      }
+    }
+  });
+
+  it("holds for sixteenCellFlake across three thicknesses", () => {
+    const transforms = sixteenCellFlake();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const h of [0.02, 0.08, 0.25]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (const q of jitteredQueries(cloud, 40)) {
+        const truth = nearestSegmentDistance4(
+          cloud.positions,
+          cloud.w,
+          cloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-9,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-9);
+      }
+    }
+  });
+
+  it("holds for doubleRotation across three thicknesses, tolerance widened for the 127-level descent", () => {
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const h of [0.02, 0.08, 0.25]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (const q of jitteredQueries(cloud, 40)) {
+        const truth = nearestSegmentDistance4(
+          cloud.positions,
+          cloud.w,
+          cloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-6,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-6);
+      }
+    }
+  });
+});
+
+describe("slab queries: the zero-thickness estimate misses off-slice content the slab captures (fr-wa6o)", () => {
+  // Query centred 0.9h off the sample's own w, so the point query looks away
+  // from it while the segment (spanning +-h in w) still reaches it exactly,
+  // at the segment's own parameter s = 0.9. Measured (this suite, h = 0.08,
+  // sampleCount = 60): pentatope missed the point query on 58/60 samples,
+  // doubleRotation on 60/60 — comfortably over the `> half` floor asserted
+  // below, which is deliberately looser than the measured numbers so the
+  // test isn't brittle to unrelated changes shifting the fraction slightly.
+  it("holds for pentatope", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const eps = 0.005 * de.boundingRadius;
+    const h = 0.08;
+    const halfExtent: Vec4 = [0, 0, 0, h];
+    const rng = mulberry32(99);
+    const sampleCount = 60;
+    let missedByPointQuery = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const a: Vec4 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ];
+      const p: Vec4 = [a[0], a[1], a[2], a[3] - 0.9 * h];
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeLessThan(eps);
+      if (estimateDistance4Refined(de, p) >= eps) missedByPointQuery++;
+    }
+    expect(missedByPointQuery).toBeGreaterThan(sampleCount / 2);
+  });
+
+  it("holds for doubleRotation, whose depth-capped DE bottoms out slightly above 0 rather than at it", () => {
+    // doubleRotation's slab reading here is a tiny POSITIVE ~2.4e-8 (the
+    // DEPTH_RESOLUTION*R floor from its 127-level cap), not exactly 0 the
+    // way pentatope's shallower descent reads — exactly why this test (like
+    // the one above) compares against an acceptance epsilon rather than
+    // asserting <= 0.
+    const transforms = doubleRotation();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const eps = 0.005 * de.boundingRadius;
+    const h = 0.08;
+    const halfExtent: Vec4 = [0, 0, 0, h];
+    const rng = mulberry32(99);
+    const sampleCount = 60;
+    let missedByPointQuery = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const a: Vec4 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ];
+      const p: Vec4 = [a[0], a[1], a[2], a[3] - 0.9 * h];
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeLessThan(eps);
+      if (estimateDistance4Refined(de, p) >= eps) missedByPointQuery++;
+    }
+    expect(missedByPointQuery).toBeGreaterThan(sampleCount / 2);
+  });
+});
+
+describe("estimateDistance4Refined never falls below the base estimate, with a slab (fr-wa6o)", () => {
+  it("holds for pentatope across the validityQueries mix at two thicknesses", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    for (const h of [0.05, 0.2]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (const q of validityQueries(cloud)) {
+        const base = estimateDistance4(de, q, halfExtent);
+        const refined = estimateDistance4Refined(de, q, 0, halfExtent);
+        expect(refined).toBeGreaterThanOrEqual(base - 1e-12);
+      }
+    }
+  });
+});
+
+describe("the final-transform lens carries the half-extent through its inverse linear part (fr-wa6o)", () => {
+  it("keeps slab validity on pentatope with a non-translation (rotate + scale) final transform", () => {
+    const transforms = pentatope();
+    const finalTransform = map4({
+      position: [0.15, -0.1, 0.2],
+      scale: [0.6, 0.4, 0.5],
+      rotation: [0.3, -0.2, 0.5],
+    });
+    const de = buildSurfaceDE4(transforms, finalTransform);
+    const rawCloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    // The DE marches the VISIBLE (lensed) attractor F(raw attractor); ground
+    // truth needs every raw sample pushed through the same forward
+    // transform, so the check exercises the lens's inverse-linear-part
+    // handling of the extent rather than assuming it away.
+    const forward = composeAffine4(toTransform4(finalTransform));
+    const visiblePositions = new Float32Array(rawCloud.count * 3);
+    const visibleW = new Float32Array(rawCloud.count);
+    for (let i = 0; i < rawCloud.count; i++) {
+      const v = applyAffine4(
+        forward,
+        rawCloud.positions[i * 3],
+        rawCloud.positions[i * 3 + 1],
+        rawCloud.positions[i * 3 + 2],
+        rawCloud.w[i],
+      );
+      visiblePositions[i * 3] = v[0];
+      visiblePositions[i * 3 + 1] = v[1];
+      visiblePositions[i * 3 + 2] = v[2];
+      visibleW[i] = v[3];
+    }
+    const rng = mulberry32(17);
+    for (const h of [0.02, 0.08, 0.25]) {
+      const halfExtent: Vec4 = [0, 0, 0, h];
+      for (let i = 0; i < 30; i++) {
+        const idx = Math.floor(rng() * rawCloud.count);
+        const q: Vec4 = [
+          visiblePositions[idx * 3] + (rng() - 0.5) * 0.3,
+          visiblePositions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+          visiblePositions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+          visibleW[idx] + (rng() - 0.5) * 0.3,
+        ];
+        const truth = nearestSegmentDistance4(
+          visiblePositions,
+          visibleW,
+          rawCloud.count,
+          q,
+          halfExtent,
+        );
+        expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+          truth + 1e-9,
+        );
+        expect(
+          estimateDistance4Refined(de, q, 0, halfExtent),
+        ).toBeLessThanOrEqual(truth + 1e-9);
+      }
+    }
+  });
+});
+
+describe("estimateDistance4Refined early-out cutoff holds with a slab (fr-wa6o)", () => {
+  it("pins both cutoff properties on pentatope with a nonzero half-extent", () => {
+    const transforms = pentatope();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+    );
+    const halfExtent: Vec4 = [0, 0, 0, 0.08];
+    const rng = mulberry32(4242);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 40; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.4][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 20; i++) {
+      probes.push([
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ]);
+    }
+    const cutoffs = [1e-4, 1e-2, 5e-2, 2e-1].map((f) => f * de.boundingRadius);
+    let earlyExits = 0;
+    for (const p of probes) {
+      const full = estimateDistance4Refined(de, p, 0, halfExtent);
+      for (const cutoff of cutoffs) {
+        const value = estimateDistance4Refined(de, p, cutoff, halfExtent);
+        expect(value).toBeGreaterThanOrEqual(full);
+        if (value >= cutoff) expect(value).toBe(full);
+        else expect(full).toBeLessThan(cutoff);
+        if (value !== full) earlyExits++;
+      }
+    }
+    // Pins the mechanism as live: measured 104 early exits on this probe set.
     expect(earlyExits).toBeGreaterThan(0);
   });
 });

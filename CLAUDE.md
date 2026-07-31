@@ -128,7 +128,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     `buildSurfaceDE4` (final-transform lens included), beam
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
-    Measured verdict + numbers in the module doc.
+    Measured verdict + numbers in the module doc. Both estimators take an
+    optional `halfExtent` (fr-wa6o): the query becomes the SEGMENT
+    `p ± halfExtent`, which turns the marched hyperplane into a SLAB of
+    half-thickness `h` — same contract (conservative bound, exact zero set),
+    just looser, because affine maps take segments to segments. One extra
+    4-vector per chain/candidate (moved by each inverse map's LINEAR part),
+    `segmentRadius` in place of every `|q|`, and `chainScale · |e| <= h`
+    caps what the bound can lose at every level. `null`/zero — the default
+    and the shipped slider position — is the point query value for value.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (fr-q1f8 spike, gated
     in by fr-ck0w's occupancy verdict; app integration fr-tzdg): mirrors
     `estimateDistance`'s refine=false fold path term for term (the
@@ -537,7 +545,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
     certificates + width-4 beam — the fr-beck-measured ghost eliminator
     plus fr-jkpn's validity slots).
-    Rotor + w-slice are LIVE per-frame view uniforms (`setSurfaceView4`),
+    The slice has a THICKNESS since fr-wa6o: `uSliceHalfW > 0` makes every
+    descent query the SEGMENT spanning `|w - uW0| <= h` instead of the point
+    `(p, uW0)`, so the mode renders a SLAB's projected shadow rather than a
+    cross-section (the oracle's `halfExtent`, mirrored line for line — one
+    `vec4` per chain/candidate, `segmentRadius` for every `length`, and the
+    visible-ball gate widened to `max(0, |uW0| - h)`). `segment` is a
+    dynamically-uniform branch, so `h = 0` — the shipped default — costs
+    nothing beyond the extra live registers and renders today's frame value
+    for value. Rotor + w-slice are LIVE per-frame view uniforms
+    (`setSurfaceView4`),
     unlike flame/solid-4D's frozen snapshot — the slider is normalized
     rotated-w, and `scene.ts`'s `setSurface4View` converts it to the
     tracer's world `uW0` through `wSupport` (fr-33yb), so one slider

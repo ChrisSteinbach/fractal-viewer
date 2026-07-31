@@ -14,6 +14,7 @@ import {
 } from "./surface-de";
 import type { MapSigmas, SurfaceEligibilityStatus } from "./surface-de";
 import type { Transform, Transform4, Vec4 } from "./types";
+import { clamp } from "./vec";
 
 /**
  * 4D surface distance estimation for an affine IFS — the fr-beck feasibility
@@ -124,6 +125,45 @@ import type { Transform, Transform4, Vec4 } from "./types";
  * on this system. Residual (disclosed on the fr-v6yg bead): 3+
  * simultaneous in-sphere branches still drop (m >= 3 slow-map systems,
  * sigma_max >= 0.96, and kaleidoscope-tied copies in 3D) at ~2-5%R.
+ *
+ * SLAB QUERIES (fr-wa6o). The SLICE CAVEAT above marches a zero-thickness
+ * hyperplane: the query is the single 4D point `(p, w0)`, so the rendered
+ * object is the cross-section `A ∩ {w = w0}`. Both estimators now take an
+ * optional half-extent `e` that turns the query into the SEGMENT
+ * `S = {(p, w0) + s·e : s ∈ [-1, 1]}`, and with `e` the slab's w-direction
+ * scaled by a half-thickness `h`, `S` is exactly the part of the slab
+ * `{|w - w0| <= h}` sitting over `p`. The contract generalizes term for term:
+ *
+ *     dist4(S, A) <= dist3(p, proj(A ∩ slab))
+ *
+ * with the zero sets EQUAL — `S` meets `A` exactly where `p` lies in the
+ * slab's shadow — so a certified lower bound on `dist4(S, A)` is a certified
+ * lower bound for marching that shadow, the same "conservative bound, exact
+ * zero set" the `h = 0` instance already had, just looser. Nothing new can go
+ * unsound.
+ *
+ * Every piece of the descent carries over because AFFINE MAPS TAKE SEGMENTS
+ * TO SEGMENTS. The core inequality holds for a SET query verbatim —
+ * `dist(S, f(A)) >= sigma_min(M) · dist(f^-1(S), A)`, since every `s ∈ S` has
+ * `|s - f(a)| = |M(f^-1(s) - a)| >= sigma_min · dist(f^-1(S), A)` — and
+ * `f^-1(S)` is the segment centred at `f^-1(q)` with half-extent `M^-1 e`.
+ * So the descent carries one extra 4-vector alongside each chain's and
+ * candidate's point, transformed by the inverse map's LINEAR part alone, and
+ * every `|q| - R` ball certificate becomes {@link segmentRadius}` - R`. The
+ * beam, fr-jkpn's validity slots, fr-beck's refined certificates, the
+ * terminal KIFS bound, the depth-0 sphere floor, the final-transform lens and
+ * both early exits are structurally untouched.
+ *
+ * HOW MUCH THE BOUND CAN LOSE. `e` GROWS down the descent (inverse maps
+ * expand), but only as fast as the chain's contraction shrinks:
+ * `|e_chain| <= h / chainScale`, so `chainScale · |e_chain| <= h` at every
+ * level. A slab certificate therefore sits within `h` of the point
+ * certificate it replaces — the trivial `dist(S, A) >= dist(q, A) - h` bound,
+ * recovered level by level. (That trivial bound is also why `min` over N
+ * discrete `w` samples is NOT what this does: subtracting `h` outright is
+ * valid and needs no new math, but it fattens the zero set ISOTROPICALLY —
+ * dilating the rendered object in x/y/z too — where the segment fattens it in
+ * `w` alone, which is the whole point.)
  */
 
 /** Fixed sweep order for {@link singularValues4}'s cyclic Jacobi: the six
@@ -614,6 +654,83 @@ export function buildSurfaceDE4(
 }
 
 /**
+ * Distance from the ORIGIN to the segment `{q + s·e : s ∈ [-1, 1]}` — the
+ * slab query's stand-in for `|q|` at every radius, escape test and ball
+ * certificate the descent computes (fr-wa6o; see the module doc's SLAB
+ * QUERIES section). `s` is the segment's own parameter at closest approach:
+ * the unconstrained minimizer of `|q + s·e|²` is `-dot(q, e) / dot(e, e)`,
+ * and clamping it to the segment's ends turns the infinite LINE's distance
+ * (which undershoots, and by more than the slab justifies) into the
+ * segment's exact one.
+ *
+ * At `e = 0` this returns `|q|` bit for bit — `ee = 0` takes the guarded
+ * `s = 0` branch and `q + 0·e` is `q` exactly — which is what lets the whole
+ * thickness feature ship defaulting to `h = 0` with the zero-thickness path
+ * unchanged value for value.
+ *
+ * OVERFLOW TAIL (the GLSL mirror's, not this one's). `chainScale · |e| <= h`
+ * bounds the extent at every level (module doc), so `ee` only reaches f32's
+ * ~1.8e19 ceiling once `chainScale` has fallen below `h / 1.8e19` — sixteen
+ * orders of magnitude under `DEPTH_RESOLUTION`, where certificates are
+ * numerically dead. There `ee` saturates to Infinity, `s` divides to 0, and
+ * this degrades to `|q|`: an overshoot of a term already indistinguishable
+ * from zero. f64 (here) never reaches it.
+ */
+function segmentRadius(
+  qx: number,
+  qy: number,
+  qz: number,
+  qw: number,
+  e: Float64Array,
+): number {
+  const ee = e[0] * e[0] + e[1] * e[1] + e[2] * e[2] + e[3] * e[3];
+  const s =
+    ee > 0
+      ? clamp(-(qx * e[0] + qy * e[1] + qz * e[2] + qw * e[3]) / ee, -1, 1)
+      : 0;
+  const dx = qx + s * e[0];
+  const dy = qy + s * e[1];
+  const dz = qz + s * e[2];
+  const dw = qw + s * e[3];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+}
+
+/**
+ * `dst = M · src` for a row-major 4x4 — the LINEAR part of an affine map,
+ * which is all a segment's half-extent ever sees: a translation slides the
+ * segment's centre and leaves its extent alone. Alias-safe (`src === dst` is
+ * fine), since every component is read before any is written.
+ */
+function applyLinear4(m: number[], src: Float64Array, dst: Float64Array): void {
+  const x = src[0];
+  const y = src[1];
+  const z = src[2];
+  const w = src[3];
+  dst[0] = m[0] * x + m[1] * y + m[2] * z + m[3] * w;
+  dst[1] = m[4] * x + m[5] * y + m[6] * z + m[7] * w;
+  dst[2] = m[8] * x + m[9] * y + m[10] * z + m[11] * w;
+  dst[3] = m[12] * x + m[13] * y + m[14] * z + m[15] * w;
+}
+
+/**
+ * True when `halfExtent` describes a real slab rather than the point query.
+ * Both estimators hoist this once and gate every extent PROPAGATION on it —
+ * the arithmetic would collapse correctly anyway (a zero extent stays zero
+ * through any linear map), so the flag buys only the work, never the values.
+ * It mirrors the GLSL's `uSliceHalfW > 0.0`, which is dynamically uniform
+ * across a draw and therefore free.
+ */
+function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
+  return (
+    halfExtent !== null &&
+    (halfExtent[0] !== 0 ||
+      halfExtent[1] !== 0 ||
+      halfExtent[2] !== 0 ||
+      halfExtent[3] !== 0)
+  );
+}
+
+/**
  * Reference DE the module's validity argument certifies: beam inverse-map
  * descent with sibling-certificate tracking, a structural port of 3D's
  * `estimateDistance` (see the module doc for why the validity argument
@@ -629,12 +746,26 @@ export function buildSurfaceDE4(
  * (doubleRotation's profile) that certificate refinement provably cannot
  * touch; widths 3/4 add the fr-jkpn validity slots — rank-3/4 chains that
  * live only while in-sphere, closing the 3-and-4-simultaneous drops.
+ *
+ * `halfExtent` turns the query into the SEGMENT `p ± halfExtent` — the slab
+ * query of fr-wa6o, see the module doc's SLAB QUERIES section. The default
+ * `null` is the point query, value for value.
  */
-export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
+export function estimateDistance4(
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4 | null = null,
+): number {
   let x = p[0];
   let y = p[1];
   let z = p[2];
   let w = p[3];
+  // The query's half-extent, carried alongside the point down every chain.
+  // Zero — the default — is the point query this module shipped with, and
+  // every term below collapses to it exactly (see `segmentRadius`).
+  const segment = isSegment(halfExtent);
+  const ext = new Float64Array(4);
+  if (segment) ext.set(halfExtent);
   let finalScale = 1;
   if (de.final) {
     const f = de.final;
@@ -648,11 +779,13 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
     y = qy;
     z = qz;
     w = qw;
+    // The lens carries the extent by its LINEAR part alone.
+    if (segment) applyLinear4(im, ext, ext);
     finalScale = f.sigmaMin;
   }
 
   const R = de.boundingRadius;
-  const startR = Math.sqrt(x * x + y * y + z * z + w * w);
+  const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
@@ -664,11 +797,20 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   // dropping them was the measured invalidity — and fold the ordinary
   // certificate the moment they escape. Mirrors 3D's estimateDistance with
   // a fourth coordinate on every chain and candidate slot.
+  //
+  // Each slot's segment half-extent rides in its own 4-element buffer rather
+  // than four more unrolled scalars: that keeps this body line-for-line with
+  // the GLSL mirror, where the same quantity is one `vec4`. The candidate and
+  // eviction buffers are hoisted out of the depth loop (the GLSL declares
+  // them inside it, where declarations are free) — safe because a slot's
+  // contents are read only once its own key/radius sentinel says it is
+  // occupied, and occupancy is re-decided from scratch every level.
   const extra = de.beamWidth - 2;
   let aX = x;
   let aY = y;
   let aZ = z;
   let aW = w;
+  const aExt = new Float64Array(ext);
   let aScale = 1;
   let aR = startR;
   let aLive = true;
@@ -676,6 +818,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   let bY = 0;
   let bZ = 0;
   let bW = 0;
+  const bExt = new Float64Array(4);
   let bScale = 1;
   let bR = 0;
   let bLive = false;
@@ -687,14 +830,25 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
   let v1Y = 0;
   let v1Z = 0;
   let v1W = 0;
+  const v1Ext = new Float64Array(4);
   let v1Scale = 1;
   let v1Live = false;
   let v2X = 0;
   let v2Y = 0;
   let v2Z = 0;
   let v2W = 0;
+  const v2Ext = new Float64Array(4);
   let v2Scale = 1;
   let v2Live = false;
+  const c1Ext = new Float64Array(4);
+  const c2Ext = new Float64Array(4);
+  const c3Ext = new Float64Array(4);
+  const c4Ext = new Float64Array(4);
+  const eExt = new Float64Array(4);
+  const imgExt = new Float64Array(4);
+  // No `tExt` here, unlike the refined twin: this estimator's rank-3/4 spill
+  // hands the fold site a radius and a certificate only — never a point, and
+  // so never an extent — so the displaced tuple's extent dies with it.
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
@@ -741,6 +895,9 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
       let pY: number;
       let pZ: number;
       let pW: number;
+      // Read-only alias of the chain's own extent buffer — every write below
+      // lands in `imgExt`, never here.
+      let pExt: Float64Array;
       let pScale: number;
       if (c === 0) {
         if (!aLive) continue;
@@ -748,6 +905,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         pY = aY;
         pZ = aZ;
         pW = aW;
+        pExt = aExt;
         pScale = aScale;
       } else if (c === 1) {
         if (!bLive) continue;
@@ -755,6 +913,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         pY = bY;
         pZ = bZ;
         pW = bW;
+        pExt = bExt;
         pScale = bScale;
       } else if (c === 2) {
         if (!v1Live) continue;
@@ -762,6 +921,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         pY = v1Y;
         pZ = v1Z;
         pW = v1W;
+        pExt = v1Ext;
         pScale = v1Scale;
       } else {
         if (!v2Live) continue;
@@ -769,6 +929,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         pY = v2Y;
         pZ = v2Z;
         pW = v2W;
+        pExt = v2Ext;
         pScale = v2Scale;
       }
       for (let j = 0; j < de.maps.length; j++) {
@@ -780,7 +941,8 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
         const iw =
           im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
-        const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+        if (segment) applyLinear4(im, pExt, imgExt);
+        const r = segmentRadius(ix, iy, iz, iw, imgExt);
         const key = pScale * (r - R);
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
@@ -794,6 +956,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         let eY = iy;
         let eZ = iz;
         let eW = iw;
+        eExt.set(imgExt);
         let eScale = childScale;
         let eR = r;
         let eCert = cert;
@@ -803,6 +966,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           eY = c2Y;
           eZ = c2Z;
           eW = c2W;
+          eExt.set(c2Ext);
           eScale = c2Scale;
           eR = c2R;
           eCert = c2Cert;
@@ -811,6 +975,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           c2Y = c1Y;
           c2Z = c1Z;
           c2W = c1W;
+          c2Ext.set(c1Ext);
           c2Scale = c1Scale;
           c2R = c1R;
           c2Cert = c1Cert;
@@ -819,6 +984,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           c1Y = iy;
           c1Z = iz;
           c1W = iw;
+          c1Ext.set(imgExt);
           c1Scale = childScale;
           c1R = r;
           c1Cert = cert;
@@ -828,6 +994,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           eY = c2Y;
           eZ = c2Z;
           eW = c2W;
+          eExt.set(c2Ext);
           eScale = c2Scale;
           eR = c2R;
           eCert = c2Cert;
@@ -836,6 +1003,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
           c2Y = iy;
           c2Z = iz;
           c2W = iw;
+          c2Ext.set(imgExt);
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
@@ -854,6 +1022,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
               c4Y = c3Y;
               c4Z = c3Z;
               c4W = c3W;
+              c4Ext.set(c3Ext);
               c4Scale = c3Scale;
               c4R = c3R;
               c4Cert = c3Cert;
@@ -863,6 +1032,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
             c3Y = eY;
             c3Z = eZ;
             c3W = eW;
+            c3Ext.set(eExt);
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
@@ -876,6 +1046,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
             c4Y = eY;
             c4Z = eZ;
             c4W = eW;
+            c4Ext.set(eExt);
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
@@ -908,6 +1079,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         aY = c1Y;
         aZ = c1Z;
         aW = c1W;
+        aExt.set(c1Ext);
         aScale = c1Scale;
         aR = c1R;
         aLive = true;
@@ -921,6 +1093,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         bY = c2Y;
         bZ = c2Z;
         bW = c2W;
+        bExt.set(c2Ext);
         bScale = c2Scale;
         bR = c2R;
         bLive = true;
@@ -934,6 +1107,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         v1Y = c3Y;
         v1Z = c3Z;
         v1W = c3W;
+        v1Ext.set(c3Ext);
         v1Scale = c3Scale;
         v1Live = true;
       }
@@ -946,6 +1120,7 @@ export function estimateDistance4(de: SurfaceDE4, p: Vec4): number {
         v2Y = c4Y;
         v2Z = c4Z;
         v2W = c4W;
+        v2Ext.set(c4Ext);
         v2Scale = c4Scale;
         v2Live = true;
       }
@@ -1104,11 +1279,18 @@ export function estimateDistance4Refined(
   de: SurfaceDE4,
   p: Vec4,
   cutoff = 0,
+  halfExtent: Vec4 | null = null,
 ): number {
   let x = p[0];
   let y = p[1];
   let z = p[2];
   let w = p[3];
+  // The query's half-extent, carried alongside the point down every chain.
+  // Zero — the default — is the point query this module shipped with, and
+  // every term below collapses to it exactly (see `segmentRadius`).
+  const segment = isSegment(halfExtent);
+  const ext = new Float64Array(4);
+  if (segment) ext.set(halfExtent);
   let finalScale = 1;
   if (de.final) {
     const f = de.final;
@@ -1122,11 +1304,13 @@ export function estimateDistance4Refined(
     y = qy;
     z = qz;
     w = qw;
+    // The lens carries the extent by its LINEAR part alone.
+    if (segment) applyLinear4(im, ext, ext);
     finalScale = f.sigmaMin;
   }
 
   const R = de.boundingRadius;
-  const startR = Math.sqrt(x * x + y * y + z * z + w * w);
+  const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
   let best = Infinity;
@@ -1147,11 +1331,13 @@ export function estimateDistance4Refined(
   // image, over every map k (see the doc comment's VALIDITY note): the
   // certificate becomes childScale * max(r - R, inner) — never below the
   // base estimator's childScale * (r - R).
+  const innerExt = new Float64Array(4);
   const refinedCert = (
     ix: number,
     iy: number,
     iz: number,
     iw: number,
+    iExt: Float64Array,
     r: number,
     childScale: number,
   ): number => {
@@ -1166,7 +1352,8 @@ export function estimateDistance4Refined(
         imK[8] * ix + imK[9] * iy + imK[10] * iz + imK[11] * iw + itK[2];
       const kw =
         imK[12] * ix + imK[13] * iy + imK[14] * iz + imK[15] * iw + itK[3];
-      const rk = Math.sqrt(kx * kx + ky * ky + kz * kz + kw * kw);
+      if (segment) applyLinear4(imK, iExt, innerExt);
+      const rk = segmentRadius(kx, ky, kz, kw, innerExt);
       const innerTerm = mapK.sigmaMin * (rk - R);
       if (innerTerm < inner) inner = innerTerm;
     }
@@ -1179,11 +1366,20 @@ export function estimateDistance4Refined(
   // those are in-sphere — branches that carry no positive certificate, so
   // dropping them was the measured invalidity — and fold the ordinary
   // refined certificate the moment they escape.
+  //
+  // Each slot's segment half-extent rides in its own 4-element buffer rather
+  // than four more unrolled scalars: that keeps this body line-for-line with
+  // the GLSL mirror, where the same quantity is one `vec4`. The candidate and
+  // eviction buffers are hoisted out of the depth loop (the GLSL declares
+  // them inside it, where declarations are free) — safe because a slot's
+  // contents are read only once its own key/radius sentinel says it is
+  // occupied, and occupancy is re-decided from scratch every level.
   const extra = de.beamWidth - 2;
   let aX = x;
   let aY = y;
   let aZ = z;
   let aW = w;
+  const aExt = new Float64Array(ext);
   let aScale = 1;
   let aR = startR;
   let aLive = true;
@@ -1191,6 +1387,7 @@ export function estimateDistance4Refined(
   let bY = 0;
   let bZ = 0;
   let bW = 0;
+  const bExt = new Float64Array(4);
   let bScale = 1;
   let bR = 0;
   let bLive = false;
@@ -1202,14 +1399,23 @@ export function estimateDistance4Refined(
   let v1Y = 0;
   let v1Z = 0;
   let v1W = 0;
+  const v1Ext = new Float64Array(4);
   let v1Scale = 1;
   let v1Live = false;
   let v2X = 0;
   let v2Y = 0;
   let v2Z = 0;
   let v2W = 0;
+  const v2Ext = new Float64Array(4);
   let v2Scale = 1;
   let v2Live = false;
+  const c1Ext = new Float64Array(4);
+  const c2Ext = new Float64Array(4);
+  const c3Ext = new Float64Array(4);
+  const c4Ext = new Float64Array(4);
+  const eExt = new Float64Array(4);
+  const imgExt = new Float64Array(4);
+  const tExt = new Float64Array(4);
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
@@ -1256,6 +1462,9 @@ export function estimateDistance4Refined(
       let pY: number;
       let pZ: number;
       let pW: number;
+      // Read-only alias of the chain's own extent buffer — every write below
+      // lands in `imgExt`, never here.
+      let pExt: Float64Array;
       let pScale: number;
       if (c === 0) {
         if (!aLive) continue;
@@ -1263,6 +1472,7 @@ export function estimateDistance4Refined(
         pY = aY;
         pZ = aZ;
         pW = aW;
+        pExt = aExt;
         pScale = aScale;
       } else if (c === 1) {
         if (!bLive) continue;
@@ -1270,6 +1480,7 @@ export function estimateDistance4Refined(
         pY = bY;
         pZ = bZ;
         pW = bW;
+        pExt = bExt;
         pScale = bScale;
       } else if (c === 2) {
         if (!v1Live) continue;
@@ -1277,6 +1488,7 @@ export function estimateDistance4Refined(
         pY = v1Y;
         pZ = v1Z;
         pW = v1W;
+        pExt = v1Ext;
         pScale = v1Scale;
       } else {
         if (!v2Live) continue;
@@ -1284,6 +1496,7 @@ export function estimateDistance4Refined(
         pY = v2Y;
         pZ = v2Z;
         pW = v2W;
+        pExt = v2Ext;
         pScale = v2Scale;
       }
       for (let j = 0; j < de.maps.length; j++) {
@@ -1295,7 +1508,8 @@ export function estimateDistance4Refined(
         const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
         const iw =
           im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
-        const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+        if (segment) applyLinear4(im, pExt, imgExt);
+        const r = segmentRadius(ix, iy, iz, iw, imgExt);
         const key = pScale * (r - R);
         const childScale = pScale * map.sigmaMin;
         const cert = childScale * (r - R);
@@ -1309,6 +1523,7 @@ export function estimateDistance4Refined(
         let eY = iy;
         let eZ = iz;
         let eW = iw;
+        eExt.set(imgExt);
         let eScale = childScale;
         let eR = r;
         let eCert = cert;
@@ -1318,6 +1533,7 @@ export function estimateDistance4Refined(
           eY = c2Y;
           eZ = c2Z;
           eW = c2W;
+          eExt.set(c2Ext);
           eScale = c2Scale;
           eR = c2R;
           eCert = c2Cert;
@@ -1326,6 +1542,7 @@ export function estimateDistance4Refined(
           c2Y = c1Y;
           c2Z = c1Z;
           c2W = c1W;
+          c2Ext.set(c1Ext);
           c2Scale = c1Scale;
           c2R = c1R;
           c2Cert = c1Cert;
@@ -1334,6 +1551,7 @@ export function estimateDistance4Refined(
           c1Y = iy;
           c1Z = iz;
           c1W = iw;
+          c1Ext.set(imgExt);
           c1Scale = childScale;
           c1R = r;
           c1Cert = cert;
@@ -1343,6 +1561,7 @@ export function estimateDistance4Refined(
           eY = c2Y;
           eZ = c2Z;
           eW = c2W;
+          eExt.set(c2Ext);
           eScale = c2Scale;
           eR = c2R;
           eCert = c2Cert;
@@ -1351,6 +1570,7 @@ export function estimateDistance4Refined(
           c2Y = iy;
           c2Z = iz;
           c2W = iw;
+          c2Ext.set(imgExt);
           c2Scale = childScale;
           c2R = r;
           c2Cert = cert;
@@ -1366,6 +1586,7 @@ export function estimateDistance4Refined(
             const tY = extra > 1 ? c4Y : c3Y;
             const tZ = extra > 1 ? c4Z : c3Z;
             const tW = extra > 1 ? c4W : c3W;
+            tExt.set(extra > 1 ? c4Ext : c3Ext);
             const tScale = extra > 1 ? c4Scale : c3Scale;
             const tR = extra > 1 ? c4R : c3R;
             const tCert = extra > 1 ? c4Cert : c3Cert;
@@ -1375,6 +1596,7 @@ export function estimateDistance4Refined(
               c4Y = c3Y;
               c4Z = c3Z;
               c4W = c3W;
+              c4Ext.set(c3Ext);
               c4Scale = c3Scale;
               c4R = c3R;
               c4Cert = c3Cert;
@@ -1384,6 +1606,7 @@ export function estimateDistance4Refined(
             c3Y = eY;
             c3Z = eZ;
             c3W = eW;
+            c3Ext.set(eExt);
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
@@ -1391,6 +1614,7 @@ export function estimateDistance4Refined(
             eY = tY;
             eZ = tZ;
             eW = tW;
+            eExt.set(tExt);
             eScale = tScale;
             eR = tR;
             eCert = tCert;
@@ -1399,6 +1623,7 @@ export function estimateDistance4Refined(
             const tY = c4Y;
             const tZ = c4Z;
             const tW = c4W;
+            tExt.set(c4Ext);
             const tScale = c4Scale;
             const tR = c4R;
             const tCert = c4Cert;
@@ -1407,6 +1632,7 @@ export function estimateDistance4Refined(
             c4Y = eY;
             c4Z = eZ;
             c4W = eW;
+            c4Ext.set(eExt);
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
@@ -1414,6 +1640,7 @@ export function estimateDistance4Refined(
             eY = tY;
             eZ = tZ;
             eW = tW;
+            eExt.set(tExt);
             eScale = tScale;
             eR = tR;
             eCert = tCert;
@@ -1426,7 +1653,7 @@ export function estimateDistance4Refined(
         // widths 3/4 it can only get here past FOUR smaller keys, the
         // (shrunken) fr-jkpn residual drop.
         if (eR > R && eCert < best) {
-          const rc = refinedCert(eX, eY, eZ, eW, eR, eScale);
+          const rc = refinedCert(eX, eY, eZ, eW, eExt, eR, eScale);
           if (rc < best) {
             best = rc;
             // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
@@ -1464,6 +1691,7 @@ export function estimateDistance4Refined(
         aY = c1Y;
         aZ = c1Z;
         aW = c1W;
+        aExt.set(c1Ext);
         aScale = c1Scale;
         aR = c1R;
         aLive = true;
@@ -1472,7 +1700,7 @@ export function estimateDistance4Refined(
     if (c2Key < Infinity) {
       if (!wide) {
         if (c2R > R && c2Cert < best) {
-          const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2R, c2Scale);
+          const rc = refinedCert(c2X, c2Y, c2Z, c2W, c2Ext, c2R, c2Scale);
           if (rc < best) best = rc;
         }
       } else if (c2R > de.escapeRadius) {
@@ -1482,6 +1710,7 @@ export function estimateDistance4Refined(
         bY = c2Y;
         bZ = c2Z;
         bW = c2W;
+        bExt.set(c2Ext);
         bScale = c2Scale;
         bR = c2R;
         bLive = true;
@@ -1490,7 +1719,7 @@ export function estimateDistance4Refined(
     if (extra > 0 && c3Key < Infinity) {
       if (c3R > R) {
         if (c3Cert < best) {
-          const rc = refinedCert(c3X, c3Y, c3Z, c3W, c3R, c3Scale);
+          const rc = refinedCert(c3X, c3Y, c3Z, c3W, c3Ext, c3R, c3Scale);
           if (rc < best) best = rc;
         }
       } else {
@@ -1498,6 +1727,7 @@ export function estimateDistance4Refined(
         v1Y = c3Y;
         v1Z = c3Z;
         v1W = c3W;
+        v1Ext.set(c3Ext);
         v1Scale = c3Scale;
         v1Live = true;
       }
@@ -1505,7 +1735,7 @@ export function estimateDistance4Refined(
     if (extra > 1 && c4Key < Infinity) {
       if (c4R > R) {
         if (c4Cert < best) {
-          const rc = refinedCert(c4X, c4Y, c4Z, c4W, c4R, c4Scale);
+          const rc = refinedCert(c4X, c4Y, c4Z, c4W, c4Ext, c4R, c4Scale);
           if (rc < best) best = rc;
         }
       } else {
@@ -1513,6 +1743,7 @@ export function estimateDistance4Refined(
         v2Y = c4Y;
         v2Z = c4Z;
         v2W = c4W;
+        v2Ext.set(c4Ext);
         v2Scale = c4Scale;
         v2Live = true;
       }
