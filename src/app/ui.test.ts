@@ -3843,6 +3843,77 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     );
   });
 
+  // fr-k9nx: the opening help-box line names the tumble motion instead of
+  // asserting it unconditionally, so it has to track fourDTumbleActive
+  // (default true, mirroring main.ts's fourDView.tumbleOn) rather than being
+  // a fixed string.
+  it("opens the help box on the auto-tumbling line by default", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
+
+    expect(el("helpText").firstElementChild?.textContent).toBe(
+      "Auto-tumbling 4D IFS",
+    );
+  });
+
+  it("switches the help box to the paused line after resetFourDTumble(false)", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.resetFourDTumble(false);
+    ui.updateLabels(nonFlat);
+
+    expect(el("helpText").firstElementChild?.textContent).toBe(
+      "4D IFS (tumble paused)",
+    );
+    // The rest of the canvas hint has to survive the wording change
+    // untouched, so a future rewrite can't silently drop the gesture lines.
+    expect(
+      Array.from(el("helpText").children).map((line) => line.textContent),
+    ).toEqual([
+      "4D IFS (tumble paused)",
+      "1 finger: Rotate",
+      "2 fingers: Pan/Zoom",
+    ]);
+  });
+
+  // Regression test for the real user path: unchecking the panel's own
+  // toggle has to repaint the help box, not just flip fourDTumbleActive
+  // silently (fr-k9nx).
+  it("re-words the help box when the tumble checkbox is unchecked", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.bind({
+      ...noopHandlers(),
+      onFourDTumbleToggle: () => ui.updateLabels(nonFlat),
+    });
+    ui.updateLabels(nonFlat);
+
+    (el("fourDTumbleToggle") as HTMLInputElement).checked = false;
+    el("fourDTumbleToggle").dispatchEvent(new Event("change"));
+
+    expect(el("helpText").firstElementChild?.textContent).toBe(
+      "4D IFS (tumble paused)",
+    );
+  });
+
+  // fr-k9nx: the build-replay showcase forces the tumble on for its duration
+  // via setFourDTumbleActive without ever touching the user's checkbox, so
+  // the help box has to believe the override, not the untouched control.
+  it("words the help box as auto-tumbling when setFourDTumbleActive(true) overrides an unchecked checkbox", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+
+    ui.resetFourDTumble(false);
+    ui.setFourDTumbleActive(true);
+    ui.updateLabels(nonFlat);
+
+    expect(el("helpText").firstElementChild?.textContent).toBe(
+      "Auto-tumbling 4D IFS",
+    );
+    expect((el("fourDTumbleToggle") as HTMLInputElement).checked).toBe(false);
+  });
+
   // Unlike the old 4D mode (which forced selectedTransform back to camera
   // mode on entry), a non-flat system's transform list stays selectable — but
   // there is still no draggable guide box in the projection, so the canvas
