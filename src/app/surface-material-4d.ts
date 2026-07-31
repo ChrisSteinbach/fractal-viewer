@@ -1232,6 +1232,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         // length() is rotation-invariant, so this reading is invariant
         // under BOTH rotor spins and slice moves — unlike a plain 3D
         // length(pos), which would swim under either.
+        //
+        // With a slab (uSliceHalfW > 0, fr-wa6o) this lifts through the
+        // slab's CENTRE plane, not the hit's own w — which the descent
+        // knows (its segment parameter at closest approach) but does not
+        // report back. So the ramp reads one shell across the slab's
+        // depth. Same class as the sheets trap above: a shading extra, not
+        // part of the distance contract, and exact at uSliceHalfW = 0.
+        // Tracked as its own follow-up rather than fixed here, since
+        // threading a w out of the descent needs a decision about WHICH
+        // level's is the honest one.
         vec4 q4 = uInvRotor * vec4(pos, uW0);
         u = clamp(length(q4) / uVisibleRadius, 0.0, 1.0);
       } else if (uColorSource == 4) {

@@ -669,12 +669,13 @@ export function buildSurfaceDE4(
  * unchanged value for value.
  *
  * OVERFLOW TAIL (the GLSL mirror's, not this one's). `chainScale · |e| <= h`
- * bounds the extent at every level (module doc), so `ee` only reaches f32's
- * ~1.8e19 ceiling once `chainScale` has fallen below `h / 1.8e19` — sixteen
- * orders of magnitude under `DEPTH_RESOLUTION`, where certificates are
- * numerically dead. There `ee` saturates to Infinity, `s` divides to 0, and
- * this degrades to `|q|`: an overshoot of a term already indistinguishable
- * from zero. f64 (here) never reaches it.
+ * bounds the extent at every level (module doc), and `ee` is `|e|²`, so `ee`
+ * only overflows f32 once `|e|` passes that ceiling's square root, ~1.8e19 —
+ * which takes a `chainScale` below `h / 1.8e19`, sixteen orders of magnitude
+ * under `DEPTH_RESOLUTION`, where certificates are numerically dead. There
+ * `ee` saturates to Infinity, `s` divides to 0, and this degrades to `|q|`:
+ * an overshoot of a term already indistinguishable from zero. f64 (here)
+ * never reaches it.
  */
 function segmentRadius(
   qx: number,
