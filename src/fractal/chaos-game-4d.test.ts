@@ -2,6 +2,7 @@ import {
   applyAffine4,
   composeAffine4,
   embedTransform3,
+  symmetryRotation4,
   toTransform4,
 } from "./affine4";
 import {
@@ -10,6 +11,7 @@ import {
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
   derivedColorIndex,
+  effectiveSymmetryOrder,
   runChaosGame,
 } from "./chaos-game";
 import {
@@ -450,7 +452,7 @@ describe("prepareChaosGame4 flame color resolution (fr-hiyu)", () => {
     expect(prepared.colorSpeed[2]).toBe(DEFAULT_COLOR_SPEED);
   });
 
-  it("keys the resolved arrays on the raw transform count (4D has no symmetry expansion)", () => {
+  it("keys the resolved arrays on the raw transform count when there is no kaleidoscope", () => {
     const prepared = prepareChaosGame4(makeMaps(5));
     expect(prepared.transformCount).toBe(5);
     expect(prepared.colorIndex).toHaveLength(5);
@@ -461,6 +463,21 @@ describe("prepareChaosGame4 flame color resolution (fr-hiyu)", () => {
       derivedColorIndex(2, 5),
       derivedColorIndex(3, 5),
       derivedColorIndex(4, 5),
+    ]);
+  });
+
+  it("keys colorIndex/colorSpeed on baseTransformCount, not the symmetry-expanded transformCount", () => {
+    const prepared = prepareChaosGame4(makeMaps(2), null, {
+      order: 4,
+      plane: "xw",
+    });
+    expect(prepared.transformCount).toBe(8);
+    expect(prepared.baseTransformCount).toBe(2);
+    expect(prepared.colorIndex).toHaveLength(2);
+    expect(prepared.colorSpeed).toHaveLength(2);
+    expect(Array.from(prepared.colorIndex)).toEqual([
+      derivedColorIndex(0, 2),
+      derivedColorIndex(1, 2),
     ]);
   });
 });
@@ -534,6 +551,332 @@ describe("stepOrbit4", () => {
   });
 });
 
+describe("prepareChaosGame4 / stepOrbit4 with symmetry (fr-q0h6)", () => {
+  function fixedRng(value: number) {
+    return () => value;
+  }
+
+  // Base map 0 is pure affine; base map 1 carries a (deterministic, RNG-free)
+  // variation, so tests below can exercise "rotate the FULL output" against
+  // both the affine-only and the affine+variation case.
+  const twoMaps: Transform4[] = [
+    {
+      position: [0.1, 0.05, -0.05, 0.02],
+      rotation: { yz: 0.1, xz: 0.2, xy: 0.05 },
+      scale: [0.5, 0.5, 0.5, 0.5],
+    },
+    {
+      position: [-0.1, 0.05, 0.1, -0.02],
+      rotation: { xy: 0.2, zw: 0.1 },
+      scale: [0.5, 0.5, 0.5, 0.5],
+      variations: [{ type: "swirl", weight: 1 }],
+    },
+  ];
+
+  it("order 1 leaves the prepared system byte-identical to omitting symmetry, for any plane or twist", () => {
+    const withDefault = prepareChaosGame4(twoMaps);
+    const explicitOrderOne = prepareChaosGame4(twoMaps, null, {
+      order: 1,
+      plane: "zw",
+      twist: 2,
+    });
+    expect(explicitOrderOne.transformCount).toBe(withDefault.transformCount);
+    expect(explicitOrderOne.baseTransformCount).toBe(
+      withDefault.baseTransformCount,
+    );
+    expect(explicitOrderOne.affines).toEqual(withDefault.affines);
+    expect(explicitOrderOne.postRotations).toEqual(withDefault.postRotations);
+    expect(explicitOrderOne.postRotations.every((p) => p === null)).toBe(true);
+  });
+
+  it("expands to order * n slots, k-major, sharing each copy's base affine/variation by reference", () => {
+    const prepared = prepareChaosGame4(twoMaps, null, {
+      order: 3,
+      plane: "xw",
+    });
+    expect(prepared.transformCount).toBe(6);
+    expect(prepared.baseTransformCount).toBe(2);
+    // Copy 0 (slots 0-1) is always unrotated.
+    expect(prepared.postRotations[0]).toBeNull();
+    expect(prepared.postRotations[1]).toBeNull();
+    // Copies 1 and 2 (slots 2-3, 4-5) are rotated, and reuse — not
+    // recompute — their base map's composed affine/variation.
+    expect(prepared.postRotations[2]).not.toBeNull();
+    expect(prepared.postRotations[4]).not.toBeNull();
+    expect(prepared.affines[2]).toBe(prepared.affines[0]);
+    expect(prepared.affines[4]).toBe(prepared.affines[0]);
+    expect(prepared.variations[3]).toBe(prepared.variations[1]);
+  });
+
+  it("clamps the effective order to fit MAX_TRANSFORMS, matching effectiveSymmetryOrder", () => {
+    const transforms = makeMaps(20);
+    expect(effectiveSymmetryOrder(20, 20)).toBe(12);
+    const prepared = prepareChaosGame4(transforms, null, {
+      order: 20,
+      plane: "yw",
+    });
+    expect(prepared.transformCount).toBe(12 * 20);
+  });
+
+  it("rotates a slot's FULL affine+variation output, not just its affine (critical ordering)", () => {
+    // transformCount = 6 for order 3 over 2 maps: slots [0,1]=k0, [2,3]=k1,
+    // [4,5]=k2. Force the single pickIndex4 draw onto slot 3 (k=1, base map
+    // 1 — the one with a variation) via a fixed rng() in [3/6, 4/6).
+    const order = 3;
+    const twist = 1;
+    const prepared = prepareChaosGame4(twoMaps, null, {
+      order,
+      plane: "xw",
+      twist,
+    });
+    const rng = fixedRng(0.55); // floor(0.55 * 6) === 3
+    const x = 0.2;
+    const y = -0.15;
+    const z = 0.1;
+    const w = 0.05;
+
+    const step = stepOrbit4(prepared, x, y, z, w, rng);
+
+    const baseAffine = composeAffine4(twoMaps[1]);
+    const warp = composeVariations4(twoMaps[1].variations);
+    if (warp === null) throw new Error("expected map 1 to have a variation");
+    const [ax, ay, az, aw] = applyAffine4(baseAffine, x, y, z, w);
+    const [fx, fy, fz, fw] = warp(ax, ay, az, aw, rng);
+    const r = symmetryRotation4("xw", (2 * Math.PI * 1) / order, twist);
+    const expected = [0, 1, 2, 3].map(
+      (row) =>
+        r[row * 4] * fx +
+        r[row * 4 + 1] * fy +
+        r[row * 4 + 2] * fz +
+        r[row * 4 + 3] * fw,
+    );
+
+    expect(step.x).toBeCloseTo(expected[0], 12);
+    expect(step.y).toBeCloseTo(expected[1], 12);
+    expect(step.z).toBeCloseTo(expected[2], 12);
+    expect(step.w).toBeCloseTo(expected[3], 12);
+    // Recorded index is the BASE map (1), not the expanded slot (3).
+    expect(step.index).toBe(1);
+  });
+
+  it("keeps every recorded transform index a valid BASE index, never an expanded slot", () => {
+    const base = pentatopeGasket();
+    const prepared = prepareChaosGame4(base, null, { order: 5, plane: "yz" });
+    const rng = mulberry32(21);
+    let x = 0.1;
+    let y = -0.1;
+    let z = 0.2;
+    let w = 0.05;
+    for (let i = 0; i < 500; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng);
+      expect(s.index).toBeGreaterThanOrEqual(0);
+      expect(s.index).toBeLessThan(base.length);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+    }
+  });
+
+  it("gives every copy an equal share of its base map's weight (3:1 stays 3:1)", () => {
+    const weighted: Transform4[] = [
+      { position: [0.3, 0, 0, 0], scale: [0.4, 0.4, 0.4, 0.4], weight: 3 },
+      { position: [-0.3, 0, 0, 0], scale: [0.4, 0.4, 0.4, 0.4], weight: 1 },
+    ];
+    const result = runChaosGame4(weighted, 8000, mulberry32(5), null, {
+      order: 4,
+      plane: "zw",
+    });
+    let zero = 0;
+    for (const idx of result.transformIndices) if (idx === 0) zero++;
+    const share = zero / result.count;
+    // Same 3:1 ratio as the unsymmetric weighting test — symmetry replicates
+    // geometry, not bias.
+    expect(share).toBeGreaterThan(0.72);
+    expect(share).toBeLessThan(0.78);
+  });
+});
+
+describe("runChaosGame4 with symmetry (fr-q0h6)", () => {
+  // An attractor pinned strictly to +x, so a kaleidoscope in the xy plane
+  // spreads it into as many angular sectors as it has copies — and the share
+  // of points per sector reads the copies' selection share directly.
+  function offAxisSystem(): Transform4[] {
+    return [
+      { position: [1, 0.2, 0, 0], scale: [0.4, 0.4, 0.4, 0.4] },
+      { position: [1, -0.2, 0, 0], scale: [0.4, 0.4, 0.4, 0.4] },
+    ];
+  }
+
+  it("renders order 1 byte-identically to omitting symmetry entirely", () => {
+    const explicit = runChaosGame4(
+      pentatopeGasket(),
+      2000,
+      mulberry32(3),
+      null,
+      {
+        order: 1,
+        plane: "yw",
+        twist: 2,
+      },
+    );
+    const omitted = runChaosGame4(pentatopeGasket(), 2000, mulberry32(3));
+    expect(explicit.positions).toEqual(omitted.positions);
+    expect(explicit.w).toEqual(omitted.w);
+    expect(explicit.transformIndices).toEqual(omitted.transformIndices);
+    expect(explicit.bounds).toEqual(omitted.bounds);
+  });
+
+  it("spreads an off-axis attractor evenly over the order's rotated copies", () => {
+    const order = 3;
+    const result = runChaosGame4(offAxisSystem(), 9000, mulberry32(11), null, {
+      order,
+      plane: "xy",
+    });
+    // The attractor of {R^k ∘ f_i} is exactly R-invariant (k ranges over every
+    // residue), so each of the `order` angular sectors of the xy plane holds
+    // the same share of the cloud — the plotted form of "n rotated copies".
+    const sectors = new Array<number>(order).fill(0);
+    for (let i = 0; i < result.count; i++) {
+      const angle = Math.atan2(result.positions[i * 3 + 1], result.positions[i * 3]); // prettier-ignore
+      const turns = (angle / (2 * Math.PI) + 1) % 1;
+      sectors[Math.floor(turns * order)]++;
+    }
+    for (const count of sectors) {
+      expect(count / result.count).toBeCloseTo(1 / order, 1);
+    }
+  });
+
+  it("still records BASE map indices under an expanded kaleidoscope", () => {
+    const result = runChaosGame4(offAxisSystem(), 3000, mulberry32(11), null, {
+      order: 6,
+      plane: "xy",
+    });
+    const seen = new Set(result.transformIndices);
+    // Two base maps, six copies each: every recorded index names one of the
+    // two logical maps, never one of the twelve expanded slots.
+    expect([...seen].sort()).toEqual([0, 1]);
+  });
+
+  it("lifts a FLAT system out of the w = 0 hyperplane on a w-plane", () => {
+    const flat = sierpinskiTetrahedron().map(toTransform4);
+    const plain = runChaosGame4(flat, 20000, mulberry32(11));
+    const turned = runChaosGame4(flat, 20000, mulberry32(11), null, {
+      order: 4,
+      plane: "xw",
+    });
+    // Without the kaleidoscope the lifted system collapses onto w = 0 (the
+    // embedding property); rotating copies in the xw plane carries the
+    // attractor's x extent into w, which is exactly why such a symmetry makes
+    // the SYSTEM non-flat (affine4.ts's symmetryIsNonFlat).
+    expect(plain.bounds.maxW - plain.bounds.minW).toBeLessThan(1e-25);
+    expect(turned.bounds.maxW - turned.bounds.minW).toBeGreaterThan(0.1);
+  });
+
+  it("lifts a FLAT system out of the w = 0 hyperplane with a twist on a w-free plane", () => {
+    const flat = sierpinskiTetrahedron().map(toTransform4);
+    const simple = runChaosGame4(flat, 20000, mulberry32(11), null, {
+      order: 4,
+      plane: "xy",
+    });
+    const twisted = runChaosGame4(flat, 20000, mulberry32(11), null, {
+      order: 4,
+      plane: "xy",
+      twist: 1,
+    });
+    // The twist turns the ORTHOGONAL plane (zw) at the same rate, carrying z
+    // into w — a double rotation, the thing 4D has and 3D does not. The
+    // untwisted run in the same w-free plane stays flat, so this isolates the
+    // twist itself.
+    expect(simple.bounds.maxW - simple.bounds.minW).toBeLessThan(1e-25);
+    expect(twisted.bounds.maxW - twisted.bounds.minW).toBeGreaterThan(0.1);
+  });
+
+  it("renders blend 0 bit-identically to order 1", () => {
+    const faded = runChaosGame4(offAxisSystem(), 3000, mulberry32(3), null, {
+      order: 5,
+      plane: "xw",
+      twist: 2,
+      blend: 0,
+    });
+    const orderOne = runChaosGame4(offAxisSystem(), 3000, mulberry32(3));
+    expect(faded.positions).toEqual(orderOne.positions);
+    expect(faded.w).toEqual(orderOne.w);
+    expect(faded.transformIndices).toEqual(orderOne.transformIndices);
+    expect(faded.bounds).toEqual(orderOne.bounds);
+  });
+});
+
+describe("runChaosGame4 vs. runChaosGame under a w-free kaleidoscope (fr-q0h6 continuity)", () => {
+  // Pure translate + scale: no rotation, no shear, no variation. That is what
+  // makes the two paths comparable ENTRY FOR ENTRY rather than to within a
+  // few ulps — `composeAffine4` builds its 3x3 block from `rotationMatrix4`'s
+  // 4x4 products, which associate differently than `rotationMatrixXYZ`'s
+  // hand-factored terms, so a rotated map's two affines agree only to ~1e-16
+  // (pinned at 1e-12 in affine4.test.ts). At zero rotation both are exactly
+  // diag(scale), and the ONLY remaining difference between the paths is the
+  // kaleidoscope matrix — which is the thing under test.
+  function flatMaps(): Transform[] {
+    return [
+      { id: 0, position: [0.4, 0.1, -0.2], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] }, // prettier-ignore
+      { id: 1, position: [-0.3, 0.25, 0.1], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] }, // prettier-ignore
+      { id: 2, position: [0.1, -0.35, 0.3], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] }, // prettier-ignore
+    ];
+  }
+
+  /**
+   * `mulberry32(seed)` with a single `0.5` spliced in as the FOURTH draw — the
+   * one `runChaosGame4` spends seeding the orbit's `w`, which `runChaosGame`
+   * has no counterpart for. `0.5 - 0.5` is exactly `0`, so the 4D orbit starts
+   * ON the `w = 0` hyperplane, and every draw after it is the 3D run's own, in
+   * order: the two pick streams stay aligned iteration for iteration (these
+   * maps are contractive, so no escape ever consumes an extra draw). Without
+   * it the two runs share a seed but not a stream, and only sample the same
+   * attractor.
+   */
+  function seedAlignedRng(seed: number): Rng {
+    const base = mulberry32(seed);
+    let calls = 0;
+    return () => (++calls === 4 ? 0.5 : base());
+  }
+
+  /** `-0` normalized to `+0`: a 4D sum carries one extra `+ post[3] * 0` term
+   * the 3D one does not, which can only ever turn a `-0` coordinate into `+0`
+   * — the same number for every purpose downstream. */
+  function normalized(values: Float32Array): number[] {
+    return Array.from(values, (v) => v + 0);
+  }
+
+  it("plots the identical xyz cloud, entry for entry, at w exactly 0", () => {
+    // Every w-free plane, including `xz` — whose angle `symmetryRotation4`
+    // NEGATES, because "rotation about +y" carries +z toward +x. Get that sign
+    // backwards and this test sees a MIRRORED kaleidoscope, which is precisely
+    // the continuity the shared vocabulary exists to provide.
+    for (const plane of ["xy", "xz", "yz"] as const) {
+      const symmetry = { order: 5, plane } as const;
+      const three = runChaosGame(
+        flatMaps(),
+        2000,
+        mulberry32(31),
+        null,
+        symmetry,
+      );
+      const four = runChaosGame4(
+        flatMaps().map(toTransform4),
+        2000,
+        seedAlignedRng(31),
+        null,
+        symmetry,
+      );
+      expect(normalized(four.positions)).toEqual(normalized(three.positions));
+      expect(normalized(four.w)).toEqual(new Array<number>(2000).fill(0));
+      expect(Array.from(four.transformIndices)).toEqual(
+        Array.from(three.transformIndices),
+      );
+    }
+  });
+});
+
 describe("plotPoint4", () => {
   it("returns the orbit point unchanged when the prepared system has no final transform", () => {
     const prepared = prepareChaosGame4(makeMaps(4));
@@ -584,9 +927,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
   // object and two Vec4 arrays per point. This block pins that inlined loop
   // against the real, unmodified stepOrbit4/plotPoint4 building blocks it
   // must stay byte-for-byte equivalent to — if the inlined copy ever drifts
-  // from the real thing, one of the scenarios below catches it. 4D has no
-  // symmetry (see PreparedChaosGame4's doc), so unlike the 3D oracle in
-  // chaos-game.test.ts there is no postRotations scenario here.
+  // from the real thing, one of the scenarios below catches it.
   //
   // referenceChaosGame4 is the oracle computation itself (the same loop
   // shape as the real stepOrbit4/plotPoint4 building blocks, not
@@ -595,7 +936,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
   // with the same if-comparisons runChaosGame4 uses, then a second pass for
   // the exact center/radius) — identical by
   // construction for every scenario, so it is shared rather than re-typed
-  // four times; each scenario below still states its own
+  // five times; each scenario below still states its own
   // system/seed/point-count inline so it reads standalone.
   function referenceChaosGame4(
     prepared: PreparedChaosGame4,
@@ -793,6 +1134,49 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
   });
+
+  it("matches for a system with symmetry order > 1 (postRotations branch)", () => {
+    const transforms: Transform4[] = [
+      {
+        position: [0.1, 0.05, -0.05, 0.02],
+        rotation: { yz: 0.1, xz: 0.2, xw: 0.05 },
+        scale: [0.5, 0.5, 0.5, 0.5],
+      },
+      {
+        position: [-0.1, 0.05, 0.1, -0.02],
+        rotation: { xy: 0.2, zw: 0.1 },
+        scale: [0.5, 0.5, 0.5, 0.5],
+        variations: [{ type: "swirl", weight: 1 }],
+      },
+    ];
+    const symmetry = { order: 3, plane: "xw", twist: 1 } as const;
+    const numPoints = 700;
+    const seed = 21;
+
+    const actual = runChaosGame4(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      null,
+      symmetry,
+    );
+    const reference = referenceChaosGame4(
+      prepareChaosGame4(transforms, null, symmetry),
+      numPoints,
+      mulberry32(seed),
+    );
+
+    expect(Array.from(actual.positions)).toEqual(
+      Array.from(reference.positions),
+    );
+    expect(Array.from(actual.w)).toEqual(Array.from(reference.w));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(reference.transformIndices),
+    );
+    expect(actual.bounds).toEqual(reference.bounds);
+    expect(actual.center).toEqual(reference.center);
+    expect(actual.radius).toBe(reference.radius);
+  });
 });
 
 describe("iteration-local randomness isolation (fr-2wfw, 4D twin)", () => {
@@ -867,7 +1251,14 @@ describe("iteration-local randomness isolation (fr-2wfw, 4D twin)", () => {
       },
     };
 
-    runChaosGame4(gauntletSystem4(), numPoints, primary, null, countingIter);
+    runChaosGame4(
+      gauntletSystem4(),
+      numPoints,
+      primary,
+      null,
+      undefined,
+      countingIter,
+    );
 
     // 4 draws seed the initial point, then exactly one pick per warmup and
     // recorded iteration — no matter how often julia flipped its coin or

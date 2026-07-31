@@ -51,8 +51,10 @@ export interface CloudRequest {
   /** Explicit numeric seed (a live `Rng` can't cross postMessage) — same
    * discipline as the flame/voxel `start` commands. */
   seed: number;
-  /** Kaleidoscope symmetry (fr-6im). 3D-only by design — the 4D path ignores
-   * it, exactly like the old synchronous `regenerate()` did. */
+  /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6). Both paths honor it —
+   * `runChaosGame4` rotates its copies in a PLANE (optionally a second,
+   * orthogonal one, for a double rotation) where `runChaosGame` rotates about
+   * an axis, and the two agree entry for entry wherever a system is flat. */
   symmetry: SymmetryParams;
   /** True → the system is non-flat: lift through `toTransform4` and run the
    * 4D chaos game. Decided by the MAIN thread (`systemIsNonFlat(state)`) so
@@ -168,6 +170,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
       request.numPoints,
       rng,
       final4,
+      request.symmetry,
       iterRng,
     );
     const frameRadius = framingRadius4(
