@@ -165,8 +165,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * is its transpose, so scene.ts uploads the transposed matrix here (see
    * setSurfaceView4 in this module). */
   uniform mat4 uInvRotor;
-  /** The marched w-slice — the same w0 the cloud/flame/voxel renderers
-   * slice at. */
+  /** The marched w-slice, as a WORLD w in the view frame — the same
+   * hyperplane the cloud/flame/voxel renderers slice at, but not the same
+   * NUMBER: their slice window is written in normalized rotated-w
+   * (q.w * uInvWAmp4), and scene.ts's setSurface4View converts the shared
+   * slider through wSupport on the way here (fr-33yb). Backticks would end
+   * this template literal, so this whole GLSL source names code plainly. */
   uniform float uW0;
   /** Base-color source: 0 = by-transform (uMapColorSigma.xyz), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
