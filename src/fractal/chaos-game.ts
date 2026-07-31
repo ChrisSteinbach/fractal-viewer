@@ -35,9 +35,9 @@ export const ESCAPE_LIMIT = 50;
 export const MAX_TRANSFORMS = 256;
 
 /** `prepareChaosGame`'s default `symmetry`: order 1 is the identity (today's
- * unreplicated system) for any axis, so every existing caller that omits the
+ * unreplicated system) for any plane, so every existing caller that omits the
  * parameter gets byte-identical behavior. */
-const NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
+const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 
 /**
  * A transform's structural color speed when it authors none
@@ -90,23 +90,68 @@ export function effectiveSymmetryOrder(
   return Math.max(1, Math.min(requested, fits));
 }
 
-/** Row-major 3x3 rotation by `angle` radians about a single axis — one
- * nonzero Euler angle into {@link rotationMatrixXYZ} gives exactly that,
- * since the other two axes' sin/cos terms all collapse to 0/1. Exported so
- * `surface-de.ts` can expand kaleidoscope copies with the exact same
- * matrices {@link prepareChaosGame} uses (no drift between the plotted set
- * and its distance estimator). */
+/**
+ * Row-major 3x3 rotation by `angle` radians in one of the three w-free
+ * coordinate planes — one nonzero Euler angle into {@link rotationMatrixXYZ}
+ * gives exactly that, since the other two axes' sin/cos terms all collapse to
+ * 0/1. Exported so `surface-de.ts` can sweep kaleidoscope sectors against the
+ * exact same matrices {@link prepareChaosGame} rotates copies by (no drift
+ * between the plotted set and its distance estimator).
+ *
+ * ## The fr-q0h6 axis → plane migration, entry for entry
+ *
+ * `SymmetryParams` named an AXIS before fr-q0h6. A simple rotation fixes the
+ * orthogonal complement — an axis in 3D, a plane in 4D — so the same three
+ * rotations renamed to the planes they turn IN, and each is the SAME matrix
+ * it always was:
+ *
+ *     legacy axis "x"  →  plane "yz"  =  rotationMatrixXYZ(angle, 0, 0)
+ *     legacy axis "y"  →  plane "xz"  =  rotationMatrixXYZ(0, angle, 0)
+ *     legacy axis "z"  →  plane "xy"  =  rotationMatrixXYZ(0, 0, angle)
+ *
+ * so every pre-fr-q0h6 document renders bit-identically (pinned by this
+ * module's tests, entry for entry).
+ *
+ * ## One sign that is NOT `affine4.ts`'s `R_ab`
+ *
+ * Worth stating outright, because it is a live trap for the 4D generator this
+ * vocabulary exists for: `Rotation4`/`rotationMatrix4` define `R_ab(θ)` as
+ * rotating `+a` TOWARD `+b`, and "rotation about the `+y` axis" is the
+ * right-handed rotation that carries `+z` toward `+x` — i.e. `R_zx(θ)`, which
+ * is `R_xz(−θ)`. So of the three:
+ *
+ *     symmetryRotation("yz", θ) === upper-3x3 of rotationMatrix4({ yz:  θ })
+ *     symmetryRotation("xy", θ) === upper-3x3 of rotationMatrix4({ xy:  θ })
+ *     symmetryRotation("xz", θ) === upper-3x3 of rotationMatrix4({ xz: −θ })
+ *
+ * — exactly the `xz: -ry` that `affine4.ts`'s `embedTransform3` already
+ * writes when it lifts a 3D Euler triple, for exactly this reason. This
+ * function keeps the LEGACY sign in all three planes, because phase 1 of
+ * fr-q0h6 must not move a single rendered point; a 4D generator built on
+ * `rotationMatrix4` has to negate the `xz` angle to agree with it (or adopt
+ * this sign), and the tests pin both relations so the choice cannot be made
+ * by accident.
+ *
+ * Throws on a `w`-plane: the 3D chaos game only ever sees w-free planes with
+ * twist 0 (`affine4.ts`'s `symmetryIsNonFlat` routes anything else to the 4D
+ * path), so reaching here with one is a bug, not a case to degrade.
+ */
 export function symmetryRotation(
-  axis: SymmetryParams["axis"],
+  plane: SymmetryParams["plane"],
   angle: number,
 ): number[] {
-  switch (axis) {
-    case "x":
+  switch (plane) {
+    case "yz":
       return rotationMatrixXYZ(angle, 0, 0);
-    case "y":
+    case "xz":
       return rotationMatrixXYZ(0, angle, 0);
-    case "z":
+    case "xy":
       return rotationMatrixXYZ(0, 0, angle);
+    default:
+      throw new Error(
+        `symmetryRotation: "${plane}" mixes w and has no 3x3 — a 4D ` +
+          `symmetry plane must route to the 4D path (symmetryIsNonFlat)`,
+      );
   }
 }
 
@@ -202,9 +247,9 @@ export interface PreparedChaosGame {
  *
  * `symmetry` (fr-6im; defaults to order 1, the identity) replicates every
  * base map `effectiveSymmetryOrder(symmetry.order, transforms.length)` times,
- * copy `k` rotated by `2π·k / order` about `symmetry.axis` — see
+ * copy `k` rotated by `2π·k / order` in `symmetry.plane` — see
  * {@link stepOrbit} for where that rotation is actually applied. At order 1
- * (any axis) this expansion is a no-op: exactly one (unrotated) copy of each
+ * (any plane) this expansion is a no-op: exactly one (unrotated) copy of each
  * base map, so every existing caller that omits `symmetry` gets a
  * byte-identical `PreparedChaosGame` to before this parameter existed.
  * `symmetry.blend` (fr-eykn; default 1) scales the rotated copies' selection
@@ -255,7 +300,7 @@ export function prepareChaosGame(
     const post =
       k === 0
         ? null
-        : symmetryRotation(symmetry.axis, (2 * Math.PI * k) / order);
+        : symmetryRotation(symmetry.plane, (2 * Math.PI * k) / order);
     for (let i = 0; i < baseTransformCount; i++) {
       affines.push(baseAffines[i]);
       variations.push(baseVariations[i]);

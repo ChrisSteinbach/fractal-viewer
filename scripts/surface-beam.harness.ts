@@ -418,7 +418,7 @@ function probe3(sys: System3): {
     CLOUD,
     mulberry32(101),
     null,
-    sys.symmetry ?? { order: 1, axis: "y" },
+    sys.symmetry ?? { order: 1, plane: "xz" },
   );
   const qs = queries3(cloud, de.boundingRadius);
   const trueD = qs.map((q) => nearest3(cloud, q.p));
@@ -704,7 +704,7 @@ describe("fr-v6yg surface beam harness", () => {
       {
         label: "repro2+sym4y (2 maps x order 4)",
         transforms: repro3D(),
-        symmetry: { order: 4, axis: "y" },
+        symmetry: { order: 4, plane: "xz" },
       },
       { label: "repro3 (+0.3 map)", transforms: repro3D3Map() },
       ...presets,
@@ -825,7 +825,7 @@ describe("fr-v6yg surface beam harness", () => {
       {
         label: "boxfold pair x sym3y",
         transforms: foldBoxfoldPair(),
-        symmetry: { order: 3, axis: "y" },
+        symmetry: { order: 3, plane: "xz" },
       },
       // The shipped pure-fold preset — the fr-5rvk acceptance criterion's
       // probe set (12 maps: 8 mandelbox corners + 4 boxfold binders).

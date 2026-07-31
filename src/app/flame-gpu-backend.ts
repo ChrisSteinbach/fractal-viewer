@@ -996,7 +996,7 @@ export async function createGpuFlameBackend(
   const packed = packGpuSystem({
     transforms: request.transforms,
     finalTransform: request.finalTransform,
-    symmetry: { order: request.order, axis: request.axis },
+    symmetry: { order: request.order, plane: request.plane },
     palette: request.palette,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this

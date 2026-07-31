@@ -235,7 +235,7 @@ describe("stored floors stay conservative on harder systems", () => {
 
   it("holds on a kaleidoscope build (order 3, axis z)", () => {
     const transforms = sierpinskiTetrahedron();
-    const symmetry = { order: 3, axis: "z" } as const;
+    const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,

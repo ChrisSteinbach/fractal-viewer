@@ -231,7 +231,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     untouched.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
-    `FOUR_D_COLOR_MODES`/`SYMMETRY_AXES` const arrays (single source of truth).
+    `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
   - `variations.ts` — fifteen nonlinear flame variations as pure functions: a
     dozen classics plus the Mandelbox fold family (`boxfold`/`spherefold`/
     `mandelbox`, fr-p7nu); `composeVariations` blends a transform's weighted

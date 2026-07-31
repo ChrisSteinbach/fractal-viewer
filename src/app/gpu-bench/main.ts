@@ -548,7 +548,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "sierpinski",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     paletteId: "legacy",
     ...SIERPINSKI_CAMERA,
   },
@@ -557,7 +557,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "fern",
     transforms: barnsleyFern(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     paletteId: "ember",
     ...FERN_CAMERA,
   },
@@ -566,7 +566,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "xform-color",
     transforms: xformColorFern(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     // A gradient palette is load-bearing here: the color walk only runs on
     // the structural (colorLUT / colorMode 1) path, so under "legacy" both
     // engines would color per transform and the authored pairs would go
@@ -588,7 +588,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "swirl",
     transforms: swirlFlame(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     paletteId: "spectrum",
     cameraPos: [2.6, 1.9, 2.6],
     lookAt: [0, 0, 0],
@@ -598,7 +598,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "kaleido",
     transforms: sierpinskiTetrahedron(),
     finalTransform: null,
-    symmetry: { order: 5, axis: "y" },
+    symmetry: { order: 5, plane: "xz" },
     paletteId: "aurora",
     ...SIERPINSKI_CAMERA,
   },
@@ -607,7 +607,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "variation-zoo",
     transforms: variationZoo(),
     finalTransform: variationZooLens(),
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     paletteId: "legacy",
     // Frames the zoo's dense mass (probed at 400k points: x ∈ [0.06, 1.73],
     // y ∈ [-1.27, 1.27], z ∈ [-1.03, 1.10] at the 1%-99% percentiles, ~0.05%
@@ -637,7 +637,7 @@ const SCENARIOS: ScenarioDef[] = [
     name: "fold-zoo",
     transforms: foldZoo(),
     finalTransform: null,
-    symmetry: { order: 1, axis: "y" },
+    symmetry: { order: 1, plane: "xz" },
     paletteId: "legacy",
     // Frames the fold zoo's mass (probed at 400k points: x ∈ [-1.23, 2.34],
     // y ∈ [-1.74, 1.83], z ∈ [-0.85, 2.04] at the 1%-99% percentiles).
@@ -892,7 +892,7 @@ function toGpuBackendRequest(
     transforms: def.transforms,
     finalTransform: def.finalTransform,
     order: def.symmetry.order,
-    axis: def.symmetry.axis,
+    plane: def.symmetry.plane,
     palette: def.paletteId,
     projection,
     width: ACCUM_WIDTH,
@@ -1827,7 +1827,7 @@ async function runSs1DisplayDownsampleCheck(): Promise<
       transforms: def.transforms,
       finalTransform: def.finalTransform,
       order: def.symmetry.order,
-      axis: def.symmetry.axis,
+      plane: def.symmetry.plane,
       palette: def.paletteId,
       projection,
       width: SS1_WIDTH,
@@ -2250,7 +2250,7 @@ const SURFACE_AFFINE_LADDER_WIDTH = 4;
 
 /** `surface-de.ts`'s `NO_SYMMETRY`, duplicated (it isn't exported) like
  * this file's other cross-module mirrors. */
-const SURFACE_NO_SYMMETRY: SymmetryParams = { order: 1, axis: "y" };
+const SURFACE_NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 
 /** The CPU sanity march samples every Nth pixel in both raster axes. */
 const SURFACE_SANITY_STRIDE = 8;
@@ -4771,7 +4771,7 @@ async function runSurfaceDeSection(
       name: "affineTwistFinal",
       transforms: surfaceAffineTwist(),
       finalTransform: surfaceAffineTwistFinal(),
-      symmetry: { order: 3, axis: "y" },
+      symmetry: { order: 3, plane: "xz" },
     },
     // fr-55s1 stage B (M1) — the fold FINAL lens systems. `buildSurfaceDE`
     // turns each fold-carrying final into `de.foldFinal`; the CPU calls

@@ -613,7 +613,12 @@ function randomSymmetry(rng: Rng): SymmetryParams | null {
   if (rng() >= SYMMETRY_PROBABILITY) return null;
   return {
     order: SYMMETRY_ORDER_MIN + Math.floor(rng() * SYMMETRY_ORDER_SPAN),
-    axis: "y",
+    // The pre-fr-q0h6 "y" axis, renamed: the same rotation, so every rolled
+    // kaleidoscope is the one this generator always rolled. Deliberately not
+    // widened to the six planes here — a 4D candidate still rolls no symmetry
+    // at all (see randomCandidate), and spending draws on a plane/twist would
+    // shift the documented draw order.
+    plane: "xz",
   };
 }
 

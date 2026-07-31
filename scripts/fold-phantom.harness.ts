@@ -274,7 +274,7 @@ describe("fr-7xgi fold phantom faces", () => {
     const de = buildSurfaceDE(transforms);
     const cloud = runChaosGame(transforms, CLOUD, mulberry32(101), null, {
       order: 1,
-      axis: "y",
+      plane: "xz",
     });
     console.log(
       `\n== control: pure affine default (CLOUD=${CLOUD}, R=${de.boundingRadius.toFixed(4)}) ==`,
@@ -313,7 +313,7 @@ describe("fr-7xgi fold phantom faces", () => {
       const de = buildSurfaceDE(transforms);
       const cloud = runChaosGame(transforms, CLOUD, mulberry32(101), null, {
         order: 1,
-        axis: "y",
+        plane: "xz",
       });
       console.log(
         `-- fold on map ${foldIndex}: status=${analysis.status}` +
@@ -357,7 +357,7 @@ describe("fr-7xgi fold phantom faces", () => {
       const de = buildSurfaceDE(transforms);
       const cloud = runChaosGame(transforms, CLOUD, mulberry32(101), null, {
         order: 1,
-        axis: "y",
+        plane: "xz",
       });
       const rng = mulberry32(11);
       // On-face probes for the SWEPT weight's cube and for the two other
@@ -518,7 +518,7 @@ describe("fr-7xgi acceptance policy (the shipped fix)", () => {
     const de = buildSurfaceDE(transforms);
     const cloud = runChaosGame(transforms, 60_000, mulberry32(101), null, {
       order: 1,
-      axis: "y",
+      plane: "xz",
     });
     const R = de.boundingRadius;
     const rays = acceptRayBundles(de);

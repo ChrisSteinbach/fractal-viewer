@@ -56,7 +56,7 @@
  * and not the dependency-free `src/fractal/`.
  */
 import { composeAffine, rotationMatrixXYZ } from "../fractal/affine";
-import { isFlatTransform } from "../fractal/affine4";
+import { isFlatTransform, planeHasW } from "../fractal/affine4";
 import {
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
@@ -75,7 +75,8 @@ import type { CustomPalette, RgbStop } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { VARIATION_TYPES } from "../fractal/types";
 import type {
-  SymmetryAxis,
+  SymmetryParams,
+  SymmetryPlane,
   Transform,
   Variation,
   VariationType,
@@ -341,15 +342,20 @@ function mul3(a: number[], b: number[]): number[] {
 }
 
 /** The rotation matrix of one kaleidoscope copy (`chaos-game.ts`'s
- * `symmetryRotation`, reproduced via the same one-axis Euler call). */
-function symmetryRotation(axis: SymmetryAxis, angle: number): number[] {
-  switch (axis) {
-    case "x":
+ * `symmetryRotation`, reproduced via the same one-angle Euler call — the same
+ * plane → Euler mapping fr-q0h6's axis migration pins there). Throws on a
+ * `w`-plane: a 4D kaleidoscope has no 3x3, and this exporter writes a flat 2D
+ * shadow. */
+function symmetryRotation(plane: SymmetryPlane, angle: number): number[] {
+  switch (plane) {
+    case "yz":
       return rotationMatrixXYZ(angle, 0, 0);
-    case "y":
+    case "xz":
       return rotationMatrixXYZ(0, angle, 0);
-    case "z":
+    case "xy":
       return rotationMatrixXYZ(0, 0, angle);
+    default:
+      throw new Error(`symmetryRotation: "${plane}" mixes w and has no 3x3`);
   }
 }
 
@@ -801,8 +807,18 @@ function variationAttrs(merged: Map<VariationType, number>): string {
  * same rationale as `framing-bounds.ts`, deliberately re-derived here so the
  * codec stays self-contained). Falls back to flam3's classic
  * `center 0 0 / scale 240` for degenerate clouds.
+ *
+ * `symmetry` is the kaleidoscope the export actually EMITS, not the
+ * document's — they differ only for a 4D one, which `encodeFlameFile` drops
+ * (fr-q0h6). Framing the probe on what is written is what keeps the two in
+ * agreement; for every w-free document the two are the same value, since the
+ * caller's order is already `effectiveSymmetryOrder`'s, which is exactly what
+ * `runChaosGame` would have clamped the document's to.
  */
-function probeFraming(s: SceneSnapshot): {
+function probeFraming(
+  s: SceneSnapshot,
+  symmetry: SymmetryParams,
+): {
   centerX: number;
   centerY: number;
   scale: number;
@@ -813,7 +829,7 @@ function probeFraming(s: SceneSnapshot): {
     PROBE_POINTS,
     mulberry32(PROBE_SEED),
     s.finalTransform ?? null,
-    s.symmetry,
+    symmetry,
   );
   if (result.count < 16) return fallback;
 
@@ -893,8 +909,8 @@ function paletteBlock(s: SceneSnapshot, transformCount: number): string {
  * `coefs` for affine maps, a `post` rotation for nonlinear ones (our
  * post-rotation applies to the variation output, which at `z = 0` is what
  * flam3's `post` does too). Returns the XML plus warnings for anything the
- * projection genuinely loses (z structure, 4D extensions, x/y-axis
- * kaleidoscopes' out-of-plane rotations).
+ * projection genuinely loses (z structure, 4D extensions, out-of-XY-plane
+ * kaleidoscopes' rotations).
  */
 export function encodeFlameFile(
   s: SceneSnapshot,
@@ -904,10 +920,19 @@ export function encodeFlameFile(
   const transforms = s.transforms;
   const n = transforms.length;
 
-  const order = effectiveSymmetryOrder(s.symmetry.order, n);
-  if (order > 1 && s.symmetry.axis !== "z") {
+  // A 4D kaleidoscope (fr-q0h6: a w-plane) has no 3x3 to compose into
+  // `coefs`, so it DROPS here rather than throwing — this exporter's whole
+  // contract is a lossy XY projection that warns about what it loses (see
+  // the 3D/4D flattening warnings just below), and refusing the export would
+  // be the one place in the module that treats loss as fatal.
+  const requestedOrder = effectiveSymmetryOrder(s.symmetry.order, n);
+  const drops4D = requestedOrder > 1 && planeHasW(s.symmetry.plane);
+  const order = drops4D ? 1 : requestedOrder;
+  if (drops4D) {
+    warnings.add("A 4D kaleidoscope cannot be projected and was dropped");
+  } else if (order > 1 && s.symmetry.plane !== "xy") {
     warnings.add(
-      "Kaleidoscope about the X/Y axis exports as its flat 2D shadow",
+      "Kaleidoscope outside the XY plane exports as its flat 2D shadow",
     );
   }
 
@@ -929,7 +954,7 @@ export function encodeFlameFile(
     const rot =
       k === 0
         ? null
-        : symmetryRotation(s.symmetry.axis, (2 * Math.PI * k) / order);
+        : symmetryRotation(s.symmetry.plane, (2 * Math.PI * k) / order);
     for (let i = 0; i < n; i++) {
       const t = transforms[i];
       const affine = affines[i];
@@ -990,7 +1015,7 @@ export function encodeFlameFile(
     );
   }
 
-  const framing = probeFraming(s);
+  const framing = probeFraming(s, { ...s.symmetry, order });
   const flameAttrs =
     `name="${escapeXml(name)}" version="fractal-explorer" ` +
     `size="${EXPORT_SIZE} ${EXPORT_SIZE}" ` +

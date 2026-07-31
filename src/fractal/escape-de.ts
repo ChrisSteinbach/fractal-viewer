@@ -127,7 +127,7 @@ function pureFoldVariation(t: Transform): Variation | null {
 export function analyzeEscapeSystem(
   transforms: Transform[],
   finalTransform: Transform | null = null,
-  symmetry: SymmetryParams = { order: 1, axis: "y" },
+  symmetry: SymmetryParams = { order: 1, plane: "xz" },
 ): EscapeEligibility {
   const reasons: string[] = [];
   const active = transforms.filter((t) => (t.weight ?? 1) > 0);
@@ -178,7 +178,7 @@ export function analyzeEscapeSystem(
 export function buildEscapeDE(
   transforms: Transform[],
   finalTransform: Transform | null = null,
-  symmetry: SymmetryParams = { order: 1, axis: "y" },
+  symmetry: SymmetryParams = { order: 1, plane: "xz" },
 ): EscapeDE {
   const analysis = analyzeEscapeSystem(transforms, finalTransform, symmetry);
   if (analysis.status === "ineligible") {
