@@ -1,4 +1,9 @@
 import {
+  ESCAPE_STEP_SCALE,
+  ESCAPE_TIME_ITERATIONS,
+  type EscapeDE,
+} from "./escape-de";
+import {
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
   SYM_PLANE_CODE,
@@ -23,8 +28,10 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
- * TWO DESCENT CORES (`core`, fr-55s1 stage A). Which estimator a system
- * is entitled to is decided by its BASE maps, exactly as on the CPU:
+ * THREE KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
+ * the third). Which estimator a system is entitled to is decided exactly
+ * as on the CPU — its BASE maps for the two descents, the escape gate
+ * for the forward loop:
  *
  * - `core: "fold"` (the default, and every config that predates fr-55s1)
  *   emits the width-`width` fold frontier above — `descendFold` refine=
@@ -38,20 +45,38 @@ import type { Vec3 } from "./types";
  *   fold frontier for affine maps would NOT be the same estimator (width
  *   12 vs the ladder's 4, no refinement), so a second body is the only
  *   shape that keeps the term-for-term discipline.
+ * - `core: "escape"` (fr-dlxh) is not a descent at all: it emits
+ *   `escape-de.ts`'s {@link estimateEscapeDistance} — the FORWARD fold
+ *   orbit with the Buddhi/Rrrola scalar derivative, `DE = |v| / dr` —
+ *   in the `SURFACE_ESCAPE` GLSL arm's f32 formulation, for exactly the
+ *   systems `analyzeEscapeSystem` admits (single non-contracting pure
+ *   fold; the IFS gate's complement). The one forward map rides the
+ *   208..271 VARIANT block of the params uniform ({@link
+ *   packEscapeGpuParams}); the maps storage binding is NOT DECLARED
+ *   (a statically-unused binding would drop out of the auto layout
+ *   anyway — hosts must skip buffer 1), `width`/`sharedFrontier`/
+ *   `bnbStage2`/`shadeDeWidth` are all inert (no frontier, no branch
+ *   fan, no probe — the GLSL arm's shape), `maxDepth` is the orbit's
+ *   iteration budget (`ESCAPE_TIME_ITERATIONS` full, preview-clamped
+ *   through the same `run.maxDepth` override the descents use), and a
+ *   fold-final `lens` THROWS (the escape gate refuses final
+ *   transforms; nothing pins that shape).
  *
- * The two bodies share the public signature — `surfaceDE(pIn, cutoff,
- * li)` — so the mode entry points below are textually identical either
- * way, and they share the descent PROLOGUE text (lens, sphere bound,
- * bail threshold, fr-3c0k depth cap) for the same reason `renameToProbe`
- * exists: one text cannot drift from itself. `core: "affine"` IGNORES
- * `width` (the ladder is fixed at the oracle's production `beamWidth`
- * 4), `sharedFrontier` and `bnbStage2` (the unrolled ladder has no
- * frontier arrays and no fold branches to bound), and it declares no
- * workgroup storage ({@link surfaceGpuWorkgroupBytes} returns 0).
- * fr-55s1 stage A gates it to mode "eval" + "march": mode "shade" needs
- * an affine hit-info body, which arrives with stage C, so it THROWS
- * rather than shading through the wrong descent. Only the eval leg is
- * bench-pinned this stage.
+ * All three bodies share the public signature — `surfaceDE(pIn, cutoff,
+ * li)` — so the mode entry points below are textually identical
+ * whichever core is picked. The two DESCENT cores additionally share the
+ * descent PROLOGUE text (lens, sphere bound, bail threshold, fr-3c0k
+ * depth cap) for the same reason `renameToProbe` exists: one text cannot
+ * drift from itself. (The escape core deliberately has NO prologue —
+ * those are inverse-descent concepts, and its GLSL arm replaces the
+ * descent bodies wholesale.) `core: "affine"` IGNORES `width` (the
+ * ladder is fixed at the oracle's production `beamWidth` 4),
+ * `sharedFrontier` and `bnbStage2` (the unrolled ladder has no frontier
+ * arrays and no fold branches to bound), and it declares no workgroup
+ * storage ({@link surfaceGpuWorkgroupBytes} returns 0). fr-55s1 stage A
+ * shipped it eval/march-only with a shade throw; stage C replaced the
+ * throw with the affine hit-info descent below, so every mode serves
+ * every core today.
  *
  * THE FOLD-LENS WRAPPER (`lens`, fr-55s1 stage B) lifts `descendLens` —
  * the CPU route for `foldFinal` systems (fr-g58b) — over EITHER core.
@@ -204,15 +229,25 @@ import type { Vec3 } from "./types";
  *         160  vec3f right               172  f32 tanHalf
  *         176  vec3f up                  188  f32 aspect
  *         192  vec3f fwd                 204  f32 (pad)
- *         208  vec3f lensM row0          220  f32 lensT.x
- *         224  vec3f lensM row1          236  f32 lensT.y
- *         240  vec3f lensM row2          252  f32 lensT.z
- *         256  vec4f lensParams — (foldKind as f32, invW, absW,
- *              sigmaMin), the GLSL `uLensParams` order. The whole
- *              208..271 block is zeros without a `foldFinal`, and the
- *              no-lens kernels' Params struct still ends at 208 —
- *              binding the larger buffer is valid, a struct never reads
- *              past its own size (fr-55s1 stage B).
+ *         208..271 — the VARIANT block, keyed on the kernel config
+ *              (mutually exclusive by construction; zeros when neither
+ *              variant is active, and the plain kernels' Params struct
+ *              still ends at 208 — binding the larger buffer is valid,
+ *              a struct never reads past its own size):
+ *          · `lens: true` (fr-55s1 stage B):
+ *              208 vec3f lensM row0   220 f32 lensT.x
+ *              224 vec3f lensM row1   236 f32 lensT.y
+ *              240 vec3f lensM row2   252 f32 lensT.z
+ *              256 vec4f lensParams — (foldKind as f32, invW, absW,
+ *                  sigmaMin), the GLSL `uLensParams` order.
+ *          · `core: "escape"` (fr-dlxh) — the FORWARD map in the same
+ *              interleave:
+ *              208 vec3f escM row0    220 f32 escT.x
+ *              224 vec3f escM row1    236 f32 escT.y
+ *              240 vec3f escM row2    252 f32 escT.z
+ *              256 vec4f escParams — (foldKind as f32, w, derivGrowth,
+ *                  0), the GLSL `uEscParams` order plus the packed-zero
+ *                  spare.
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -244,7 +279,10 @@ import type { Vec3 } from "./types";
  * Bindings per mode — eval and march "pose" bind 0-3 (params, maps, the
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
  * plus shade: ShadeParams (rays + dither inputs only — it declares none
- * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8:
+ * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8. The
+ * ESCAPE core never declares binding 1 (maps) in any mode — its one
+ * forward map rides the params variant block — so escape hosts skip
+ * that buffer; every other binding is identical. Mode "shade" binds:
  *   @binding(4) var<uniform> shade: ShadeParams
  *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
  *   @binding(6) var<storage, read_write> colorOut: array<u32> — one RGBA8
@@ -285,16 +323,20 @@ export const SURFACE_GPU_FRONTIER_ARRAYS = 14;
 export interface SurfaceGpuKernelOptions {
   /** Which entry point (and binding interface) to generate. */
   mode: "eval" | "march" | "shade";
-  /** Which DESCENT BODY to emit (fr-55s1; module doc). "fold" (the
+  /** Which CORE BODY to emit (fr-55s1; fr-dlxh; module doc). "fold" (the
    * default, and every pre-fr-55s1 config's byte-identical source) is the
    * width-`width` fold frontier mirroring `estimateDistance`; "affine" is
    * the fixed width-4 refined ladder mirroring `estimateDistanceRefined`
-   * — the estimator a FOLD-FREE base map set is entitled to. Pick it the
-   * way the CPU does, off `deHasFolds(de)`. Under "affine" the `width`,
-   * `sharedFrontier`, `bnbStage2` and `shadeDeWidth` options are all
-   * inert (the ladder has one width and no branch fan to cheapen — the
-   * GLSL affine arm carries no probe either). */
-  core?: "fold" | "affine";
+   * — the estimator a FOLD-FREE base map set is entitled to. Pick between
+   * those two the way the CPU does, off `deHasFolds(de)`. Under "affine"
+   * the `width`, `sharedFrontier`, `bnbStage2` and `shadeDeWidth` options
+   * are all inert (the ladder has one width and no branch fan to cheapen
+   * — the GLSL affine arm carries no probe either). "escape" (fr-dlxh)
+   * is the forward escape-time loop mirroring `estimateEscapeDistance`
+   * for `analyzeEscapeSystem` systems — pack with
+   * {@link packEscapeGpuParams}, skip the maps buffer (binding 1 is not
+   * declared), same inert options as "affine", and `lens` throws. */
+  core?: "fold" | "affine" | "escape";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
    * is renamed `surfaceDECore` and a new `surfaceDE` sweeps the lens's
@@ -341,15 +383,16 @@ export interface SurfaceGpuKernelOptions {
 /** Workgroup shared-memory bytes the generated kernel declares — what the
  * bench must cover via `maxComputeWorkgroupStorageSize` when it exceeds
  * the 16 384-byte WebGPU default. Zero for the private variant, and zero
- * for `core: "affine"` at any `sharedFrontier` (its ladder declares no
- * frontier arrays at all — fr-55s1). */
+ * for every non-fold core at any `sharedFrontier` (the affine ladder
+ * declares no frontier arrays at all — fr-55s1 — and the escape loop has
+ * no frontier concept to begin with — fr-dlxh). */
 export function surfaceGpuWorkgroupBytes(
   opts: Pick<
     SurfaceGpuKernelOptions,
     "width" | "workgroupSize" | "sharedFrontier" | "core"
   >,
 ): number {
-  if (!opts.sharedFrontier || opts.core === "affine") return 0;
+  if (!opts.sharedFrontier || (opts.core ?? "fold") !== "fold") return 0;
   return SURFACE_GPU_FRONTIER_ARRAYS * opts.width * opts.workgroupSize * 4;
 }
 
@@ -495,6 +538,73 @@ export function packSurfaceGpuParams(
   return buf;
 }
 
+/**
+ * Pack the params uniform for the ESCAPE core (fr-dlxh). The frozen
+ * offsets carry the escape session's marching quantities — the bailout
+ * ball is both bounding and visible sphere, {@link ESCAPE_STEP_SCALE}
+ * damps steps (the GLSL variant's `uStepScale`), and `maxDepth` is the
+ * orbit's iteration budget ({@link ESCAPE_TIME_ITERATIONS} full,
+ * preview-clamped by `run.maxDepth`) — and the 208..271 VARIANT block
+ * carries the FORWARD map in the lens rows' interleave, tail vec4f in
+ * the GLSL `uEscParams` order (foldKind, w, derivGrowth, 0). Symmetry
+ * packs OFF and the final packs identity/1 (the escape gate refuses
+ * both); `escapeRadius` packs the GLSL's dead `2R` so the wire never
+ * carries an uninitialized word; `footprint` packs 0 — a forward loop
+ * has no cone-footprint depth cap. The maps storage binding does not
+ * exist in escape kernels, so there is no escape `packSurfaceGpuMaps`
+ * twin.
+ */
+export function packEscapeGpuParams(
+  de: EscapeDE,
+  run: SurfaceGpuRunParams,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_BYTES);
+  const view = new DataView(buf);
+  view.setFloat32(12, de.boundingRadius, true);
+  view.setFloat32(16, de.boundingRadius * 2, true);
+  view.setFloat32(20, ESCAPE_STEP_SCALE, true);
+  view.setFloat32(24, de.boundingRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 1, true);
+  view.setUint32(48, 1, true);
+  view.setUint32(52, run.maxDepth ?? ESCAPE_TIME_ITERATIONS, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(
+    80,
+    de.boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    true,
+  );
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  writeVec3(view, 208, [de.m[0], de.m[1], de.m[2]]);
+  view.setFloat32(220, de.t[0], true);
+  writeVec3(view, 224, [de.m[3], de.m[4], de.m[5]]);
+  view.setFloat32(236, de.t[1], true);
+  writeVec3(view, 240, [de.m[6], de.m[7], de.m[8]]);
+  view.setFloat32(252, de.t[2], true);
+  view.setFloat32(256, de.foldKind, true);
+  view.setFloat32(260, de.w, true);
+  view.setFloat32(264, de.derivGrowth, true);
+  return buf;
+}
+
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   const out = new Float32Array(
@@ -607,6 +717,13 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // and the lens (hit-info bodies + probe composition) landed with
   // stage C.
   const lens = opts.lens ?? false;
+  if (core === "escape" && lens) {
+    // analyzeEscapeSystem refuses final transforms, so no oracle or GLSL
+    // arm pins a lensed escape shape — loud beats generating one.
+    throw new Error(
+      "surface-de-gpu: the escape core cannot take a fold-final lens",
+    );
+  }
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -667,12 +784,13 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const ixBody = sharedFrontier
     ? `return slot * ${workgroupSize}u + li;`
     : `return slot;`;
-  // The fold frontier's storage and its index helper. `core: "affine"`
-  // declares NEITHER — its four chains live in scalars, which is also
-  // why its kernels need no workgroup budget at any `sharedFrontier`
-  // (fr-55s1; {@link surfaceGpuWorkgroupBytes}).
+  // The fold frontier's storage and its index helper. The non-fold cores
+  // declare NEITHER — the affine ladder's four chains live in scalars
+  // (fr-55s1) and the escape loop has no frontier concept (fr-dlxh) —
+  // which is also why their kernels need no workgroup budget at any
+  // `sharedFrontier` ({@link surfaceGpuWorkgroupBytes}).
   const frontierBlock =
-    core === "affine"
+    core !== "fold"
       ? ""
       : `
 ${frontierDecls}
@@ -1167,6 +1285,49 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
 
+  // Escape hit-info (fr-dlxh — the GLSL SURFACE_ESCAPE shading overload,
+  // term for term): the same forward orbit with the classic escape-time
+  // extras — trap is the ESCAPE FRACTION escapedAt/maxDepth (the
+  // canonical Mandelbox palette coordinate), rings/sheets the orbit's
+  // closest radial / y-plane approaches — the same trap vocabulary the
+  // descent variants feed the shared color sources. firstChoice is
+  // always 0 (one map). Colors-only convention (the fold twin's): the
+  // GLSL overload also returns the DE, so its dr accumulator is the one
+  // value-side term trimmed here.
+  const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var v = p;
+  var r = length(v);
+  let kind = u32(params.escParams.x);
+  var escapedAt = params.maxDepth;
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (r > params.boundingRadius) {
+      escapedAt = i;
+      break;
+    }
+    var y = vec3f(
+      dot(params.escM0, v) + params.escT0,
+      dot(params.escM1, v) + params.escT1,
+      dot(params.escM2, v) + params.escT2,
+    );
+    if (kind != 2u) {
+      y = clamp(y, vec3f(-1.0), vec3f(1.0)) * 2.0 - y;
+    }
+    if (kind != 1u) {
+      let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+      y *= f;
+    }
+    v = params.escParams.y * y;
+    r = length(v);
+    info.rings = min(info.rings, r / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
+  }
+  info.trap = f32(escapedAt) / f32(params.maxDepth);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}`;
+
   // Lens hit-info wrapper (fr-55s1 stage C — the GLSL lens hit overload
   // term for term): re-run the branch sweep with FULL-width zero-cutoff
   // core calls, tracking the ARGMIN branch's core query (identity-branch
@@ -1310,7 +1471,11 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
 }`;
 
   const coreHitInfoText =
-    core === "affine" ? affineHitInfoText : foldHitInfoText;
+    core === "affine"
+      ? affineHitInfoText
+      : core === "escape"
+        ? escapeHitInfoText
+        : foldHitInfoText;
   const hitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
@@ -1666,9 +1831,21 @@ struct Params {
   lensM2: vec3f,
   lensT2: f32,
   lensParams: vec4f,`
-      : ""
+      : core === "escape"
+        ? /* wgsl */ `
+  escM0: vec3f,
+  escT0: f32,
+  escM1: vec3f,
+  escT1: f32,
+  escM2: vec3f,
+  escT2: f32,
+  escParams: vec4f,`
+        : ""
   }
-}
+}${
+    core === "escape"
+      ? ""
+      : /* wgsl */ `
 
 struct GpuMap {
   r0: vec4f,
@@ -1677,12 +1854,24 @@ struct GpuMap {
   p0: vec4f,
   bnb: vec4f,
   p1: vec4f,
-}
+}`
+  }
 
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> maps: array<GpuMap>;
+@group(0) @binding(0) var<uniform> params: Params;${
+    // The escape core reads its one forward map from the params variant
+    // block and never touches per-map storage; a declared-but-unused
+    // binding would drop out of the auto layout anyway (module doc), so
+    // it is not declared and hosts skip buffer 1.
+    core === "escape"
+      ? ""
+      : `
+@group(0) @binding(1) var<storage, read> maps: array<GpuMap>;`
+  }
 ${io}
-${frontierBlock}
+${frontierBlock}${
+    core === "escape"
+      ? ""
+      : /* wgsl */ `
 fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
   return vec3f(
     dot(m.r0.xyz, x) + m.r0.w,
@@ -1701,7 +1890,8 @@ fn stepSector(v: vec3f) -> vec3f {
     return vec3f(c * v.x - s * v.z, v.y, s * v.x + c * v.z);
   }
   return vec3f(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
-}`;
+}`
+  }`;
 
   // The descent PROLOGUE both cores open with (fr-55s1): the affine
   // final lens, the depth-0 sphere bound, the fr-55r5 bail threshold and
@@ -2397,12 +2587,60 @@ ${descentPrologue}
   return max(best, sphereBound) * params.finalSigmaMin;
 }`;
 
+  // The ESCAPE core (fr-dlxh): escape-de.ts's estimateEscapeDistance —
+  // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
+  // DE = |v| / dr — in the SURFACE_ESCAPE GLSL arm's f32 formulation
+  // (surface-material.ts, the variant this core replaces on the compute
+  // route). No descent, no frontier, no prunes: the loop is fixed-cost,
+  // so `cutoff` is accepted for signature parity and ignored (every
+  // return IS the cutoff-0 result, trivially the fr-55r5 contract) and
+  // `li` never indexes anything (the affine ladder's precedent). Plain
+  // params.maxDepth — the orbit's iteration budget; no footprint cap,
+  // like the GLSL arm.
+  const escapeDescentText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  var v = pIn;
+  var dr = 1.0;
+  var r = length(v);
+  let kind = u32(params.escParams.x);
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (r > params.boundingRadius) {
+      break;
+    }
+    var y = vec3f(
+      dot(params.escM0, v) + params.escT0,
+      dot(params.escM1, v) + params.escT1,
+      dot(params.escM2, v) + params.escT2,
+    );
+    var localL = 1.0;
+    if (kind != 2u) {
+      // The box fold (boxfold + mandelbox): per-axis reflections,
+      // local factor 1.
+      y = clamp(y, vec3f(-1.0), vec3f(1.0)) * 2.0 - y;
+    }
+    if (kind != 1u) {
+      // The sphere fold (spherefold + mandelbox): variations.ts's
+      // sphereFoldFactor, which IS the local conformal factor.
+      let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+      y *= f;
+      localL = f;
+    }
+    v = params.escParams.y * y;
+    dr = params.escParams.z * localL * dr + 1.0;
+    r = length(v);
+  }
+  return r / dr;
+}`;
+
   const descentBlock =
     core === "affine"
       ? `// descend's refine=true path (surface-de.ts) — the estimator the
 // AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
 ${affineDescentText}`
-      : `// descendFold's refine=false path (surface-de.ts), the estimator the
+      : core === "escape"
+        ? `// estimateEscapeDistance (escape-de.ts) — the forward-orbit
+// escape-time estimator, the SURFACE_ESCAPE GLSL arm's twin (fr-dlxh).
+${escapeDescentText}`
+        : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
 
