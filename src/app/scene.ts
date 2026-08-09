@@ -2399,6 +2399,21 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
   }
 
+  /**
+   * {@link enterSurfaceComputeSession}'s escape-time twin (fr-dlxh): the
+   * same session-entry resets {@link setEscapeSystem} makes — the orbit's
+   * iteration budget as the preview depth clamp, a plain governor reset
+   * (the escape loop is phone-cheap; no descent cost weight exists) —
+   * without touching the GLSL material.
+   */
+  enterSurfaceComputeEscapeSession(): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+  }
+
   /** Leave the compute presentation (session exit or fallback re-enter):
    * drop the flag and free the frame texture — a settled full-resolution
    * frame holds megabytes of GPU memory nothing will re-present. */

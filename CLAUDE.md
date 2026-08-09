@@ -147,14 +147,31 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). TWO descent
-    cores since fr-55s1: `core:"affine"` emits the width-4 A/B +
-    fr-jkpn-validity-slot REFINED ladder (mirrors
-    `estimateDistanceRefined`, the affine GLSL's estimator; width/
-    sharedFrontier/bnbStage2/shadeDeWidth inert) beside the fold
-    frontier, picked off `deHasFolds` exactly like the CPU; and
-    `lens:true` wraps EITHER core in `descendLens`'s fold-FINAL branch
-    sweep — the body token-renames to `surfaceDECore` (hit-info to
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). THREE
+    KERNEL CORES (fr-55s1 added the second, fr-dlxh the third):
+    `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot
+    REFINED ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
+    estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
+    the fold frontier, picked off `deHasFolds` exactly like the CPU;
+    `core:"escape"` (fr-dlxh) is not a descent at all — it emits
+    `escape-de.ts`'s `estimateEscapeDistance`, the FORWARD fold orbit
+    with the Buddhi/Rrrola scalar derivative, in the `SURFACE_ESCAPE`
+    GLSL arm's f32 formulation, for exactly the systems
+    `analyzeEscapeSystem` admits; the one forward map rides the params
+    uniform's 208-271 VARIANT block via `packEscapeGpuParams` (bailout
+    ball packed as both bounding AND visible sphere, `ESCAPE_STEP_SCALE`,
+    `maxDepth` as the orbit's iteration budget through the same preview
+    door the descents use), mutually exclusive with the lens block by
+    construction (escape+lens throws); the maps storage binding is NOT
+    DECLARED for escape (hosts must skip buffer 1), width/sharedFrontier/
+    bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
+    trap as the escape fraction (`escapedAt/maxDepth`, the canonical
+    Mandelbox palette coordinate) with rings/sheets over the orbit's
+    closest approaches — the descent cores' colors-only convention. All
+    three share the public `surfaceDE(pIn, cutoff, li)` signature, so the
+    Modes below are textually identical whichever core is picked. And
+    `lens:true` wraps EITHER descent core in `descendLens`'s fold-FINAL
+    branch sweep — the body token-renames to `surfaceDECore` (hit-info to
     `surfaceDEHitInfoCore` behind the argmin sweep, probe to
     `surfaceDEProbeCore` under the same sweep text renamed) and the
     wrapper owns the public names, entries untouched; params grew
@@ -169,7 +186,32 @@ and UI**, so the interesting math is unit-tested without a browser:
     trajectory and straddled `d < eps` by 0.6%/2% of eps, which the older
     same-terminal-`t` rule could never recognize because a miss runs on to
     the sphere exit while a hit stops at the surface. Re-verify surface
-    kernel changes on `--display=:0`, not SwiftShader alone.
+    kernel changes on `--display=:0`, not SwiftShader alone — fr-dlxh
+    re-proved it: the escape eval leg's first classifier (a single
+    fround twin of the oracle) passed SwiftShader clean, then real Iris
+    flipped 6 "stable" rows at maxAbs 0.41. A forward orbit is chaotic
+    (~8x/iteration noise growth into the escape-decision dichotomy; the
+    folds themselves are C0-continuous, so there is no
+    boundary-proximity predictor), and which rounding seeds flip is
+    realization-dependent — so the leg gates in LAYERS: pre-hoc, a
+    seven-orbit ENSEMBLE classifier (`escapeQueryStable` — the fround
+    twin at the query and its six one-ULP axis neighbors must all agree
+    with the f64 oracle; exclusions disclosed per row and pinned under
+    20%, the structural not-eating-the-leg cap); post-hoc, a residual
+    failure is absolved only if `escapeShadowFlipVerified` proves some
+    1..4-ULP neighbor orbit REPRODUCES the GPU's value within tolerance
+    (fr-7tl3's per-mismatch discipline lifted to eval; `flips=` in the
+    row, capped at 7). Measured on real Iris: fail=0 across all four
+    escape systems, worst row excluded=74/700 with flips=2, gated
+    maxAbs 2.1e-6. A `computeFrameEscape` leg
+    runs one production frame through `SurfaceComputeRenderer` with a
+    `{kind:"escape"}` target and checks it against a strided CPU sanity
+    march as HIT RATES rather than the per-pixel fr-7tl3
+    status-exclusion tiers — the march entry text is shared across every
+    core (test-pinned) and the escape DE is eval-pinned, so a rate band
+    absorbs the same chaotic-orbit flips without duplicating that
+    machinery for a second DE type (measured on real Iris: 256x144 in
+    ~100ms wall, 27 passes, GPU hit rate 0.239 vs CPU 0.240).
     Modes:
     `eval` (per-query distances) and `march` (bounded-dispatch ray march,
     host-compacted active list) are the fr-q1f8 bench baselines,
@@ -201,10 +243,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     (23.8x, thermally understated) with eyeball-identical images —
     differences are a slight lightening of deep-crease shadow/AO from
     the greedy DE's overshoot, no structural artifacts.
-    Consumed by `src/app/surface-compute.ts` (the fold surface session's
-    preferred tracer) and pinned by `src/app/gpu-bench/`'s surface section
-    (`npm run bench:surface`; real-driver timing via `--display=:0`;
-    `--surface-shade-width=N` reruns the fr-p8bc probe-width A/B).
+    Consumed by `src/app/surface-compute.ts` (the fold- and, since
+    fr-dlxh, escape-shaped surface sessions' preferred tracer) and pinned
+    by `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
+    real-driver timing via `--display=:0`; `--surface-shade-width=N`
+    reruns the fr-p8bc probe-width A/B).
   - `surface-grid.ts` — empty-space skip grid for the 3D surface march:
     conservative distance floors (cell centers, cutoff `cellRadius` — at/above
     the cutoff the return is the exact full-descent value, below it 0 is the
@@ -224,13 +267,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     COMPLEMENT of `analyzeSurfaceSystem` on that shape).
     `estimateEscapeDistance` iterates the map FORWARD with a scalar
     running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
-    standard heuristic, not a certified bound; the marcher damps steps),
-    mirrored by `surface-material.ts`'s `SURFACE_ESCAPE` variant.
-    Phone-cheap by construction (~30 branchless folds per eval). The
-    rendered set is the JULIA-form set of the authored transform (`t` is
-    the document's fixed offset), so the mode stays a render MODE over
-    the existing transform vocabulary — morphs/mutations/persistence
-    untouched.
+    standard heuristic, not a certified bound), mirrored by
+    `surface-material.ts`'s `SURFACE_ESCAPE` variant and, since fr-dlxh,
+    `surface-de-gpu.ts`'s `core:"escape"` kernel — `ESCAPE_STEP_SCALE`
+    is the one marcher-damping definition both the GLSL variant and the
+    WGSL packer import. Phone-cheap by construction (~30 branchless
+    folds per eval). The rendered set is the JULIA-form set of the
+    authored transform (`t` is the document's fixed offset), so the mode
+    stays a render MODE over the existing transform vocabulary —
+    morphs/mutations/persistence untouched.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
@@ -508,8 +553,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     real lens from `uLens*`. The `SURFACE_ESCAPE` variant (fr-kltj)
     replaces the descent bodies wholesale with `escape-de.ts`'s forward
     loop (`setEscapeSystem` packs it; main.ts routes there when the IFS
-    gate refuses but `analyzeEscapeSystem` admits) — same marcher, tiers,
-    strips, capture; no grid (its validity chain is IFS-specific).
+    gate refuses but `analyzeEscapeSystem` admits — the FALLBACK since
+    fr-dlxh, `surface-compute.ts`'s WebGPU renderer preferred whenever an
+    adapter exists) — same marcher, tiers, strips, capture; no grid (its
+    validity chain is IFS-specific).
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
@@ -567,14 +614,24 @@ and UI**, so the interesting math is unit-tested without a browser:
     guaranteed 16KB, where default-block arrays would have taken 192 of the
     guaranteed 224 fragment uniform vectors), and the kaleidoscope SWEEPS
     like 3D's (fr-u91x), so 24 slots means 24 transforms at any order.
-  - `surface-compute.ts` — WebGPU compute renderer for FOLD 3D surface
-    sessions (fr-tzdg): systems with base-map folds OR a fold FINAL lens
-    (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks the kernel
-    core and the lens wrapper, and the two first-sizing priors scale by
-    the lens branch count 27/3/81 ÷ 8) PREFER it when an adapter exists
+  - `surface-compute.ts` — WebGPU compute renderer for fold-shaped 3D
+    surface sessions (fr-tzdg): systems with base-map folds OR a fold
+    FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
+    the kernel core and the lens wrapper, and the two first-sizing
+    priors scale by the lens branch count 27/3/81 ÷ 8), and — since
+    fr-dlxh — escape-time sessions (the single non-contracting pure-fold
+    map the IFS gate refuses) ALL PREFER it when an adapter exists
     — no fold GLSL ever compiles (the ~25s Mesa link / ~5.7s lens link /
     fr-096u entry hazards never engage), no grid request (gridless by
-    decision, measured). MEASURED (fr-55s1, Iris Xe real driver, dev
+    decision, measured). `create()` takes a `SurfaceComputeTarget` union
+    (`{kind:"ifs"|"escape"}`) whose `kind` picks the kernel core, the
+    params packer and the maps buffer's existence — the bounded
+    march/shade host loop, progressive presents and failure ladder stay
+    shared regardless. Escape targets scale no priors: the forward loop
+    is phone-cheap, and the pessimistic base priors elsewhere only err
+    toward smaller first slices. `SURFACE_ESCAPE` GLSL is now the
+    fallback arm (`?surfacegl` / no adapter / device loss), exactly like
+    `SURFACE_FOLD_LENS`. MEASURED (fr-55s1, Iris Xe real driver, dev
     regime): the fr-g58b lens archetype previews in 0.94s and settles a
     full 1280x720 frame in 9.4s (0 exhausted) where the WebGL A/B of the
     same hash was 43% settled at 30s; the 81-branch mandelbox field

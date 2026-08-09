@@ -22,6 +22,7 @@ import {
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
   type SurfaceComputeFrameSpec,
+  type SurfaceComputeTarget,
 } from "./surface-compute";
 import {
   isSoftwareRendererLabel,
@@ -146,7 +147,7 @@ import {
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
-import type { Bounds, Vec4 } from "../fractal/types";
+import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -2754,7 +2755,8 @@ function main(): void {
   // The surface progress row's trailing WebGL detail token (fr-tmgf):
   // why THIS session runs the WebGL tracer when compute would have been
   // its home ("compute unavailable" / "compute failed"), null when WebGL
-  // is the natural engine (affine/escape/4D, or the ?surfacegl flag).
+  // is the natural engine (affine/4D, or the ?surfacegl flag — escape
+  // joined the compute-homed set with fr-dlxh).
   // Session-scoped: set by start()'s routing, cleared with the session.
   let surfaceWebglDetailToken: string | null = null;
 
@@ -2765,18 +2767,33 @@ function main(): void {
   // before a single measurement existed and the ladder would never learn.
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
-  // Fold 3D sessions — base-map folds OR a fold FINAL lens (fr-55s1: the
-  // kernel wraps either core in descendLens's branch sweep, so fr-zx34's
-  // lens-over-affine field class now routes here too, off the fragile
-  // fold GLSL entirely). Plain affine systems stay on the WebGL tracer
-  // (fast there, with the refined estimator and the grid), and escape/4D
-  // route before this predicate is consulted.
+  // Compute is on the table at all — no block latched, an API present.
+  // The escape branch consults this alone (fr-dlxh: a single pure-fold
+  // map is always compute-shaped); the IFS branch adds its shape test
+  // below. 4D still routes before either is consulted.
+  function surfaceComputeAvailable(): boolean {
+    return surfaceComputeBlock === null && SurfaceComputeRenderer.supported();
+  }
+
+  // Fold 3D IFS sessions — base-map folds OR a fold FINAL lens (fr-55s1:
+  // the kernel wraps either core in descendLens's branch sweep, so
+  // fr-zx34's lens-over-affine field class now routes here too, off the
+  // fragile fold GLSL entirely). Plain affine systems stay on the WebGL
+  // tracer (fast there, with the refined estimator and the grid).
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
-      surfaceComputeBlock === null &&
-      (deHasFolds(de) || de.foldFinal !== null) &&
-      SurfaceComputeRenderer.supported()
+      surfaceComputeAvailable() && (deHasFolds(de) || de.foldFinal !== null)
     );
+  }
+
+  /** The escape session's one shade slot: the active map's explorer
+   * color — the exact pick `setEscapeSystem`'s GLSL packing takes. */
+  function escapeSlotColor(): Vec3 {
+    const active = Math.max(
+      0,
+      state.transforms.findIndex((t) => (t.weight ?? 1) > 0),
+    );
+    return transformColors(state.transforms.length)[active];
   }
 
   function teardownSurfaceCompute(): void {
@@ -2823,11 +2840,22 @@ function main(): void {
   // failure here FALLS BACK (memo + re-enter routes the WebGL path)
   // rather than exiting the mode: the WebGL tracer is the fallback, not
   // the error state.
-  function beginSurfaceComputeGate(token: number, de: SurfaceDE): void {
+  function beginSurfaceComputeGate(
+    token: number,
+    target: SurfaceComputeTarget,
+  ): void {
     SurfaceComputeRenderer.create(
-      de,
-      surfaceSlotColors(state.transforms, de.maps),
-      surfaceTrapIndices(state.transforms, de.maps),
+      target,
+      // Per-slot shading inputs by kind: the IFS session shades
+      // de.maps[j] (fr-c6yd's shared derivation); the escape session has
+      // ONE slot — the active map's color, trap index 0, the GLSL
+      // setEscapeSystem shape.
+      target.kind === "ifs"
+        ? surfaceSlotColors(state.transforms, target.de.maps)
+        : [escapeSlotColor()],
+      target.kind === "ifs"
+        ? surfaceTrapIndices(state.transforms, target.de.maps)
+        : [0],
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -3062,12 +3090,13 @@ function main(): void {
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
-      // Set when this session routes to the WebGPU compute path (fr-tzdg)
-      // — the gate below then awaits device + pipeline instead of the
-      // GLSL link.
-      let computeDe: SurfaceDE | null = null;
-      // Recomputed by the routing below (fr-tmgf); the non-IFS branches
-      // keep null — WebGL is their natural engine, nothing to explain.
+      // Set when this session routes to the WebGPU compute path (fr-tzdg;
+      // fr-dlxh widened it to the escape kind) — the gate below then
+      // awaits device + pipeline instead of the GLSL link.
+      let computeTarget: SurfaceComputeTarget | null = null;
+      // Recomputed by the routing below (fr-tmgf); the 4D and plain-affine
+      // branches keep null — WebGL is their natural engine, nothing to
+      // explain.
       surfaceWebglDetailToken = null;
       try {
         if (
@@ -3114,8 +3143,11 @@ function main(): void {
           // The IFS gate refused — the escape-time complement (fr-kltj):
           // a single non-contracting pure-fold map has no attractor, but
           // it has the canonical Mandelbox escape-time set, and THAT is
-          // what Surface renders for it. Same session plumbing (tiers,
-          // strips, compile gate); no grid — the empty-space chain's
+          // what Surface renders for it. Since fr-dlxh the escape kind
+          // PREFERS the compute renderer like every fold-shaped session
+          // (the kernel's forward-orbit core); the SURFACE_ESCAPE GLSL
+          // variant is the fallback arm (?surfacegl / no adapter /
+          // device loss). No grid either way — the empty-space chain's
           // validity argument is IFS-specific.
           surfaceSessionIs4D = false;
           const de = buildEscapeDE(
@@ -3123,14 +3155,20 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
-          const active = Math.max(
-            0,
-            state.transforms.findIndex((t) => (t.weight ?? 1) > 0),
-          );
-          scene.setEscapeSystem(
-            de,
-            transformColors(state.transforms.length)[active],
-          );
+          if (surfaceComputeAvailable()) {
+            computeTarget = { kind: "escape", de };
+            scene.enterSurfaceComputeEscapeSession();
+          } else {
+            // fr-tmgf: a pure-fold map is fold-shaped — compute is its
+            // home, so the WebGL session says why it passed (null for
+            // the deliberate ?surfacegl flag).
+            surfaceWebglDetailToken = surfaceWebglDetail({
+              foldShaped: true,
+              supported: SurfaceComputeRenderer.supported(),
+              block: surfaceComputeBlock,
+            });
+            scene.setEscapeSystem(de, escapeSlotColor());
+          }
           surfaceGrid.cancel();
           // The explorer camera was framed on the chaos game's cloud —
           // for a non-contracting map that is escape-reset debris near
@@ -3166,7 +3204,7 @@ function main(): void {
             // and no grid request: the kernel marches gridless by
             // decision (49µs/ray was measured without it; the fallback
             // re-enter requests one when it routes the WebGL branch).
-            computeDe = de;
+            computeTarget = { kind: "ifs", de };
             scene.enterSurfaceComputeSession(de);
           } else {
             // fr-tmgf: this session runs the WebGL tracer — the progress
@@ -3205,8 +3243,8 @@ function main(): void {
         // completion and the render-complete signal (which holding shows /
         // timeline render keyframes depart on) wait for it.
         const token = ++surfaceCompileToken;
-        if (computeDe) {
-          beginSurfaceComputeGate(token, computeDe);
+        if (computeTarget) {
+          beginSurfaceComputeGate(token, computeTarget);
           return {
             post: () => {},
             terminate: () => {

@@ -57,11 +57,15 @@
  * re-enters via the WebGL path.
  */
 
+import type { EscapeDE } from "../fractal/escape-de";
+import type { SurfaceGpuRunParams } from "../fractal/surface-de-gpu";
 import {
+  packEscapeGpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
+  SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -119,6 +123,18 @@ const BG_BOTTOM = hexToRgb01(DARK_BACKDROP.bottom);
  * compatible adapter) — the session's signal to route to the WebGL tracer
  * without noting an error. */
 export class SurfaceComputeUnavailableError extends Error {}
+
+/**
+ * What one compute session traces (fr-dlxh): an IFS attractor descent
+ * (the fr-tzdg/fr-55s1 fold and fold-lens classes, `SurfaceDE` frozen at
+ * enter) or an escape-time forward orbit (`EscapeDE`, the systems
+ * `analyzeEscapeSystem` admits — the IFS gate's complement). The kind
+ * picks the kernel core, the params packer and the maps buffer's
+ * existence; everything else — the bounded march/shade host loop, the
+ * progressive presents, the failure ladder — is shared.
+ */
+export type SurfaceComputeTarget =
+  { kind: "ifs"; de: SurfaceDE } | { kind: "escape"; de: EscapeDE };
 
 /** Everything one frame needs beyond the session-frozen DE: raster size,
  * camera, tier budgets, live lighting/color params. Assembled by scene.ts
@@ -450,18 +466,20 @@ export class SurfaceComputeRenderer {
   }
 
   /**
-   * Acquire a device and build the session pipeline for `de` (frozen — a
-   * system edit re-enters the session, never retargets a live renderer).
-   * `colors[j]`/`trapIndices[j]` shade `de.maps[j]`, the same per-slot
-   * inputs the GLSL packer takes. `opts.shadeDeWidth` overrides the
-   * shipped shade probe width ({@link SURFACE_COMPUTE_SHADE_DE_WIDTH}) —
-   * the gpu-bench A/B knob, never set by the app. Rejects with
-   * {@link SurfaceComputeUnavailableError} when WebGPU is absent, or a
-   * plain error (compile/validation) the caller treats identically: fall
-   * back to the WebGL tracer.
+   * Acquire a device and build the session pipeline for `target` (frozen
+   * — a system edit re-enters the session, never retargets a live
+   * renderer). `colors[j]`/`trapIndices[j]` shade `de.maps[j]` for the
+   * IFS kind — the same per-slot inputs the GLSL packer takes — and slot
+   * 0 alone for the escape kind (one map, the GLSL `setEscapeSystem`
+   * shape). `opts.shadeDeWidth` overrides the shipped shade probe width
+   * ({@link SURFACE_COMPUTE_SHADE_DE_WIDTH}) — the gpu-bench A/B knob,
+   * never set by the app; inert for escape (its loop has no width).
+   * Rejects with {@link SurfaceComputeUnavailableError} when WebGPU is
+   * absent, or a plain error (compile/validation) the caller treats
+   * identically: fall back to the WebGL tracer.
    */
   static async create(
-    de: SurfaceDE,
+    target: SurfaceComputeTarget,
     colors: Vec3[],
     trapIndices: number[],
     opts: { shadeDeWidth?: number } = {},
@@ -501,7 +519,7 @@ export class SurfaceComputeRenderer {
     try {
       const renderer = await SurfaceComputeRenderer.buildOnDevice(
         device,
-        de,
+        target,
         colors,
         trapIndices,
         opts.shadeDeWidth ?? SURFACE_COMPUTE_SHADE_DE_WIDTH,
@@ -518,7 +536,7 @@ export class SurfaceComputeRenderer {
 
   private static async buildOnDevice(
     device: GPUDevice,
-    de: SurfaceDE,
+    target: SurfaceComputeTarget,
     colors: Vec3[],
     trapIndices: number[],
     shadeDeWidth: number,
@@ -547,9 +565,16 @@ export class SurfaceComputeRenderer {
           // estimators route — fold base maps march the wide frontier,
           // fold-free ones the width-4 refined ladder (width/shadeDeWidth
           // are inert there) — and a fold FINAL lens wraps either core in
-          // descendLens's branch sweep.
-          core: deHasFolds(de) ? "fold" : "affine",
-          lens: de.foldFinal !== null,
+          // descendLens's branch sweep. fr-dlxh: an escape target takes
+          // the forward-orbit core instead (no lens — the escape gate
+          // refuses final transforms).
+          core:
+            target.kind === "escape"
+              ? "escape"
+              : deHasFolds(target.de)
+                ? "fold"
+                : "affine",
+          lens: target.kind === "ifs" && target.de.foldFinal !== null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -640,8 +665,15 @@ export class SurfaceComputeRenderer {
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
     // (ArrayBufferLike-backed) don't satisfy writeBuffer's non-shared
-    // buffer requirement — the bench's own idiom.
-    const mapsData = new Float32Array(packSurfaceGpuMaps(de));
+    // buffer requirement — the bench's own idiom. An escape kernel never
+    // DECLARES the maps binding, but the explicit bind group layouts
+    // below keep entry 1 (a layout may carry entries a shader ignores),
+    // so the escape target binds one zero stride there rather than
+    // forking every layout/bind-group path.
+    const mapsData =
+      target.kind === "escape"
+        ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
+        : new Float32Array(packSurfaceGpuMaps(target.de));
     const mapsBuf = device.createBuffer({
       size: mapsData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -684,7 +716,7 @@ export class SurfaceComputeRenderer {
 
     return new SurfaceComputeRenderer(
       device,
-      de,
+      target,
       marchPipeline,
       marchLayout,
       shadePipeline,
@@ -733,7 +765,7 @@ export class SurfaceComputeRenderer {
 
   private constructor(
     private readonly device: GPUDevice,
-    private readonly de: SurfaceDE,
+    private readonly target: SurfaceComputeTarget,
     private readonly marchPipeline: GPUComputePipeline,
     private readonly marchLayout: GPUBindGroupLayout,
     private readonly shadePipeline: GPUComputePipeline,
@@ -1006,7 +1038,12 @@ export class SurfaceComputeRenderer {
     // factor, surface-de.ts) — so first-slice/first-batch sizing starts
     // from a proportionally raised prior and stays watchdog-safe before
     // the EMAs take over.
-    const lensKind = this.de.foldFinal?.foldKind;
+    // (Escape targets scale nothing: the forward loop is phone-cheap and
+    // the pessimistic base priors only err toward smaller first slices.)
+    const lensKind =
+      this.target.kind === "ifs"
+        ? this.target.de.foldFinal?.foldKind
+        : undefined;
     const lensCostScale =
       lensKind === undefined
         ? 1
@@ -1020,32 +1057,35 @@ export class SurfaceComputeRenderer {
     let lastProgress = wallStart;
 
     const writeParams = (itemCount: number, steps: number): void => {
+      const run: SurfaceGpuRunParams = {
+        itemCount,
+        stepsThisPass: steps,
+        marchSteps: spec.marchSteps,
+        maxDepth: spec.maxDepth,
+        hitFloor: spec.hitFloor,
+        cutoff: 0,
+        footprint: 0,
+        pose: {
+          ro: spec.camPos,
+          right: [1, 0, 0],
+          up: [0, 1, 0],
+          fwd: [0, 0, 1],
+          tanHalf: 0,
+          aspect: width / Math.max(1, height),
+          rasterWidth: width,
+          rasterHeight: height,
+          // The ACCEPTANCE slope (fr-7xgi): eps = max(pixelEps * t,
+          // hitFloorEps) in the kernel's march — native-height derived,
+          // tier-independent.
+          pixelEps: spec.acceptPixelEps,
+        },
+      };
       device.queue.writeBuffer(
         this.paramsBuf,
         0,
-        packSurfaceGpuParams(this.de, {
-          itemCount,
-          stepsThisPass: steps,
-          marchSteps: spec.marchSteps,
-          maxDepth: spec.maxDepth,
-          hitFloor: spec.hitFloor,
-          cutoff: 0,
-          footprint: 0,
-          pose: {
-            ro: spec.camPos,
-            right: [1, 0, 0],
-            up: [0, 1, 0],
-            fwd: [0, 0, 1],
-            tanHalf: 0,
-            aspect: width / Math.max(1, height),
-            rasterWidth: width,
-            rasterHeight: height,
-            // The ACCEPTANCE slope (fr-7xgi): eps = max(pixelEps * t,
-            // hitFloorEps) in the kernel's march — native-height derived,
-            // tier-independent.
-            pixelEps: spec.acceptPixelEps,
-          },
-        }),
+        this.target.kind === "escape"
+          ? packEscapeGpuParams(this.target.de, run)
+          : packSurfaceGpuParams(this.target.de, run),
       );
     };
     const dispatchTimed = async (
