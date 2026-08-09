@@ -81,9 +81,11 @@ const BG_B = 14;
  * consulted, mirroring that same branch) runs the 3D chaos game directly;
  * otherwise every map (and the lens, if any) is lifted through
  * {@link toTransform4} and run through the 4D chaos game, reading its xyz
- * `positions` and `transformIndices` the same way. An order-1 `symmetry` is
- * the identity, so passing `system.symmetry` unconditionally on the flat path
- * is always safe.
+ * `positions` and `transformIndices` the same way, with `system.symmetry`
+ * passed straight through on BOTH branches (fr-4ao9) — an order-1 symmetry is
+ * the identity, so passing it unconditionally is always safe, and it's the 4D
+ * branch that actually renders a w-plane or twisted symmetry's kaleidoscope,
+ * since a non-flat symmetry always routes there.
  *
  * Each plotted point is colored by its BASE transform (`transformColors`,
  * `color.ts`'s "by transform" palette) — `transformIndices` already records
@@ -134,6 +136,7 @@ export function renderSystemThumb(
       THUMB_POINTS,
       rng,
       finalTransform4,
+      symmetry,
     );
     positions = result.positions;
     transformIndices = result.transformIndices;

@@ -174,6 +174,42 @@ describe("renderSystemThumb", () => {
     }
   });
 
+  it("carries a w-plane kaleidoscope into the 4D thumbnail render (fr-4ao9): a flat system with symmetry { order: 4, plane: zw } — which routes to the 4D branch purely because of the symmetry — renders differently than the same system with symmetry off", () => {
+    const size = 48;
+    const transforms = sierpinskiTetrahedron();
+    const plain: MorphSystem = {
+      transforms,
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+    };
+    const kaleidoscope: MorphSystem = {
+      transforms,
+      finalTransform: null,
+      symmetry: { order: 4, plane: "zw" },
+    };
+
+    const plainBuffer = renderSystemThumb(plain, size, mulberry32(23));
+    const kaleidoscopeBuffer = renderSystemThumb(
+      kaleidoscope,
+      size,
+      mulberry32(23),
+    );
+
+    let differingPixels = 0;
+    for (let p = 0; p < size * size; p++) {
+      const o = p * 4;
+      if (
+        plainBuffer[o] !== kaleidoscopeBuffer[o] ||
+        plainBuffer[o + 1] !== kaleidoscopeBuffer[o + 1] ||
+        plainBuffer[o + 2] !== kaleidoscopeBuffer[o + 2]
+      ) {
+        differingPixels++;
+      }
+    }
+
+    expect(differingPixels).toBeGreaterThan(200);
+  });
+
   it("returns the plain background for a system with no transforms", () => {
     const size = 16;
     const system: MorphSystem = {
