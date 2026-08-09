@@ -4,6 +4,7 @@ import {
   MIN_OCCUPIED_CELLS,
   occupiedCellCount,
   randomSystem,
+  scoreSystem,
 } from "./random-system";
 import { systemIsFlat, toTransform4 } from "./affine4";
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
@@ -360,6 +361,58 @@ describe("randomSystem's symmetry roll (fr-d61)", () => {
       expect(isAcceptableSystem(result.bounds)).toBe(true);
     }
     expect(symmetricSystemsSeen).toBeGreaterThan(0);
+  });
+});
+
+describe("scoreSystem's flat/4D routing (fr-x6hz)", () => {
+  it("does not throw and returns a finite score for flat transforms carrying a w-plane symmetry", () => {
+    // Before fr-x6hz, scoreSystem routed on `systemIsFlat(transforms)` alone,
+    // so this flat-transform candidate reached the 3D `runChaosGame`, whose
+    // `symmetryRotation` throws on a plane that mixes w.
+    const score = scoreSystem(
+      {
+        transforms: sierpinskiTetrahedron(),
+        finalTransform: null,
+        symmetry: { order: 4, plane: "xw" },
+      },
+      mulberry32(1),
+    );
+    expect(Number.isFinite(score)).toBe(true);
+  });
+
+  it("does not throw and returns a finite score for flat transforms carrying a w-free plane with a nonzero twist", () => {
+    // A twist alone (no w-plane) is also 4D structure (affine4.ts's
+    // symmetryIsNonFlat) -- it must force the 4D probe just like a w-plane
+    // does.
+    const score = scoreSystem(
+      {
+        transforms: sierpinskiTetrahedron(),
+        finalTransform: null,
+        symmetry: { order: 3, plane: "xz", twist: 1 },
+      },
+      mulberry32(1),
+    );
+    expect(Number.isFinite(score)).toBe(true);
+  });
+
+  it("threads a non-null symmetry into the 4D probe: a real kaleidoscope changes the score against none, holding the (already non-flat) transforms fixed", () => {
+    // doubleRotation's transforms are already non-flat (confirmed by the
+    // isAcceptableSystem4 test above), so both calls take the 4D branch --
+    // isolating whether `symmetry` itself reaches runChaosGame4 from whether
+    // routing does.
+    const withoutSymmetry = scoreSystem(
+      { transforms: doubleRotation(), finalTransform: null, symmetry: null },
+      mulberry32(4),
+    );
+    const withSymmetry = scoreSystem(
+      {
+        transforms: doubleRotation(),
+        finalTransform: null,
+        symmetry: { order: 6, plane: "xw" },
+      },
+      mulberry32(4),
+    );
+    expect(withSymmetry).not.toBe(withoutSymmetry);
   });
 });
 

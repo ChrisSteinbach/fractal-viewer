@@ -292,6 +292,23 @@ describe("mutateSystem quality gate", () => {
   });
 });
 
+describe("mutateSystem symmetry routing (fr-x6hz)", () => {
+  it("does not throw when the base's transforms are flat but its symmetry turns in a w-plane", () => {
+    // mutateSystem copies symmetry through verbatim, so a base carrying a
+    // w-plane kaleidoscope on an otherwise-flat system reaches scoreSystem's
+    // quality gate with exactly that combination on every attempt. Before
+    // fr-x6hz, scoreSystem's flat/4D routing looked at the transforms alone,
+    // so this candidate reached the 3D chaos game and its symmetryRotation
+    // threw on the w-plane.
+    const base = system({
+      transforms: sierpinskiTetrahedron(),
+      symmetry: { order: 4, plane: "xw" },
+    });
+    const mutant = mutateSystem(base, mulberry32(6));
+    expect(mutant.transforms.length).toBe(base.transforms.length);
+  });
+});
+
 describe("mutateSystem colorIndex/colorSpeed", () => {
   it("leaves colorIndex and colorSpeed absent when the base carries neither", () => {
     const base = system({ transforms: sierpinskiTetrahedron() });
