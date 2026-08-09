@@ -78,6 +78,7 @@ import {
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
+import { webgpuAdapterStatus } from "./render-backend";
 
 /** Threads per workgroup — fr-q1f8's measured winner (private frontier,
  * stage-1 prune only; wg size itself measured a non-factor, 64 matches the
@@ -489,6 +490,14 @@ export class SurfaceComputeRenderer {
         maxBufferSize: adapter.limits.maxBufferSize,
       },
     });
+    // fr-tmgf: capture the adapter's identity before the reference is
+    // dropped — the renderer discloses label + software verdict to the UI
+    // (the shared render-backend derivation, same as the flame worker's;
+    // the older spec kept `isFallbackAdapter` on the adapter itself).
+    const adapterStatus = webgpuAdapterStatus(
+      adapter.info,
+      (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter,
+    );
     try {
       const renderer = await SurfaceComputeRenderer.buildOnDevice(
         device,
@@ -496,6 +505,7 @@ export class SurfaceComputeRenderer {
         colors,
         trapIndices,
         opts.shadeDeWidth ?? SURFACE_COMPUTE_SHADE_DE_WIDTH,
+        adapterStatus,
       );
       return renderer;
     } catch (e) {
@@ -512,6 +522,7 @@ export class SurfaceComputeRenderer {
     colors: Vec3[],
     trapIndices: number[],
     shadeDeWidth: number,
+    adapterStatus: { label: string | undefined; software: boolean },
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -684,6 +695,8 @@ export class SurfaceComputeRenderer {
       shadeMapsBuf,
       lutTex,
       lutSamp,
+      adapterStatus.label,
+      adapterStatus.software,
     );
   }
 
@@ -731,6 +744,14 @@ export class SurfaceComputeRenderer {
     private readonly shadeMapsBuf: GPUBuffer,
     private readonly lutTex: GPUTexture,
     private readonly lutSamp: GPUSampler,
+    /** Adapter label from create()'s requestAdapter (fr-tmgf) — surfaced
+     * in the UI's backend disclosure; undefined when the adapter offered
+     * no vendor/architecture. */
+    readonly adapterLabel: string | undefined,
+    /** True when the adapter is a software rasterizer (fallback flag or a
+     * SwiftShader-class string tell — see render-backend.ts): the UI's cue
+     * to warn rather than let a CPU-rasterized settle pass as the GPU. */
+    readonly software: boolean,
   ) {
     void this.device.lost.then(() => {
       this.isLost = true;

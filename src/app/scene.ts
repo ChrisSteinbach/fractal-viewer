@@ -75,6 +75,7 @@ import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
+import { unmaskedWebglRenderer } from "./render-backend";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
@@ -3034,6 +3035,17 @@ export class FractalScene {
       };
     }
     return null;
+  }
+
+  /** The unmasked WebGL renderer string (fr-tmgf):
+   * WEBGL_debug_renderer_info where the browser exposes it, else the
+   * masked RENDERER. main.ts matches it against the software-rasterizer
+   * tells ONCE at boot — the incident behind the bead was a browser that
+   * silently blocklisted the GPU, so every mode rendered on SwiftShader
+   * for a day with nothing on screen saying so. Lives here because raw-GL
+   * access stays inside FractalScene. */
+  unmaskedRendererLabel(): string | null {
+    return unmaskedWebglRenderer(this.renderer.getContext());
   }
 
   /**

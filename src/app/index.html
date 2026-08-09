@@ -152,6 +152,12 @@
         </button>
       </div>
 
+      <!-- fr-tmgf: device-level software-rasterizer warning. Sits OUTSIDE
+           the per-mode status sections so a silently software-rendered
+           session (the trigger incident: a browser-blocklisted GPU) is
+           disclosed in every mode, Points included. -->
+      <p id="softwareRendererNote" class="flame-note hidden"></p>
+
       <div id="flameStatus" class="hidden">
         <p class="flame-hint">
           The classic &#8220;fractal flame&#8221; exposure: a soft, glowing 2D

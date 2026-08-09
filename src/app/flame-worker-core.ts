@@ -337,6 +337,12 @@ export type FlameWorkerEvent =
       /** Whatever label the backend factory's adapter exposes (e.g. a
        * `GPUAdapterInfo` description) — see {@link FlameAccumBackend.adapterLabel}. */
       adapter?: string;
+      /** True when a GPU backend runs on a SOFTWARE (fallback/SwiftShader-
+       * class) adapter — see {@link FlameAccumBackend.software}. The main
+       * thread escalates its backend note to the warning tier (fr-tmgf):
+       * software rasterization must not pass as a normal GPU render.
+       * Absent for CPU backends. */
+      software?: boolean;
     }
   | { type: "error"; message: string }
   | {
@@ -2146,6 +2152,7 @@ export class FlameWorkerSession {
         type: "backend",
         backend: created.kind,
         adapter: created.adapterLabel,
+        software: created.software,
       });
     }
     const backend = this.backend;

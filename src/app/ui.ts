@@ -896,6 +896,11 @@ export class Ui {
    * mode each one switches to — the single entry/exit surface that replaced
    * the flame/solid modal islands' four separate buttons. */
   private readonly modeButtons: Record<RenderMode, HTMLButtonElement>;
+  /** fr-tmgf: device-level software-rasterizer warning (see
+   * {@link setSoftwareRendererNote}) — sits OUTSIDE every mode-scoped block
+   * below, so it stays visible across a render-mode switch instead of
+   * disappearing with whichever status section owned it. */
+  private readonly softwareRendererNote: HTMLElement;
   // The mode-scoped blocks that are NOT part of any accordion section
   // (fr-374p): Points' Undo/Redo row and the flame/solid hint + progress
   // status blocks. They sit above ALL the sections in index.html — floating
@@ -1172,6 +1177,7 @@ export class Ui {
       solid: this.byId("modeSolidBtn"),
       surface: this.byId("modeSurfaceBtn"),
     };
+    this.softwareRendererNote = this.byId("softwareRendererNote");
     this.undoRedoRow = this.byId("undoRedoRow");
     this.flameStatus = this.byId("flameStatus");
     this.solidStatus = this.byId("solidStatus");
@@ -2982,14 +2988,22 @@ export class Ui {
    * why-am-I-on-CPU annotation ("GPU failed", "WebGPU unavailable") shown
    * when the CPU backend is a FALLBACK rather than the natural choice —
    * the one-word answer that makes a field report of "it says CPU"
-   * diagnosable. `null` hides the note, mirroring
+   * diagnosable. `software` (fr-tmgf) is the worker backend event's own
+   * GPUAdapterInfo fallback/SwiftShader tell, escalating this note's tier:
+   * true swaps the note's class from informational `.flame-note-info` to
+   * warning `.flame-note` — software rasterization must not pass as a
+   * normal backend note. The swap runs on every non-null call (not just
+   * the software→hardware transition), so a later hardware backend note
+   * un-escalates cleanly. `null` hides the note, mirroring
    * {@link setFlameSupersampleNote}'s contract (cleared at the start of
-   * every render, before the fresh worker reports its own).
+   * every render, before the fresh worker reports its own) — classes are
+   * left alone on that path, since hidden is hidden either way.
    */
   setFlameBackendNote(
     backend: "gpu" | "cpu" | null,
     adapter?: string,
     detail?: string,
+    software = false,
   ): void {
     if (backend === null) {
       this.flameBackendNote.textContent = "";
@@ -3000,7 +3014,34 @@ export class Ui {
       backend === "gpu"
         ? `GPU accumulation${adapter ? ` (${adapter})` : ""}`
         : `CPU accumulation${detail ? ` — ${detail}` : ""}`;
+    this.flameBackendNote.classList.toggle("flame-note", software);
+    this.flameBackendNote.classList.toggle("flame-note-info", !software);
     this.flameBackendNote.classList.remove("hidden");
+  }
+
+  /**
+   * Device-level software-rasterizer warning (fr-tmgf): unlike the
+   * per-mode notes elsewhere in this file, this one sits OUTSIDE every
+   * render mode (see `softwareRendererNote`'s placement in index.html,
+   * ahead of `flameStatus`) because a silently software-rendered session
+   * — the trigger incident was a browser-blocklisted GPU — is exactly as
+   * misleading in Points as it is in Flame or Surface. Warning-tier
+   * `.flame-note` (red, `var(--bad)`) per the style.css contract:
+   * software rasterization standing in for the real GPU is a "not quite
+   * what you asked for" condition, not a routine informational note. A
+   * runtime, device-dependent fact that isn't part of `AppState`, so —
+   * like {@link setFlameBackendNote} — this is a targeted setter main.ts
+   * calls directly rather than something `updateLabels` derives. `null`
+   * hides the note.
+   */
+  setSoftwareRendererNote(text: string | null): void {
+    if (text === null) {
+      this.softwareRendererNote.textContent = "";
+      this.softwareRendererNote.classList.add("hidden");
+      return;
+    }
+    this.softwareRendererNote.textContent = text;
+    this.softwareRendererNote.classList.remove("hidden");
   }
 
   /** Reflect solid-render progress, mirroring {@link setFlameProgress}. */
@@ -3073,15 +3114,21 @@ export class Ui {
    * most surface renders finish within a frame or two and a permanent
    * "0%" would read as a stuck render. POSE-derived and polled from the
    * render loop — never shares {@link setSurfaceEligibility}'s
-   * document-derived note element.
+   * document-derived note element. `detail` (fr-tmgf) is a fallback-reason
+   * token ("compute failed" / "compute unavailable") appended TRAILING
+   * after the percentage, so the engine token and percentage stay the
+   * prominent read — the fr-tmgf legibility lesson: the eye catches
+   * leading tokens.
    */
-  setSurfaceProgress(progress: { label: string; pct: number } | null): void {
+  setSurfaceProgress(
+    progress: { label: string; pct: number; detail?: string } | null,
+  ): void {
     if (progress === null) {
       this.surfaceProgress.classList.add("hidden");
       this.surfaceProgress.style.setProperty("--progress", "0%");
       return;
     }
-    this.surfaceProgress.textContent = `${progress.label} ${String(progress.pct)}%`;
+    this.surfaceProgress.textContent = `${progress.label} ${String(progress.pct)}%${progress.detail ? ` — ${progress.detail}` : ""}`;
     this.surfaceProgress.style.setProperty(
       "--progress",
       `${String(progress.pct)}%`,

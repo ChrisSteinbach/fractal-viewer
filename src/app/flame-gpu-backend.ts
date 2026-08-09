@@ -76,6 +76,7 @@ import {
   FlameGpuSizeError,
   FlameGpuUnavailableError,
 } from "./flame-worker-core";
+import { webgpuAdapterStatus } from "./render-backend";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
@@ -918,23 +919,18 @@ async function buildBackendOnDevice(
     );
   }
 
-  // Firefox (and possibly others) blanks vendor/architecture rather than
-  // omitting them — filter empties instead of trusting the whole info
-  // object's truthiness, so a blank-but-present adapter.info still yields
-  // `undefined` (no bare parenthesis in the UI note) rather than "".
-  const info = adapter.info;
   // A fallback adapter is SOFTWARE WebGPU (SwiftShader-class) — flagged on
   // the backend for the session's device-loss-retry policy, and labeled so
   // the UI note never passes software rasterization off as the real GPU.
-  // `isFallbackAdapter` still lives on the adapter itself in older
-  // implementations — read both homes.
-  const software =
-    info.isFallbackAdapter === true ||
-    (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter === true;
-  const baseLabel = [info.vendor, info.architecture].filter(Boolean).join(" ");
-  const adapterLabel = software
-    ? `${baseLabel || "fallback adapter"} (software)`
-    : baseLabel || undefined;
+  // Detection + label shape live in render-backend.ts (fr-tmgf), shared
+  // with the surface compute renderer: the fallback flag's older home on
+  // the adapter itself is read too, and the string tell catches the
+  // real-looking software stacks Chrome hands out with `isFallbackAdapter`
+  // unset (the fr-tmgf field incident).
+  const { label: adapterLabel, software } = webgpuAdapterStatus(
+    adapter.info,
+    (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter,
+  );
 
   // The one create-time diagnostic breadcrumb (fr-2w5): when a field report
   // says "it picked X", this line says what the context offered and what
