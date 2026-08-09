@@ -100,6 +100,7 @@ import {
   addTransform,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
+  DEFAULT_SYMMETRY_TWIST,
   initialState,
   removeTransform,
   selectTransform,
@@ -110,6 +111,7 @@ import {
   setRenderMode,
   setSymmetryPlane,
   setSymmetryOrder,
+  setSymmetryTwist,
   setTransforms,
   updateTransform,
 } from "./state";
@@ -4009,6 +4011,16 @@ function main(): void {
           state,
           sys.symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
         );
+        // The twist resets with the rest of the kaleidoscope (fr-q0h6 P6):
+        // the order/plane setters spread the previous symmetry, so without
+        // this a twist authored before the roll would silently ride into the
+        // fresh surprise — a 4D double rotation its quality gate never
+        // probed. (Rolled systems never carry one today, so this is always
+        // the DEFAULT_SYMMETRY_TWIST reset.)
+        state = setSymmetryTwist(
+          state,
+          sys.symmetry?.twist ?? DEFAULT_SYMMETRY_TWIST,
+        );
       },
       "always",
       morphMs,
@@ -4079,6 +4091,7 @@ function main(): void {
       // kept for uniformity with the other replace-load paths.
       state = setSymmetryOrder(state, candidate.symmetry.order);
       state = setSymmetryPlane(state, candidate.symmetry.plane);
+      state = setSymmetryTwist(state, candidate.symmetry.twist ?? 0);
     }, "always");
     // A mutated system is no longer the polytope a preset's scaffold
     // illustrated — clear it, like rollSurpriseSystem.
@@ -4112,9 +4125,10 @@ function main(): void {
   // field) shares the one pipeline in onScalarControl below, driven by
   // control-spec.ts's SCALAR_CONTROLS table. Its `view` guard replaces the
   // old per-handler viewIs4D checks — belt-and-braces for controls whose row
-  // is hidden in the other view (symmetry, color mode/contrast, depth style,
-  // the 4D color/fade), so a stray event can't mutate a concern that isn't
-  // even on screen. Everything that edits the system, loads a preset/
+  // is hidden in the other view (color mode/contrast, depth style, the 4D
+  // color/fade — symmetry left the guarded set with fr-q0h6 P6, live in both
+  // views), so a stray event can't mutate a concern that isn't even on
+  // screen. Everything that edits the system, loads a preset/
   // Surprise-Me system, or selects a transform stays a bespoke handler and is
   // UNGUARDED (fr-bf6): the single editor and transform list are live for a
   // non-flat system exactly like a flat one.

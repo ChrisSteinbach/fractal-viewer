@@ -997,8 +997,6 @@ export class Ui {
    * in the Appearance section (fr-15g). */
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
-  private readonly symmetrySection: HTMLElement;
-  private readonly symmetryInactiveNote: HTMLElement;
 
   /**
    * The table-driven scalar controls (see control-spec.ts's SCALAR_CONTROLS),
@@ -1214,8 +1212,6 @@ export class Ui {
     this.fourDColorRow = this.byId("fourDColorRow");
     this.fourDDepthFadeRow = this.byId("fourDDepthFadeRow");
     this.renderStyleRow = this.byId("renderStyleRow");
-    this.symmetrySection = this.byId("symmetrySection");
-    this.symmetryInactiveNote = this.byId("symmetryInactiveNote");
     for (const spec of SCALAR_CONTROLS) {
       this.scalars.set(spec.id, {
         spec,
@@ -1733,8 +1729,10 @@ export class Ui {
     // The presets block, transform list, and editor all STAY VISIBLE and live
     // for a non-flat system exactly as for a flat one — only the controls
     // that are genuinely meaningless while viewing the 4D shader path
-    // (symmetry, color mode/contrast, depth style — none of them reach the 4D
-    // projection or its own w-driven coloring) hide; their 4D look siblings
+    // (color mode/contrast, depth style — neither reaches the 4D projection
+    // or its own w-driven coloring; symmetry, by contrast, stays put since
+    // fr-q0h6 gave the 4D chaos game its own kaleidoscope stage) hide; their
+    // 4D look siblings
     // (the 4D Color and depth-fade rows) swap into the same Appearance slots
     // (fr-15g), and the 4D View section's tumble/slice block replaces the 3D
     // View block. All four render modes stay available while
@@ -1818,25 +1816,11 @@ export class Ui {
     this.fourDColorRow.classList.toggle("hidden", !nonFlat);
     this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
-    this.symmetrySection.classList.toggle("hidden", nonFlat);
-    // fr-5gxn: the 4D chaos game has no post-rotation stage (chaos-game-4d.ts),
-    // so kaleidoscope symmetry is inert while any transform is non-flat. The
-    // value is deliberately preserved rather than reset (see AppState.symmetry),
-    // so this note is the only thing that tells the user it stopped applying.
-    // It's a statement about the DOCUMENT, not the active render mode — the
-    // kaleidoscope is equally parked (and equally live in the shared #v1= URL)
-    // in flame, solid, and surface, so unlike symmetrySection it doesn't gate
-    // on `rendering`. Status text, not an editing control, so — like
-    // surfaceNote — it lives above the accordion with the other floating
-    // status blocks (fr-374p: a mode container may hold only accordion
-    // sections) rather than inside #explorerControls.
-    if (nonFlat && state.symmetry.order > 1) {
-      this.symmetryInactiveNote.textContent = `Kaleidoscope symmetry (${state.symmetry.order}-fold in ${state.symmetry.plane.toUpperCase()}) is inactive in 4D — the setting is kept and returns when the system is 3D again.`;
-      this.symmetryInactiveNote.classList.remove("hidden");
-    } else {
-      this.symmetryInactiveNote.textContent = "";
-      this.symmetryInactiveNote.classList.add("hidden");
-    }
+    // The Symmetry section deliberately does NOT gate on `nonFlat` (fr-q0h6
+    // P6): every render path sweeps or expands the kaleidoscope for a 4D
+    // system too, so the controls stay editable — and fr-5gxn's "parked
+    // kaleidoscope" note died with the hiding, since no authored symmetry is
+    // inert anymore (a w-plane or twist makes the system itself 4D).
     // The manual brightness override only means anything for the glow render
     // style, so — like the flame/solid sub-panels above — it's hidden whenever
     // that style isn't the active one (and always while non-flat, since

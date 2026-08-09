@@ -910,7 +910,7 @@ function paletteBlock(s: SceneSnapshot, transformCount: number): string {
  * post-rotation applies to the variation output, which at `z = 0` is what
  * flam3's `post` does too). Returns the XML plus warnings for anything the
  * projection genuinely loses (z structure, 4D extensions, out-of-XY-plane
- * kaleidoscopes' rotations).
+ * kaleidoscopes' rotations, any kaleidoscope twist).
  */
 export function encodeFlameFile(
   s: SceneSnapshot,
@@ -933,6 +933,16 @@ export function encodeFlameFile(
   } else if (order > 1 && s.symmetry.plane !== "xy") {
     warnings.add(
       "Kaleidoscope outside the XY plane exports as its flat 2D shadow",
+    );
+  }
+  // A twist turns each copy in the plane's orthogonal complement too — for
+  // every w-free plane that complement mixes w, so no 2D xform can carry it
+  // (fr-q0h6). The in-plane copies still export above; only the second
+  // rotation is lost, and when the whole kaleidoscope drops (`drops4D`) the
+  // twist rides that warning instead of adding a second one.
+  if (!drops4D && order > 1 && (s.symmetry.twist ?? 0) !== 0) {
+    warnings.add(
+      "The kaleidoscope's twist (a 4D double rotation) cannot be projected and was dropped",
     );
   }
 

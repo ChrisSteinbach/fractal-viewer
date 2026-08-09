@@ -1,3 +1,4 @@
+import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
@@ -283,26 +284,39 @@ describe("lerpSystem symmetry", () => {
       blend: expect.closeTo(0.3),
     });
   });
-});
 
-describe("lerpSystem symmetry on a non-flat sample", () => {
-  it("carries the departing side's kaleidoscope unchanged, by reference, at an early sample of a flat -> 4D morph", () => {
-    const a = system({
-      transforms: [transform()],
-      symmetry: { order: 6, plane: "xy" },
+  it("treats a differing twist as a different kaleidoscope and crossfades, never interpolating the twist", () => {
+    // Same order and plane, different second angle: (order, plane, twist) is
+    // the identity tuple (fr-q0h6 P6), so this pair crossfades — each half
+    // still that side's own group, twist carried whole, no in-between twist
+    // value ever synthesized (it would be a rotation in neither group).
+    const a = system({ symmetry: { order: 6, plane: "xw", twist: 1 } });
+    const b = system({ symmetry: { order: 6, plane: "xw", twist: 5 } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toEqual({
+      order: 6,
+      plane: "xw",
+      twist: 1,
+      blend: 0.5,
     });
-    const b = system({
-      transforms: [transform({ w: { position: 0.5 } })],
-      symmetry: { order: 5, plane: "xz" },
+    expect(lerpSystem(a, b, 0.75).symmetry).toEqual({
+      order: 6,
+      plane: "xw",
+      twist: 5,
+      blend: 0.5,
     });
-    // b's transform carries a genuine w block, so lerpW returns a live w for
-    // EVERY 0 < t < 1 sample (it only stays undefined when both sides are
-    // flat) -- every intermediate is already on the 4D path, which has no
-    // kaleidoscope stage at all, so the crossfade below must never run.
-    expect(lerpSystem(a, b, 0.1).symmetry).toBe(a.symmetry);
   });
 
-  it("carries the arriving side's kaleidoscope unchanged, by reference, at a late sample of a flat -> 4D morph", () => {
+  it("keeps a matching twisted kaleidoscope untouched (by reference) across the whole morph", () => {
+    const a = system({ symmetry: { order: 6, plane: "xy", twist: 2 } });
+    const b = system({ symmetry: { order: 6, plane: "xy", twist: 2 } });
+    expect(lerpSystem(a, b, 0.25).symmetry).toBe(a.symmetry);
+    expect(lerpSystem(a, b, 0.75).symmetry).toBe(b.symmetry);
+  });
+
+  it("crossfades the kaleidoscopes of a flat -> 4D morph like any other differing pair", () => {
+    // The fr-5gxn non-flat skip is gone (fr-q0h6 P6): a 4D sample renders
+    // its kaleidoscope, so the crossfade runs even though b's transform
+    // carries a genuine w block and every intermediate is non-flat.
     const a = system({
       transforms: [transform()],
       symmetry: { order: 6, plane: "xy" },
@@ -311,7 +325,48 @@ describe("lerpSystem symmetry on a non-flat sample", () => {
       transforms: [transform({ w: { position: 0.5 } })],
       symmetry: { order: 5, plane: "xz" },
     });
-    expect(lerpSystem(a, b, 0.9).symmetry).toBe(b.symmetry);
+    expect(lerpSystem(a, b, 0.1).symmetry).toEqual({
+      order: 6,
+      plane: "xy",
+      blend: expect.closeTo(0.8),
+    });
+    expect(lerpSystem(a, b, 0.9).symmetry).toEqual({
+      order: 5,
+      plane: "xz",
+      blend: expect.closeTo(0.8),
+    });
+  });
+
+  it("produces genuinely non-flat intermediates when a flat-transform endpoint carries a w-plane kaleidoscope", () => {
+    // Every transform on both sides is flat; only a's symmetry plane mixes
+    // w. The departing kaleidoscope fades through the first half of the
+    // morph, and while it is present the SAMPLE itself is a 4D system —
+    // derived from the finished parts + symmetry, the same predicate the
+    // app routes generation requests on.
+    const a = system({ symmetry: { order: 6, plane: "xw" } });
+    const b = system({ symmetry: { order: 1, plane: "xz" } });
+    const sample = lerpSystem(a, b, 0.25);
+    expect(sample.symmetry).toEqual({
+      order: 6,
+      plane: "xw",
+      blend: 0.5,
+    });
+    expect(
+      systemPartsAreNonFlat(
+        sample.transforms,
+        sample.finalTransform,
+        sample.symmetry,
+      ),
+    ).toBe(true);
+    // Past the midpoint only b's w-free order-1 side remains: flat again.
+    const late = lerpSystem(a, b, 0.75);
+    expect(
+      systemPartsAreNonFlat(
+        late.transforms,
+        late.finalTransform,
+        late.symmetry,
+      ),
+    ).toBe(false);
   });
 });
 

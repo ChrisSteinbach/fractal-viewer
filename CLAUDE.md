@@ -78,7 +78,7 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
-    (skipped, parked by reference, on a non-flat sample).
+    (identity tuple = order/plane/twist; twist never interpolates).
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved
     exactly; `wildcard` option adds structural kicks. Quality-gated by
@@ -565,8 +565,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     position is one hyperplane across every mode; 24-map cap, matching 3D's —
     the per-map arrays ride a std140 uniform BLOCK (fr-dqlq: 2688 bytes of the
     guaranteed 16KB, where default-block arrays would have taken 192 of the
-    guaranteed 224 fragment uniform vectors), and there is no kaleidoscope to
-    expand, so 24 slots means 24 transforms.
+    guaranteed 224 fragment uniform vectors), and the kaleidoscope SWEEPS
+    like 3D's (fr-u91x), so 24 slots means 24 transforms at any order.
   - `surface-compute.ts` — WebGPU compute renderer for FOLD 3D surface
     sessions (fr-tzdg): systems with base-map folds OR a fold FINAL lens
     (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks the kernel

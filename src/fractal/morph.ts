@@ -35,20 +35,15 @@
  * - Negative scale lerps straight through zero on purpose: the momentary
  *   planar collapse is the correct mirror fold-through, not a case to dodge.
  * - `symmetry`'s order/plane/twist are discrete and cannot interpolate, but its
- *   VISUAL WEIGHT can (fr-eykn): when the two sides' kaleidoscopes differ,
+ *   VISUAL WEIGHT can (fr-eykn): when the two sides' kaleidoscopes differ —
+ *   the identity tuple is (order, plane, twist), see {@link lerpSymmetry} —
  *   `a`'s fades out over the first half (`blend` 1 -> 0, see
  *   `SymmetryParams.blend`) and `b`'s fades in over the second — continuous
  *   at the midpoint, where both ends sit at blend 0 (bit-identical to order
- *   1, per `prepareChaosGame`). A matching pair stays untouched, an
- *   order-1 side needs no fade (it has no copies), and a non-flat sample
- *   skips the crossfade too (no kaleidoscope renders in 4D) — all three
- *   ride by reference (fr-5gxn).
+ *   1, per `prepareChaosGame`). A matching pair stays untouched and an
+ *   order-1 side needs no fade (it has no copies) — both ride by reference.
  */
-import {
-  isFlatTransform,
-  meanContraction,
-  systemPartsAreNonFlat,
-} from "./affine4";
+import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import type {
   SymmetryParams,
@@ -330,38 +325,34 @@ function identityTransform(id: number): Transform {
 }
 
 /**
- * `symmetry` for a morph (fr-eykn): a matching pair (same order, plane and
- * twist — `blend` deliberately ignored, it's a morph artifact, not an identity)
- * rides through untouched; a differing pair CROSSFADES — the departing
- * kaleidoscope's rotated copies thin to nothing over the first half
- * (`blend`: own strength -> 0), the arriving one's grow from nothing over
- * the second (0 -> own strength) — so the midpoint is continuous: both ends
- * sit at blend 0, which `prepareChaosGame` renders bit-identically to order
- * 1. An order-1 side has no copies to fade, so it rides by reference; each
- * side's own strength resolves through `blend ?? 1`, which is what lets a
- * CHAINED morph (morph-tween.ts) depart from a mid-fade sample without its
+ * `symmetry` for a morph (fr-eykn): two kaleidoscopes are the SAME exactly
+ * when the identity tuple (order, plane, twist) matches — `blend`
+ * deliberately ignored, it's a morph artifact, not an identity — and a
+ * matching pair rides through untouched; a differing pair CROSSFADES — the
+ * departing kaleidoscope's rotated copies thin to nothing over the first
+ * half (`blend`: own strength -> 0), the arriving one's grow from nothing
+ * over the second (0 -> own strength) — so the midpoint is continuous: both
+ * ends sit at blend 0, which `prepareChaosGame` renders bit-identically to
+ * order 1. An order-1 side has no copies to fade, so it rides by reference;
+ * each side's own strength resolves through `blend ?? 1`, which is what lets
+ * a CHAINED morph (morph-tween.ts) depart from a mid-fade sample without its
  * kaleidoscope popping back to full first.
  *
- * A NON-FLAT sample (fr-5gxn) skips the crossfade entirely and rides `a`/`b`
- * by reference, same as a matching pair: the 4D chaos game has no
- * post-rotation stage, so the blend computed below would just be discarded
- * unread — and fading it anyway would leave a parked (non-rendering)
- * kaleidoscope with a decayed `blend` for no visual gain. Same reasoning as
- * {@link lerpW}'s flat-flat guard, one field over.
- *
- * `twist` (fr-q0h6) rides each side's own branch untouched — a crossfade
- * fades one kaleidoscope OUT and the other IN, so each half is still that
- * side's own group, twist included. It joins the identity comparison for the
- * same reason `plane` does: two kaleidoscopes of equal order that turn
- * differently are not the same kaleidoscope.
+ * `twist` (fr-q0h6) rides each side's own branch untouched, NEVER
+ * interpolated — a crossfade fades one kaleidoscope OUT and the other IN, so
+ * each half is still that side's own group, twist included (an interpolated
+ * twist would sweep the copies through rotations that belong to neither
+ * side's group). It joins the identity comparison for the same reason
+ * `plane` does: two kaleidoscopes of equal order that turn differently are
+ * not the same kaleidoscope. Flatness plays no part here (the fr-5gxn
+ * non-flat skip died with fr-q0h6 P6): a 4D sample renders its kaleidoscope
+ * like any other, so the crossfade is always worth computing.
  */
 function lerpSymmetry(
   a: SymmetryParams,
   b: SymmetryParams,
   t: number,
-  nonFlat: boolean,
 ): SymmetryParams {
-  if (nonFlat) return t < 0.5 ? a : b;
   if (
     a.order === b.order &&
     a.plane === b.plane &&
@@ -444,33 +435,13 @@ export function lerpSystem(
 ): MorphSystem {
   if (t <= 0) return a;
   if (t >= 1) return b;
-  const transforms = lerpTransforms(a.transforms, b.transforms, t);
-  const finalTransform = lerpFinalTransform(
-    a.finalTransform,
-    b.finalTransform,
-    t,
-  );
-  // The interpolated PARTS' flatness — deliberately not the sample's full
-  // flatness, which since fr-q0h6 also depends on the symmetry
-  // (`symmetryIsNonFlat`). NO_SYMMETRY is the identity for that predicate, so
-  // this is exactly the value this line computed before fr-q0h6, and the
-  // fr-5gxn guard below keeps behaving exactly as it did.
-  //
-  // TODO(fr-q0h6 P6): the ordering hazard. `lerpSymmetry` consumes flatness,
-  // and flatness now consumes symmetry — feeding the widened predicate's
-  // result in here would be circular (symmetry -> flatness -> symmetry).
-  // Phase 6 removes the fr-5gxn `nonFlat` guard from `lerpSymmetry` (a 4D
-  // kaleidoscope renders by then, so there is nothing to skip the crossfade
-  // for), at which point `lerpSymmetry` takes no flatness at all and the
-  // cycle dissolves — symmetry is simply computed, and any caller that wants
-  // the SAMPLE's flatness derives it from the finished parts + symmetry.
-  const nonFlat = systemPartsAreNonFlat(transforms, finalTransform, {
-    order: 1,
-    plane: "xz",
-  });
+  // No flatness is derived here (that would be circular: since fr-q0h6
+  // flatness consumes symmetry via `symmetryIsNonFlat`) — symmetry is simply
+  // computed, and any caller that wants the SAMPLE's flatness derives it
+  // from the finished parts + symmetry, exactly as for an authored system.
   return {
-    transforms,
-    finalTransform,
-    symmetry: lerpSymmetry(a.symmetry, b.symmetry, t, nonFlat),
+    transforms: lerpTransforms(a.transforms, b.transforms, t),
+    finalTransform: lerpFinalTransform(a.finalTransform, b.finalTransform, t),
+    symmetry: lerpSymmetry(a.symmetry, b.symmetry, t),
   };
 }

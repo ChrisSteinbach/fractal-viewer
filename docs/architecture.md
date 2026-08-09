@@ -282,12 +282,15 @@ stays with the old cloud. The "fresh visit" resets (`resetFourDView` /
 superseded preset load's intent survives into whichever request actually runs
 — see `cloud-generator.ts`) and fire from `applyCloudResult` once that
 request's result lands. Point color is a separate concern from generating the
-cloud — see below. Rotational symmetry stays 3D-only by design — a recorded
-decision (fr-bf6), not an oversight, and the 4D chaos game genuinely has no
-kaleidoscope-symmetry step — so its control simply hides whenever the system is
-non-flat. The flame and solid renders were once 3D-only under that same
-reasoning but have since gained 4D variants (fr-5b3/fr-4wd), covered under "The
-flame still and the solid voxel render" below.
+cloud — see below. Rotational symmetry was once 3D-only by the same recorded
+decision (fr-bf6) that kept flame and solid flat, its control hidden whenever
+the system was non-flat; fr-q0h6 overturned that last holdout: `runChaosGame4`
+now has a kaleidoscope stage of its own (copies rotate in any of the six
+coordinate planes, optionally with a `twist` — a double rotation), a w-plane or
+nonzero twist by itself makes the system 4D (`affine4.ts`'s
+`symmetryIsNonFlat`), and the Symmetry controls stay put. The flame and solid
+renders left the same decision earlier with their 4D variants (fr-5b3/fr-4wd),
+covered under "The flame still and the solid voxel render" below.
 
 Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
@@ -629,12 +632,12 @@ spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
 `surface-de.ts` with four coordinates: the sigma_min inequality is
 dimension-free, so the whole descent transfers verbatim; the singular values
 need a deterministic cyclic-Jacobi eigen-solve where 3D had a closed form;
-and there is no kaleidoscope to expand (the 4D pipeline has none by design),
-so slots are input maps 1:1 against the same 24-slot cap 3D uses — a cap 3D
-also reads as bare base maps since fr-x029 swapped its symmetry EXPANSION
-for a sector sweep (the descent turns each chain point through the
-kaleidoscope's sectors instead of storing a composed matrix per copy, so
-symmetry order costs descent time rather than slots).
+and the kaleidoscope rides the same sector SWEEP as 3D's (fr-u91x lifted
+fr-x029's expansion-to-sweep swap one dimension up: the descent turns each
+chain point through the kaleidoscope's sectors instead of storing a composed
+matrix per copy, so symmetry order costs descent time rather than slots),
+leaving slots input maps 1:1 against the same 24-slot cap 3D uses, at any
+order.
 Those mat4-sized slots did start at 16, because in the DEFAULT uniform block
 24 of them would have claimed 192 of the 224 fragment uniform vectors WebGL2
 merely guarantees; fr-dqlq moved the per-map arrays into a std140 uniform
