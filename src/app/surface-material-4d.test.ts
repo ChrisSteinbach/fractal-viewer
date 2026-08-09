@@ -28,10 +28,17 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
   };
 }
 
+/** Row-major 4x4 identity — the no-kaleidoscope backward step. */
+const IDENTITY4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
 /** The smallest DE the packer accepts, wrapped around the given slots. */
-function de4(maps: SurfaceDE4Map[]): SurfaceDE4 {
+function de4(
+  maps: SurfaceDE4Map[],
+  symmetry: SurfaceDE4["symmetry"] = { order: 1, stepBack: IDENTITY4 },
+): SurfaceDE4 {
   return {
     maps,
+    symmetry,
     boundingRadius: 1,
     visibleBoundingRadius: 1,
     escapeRadius: 2,
@@ -163,5 +170,45 @@ describe("setSurfaceSystem4 std140 packing", () => {
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], [0.75]);
     setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
     expect(mapBlock(material).trap[0]).toBe(0);
+  });
+});
+
+describe("setSurfaceSystem4 kaleidoscope sweep uniforms (fr-u91x)", () => {
+  it("defaults to a single sector and an identity backward step before any system arrives", () => {
+    const material = createSurfaceMaterial4();
+    expect(material.uniforms.uSymOrder.value).toBe(1);
+    const m = material.uniforms.uSymStepBack.value as THREE.Matrix4;
+    expect(Array.from(m.elements)).toEqual(IDENTITY4);
+  });
+
+  it("packs the DE's order and its row-major backward step column-major, the uFinalInvM convention", () => {
+    const material = createSurfaceMaterial4();
+    const rowMajor = Array.from({ length: 16 }, (_, k) => k);
+    setSurfaceSystem4(
+      material,
+      de4([map4()], { order: 5, stepBack: rowMajor }),
+      [[0, 0, 0]],
+    );
+    expect(material.uniforms.uSymOrder.value).toBe(5);
+    const m = material.uniforms.uSymStepBack.value as THREE.Matrix4;
+    expect(Array.from(m.elements)).toEqual([
+      0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15,
+    ]);
+  });
+
+  it("resets a previous system's sectors when the next system has no kaleidoscope", () => {
+    const material = createSurfaceMaterial4();
+    setSurfaceSystem4(
+      material,
+      de4([map4()], {
+        order: 3,
+        stepBack: Array.from({ length: 16 }, (_, k) => k),
+      }),
+      [[0, 0, 0]],
+    );
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
+    expect(material.uniforms.uSymOrder.value).toBe(1);
+    const m = material.uniforms.uSymStepBack.value as THREE.Matrix4;
+    expect(Array.from(m.elements)).toEqual(IDENTITY4);
   });
 });

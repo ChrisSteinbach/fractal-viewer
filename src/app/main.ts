@@ -2994,11 +2994,14 @@ function main(): void {
           // per frame): unlike flame/solid-4D's frozen pose snapshot —
           // frozen there because a pose change invalidates their whole
           // accumulation — the tracer recomputes every pixel every frame,
-          // so the 4D pose stays exactly as live as the camera. No
-          // symmetry argument: the 4D pipeline has none by design.
+          // so the 4D pose stays exactly as live as the camera. The
+          // document's kaleidoscope rides into the DE (fr-u91x): the 4D
+          // descent sweeps its sectors — w-planes and twists included —
+          // so the surfaced set is the plotted set.
           const de = buildSurfaceDE4(
             state.transforms,
             state.finalTransform ?? null,
+            state.symmetry,
           );
           scene.setSurfaceSystem4(
             de,
@@ -3387,10 +3390,11 @@ function main(): void {
   /**
    * Keep the Surface mode button's gate tracking the DOCUMENT (epic
    * fr-7jlk): the pure marchability analysis (cheap — no bounding probe)
-   * plus the material's uniform-array cap — on the symmetry-EXPANDED map
-   * count for a flat document, on the bare active-map count for a 4D one
-   * (fr-vxoj: 4D documents route to analyzeSurfaceSystem4 and the 4D
-   * tracer's own cap; no kaleidoscope in 4D). Rides refreshUi — the one
+   * plus the material's uniform-array cap — on the bare active-map count
+   * in BOTH views (fr-x029 / fr-u91x: both tracers sweep kaleidoscope
+   * sectors instead of expanding them into slots; 4D documents route to
+   * analyzeSurfaceSystem4 and the 4D tracer's own cap). Rides refreshUi —
+   * the one
    * chokepoint every document edit, snapshot load, and undo/redo already
    * funnels through — so the button enables/disables live as variations,
    * 4D blocks, scales, weights, or symmetry orders change.
@@ -3417,7 +3421,8 @@ function main(): void {
         return;
       }
       // The 4D tracer's uniform cap. No symmetry multiplier — the 4D
-      // pipeline has no kaleidoscope, so slots are active maps 1:1.
+      // descent sweeps kaleidoscope sectors around the base maps
+      // (fr-u91x), so slots are active maps 1:1 at any order.
       const activeMaps4 = state.transforms.filter(
         (t) => (t.weight ?? 1) > 0,
       ).length;

@@ -25,7 +25,13 @@ import { lightDirection } from "./voxel-material";
  * (0.0% ghost-of-hits on every slice measured, down from a 4.7-84.6% range
  * unrefined); beam width 4 is hardcoded here exactly as in the 3D shader.
  * fr-jkpn's rank-3/4 validity slots ride along too — extra chains that
- * stay live only while their image is in-sphere.
+ * stay live only while their image is in-sphere. Kaleidoscope sectors are
+ * SWEPT from two default-block uniforms (`uSymOrder` + the backward-step
+ * `uSymStepBack`) rather than expanded into slots — fr-u91x, the 3D
+ * tracer's fr-x029 shape one dimension up, with the whole `mat4` standing
+ * in for 3D's `(cos, sin)` pair because a 4D double rotation carries two
+ * angles; the slab query's half-extent rotates through the same matrix
+ * (an isometry maps segments to segments).
  *
  * The rotor and w-slice arrive as VIEW uniforms rather than baked into the
  * packed maps: every query lifts `q = uInvRotor * vec4(p, uW0)` into the
@@ -99,8 +105,9 @@ const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
  * every WebGL2 device guarantees. Raising the cap further is now a matter of
  * how much per-ray DESCENT cost the tracer can afford, not of uniform space.
  *
- * With no kaleidoscope symmetry in 4D (see surface-de-4d.ts's module doc),
- * 24 slots means 24 transforms, no expansion. The app gates systems whose
+ * Kaleidoscope sectors are swept from uniforms rather than expanded into
+ * slots (fr-u91x; see surface-de-4d.ts's SYMMETRY section), so 24 slots
+ * means 24 transforms at ANY symmetry order. The app gates systems whose
  * map count exceeds it before entering the mode, so {@link setSurfaceSystem4}
  * treats overflow as a bug, not a degrade. */
 export const SURFACE4_MAX_MAPS = 24;
@@ -134,8 +141,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * device guarantees per block, where the same arrays as default-block
    * uniforms would have eaten 192 of the guaranteed 224 fragment uniform
    * vectors. Only the first uMapCount slots are meaningful; the rest are
-   * stale/identity and never read. No symmetry expansion in 4D (see
-   * surface-de-4d.ts's module doc) — one slot per INPUT transform.
+   * stale/identity and never read. One slot per INPUT transform at any
+   * kaleidoscope order — sectors are swept, not expanded (fr-u91x; see
+   * uSymOrder below).
    *
    * This member list IS the layout contract with the THREE.UniformsGroup in
    * createSurfaceMaterial4 below: the renderer uploads that group's backing
@@ -161,6 +169,20 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec4 uMapTrap[MAX_MAPS];
   };
   uniform int uMapCount;
+  /** Kaleidoscope sectors swept around every base map (fr-u91x; >= 1).
+   * 1 leaves the sweep a single pass with no rotation, which is what keeps
+   * non-symmetric systems bit-identical to the pre-sweep tracer. Default
+   * block, like uMapCount — three's UBO writer is float-only, so ints stay
+   * out of the block. */
+  uniform int uSymOrder;
+  /** One BACKWARD sector step, a whole mat4: the transpose of the forward
+   * copy rotation symmetryRotation4(plane, 2*PI/order, twist) — a 4D double
+   * rotation carries two angles, so the matrix stands in for the 3D
+   * tracer's single (cos, sin) pair (see the oracle's stepSector4).
+   * Identity when there is no kaleidoscope; never read at uSymOrder 1
+   * either way. Not per-map data, so it lives beside uSymOrder rather than
+   * growing the std140 block above. */
+  uniform mat4 uSymStepBack;
   /** Bounding-hypersphere radius R of the RAW attractor (pre final
    * transform), in 4D. */
   uniform float uBoundingRadius;
@@ -274,27 +296,53 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return length(q + s * e);
   }
 
+  /** One sector step of the kaleidoscope sweep (the oracle's stepSector4):
+   * turn a chain point BACKWARD by one sector — the transpose of the
+   * rotation copy k applies AFTER its base map, so descending through the
+   * copy un-rotates first. One branchless mat4 multiply, simpler than 3D's
+   * stepSector: a double rotation has two angles, so the whole matrix ships
+   * as a uniform where 3D derived three plane branches from one (cos, sin)
+   * pair. A slab query's half-extent takes the same multiply at the call
+   * sites — an isometry maps segments to segments. */
+  vec4 stepSector4(vec4 q) {
+    return uSymStepBack * q;
+  }
+
   /** One extra Hutchinson level on a frozen escaped candidate's own inverse
    * image (the oracle's refinedCert): the certificate becomes
-   * childScale * max(r - R, min_k sigmaMin_k * (|invMap_k(img)| - R)) —
-   * never below the base childScale * (r - R). fr-beck measured this exact
-   * refinement eliminating every march ghost.
+   * childScale * max(r - R, min sigmaMin_j * (|invMap_j(img)| - R)) —
+   * never below the base childScale * (r - R), with the min over every
+   * (sector, base map) pair, which the sweep spells out exactly as the
+   * oracle's refinedCert does (fr-u91x) — skipping the rotated pieces
+   * would skip candidates the descent itself sweeps. fr-beck measured this
+   * exact refinement eliminating every march ghost.
    *
-   * imgExt is the candidate's segment half-extent (fr-wa6o), carried
-   * through each inner map by its LINEAR part alone and turning that
-   * |invMap_k(img)| into a segment radius; zero — the point query — leaves
-   * every term above unchanged. The segment flag is recomputed from
-   * uSliceHalfW here rather than passed, because a free function sees no
-   * caller scope; it is the same dynamically-uniform test the descent
-   * bodies hoist, so both branches cost nothing across a draw. */
+   * imgExt is the candidate's segment half-extent (fr-wa6o), rotated one
+   * backward step per sector alongside the point and carried through each
+   * inner map by its LINEAR part alone, turning that |invMap_j(img)| into a
+   * segment radius; zero — the point query — leaves every term above
+   * unchanged. The segment flag is recomputed from uSliceHalfW here rather
+   * than passed, because a free function sees no caller scope; it is the
+   * same dynamically-uniform test the descent bodies hoist, so both
+   * branches cost nothing across a draw. */
   float refinedCert4(vec4 img, vec4 imgExt, float r, float childScale) {
     bool segment = uSliceHalfW > 0.0;
     float inner = 1e30;
-    for (int k = 0; k < uMapCount; k++) {
-      vec4 kImg = uInvM[k] * img + uInvT[k];
-      vec4 kExt = segment ? uInvM[k] * imgExt : vec4(0.0);
-      float rk = segmentRadius(kImg, kExt);
-      inner = min(inner, uMapColorSigma[k].w * (rk - uBoundingRadius));
+    vec4 sImg = img;
+    vec4 sExt = imgExt;
+    for (int k = 0; k < uSymOrder; k++) {
+      if (k > 0) {
+        sImg = stepSector4(sImg);
+        if (segment) {
+          sExt = uSymStepBack * sExt;
+        }
+      }
+      for (int j = 0; j < uMapCount; j++) {
+        vec4 jImg = uInvM[j] * sImg + uInvT[j];
+        vec4 jExt = segment ? uInvM[j] * sExt : vec4(0.0);
+        float rj = segmentRadius(jImg, jExt);
+        inner = min(inner, uMapColorSigma[j].w * (rj - uBoundingRadius));
+      }
     }
     return childScale * max(r - uBoundingRadius, inner);
   }
@@ -383,6 +431,17 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * At uSliceHalfW == 0 every value here is today's, bit for bit:
    * segmentRadius degenerates to length, and a zero extent stays zero
    * through any linear map.
+   *
+   * SECTOR SWEEP (fr-u91x), mirroring the oracle's kaleidoscope. Each
+   * chain point (and its slab half-extent — an isometry maps segments to
+   * segments) turns one backward step per sector via uSymStepBack, and
+   * every base map is applied to it there, sector-major (k*n + i, the
+   * chaos-game expansion's slot order), so the candidate stream — keys,
+   * certificates, tie-breaks — is exactly the expanded system's without a
+   * single expanded slot. uSymOrder 1 leaves the k > 0 branches dead:
+   * non-symmetric systems run the pre-sweep arithmetic unchanged. The
+   * oracle module's SYMMETRY section carries the validity argument and
+   * why a single wedge FOLD would not be sound here.
    */
   float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
@@ -509,128 +568,149 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           pExt = v2Ext;
           pScale = v2Scale;
         }
-        for (int j = 0; j < uMapCount; j++) {
-          vec4 img = uInvM[j] * pQ + uInvT[j];
-          // uInvM[j] carries no translation — uInvT[j] is a separate
-          // member — so this IS the inverse map's linear part, all a
-          // segment's half-extent ever sees (fr-wa6o).
-          vec4 imgExt = segment ? uInvM[j] * pExt : vec4(0.0);
-          float r = segmentRadius(img, imgExt);
-          float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uMapColorSigma[j].w;
-          float cert = childScale * (r - uBoundingRadius);
-          // Exactly one tuple leaves the top-2 ladder per candidate — the
-          // displaced runner-up, or the candidate itself. It spills into
-          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
-          // through both harmlessly (key 1e30 never inserts, r = 0 never
-          // folds).
-          float eKey = key;
-          vec4 eQ = img;
-          vec4 eExt = imgExt;
-          float eScale = childScale;
-          float eR = r;
-          float eCert = cert;
-          if (key < c1Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = c1Key;
-            c2Q = c1Q;
-            c2Ext = c1Ext;
-            c2Scale = c1Scale;
-            c2R = c1R;
-            c2Cert = c1Cert;
-            c1Key = key;
-            c1Q = img;
-            c1Ext = imgExt;
-            c1Scale = childScale;
-            c1R = r;
-            c1Cert = cert;
-          } else if (key < c2Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = key;
-            c2Q = img;
-            c2Ext = imgExt;
-            c2Scale = childScale;
-            c2R = r;
-            c2Cert = cert;
+        // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
+        // chain point — and, under a slab query, its half-extent, since the
+        // backward step is an isometry taking segments to segments — turns
+        // one step per kaleidoscope sector, and every BASE map is applied
+        // to it there, so the candidates and their SECTOR-MAJOR enumeration
+        // order (k*n + i, exactly chaos-game-4d's expansion slots) are the
+        // ones the expansion would have produced. The ladders below
+        // therefore break ties the same way, and the beam, the validity
+        // slots and the exits see an unchanged stream. See the oracle
+        // module's SYMMETRY section for why a single wedge FOLD would not
+        // be sound here.
+        vec4 sQ = pQ;
+        vec4 sExt = pExt;
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector4(sQ);
+            if (segment) {
+              sExt = uSymStepBack * sExt;
+            }
           }
-          // Spill into the rank-3/4 ladder (unconditional at width 4);
-          // what THAT evicts (or the spilled tuple itself, when it beats
-          // neither slot) falls through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, extent, scale, radius, certificate) survive;
-            // width 4 is hardcoded here, so there is no tKey — and the
-            // oracle's width-3/4 'extra' conditionals collapse with it (its
-            // ternary here always takes the c4 arm).
-            vec4 tQ = c4Q;
-            vec4 tExt = c4Ext;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = c3Key;
-            c4Q = c3Q;
-            c4Ext = c3Ext;
-            c4Scale = c3Scale;
-            c4R = c3R;
-            c4Cert = c3Cert;
-            c3Key = eKey;
-            c3Q = eQ;
-            c3Ext = eExt;
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (eKey < c4Key) {
-            vec4 tQ = c4Q;
-            vec4 tExt = c4Ext;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = eKey;
-            c4Q = eQ;
-            c4Ext = eExt;
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          }
-          // The tuple leaving the beam frontier: escaped candidates fold
-          // their REFINED certificate (fr-beck: one extra Hutchinson level
-          // closes the barely-escaped-sibling ghost) — skipped whole when
-          // its plain certificate cannot beat the running min anyway (the
-          // oracle's laziness guard, bit-exact); an in-sphere tuple
-          // carries no positive certificate — it can only get here past
-          // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
-          if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert4(eQ, eExt, eR, eScale));
-            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
-            // the folded certificate is FINALIZED (already refined), and
-            // best only falls from here. Once best is at or below
-            // sphereBound the return is already pinned at sphereBound *
-            // uFinalSigmaMin no matter how much further best still
-            // falls, so that case exits unconditionally; short of it,
-            // the settled verdict against the caller's cutoff means the
-            // rest of the descent cannot lift it back either.
-            if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
-              return max(best, sphereBound) * uFinalSigmaMin;
+          for (int j = 0; j < uMapCount; j++) {
+            vec4 img = uInvM[j] * sQ + uInvT[j];
+            // uInvM[j] carries no translation — uInvT[j] is a separate
+            // member — so this IS the inverse map's linear part, all a
+            // segment's half-extent ever sees (fr-wa6o).
+            vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
+            float r = segmentRadius(img, imgExt);
+            float key = pScale * (r - uBoundingRadius);
+            float childScale = pScale * uMapColorSigma[j].w;
+            float cert = childScale * (r - uBoundingRadius);
+            // Exactly one tuple leaves the top-2 ladder per candidate — the
+            // displaced runner-up, or the candidate itself. It spills into
+            // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+            // through both harmlessly (key 1e30 never inserts, r = 0 never
+            // folds).
+            float eKey = key;
+            vec4 eQ = img;
+            vec4 eExt = imgExt;
+            float eScale = childScale;
+            float eR = r;
+            float eCert = cert;
+            if (key < c1Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eExt = c2Ext;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = c1Key;
+              c2Q = c1Q;
+              c2Ext = c1Ext;
+              c2Scale = c1Scale;
+              c2R = c1R;
+              c2Cert = c1Cert;
+              c1Key = key;
+              c1Q = img;
+              c1Ext = imgExt;
+              c1Scale = childScale;
+              c1R = r;
+              c1Cert = cert;
+            } else if (key < c2Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eExt = c2Ext;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = key;
+              c2Q = img;
+              c2Ext = imgExt;
+              c2Scale = childScale;
+              c2R = r;
+              c2Cert = cert;
+            }
+            // Spill into the rank-3/4 ladder (unconditional at width 4);
+            // what THAT evicts (or the spilled tuple itself, when it beats
+            // neither slot) falls through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, extent, scale, radius, certificate) survive;
+              // width 4 is hardcoded here, so there is no tKey — and the
+              // oracle's width-3/4 'extra' conditionals collapse with it (its
+              // ternary here always takes the c4 arm).
+              vec4 tQ = c4Q;
+              vec4 tExt = c4Ext;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = c3Key;
+              c4Q = c3Q;
+              c4Ext = c3Ext;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+              c3Key = eKey;
+              c3Q = eQ;
+              c3Ext = eExt;
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eQ = tQ;
+              eExt = tExt;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (eKey < c4Key) {
+              vec4 tQ = c4Q;
+              vec4 tExt = c4Ext;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = eKey;
+              c4Q = eQ;
+              c4Ext = eExt;
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eQ = tQ;
+              eExt = tExt;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+            // The tuple leaving the beam frontier: escaped candidates fold
+            // their REFINED certificate (fr-beck: one extra Hutchinson level
+            // closes the barely-escaped-sibling ghost) — skipped whole when
+            // its plain certificate cannot beat the running min anyway (the
+            // oracle's laziness guard, bit-exact); an in-sphere tuple
+            // carries no positive certificate — it can only get here past
+            // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            if (eR > uBoundingRadius && eCert < best) {
+              best = min(best, refinedCert4(eQ, eExt, eR, eScale));
+              // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
+              // the folded certificate is FINALIZED (already refined), and
+              // best only falls from here. Once best is at or below
+              // sphereBound the return is already pinned at sphereBound *
+              // uFinalSigmaMin no matter how much further best still
+              // falls, so that case exits unconditionally; short of it,
+              // the settled verdict against the caller's cutoff means the
+              // rest of the descent cannot lift it back either.
+              if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
+                return max(best, sphereBound) * uFinalSigmaMin;
+              }
             }
           }
         }
@@ -781,7 +861,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * at every ball certificate — because lockstep with the plain overload
    * IS the contract; only the extras above are extra. Of those, rings
    * inherits the segment radius (it reads c1R, which is one), while sheets
-   * keeps reading the chain centre's y: shading, not distance.
+   * keeps reading the chain centre's y: shading, not distance. The fr-u91x
+   * sector sweep rides the same way, and c1Map stays the BASE map index j
+   * whichever sector the winning candidate came from — every kaleidoscope
+   * copy of a map colors as that map, exactly chaos-game-4d's
+   * transformIndices discipline.
    */
   float surfaceDE(
     vec3 p,
@@ -899,119 +983,140 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           pExt = v2Ext;
           pScale = v2Scale;
         }
-        for (int j = 0; j < uMapCount; j++) {
-          vec4 img = uInvM[j] * pQ + uInvT[j];
-          // uInvM[j] carries no translation — uInvT[j] is a separate
-          // member — so this IS the inverse map's linear part, all a
-          // segment's half-extent ever sees (fr-wa6o).
-          vec4 imgExt = segment ? uInvM[j] * pExt : vec4(0.0);
-          float r = segmentRadius(img, imgExt);
-          float key = pScale * (r - uBoundingRadius);
-          float childScale = pScale * uMapColorSigma[j].w;
-          float cert = childScale * (r - uBoundingRadius);
-          // Exactly one tuple leaves the top-2 ladder per candidate — the
-          // displaced runner-up, or the candidate itself. It spills into
-          // the rank-3/4 ladder or folds below; empty-slot sentinels flow
-          // through both harmlessly (key 1e30 never inserts, r = 0 never
-          // folds).
-          float eKey = key;
-          vec4 eQ = img;
-          vec4 eExt = imgExt;
-          float eScale = childScale;
-          float eR = r;
-          float eCert = cert;
-          if (key < c1Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = c1Key;
-            c2Q = c1Q;
-            c2Ext = c1Ext;
-            c2Scale = c1Scale;
-            c2R = c1R;
-            c2Cert = c1Cert;
-            c1Key = key;
-            c1Q = img;
-            c1Ext = imgExt;
-            c1Scale = childScale;
-            c1R = r;
-            c1Cert = cert;
-            c1Map = j;
-          } else if (key < c2Key) {
-            eKey = c2Key;
-            eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
-            eR = c2R;
-            eCert = c2Cert;
-            c2Key = key;
-            c2Q = img;
-            c2Ext = imgExt;
-            c2Scale = childScale;
-            c2R = r;
-            c2Cert = cert;
+        // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
+        // chain point — and, under a slab query, its half-extent, since the
+        // backward step is an isometry taking segments to segments — turns
+        // one step per kaleidoscope sector, and every BASE map is applied
+        // to it there, so the candidates and their SECTOR-MAJOR enumeration
+        // order (k*n + i, exactly chaos-game-4d's expansion slots) are the
+        // ones the expansion would have produced. The ladders below
+        // therefore break ties the same way, and the beam, the validity
+        // slots and the exits see an unchanged stream. See the oracle
+        // module's SYMMETRY section for why a single wedge FOLD would not
+        // be sound here.
+        vec4 sQ = pQ;
+        vec4 sExt = pExt;
+        for (int k = 0; k < uSymOrder; k++) {
+          if (k > 0) {
+            sQ = stepSector4(sQ);
+            if (segment) {
+              sExt = uSymStepBack * sExt;
+            }
           }
-          // Spill into the rank-3/4 ladder (unconditional at width 4);
-          // what THAT evicts (or the spilled tuple itself, when it beats
-          // neither slot) falls through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, extent, scale, radius, certificate) survive;
-            // width 4 is hardcoded here, so there is no tKey — and the
-            // oracle's width-3/4 'extra' conditionals collapse with it (its
-            // ternary here always takes the c4 arm).
-            vec4 tQ = c4Q;
-            vec4 tExt = c4Ext;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = c3Key;
-            c4Q = c3Q;
-            c4Ext = c3Ext;
-            c4Scale = c3Scale;
-            c4R = c3R;
-            c4Cert = c3Cert;
-            c3Key = eKey;
-            c3Q = eQ;
-            c3Ext = eExt;
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (eKey < c4Key) {
-            vec4 tQ = c4Q;
-            vec4 tExt = c4Ext;
-            float tScale = c4Scale;
-            float tR = c4R;
-            float tCert = c4Cert;
-            c4Key = eKey;
-            c4Q = eQ;
-            c4Ext = eExt;
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          }
-          // The tuple leaving the beam frontier: escaped candidates fold
-          // their REFINED certificate (fr-beck: one extra Hutchinson level
-          // closes the barely-escaped-sibling ghost) — skipped whole when
-          // its plain certificate cannot beat the running min anyway (the
-          // oracle's laziness guard, bit-exact); an in-sphere tuple
-          // carries no positive certificate — it can only get here past
-          // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
-          if (eR > uBoundingRadius && eCert < best) {
-            best = min(best, refinedCert4(eQ, eExt, eR, eScale));
+          for (int j = 0; j < uMapCount; j++) {
+            vec4 img = uInvM[j] * sQ + uInvT[j];
+            // uInvM[j] carries no translation — uInvT[j] is a separate
+            // member — so this IS the inverse map's linear part, all a
+            // segment's half-extent ever sees (fr-wa6o).
+            vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
+            float r = segmentRadius(img, imgExt);
+            float key = pScale * (r - uBoundingRadius);
+            float childScale = pScale * uMapColorSigma[j].w;
+            float cert = childScale * (r - uBoundingRadius);
+            // Exactly one tuple leaves the top-2 ladder per candidate — the
+            // displaced runner-up, or the candidate itself. It spills into
+            // the rank-3/4 ladder or folds below; empty-slot sentinels flow
+            // through both harmlessly (key 1e30 never inserts, r = 0 never
+            // folds).
+            float eKey = key;
+            vec4 eQ = img;
+            vec4 eExt = imgExt;
+            float eScale = childScale;
+            float eR = r;
+            float eCert = cert;
+            if (key < c1Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eExt = c2Ext;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = c1Key;
+              c2Q = c1Q;
+              c2Ext = c1Ext;
+              c2Scale = c1Scale;
+              c2R = c1R;
+              c2Cert = c1Cert;
+              c1Key = key;
+              c1Q = img;
+              c1Ext = imgExt;
+              c1Scale = childScale;
+              c1R = r;
+              c1Cert = cert;
+              c1Map = j;
+            } else if (key < c2Key) {
+              eKey = c2Key;
+              eQ = c2Q;
+              eExt = c2Ext;
+              eScale = c2Scale;
+              eR = c2R;
+              eCert = c2Cert;
+              c2Key = key;
+              c2Q = img;
+              c2Ext = imgExt;
+              c2Scale = childScale;
+              c2R = r;
+              c2Cert = cert;
+            }
+            // Spill into the rank-3/4 ladder (unconditional at width 4);
+            // what THAT evicts (or the spilled tuple itself, when it beats
+            // neither slot) falls through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, extent, scale, radius, certificate) survive;
+              // width 4 is hardcoded here, so there is no tKey — and the
+              // oracle's width-3/4 'extra' conditionals collapse with it (its
+              // ternary here always takes the c4 arm).
+              vec4 tQ = c4Q;
+              vec4 tExt = c4Ext;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = c3Key;
+              c4Q = c3Q;
+              c4Ext = c3Ext;
+              c4Scale = c3Scale;
+              c4R = c3R;
+              c4Cert = c3Cert;
+              c3Key = eKey;
+              c3Q = eQ;
+              c3Ext = eExt;
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eQ = tQ;
+              eExt = tExt;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (eKey < c4Key) {
+              vec4 tQ = c4Q;
+              vec4 tExt = c4Ext;
+              float tScale = c4Scale;
+              float tR = c4R;
+              float tCert = c4Cert;
+              c4Key = eKey;
+              c4Q = eQ;
+              c4Ext = eExt;
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eQ = tQ;
+              eExt = tExt;
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+            // The tuple leaving the beam frontier: escaped candidates fold
+            // their REFINED certificate (fr-beck: one extra Hutchinson level
+            // closes the barely-escaped-sibling ghost) — skipped whole when
+            // its plain certificate cannot beat the running min anyway (the
+            // oracle's laziness guard, bit-exact); an in-sphere tuple
+            // carries no positive certificate — it can only get here past
+            // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            if (eR > uBoundingRadius && eCert < best) {
+              best = min(best, refinedCert4(eQ, eExt, eR, eScale));
+            }
           }
         }
       }
@@ -1381,6 +1486,11 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     glslVersion: THREE.GLSL3,
     uniforms: {
       uMapCount: { value: 0 },
+      // No kaleidoscope until a system says otherwise: order 1 + identity
+      // is the "no symmetry" encoding, and the sweep never reads the
+      // matrix at order 1.
+      uSymOrder: { value: 1 },
+      uSymStepBack: { value: new THREE.Matrix4() },
       uBoundingRadius: { value: 1 },
       uEscapeRadius: { value: 2 },
       uMaxDepth: { value: 0 },
@@ -1475,6 +1585,31 @@ export function setSurfaceSystem4(
     maps.trap[j * 4] = trapIndices ? trapIndices[j] : 0;
   });
   u.uMapCount.value = de.maps.length;
+  // The kaleidoscope sweep (fr-u91x): always written, like the lens reset
+  // below — order 1 (whose matrix the sweep never reads) is the "no
+  // kaleidoscope" encoding, so a previous system's sectors never leak.
+  // Matrix4.set takes row-major arguments and stores column-major
+  // internally, exactly the uFinalInvM convention above.
+  u.uSymOrder.value = de.symmetry.order;
+  const sb = de.symmetry.stepBack;
+  (u.uSymStepBack.value as THREE.Matrix4).set(
+    sb[0],
+    sb[1],
+    sb[2],
+    sb[3],
+    sb[4],
+    sb[5],
+    sb[6],
+    sb[7],
+    sb[8],
+    sb[9],
+    sb[10],
+    sb[11],
+    sb[12],
+    sb[13],
+    sb[14],
+    sb[15],
+  );
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = de.maxDepth;
