@@ -9,6 +9,7 @@ import {
   SYM_PLANE_CODE,
   type SurfaceDE,
 } from "./surface-de";
+import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Vec3 } from "./types";
 
 /**
@@ -28,10 +29,11 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
- * THREE KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
- * the third). Which estimator a system is entitled to is decided exactly
- * as on the CPU — its BASE maps for the two descents, the escape gate
- * for the forward loop:
+ * FOUR KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
+ * the third and — its 4D cut — the fourth). Which estimator a system is
+ * entitled to is decided exactly as on the CPU — its BASE maps for the
+ * two 3D descents, the escape gate for the forward loop, the 4D gate
+ * (`analyzeSurfaceSystem4`) for the 4D ladder:
  *
  * - `core: "fold"` (the default, and every config that predates fr-55s1)
  *   emits the width-`width` fold frontier above — `descendFold` refine=
@@ -61,6 +63,26 @@ import type { Vec3 } from "./types";
  *   through the same `run.maxDepth` override the descents use), and a
  *   fold-final `lens` THROWS (the escape gate refuses final
  *   transforms; nothing pins that shape).
+ * - `core: "affine4"` (fr-dlxh's 4D cut) is the affine ladder ONE
+ *   DIMENSION UP: `surface-de-4d.ts`'s `estimateDistance4Refined` — the
+ *   width-4 refined beam with fr-jkpn's validity slots over 4×4+t
+ *   inverse maps — for the systems `analyzeSurfaceSystem4` admits, i.e.
+ *   the estimator `surface-material-4d.ts` marches. The public
+ *   signature stays `surfaceDE(pIn: vec3f, …)`: the VIEW LIFT lives in
+ *   the body's own prologue (`q = rotorInv · vec4f(pIn, w0)`, the GLSL
+ *   tracer's uInvRotor line), the fr-wa6o slab rides a per-chain
+ *   half-extent vec4f seeded from rotorInv's w column × sliceHalfW, and
+ *   the kaleidoscope sweeps ONE backward-step 4×4 (fr-u91x) instead of
+ *   the 3D (cos, sin) pair. Pack with {@link packSurface4GpuParams}
+ *   (the 208.. tail IS this core's variant block — rotor, sector step,
+ *   4D final lens, w0/sliceHalfW — and `visibleRadius` packs the
+ *   SLICE-ADJUSTED sliceVisR so the shared march entry's sphere gate is
+ *   the 4D GLSL's, textually unchanged) and {@link packSurfaceGpuMaps4}
+ *   (binding 1 is `array<GpuMap4>` here). Same inert options as
+ *   "affine" (the ladder is fixed at the oracle's `beamWidth` 4; no
+ *   frontier, no probe), `footprint` THROWS at pack (the 4D oracle has
+ *   no cone-footprint cap; hosts pass 0), and a fold-final `lens`
+ *   THROWS (4D fold finals are fr-rsp6's scope).
  *
  * All three bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
@@ -248,6 +270,25 @@ import type { Vec3 } from "./types";
  *              256 vec4f escParams — (foldKind as f32, w, derivGrowth,
  *                  0), the GLSL `uEscParams` order plus the packed-zero
  *                  spare.
+ *          · `core: "affine4"` (fr-dlxh's 4D cut) — the variant block
+ *              GROWS: {@link SURFACE_GPU_PARAMS4_BYTES} = 432 bytes
+ *              total. Every matrix is four row-vec4s holding the
+ *              ROW-MAJOR bytes of the matrix the body APPLIES
+ *              (`dot(rowN, v)` — no column-major reasoning anywhere;
+ *              the packer performs the one real transpose, pose rotor →
+ *              world-to-attractor, exactly `setSurfaceView4`'s dance):
+ *              208 vec4f rotorInv row0..row3   (..271)
+ *              272 vec4f stepBack4 row0..row3  (..335)
+ *              336 vec4f final4M row0..row3    (..399) — identity when
+ *                  no final, like the 3D finalM rows
+ *              400 vec4f final4T
+ *              416 f32 w0             420 f32 sliceHalfW
+ *              424 f32 final4SigmaMin 428 f32 (pad)
+ *              In this core the frozen block's `visibleRadius` carries
+ *              the SLICE-ADJUSTED sliceVisR (the slab's widest 3D
+ *              shadow, surface-material-4d.ts's march gate) and
+ *              `boundCenter` packs the origin (the 4D oracle is
+ *              origin-anchored by construction).
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -256,6 +297,12 @@ import type { Vec3 } from "./types";
  *   p0  = sigmaMin, foldInvW, foldSigma, foldKind (0/1/2/3 as f32)
  *   bnb = bnbDir xyz, invTNorm
  *   p1  = invMSigmaMin, 0, 0, 0
+ *
+ * 4D maps storage (`core: "affine4"`) — {@link SURFACE_GPU_MAP4_VEC4}
+ * vec4f per map (the same 96-byte stride by arithmetic coincidence),
+ * matching WGSL `struct GpuMap4`:
+ *   r0..r3 = invM rows 0..3 (row-major)    t = invT
+ *   p0     = sigmaMin, 0, 0, 0
  *
  * March state — one vec4f per ray: (t, status, steps, lastD), host-
  * initialized to `(-1, 0, 0, 0)`; `t < 0` means the sphere gate has not
@@ -282,7 +329,9 @@ import type { Vec3 } from "./types";
  * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8. The
  * ESCAPE core never declares binding 1 (maps) in any mode — its one
  * forward map rides the params variant block — so escape hosts skip
- * that buffer; every other binding is identical. Mode "shade" binds:
+ * that buffer; the AFFINE4 core declares binding 1 as
+ * `array<GpuMap4>` (pack with {@link packSurfaceGpuMaps4}); every
+ * other binding is identical. Mode "shade" binds:
  *   @binding(4) var<uniform> shade: ShadeParams
  *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
  *   @binding(6) var<storage, read_write> colorOut: array<u32> — one RGBA8
@@ -304,8 +353,17 @@ import type { Vec3 } from "./types";
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
 export const SURFACE_GPU_PARAMS_BYTES = 272;
+/** Params size for `core: "affine4"` — the frozen 0..207 block plus the
+ * 4D variant tail (layout contract in the module doc). The other cores'
+ * structs still end at 208/272; binding the larger buffer to them would
+ * be valid, but hosts size per core. */
+export const SURFACE_GPU_PARAMS4_BYTES = 432;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
+/** vec4f slots per 4D map (`struct GpuMap4`) — the same stride as the 3D
+ * GpuMap by arithmetic coincidence (3+1+2 = 4+1+1), so shared host
+ * sizing math keeps working; the field layout is its own contract. */
+export const SURFACE_GPU_MAP4_VEC4 = 6;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). */
 export const SURFACE_GPU_SHADE_BYTES = 128;
@@ -335,8 +393,15 @@ export interface SurfaceGpuKernelOptions {
    * is the forward escape-time loop mirroring `estimateEscapeDistance`
    * for `analyzeEscapeSystem` systems — pack with
    * {@link packEscapeGpuParams}, skip the maps buffer (binding 1 is not
-   * declared), same inert options as "affine", and `lens` throws. */
-  core?: "fold" | "affine" | "escape";
+   * declared), same inert options as "affine", and `lens` throws.
+   * "affine4" (fr-dlxh's 4D cut) is the refined ladder ONE DIMENSION UP
+   * — `surface-de-4d.ts`'s `estimateDistance4Refined` behind the view
+   * lift (rotor + w0 + fr-wa6o slab) — for `analyzeSurfaceSystem4`
+   * systems: pack with {@link packSurface4GpuParams} +
+   * {@link packSurfaceGpuMaps4} (binding 1 is `array<GpuMap4>`), same
+   * inert options as "affine", `lens` throws (4D fold finals are
+   * fr-rsp6's scope) and a nonzero `footprint` throws at pack. */
+  core?: "fold" | "affine" | "escape" | "affine4";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
    * is renamed `surfaceDECore` and a new `surfaceDE` sweeps the lens's
@@ -605,6 +670,119 @@ export function packEscapeGpuParams(
   return buf;
 }
 
+/** Per-frame 4D view for `core: "affine4"` — the same (rotor, w0,
+ * sliceHalfW) triple `setSurfaceView4` receives: `rotor` is the
+ * ROW-MAJOR pose rotor (`fourDView.matrix()`'s output), and the packer
+ * stores its TRANSPOSE — the world→attractor rotation the body applies
+ * — as the rotorInv rows (the exact `setSurfaceView4` dance); `w0` and
+ * `sliceHalfW` are LITERAL world w (scene.ts's `wSupport` conversion,
+ * fr-33yb, happens before this seam). */
+export interface SurfaceGpu4View {
+  rotor: ArrayLike<number>;
+  w0: number;
+  sliceHalfW: number;
+}
+
+/**
+ * Pack the params uniform for the AFFINE4 core (fr-dlxh's 4D cut). The
+ * frozen block carries the 4D session's marching quantities with two
+ * core-specific meanings: `boundCenter` packs the ORIGIN (the 4D oracle
+ * is origin-anchored by construction — `buildSurfaceDE4`'s probe) and
+ * `visibleRadius` packs the SLICE-ADJUSTED sliceVisR — the slab's
+ * widest 3D shadow, `surface-material-4d.ts`'s march gate — so the
+ * shared march entry's sphere gate is the 4D GLSL's, textually
+ * unchanged; repacked per pass, which is what keeps it live as the
+ * rotor/slice move. The 208.. tail is the 4D variant block (layout
+ * contract in the module doc): rotorInv/stepBack4/final4M as row-vec4
+ * quartets holding the ROW-MAJOR bytes of the matrix the body applies,
+ * the affine final lens packing identity/1 when absent (the 3D finalM
+ * rows always pack identity here — the 4D lens rides the tail alone).
+ * `slowestSigma`/`stepCos` pack benign 1s the body never reads (no
+ * footprint cap, no (cos, sin) sector step — the escape packer's
+ * never-uninitialized convention), and a nonzero `footprint` THROWS:
+ * the 4D oracle takes no footprint argument, and the app path always
+ * passes 0.
+ */
+export function packSurface4GpuParams(
+  de: SurfaceDE4,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+): ArrayBuffer {
+  if ((run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: the affine4 core has no cone-footprint depth cap " +
+        "(the 4D oracle takes no footprint argument; hosts pass 0)",
+    );
+  }
+  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS4_BYTES);
+  const view = new DataView(buf);
+  view.setFloat32(12, de.boundingRadius, true);
+  view.setFloat32(16, de.escapeRadius, true);
+  view.setFloat32(20, de.stepScale, true);
+  const minW = Math.max(Math.abs(view4.w0) - view4.sliceHalfW, 0);
+  const visR = de.visibleBoundingRadius;
+  view.setFloat32(24, Math.sqrt(Math.max(visR * visR - minW * minW, 0)), true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, de.symmetry.order, true);
+  view.setUint32(44, 1, true);
+  view.setUint32(48, de.maps.length, true);
+  view.setUint32(52, run.maxDepth ?? de.maxDepth, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(
+    80,
+    de.boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    true,
+  );
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  // The 4D variant tail. rotorInv rows are the TRANSPOSE of the
+  // row-major pose rotor — row i of Mᵀ is column i of M — the one real
+  // transpose in the pipeline; stepBack4 and final4M are applied
+  // row-major by the oracle already, so their rows pack sequentially.
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  const sb = de.symmetry.stepBack;
+  for (let i = 0; i < 16; i++) {
+    view.setFloat32(272 + i * 4, sb[i], true);
+  }
+  const f = de.final;
+  const fm = f ? f.invM : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  for (let i = 0; i < 16; i++) {
+    view.setFloat32(336 + i * 4, fm[i], true);
+  }
+  const ft = f ? f.invT : [0, 0, 0, 0];
+  view.setFloat32(400, ft[0], true);
+  view.setFloat32(404, ft[1], true);
+  view.setFloat32(408, ft[2], true);
+  view.setFloat32(412, ft[3], true);
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(420, view4.sliceHalfW, true);
+  view.setFloat32(424, f ? f.sigmaMin : 1, true);
+  return buf;
+}
+
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   const out = new Float32Array(
@@ -633,6 +811,28 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 18] = m.bnbDir[2];
     out[base + 19] = m.invTNorm;
     out[base + 20] = m.invMSigmaMin;
+  });
+  return out;
+}
+
+/** Pack the per-map storage array for `core: "affine4"` (layout
+ * contract above): invM rows row-major, then invT, then sigmaMin in
+ * p0.x. Pads to one zero stride when empty, like
+ * {@link packSurfaceGpuMaps}. */
+export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
+  const out = new Float32Array(
+    de.maps.length * SURFACE_GPU_MAP4_VEC4 * 4 || SURFACE_GPU_MAP4_VEC4 * 4,
+  );
+  de.maps.forEach((m, j) => {
+    const base = j * SURFACE_GPU_MAP4_VEC4 * 4;
+    for (let i = 0; i < 16; i++) {
+      out[base + i] = m.invM[i];
+    }
+    out[base + 16] = m.invT[0];
+    out[base + 17] = m.invT[1];
+    out[base + 18] = m.invT[2];
+    out[base + 19] = m.invT[3];
+    out[base + 20] = m.sigmaMin;
   });
   return out;
 }
@@ -722,6 +922,15 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     // arm pins a lensed escape shape — loud beats generating one.
     throw new Error(
       "surface-de-gpu: the escape core cannot take a fold-final lens",
+    );
+  }
+  if (core === "affine4" && lens) {
+    // analyzeSurfaceSystem4 blanket-refuses fold finals today — the 4D
+    // fold-branch sweep is fr-rsp6's scope — so no oracle pins a lensed
+    // 4D shape. Loud beats generating one.
+    throw new Error(
+      "surface-de-gpu: the affine4 core cannot take a fold-final lens " +
+        "(4D fold finals are fr-rsp6's scope)",
     );
   }
   if (!Number.isInteger(width) || width < 1) {
@@ -1285,6 +1494,14 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
 
+  // 4D hit-info (fr-dlxh's 4D cut): surface-material-4d.ts's shading
+  // hit-info overload, term for term — the greedy width-1 descent over
+  // the 4D maps behind the same view lift as the value body, colors-only
+  // convention. STUB until stage A2's body port lands: deliberately not
+  // valid WGSL, so an accidental emission fails loudly at pipeline
+  // creation instead of computing garbage.
+  const affine4HitInfoText = /* wgsl */ `AFFINE4_HIT_INFO_BODY_NOT_YET_PORTED (fr-dlxh stage A2)`;
+
   // Escape hit-info (fr-dlxh — the GLSL SURFACE_ESCAPE shading overload,
   // term for term): the same forward orbit with the classic escape-time
   // extras — trap is the ESCAPE FRACTION escapedAt/maxDepth (the
@@ -1475,7 +1692,9 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       ? affineHitInfoText
       : core === "escape"
         ? escapeHitInfoText
-        : foldHitInfoText;
+        : core === "affine4"
+          ? affine4HitInfoText
+          : foldHitInfoText;
   const hitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
@@ -1840,12 +2059,42 @@ struct Params {
   escM2: vec3f,
   escT2: f32,
   escParams: vec4f,`
-        : ""
+        : core === "affine4"
+          ? /* wgsl */ `
+  rotorInvR0: vec4f,
+  rotorInvR1: vec4f,
+  rotorInvR2: vec4f,
+  rotorInvR3: vec4f,
+  stepBack4R0: vec4f,
+  stepBack4R1: vec4f,
+  stepBack4R2: vec4f,
+  stepBack4R3: vec4f,
+  final4MR0: vec4f,
+  final4MR1: vec4f,
+  final4MR2: vec4f,
+  final4MR3: vec4f,
+  final4T: vec4f,
+  w0: f32,
+  sliceHalfW: f32,
+  final4SigmaMin: f32,
+  pad4: f32,`
+          : ""
   }
 }${
     core === "escape"
       ? ""
-      : /* wgsl */ `
+      : core === "affine4"
+        ? /* wgsl */ `
+
+struct GpuMap4 {
+  r0: vec4f,
+  r1: vec4f,
+  r2: vec4f,
+  r3: vec4f,
+  t: vec4f,
+  p0: vec4f,
+}`
+        : /* wgsl */ `
 
 struct GpuMap {
   r0: vec4f,
@@ -1861,17 +2110,44 @@ struct GpuMap {
     // The escape core reads its one forward map from the params variant
     // block and never touches per-map storage; a declared-but-unused
     // binding would drop out of the auto layout anyway (module doc), so
-    // it is not declared and hosts skip buffer 1.
+    // it is not declared and hosts skip buffer 1. The affine4 core's
+    // maps are the 4D layout (GpuMap4).
     core === "escape"
       ? ""
-      : `
+      : core === "affine4"
+        ? `
+@group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;`
+        : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap>;`
   }
 ${io}
 ${frontierBlock}${
     core === "escape"
       ? ""
-      : /* wgsl */ `
+      : core === "affine4"
+        ? /* wgsl */ `
+// Row-major 4×4 apply — every matrix in this core's wire format stores
+// the ROW-MAJOR bytes of the matrix the body applies (module doc), so
+// application is always dot(row, v); translations ride separately and
+// never touch a half-extent (fr-wa6o: extents transform by the LINEAR
+// part alone).
+fn mapApply4(m: GpuMap4, x: vec4f) -> vec4f {
+  return vec4f(dot(m.r0, x), dot(m.r1, x), dot(m.r2, x), dot(m.r3, x)) + m.t;
+}
+
+fn mapApplyLinear4(m: GpuMap4, x: vec4f) -> vec4f {
+  return vec4f(dot(m.r0, x), dot(m.r1, x), dot(m.r2, x), dot(m.r3, x));
+}
+
+fn stepSector4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.stepBack4R0, v),
+    dot(params.stepBack4R1, v),
+    dot(params.stepBack4R2, v),
+    dot(params.stepBack4R3, v),
+  );
+}`
+        : /* wgsl */ `
 fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
   return vec3f(
     dot(m.r0.xyz, x) + m.r0.w,
@@ -2587,6 +2863,14 @@ ${descentPrologue}
   return max(best, sphereBound) * params.finalSigmaMin;
 }`;
 
+  // The AFFINE4 core (fr-dlxh's 4D cut): estimateDistance4Refined
+  // (surface-de-4d.ts) behind the view lift — the 4D GLSL tracer's
+  // estimator (surface-material-4d.ts) in WGSL. STUB until stage A2's
+  // body port lands: deliberately not valid WGSL, so an accidental
+  // emission fails loudly at pipeline creation instead of computing
+  // garbage.
+  const affine4DescentText = /* wgsl */ `AFFINE4_DESCENT_BODY_NOT_YET_PORTED (fr-dlxh stage A2)`;
+
   // The ESCAPE core (fr-dlxh): escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
   // DE = |v| / dr — in the SURFACE_ESCAPE GLSL arm's f32 formulation
@@ -2640,7 +2924,12 @@ ${affineDescentText}`
         ? `// estimateEscapeDistance (escape-de.ts) — the forward-orbit
 // escape-time estimator, the SURFACE_ESCAPE GLSL arm's twin (fr-dlxh).
 ${escapeDescentText}`
-        : `// descendFold's refine=false path (surface-de.ts), the estimator the
+        : core === "affine4"
+          ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
+// the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
+// that mirror's f32 formulation. Fixed width 4 (fr-dlxh's 4D cut).
+${affine4DescentText}`
+          : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
 
