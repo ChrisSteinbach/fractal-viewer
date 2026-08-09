@@ -2980,6 +2980,66 @@ describe("Ui.setFlameBackendNote", () => {
     expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
   });
+
+  it("escalates to the warning tier for a software adapter (fr-tmgf)", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote(
+      "gpu",
+      "fallback adapter (software)",
+      undefined,
+      true,
+    );
+    expect(note()?.textContent).toBe(
+      "GPU accumulation (fallback adapter (software))",
+    );
+    expect(note()?.classList.contains("flame-note")).toBe(true);
+    expect(note()?.classList.contains("flame-note-info")).toBe(false);
+  });
+
+  it("returns to the info tier when a later backend is hardware (fr-tmgf)", () => {
+    const ui = new Ui(document);
+    ui.setFlameBackendNote(
+      "gpu",
+      "fallback adapter (software)",
+      undefined,
+      true,
+    );
+    ui.setFlameBackendNote("gpu", "Apple M2");
+    expect(note()?.classList.contains("flame-note-info")).toBe(true);
+    expect(note()?.classList.contains("flame-note")).toBe(false);
+  });
+});
+
+describe("Ui.setSoftwareRendererNote", () => {
+  function note(): HTMLElement | null {
+    return document.getElementById("softwareRendererNote");
+  }
+
+  it("is hidden with empty text by default", () => {
+    new Ui(document);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
+
+  it("shows the text and un-hides, keeping the warning-tier class", () => {
+    const ui = new Ui(document);
+    ui.setSoftwareRendererNote(
+      "Software rendering (SwiftShader) — expect low performance.",
+    );
+    expect(note()?.classList.contains("hidden")).toBe(false);
+    expect(note()?.classList.contains("flame-note")).toBe(true);
+    expect(note()?.textContent).toBe(
+      "Software rendering (SwiftShader) — expect low performance.",
+    );
+  });
+
+  it("hides again and clears on null", () => {
+    const ui = new Ui(document);
+    ui.setSoftwareRendererNote("Software rendering (SwiftShader).");
+    ui.setSoftwareRendererNote(null);
+    expect(note()?.classList.contains("hidden")).toBe(true);
+    expect(note()?.textContent).toBe("");
+  });
 });
 
 describe("Ui solid render controls", () => {
@@ -4442,6 +4502,52 @@ describe("Ui.setSolidResolutionNote", () => {
     ui.setSolidResolutionNote(null);
     expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+  });
+});
+
+describe("Ui.setSurfaceProgress", () => {
+  function progress(): HTMLElement | null {
+    return document.getElementById("surfaceProgress");
+  }
+
+  it("is hidden by default (index.html ships it hidden)", () => {
+    new Ui(document);
+    expect(progress()?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the label and percentage and un-hides", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 51 });
+    expect(progress()?.classList.contains("hidden")).toBe(false);
+    expect(progress()?.textContent).toBe("Full detail · WebGPU 51%");
+    expect(progress()?.style.getPropertyValue("--progress")).toBe("51%");
+  });
+
+  it("appends a trailing fallback-reason detail after the percentage (fr-tmgf)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({
+      label: "Full detail · WebGL",
+      pct: 12,
+      detail: "compute failed",
+    });
+    expect(progress()?.textContent).toBe(
+      "Full detail · WebGL 12% — compute failed",
+    );
+    expect(progress()?.style.getPropertyValue("--progress")).toBe("12%");
+  });
+
+  it("passes a fractional percentage through unrounded", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Preview · WebGL", pct: 0.4 });
+    expect(progress()?.textContent).toBe("Preview · WebGL 0.4%");
+  });
+
+  it("hides again and resets --progress to 0% when passed null", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 51 });
+    ui.setSurfaceProgress(null);
+    expect(progress()?.classList.contains("hidden")).toBe(true);
+    expect(progress()?.style.getPropertyValue("--progress")).toBe("0%");
   });
 });
 

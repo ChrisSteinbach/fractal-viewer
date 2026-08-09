@@ -1875,6 +1875,9 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
         type: "backend",
         backend: "gpu",
         adapter: "google swiftshader (software)",
+        // The software verdict rides the wire (fr-tmgf) so the UI can
+        // escalate its note to the warning tier.
+        software: true,
       },
     ]);
     expect(gpuUnavailableEvents(events)).toHaveLength(0);

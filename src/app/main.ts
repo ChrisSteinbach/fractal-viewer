@@ -20,8 +20,15 @@ import {
 } from "../fractal/surface-de";
 import {
   SurfaceComputeRenderer,
+  SurfaceComputeUnavailableError,
   type SurfaceComputeFrameSpec,
 } from "./surface-compute";
+import {
+  isSoftwareRendererLabel,
+  softwareWarningText,
+  surfaceWebglDetail,
+  type SurfaceComputeBlock,
+} from "./render-backend";
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
@@ -347,6 +354,25 @@ function main(): void {
     : initialState(panelOpen);
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+
+  // fr-tmgf: the device-level software-rasterizer disclosure. Read ONCE at
+  // boot — the renderer string is stable for the context's life — and shown
+  // immediately: the incident behind the bead was a browser that silently
+  // blocklisted the GPU, so every mode ran on SwiftShader for a day with
+  // nothing on screen saying so. The surface compute session's own verdict
+  // recomposes the same note via updateSoftwareRendererNote (declared with
+  // the compute state below, which it reads — not callable this early).
+  const webglRendererLabel = scene.unmaskedRendererLabel();
+  const webglSoftware =
+    webglRendererLabel !== null && isSoftwareRendererLabel(webglRendererLabel);
+  if (webglSoftware) {
+    console.warn(
+      `WebGL renderer is a software rasterizer: ${webglRendererLabel}`,
+    );
+    ui.setSoftwareRendererNote(
+      softwareWarningText("webgl", webglRendererLabel),
+    );
+  }
 
   // Whether a video capture is running (fr-py7z): canvas capture streams only
   // emit frames when the canvas actually paints, so the render-on-demand gate
@@ -2242,12 +2268,19 @@ function main(): void {
           event.adapter,
           // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
           // briefly. A CPU backend with no preceding gpuUnavailable is just
-          // a CPU render (GPU never attempted): no reason to show.
+          // a CPU render (GPU never attempted): no reason to show. Wording
+          // per the fr-tmgf legibility lesson: no API names inside
+          // negations — "WebGPU unavailable" was field-misread as a
+          // positive WebGPU indicator (the eye catches the API name, not
+          // the negation).
           event.backend === "cpu" && flameGpuUnavailableReason !== null
             ? flameGpuUnavailableReason === "no-webgpu"
-              ? "WebGPU unavailable"
+              ? "no GPU API in this browser"
               : "GPU failed"
             : undefined,
+          // Software adapters escalate the note to the warning tier
+          // (fr-tmgf): SwiftShader accumulation must not pass as the GPU.
+          event.software === true,
         );
         break;
       case "gpuUnavailable":
@@ -2691,9 +2724,16 @@ function main(): void {
   // request on purpose (49µs/ray was measured gridless; the multi-second
   // fold grid build buys nothing this path needs — measure before wiring,
   // see the fr-tzdg follow-ups).
-  let surfaceComputeBlocked = new URLSearchParams(window.location.search).has(
-    "surfacegl",
-  );
+  // fr-tmgf: the block carries its REASON so the WebGL session's detail
+  // token can say why compute passed — "flag" is the user's own ?surfacegl
+  // escape hatch (a deliberate choice needs no caveat), "unavailable" is a
+  // missing adapter, "failed" a create failure or device loss. One-way for
+  // the page's life, like the boolean it replaced.
+  let surfaceComputeBlock: SurfaceComputeBlock | null = new URLSearchParams(
+    window.location.search,
+  ).has("surfacegl")
+    ? "flag"
+    : null;
   let surfaceComputeRenderer: SurfaceComputeRenderer | null = null;
   // Latest-wins preview coalescing: `pending` latches every invalidation,
   // the single driver loop re-checks it after each completed frame — a
@@ -2711,6 +2751,12 @@ function main(): void {
   // (fr-tmgf: the progress row's compute-path feed — null outside a
   // settle, so the row hides exactly like the strip path's idle state).
   let surfaceComputeSettleProgress: number | null = null;
+  // The surface progress row's trailing WebGL detail token (fr-tmgf):
+  // why THIS session runs the WebGL tracer when compute would have been
+  // its home ("compute unavailable" / "compute failed"), null when WebGL
+  // is the natural engine (affine/escape/4D, or the ?surfacegl flag).
+  // Session-scoped: set by start()'s routing, cleared with the session.
+  let surfaceWebglDetailToken: string | null = null;
 
   // Preview frames carry a wall budget so a rung too heavy for this
   // device still completes (truncated — untraced rays show backdrop),
@@ -2727,7 +2773,7 @@ function main(): void {
   // route before this predicate is consulted.
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
-      !surfaceComputeBlocked &&
+      surfaceComputeBlock === null &&
       (deHasFolds(de) || de.foldFinal !== null) &&
       SurfaceComputeRenderer.supported()
     );
@@ -2741,6 +2787,33 @@ function main(): void {
     surfaceComputeForceKey = null;
     surfaceComputeSettleProgress = null;
     scene.exitSurfaceComputeSession();
+    updateSoftwareRendererNote();
+  }
+
+  // fr-tmgf: ONE warning element, two possible facts — the boot-time WebGL
+  // renderer string (device-level and permanent, so it wins) and the live
+  // surface compute session's software adapter (session-scoped; its row
+  // token also carries "(software)"). Recomposed at every compute
+  // create/teardown; the boot path sets the WebGL fact directly because
+  // this function reads compute state that doesn't exist yet up there.
+  function updateSoftwareRendererNote(): void {
+    if (webglSoftware) {
+      ui.setSoftwareRendererNote(
+        softwareWarningText("webgl", webglRendererLabel ?? "unknown renderer"),
+      );
+      return;
+    }
+    const compute = surfaceComputeRenderer;
+    if (compute !== null && compute.software) {
+      ui.setSoftwareRendererNote(
+        softwareWarningText(
+          "webgpu",
+          compute.adapterLabel ?? "fallback adapter",
+        ),
+      );
+      return;
+    }
+    ui.setSoftwareRendererNote(null);
   }
 
   // The compute path's first-frame gate — the compile gate's twin, one
@@ -2764,13 +2837,18 @@ function main(): void {
         surfaceComputeRenderer = renderer;
         // Field-debuggability breadcrumb (the ?surfacegl escape hatch's
         // counterpart): one line saying which tracer owns this session.
-        console.info("Surface render: WebGPU compute tracer active.");
+        console.info(
+          `Surface render: WebGPU compute tracer active${
+            renderer.adapterLabel ? ` (${renderer.adapterLabel})` : ""
+          }.`,
+        );
+        updateSoftwareRendererNote();
         renderer.onLost = () => {
           if (surfaceComputeRenderer !== renderer) return;
           console.warn(
             "Surface compute device lost; re-entering via the WebGL tracer.",
           );
-          surfaceComputeBlocked = true;
+          surfaceComputeBlock = "failed";
           surfaceSession.enter();
         };
         state = selectTransform(state, null);
@@ -2788,7 +2866,13 @@ function main(): void {
           "Surface compute unavailable; falling back to the WebGL tracer.",
           error,
         );
-        surfaceComputeBlocked = true;
+        // "unavailable" (no adapter for this context) vs "failed" (device/
+        // pipeline creation died) — the progress row's detail token tells
+        // them apart (fr-tmgf).
+        surfaceComputeBlock =
+          error instanceof SurfaceComputeUnavailableError
+            ? "unavailable"
+            : "failed";
         surfaceSession.enter();
       });
   }
@@ -2982,6 +3066,9 @@ function main(): void {
       // — the gate below then awaits device + pipeline instead of the
       // GLSL link.
       let computeDe: SurfaceDE | null = null;
+      // Recomputed by the routing below (fr-tmgf); the non-IFS branches
+      // keep null — WebGL is their natural engine, nothing to explain.
+      surfaceWebglDetailToken = null;
       try {
         if (
           systemPartsAreNonFlat(
@@ -3082,6 +3169,14 @@ function main(): void {
             computeDe = de;
             scene.enterSurfaceComputeSession(de);
           } else {
+            // fr-tmgf: this session runs the WebGL tracer — the progress
+            // row says why compute passed, when it did (null for affine
+            // systems and the ?surfacegl flag: deliberate choices).
+            surfaceWebglDetailToken = surfaceWebglDetail({
+              foldShaped: deHasFolds(de) || de.foldFinal !== null,
+              supported: SurfaceComputeRenderer.supported(),
+              block: surfaceComputeBlock,
+            });
             scene.setSurfaceSystem(
               de,
               surfaceSlotColors(state.transforms, de.maps),
@@ -3223,8 +3318,10 @@ function main(): void {
       scene.abandonSurfaceSettle();
       scene.abandonSurfacePreview();
       // Progress is pose state, not document state (fr-zx34) — a dead
-      // session's percent must not greet the next one.
+      // session's percent must not greet the next one. Neither must its
+      // backend detail token (fr-tmgf).
       ui.setSurfaceProgress(null);
+      surfaceWebglDetailToken = null;
       // A grid still building for this session is nobody's business once
       // the session ends — drop it so its late arrival can't touch the
       // next mode's frame (fr-55r5 part 2). The next 3D session's request
@@ -5275,7 +5372,15 @@ function main(): void {
       const pctRaw = surfaceComputeSettleProgress * 100;
       const pct =
         pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
-      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct });
+      // "(software)" rides the engine token (fr-tmgf): a SwiftShader-class
+      // adapter must not read as the real GPU; the warning note carries
+      // the full story.
+      ui.setSurfaceProgress({
+        label: surfaceComputeRenderer.software
+          ? "Full detail · WebGPU (software)"
+          : "Full detail · WebGPU",
+        pct,
+      });
       return;
     }
     const progress = scene.surfaceRenderProgress();
@@ -5290,12 +5395,17 @@ function main(): void {
     // remove.
     const pctRaw = progress.fraction * 100;
     const pct = pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
+    // The trailing detail token (fr-tmgf) says why compute passed on a
+    // fold system — "compute unavailable" / "compute failed" — and stays
+    // absent when WebGL is the natural engine. Trailing, so the engine
+    // token and percentage keep the prominent read.
     ui.setSurfaceProgress({
       label:
         progress.phase === "preview"
           ? "Preview · WebGL"
           : "Full detail · WebGL",
       pct,
+      detail: surfaceWebglDetailToken ?? undefined,
     });
   }
 

@@ -28,6 +28,7 @@
  * since the page works interactively over the LAN like any other dev page.
  */
 import * as THREE from "three";
+import { SOFTWARE_RENDERER_RE } from "../render-backend";
 import { rotationMatrix4, toTransform4 } from "../../fractal/affine4";
 import { prepareChaosGame, runChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
@@ -853,8 +854,6 @@ const EQUAL_N_ITERATIONS = EQUAL_N_CALL_ITERATIONS * EQUAL_N_CALLS; // 50,331,64
  * (`ScenarioDef3D.maeThreshold`) with its own measured floor documented. */
 const AGREEMENT_MAE_THRESHOLD = 1.0;
 const AGREEMENT_BIAS_THRESHOLD = 0.3;
-
-const SOFTWARE_ADAPTER_RE = /swiftshader|llvmpipe|software/i;
 
 const ADAPTIVE_BATCH_TARGET_MS = 250;
 const ADAPTIVE_BATCH_MIN_ITERATIONS = 100_000;
@@ -5728,11 +5727,12 @@ function isSoftwareAdapter(adapter: BenchAdapterInfo): boolean {
   // Chrome's SwiftShader fallback (the common case in a headless/no-GPU CI
   // box — see scripts/gpu-flame-bench.mjs) reports the tell in `architecture`
   // ("swiftshader"), often leaving `description` empty — so all three fields
-  // are checked, not just description/vendor.
+  // are checked, not just description/vendor. The regex is the app's ONE
+  // software-tell definition (render-backend.ts, fr-tmgf).
   return (
-    SOFTWARE_ADAPTER_RE.test(adapter.description) ||
-    SOFTWARE_ADAPTER_RE.test(adapter.vendor) ||
-    SOFTWARE_ADAPTER_RE.test(adapter.architecture)
+    SOFTWARE_RENDERER_RE.test(adapter.description) ||
+    SOFTWARE_RENDERER_RE.test(adapter.vendor) ||
+    SOFTWARE_RENDERER_RE.test(adapter.architecture)
   );
 }
 
