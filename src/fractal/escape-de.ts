@@ -74,6 +74,12 @@ export const ESCAPE_TIME_ITERATIONS = 30;
  * marginally smoother far fields for strictly more iterations. */
 export const ESCAPE_TIME_RADIUS = 4;
 
+/** March step fudge for the escape-time marchers (GLSL variant and WGSL
+ * core alike): the scalar-derivative estimate is the field's standard
+ * heuristic, not a certified lower bound — every published Mandelbox
+ * marcher damps its steps; 0.7 is the common conservative pick. */
+export const ESCAPE_STEP_SCALE = 0.7;
+
 export type EscapeEligibilityStatus = "eligible" | "ineligible";
 
 /** What {@link analyzeEscapeSystem} feeds the session gate. */

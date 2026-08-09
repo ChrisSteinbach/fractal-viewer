@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import type { EscapeDE } from "../fractal/escape-de";
-import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
+import {
+  ESCAPE_STEP_SCALE,
+  ESCAPE_TIME_ITERATIONS,
+} from "../fractal/escape-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
   SPHEREFOLD_MID_MIN_R,
@@ -2648,12 +2651,6 @@ export function setSurfaceSystem(
     lensT.set(0, 0, 0);
   }
 }
-
-/** March step fudge for the escape-time variant: the scalar-derivative
- * estimate is the field's standard heuristic, not a certified lower bound
- * — every published Mandelbox marcher damps its steps; 0.7 is the common
- * conservative pick. */
-const ESCAPE_STEP_SCALE = 0.7;
 
 /**
  * Resolve the SURFACE_ESCAPE / SURFACE_FOLD_LENS preprocessor arms

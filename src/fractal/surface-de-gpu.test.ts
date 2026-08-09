@@ -1,4 +1,5 @@
 import {
+  packEscapeGpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
@@ -19,6 +20,11 @@ import type {
   SurfaceGpuPose,
   SurfaceGpuShadeParams,
 } from "./surface-de-gpu";
+import {
+  buildEscapeDE,
+  ESCAPE_STEP_SCALE,
+  ESCAPE_TIME_ITERATIONS,
+} from "./escape-de";
 import { buildSurfaceDE, SURFACE_FOLD_BOXFOLD } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
 import type { Transform } from "./types";
@@ -70,6 +76,33 @@ function spherefoldFinalTransform(): Transform {
     rotation: [0.3, 0.1, -0.2],
     scale: [0.9, 0.9, 0.9],
     variations: [{ type: "spherefold", weight: 0.9 }],
+  };
+}
+
+/** The canonical single-map Mandelbox shape (escape-de.test.ts's fixture) —
+ * a minimal ELIGIBLE escape system, so buildEscapeDE gives a real EscapeDE
+ * to pin the ESCAPE core packer/generator against. */
+function canonicalMandelbox(): Transform {
+  return {
+    id: 0,
+    position: [0.4, 0.3, 0.2],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    variations: [{ type: "mandelbox", weight: 2 }],
+  };
+}
+
+/** Same shape with a NEGATIVE weight and a non-unit scale, so `w` (-2) and
+ * `derivGrowth` (|w|·sigmaMax = 3) land on distinct values — a same-sign
+ * same-magnitude fixture would let the 208..271 variant block's offset
+ * 260/264 pair swap silently. */
+function negativeWeightMandelbox(): Transform {
+  return {
+    id: 0,
+    position: [0.4, 0.3, 0.2],
+    rotation: [0, 0, 0],
+    scale: [1.5, 1.5, 1.5],
+    variations: [{ type: "mandelbox", weight: -2 }],
   };
 }
 
@@ -1172,5 +1205,326 @@ describe("ray-state status constants", () => {
     expect(SURFACE_GPU_RAY_HIT).toBe(1);
     expect(SURFACE_GPU_RAY_MISS).toBe(2);
     expect(SURFACE_GPU_RAY_EXHAUSTED).toBe(3);
+  });
+});
+
+describe("packEscapeGpuParams (fr-dlxh)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size the fold/affine packer uses", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const buf = packEscapeGpuParams(de, { itemCount: 1 });
+    expect(buf).toBeInstanceOf(ArrayBuffer);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+  });
+
+  it("packs the frozen scalar offsets: zero boundCenter, the bailout ball doubling as bounding/visible radius, the dead 2R escapeRadius, ESCAPE_STEP_SCALE, and symmetry pinned off", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+
+    // boundCenter zeros — the escape loop has no bounding-ball center.
+    expect(view.getFloat32(0, true)).toBe(0);
+    expect(view.getFloat32(4, true)).toBe(0);
+    expect(view.getFloat32(8, true)).toBe(0);
+    expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
+    // escapeRadius packs the GLSL's dead 2R so the wire never carries an
+    // uninitialized word (module doc) — nothing reads it in this core.
+    expect(view.getFloat32(16, true)).toBe(Math.fround(de.boundingRadius * 2));
+    expect(view.getFloat32(20, true)).toBe(Math.fround(ESCAPE_STEP_SCALE));
+    // visibleRadius is the SAME bailout ball as boundingRadius.
+    expect(view.getFloat32(24, true)).toBe(Math.fround(de.boundingRadius));
+    expect(view.getFloat32(28, true)).toBe(1); // slowestSigma
+    expect(view.getFloat32(32, true)).toBe(1); // stepCos
+    expect(view.getFloat32(36, true)).toBe(0); // stepSin
+    expect(view.getUint32(40, true)).toBe(1); // symOrder
+    expect(view.getUint32(44, true)).toBe(1); // symPlane
+    expect(view.getUint32(48, true)).toBe(1); // mapCount
+  });
+
+  it("packs maxDepth at offset 52 as ESCAPE_TIME_ITERATIONS by default, overridden by run.maxDepth (the preview clamp door)", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const def = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(def.getUint32(52, true)).toBe(ESCAPE_TIME_ITERATIONS);
+
+    const clamped = new DataView(
+      packEscapeGpuParams(de, { itemCount: 1, maxDepth: 12 }),
+    );
+    expect(clamped.getUint32(52, true)).toBe(12);
+  });
+
+  it("round-trips the run params' itemCount/stepsThisPass/cutoff/marchSteps at their documented offsets", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(
+      packEscapeGpuParams(de, {
+        itemCount: 321,
+        stepsThisPass: 9,
+        cutoff: 0.04,
+        marchSteps: 96,
+      }),
+    );
+    expect(view.getUint32(56, true)).toBe(321);
+    expect(view.getUint32(60, true)).toBe(9);
+    expect(view.getFloat32(64, true)).toBe(Math.fround(0.04));
+    expect(view.getUint32(72, true)).toBe(96);
+  });
+
+  it("packs footprint at offset 68 as 0 even when run.footprint is passed — a forward loop has no cone-footprint depth cap", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const withFootprint = new DataView(
+      packEscapeGpuParams(de, { itemCount: 1, footprint: 0.5 }),
+    );
+    expect(withFootprint.getFloat32(68, true)).toBe(0);
+    const without = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(without.getFloat32(68, true)).toBe(0);
+  });
+
+  it("packs hitFloorEps at offset 80 as fround(boundingRadius * SURFACE_GPU_HIT_FLOOR) by default, and fround(boundingRadius * run.hitFloor) when given", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const def = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(def.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR),
+    );
+    const overridden = new DataView(
+      packEscapeGpuParams(de, { itemCount: 1, hitFloor: 0.03 }),
+    );
+    expect(overridden.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * 0.03),
+    );
+  });
+
+  it("packs the final transform as identity/1 at 96..156 — the escape gate refuses final transforms, so nothing else is ever eligible to fill it", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(96, true)).toBe(1);
+    expect(view.getFloat32(100, true)).toBe(0);
+    expect(view.getFloat32(104, true)).toBe(0);
+    expect(view.getFloat32(108, true)).toBe(0);
+    expect(view.getFloat32(112, true)).toBe(0);
+    expect(view.getFloat32(116, true)).toBe(1);
+    expect(view.getFloat32(120, true)).toBe(0);
+    expect(view.getFloat32(124, true)).toBe(0);
+    expect(view.getFloat32(128, true)).toBe(0);
+    expect(view.getFloat32(132, true)).toBe(0);
+    expect(view.getFloat32(136, true)).toBe(1);
+    expect(view.getFloat32(140, true)).toBe(0);
+    expect(view.getFloat32(156, true)).toBe(1); // finalSigmaMin
+  });
+
+  it("packs pose ro/right/up/fwd/tanHalf/aspect/pixelEps/raster at their documented offsets, and the documented defaults when no pose is given", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const pose: SurfaceGpuPose = {
+      ro: [1.1, 2.2, 3.3],
+      right: [1, 0, 0],
+      up: [0, 1, 0],
+      fwd: [0, 0, -1],
+      tanHalf: 0.5773,
+      aspect: 1.7778,
+      rasterWidth: 640,
+      rasterHeight: 360,
+      pixelEps: 0.0007,
+    };
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1, pose }));
+
+    expect(view.getFloat32(76, true)).toBe(Math.fround(pose.pixelEps));
+    expect(view.getUint32(84, true)).toBe(pose.rasterWidth);
+    expect(view.getUint32(88, true)).toBe(pose.rasterHeight);
+    expect(view.getFloat32(144, true)).toBe(Math.fround(pose.ro[0]));
+    expect(view.getFloat32(148, true)).toBe(Math.fround(pose.ro[1]));
+    expect(view.getFloat32(152, true)).toBe(Math.fround(pose.ro[2]));
+    expect(view.getFloat32(160, true)).toBe(Math.fround(pose.right[0]));
+    expect(view.getFloat32(164, true)).toBe(Math.fround(pose.right[1]));
+    expect(view.getFloat32(168, true)).toBe(Math.fround(pose.right[2]));
+    expect(view.getFloat32(172, true)).toBe(Math.fround(pose.tanHalf));
+    expect(view.getFloat32(176, true)).toBe(Math.fround(pose.up[0]));
+    expect(view.getFloat32(180, true)).toBe(Math.fround(pose.up[1]));
+    expect(view.getFloat32(184, true)).toBe(Math.fround(pose.up[2]));
+    expect(view.getFloat32(188, true)).toBe(Math.fround(pose.aspect));
+    expect(view.getFloat32(192, true)).toBe(Math.fround(pose.fwd[0]));
+    expect(view.getFloat32(196, true)).toBe(Math.fround(pose.fwd[1]));
+    expect(view.getFloat32(200, true)).toBe(Math.fround(pose.fwd[2]));
+
+    const noPose = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(noPose.getFloat32(76, true)).toBe(0);
+    expect(noPose.getUint32(84, true)).toBe(0);
+    expect(noPose.getUint32(88, true)).toBe(0);
+    expect(noPose.getFloat32(144, true)).toBe(0);
+    expect(noPose.getFloat32(148, true)).toBe(0);
+    expect(noPose.getFloat32(152, true)).toBe(0);
+    expect(noPose.getFloat32(160, true)).toBe(1);
+    expect(noPose.getFloat32(164, true)).toBe(0);
+    expect(noPose.getFloat32(168, true)).toBe(0);
+    expect(noPose.getFloat32(172, true)).toBe(0);
+    expect(noPose.getFloat32(176, true)).toBe(0);
+    expect(noPose.getFloat32(180, true)).toBe(1);
+    expect(noPose.getFloat32(184, true)).toBe(0);
+    expect(noPose.getFloat32(188, true)).toBe(1);
+    expect(noPose.getFloat32(192, true)).toBe(0);
+    expect(noPose.getFloat32(196, true)).toBe(0);
+    expect(noPose.getFloat32(200, true)).toBe(1);
+  });
+
+  it("packs the forward map's m rows / t / escParams at the documented 208..271 offsets, a negative weight keeping w and derivGrowth distinguishable", () => {
+    const de = buildEscapeDE([negativeWeightMandelbox()]);
+    // Sanity pin on the fixture (escape-de.test.ts owns buildEscapeDE's own
+    // correctness): w and derivGrowth must differ, or this test could not
+    // catch an offset swap between 260 and 264.
+    expect(de.w).toBe(-2);
+    expect(de.derivGrowth).toBeCloseTo(3, 12);
+
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(208, true)).toBe(Math.fround(de.m[0]));
+    expect(view.getFloat32(212, true)).toBe(Math.fround(de.m[1]));
+    expect(view.getFloat32(216, true)).toBe(Math.fround(de.m[2]));
+    expect(view.getFloat32(220, true)).toBe(Math.fround(de.t[0]));
+    expect(view.getFloat32(224, true)).toBe(Math.fround(de.m[3]));
+    expect(view.getFloat32(228, true)).toBe(Math.fround(de.m[4]));
+    expect(view.getFloat32(232, true)).toBe(Math.fround(de.m[5]));
+    expect(view.getFloat32(236, true)).toBe(Math.fround(de.t[1]));
+    expect(view.getFloat32(240, true)).toBe(Math.fround(de.m[6]));
+    expect(view.getFloat32(244, true)).toBe(Math.fround(de.m[7]));
+    expect(view.getFloat32(248, true)).toBe(Math.fround(de.m[8]));
+    expect(view.getFloat32(252, true)).toBe(Math.fround(de.t[2]));
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.foldKind));
+    expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
+    expect(view.getFloat32(264, true)).toBe(Math.fround(de.derivGrowth));
+    expect(view.getFloat32(268, true)).toBe(0); // packed-zero spare
+  });
+});
+
+describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
+  it("throws when combined with a fold-final lens — the escape gate refuses final transforms, so no shape is pinned", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape", lens: true })),
+    ).toThrow(/escape core cannot take a fold-final lens/);
+  });
+
+  it("still validates width and workgroupSize, even though the forward loop ignores both", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape", width: 0 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape", workgroupSize: 0 })),
+    ).toThrow();
+  });
+
+  it("mode 'eval' emits the forward-loop body once, declares the esc* uniform fields, and carries none of the fold/affine descent markers", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape" }),
+    );
+    expect(wgsl).toContain("fn evalQueries");
+    expect(
+      wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
+    ).toBe(2);
+    expect(wgsl).toContain("dr = params.escParams.z * localL * dr + 1.0");
+    expect(wgsl).toContain("escM0: vec3f");
+    expect(wgsl).toContain("escT0: f32");
+    expect(wgsl).toContain("escParams: vec4f");
+    for (const marker of [
+      "@binding(1)",
+      "struct GpuMap",
+      "mapApply",
+      "stepSector",
+      "frontierIx",
+      "fcX",
+      "refinedCert",
+      "surfaceDECore",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+  });
+
+  it("mode 'march' keeps the same absence set, and rays 'unproject' composes normally with ShadeParams at binding 4", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "escape" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    for (const marker of [
+      "@binding(1)",
+      "struct GpuMap",
+      "mapApply",
+      "stepSector",
+      "frontierIx",
+      "fcX",
+      "refinedCert",
+      "surfaceDECore",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+
+    const unprojected = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "escape", rays: "unproject" }),
+    );
+    expect(unprojected).toContain("fn marchRays");
+    expect(unprojected).toContain("shade.invProjView");
+    expect(unprojected).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+  });
+
+  it("mode 'shade' emits the escape hit-info once, with the escape fraction as trap, over the full shading interface", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape" }),
+    );
+    expect(wgsl).toContain("fn shadeRays");
+    expect(wgsl).toContain("escapedAt = i");
+    expect(wgsl).toContain("f32(escapedAt) / f32(params.maxDepth)");
+    expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+    expect(wgsl).toContain(
+      "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(7) var lutTex: texture_2d<f32>;",
+    );
+    expect(wgsl).toContain("@group(0) @binding(8) var lutSamp: sampler;");
+    expect(wgsl).not.toContain("fn surfaceDEProbe");
+  });
+
+  it("ignores width, sharedFrontier and bnbStage2 — all producing identical eval source", () => {
+    const base = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape", width: 4 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "escape", width: 12 }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "escape", sharedFrontier: true }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "escape", bnbStage2: true }),
+      ),
+    ).toBe(base);
+  });
+
+  it("ignores shadeDeWidth in shade mode too — no probe descent for a forward loop with nothing to narrow", () => {
+    const shadeBase = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape" }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core: "escape", shadeDeWidth: 1 }),
+      ),
+    ).toBe(shadeBase);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core: "escape", shadeDeWidth: 12 }),
+      ),
+    ).toBe(shadeBase);
+  });
+
+  it("surfaceGpuWorkgroupBytes returns 0 for core 'escape' even under sharedFrontier — the forward loop has no frontier concept", () => {
+    expect(
+      surfaceGpuWorkgroupBytes({
+        core: "escape",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+      }),
+    ).toBe(0);
   });
 });
