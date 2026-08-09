@@ -1,4 +1,9 @@
-import { meanContraction, systemIsFlat, toTransform4 } from "./affine4";
+import {
+  meanContraction,
+  systemIsFlat,
+  systemPartsAreNonFlat,
+  toTransform4,
+} from "./affine4";
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { Rng } from "./rng";
@@ -801,11 +806,26 @@ export function occupiedCellCount(
 const UNACCEPTABLE_BOUNDS_SCORE = -1;
 
 /**
+ * {@link scoreSystem}'s resolved stand-in for "no symmetry" (`candidate.symmetry
+ * === null`): value-identical to `chaos-game.ts`'s and `chaos-game-4d.ts`'s own
+ * (un-exported) `NO_SYMMETRY`/`NO_SYMMETRY4` defaults, duplicated here for the
+ * same reason `morph.ts`'s `lerpSystem` inlines the same literal — order 1 is
+ * the identity for any plane, so this is a genuine no-op wherever it's read.
+ */
+const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
+
+/**
  * Probe a candidate once and score what came back:
  * {@link UNACCEPTABLE_BOUNDS_SCORE} when the probe's bounds gate failed,
  * otherwise the probe's occupied cell count. "This probe passed the gate" is
- * exactly `score >= MIN_OCCUPIED_CELLS`. The probe branches on the
- * candidate's flatness (`affine4.ts`'s `systemIsFlat`):
+ * exactly `score >= MIN_OCCUPIED_CELLS`. The probe branches on
+ * `affine4.ts`'s {@link systemPartsAreNonFlat} — the transforms AND the
+ * final-transform lens AND the symmetry, not `systemIsFlat(transforms)`
+ * alone (fr-x6hz): a candidate's transforms can be entirely flat while its
+ * symmetry turns in a `w`-plane or carries a `twist` — 4D structure the 3D
+ * path's `symmetryRotation` cannot express (it throws rather than degrade,
+ * see `chaos-game.ts`) — so routing on the transforms alone could hand it to
+ * the 3D branch and crash the quality gate:
  *
  * - a FLAT candidate takes a short `runChaosGame` run — including any rolled
  *   `symmetry`, so the gate judges the kaleidoscoped cloud the user will
@@ -813,10 +833,24 @@ const UNACCEPTABLE_BOUNDS_SCORE = -1;
  *   {@link isAcceptableSystem} (sane bounds — not collapsed, not hugging the
  *   escape wall);
  * - a NON-FLAT candidate is instead probed by lifting every map through
- *   `toTransform4` and running `runChaosGame4`, bounds-gated by
+ *   `toTransform4` and running `runChaosGame4` WITH THE SAME symmetry
+ *   (`candidate.symmetry`, resolved from `null` to {@link NO_SYMMETRY}), so a
+ *   w-plane/twisted kaleidoscope is judged by the shape it actually produces
+ *   instead of being silently dropped, bounds-gated by
  *   {@link isAcceptableSystem4} (the 4D analogue: bounded radius, and with a
  *   genuine w-extent), its occupancy counted over the result's projected xyz
  *   positions.
+ *
+ * This is the exact routing formula every other flat/4D call site shares
+ * (`state.ts`'s `systemIsNonFlat`, `morph.ts`'s `lerpSystem`), so it can never
+ * drift from what the app itself would render for the same parts. It also
+ * means the FLAT branch never needs a `symmetry3D`-style narrowing guard the
+ * way the flame/voxel worker cores do for their unconditionally-built 3D
+ * `prepareChaosGame`: {@link systemPartsAreNonFlat} only routes here when
+ * `symmetryIsNonFlat` is false, which is either `order <= 1` (so
+ * `prepareChaosGame`'s `k === 0 ? null : symmetryRotation(...)` loop never
+ * even calls `symmetryRotation`, whatever `plane` says) or a genuinely
+ * w-free, twist-0 plane — never the shape `symmetryRotation` throws on.
  *
  * Scores are comparable across the two branches — same grid, same floor —
  * so {@link randomSystem}'s best-candidate bookkeeping never needs to care
@@ -825,10 +859,19 @@ const UNACCEPTABLE_BOUNDS_SCORE = -1;
  * Shared by two acceptance gates (fr-3vly): {@link randomSystem}'s own roll
  * here, and `mutate-system.ts`'s mutation gate, which judges a perturbed
  * system by the exact same "renders as a real shape" bar so a mutant is held
- * to no looser a standard than a fresh roll.
+ * to no looser a standard than a fresh roll — symmetry-crash included: a
+ * mutant copies its base's symmetry through verbatim, so a hand-authored
+ * flat system carrying a w-plane/twisted kaleidoscope reaches this same gate
+ * on every Mutate click.
  */
 export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
-  if (systemIsFlat(candidate.transforms)) {
+  const symmetry = candidate.symmetry ?? NO_SYMMETRY;
+  const nonFlat = systemPartsAreNonFlat(
+    candidate.transforms,
+    candidate.finalTransform,
+    symmetry,
+  );
+  if (!nonFlat) {
     const { positions, count, bounds } = runChaosGame(
       candidate.transforms,
       PROBE_POINTS,
@@ -847,6 +890,7 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
     PROBE_POINTS,
     rng,
     finalTransform4,
+    symmetry,
   );
   if (!isAcceptableSystem4(bounds, radius)) return UNACCEPTABLE_BOUNDS_SCORE;
   return occupiedCellCount(positions, count, bounds);
