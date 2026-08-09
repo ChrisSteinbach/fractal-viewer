@@ -447,6 +447,15 @@ function main(): void {
   // still mid-flight (fr-du81): held here until the preview completes, then
   // begun. A fresh invalidation supersedes it.
   let surfaceSettlePending = false;
+  // The WebGL compile gate owes the session its first traced frame
+  // (fr-yvcw): the gate's one-shot scene.invalidate() can be consumed by
+  // another draw before the tier clock reads it — 2ca508b's race, on the
+  // fallback arm — and on a re-enter after a failed compute create() the
+  // entry glide has already spent itself, so no camera motion follows to
+  // mask the loss. OR'd into the tier read until the preview actually
+  // traces; the tier answers "preview" to any invalidated frame, so one
+  // surviving read is a guaranteed first frame.
+  let surfaceWebglPreviewPending = false;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
@@ -3290,6 +3299,17 @@ function main(): void {
             surfaceSession.markFirstFrame();
             noteRenderProgress("surface", 1, 1);
             scene.invalidate();
+            // First frame without waiting for a camera nudge (fr-yvcw):
+            // the invalidate above is one-shot, and any other draw can
+            // consume it before the tier clock reads it — 2ca508b's race
+            // on this arm. On the fallback re-enter (compute create()
+            // failed, or no WebGPU at all) the entry glide already spent
+            // itself during the first entry, so no camera motion follows
+            // to mask the loss and the session sits on the live explorer
+            // frame until a nudge. The pending flag rides the tier read
+            // until the preview actually traces — un-losable by
+            // construction, and a redundant preview is free.
+            surfaceWebglPreviewPending = true;
           })
           .catch((error: unknown) => {
             if (token !== surfaceCompileToken) return;
@@ -3346,6 +3366,7 @@ function main(): void {
       // reflect has changed yet; the compile gate's resolution refreshes
       // them together with the selection drop.
       surfaceRenderTier.reset();
+      surfaceWebglPreviewPending = false;
       surfaceSettled = false;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
@@ -5529,8 +5550,12 @@ function main(): void {
           surfaceSettlePending = false;
           scene.renderSurface("full");
         } else {
-          const tier = surfaceRenderTier.frame(now, scene.needsRender);
+          const tier = surfaceRenderTier.frame(
+            now,
+            scene.needsRender || surfaceWebglPreviewPending,
+          );
           if (tier === "preview") {
+            surfaceWebglPreviewPending = false;
             scene.abandonSurfaceSettle();
             surfaceSettled = false;
             surfaceSettlePending = false;
