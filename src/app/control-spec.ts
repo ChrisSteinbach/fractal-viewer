@@ -53,6 +53,7 @@ import {
   setSurfacePaletteId,
   setSymmetryPlane,
   setSymmetryOrder,
+  setSymmetryTwist,
 } from "./state";
 import type {
   AppState,
@@ -541,12 +542,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       }
     },
   },
-  // ——— Symmetry (flat systems only: the 4D chaos game has no symmetry
-  // parameter at all, and the section hides while non-flat) ———
+  // ——— Symmetry (live in BOTH views since fr-q0h6: the 4D chaos game has a
+  // post-rotation stage of its own, and a w-plane or nonzero twist makes the
+  // system itself 4D, so no authored kaleidoscope is ever inert) ———
   {
     kind: "range",
     id: "symmetryOrderSlider",
-    view: "flat",
     label: {
       id: "symmetryOrderLabel",
       text: (s) => `${s.symmetry.order}-fold`,
@@ -557,13 +558,33 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The plane the kaleidoscope turns in (fr-q0h6, renamed from the axis it
-    // turned about). Still `view: "flat"` and still offering only the three
-    // w-free planes — the w-planes arrive with the 4D kaleidoscope itself.
+    // turned about) — all six coordinate planes; picking a w-plane is one of
+    // the few edits that flips systemIsNonFlat without touching a transform
+    // (`affine4.ts`'s `symmetryIsNonFlat`).
     kind: "select",
     id: "symmetryPlane",
-    view: "flat",
     read: (s) => s.symmetry.plane,
     apply: (s, raw) => setSymmetryPlane(s, raw as SymmetryPlane),
+    effect: symmetryEffect,
+  },
+  {
+    // The kaleidoscope's twist (fr-q0h6): the second angle of a 4D double
+    // rotation, in whole sectors — 0 is a simple rotation, anything else
+    // makes the system 4D like a w-plane does. The slider's range is the
+    // STATIC `[0, MAX_SYMMETRY_ORDER - 1]` span; `setSymmetryTwist` is the
+    // single INTERACTIVE clamp (down to the CURRENT order's last distinct
+    // value, `order - 1`); a loaded document meets the same `[0, order)`
+    // policy in `persist.ts`'s decoder — the mirror of `order`'s own
+    // decode-time clamp — so out-of-range values never reach state from
+    // either door.
+    kind: "range",
+    id: "symmetryTwistSlider",
+    label: {
+      id: "symmetryTwistLabel",
+      text: (s) => String(s.symmetry.twist ?? 0),
+    },
+    read: (s) => String(s.symmetry.twist ?? 0),
+    apply: (s, raw) => setSymmetryTwist(s, Number(raw)),
     effect: symmetryEffect,
   },
   // ——— 4D look (non-flat systems only; the rows live in the Appearance

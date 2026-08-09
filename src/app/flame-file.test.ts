@@ -894,6 +894,49 @@ describe("encodeFlameFile warnings", () => {
     expect(xml.match(/<xform /g)).toHaveLength(1);
   });
 
+  it("keeps a twisted w-free kaleidoscope's copies but warns that the twist was dropped", () => {
+    // Plane "xy" projects faithfully, so without the twist this export would
+    // carry no kaleidoscope warning at all — but the twist's second rotation
+    // turns the copies through zw, which no 2D xform can express (fr-q0h6).
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+    ];
+    const source = snapshotWith({
+      transforms,
+      symmetry: { order: 3, plane: "xy", twist: 1 },
+    });
+    const { xml, warnings } = encodeFlameFile(source, "twisted-kaleido");
+    expect(warnings.some((w) => /twist/i.test(w))).toBe(true);
+    // The in-plane copies still export: three xforms, only the second
+    // rotation lost.
+    expect(xml.match(/<xform /g)).toHaveLength(3);
+  });
+
+  it("warns only about the whole dropped kaleidoscope when a w-plane one also carries a twist", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+    ];
+    const source = snapshotWith({
+      transforms,
+      symmetry: { order: 3, plane: "zw", twist: 2 },
+    });
+    const { warnings } = encodeFlameFile(source, "twisted-zw-kaleido");
+    // The twist rides the kaleidoscope drop — a second twist warning about a
+    // kaleidoscope that is not in the file would just be noise.
+    expect(warnings.some((w) => /4D kaleidoscope/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /twist/i.test(w))).toBe(false);
+  });
+
   it("has no warnings for a z-flat system with default symmetry", () => {
     const transforms: Transform[] = [
       {

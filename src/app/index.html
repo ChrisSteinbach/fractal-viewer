@@ -194,8 +194,6 @@
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
       </div>
 
-      <p id="symmetryInactiveNote" class="flame-note-info hidden"></p>
-
       <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way
            snapshots of what's on screen. The scene-document traffic (link,
            JSON file, .flame, import) lives in the Share section below. -->
@@ -677,7 +675,7 @@
               type="range"
               id="symmetryOrderSlider"
               min="1"
-              max="9"
+              max="12"
               step="1"
               value="1"
             />
@@ -688,7 +686,21 @@
               <option value="xy">XY</option>
               <option value="xz" selected>XZ</option>
               <option value="yz">YZ</option>
+              <option value="xw">XW</option>
+              <option value="yw">YW</option>
+              <option value="zw">ZW</option>
             </select>
+          </label>
+          <label class="select-label">
+            Twist: <span id="symmetryTwistLabel">0</span>
+            <input
+              type="range"
+              id="symmetryTwistSlider"
+              min="0"
+              max="11"
+              step="1"
+              value="0"
+            />
           </label>
           <p id="symmetryNote" class="flame-note hidden"></p>
         </details>

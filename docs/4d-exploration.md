@@ -45,8 +45,10 @@ SO(n), which has n(n−1)/2 plane angles). The _axis_ picture is what dies: only
 at n = 3 does the number of planes equal the number of axes. Consequences:
 
 - A simple rotation fixes an (n−2)-dimensional subspace: an axis in 3D, a
-  _plane_ in 4D. The kaleidoscope feature's `SymmetryAxis` becomes a symmetry
-  plane (six coordinate planes to choose from).
+  _plane_ in 4D. The kaleidoscope feature's `SymmetryAxis` became a symmetry
+  plane exactly this way (fr-q0h6: `SymmetryParams.plane`, six coordinate
+  planes to choose from, plus an optional `twist` — the double-rotation case
+  below).
 - 4D admits **double rotations** — two independent planes turning at once
   (e.g. XY and ZW) with no fixed direction at all; equal angles make it
   _isoclinic_. These have no 3D counterpart and are the source of the most
@@ -240,10 +242,17 @@ log:
   System → 4D" embed button this section anticipated needing (that button,
   and the mode's entry/exit machinery generally, never shipped and so needed
   no deprecation).
-- **DECISION, recorded:** flame, solid, and symmetry stay 3D-only and gate on
-  flatness — their controls hide, rather than generalize, whenever
-  `systemIsNonFlat` holds. This is the resolution this table's "flame / voxel
-  workers" row left open. Voxel-of-the-current-projection (re-voxelizing per
+- **DECISION, recorded — and since overturned in full:** flame, solid, and
+  symmetry stay 3D-only and gate on flatness — their controls hide, rather
+  than generalize, whenever `systemIsNonFlat` holds. This was the resolution
+  this table's "flame / voxel workers" row left open, and each item has since
+  earned its way off the list separately: the flame and solid renders gained
+  true 4D accumulators (fr-5b3/fr-4wd), and the kaleidoscope generalized last
+  (fr-q0h6) — the 4D chaos game grew a post-rotation stage, the symmetry
+  plane spans all six coordinate planes plus an optional twist (a double
+  rotation), a w-plane or twist by itself makes the system 4D, and the
+  Symmetry controls now stay put for a non-flat system.
+  Voxel-of-the-current-projection (re-voxelizing per
   tumble orientation) remains a possible future nicety, not a commitment.
 
 See `affine4.ts`, `chaos-game-4d.ts`, `variations4.ts`, `rotor4.ts`, and

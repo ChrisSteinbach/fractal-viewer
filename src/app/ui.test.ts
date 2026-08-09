@@ -12,6 +12,7 @@ import {
   setSolidPaletteId,
   setSurfaceColorSource,
   setSurfacePaletteId,
+  setSymmetryOrder,
   SURFACE_COLOR_SOURCES,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
@@ -31,7 +32,7 @@ import {
   LEGACY_POSITION_AXIS_COLORS,
 } from "../fractal/color";
 import { to255 } from "../fractal/vec";
-import { FOUR_D_COLOR_MODES } from "../fractal/types";
+import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
@@ -2530,7 +2531,6 @@ describe("Ui render mode switch (fr-39y)", () => {
       "flameStatus",
       "solidStatus",
       "surfaceStatus",
-      "symmetryInactiveNote",
     ]) {
       const position = byId(floatingId).compareDocumentPosition(firstSection!);
       expect(
@@ -3701,7 +3701,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows the 4D controls and hides symmetry/color/style for a non-flat system — the render mode switch stays (fr-5b3/fr-4wd)", () => {
+  it("shows the 4D controls and hides color/style — but keeps Symmetry — for a non-flat system; the render mode switch stays (fr-5b3/fr-4wd)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
@@ -3712,7 +3712,10 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
-    expect(el("symmetrySection").classList.contains("hidden")).toBe(true);
+    // The Symmetry section used to hide here too; since fr-q0h6 every render
+    // path sweeps or expands the kaleidoscope for a 4D system, so its
+    // controls stay editable.
+    expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
   // The 4D look controls live in Appearance beside their flat siblings
@@ -4447,10 +4450,6 @@ describe("Ui symmetry controls", () => {
     return document.getElementById("symmetryNote");
   }
 
-  function inactiveNote(): HTMLElement | null {
-    return document.getElementById("symmetryInactiveNote");
-  }
-
   it("reflects order and plane into the slider, label, and select", () => {
     const ui = new Ui(document);
     ui.updateLabels({
@@ -4468,6 +4467,39 @@ describe("Ui symmetry controls", () => {
     expect(
       (document.getElementById("symmetryPlane") as HTMLSelectElement).value,
     ).toBe("xy");
+  });
+
+  it("offers all six coordinate planes in the plane select, w-planes included (fr-q0h6)", () => {
+    const select = document.getElementById(
+      "symmetryPlane",
+    ) as HTMLSelectElement;
+
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      ...SYMMETRY_PLANES,
+    ]);
+  });
+
+  it("reflects the twist into its slider and label, showing 0 for an absent twist", () => {
+    const ui = new Ui(document);
+    const slider = document.getElementById(
+      "symmetryTwistSlider",
+    ) as HTMLInputElement;
+    const label = document.getElementById("symmetryTwistLabel");
+
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 6, plane: "xy", twist: 2 },
+    });
+    expect(slider.value).toBe("2");
+    expect(label?.textContent).toBe("2");
+
+    // An absent twist is the stored form of 0 (see setSymmetryTwist).
+    ui.updateLabels({
+      ...initialState(true),
+      symmetry: { order: 6, plane: "xy" },
+    });
+    expect(slider.value).toBe("0");
+    expect(label?.textContent).toBe("0");
   });
 
   it("applies the order slider's value to state.symmetry.order on input", () => {
@@ -4496,6 +4528,30 @@ describe("Ui symmetry controls", () => {
     select.dispatchEvent(new Event("change"));
 
     expect(current().symmetry.plane).toBe("yz");
+  });
+
+  it("applies the twist slider's value to state.symmetry.twist through its clamping reducer", () => {
+    // Order 4 first, so the reducer's own order-1 cap is what the assertion
+    // exercises: the slider's static 0..11 range never clamps for it.
+    const { handlers, current } = scalarHandlers(
+      setSymmetryOrder(initialState(true), 4),
+    );
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const slider = document.getElementById(
+      "symmetryTwistSlider",
+    ) as HTMLInputElement;
+    slider.value = "2";
+    slider.dispatchEvent(new Event("input"));
+    expect(current().symmetry.twist).toBe(2);
+
+    // Out of range for the CURRENT order: setSymmetryTwist caps at
+    // order - 1, the single source of twist clamping (the slider max stays
+    // static at MAX_SYMMETRY_ORDER - 1).
+    slider.value = "9";
+    slider.dispatchEvent(new Event("input"));
+    expect(current().symmetry.twist).toBe(3);
   });
 
   it("hides the reduction note when the requested order fits under the transform limit", () => {
@@ -4528,66 +4584,6 @@ describe("Ui symmetry controls", () => {
       "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
     );
   });
-
-  // fr-5gxn: the value is kept but inert while non-flat (ui.ts hides
-  // #symmetrySection itself), so this note is the only thing on screen that
-  // still tells the user their kaleidoscope is parked rather than gone.
-  it("shows the inactive note naming the order and plane for a non-flat system with a 6-fold kaleidoscope", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      symmetry: { order: 6, plane: "xz" },
-    });
-
-    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
-    expect(inactiveNote()?.textContent).toBe(
-      "Kaleidoscope symmetry (6-fold in XZ) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
-    );
-  });
-
-  it("shows no inactive note for a non-flat system with symmetry order 1", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      symmetry: { order: 1, plane: "xz" },
-    });
-
-    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
-    expect(inactiveNote()?.textContent).toBe("");
-  });
-
-  it("shows no inactive note for a flat system with a 6-fold kaleidoscope", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      symmetry: { order: 6, plane: "xz" },
-    });
-
-    expect(inactiveNote()?.classList.contains("hidden")).toBe(true);
-    expect(inactiveNote()?.textContent).toBe("");
-  });
-
-  // fr-5gxn: the note is a statement about the document — the kaleidoscope
-  // is equally parked, and equally live in the shared #v1= URL, no matter
-  // what's rendering — not about the active render mode, so unlike
-  // symmetrySection (which lives inside the Points-only explorer panel) it
-  // keeps showing under a flame/solid/surface render exactly as in Points.
-  it("keeps showing the inactive note for a non-flat 6-fold system while a render is active", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: nonFlatTransforms(),
-      symmetry: { order: 6, plane: "xz" },
-      renderMode: "flame",
-    });
-
-    expect(inactiveNote()?.classList.contains("hidden")).toBe(false);
-    expect(inactiveNote()?.textContent).toBe(
-      "Kaleidoscope symmetry (6-fold in XZ) is inactive in 4D — the setting is kept and returns when the system is 3D again.",
-    );
-  });
 });
 
 // fr-2v7: index.html's slider min/max are single-sourced from state.ts's PARAM
@@ -4595,8 +4591,11 @@ describe("Ui symmetry controls", () => {
 // value range) against its spec, so editing a range in one place without the
 // other fails here. Excluded on purpose (their HTML range is a mapping DOMAIN,
 // not the parameter's value range — see control-spec.ts): numPointsSlider and
-// colorGammaSlider carry a log-scale position, flameIterationsSlider a detent
-// index, and symmetryOrderSlider's max is deliberately capped below its spec.
+// colorGammaSlider carry a log-scale position and flameIterationsSlider a
+// detent index. symmetryOrderSlider joined the direct set with fr-xkkb (its
+// max used to be capped below its spec, silently rewriting shared 10-12
+// links), and symmetryTwistSlider's static range IS its spec — the tighter
+// order-dependent cap lives in setSymmetryTwist alone.
 describe("index.html slider ranges match PARAM (fr-2v7)", () => {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
   const attr = (id: string, name: string): string => {
@@ -4627,6 +4626,8 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["surfaceLightElevationSlider", PARAM.surfaceLightElevation],
     ["surfaceAmbientSlider", PARAM.surfaceAmbient],
     ["surfaceColorSpeedSlider", PARAM.surfaceColorSpeed],
+    ["symmetryOrderSlider", PARAM.symmetryOrder],
+    ["symmetryTwistSlider", PARAM.symmetryTwist],
   ];
 
   it.each(DIRECT)("%s min/max match its ParamSpec", (id, spec) => {

@@ -30,8 +30,9 @@ import type {
  *
  * `symmetry` (fr-wti's follow-up, landed via fr-d61) is rolled for FLAT
  * systems only — see {@link randomSymmetry}. `null` means "no kaleidoscope",
- * and is also what every non-flat roll carries unconditionally (the 4D
- * pipeline has no symmetry parameter to roll one into). Like
+ * and is also what every non-flat roll carries unconditionally (a deliberate
+ * deferral now that the 4D pipeline renders one — see the
+ * {@link SYMMETRY_PROBABILITY} doc). Like
  * `finalTransform`, the consumer must apply this field to the app's
  * symmetry state INCLUDING resetting it to order 1 on `null`, so a previous
  * session's kaleidoscope never survives a roll that landed on no symmetry. */
@@ -166,20 +167,23 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
  * random kaleidoscopes look disproportionately good for how cheap they are
  * to roll, so roughly 3 flat rolls in 10 also land one, at an integer order
  * of 2..6 ({@link SYMMETRY_ORDER_MIN} + `floor(rng() *`
- * {@link SYMMETRY_ORDER_SPAN}`)`), comfortably inside the UI slider's 1..9
- * range.
+ * {@link SYMMETRY_ORDER_SPAN}`)`), comfortably inside the UI slider's 1..12
+ * range (1..9 before fr-xkkb).
  *
- * The axis is ALWAYS `"y"`, never rolled: every rolled map already carries a
- * uniformly random rotation, so changing the world axis the kaleidoscope
- * turns about amounts to a global reorientation of the whole cloud — and the
- * free-orbiting camera erases any difference reorientation would make. It
- * would be a draw spent on no added variety.
+ * The plane is ALWAYS `"xz"` (the pre-fr-q0h6 `"y"` axis renamed), never
+ * rolled: every rolled map already carries a uniformly random rotation, so
+ * changing which w-free plane the kaleidoscope turns in amounts to a global
+ * reorientation of the whole cloud — and the free-orbiting camera erases any
+ * difference reorientation would make. It would be a draw spent on no added
+ * variety. (A w-plane or twist would be genuinely different — it makes the
+ * system 4D — but that falls under the deferral below.)
  *
- * 4D candidates NEVER roll symmetry (see {@link randomCandidate}): the 4D
- * pipeline (`runChaosGame4` plus the projection view) has no symmetry
- * parameter at all, and the app hides the symmetry controls while a system
- * is non-flat, so a rolled order on a non-flat system would be a dial the
- * renderer ignores and the quality gate never probes.
+ * 4D candidates NEVER roll symmetry (see {@link randomCandidate}). Not
+ * because the dial is inert anymore — since fr-q0h6 the 4D pipeline renders
+ * a kaleidoscope like any other — but because letting them roll one would
+ * spend extra rng draws and shift the documented candidate draw order,
+ * changing every existing 4D Surprise Me result. A deliberate deferral
+ * recorded on fr-3rem, not an oversight.
  */
 const SYMMETRY_PROBABILITY = 0.3;
 const SYMMETRY_ORDER_MIN = 2;

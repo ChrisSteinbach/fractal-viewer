@@ -432,6 +432,23 @@ morphs into place instead of snapping (see **Presets** below).
   **✦ Final Transform** row under **Select to edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
+- **Symmetry** (fr-6im) — kaleidoscope replication of the whole attractor:
+  **Order** draws every chaos-game point up to 12 times (1 = off), the
+  copies rotated evenly in the chosen **Plane** — any of the six coordinate
+  planes (fr-q0h6). XY / XZ / YZ turn in ordinary 3-space; picking XW / YW /
+  ZW turns the copies through the fourth axis, which by itself makes the
+  system 4D and hands the view to **4D View**'s tumbling projection.
+  **Twist** adds the second angle of a 4D double rotation: copy `k` also
+  turns `k · twist` sectors in the plane's orthogonal complement, so 0 is a
+  simple rotation, any nonzero value is 4D the same way a w-plane is, and 1
+  and order−1 are the left/right isoclinic cases. Only `order` distinct
+  twists exist, so the value caps itself at order−1 — as you drag, and
+  equally when a shared link carries a larger number (the link decoder
+  applies the same cap the order itself gets). If
+  order × transform count would exceed the 256-transform budget, a note
+  under the sliders names the reduced order that actually renders. The
+  whole setting persists in the link, and every render mode — Points,
+  Flame, Solid, Surface — renders the same kaleidoscope.
 - **3D View** — appears while the current system is _flat_, in the same panel
   spot **4D View** (below) takes over for a non-flat one. **Auto-orbit
   (turntable)** slowly circles the camera around the cloud — one revolution
@@ -533,14 +550,13 @@ morphs into place instead of snapping (see **Presets** below).
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
   remap. What does drop out of the panel is the flat-only look controls:
   **Color Mode** and **Depth Style** are superseded in place by **4D
-  Color** and **Depth fade** above, **Color
+  Color** and **Depth fade** above, and **Color
   Contrast** goes with them (it tunes the height / radius / position ramps,
-  none of which are in play once 4D Color owns the coloring), and
-  **Symmetry** hides because the 4D chaos game has no symmetry parameter at
-  all — an authored kaleidoscope isn't discarded, though: it stays in the
-  document and in the shared link, inert, and returns the moment the system
-  is 3D again. A note at the top of the panel says so while it's parked
-  (fr-5gxn). The
+  none of which are in play once 4D Color owns the coloring).
+  **Symmetry** stays put (fr-q0h6): the 4D chaos game runs its own
+  kaleidoscope stage, so Order, Plane, and Twist keep editing the live
+  projection — and the frozen flame/solid snapshots and the live surface
+  tracer render the same kaleidoscope (see **Symmetry** above). The
   tumble/slice view is session-only (never persisted) and resets to
   a fresh baseline only when the system flips from flat to non-flat, or a
   whole new system replaces it (preset load / Surprise Me) — never on a

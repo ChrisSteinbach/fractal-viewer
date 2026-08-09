@@ -665,13 +665,13 @@ export const DEFAULT_RAMP_PALETTE: FlamePaletteId = "legacy";
 export const DEFAULT_SYMMETRY_ORDER = 1;
 export const MIN_SYMMETRY_ORDER = 1;
 /**
- * Deliberately WIDER than the UI slider will expose (the slider caps at 9,
- * a practical range) — 12 is the ceiling because `effectiveSymmetryOrder` in
- * `chaos-game.ts` already clamps the actually-used order down to fit
- * `MAX_TRANSFORMS` (256), and 12 is exactly enough for e.g. a 20-map preset's
- * 12-fold symmetry (20*12=240<=256) without silently losing a value a shared
- * URL might carry. So this stored/persisted value has its own, more generous
- * ceiling than the slider widget does.
+ * 12 is the ceiling because `effectiveSymmetryOrder` in `chaos-game.ts`
+ * already clamps the actually-used order down to fit `MAX_TRANSFORMS` (256),
+ * and 12 is exactly enough for e.g. a 20-map preset's 12-fold symmetry
+ * (20*12=240<=256) without silently losing a value a shared URL might carry.
+ * The UI slider spans this same range since fr-xkkb — it used to cap at 9,
+ * so a shared link at 10-12 was silently rewritten the moment the slider
+ * was touched.
  */
 export const MAX_SYMMETRY_ORDER = 12;
 /**

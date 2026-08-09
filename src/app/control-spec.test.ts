@@ -12,6 +12,7 @@ import {
   MAX_NUM_POINTS,
   MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
+  setSymmetryOrder,
 } from "./state";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
@@ -252,6 +253,23 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       const command = { type: "setSymmetry", order: 1, plane: "yz", twist: 0 };
+      expect(fx.postFlame).toHaveBeenCalledWith(command);
+      expect(fx.postVoxel).toHaveBeenCalledWith(command);
+    });
+
+    it("symmetryTwistSlider applies through setSymmetryTwist and posts the twist in the setSymmetry command", () => {
+      const spec = specById("symmetryTwistSlider");
+      // Order 5 first: setSymmetryTwist caps at order - 1, so the default
+      // order-1 state would store no twist at all.
+      const previous = setSymmetryOrder(initialState(true), 5);
+      const state = applyScalarControl(previous, spec, "2");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(state.symmetry.twist).toBe(2);
+      expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+      const command = { type: "setSymmetry", order: 5, plane: "xz", twist: 2 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
@@ -827,14 +845,11 @@ describe("table policy", () => {
       (s) => s.view === undefined,
     ).length;
 
+    // The symmetry entries left the flat set with fr-q0h6 P6: a kaleidoscope
+    // is live in both views now (a w-plane or twist even makes the system
+    // 4D), so its controls carry no view guard.
     expect(flatIds).toEqual(
-      [
-        "colorGammaSlider",
-        "colorMode",
-        "renderStyle",
-        "symmetryOrderSlider",
-        "symmetryPlane",
-      ].sort(),
+      ["colorGammaSlider", "colorMode", "renderStyle"].sort(),
     );
     expect(nonFlatIds).toEqual(["fourDColor", "fourDDepthFadeToggle"].sort());
     // Every entry lands in exactly one of the three groups — catches a spec

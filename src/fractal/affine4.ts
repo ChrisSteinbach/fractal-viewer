@@ -486,9 +486,10 @@ export function systemIsFlat(transforms: readonly Transform[]): boolean {
  * `systemIsNonFlat` is its `AppState` front door; `main.ts`'s `cloudParams`
  * stamps the result onto every generation request; `ui.ts`'s `updateLabels`
  * gates the panel on it (then hands the one result on to `updateLegend`);
- * and `morph.ts`'s `lerpSymmetry` routes a morph SAMPLE's own flatness on
- * it — not the live document's — so a flat↔4D pair takes the 4D path
- * exactly when the interpolated maps first carry live `w` blocks.
+ * and a morph SAMPLE's own flatness — not the live document's — is derived
+ * from `lerpSystem`'s finished parts + symmetry by the same `cloudParams`
+ * stamp, so a flat↔4D pair takes the 4D path exactly when the interpolated
+ * maps (or the crossfading kaleidoscope) first carry live 4D structure.
  *
  * Since fr-q0h6 the `symmetry` is a THIRD input, on the same footing as the
  * transforms: a kaleidoscope turning in a `w`-plane (or with a twist) is 4D
