@@ -2885,6 +2885,16 @@ function main(): void {
         surfaceSession.markFirstFrame();
         noteRenderProgress("surface", 1, 1);
         scene.invalidate();
+        // First frame without waiting for a camera nudge: entry
+        // invalidations (the escape branch's framing glide included) fire
+        // while create() is still in flight, where the preview kick
+        // no-ops for want of a renderer, and the one-shot invalidate
+        // above can be consumed by the scene's own draw before the tier
+        // clock reads it — so a session could sit blank until the next
+        // camera motion. Kick directly now that the renderer exists;
+        // the preview loop's latest-wins coalescing makes a redundant
+        // kick free, and the tier clock's settle follows as usual.
+        kickSurfaceComputePreview();
       })
       .catch((error: unknown) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
