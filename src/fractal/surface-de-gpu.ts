@@ -1495,12 +1495,244 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
 }`;
 
   // 4D hit-info (fr-dlxh's 4D cut): surface-material-4d.ts's shading
-  // hit-info overload, term for term — the greedy width-1 descent over
-  // the 4D maps behind the same view lift as the value body, colors-only
-  // convention. STUB until stage A2's body port lands: deliberately not
-  // valid WGSL, so an accidental emission fails loudly at pipeline
-  // creation instead of computing garbage.
-  const affine4HitInfoText = /* wgsl */ `AFFINE4_HIT_INFO_BODY_NOT_YET_PORTED (fr-dlxh stage A2)`;
+  // overload (the out-param surfaceDE), trajectory term for term — the
+  // width-4 refined ladder behind the SAME view lift as the value body,
+  // under the colors-only convention the fold/affine twins set: best and
+  // refinedCert never steer the ladder (keys route the beam,
+  // escape/bounding radii route the chains), and the GLSL overload's
+  // returned distance is exactly the value side trimmed here. Plain
+  // params.maxDepth on purpose, like the other twins.
+  const affine4HitInfoText = /* wgsl */ `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
+// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
+// spill, sector-major enumeration, one vec4f half-extent per register
+// (fr-wa6o) — behind the value body's view lift, feeding colors only
+// (the value side never steers it; see the generator comment).
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var q = rotorInvApply4(vec4f(p, params.w0));
+  let segment = params.sliceHalfW > 0.0;
+  var ext = vec4f(0.0);
+  if (segment) {
+    ext = rotorInvWCol4() * params.sliceHalfW;
+  }
+  q = finalApply4(q);
+  if (segment) {
+    ext = finalApplyLinear4(ext);
+  }
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var trapAcc = 0.0;
+  var trapNorm = 0.0;
+  var trapW = 1.0;
+  let R = params.boundingRadius;
+  var aQ = q;
+  var aExt = ext;
+  var aScale = 1.0;
+  var aLive = true;
+  var bQ = vec4f(0.0);
+  var bExt = vec4f(0.0);
+  var bScale = 1.0;
+  var bLive = false;
+  var v1Q = vec4f(0.0);
+  var v1Ext = vec4f(0.0);
+  var v1Scale = 1.0;
+  var v1Live = false;
+  var v2Q = vec4f(0.0);
+  var v2Ext = vec4f(0.0);
+  var v2Scale = 1.0;
+  var v2Live = false;
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (!aLive && !bLive && !v1Live && !v2Live) {
+      break;
+    }
+    var c1Key = 1e30;
+    var c1Q = vec4f(0.0);
+    var c1Ext = vec4f(0.0);
+    var c1Scale = 1.0;
+    var c1R = 0.0;
+    var c1Map = 0u;
+    var c2Key = 1e30;
+    var c2Q = vec4f(0.0);
+    var c2Ext = vec4f(0.0);
+    var c2Scale = 1.0;
+    var c2R = 0.0;
+    var c3Key = 1e30;
+    var c3Q = vec4f(0.0);
+    var c3Ext = vec4f(0.0);
+    var c3Scale = 1.0;
+    var c3R = 0.0;
+    var c4Key = 1e30;
+    var c4Q = vec4f(0.0);
+    var c4Ext = vec4f(0.0);
+    var c4Scale = 1.0;
+    var c4R = 0.0;
+    for (var c = 0u; c < 4u; c++) {
+      var pQ = vec4f(0.0);
+      var pExt = vec4f(0.0);
+      var pScale = 1.0;
+      if (c == 0u) {
+        if (!aLive) {
+          continue;
+        }
+        pQ = aQ;
+        pExt = aExt;
+        pScale = aScale;
+      } else if (c == 1u) {
+        if (!bLive) {
+          continue;
+        }
+        pQ = bQ;
+        pExt = bExt;
+        pScale = bScale;
+      } else if (c == 2u) {
+        if (!v1Live) {
+          continue;
+        }
+        pQ = v1Q;
+        pExt = v1Ext;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) {
+          continue;
+        }
+        pQ = v2Q;
+        pExt = v2Ext;
+        pScale = v2Scale;
+      }
+      // Sector sweep (fr-u91x): sector-major enumeration, the
+      // expansion's order, so ladder tie-breaks match the oracle's; the
+      // half-extent turns through the same backward step (an isometry
+      // maps segments to segments).
+      var sQ = pQ;
+      var sExt = pExt;
+      for (var k = 0u; k < params.symOrder; k++) {
+        if (k > 0u) {
+          sQ = stepSector4(sQ);
+          if (segment) {
+            sExt = stepSector4(sExt);
+          }
+        }
+        for (var j = 0u; j < params.mapCount; j++) {
+          let m = maps[j];
+          let img = mapApply4(m, sQ);
+          var imgExt = vec4f(0.0);
+          if (segment) {
+            imgExt = mapApplyLinear4(m, sExt);
+          }
+          let r = segmentRadius4(img, imgExt);
+          let key = pScale * (r - R);
+          let childScale = pScale * m.p0.x;
+          // Top-2 insert-shift; the displaced tuple (or the candidate
+          // itself) spills into the rank-3/4 ladder. Certificates are
+          // value-side and trimmed; radii and extents flow through —
+          // the spill ladder routes on radii, the chains descend the
+          // extents.
+          var eKey = key;
+          var eQ = img;
+          var eExt = imgExt;
+          var eScale = childScale;
+          var eR = r;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eExt = c2Ext;
+            eScale = c2Scale;
+            eR = c2R;
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Ext = c1Ext;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c1Key = key;
+            c1Q = img;
+            c1Ext = imgExt;
+            c1Scale = childScale;
+            c1R = r;
+            c1Map = j;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eExt = c2Ext;
+            eScale = c2Scale;
+            eR = c2R;
+            c2Key = key;
+            c2Q = img;
+            c2Ext = imgExt;
+            c2Scale = childScale;
+            c2R = r;
+          }
+          if (eKey < c3Key) {
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Ext = c3Ext;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Ext = eExt;
+            c3Scale = eScale;
+            c3R = eR;
+          } else if (eKey < c4Key) {
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Ext = eExt;
+            c4Scale = eScale;
+            c4R = eR;
+          }
+        }
+      }
+    }
+    if (depth == 0u) {
+      info.firstChoice = i32(c1Map);
+    }
+    trapAcc += trapW * shadeMaps[c1Map].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;
+    // Under a slab query rings rides the SEGMENT radius (c1R is one);
+    // sheets keeps reading the segment's CENTRE y by design — a shading
+    // extra, and a coordinate is what the plane trap wants (fr-wa6o).
+    info.rings = min(info.rings, c1R / R);
+    info.sheets = min(info.sheets, abs(c1Q.y) / R);
+    aLive = false;
+    bLive = false;
+    v1Live = false;
+    v2Live = false;
+    if (c1Key < 1e29) {
+      if (c1R <= params.escapeRadius) {
+        aQ = c1Q;
+        aExt = c1Ext;
+        aScale = c1Scale;
+        aLive = true;
+      }
+    }
+    if (c2Key < 1e29) {
+      if (c2R <= params.escapeRadius) {
+        bQ = c2Q;
+        bExt = c2Ext;
+        bScale = c2Scale;
+        bLive = true;
+      }
+    }
+    if (c3Key < 1e29) {
+      if (c3R <= R) {
+        v1Q = c3Q;
+        v1Ext = c3Ext;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (c4Key < 1e29) {
+      if (c4R <= R) {
+        v2Q = c4Q;
+        v2Ext = c4Ext;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
+  }
+  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}`;
 
   // Escape hit-info (fr-dlxh — the GLSL SURFACE_ESCAPE shading overload,
   // term for term): the same forward orbit with the classic escape-time
@@ -2146,6 +2378,68 @@ fn stepSector4(v: vec4f) -> vec4f {
     dot(params.stepBack4R2, v),
     dot(params.stepBack4R3, v),
   );
+}
+
+// The view lift's rotor half — the 4D GLSL's uInvRotor * v: world ->
+// attractor frame through the transposed pose rotor (the packer stores
+// the transpose's ROWS, so this dot-of-rows IS that product).
+fn rotorInvApply4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.rotorInvR0, v),
+    dot(params.rotorInvR1, v),
+    dot(params.rotorInvR2, v),
+    dot(params.rotorInvR3, v),
+  );
+}
+
+// The rotor matrix's w COLUMN — the GLSL's uInvRotor[3], i.e. the pose
+// rotor's w ROW read out of the packed transpose rows: what a
+// view-frame w displacement of 1 lifts to, the slab half-extent's
+// direction (fr-wa6o).
+fn rotorInvWCol4() -> vec4f {
+  return vec4f(
+    params.rotorInvR0.w,
+    params.rotorInvR1.w,
+    params.rotorInvR2.w,
+    params.rotorInvR3.w,
+  );
+}
+
+// The affine final lens (identity/zero when none — the packer's
+// contract, like the 3D finalM rows), and its LINEAR part alone for the
+// half-extent — a translation slides a segment's centre, never its
+// extent.
+fn finalApply4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.final4MR0, v),
+    dot(params.final4MR1, v),
+    dot(params.final4MR2, v),
+    dot(params.final4MR3, v),
+  ) + params.final4T;
+}
+
+fn finalApplyLinear4(v: vec4f) -> vec4f {
+  return vec4f(
+    dot(params.final4MR0, v),
+    dot(params.final4MR1, v),
+    dot(params.final4MR2, v),
+    dot(params.final4MR3, v),
+  );
+}
+
+// Distance from the origin to the segment q + s*e, s in [-1, 1] — the
+// slab query's stand-in for length(q) at every radius, escape test and
+// ball certificate (fr-wa6o; the oracle's segmentRadius in the 4D
+// GLSL's f32 formulation). At e = 0 the guarded s = 0 branch returns
+// length(q) bit for bit, which is what keeps the shipped sliceHalfW 0
+// the point query value for value.
+fn segmentRadius4(q: vec4f, e: vec4f) -> f32 {
+  let ee = dot(e, e);
+  var s = 0.0;
+  if (ee > 0.0) {
+    s = clamp(-dot(q, e) / ee, -1.0, 1.0);
+  }
+  return length(q + s * e);
 }`
         : /* wgsl */ `
 fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
@@ -2865,11 +3159,409 @@ ${descentPrologue}
 
   // The AFFINE4 core (fr-dlxh's 4D cut): estimateDistance4Refined
   // (surface-de-4d.ts) behind the view lift — the 4D GLSL tracer's
-  // estimator (surface-material-4d.ts) in WGSL. STUB until stage A2's
-  // body port lands: deliberately not valid WGSL, so an accidental
-  // emission fails loudly at pipeline creation instead of computing
-  // garbage.
-  const affine4DescentText = /* wgsl */ `AFFINE4_DESCENT_BODY_NOT_YET_PORTED (fr-dlxh stage A2)`;
+  // estimator (surface-material-4d.ts's plain surfaceDE overload, the
+  // f32 formulation this port follows line for line) in WGSL. Section
+  // for section it is the AFFINE ladder above one dimension up, at the
+  // oracle's FIXED width 4 (`wide` true, `extra` 2 — its width
+  // conditionals collapse exactly as the GLSL's): A/B beam chains +
+  // fr-jkpn V1/V2 validity slots, fr-beck's refined certificate under
+  // the fr-1z6p laziness guard at every refined fold site. New here:
+  // the view-lift prologue (rotor + w0, the GLSL's uInvRotor line), the
+  // fr-wa6o slab query — one vec4f half-extent register beside every
+  // point, moved by LINEAR parts alone and gated on the dynamically
+  // uniform `segment` flag, segmentRadius4 in place of every |q| — and
+  // the fr-u91x sector sweep stepping one whole backward 4x4. NO
+  // footprint depth cap (the 4D oracle takes none; the packer throws on
+  // one), so the loop runs plain params.maxDepth. `opts.width`,
+  // `sharedFrontier` and `bnbStage2` are all inert here, like "affine".
+  const affine4DescentText = /* wgsl */ `// One extra Hutchinson level on a frozen escaped candidate's own
+// inverse image (the oracle's refinedCert closure — fr-beck's measured
+// ghost-eliminator, with fr-1z6p's guard riding at every call site):
+// the certificate becomes childScale * max(r - R, min_j sigmaMin_j *
+// (segmentRadius(invMap_j(img)) - R)) — never below the plain
+// childScale * (r - R). "Every map" means every (sector, base map)
+// pair (fr-u91x), the candidate's half-extent sweeping alongside by
+// LINEAR parts alone (fr-wa6o); segment is recomputed from
+// params.sliceHalfW — the 4D GLSL's free-function move, dynamically
+// uniform, so both branches cost nothing across a dispatch.
+fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32) -> f32 {
+  let segment = params.sliceHalfW > 0.0;
+  var inner = 1e30;
+  var sImg = img;
+  var sExt = imgExt;
+  for (var k = 0u; k < params.symOrder; k++) {
+    if (k > 0u) {
+      sImg = stepSector4(sImg);
+      if (segment) {
+        sExt = stepSector4(sExt);
+      }
+    }
+    for (var j = 0u; j < params.mapCount; j++) {
+      let m = maps[j];
+      let jImg = mapApply4(m, sImg);
+      var jExt = vec4f(0.0);
+      if (segment) {
+        jExt = mapApplyLinear4(m, sExt);
+      }
+      inner = min(
+        inner,
+        m.p0.x * (segmentRadius4(jImg, jExt) - params.boundingRadius),
+      );
+    }
+  }
+  return childScale * max(r - params.boundingRadius, inner);
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
+  // is an isometry, so distances, steps and gradients survive the lift
+  // unchanged; then the affine final lens, exactly as the oracle's
+  // prologue. The slab query's half-extent (fr-wa6o) is the rotor's w
+  // column times sliceHalfW — a view-frame w displacement lifted into
+  // the attractor frame — and the lens moves it by its LINEAR part
+  // alone (a translation slides a segment's centre, never its extent).
+  var q = rotorInvApply4(vec4f(pIn, params.w0));
+  let segment = params.sliceHalfW > 0.0;
+  var ext = vec4f(0.0);
+  if (segment) {
+    ext = rotorInvWCol4() * params.sliceHalfW;
+  }
+  q = finalApply4(q);
+  if (segment) {
+    ext = finalApplyLinear4(ext);
+  }
+  let R = params.boundingRadius;
+  let startR = segmentRadius4(q, ext);
+  let sphereBound = startR - R;
+  var best = 1e30;
+  var bailBelow = -1e30;
+  if (cutoff > 0.0 && sphereBound * params.final4SigmaMin < cutoff) {
+    bailBelow = cutoff;
+  }
+  // Chain A starts at the (lifted, lensed) query; B idles until beam
+  // selection fills it. Each chain carries the contraction accumulated
+  // INCLUDING its own map, the radius it was selected at — scale *
+  // (r - R) is its terminal bound — and its own segment half-extent,
+  // one vec4f where the oracle unrolls a 4-element buffer. The validity
+  // chains carry no R field: unlike A/B they never fold a terminal (see
+  // past the loop), and expansion re-derives every child radius.
+  var aQ = q;
+  var aExt = ext;
+  var aScale = 1.0;
+  var aR = startR;
+  var aLive = true;
+  var bQ = vec4f(0.0);
+  var bExt = vec4f(0.0);
+  var bScale = 1.0;
+  var bR = 0.0;
+  var bLive = false;
+  var v1Q = vec4f(0.0);
+  var v1Ext = vec4f(0.0);
+  var v1Scale = 1.0;
+  var v1Live = false;
+  var v2Q = vec4f(0.0);
+  var v2Ext = vec4f(0.0);
+  var v2Scale = 1.0;
+  var v2Live = false;
+  // NO fr-3c0k footprint depth cap in this core — the 4D oracle takes
+  // none (packSurface4GpuParams throws on a nonzero footprint), so the
+  // loop runs plain params.maxDepth.
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (!aLive && !bLive && !v1Live && !v2Live) {
+      break;
+    }
+    // The four smallest-key candidates this level, key-ascending. The
+    // sentinel r = 0 keeps empty slots out of every escaped-candidate
+    // fold below.
+    var c1Key = 1e30;
+    var c1Q = vec4f(0.0);
+    var c1Ext = vec4f(0.0);
+    var c1Scale = 1.0;
+    var c1R = 0.0;
+    var c1Cert = 0.0;
+    var c2Key = 1e30;
+    var c2Q = vec4f(0.0);
+    var c2Ext = vec4f(0.0);
+    var c2Scale = 1.0;
+    var c2R = 0.0;
+    var c2Cert = 0.0;
+    // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
+    // by everything the top-2 ladder evicts, so the pair holds exactly
+    // the level's third- and fourth-smallest keys.
+    var c3Key = 1e30;
+    var c3Q = vec4f(0.0);
+    var c3Ext = vec4f(0.0);
+    var c3Scale = 1.0;
+    var c3R = 0.0;
+    var c3Cert = 0.0;
+    var c4Key = 1e30;
+    var c4Q = vec4f(0.0);
+    var c4Ext = vec4f(0.0);
+    var c4Scale = 1.0;
+    var c4R = 0.0;
+    var c4Cert = 0.0;
+    for (var c = 0u; c < 4u; c++) {
+      var pQ = vec4f(0.0);
+      var pExt = vec4f(0.0);
+      var pScale = 1.0;
+      if (c == 0u) {
+        if (!aLive) {
+          continue;
+        }
+        pQ = aQ;
+        pExt = aExt;
+        pScale = aScale;
+      } else if (c == 1u) {
+        if (!bLive) {
+          continue;
+        }
+        pQ = bQ;
+        pExt = bExt;
+        pScale = bScale;
+      } else if (c == 2u) {
+        if (!v1Live) {
+          continue;
+        }
+        pQ = v1Q;
+        pExt = v1Ext;
+        pScale = v1Scale;
+      } else {
+        if (!v2Live) {
+          continue;
+        }
+        pQ = v2Q;
+        pExt = v2Ext;
+        pScale = v2Scale;
+      }
+      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
+      // chain point — and, under a slab query, its half-extent, since
+      // the backward step is an isometry taking segments to segments —
+      // turns one step per kaleidoscope sector and every BASE map is
+      // applied to it there, SECTOR-MAJOR (the expansion's k*n + i slot
+      // order), so the candidate stream and the ladders' tie-breaks are
+      // exactly the expansion's.
+      var sQ = pQ;
+      var sExt = pExt;
+      for (var k = 0u; k < params.symOrder; k++) {
+        if (k > 0u) {
+          sQ = stepSector4(sQ);
+          if (segment) {
+            sExt = stepSector4(sExt);
+          }
+        }
+        for (var j = 0u; j < params.mapCount; j++) {
+          let m = maps[j];
+          let img = mapApply4(m, sQ);
+          // GpuMap4 keeps translation in its own t field, so the
+          // linear apply IS the inverse map's linear part — all a
+          // segment's half-extent ever sees (fr-wa6o).
+          var imgExt = vec4f(0.0);
+          if (segment) {
+            imgExt = mapApplyLinear4(m, sExt);
+          }
+          let r = segmentRadius4(img, imgExt);
+          let key = pScale * (r - R);
+          let childScale = pScale * m.p0.x;
+          let cert = childScale * (r - R);
+          // Exactly one tuple leaves the top-2 ladder per candidate —
+          // the displaced runner-up, or the candidate itself. It spills
+          // into the rank-3/4 ladder or folds below; empty-slot
+          // sentinels flow through both harmlessly (key 1e30 never
+          // inserts, r = 0 never folds).
+          var eKey = key;
+          var eQ = img;
+          var eExt = imgExt;
+          var eScale = childScale;
+          var eR = r;
+          var eCert = cert;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eExt = c2Ext;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = c1Key;
+            c2Q = c1Q;
+            c2Ext = c1Ext;
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1Q = img;
+            c1Ext = imgExt;
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eQ = c2Q;
+            eExt = c2Ext;
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = key;
+            c2Q = img;
+            c2Ext = imgExt;
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
+          }
+          // Spill into the rank-3/4 ladder (unconditional at width 4);
+          // what THAT evicts — or the spilled tuple itself, when it
+          // beats neither slot — falls through to the fold below. The
+          // evicted KEY is dead past this point: only the folded fields
+          // (point, extent, scale, radius, certificate) survive, and
+          // width 4 is fixed here, so there is no tKey.
+          if (eKey < c3Key) {
+            let tQ = c4Q;
+            let tExt = c4Ext;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+            c4Key = c3Key;
+            c4Q = c3Q;
+            c4Ext = c3Ext;
+            c4Scale = c3Scale;
+            c4R = c3R;
+            c4Cert = c3Cert;
+            c3Key = eKey;
+            c3Q = eQ;
+            c3Ext = eExt;
+            c3Scale = eScale;
+            c3R = eR;
+            c3Cert = eCert;
+            eQ = tQ;
+            eExt = tExt;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          } else if (eKey < c4Key) {
+            let tQ = c4Q;
+            let tExt = c4Ext;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+            c4Key = eKey;
+            c4Q = eQ;
+            c4Ext = eExt;
+            c4Scale = eScale;
+            c4R = eR;
+            c4Cert = eCert;
+            eQ = tQ;
+            eExt = tExt;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+          }
+          // The tuple leaving the beam frontier: an escaped candidate
+          // folds its REFINED certificate (fr-beck closes the
+          // barely-escaped-sibling ghost), skipped whole when its PLAIN
+          // certificate cannot beat the running min anyway (the
+          // oracle's fr-1z6p laziness guard, bit-exact); an in-sphere
+          // tuple carries no positive certificate — it can only get
+          // here past FOUR smaller keys, the shrunken fr-jkpn residual
+          // drop.
+          if (eR > R && eCert < best) {
+            best = min(best, refinedCert(eQ, eExt, eR, eScale));
+            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
+            // the folded certificate is FINALIZED (already refined) and
+            // best only falls from here, so once best is at or below
+            // sphereBound the return is pinned no matter how much
+            // further it falls, and short of that the settled verdict
+            // against the caller's cutoff cannot be lifted back either.
+            if (
+              best <= sphereBound ||
+              best * params.final4SigmaMin < bailBelow
+            ) {
+              return max(best, sphereBound) * params.final4SigmaMin;
+            }
+          }
+        }
+      }
+    }
+    // Promote: the best candidate continues as chain A, the runner-up as
+    // chain B; past the escape radius a candidate folds its PLAIN
+    // terminal and dies instead (deeper refinement cannot improve the
+    // min). Ranks 3/4 continue as validity chains ONLY while in-sphere;
+    // escaped, they fold the same refined certificate they would have
+    // folded without the slots.
+    aLive = false;
+    bLive = false;
+    v1Live = false;
+    v2Live = false;
+    if (c1Key < 1e29) {
+      if (c1R > params.escapeRadius) {
+        best = min(best, c1Cert);
+      } else {
+        aQ = c1Q;
+        aExt = c1Ext;
+        aScale = c1Scale;
+        aR = c1R;
+        aLive = true;
+      }
+    }
+    if (c2Key < 1e29) {
+      if (c2R > params.escapeRadius) {
+        best = min(best, c2Cert);
+      } else {
+        bQ = c2Q;
+        bExt = c2Ext;
+        bScale = c2Scale;
+        bR = c2R;
+        bLive = true;
+      }
+    }
+    if (c3Key < 1e29) {
+      if (c3R > R) {
+        if (c3Cert < best) {
+          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale));
+        }
+      } else {
+        v1Q = c3Q;
+        v1Ext = c3Ext;
+        v1Scale = c3Scale;
+        v1Live = true;
+      }
+    }
+    if (c4Key < 1e29) {
+      if (c4R > R) {
+        if (c4Cert < best) {
+          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale));
+        }
+      } else {
+        v2Q = c4Q;
+        v2Ext = c4Ext;
+        v2Scale = c4Scale;
+        v2Live = true;
+      }
+    }
+    // The same two exits covering the four promote folds in one test:
+    // each either wrote a SETTLED bound into best (refined at the two
+    // validity-slot sites, the deliberately plain escape-radius bound at
+    // the other two) or continued a chain. Deliberately NOT a break: the
+    // terminal bounds past the loop are folds the FULL descent only
+    // makes at the depth cap, and folding one here could drop best below
+    // a value that descent never reaches.
+    if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.final4SigmaMin;
+    }
+  }
+  // Terminal bound of the chains alive at the depth cap (the KIFS
+  // last-value formula): non-positive when the chain tracked the
+  // attractor all the way down. Validity chains fold NO cap terminal —
+  // deliberately asymmetric with A/B: in-sphere means inside the
+  // bounding SPHERE, not near the attractor, so their cap terminal is a
+  // vacuous negative bound (fr-jkpn measured folding them changing
+  // nothing, so the omission is on principle, not cost).
+  if (aLive) {
+    best = min(best, aScale * (aR - R));
+  }
+  if (bLive) {
+    best = min(best, bScale * (bR - R));
+  }
+  return max(best, sphereBound) * params.final4SigmaMin;
+}`;
 
   // The ESCAPE core (fr-dlxh): escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
