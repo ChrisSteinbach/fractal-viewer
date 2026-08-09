@@ -6,10 +6,16 @@ import {
   singularValues4,
   transformSigmas4,
 } from "./surface-de-4d";
-import type { SurfaceDE4Map } from "./surface-de-4d";
+import type { SurfaceDE4, SurfaceDE4Map } from "./surface-de-4d";
 import { singularValues3 } from "./surface-de";
 import { composeAffine } from "./affine";
-import { applyAffine4, composeAffine4, toTransform4 } from "./affine4";
+import {
+  applyAffine4,
+  composeAffine4,
+  symmetryRotation4,
+  toTransform4,
+} from "./affine4";
+import { symmetryRotation } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGame4Result } from "./chaos-game-4d";
 import {
@@ -20,7 +26,7 @@ import {
   twentyFourCellFlake,
 } from "./presets";
 import { mulberry32 } from "./rng";
-import type { Transform, Transform4, Vec4 } from "./types";
+import type { SymmetryParams, Transform, Transform4, Vec4 } from "./types";
 import { clamp } from "./vec";
 
 /** Minimal contracting 4D-analysis map for the eligibility-table tests
@@ -1818,5 +1824,543 @@ describe("estimateDistance4Refined early-out cutoff holds with a slab (fr-wa6o)"
     }
     // Pins the mechanism as live: measured 104 early exits on this probe set.
     expect(earlyExits).toBeGreaterThan(0);
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-u91x: the 4D kaleidoscope sector sweep — 3D's fr-x029 shape one
+// dimension up. The sweep re-associates `inv(M_i) . g_k^T . q` into
+// `inv(M_i) . (g_k^T . q)` and walks the sectors incrementally off ONE
+// backward-step matrix, so it is the SAME candidate set in the SAME
+// (sector-major, `k*n + i`) order as an explicit expansion — only the
+// floating-point association differs. These tests mirror the 3D suite's
+// sweep section: agreement with the expansion (which lives below as
+// `expandedReference4`), the strict lower-bound direction separately, the
+// slab query's rotated half-extent, and the 4D novelties a blind mirror
+// would get wrong (w-planes, the twist's double rotation, and the
+// origin-anchored ball where 3D projects a fitted centre).
+// -----------------------------------------------------------------------
+const SWEEP4_FP_TOLERANCE = 1e-9;
+
+/** Row-major 4x4 identity — the no-kaleidoscope backward step. */
+const IDENTITY_STEP4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** Row-major 4x4 transpose, independent of the module under test. */
+function transpose4x4(m: number[]): number[] {
+  const out = new Array<number>(16);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) out[r * 4 + c] = m[c * 4 + r];
+  }
+  return out;
+}
+
+/**
+ * The symmetry EXPANSION the sweep replaces, preserved here and only here as
+ * the reference oracle (the 3D suite's `expandedReference`, one dimension
+ * up): materialise every kaleidoscope copy `g_k . f_i` into its own composed
+ * inverse slot (`inv(M_i) . g_k^T`, sector-major, copy 0 unrotated first —
+ * exactly `chaos-game-4d.ts`'s `k*n + i` slot order, with `g_k` the same
+ * `symmetryRotation4` matrices `prepareChaosGame4` rotates copies by) and
+ * hand back a symmetry-FREE {@link SurfaceDE4}. The composed copy's `invT`
+ * is the base map's exactly: `-(inv(M_i) g_k^T)(g_k t_i) = -inv(M_i) t_i`.
+ */
+function expandedReference4(
+  de: SurfaceDE4,
+  symmetry: SymmetryParams,
+): SurfaceDE4 {
+  const { order } = de.symmetry;
+  const maps: SurfaceDE4Map[] = [];
+  for (let k = 0; k < order; k++) {
+    const rot = symmetryRotation4(
+      symmetry.plane,
+      (2 * Math.PI * k) / order,
+      symmetry.twist ?? 0,
+    );
+    const rotT = transpose4x4(rot);
+    for (const base of de.maps) {
+      maps.push({
+        invM: multiply4x4(base.invM, rotT),
+        invT: base.invT,
+        sigmaMin: base.sigmaMin,
+        baseIndex: base.baseIndex,
+      });
+    }
+  }
+  return { ...de, maps, symmetry: { order: 1, stepBack: IDENTITY_STEP4 } };
+}
+
+describe("buildSurfaceDE4 with kaleidoscope symmetry (fr-u91x)", () => {
+  it("keeps the maps array base-sized and carries the kaleidoscope as sector data", () => {
+    const de = buildSurfaceDE4(pentatope(), null, { order: 3, plane: "xy" });
+    expect(de.maps).toHaveLength(5);
+    expect(de.symmetry.order).toBe(3);
+  });
+
+  it("derives the backward step by transposing the exact forward rotation the chaos game rotates copies by", () => {
+    const de = buildSurfaceDE4(pentatope(), null, {
+      order: 5,
+      plane: "yw",
+      twist: 2,
+    });
+    const forward = symmetryRotation4("yw", (2 * Math.PI) / 5, 2);
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        // Bit-equal, not merely close: the transpose is an element copy of
+        // the same symmetryRotation4 entries, never a re-derivation.
+        expect(de.symmetry.stepBack[r * 4 + c]).toBe(forward[c * 4 + r]);
+      }
+    }
+  });
+
+  it("reproduces the 3D kaleidoscope's backward step on a w-free plane at twist 0", () => {
+    // The flat-correspondence guarantee: on the three w-free planes,
+    // symmetryRotation4 reproduces chaos-game.ts's 3D symmetryRotation
+    // entry for entry (PLANE_SIGN's xz flip included), so the 4D backward
+    // step's upper-left 3x3 is the 3D sweep's rotation transposed, with
+    // the w row/column exactly [0, 0, 0, 1].
+    const de = buildSurfaceDE4(pentatope(), null, { order: 6, plane: "xz" });
+    const forward3 = symmetryRotation("xz", (2 * Math.PI) / 6);
+    const sb = de.symmetry.stepBack;
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        expect(sb[r * 4 + c]).toBeCloseTo(forward3[c * 3 + r], 12);
+      }
+    }
+    expect([sb[3], sb[7], sb[11], sb[12], sb[13], sb[14]]).toEqual([
+      0, 0, 0, 0, 0, 0,
+    ]);
+    expect(sb[15]).toBe(1);
+  });
+
+  it("reports a single sector for a system built without symmetry", () => {
+    const de = buildSurfaceDE4(pentatope());
+    expect(de.symmetry.order).toBe(1);
+  });
+
+  it("clamps the effective order against the transform-count budget exactly as prepareChaosGame4 does", () => {
+    // 5 base maps against the 256-slot Uint8 cap: floor(256 / 5) = 51
+    // sectors at most, however large the ask.
+    const de = buildSurfaceDE4(pentatope(), null, { order: 999, plane: "zw" });
+    expect(de.symmetry.order).toBe(51);
+  });
+});
+
+describe("sector sweep agreement with the symmetry expansion (fr-u91x)", () => {
+  it("reproduces the expansion's estimate for an order-3 xy kaleidoscope — a w-free plane at twist 0", () => {
+    const symmetry: SymmetryParams = { order: 3, plane: "xy" };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    expect(de.maps).toHaveLength(5);
+    expect(reference.maps).toHaveLength(15);
+    const rng = mulberry32(1234);
+    for (let i = 0; i < 120; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+        estimateDistance4Refined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("reproduces the expansion's estimate for an order-4 zw kaleidoscope — a w-plane", () => {
+    const symmetry: SymmetryParams = { order: 4, plane: "zw" };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    const rng = mulberry32(99);
+    for (let i = 0; i < 120; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+        estimateDistance4Refined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("reproduces the expansion's estimate for an order-5 xy double rotation (twist 1) — the 4D novelty", () => {
+    const symmetry: SymmetryParams = { order: 5, plane: "xy", twist: 1 };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    expect(reference.maps).toHaveLength(25);
+    const rng = mulberry32(2024);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+        estimateDistance4Refined(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("keeps the width-1 greedy descent on the expansion's numbers too", () => {
+    // The legacy estimator shares the descent body, so it sweeps sectors on
+    // exactly the same code path — pinned separately because its single
+    // chain reaches different branches than the production beam does.
+    const symmetry: SymmetryParams = { order: 5, plane: "xw" };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const narrow = { ...de, beamWidth: 1 } as const;
+    const reference = {
+      ...expandedReference4(de, symmetry),
+      beamWidth: 1,
+    } as const;
+    const rng = mulberry32(555);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ];
+      expect(estimateDistance4(narrow, p)).toBeCloseTo(
+        estimateDistance4(reference, p),
+        9,
+      );
+    }
+  });
+
+  it("never over-estimates the expansion's bound in any supported plane or twist", () => {
+    // The direction that matters: an estimate ABOVE the reference's is a
+    // march that steps through a surface. Asserted one-sided across every
+    // plane, twists included, on both estimators.
+    const table: SymmetryParams[] = [
+      { order: 2, plane: "xy" },
+      { order: 3, plane: "xz", twist: 1 },
+      { order: 4, plane: "yz" },
+      { order: 3, plane: "xw" },
+      { order: 5, plane: "yw", twist: 2 },
+      { order: 6, plane: "zw", twist: 1 },
+    ];
+    for (const symmetry of table) {
+      const de = buildSurfaceDE4(pentatope(), null, symmetry);
+      const reference = expandedReference4(de, symmetry);
+      const rng = mulberry32(17);
+      for (let i = 0; i < 60; i++) {
+        const p: Vec4 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+          estimateDistance4Refined(reference, p) + SWEEP4_FP_TOLERANCE,
+        );
+        expect(estimateDistance4(de, p)).toBeLessThanOrEqual(
+          estimateDistance4(reference, p) + SWEEP4_FP_TOLERANCE,
+        );
+      }
+    }
+  });
+
+  it("sweeps every sector at any blend, exactly as the expansion included every copy", () => {
+    // SymmetryParams.blend fades the rotated copies' SELECTION WEIGHTS, not
+    // their geometry — a DE built at blend 0 still describes the full
+    // kaleidoscope, not the bare base system (the 3D module doc's BLEND
+    // rule, dimension-free).
+    for (const blend of [0, 0.35, 1]) {
+      const symmetry: SymmetryParams = { order: 4, plane: "zw", blend };
+      const de = buildSurfaceDE4(pentatope(), null, symmetry);
+      expect(de.symmetry.order).toBe(4);
+      const reference = expandedReference4(de, symmetry);
+      const rng = mulberry32(1010);
+      for (let i = 0; i < 40; i++) {
+        const p: Vec4 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+          estimateDistance4Refined(reference, p),
+          9,
+        );
+      }
+    }
+  });
+});
+
+describe("estimateDistance4 with kaleidoscope symmetry (fr-u91x)", () => {
+  it("reads near zero for points sampled on the symmetric attractor, rotated copies included", () => {
+    // An xw kaleidoscope turns base structure INTO w, so these samples
+    // cover copies a 3D sweep could never produce; the true-ancestor-branch
+    // argument (a point ON the attractor can never earn a positive bound)
+    // holds for the swept candidate set exactly as for the expanded one.
+    const transforms = pentatope();
+    const symmetry: SymmetryParams = { order: 3, plane: "xw" };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(42),
+      null,
+      symmetry,
+    );
+    for (let i = 0; i < 200; i++) {
+      const idx = (i * 61) % cloud.count;
+      const p: Vec4 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(0.08);
+    }
+  });
+
+  it("stays conservative against the sampled symmetric attractor for off-attractor queries on a w-plane kaleidoscope", () => {
+    // Strict fp tolerance holds here (measured, this suite): pentatope's
+    // zw-rotated copies separate cleanly, so the fr-jkpn >= 5-simultaneous
+    // in-sphere drops that loosen dense kaleidoscopes never fire on this
+    // probe set — contrast the off-origin twisted suite at the end of this
+    // file, which needs (and documents) the disclosed residual band.
+    const transforms = pentatope();
+    const symmetry: SymmetryParams = { order: 4, plane: "zw" };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+      null,
+      symmetry,
+    );
+    for (const q of validityQueries(cloud)) {
+      const truth = nearestDistance4(cloud, q);
+      expect(estimateDistance4(de, q)).toBeLessThanOrEqual(truth + 1e-9);
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(truth + 1e-9);
+    }
+  });
+});
+
+describe("kaleidoscope order 1 is the identity (fr-u91x)", () => {
+  it("returns bit-identical estimates to a build without symmetry, for any plane and twist", () => {
+    const transforms = pentatope();
+    const plain = buildSurfaceDE4(transforms);
+    const identities: SymmetryParams[] = [
+      { order: 1, plane: "xy" },
+      { order: 1, plane: "zw", twist: 1 },
+    ];
+    for (const symmetry of identities) {
+      const de = buildSurfaceDE4(transforms, null, symmetry);
+      // The probe is byte-identical at order 1 (prepareChaosGame4's order-1
+      // expansion is a no-op), so the whole build matches, radius included.
+      expect(de.boundingRadius).toBe(plain.boundingRadius);
+      const rng = mulberry32(11);
+      for (let i = 0; i < 60; i++) {
+        const p: Vec4 = [
+          (rng() - 0.5) * 4,
+          (rng() - 0.5) * 4,
+          (rng() - 0.5) * 4,
+          (rng() - 0.5) * 4,
+        ];
+        expect(estimateDistance4(de, p)).toBe(estimateDistance4(plain, p));
+        expect(estimateDistance4Refined(de, p)).toBe(
+          estimateDistance4Refined(plain, p),
+        );
+      }
+    }
+  });
+});
+
+describe("slab queries rotate the carried half-extent through the sectors (fr-u91x x fr-wa6o)", () => {
+  it("matches the expansion with a nonzero half-extent on a w-plane kaleidoscope", () => {
+    // The expansion's composed inverse rotates the extent through its own
+    // matrix product, so this equality pins the sweep's per-sector extent
+    // rotation — an unrotated extent would march the wrong segment in
+    // every k > 0 sector and break it.
+    const symmetry: SymmetryParams = { order: 4, plane: "xw" };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    const halfExtent: Vec4 = [0, 0, 0, 0.08];
+    const rng = mulberry32(88);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+      ];
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeCloseTo(
+        estimateDistance4Refined(reference, p, 0, halfExtent),
+        9,
+      );
+      expect(estimateDistance4(de, p, halfExtent)).toBeCloseTo(
+        estimateDistance4(reference, p, halfExtent),
+        9,
+      );
+    }
+  });
+
+  it("matches the expansion with a nonzero half-extent under a double rotation (twist 1)", () => {
+    const symmetry: SymmetryParams = { order: 3, plane: "yz", twist: 1 };
+    const de = buildSurfaceDE4(pentatope(), null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    const halfExtent: Vec4 = [0, 0, 0, 0.08];
+    const rng = mulberry32(313);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+      ];
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeCloseTo(
+        estimateDistance4Refined(reference, p, 0, halfExtent),
+        9,
+      );
+      expect(estimateDistance4(de, p, halfExtent)).toBeCloseTo(
+        estimateDistance4(reference, p, halfExtent),
+        9,
+      );
+    }
+  });
+
+  it("sees a rotated copy that only the slab's rotated segment can reach", () => {
+    // FLAT base maps (their own attractor pins to w = 0) under an xw
+    // kaleidoscope: any sample with |w| clearly off zero sits on a ROTATED
+    // copy. A slab query centred 0.9h short of such a sample in w reaches
+    // it only through the carried segment, which the descent must turn
+    // through the sectors along with the point (design point D); the point
+    // query at the same centre misses the copy for most samples, which is
+    // what makes the segment's reach observable. Scale 0.4 keeps the
+    // 8-copy attractor sparse enough for that contrast (measured, this
+    // suite: slab reads under eps on 40/40 samples while the point query
+    // misses 31/40 — scale-0.5 maps left it a near-space-filling dust the
+    // point query found other content in, 9/40).
+    const flat = [
+      map4({ position: [0.6, 0.2, -0.1], scale: [0.4, 0.4, 0.4] }),
+      map4({ id: 1, position: [-0.4, 0.35, 0.3], scale: [0.4, 0.4, 0.4] }),
+    ];
+    const symmetry: SymmetryParams = { order: 4, plane: "xw" };
+    const de = buildSurfaceDE4(flat, null, symmetry);
+    const cloud = runChaosGame4(
+      flat.map(toTransform4),
+      20000,
+      mulberry32(1),
+      null,
+      symmetry,
+    );
+    const eps = 0.005 * de.boundingRadius;
+    const h = 0.12;
+    const halfExtent: Vec4 = [0, 0, 0, h];
+    let checked = 0;
+    let missedByPointQuery = 0;
+    for (let i = 0; i < cloud.count && checked < 40; i++) {
+      if (Math.abs(cloud.w[i]) < 0.25) continue;
+      const p: Vec4 = [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+        cloud.w[i] - 0.9 * h,
+      ];
+      expect(estimateDistance4Refined(de, p, 0, halfExtent)).toBeLessThan(eps);
+      if (estimateDistance4Refined(de, p) >= eps) missedByPointQuery++;
+      checked++;
+    }
+    expect(checked).toBe(40);
+    expect(missedByPointQuery).toBeGreaterThan(checked / 2);
+  });
+});
+
+describe("symmetry never affects surface eligibility (fr-u91x)", () => {
+  it("keeps the bare system's verdict and step scale, and cannot rescue an ineligible one", () => {
+    // analyzeSurfaceSystem4 takes no symmetry at all — mirrored from 3D's
+    // stance (copies are rotations of maps already analyzed, twist
+    // included) — so the build's derived analysis quantities match the
+    // bare system's under any kaleidoscope, and an ineligible system
+    // stays ineligible under one.
+    const anisotropic = [map4({ scale: [0.8, 0.4, 0.4] })];
+    const bare = analyzeSurfaceSystem4(anisotropic);
+    expect(bare.status).toBe("degraded");
+    const symmetry: SymmetryParams = { order: 6, plane: "yw", twist: 1 };
+    const de = buildSurfaceDE4(anisotropic, null, symmetry);
+    expect(de.stepScale).toBe(bare.stepScale);
+    const ineligible = [map4({ variations: [{ type: "swirl", weight: 1 }] })];
+    expect(() => buildSurfaceDE4(ineligible, null, symmetry)).toThrow(
+      /no surface distance estimator/,
+    );
+  });
+});
+
+describe("twisted symmetry on an off-origin attractor stays conservative (fr-u91x's fixed-subspace two-case)", () => {
+  // The one place a blind 3D mirror would go wrong: 3D recentres its
+  // probe-fit ball by zeroing the two IN-PLANE coordinates (projection onto
+  // the rotation axis, the group-fixed subspace). Under a twist the
+  // generator fixes ONLY the origin — both angles are nonzero multiples of
+  // 2π/order inside (0, 2π) — so that same projection would leave a
+  // NON-invariant centre and an unsound certificate. The 4D ball is
+  // origin-anchored (surface-de-4d.ts never adopted the centred fit), which
+  // every generator fixes; these tests make that observable by driving the
+  // base attractor far off-origin inside the twist plane, where an invalid
+  // recentred bound would overshoot near the rotated copies.
+  const offOrigin = () => [
+    map4({ position: [0.5, 0.35, 0.2], rotation: [0.4, 0.2, -0.3] }),
+    map4({ id: 1, position: [0.65, 0.15, -0.1], rotation: [-0.2, 0.5, 0.1] }),
+    map4({ id: 2, position: [0.45, 0.5, 0.05], rotation: [0.1, -0.3, 0.6] }),
+  ];
+
+  it("never exceeds the sampled distance under a twist-1 kaleidoscope whose base attractor sits far off-origin, within the disclosed kaleidoscope residual", () => {
+    // Tolerance is the fr-jkpn KALEIDOSCOPE residual band, not fp noise:
+    // orders >= 3 multiply every branch, so the >= 5 simultaneous
+    // in-sphere drops that break strict beam validity get common (the 3D
+    // module doc discloses ~2.6%R for fast-map kaleidoscopes). Measured on
+    // THIS system (probe-overshoot harness, 520 queries): 3 overshoots,
+    // worst 1.66%R, and the sweep matches the EXPANSION to 6.1e-16 at
+    // every one of them — the residual is the beam's, present under the
+    // old expansion too, not the sweep's or the origin-anchored ball's. A
+    // wrongly recentred ball (the complement-plane projection a blind 3D
+    // mirror would apply, invalid under a twist) would overshoot by the
+    // centre offset's scale — tens of %R — so the 3%R band still
+    // discriminates exactly the failure this test exists to catch.
+    const transforms = offOrigin();
+    const symmetry: SymmetryParams = { order: 3, plane: "xy", twist: 1 };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(1),
+      null,
+      symmetry,
+    );
+    const residual = 0.03 * de.boundingRadius;
+    for (const q of validityQueries(cloud)) {
+      const truth = nearestDistance4(cloud, q);
+      expect(estimateDistance4(de, q)).toBeLessThanOrEqual(truth + residual);
+      expect(estimateDistance4Refined(de, q)).toBeLessThanOrEqual(
+        truth + residual,
+      );
+    }
+  });
+
+  it("matches the expansion on that same off-origin twisted system", () => {
+    const transforms = offOrigin();
+    const symmetry: SymmetryParams = { order: 3, plane: "xy", twist: 1 };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const reference = expandedReference4(de, symmetry);
+    const rng = mulberry32(747);
+    for (let i = 0; i < 80; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+        (rng() - 0.5) * 4,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeCloseTo(
+        estimateDistance4Refined(reference, p),
+        9,
+      );
+    }
   });
 });

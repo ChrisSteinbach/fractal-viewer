@@ -1,4 +1,5 @@
-import { composeAffine4, toTransform4 } from "./affine4";
+import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
+import { effectiveSymmetryOrder } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { mulberry32 } from "./rng";
 import {
@@ -13,7 +14,7 @@ import {
   RADIUS_PAD,
 } from "./surface-de";
 import type { MapSigmas, SurfaceEligibilityStatus } from "./surface-de";
-import type { Transform, Transform4, Vec4 } from "./types";
+import type { SymmetryParams, Transform, Transform4, Vec4 } from "./types";
 import { clamp } from "./vec";
 
 /**
@@ -51,11 +52,12 @@ import { clamp } from "./vec";
  * given matrix always converges to bit-identical sigmas.
  *
  * WHAT THIS SPIKE DELIBERATELY LEAVES OUT.
- * - No kaleidoscope symmetry: the 4D chaos-game pipeline has none, by design
- *   (`chaos-game-4d.ts`'s `PreparedChaosGame4` — "every slot IS a base
- *   transform", no `postRotations`/`baseTransformCount` to carry), so there
- *   is nothing here to expand — {@link SurfaceDE4.maps} is the input maps
- *   1:1, unlike 3D's symmetry-expanded `SurfaceDEMap[]`.
+ * - No kaleidoscope symmetry — at the time true of the whole 4D chaos-game
+ *   pipeline by design. BOTH halves have SINCE landed: fr-q0h6 gave
+ *   `chaos-game-4d.ts` its kaleidoscope (`postRotations`, copy-major slots
+ *   `k*n + i`), and fr-u91x lifted the 3D tracer's sector sweep up here —
+ *   see the SYMMETRY section below. {@link SurfaceDE4.maps} STAYS the input
+ *   maps 1:1 at any order, exactly like 3D's post-fr-x029 `SurfaceDEMap[]`.
  * - The final-transform lens is no longer on this list. It was originally
  *   deferred here as 3D's `SurfaceDE.final` "waiting to happen" until this
  *   spike's verdict landed; it has SINCE landed (fr-vxoj, post-verdict), a
@@ -164,6 +166,61 @@ import { clamp } from "./vec";
  * valid and needs no new math, but it fattens the zero set ISOTROPICALLY —
  * dilating the rendered object in x/y/z too — where the segment fattens it in
  * `w` alone, which is the whole point.)
+ *
+ * SYMMETRY: THE SECTOR SWEEP, ONE DIMENSION UP (fr-u91x). A 4D kaleidoscope
+ * of order `n` (fr-q0h6) replicates every base map into `n` copies
+ * `g_k . f_i`, `g_k` the rotation for copy `k` applied AFTER the base map —
+ * `chaos-game-4d.ts`'s `postRotations`, built by `affine4.ts`'s
+ * `symmetryRotation4(plane, 2πk/n, twist)`: a rotation in a PLANE, plus an
+ * optional `twist` turning the COMPLEMENT plane in lockstep (a double
+ * rotation, which has no 3D counterpart). The DE never materialises those
+ * copies: exactly like 3D's fr-x029 repacking, {@link SurfaceDE4.maps} holds
+ * the base inverses only and the descent walks the `n` sectors by turning
+ * each chain point ONE step backward per sector — `inv(M_i) . g_k^T . q`
+ * re-associated as `inv(M_i) . (g_k^T . q)` — enumerated sector-major
+ * (sector `k` outer, base map `i` inner), the expansion's own `k*n + i` slot
+ * order, so the insert-shift ladders break ties identically and the beam,
+ * fr-jkpn's validity slots, the refined certificates and the cutoff exits
+ * see an unchanged candidate stream. The validity argument (and the whole
+ * WHY-NOT-THE-KIFS-FOLD case against folding the query into one wedge — a
+ * fold minimises over a SUBSET of group elements and can only come out too
+ * HIGH) is `surface-de.ts`'s symmetry section verbatim; every word of it is
+ * dimension-independent. Order 1 skips the rotation entirely, so every
+ * non-kaleidoscope system stays bit-for-bit on its old numbers.
+ *
+ * Two places the lift is NOT a blind mirror of the 3D code:
+ *
+ * - ONE MATRIX, NOT A (cos, sin) PAIR. 3D's backward step rides a single
+ *   (cos, sin) pair because transposing a single-plane rotation flips the
+ *   sign of sin alone. A double rotation carries TWO angles, so
+ *   {@link SurfaceSymmetry4.stepBack} is the whole 4x4 backward step: the
+ *   TRANSPOSE of the same `symmetryRotation4` call the chaos game rotates
+ *   copy 1 by (the generator is orthogonal, so its transpose is its exact
+ *   inverse, bit-derived from the same entries) — which also means the
+ *   PLANE_SIGN convention buried in that call is inherited rather than
+ *   re-derived. Under a slab query the carried half-extent takes the same
+ *   multiply per sector: an isometry maps segments to segments, so the swept
+ *   segment is `{g_k^T q + s · g_k^T e}`.
+ *
+ * - THE FIXED SUBSPACE. 3D projects its probe-fit ball centre onto the
+ *   rotation AXIS — the group-fixed subspace — so one centred ball serves
+ *   every sector. In 4D the cyclic group's fixed subspace is the fixed
+ *   subspace of the GENERATOR: at `twist = 0` the COMPLEMENT plane of the
+ *   rotation plane (projection = zero the two in-plane coordinates), and at
+ *   `twist != 0` the ORIGIN alone — both angles are nonzero multiples of
+ *   `2π/order` strictly inside `(0, 2π)`, so neither block of the generator
+ *   fixes a direction. This module's bounding ball is ORIGIN-anchored by
+ *   construction (3D's fr-pjqw centred fit was never ported up), and the
+ *   origin is fixed by EVERY generator, twist included, so the ball is
+ *   sector-invariant for free and there is nothing to project — see the
+ *   comment in {@link buildSurfaceDE4} for what a future centred-ball port
+ *   must do instead of copying 3D's in-plane zeroing. The same
+ *   norm-invariance (`|g^T q| = |q|` for any orthogonal `g` fixing the
+ *   origin) is why every origin-anchored gate — the depth-0 sphere bound,
+ *   the escape test, the tracer's visible-ball gate (its slab form
+ *   `max(0, |w0| - h)` included) — needs no per-sector adjustment, the very
+ *   fact 3D's fold frontier leans on for its fr-kidj `chainNormSq` hoist
+ *   (no fold frontier exists here for the hoist itself to land in).
  */
 
 /** Fixed sweep order for {@link singularValues4}'s cyclic Jacobi: the six
@@ -334,6 +391,11 @@ function isActive(t: Transform): boolean {
   return (t.weight ?? 1) > 0;
 }
 
+/** `prepareChaosGame4`'s no-symmetry default, duplicated here because it is
+ * private there (exactly `surface-de.ts`'s `NO_SYMMETRY` situation); order 1
+ * is the identity expansion for any plane and any twist. */
+const NO_SYMMETRY4: SymmetryParams = { order: 1, plane: "xz" };
+
 /** What {@link analyzeSurfaceSystem4} feeds the 4D DE build. Same shape as
  * 3D's `SurfaceEligibility` — final-transform bookkeeping included (see
  * {@link analyzeSurfaceSystem4}'s doc for the one place its gate
@@ -360,8 +422,10 @@ export interface SurfaceEligibility4 {
  * (so a map's `w` extension is what gets checked for contraction, not
  * ignored), and there is no `isFlatTransform` gate — a system extending into
  * 4D is the entire point of this module, not a disqualifier. Weight-0 maps
- * are still ignored (never selected, so they add nothing to the attractor);
- * no symmetry to affect eligibility either way.
+ * are still ignored (never selected, so they add nothing to the attractor).
+ * Symmetry never affects eligibility — kaleidoscope copies are rotations of
+ * maps already analyzed (the 3D `analyzeSurfaceSystem` stance, twist
+ * included: a double rotation is still an isometry).
  *
  * The optional `finalTransform` mirrors 3D's final-transform gate (active
  * variations disqualify, near-zero scale disqualifies, anisotropy folds into
@@ -487,22 +551,85 @@ function inverse4(m: number[]): number[] {
   return inv;
 }
 
-/** One inverted base map of the 4D DE — the direct analogue of 3D's
- * `SurfaceDEMap`, minus the kaleidoscope rotation (there are no symmetry
- * copies to un-rotate; see the module doc). */
+/** Row-major 4x4 transpose — for an orthogonal matrix (every kaleidoscope
+ * generator) this is the exact inverse, bit-derived from the same entries. */
+function transpose4(m: number[]): number[] {
+  // prettier-ignore
+  return [
+    m[0], m[4], m[8], m[12],
+    m[1], m[5], m[9], m[13],
+    m[2], m[6], m[10], m[14],
+    m[3], m[7], m[11], m[15],
+  ];
+}
+
+/**
+ * One sector step of the kaleidoscope sweep (fr-u91x): turn `(x, y, z, w)`
+ * BACKWARD by one sector — multiply by {@link SurfaceSymmetry4.stepBack} —
+ * writing into `out` so the descent's hot loop never allocates. The 4D twin
+ * of `surface-de.ts`'s `stepSector`, except the step is one whole matrix
+ * (a double rotation has two angles; see the stepBack doc), so the three
+ * per-plane branches collapse into one branchless multiply. A slab query's
+ * half-extent takes the same multiply via {@link applyLinear4} at the call
+ * sites — an isometry maps segments to segments.
+ */
+function stepSector4(
+  back: number[],
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+  out: number[],
+): void {
+  out[0] = back[0] * x + back[1] * y + back[2] * z + back[3] * w;
+  out[1] = back[4] * x + back[5] * y + back[6] * z + back[7] * w;
+  out[2] = back[8] * x + back[9] * y + back[10] * z + back[11] * w;
+  out[3] = back[12] * x + back[13] * y + back[14] * z + back[15] * w;
+}
+
+/** One BASE (un-rotated) inverted map of the 4D DE — the direct analogue of
+ * 3D's `SurfaceDEMap`. Kaleidoscope copies are not slots (fr-u91x): the
+ * descent sweeps sectors around these — see the module doc's SYMMETRY
+ * section. */
 export interface SurfaceDE4Map {
-  /** Row-major 4x4 `inv(M_i)`. */
+  /** Row-major 4x4 `inv(M_i)` — the base map's inverse linear part. The
+   * sector sweep un-rotates the chain point (and, under a slab query, its
+   * half-extent) by {@link SurfaceSymmetry4.stepBack} BEFORE applying this
+   * (kaleidoscope copies rotate AFTER the base map, so their inverses
+   * un-rotate first). */
   invM: number[];
   /** `-inv(M_i) . t_i`. */
   invT: Vec4;
   /** Smallest singular value of the FORWARD map — the certified contraction
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
-  /** Which input transform this slot inverts — always `===` the slot's own
-   * index, since there is no symmetry expansion folding multiple slots onto
-   * one base map; kept for parity with 3D's `baseIndex` (e.g. per-transform
-   * coloring keyed the same way). */
+  /** Which input transform this slot inverts — the index into the caller's
+   * `transforms`, for per-transform coloring. The sector sweep (fr-u91x)
+   * replaced what would have been a symmetry expansion, so this array stays
+   * base-sized at any order and no two slots ever share a base map. */
   baseIndex: number;
+}
+
+/** The kaleidoscope the 4D descent sweeps instead of expanding — fr-u91x,
+ * 3D's fr-x029 `SurfaceSymmetry` one dimension up. */
+export interface SurfaceSymmetry4 {
+  /** Effective sector count — `effectiveSymmetryOrder` against the FULL
+   * transform list, exactly as `prepareChaosGame4` clamps it. `1` = no
+   * kaleidoscope, and the descent then skips sector rotation entirely. */
+  order: number;
+  /** Row-major 4x4 of ONE BACKWARD sector step: the TRANSPOSE of the forward
+   * copy rotation `symmetryRotation4(plane, 2π/order, twist)` — the exact
+   * call `prepareChaosGame4` rotates copy 1 by, so the PLANE_SIGN convention
+   * rides in instead of being re-derived, and the transpose is the exact
+   * inverse because the generator is orthogonal. One whole MATRIX where 3D
+   * ships a `(cos, sin)` pair: transposing a single-plane rotation flips the
+   * sign of sin alone, but a double rotation carries two angles, so the
+   * matrix is the honest step. The descent walks sectors incrementally off
+   * it — no per-sector transcendentals — and the GLSL mirror gets it as a
+   * single `mat4` uniform. Only ~identity at order 1 (cos 2π rounds), so —
+   * exactly as in 3D — the descent's order-1 short circuit is what actually
+   * guarantees bit-identical non-kaleidoscope behavior, not these entries. */
+  stepBack: number[];
 }
 
 /** Everything {@link estimateDistance4} needs, precomputed — the 4D
@@ -510,8 +637,13 @@ export interface SurfaceDE4Map {
  * post-verdict — see the module doc's landing note). */
 export interface SurfaceDE4 {
   /** One inverse map per ACTIVE input transform (weight-0 maps contribute no
-   * slot — they are never selected, so they add nothing to the attractor). */
+   * slot — they are never selected, so they add nothing to the attractor),
+   * and kaleidoscope copies contribute none either: {@link symmetry} is
+   * swept around every entry (fr-u91x), so this array is base-sized at any
+   * order. */
   maps: SurfaceDE4Map[];
+  /** Kaleidoscope sectors swept around every {@link maps} entry. */
+  symmetry: SurfaceSymmetry4;
   /** Bounding-hypersphere radius of the RAW attractor (pre-final-transform),
    * probed by a seeded 4D chaos game and padded. */
   boundingRadius: number;
@@ -547,11 +679,14 @@ export interface SurfaceDE4 {
 
 /**
  * Precompute the {@link SurfaceDE4} for a system: every active map lifted
- * (`toTransform4`) and analytically inverted, a probed bounding-hypersphere
- * radius, a depth cap sized off the slowest contraction, and the
- * pre-inverted final-transform lens. Mirrors 3D's `buildSurfaceDE` minus
- * symmetry expansion (there is none to expand — every slot is a base map
- * 1:1).
+ * (`toTransform4`) and analytically inverted, the kaleidoscope the descent
+ * sweeps around them (same `effectiveSymmetryOrder` clamp against the FULL
+ * transform list `prepareChaosGame4` applies, so the swept set is the
+ * plotted set — fr-u91x), a probed bounding-hypersphere radius, a depth cap
+ * sized off the slowest contraction, and the pre-inverted final-transform
+ * lens. Mirrors 3D's `buildSurfaceDE`; every plane (w-planes included) and
+ * any twist is admissible here — this module is exactly where 3D's
+ * `symmetryIsNonFlat` throw routes them.
  *
  * Throws when the system is ineligible ({@link analyzeSurfaceSystem4}) — the
  * app would gate on the analysis first, so reaching the throw is a bug.
@@ -559,6 +694,7 @@ export interface SurfaceDE4 {
 export function buildSurfaceDE4(
   transforms: Transform[],
   finalTransform: Transform | null = null,
+  symmetry: SymmetryParams = NO_SYMMETRY4,
 ): SurfaceDE4 {
   const analysis = analyzeSurfaceSystem4(transforms, finalTransform);
   if (analysis.status === "ineligible") {
@@ -588,14 +724,61 @@ export function buildSurfaceDE4(
     maps.push({ invM, invT, sigmaMin: analysis.sigmas[i].min, baseIndex: i });
   });
 
+  // Sector count mirroring prepareChaosGame4: the effective order is clamped
+  // against the FULL list length (weight-0 slots included), so the swept set
+  // is the plotted set. `blend` is deliberately not read — it fades copy
+  // WEIGHTS, never geometry, exactly the 3D module doc's BLEND rule (the
+  // probe below still receives it, so a faded copy shifts the sampled
+  // extent there just as it always shifted the plotted one).
+  const order = effectiveSymmetryOrder(symmetry.order, transforms.length);
+  // The BACKWARD one-step generator: build the FORWARD step with the exact
+  // symmetryRotation4 call prepareChaosGame4 rotates copy 1 by (k = 1 — the
+  // PLANE_SIGN convention lives inside that call, so reusing it is how this
+  // module stays out of the sign trap), then transpose it: the generator is
+  // orthogonal (block-diagonal over the plane and its complement), so the
+  // transpose is the exact inverse, bit-derived from the same entries —
+  // never a numerically composed g^(order-1).
+  const stepBack = transpose4(
+    symmetryRotation4(
+      symmetry.plane,
+      (2 * Math.PI) / order,
+      symmetry.twist ?? 0,
+    ),
+  );
+
   // Bounding radius: a seeded probe of the exact plotted set (the full
-  // lifted list — weight-0 slots are simply never drawn). Unlike 3D's
+  // lifted list + kaleidoscope — weight-0 slots are simply never drawn).
+  // Unlike 3D's
   // `probe.bounds.maxR` (already origin-based), `runChaosGame4`'s `radius`
   // is measured from the cloud's CENTER, not the origin (see its doc) — the
   // wrong quantity for a DE's "the attractor sits inside a sphere AROUND THE
   // ORIGIN" base case — so this re-derives the max ORIGIN distance directly
   // from the emitted points instead of reusing that field.
-  const probe = runChaosGame4(lifted, PROBE_POINTS, mulberry32(PROBE_SEED));
+  //
+  // The ball is ORIGIN-anchored (this module never adopted 3D's fr-pjqw
+  // probe-fit centred ball), and the origin is fixed by EVERY sector
+  // generator, twist included — so the ball is invariant under the whole
+  // kaleidoscope group and the sweep needs no centre projection. Recorded
+  // for the port that would add a centred fit, because this is the ONE
+  // place the 3D code must NOT be mirrored blindly: the subspace to project
+  // a fitted centre onto is the GENERATOR's fixed subspace — at twist 0 the
+  // COMPLEMENT plane of the rotation plane (zero the two in-plane
+  // coordinates, keep the pair the rotation never touches), and at
+  // twist != 0 the ORIGIN alone (both angles are nonzero multiples of
+  // 2π/order strictly inside (0, 2π), so neither block of the generator
+  // fixes a direction). Projecting a twisted fit to the origin re-measures
+  // to exactly the origin ball, so 3D's "keep the fit only where its padded
+  // radius beats the origin ball's" comparison retires the twisted case
+  // naturally rather than through a special case; copying 3D's in-plane
+  // zeroing instead would leave a twisted kaleidoscope a NON-invariant
+  // centre — an unsound certificate, not merely a loose one.
+  const probe = runChaosGame4(
+    lifted,
+    PROBE_POINTS,
+    mulberry32(PROBE_SEED),
+    null,
+    symmetry,
+  );
   let maxR = 0;
   for (let i = 0; i < probe.count; i++) {
     const x = probe.positions[i * 3];
@@ -643,6 +826,7 @@ export function buildSurfaceDE4(
 
   return {
     maps,
+    symmetry: { order, stepBack },
     boundingRadius,
     visibleBoundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
@@ -751,6 +935,13 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * `halfExtent` turns the query into the SEGMENT `p ± halfExtent` — the slab
  * query of fr-wa6o, see the module doc's SLAB QUERIES section. The default
  * `null` is the point query, value for value.
+ *
+ * Kaleidoscope sectors are SWEPT around the base maps (fr-u91x, the module
+ * doc's SYMMETRY section): each chain point (and its half-extent) turns one
+ * backward step per sector and every base map is applied to it there,
+ * sector-major, so the candidate stream is exactly the expansion's. Order 1
+ * leaves every `k > 0` branch dead — a system without symmetry runs the
+ * pre-sweep arithmetic unchanged.
  */
 export function estimateDistance4(
   de: SurfaceDE4,
@@ -784,6 +975,15 @@ export function estimateDistance4(
     if (segment) applyLinear4(im, ext, ext);
     finalScale = f.sigmaMin;
   }
+
+  // Kaleidoscope sectors swept around the base maps (fr-u91x) — `order` 1
+  // leaves every `k > 0` branch below dead, so a system without symmetry
+  // runs the pre-sweep arithmetic unchanged. `sweep`/`sweepExt` are the
+  // sector scratch (point quadruple + slab half-extent), hoisted here so
+  // the hot loop never allocates.
+  const { order, stepBack } = de.symmetry;
+  const sweep = [0, 0, 0, 0];
+  const sweepExt = new Float64Array(4);
 
   const R = de.boundingRadius;
   const startR = segmentRadius(x, y, z, w, ext);
@@ -897,7 +1097,8 @@ export function estimateDistance4(
       let pZ: number;
       let pW: number;
       // Read-only alias of the chain's own extent buffer — every write below
-      // lands in `imgExt`, never here.
+      // lands in `imgExt` or the sector scratch `sweepExt` (a copy), never
+      // here.
       let pExt: Float64Array;
       let pScale: number;
       if (c === 0) {
@@ -933,133 +1134,159 @@ export function estimateDistance4(
         pExt = v2Ext;
         pScale = v2Scale;
       }
-      for (let j = 0; j < de.maps.length; j++) {
-        const map = de.maps[j];
-        const im = map.invM;
-        const it = map.invT;
-        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
-        const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
-        const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
-        const iw =
-          im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
-        if (segment) applyLinear4(im, pExt, imgExt);
-        const r = segmentRadius(ix, iy, iz, iw, imgExt);
-        const key = pScale * (r - R);
-        const childScale = pScale * map.sigmaMin;
-        const cert = childScale * (r - R);
-        // Exactly one tuple leaves the top-2 ladder per candidate — the
-        // displaced runner-up, or the candidate itself. It spills to the
-        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
-        // sentinels flow through both harmlessly (key Infinity never
-        // inserts, r = 0 never folds).
-        let eKey = key;
-        let eX = ix;
-        let eY = iy;
-        let eZ = iz;
-        let eW = iw;
-        eExt.set(imgExt);
-        let eScale = childScale;
-        let eR = r;
-        let eCert = cert;
-        if (key < c1Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eW = c2W;
-          eExt.set(c2Ext);
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = c1Key;
-          c2X = c1X;
-          c2Y = c1Y;
-          c2Z = c1Z;
-          c2W = c1W;
-          c2Ext.set(c1Ext);
-          c2Scale = c1Scale;
-          c2R = c1R;
-          c2Cert = c1Cert;
-          c1Key = key;
-          c1X = ix;
-          c1Y = iy;
-          c1Z = iz;
-          c1W = iw;
-          c1Ext.set(imgExt);
-          c1Scale = childScale;
-          c1R = r;
-          c1Cert = cert;
-        } else if (key < c2Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eW = c2W;
-          eExt.set(c2Ext);
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = key;
-          c2X = ix;
-          c2Y = iy;
-          c2Z = iz;
-          c2W = iw;
-          c2Ext.set(imgExt);
-          c2Scale = childScale;
-          c2R = r;
-          c2Cert = cert;
+      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the chain
+      // point — and, under a slab query, its half-extent, since the backward
+      // step is an isometry taking segments to segments — turns one step per
+      // kaleidoscope sector, and every BASE map is applied to it there, so
+      // the candidates and their SECTOR-MAJOR enumeration order (k*n + i,
+      // exactly chaos-game-4d's expansion slots) are the ones the expansion
+      // would have produced. The ladders below therefore break ties the same
+      // way, and the beam, the validity slots and the exits see an unchanged
+      // stream. See the module doc's SYMMETRY section for why a single wedge
+      // FOLD would not be sound here.
+      let sX = pX;
+      let sY = pY;
+      let sZ = pZ;
+      let sW = pW;
+      if (segment) sweepExt.set(pExt);
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector4(stepBack, sX, sY, sZ, sW, sweep);
+          sX = sweep[0];
+          sY = sweep[1];
+          sZ = sweep[2];
+          sW = sweep[3];
+          if (segment) applyLinear4(stepBack, sweepExt, sweepExt);
         }
-        if (extra > 0) {
-          // Spill into the rank-3/4 ladder; what THAT evicts (or the
-          // spilled tuple itself, when it beats neither slot) falls
-          // through to the fold below — which reads radius + certificate
-          // only, so evictions narrow to that pair.
-          if (eKey < c3Key) {
-            const tR = extra > 1 ? c4R : c3R;
-            const tCert = extra > 1 ? c4Cert : c3Cert;
-            if (extra > 1) {
-              c4Key = c3Key;
-              c4X = c3X;
-              c4Y = c3Y;
-              c4Z = c3Z;
-              c4W = c3W;
-              c4Ext.set(c3Ext);
-              c4Scale = c3Scale;
-              c4R = c3R;
-              c4Cert = c3Cert;
-            }
-            c3Key = eKey;
-            c3X = eX;
-            c3Y = eY;
-            c3Z = eZ;
-            c3W = eW;
-            c3Ext.set(eExt);
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eR = tR;
-            eCert = tCert;
-          } else if (extra > 1 && eKey < c4Key) {
-            const tR = c4R;
-            const tCert = c4Cert;
-            c4Key = eKey;
-            c4X = eX;
-            c4Y = eY;
-            c4Z = eZ;
-            c4W = eW;
-            c4Ext.set(eExt);
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eR = tR;
-            eCert = tCert;
+        for (let j = 0; j < de.maps.length; j++) {
+          const map = de.maps[j];
+          const im = map.invM;
+          const it = map.invT;
+          const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
+          const iy = im[4] * sX + im[5] * sY + im[6] * sZ + im[7] * sW + it[1];
+          const iz =
+            im[8] * sX + im[9] * sY + im[10] * sZ + im[11] * sW + it[2];
+          const iw =
+            im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
+          if (segment) applyLinear4(im, sweepExt, imgExt);
+          const r = segmentRadius(ix, iy, iz, iw, imgExt);
+          const key = pScale * (r - R);
+          const childScale = pScale * map.sigmaMin;
+          const cert = childScale * (r - R);
+          // Exactly one tuple leaves the top-2 ladder per candidate — the
+          // displaced runner-up, or the candidate itself. It spills to the
+          // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+          // sentinels flow through both harmlessly (key Infinity never
+          // inserts, r = 0 never folds).
+          let eKey = key;
+          let eX = ix;
+          let eY = iy;
+          let eZ = iz;
+          let eW = iw;
+          eExt.set(imgExt);
+          let eScale = childScale;
+          let eR = r;
+          let eCert = cert;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eW = c2W;
+            eExt.set(c2Ext);
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = c1Key;
+            c2X = c1X;
+            c2Y = c1Y;
+            c2Z = c1Z;
+            c2W = c1W;
+            c2Ext.set(c1Ext);
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1X = ix;
+            c1Y = iy;
+            c1Z = iz;
+            c1W = iw;
+            c1Ext.set(imgExt);
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eW = c2W;
+            eExt.set(c2Ext);
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = key;
+            c2X = ix;
+            c2Y = iy;
+            c2Z = iz;
+            c2W = iw;
+            c2Ext.set(imgExt);
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
           }
+          if (extra > 0) {
+            // Spill into the rank-3/4 ladder; what THAT evicts (or the
+            // spilled tuple itself, when it beats neither slot) falls
+            // through to the fold below — which reads radius + certificate
+            // only, so evictions narrow to that pair.
+            if (eKey < c3Key) {
+              const tR = extra > 1 ? c4R : c3R;
+              const tCert = extra > 1 ? c4Cert : c3Cert;
+              if (extra > 1) {
+                c4Key = c3Key;
+                c4X = c3X;
+                c4Y = c3Y;
+                c4Z = c3Z;
+                c4W = c3W;
+                c4Ext.set(c3Ext);
+                c4Scale = c3Scale;
+                c4R = c3R;
+                c4Cert = c3Cert;
+              }
+              c3Key = eKey;
+              c3X = eX;
+              c3Y = eY;
+              c3Z = eZ;
+              c3W = eW;
+              c3Ext.set(eExt);
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eR = tR;
+              eCert = tCert;
+            } else if (extra > 1 && eKey < c4Key) {
+              const tR = c4R;
+              const tCert = c4Cert;
+              c4Key = eKey;
+              c4X = eX;
+              c4Y = eY;
+              c4Z = eZ;
+              c4W = eW;
+              c4Ext.set(eExt);
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eR = tR;
+              eCert = tCert;
+            }
+          }
+          // The tuple leaving the beam frontier: escaped candidates fold
+          // their plain certificate; an in-sphere tuple carries no positive
+          // certificate — on widths 3/4 it can only get here past FOUR
+          // smaller keys, the (shrunken) fr-jkpn residual drop.
+          if (eR > R && eCert < best) best = eCert;
         }
-        // The tuple leaving the beam frontier: escaped candidates fold
-        // their plain certificate; an in-sphere tuple carries no positive
-        // certificate — on widths 3/4 it can only get here past FOUR
-        // smaller keys, the (shrunken) fr-jkpn residual drop.
-        if (eR > R && eCert < best) best = eCert;
       }
     }
     // Promote: the best candidate always continues as chain A (or, past
@@ -1185,8 +1412,12 @@ function descentValue(
  * case `dist(q, A) >= |q| - R` applied directly to the sibling's own inverse
  * image `q'_j`); this variant applies one MORE level before settling:
  *
- *     inner_j = min over ALL maps k of [ sigmaMin_k * (|invMap_k(q'_j)| - R) ]
+ *     inner_j = min over ALL (sector, map k) pairs of
+ *               [ sigmaMin_k * (|invMap_k(g_sector^T q'_j)| - R) ]
  *     cert_j  = sigmaMin_j * max( r_j - R, inner_j )
+ *
+ * (the sector sweep of fr-u91x — at order 1 exactly the historical
+ * min-over-maps)
  *
  * Widths 3/4 add the fr-jkpn validity slots exactly as the base estimator
  * does (rank-3/4 chains that live only while in-sphere, closing the
@@ -1310,6 +1541,15 @@ export function estimateDistance4Refined(
     finalScale = f.sigmaMin;
   }
 
+  // Kaleidoscope sectors swept around the base maps (fr-u91x) — `order` 1
+  // leaves every `k > 0` branch below dead, so a system without symmetry
+  // runs the pre-sweep arithmetic unchanged. `sweep`/`sweepExt` are the
+  // descent body's sector scratch; `refinedCert` below carries its OWN pair,
+  // because it sweeps from INSIDE the candidate loop where these are live.
+  const { order, stepBack } = de.symmetry;
+  const sweep = [0, 0, 0, 0];
+  const sweepExt = new Float64Array(4);
+
   const R = de.boundingRadius;
   const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
@@ -1329,10 +1569,20 @@ export function estimateDistance4Refined(
     cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
 
   // One extra Hutchinson level on a frozen escaped candidate's own inverse
-  // image, over every map k (see the doc comment's VALIDITY note): the
-  // certificate becomes childScale * max(r - R, inner) — never below the
-  // base estimator's childScale * (r - R).
+  // image, over every (sector, base map) pair (see the doc comment's
+  // VALIDITY note): the certificate becomes childScale * max(r - R, inner)
+  // — never below the base estimator's childScale * (r - R). The inner min
+  // must cover the same candidate set the descent sweeps (fr-u91x), or a
+  // symmetric system's certificate would skip its rotated pieces.
+  // `certSweep`/`certSweepExt` are this refinement's OWN sector scratch,
+  // distinct from the descent body's `sweep`/`sweepExt`: refinement runs
+  // from INSIDE the candidate loop, where those are live — the 3D twin's
+  // module-scope CERT_SWEEP rationale, function-scoped here because
+  // `refinedCert` is already a per-call closure rather than a module-level
+  // helper.
   const innerExt = new Float64Array(4);
+  const certSweep = [0, 0, 0, 0];
+  const certSweepExt = new Float64Array(4);
   const refinedCert = (
     ix: number,
     iy: number,
@@ -1343,20 +1593,37 @@ export function estimateDistance4Refined(
     childScale: number,
   ): number => {
     let inner = Infinity;
-    for (let k = 0; k < de.maps.length; k++) {
-      const mapK = de.maps[k];
-      const imK = mapK.invM;
-      const itK = mapK.invT;
-      const kx = imK[0] * ix + imK[1] * iy + imK[2] * iz + imK[3] * iw + itK[0];
-      const ky = imK[4] * ix + imK[5] * iy + imK[6] * iz + imK[7] * iw + itK[1];
-      const kz =
-        imK[8] * ix + imK[9] * iy + imK[10] * iz + imK[11] * iw + itK[2];
-      const kw =
-        imK[12] * ix + imK[13] * iy + imK[14] * iz + imK[15] * iw + itK[3];
-      if (segment) applyLinear4(imK, iExt, innerExt);
-      const rk = segmentRadius(kx, ky, kz, kw, innerExt);
-      const innerTerm = mapK.sigmaMin * (rk - R);
-      if (innerTerm < inner) inner = innerTerm;
+    let sx = ix;
+    let sy = iy;
+    let sz = iz;
+    let sw = iw;
+    if (segment) certSweepExt.set(iExt);
+    for (let k = 0; k < order; k++) {
+      if (k > 0) {
+        stepSector4(stepBack, sx, sy, sz, sw, certSweep);
+        sx = certSweep[0];
+        sy = certSweep[1];
+        sz = certSweep[2];
+        sw = certSweep[3];
+        if (segment) applyLinear4(stepBack, certSweepExt, certSweepExt);
+      }
+      for (let j = 0; j < de.maps.length; j++) {
+        const mapJ = de.maps[j];
+        const imJ = mapJ.invM;
+        const itJ = mapJ.invT;
+        const jx =
+          imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + imJ[3] * sw + itJ[0];
+        const jy =
+          imJ[4] * sx + imJ[5] * sy + imJ[6] * sz + imJ[7] * sw + itJ[1];
+        const jz =
+          imJ[8] * sx + imJ[9] * sy + imJ[10] * sz + imJ[11] * sw + itJ[2];
+        const jw =
+          imJ[12] * sx + imJ[13] * sy + imJ[14] * sz + imJ[15] * sw + itJ[3];
+        if (segment) applyLinear4(imJ, certSweepExt, innerExt);
+        const rj = segmentRadius(jx, jy, jz, jw, innerExt);
+        const innerTerm = mapJ.sigmaMin * (rj - R);
+        if (innerTerm < inner) inner = innerTerm;
+      }
     }
     return childScale * Math.max(r - R, inner);
   };
@@ -1464,7 +1731,8 @@ export function estimateDistance4Refined(
       let pZ: number;
       let pW: number;
       // Read-only alias of the chain's own extent buffer — every write below
-      // lands in `imgExt`, never here.
+      // lands in `imgExt` or the sector scratch `sweepExt` (a copy), never
+      // here.
       let pExt: Float64Array;
       let pScale: number;
       if (c === 0) {
@@ -1500,174 +1768,200 @@ export function estimateDistance4Refined(
         pExt = v2Ext;
         pScale = v2Scale;
       }
-      for (let j = 0; j < de.maps.length; j++) {
-        const map = de.maps[j];
-        const im = map.invM;
-        const it = map.invT;
-        const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
-        const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
-        const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
-        const iw =
-          im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
-        if (segment) applyLinear4(im, pExt, imgExt);
-        const r = segmentRadius(ix, iy, iz, iw, imgExt);
-        const key = pScale * (r - R);
-        const childScale = pScale * map.sigmaMin;
-        const cert = childScale * (r - R);
-        // Exactly one tuple leaves the top-2 ladder per candidate — the
-        // displaced runner-up, or the candidate itself. It spills to the
-        // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
-        // sentinels flow through both harmlessly (key Infinity never
-        // inserts, r = 0 never folds).
-        let eKey = key;
-        let eX = ix;
-        let eY = iy;
-        let eZ = iz;
-        let eW = iw;
-        eExt.set(imgExt);
-        let eScale = childScale;
-        let eR = r;
-        let eCert = cert;
-        if (key < c1Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eW = c2W;
-          eExt.set(c2Ext);
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = c1Key;
-          c2X = c1X;
-          c2Y = c1Y;
-          c2Z = c1Z;
-          c2W = c1W;
-          c2Ext.set(c1Ext);
-          c2Scale = c1Scale;
-          c2R = c1R;
-          c2Cert = c1Cert;
-          c1Key = key;
-          c1X = ix;
-          c1Y = iy;
-          c1Z = iz;
-          c1W = iw;
-          c1Ext.set(imgExt);
-          c1Scale = childScale;
-          c1R = r;
-          c1Cert = cert;
-        } else if (key < c2Key) {
-          eKey = c2Key;
-          eX = c2X;
-          eY = c2Y;
-          eZ = c2Z;
-          eW = c2W;
-          eExt.set(c2Ext);
-          eScale = c2Scale;
-          eR = c2R;
-          eCert = c2Cert;
-          c2Key = key;
-          c2X = ix;
-          c2Y = iy;
-          c2Z = iz;
-          c2W = iw;
-          c2Ext.set(imgExt);
-          c2Scale = childScale;
-          c2R = r;
-          c2Cert = cert;
+      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the chain
+      // point — and, under a slab query, its half-extent, since the backward
+      // step is an isometry taking segments to segments — turns one step per
+      // kaleidoscope sector, and every BASE map is applied to it there, so
+      // the candidates and their SECTOR-MAJOR enumeration order (k*n + i,
+      // exactly chaos-game-4d's expansion slots) are the ones the expansion
+      // would have produced. The ladders below therefore break ties the same
+      // way, and the beam, the validity slots and the exits see an unchanged
+      // stream. See the module doc's SYMMETRY section for why a single wedge
+      // FOLD would not be sound here.
+      let sX = pX;
+      let sY = pY;
+      let sZ = pZ;
+      let sW = pW;
+      if (segment) sweepExt.set(pExt);
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector4(stepBack, sX, sY, sZ, sW, sweep);
+          sX = sweep[0];
+          sY = sweep[1];
+          sZ = sweep[2];
+          sW = sweep[3];
+          if (segment) applyLinear4(stepBack, sweepExt, sweepExt);
         }
-        if (extra > 0) {
-          // Spill into the rank-3/4 ladder; what THAT evicts (or the
-          // spilled tuple itself, when it beats neither slot) falls
-          // through to the fold below.
-          if (eKey < c3Key) {
-            // The evicted key is dead past this point — only the folded
-            // fields (point, scale, radius, certificate) survive.
-            const tX = extra > 1 ? c4X : c3X;
-            const tY = extra > 1 ? c4Y : c3Y;
-            const tZ = extra > 1 ? c4Z : c3Z;
-            const tW = extra > 1 ? c4W : c3W;
-            tExt.set(extra > 1 ? c4Ext : c3Ext);
-            const tScale = extra > 1 ? c4Scale : c3Scale;
-            const tR = extra > 1 ? c4R : c3R;
-            const tCert = extra > 1 ? c4Cert : c3Cert;
-            if (extra > 1) {
-              c4Key = c3Key;
-              c4X = c3X;
-              c4Y = c3Y;
-              c4Z = c3Z;
-              c4W = c3W;
-              c4Ext.set(c3Ext);
-              c4Scale = c3Scale;
-              c4R = c3R;
-              c4Cert = c3Cert;
-            }
-            c3Key = eKey;
-            c3X = eX;
-            c3Y = eY;
-            c3Z = eZ;
-            c3W = eW;
-            c3Ext.set(eExt);
-            c3Scale = eScale;
-            c3R = eR;
-            c3Cert = eCert;
-            eX = tX;
-            eY = tY;
-            eZ = tZ;
-            eW = tW;
-            eExt.set(tExt);
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
-          } else if (extra > 1 && eKey < c4Key) {
-            const tX = c4X;
-            const tY = c4Y;
-            const tZ = c4Z;
-            const tW = c4W;
-            tExt.set(c4Ext);
-            const tScale = c4Scale;
-            const tR = c4R;
-            const tCert = c4Cert;
-            c4Key = eKey;
-            c4X = eX;
-            c4Y = eY;
-            c4Z = eZ;
-            c4W = eW;
-            c4Ext.set(eExt);
-            c4Scale = eScale;
-            c4R = eR;
-            c4Cert = eCert;
-            eX = tX;
-            eY = tY;
-            eZ = tZ;
-            eW = tW;
-            eExt.set(tExt);
-            eScale = tScale;
-            eR = tR;
-            eCert = tCert;
+        for (let j = 0; j < de.maps.length; j++) {
+          const map = de.maps[j];
+          const im = map.invM;
+          const it = map.invT;
+          const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
+          const iy = im[4] * sX + im[5] * sY + im[6] * sZ + im[7] * sW + it[1];
+          const iz =
+            im[8] * sX + im[9] * sY + im[10] * sZ + im[11] * sW + it[2];
+          const iw =
+            im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
+          if (segment) applyLinear4(im, sweepExt, imgExt);
+          const r = segmentRadius(ix, iy, iz, iw, imgExt);
+          const key = pScale * (r - R);
+          const childScale = pScale * map.sigmaMin;
+          const cert = childScale * (r - R);
+          // Exactly one tuple leaves the top-2 ladder per candidate — the
+          // displaced runner-up, or the candidate itself. It spills to the
+          // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
+          // sentinels flow through both harmlessly (key Infinity never
+          // inserts, r = 0 never folds).
+          let eKey = key;
+          let eX = ix;
+          let eY = iy;
+          let eZ = iz;
+          let eW = iw;
+          eExt.set(imgExt);
+          let eScale = childScale;
+          let eR = r;
+          let eCert = cert;
+          if (key < c1Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eW = c2W;
+            eExt.set(c2Ext);
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = c1Key;
+            c2X = c1X;
+            c2Y = c1Y;
+            c2Z = c1Z;
+            c2W = c1W;
+            c2Ext.set(c1Ext);
+            c2Scale = c1Scale;
+            c2R = c1R;
+            c2Cert = c1Cert;
+            c1Key = key;
+            c1X = ix;
+            c1Y = iy;
+            c1Z = iz;
+            c1W = iw;
+            c1Ext.set(imgExt);
+            c1Scale = childScale;
+            c1R = r;
+            c1Cert = cert;
+          } else if (key < c2Key) {
+            eKey = c2Key;
+            eX = c2X;
+            eY = c2Y;
+            eZ = c2Z;
+            eW = c2W;
+            eExt.set(c2Ext);
+            eScale = c2Scale;
+            eR = c2R;
+            eCert = c2Cert;
+            c2Key = key;
+            c2X = ix;
+            c2Y = iy;
+            c2Z = iz;
+            c2W = iw;
+            c2Ext.set(imgExt);
+            c2Scale = childScale;
+            c2R = r;
+            c2Cert = cert;
           }
-        }
-        // The tuple leaving the beam frontier: escaped candidates fold
-        // their certificate through the guarded refined path (the guard
-        // already knows the plain certificate would have advanced the
-        // min); an in-sphere tuple carries no positive certificate — on
-        // widths 3/4 it can only get here past FOUR smaller keys, the
-        // (shrunken) fr-jkpn residual drop.
-        if (eR > R && eCert < best) {
-          const rc = refinedCert(eX, eY, eZ, eW, eExt, eR, eScale);
-          if (rc < best) {
-            best = rc;
-            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
-            // `rc` is FINALIZED — already refined — and `best` only
-            // falls from here. Once `best` sits at or below the depth-0
-            // sphere bound the return is pinned at `sphereBound *
-            // finalScale` no matter how much further `best` still
-            // falls, so that case exits unconditionally; short of it,
-            // once the value this would return sits under the caller's
-            // acceptance epsilon the remaining descent cannot change
-            // its verdict either.
-            if (best <= sphereBound || best * finalScale < bailBelow) {
-              return descentValue(best, sphereBound, finalScale);
+          if (extra > 0) {
+            // Spill into the rank-3/4 ladder; what THAT evicts (or the
+            // spilled tuple itself, when it beats neither slot) falls
+            // through to the fold below.
+            if (eKey < c3Key) {
+              // The evicted key is dead past this point — only the folded
+              // fields (point, scale, radius, certificate) survive.
+              const tX = extra > 1 ? c4X : c3X;
+              const tY = extra > 1 ? c4Y : c3Y;
+              const tZ = extra > 1 ? c4Z : c3Z;
+              const tW = extra > 1 ? c4W : c3W;
+              tExt.set(extra > 1 ? c4Ext : c3Ext);
+              const tScale = extra > 1 ? c4Scale : c3Scale;
+              const tR = extra > 1 ? c4R : c3R;
+              const tCert = extra > 1 ? c4Cert : c3Cert;
+              if (extra > 1) {
+                c4Key = c3Key;
+                c4X = c3X;
+                c4Y = c3Y;
+                c4Z = c3Z;
+                c4W = c3W;
+                c4Ext.set(c3Ext);
+                c4Scale = c3Scale;
+                c4R = c3R;
+                c4Cert = c3Cert;
+              }
+              c3Key = eKey;
+              c3X = eX;
+              c3Y = eY;
+              c3Z = eZ;
+              c3W = eW;
+              c3Ext.set(eExt);
+              c3Scale = eScale;
+              c3R = eR;
+              c3Cert = eCert;
+              eX = tX;
+              eY = tY;
+              eZ = tZ;
+              eW = tW;
+              eExt.set(tExt);
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            } else if (extra > 1 && eKey < c4Key) {
+              const tX = c4X;
+              const tY = c4Y;
+              const tZ = c4Z;
+              const tW = c4W;
+              tExt.set(c4Ext);
+              const tScale = c4Scale;
+              const tR = c4R;
+              const tCert = c4Cert;
+              c4Key = eKey;
+              c4X = eX;
+              c4Y = eY;
+              c4Z = eZ;
+              c4W = eW;
+              c4Ext.set(eExt);
+              c4Scale = eScale;
+              c4R = eR;
+              c4Cert = eCert;
+              eX = tX;
+              eY = tY;
+              eZ = tZ;
+              eW = tW;
+              eExt.set(tExt);
+              eScale = tScale;
+              eR = tR;
+              eCert = tCert;
+            }
+          }
+          // The tuple leaving the beam frontier: escaped candidates fold
+          // their certificate through the guarded refined path (the guard
+          // already knows the plain certificate would have advanced the
+          // min); an in-sphere tuple carries no positive certificate — on
+          // widths 3/4 it can only get here past FOUR smaller keys, the
+          // (shrunken) fr-jkpn residual drop.
+          if (eR > R && eCert < best) {
+            const rc = refinedCert(eX, eY, eZ, eW, eExt, eR, eScale);
+            if (rc < best) {
+              best = rc;
+              // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
+              // `rc` is FINALIZED — already refined — and `best` only
+              // falls from here. Once `best` sits at or below the depth-0
+              // sphere bound the return is pinned at `sphereBound *
+              // finalScale` no matter how much further `best` still
+              // falls, so that case exits unconditionally; short of it,
+              // once the value this would return sits under the caller's
+              // acceptance epsilon the remaining descent cannot change
+              // its verdict either.
+              if (best <= sphereBound || best * finalScale < bailBelow) {
+                return descentValue(best, sphereBound, finalScale);
+              }
             }
           }
         }
