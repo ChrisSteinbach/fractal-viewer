@@ -41,6 +41,14 @@ import {
 } from "../../fractal/color";
 import type { FourDRenderColor } from "../../fractal/color";
 import {
+  analyzeEscapeSystem,
+  buildEscapeDE,
+  ESCAPE_STEP_SCALE,
+  ESCAPE_TIME_ITERATIONS,
+  estimateEscapeDistance,
+} from "../../fractal/escape-de";
+import type { EscapeDE } from "../../fractal/escape-de";
+import {
   accumulateFlame,
   createFlameHistogram,
   downsampleFlame,
@@ -81,6 +89,7 @@ import {
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
+  packEscapeGpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
@@ -1956,11 +1965,14 @@ interface SurfaceSectionConfig {
 }
 
 interface SurfaceKernelConfig {
-  /** Which descent body the kernel carries (fr-55s1). "fold" is the
-   * frontier this section was built around; "affine" is the fixed width-4
-   * refined ladder, where `variant`/`stage2` are inert (the generator
-   * ignores them) and `width` is always the ladder's own 4. */
-  core: "fold" | "affine";
+  /** Which descent body the kernel carries (fr-55s1; fr-dlxh). "fold" is
+   * the frontier this section was built around; "affine" is the fixed
+   * width-4 refined ladder, where `variant`/`stage2` are inert (the
+   * generator ignores them) and `width` is always the ladder's own 4;
+   * "escape" is the forward escape-time loop, where `variant`/`stage2` are
+   * likewise inert and `width` is carried only for a readable label (the
+   * generator ignores it too). */
+  core: "fold" | "affine" | "escape";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -1969,7 +1981,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine";
+  core: "fold" | "affine" | "escape";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2010,8 +2022,27 @@ interface SurfaceAgreementRow {
    * direction for a distance bound. */
   failuresOver: number;
   /** Failures split by the query mix's deterministic layout: first 400
-   * jittered, next 200 uniform, last 100 exact on-attractor. */
+   * jittered, next 200 uniform, last 100 exact on-attractor. Always zeros
+   * on an escape row — `escapeQueries`' uniform/boundary/cluster mix
+   * doesn't share this layout, and `excluded` below is that leg's own
+   * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
+  /** fr-dlxh escape leg only: queries the f32-vs-f64 orbit-stability gate
+   * excluded before computing `failures` — `n - stableCount` (see
+   * `compareSurfaceEscapeAgreement`'s doc). `undefined` on every
+   * fold/affine/lens row (nothing is ever excluded there). */
+  excluded?: number;
+  /** fr-dlxh escape leg only: stable-classified failures POST-HOC
+   * verified as shadow flips (the GPU's value matched a 1..4-ULP
+   * neighbor orbit's fround value — {@link escapeShadowFlipVerified});
+   * excluded from `failures` but capped ({@link SURFACE_ESCAPE_FLIP_CAP}). */
+  chaoticFlips?: number;
+  /** fr-dlxh escape leg only: the shared escape-core pipeline's compile
+   * time (identical across every escape row — one pipeline serves all four
+   * systems, like the M0 affine leg's). */
+  compileMs?: number;
+  /** fr-dlxh escape leg only: this system's own GPU dispatch wall time. */
+  gpuMs?: number;
 }
 
 interface SurfaceCrossCheckRow {
@@ -2147,6 +2178,11 @@ interface SurfaceComputeFrameRow {
   passes: number;
   truncated: boolean;
   counts: { hit: number; miss: number; exhausted: number; active: number };
+  /** Escape frame leg only (fr-dlxh): whole-frame GPU hit rate vs a
+   * strided CPU sanity march's rate — the timing legs' rate-band idiom in
+   * place of a per-pixel comparison (see the leg's design comment). */
+  sanityGpuHitRate?: number;
+  sanityCpuHitRate?: number;
 }
 
 /** One arm's {@link SurfaceComputeFrame} timing/status, sliced for a
@@ -2230,6 +2266,11 @@ interface SurfaceDeResults {
    * 81-branch mandelbox lens, branch-scaled priors). Gates like
    * {@link computeFrame} (zero hits on real hardware fails). */
   computeFrameLens?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-dlxh: leg B over the escape class — the PRODUCTION renderer on
+   * escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
+   * maps buffer, unscaled priors). Gates like {@link computeFrame}, plus
+   * the strided CPU sanity march's hit-rate band on real hardware. */
+  computeFrameEscape?: SurfaceComputeFrameRow | SkippedResult;
   /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
    * `surfaceShadeWidths` is empty (the default, silent) or every requested
    * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
@@ -2291,6 +2332,20 @@ const SURFACE_MAX_STEPS_PER_PASS = 32;
  * frontier there is no width to sweep — so every affine agreement row is
  * a GATING row. */
 const SURFACE_AFFINE_LADDER_WIDTH = 4;
+
+/** fr-dlxh: how many of the escape eval leg's 700 queries per system the
+ * f32-stability gate (`compareSurfaceEscapeAgreement`'s doc) may exclude
+ * before the leg stops trusting its own `failures` count and fails the
+ * section outright — 20%. The pin is STRUCTURAL (the classifier must not
+ * eat the leg — a 20% exclusion still gates 560 queries), not a
+ * statistical fit: under the seven-orbit ensemble classifier the
+ * deliberately-worst archetype (escMandelboxRot: off-axis M, negative
+ * weight) measured ~93/700 excluded on the design mix, where the
+ * single-twin classifier's 28/700 had let the real Iris driver flip 6
+ * "stable" rows. A jump past 20% means the gate is masking real kernel
+ * disagreement behind "chaotic orbit," not absorbing expected f32
+ * noise. */
+const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
 
 /** `surface-de.ts`'s `NO_SYMMETRY`, duplicated (it isn't exported) like
  * this file's other cross-module mirrors. */
@@ -2719,6 +2774,169 @@ function surfaceQueries(
   return out;
 }
 
+/**
+ * fr-dlxh: the escape eval leg's own query mix — `surfaceQueries`' chaos-game
+ * sampling is unsound here (a single EXPANDING map has no attractor to
+ * scatter a cloud onto), so this samples directly: 400 uniform cube points,
+ * 200 bisected onto the `DE < 0.02` near-boundary shell (the region a
+ * distance estimator most needs to be right in), and 100 clustered on the
+ * map's own fixed offset (deep "inside", non-escaping by construction for
+ * every eligible map). 700 total, every component `Math.fround`ed — see
+ * `surfaceQueries`' doc for why (the kernel only ever sees f32 query points).
+ *
+ * The near-boundary batch starts `a` SMALL (unscaled by `R`, so it is very
+ * likely inside the non-escaping set) and `b` at a fresh uniform cube point
+ * (very likely escaping) — opposite sides of the `DE == 0.02` crossing more
+ * often than not — then bisects 24 times: each step keeps whichever half
+ * agrees with `a`'s own predicate, so both ends close in on the crossing.
+ * `a` (not the midpoint) is what gets pushed — see the module's inline
+ * comment where that happens.
+ */
+function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const uniformCubePoint = (): Vec3 => [
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformCubePoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateEscapeDistance(de, p) < 0.02;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformCubePoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    // The final `a` — see the doc above.
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround(de.t[0] + (rng() - 0.5) * s),
+      Math.fround(de.t[1] + (rng() - 0.5) * s),
+      Math.fround(de.t[2] + (rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
+/**
+ * fr-dlxh: the bench's f32 twin of `estimateEscapeDistance` — every
+ * intermediate `Math.fround`ed, the same duplicated-emulator discipline
+ * this file's CPU march emulators already follow (`surfaceCpuMarch` et
+ * al.). Comparing this against the f64 oracle in isolation, before either
+ * touches the GPU, separates f32-vs-f64 ORBIT divergence (a forward
+ * iteration is chaotic — a single clamp-boundary rounding flip early on can
+ * send the whole trajectory somewhere else, and unlike the IFS beam
+ * estimators there is no min-of-several-chains to absorb it) from actual
+ * kernel arithmetic bugs. See `compareSurfaceEscapeAgreement`'s doc for how
+ * the gap between the two oracles is used.
+ */
+function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
+  const f = Math.fround;
+  const m = de.m.map(f);
+  const t = de.t.map(f);
+  const w = f(de.w);
+  const g = f(de.derivGrowth);
+  let vx = f(p[0]);
+  let vy = f(p[1]);
+  let vz = f(p[2]);
+  let dr = 1;
+  let r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
+  const fold = (x: number): number =>
+    f(f(2 * Math.max(-1, Math.min(1, x))) - x);
+  for (let i = 0; i < ESCAPE_TIME_ITERATIONS && r <= de.boundingRadius; i++) {
+    let yx = f(f(f(f(m[0] * vx) + f(m[1] * vy)) + f(m[2] * vz)) + t[0]);
+    let yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + t[1]);
+    let yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + t[2]);
+    let localL = 1;
+    if (de.foldKind !== 2) {
+      yx = fold(yx);
+      yy = fold(yy);
+      yz = fold(yz);
+    }
+    if (de.foldKind !== 1) {
+      const r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
+      const s = f(1 / Math.max(0.25, Math.min(1, r2)));
+      yx = f(yx * s);
+      yy = f(yy * s);
+      yz = f(yz * s);
+      localL = s;
+    }
+    vx = f(w * yx);
+    vy = f(w * yy);
+    vz = f(w * yz);
+    dr = f(f(f(g * localL) * dr) + 1);
+    r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
+  }
+  return r / dr;
+}
+
+/**
+ * fr-dlxh: the ENSEMBLE half of the escape stability classifier. The
+ * fround twin alone tests ONE f32 realization, and that is measurably
+ * not enough: the first real-Iris `--display=:0` run flipped 6 queries
+ * the fround-only classifier had called stable (maxAbs 4.1e-1 on
+ * escMandelboxRot) while SwiftShader — whose rounding tracks fround
+ * closely — flipped none. There is no boundary-proximity predictor to
+ * reach for instead: every fold here is C0-CONTINUOUS at its branch
+ * boundaries (foldAxis and sphereFoldFactor agree from both sides, only
+ * derivatives flip), so passing near one injects only ULP-scale error —
+ * a margin classifier built on that model measured 384-400/700
+ * exclusions on systems whose GPU rows are ULP-perfect. The real
+ * discontinuity is the ESCAPE-DECISION dichotomy: exponential noise
+ * growth (~8x/iteration) can flip whether a marginal orbit ever crosses
+ * the r > R bailout at all, and dr then differs by orders of magnitude.
+ * Which seeds flip is realization-dependent, so the classifier BRACKETS
+ * the marginal set empirically: perturb the query by one f32 ULP along
+ * each axis in each direction (6 variants + the base) and demand every
+ * fround orbit agree with the f64 oracle — an orbit that survives all
+ * seven is far from the dichotomy under any faithful f32's noise.
+ */
+function escapeQueryStable(
+  de: EscapeDE,
+  q: Vec3,
+  cpu64: number,
+  tol: number,
+): boolean {
+  if (Math.abs(estimateEscapeDistanceF32(de, q) - cpu64) > tol / 2) {
+    return false;
+  }
+  for (let axis = 0; axis < 3; axis++) {
+    for (const dir of [1, -1]) {
+      const p: Vec3 = [q[0], q[1], q[2]];
+      const base = Math.fround(p[axis]);
+      const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38);
+      p[axis] = Math.fround(base + dir * step);
+      if (Math.abs(estimateEscapeDistanceF32(de, p) - cpu64) > tol / 2) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function surfaceNormalize(v: Vec3): Vec3 {
   const l = Math.hypot(v[0], v[1], v[2]);
   return [v[0] / l, v[1] / l, v[2] / l];
@@ -2740,7 +2958,9 @@ function surfaceCross(a: Vec3, b: Vec3): Vec3 {
  * its closer "near" pose ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}); no
  * other caller passes it. */
 function buildSurfacePose(
-  de: SurfaceDE,
+  // Structural pick, not the whole DE: the escape frame leg (fr-dlxh)
+  // frames its bailout ball through the same pose math.
+  de: Pick<SurfaceDE, "visibleBoundingRadius">,
   rasterWidth: number,
   rasterHeight: number,
   distFactor: number = SURFACE_POSE_DIST_FACTOR,
@@ -2847,7 +3067,10 @@ function surfaceCpuMarch(
  * radius-proportional picks are fine. Returned as Float32Array so the CPU
  * emulator reads the IDENTICAL f32 entries the kernel's uniform holds.
  */
-function surfaceInvProjView(de: SurfaceDE, pose: SurfaceGpuPose): Float32Array {
+function surfaceInvProjView(
+  de: Pick<SurfaceDE, "boundingRadius">,
+  pose: SurfaceGpuPose,
+): Float32Array {
   const near = de.boundingRadius * 1e-3;
   const far = de.boundingRadius * 10;
   const top = near * pose.tanHalf;
@@ -3263,8 +3486,14 @@ interface SurfaceSystemState {
   name: string;
   /** Which kernel core this system is entitled to, and therefore which CPU
    * oracle `cpu` below holds — both inferred from the DE by `deHasFolds`,
-   * exactly as `surface-de.ts`'s own estimators route (fr-55s1). */
-  core: "fold" | "affine";
+   * exactly as `surface-de.ts`'s own estimators route (fr-55s1). Widened to
+   * the shared `"fold" | "affine" | "escape"` vocabulary (fr-dlxh), though
+   * this state never actually carries "escape": `buildSurfaceDE` refuses
+   * escape-time shapes by design, so those systems live in the separate
+   * {@link SurfaceEscapeSystemState} array below instead — its own `de`
+   * (`EscapeDE`) shares almost none of `SurfaceDE`'s fields, so there is no
+   * single state shape the two could usefully share. */
+  core: "fold" | "affine" | "escape";
   de: SurfaceDE;
   /** The authored system behind `de`, passed to `surface-slots.ts`'s
    * `surfaceSlotColors`/`surfaceTrapIndices` so the bench shades with the
@@ -3275,6 +3504,36 @@ interface SurfaceSystemState {
   buffers?: {
     params: GPUBuffer;
     maps: GPUBuffer;
+    input: GPUBuffer;
+    output: GPUBuffer;
+    staging: GPUBuffer;
+    bindGroup: GPUBindGroup;
+  };
+}
+
+/** One escape-time system's frozen state (fr-dlxh): the forward-map DE, its
+ * own dedicated query set (`escapeQueries`, not `surfaceQueries` — a single
+ * expanding map has no attractor to scatter a chaos-game cloud onto), and
+ * the f64/f32 CPU-oracle pair the eval leg's stability gate is built from
+ * (`compareSurfaceEscapeAgreement`'s doc). No `buffers.maps`: the escape
+ * kernel core never declares binding 1 (surface-de-gpu.ts module doc), so
+ * this state — unlike {@link SurfaceSystemState} — has no maps buffer to
+ * carry. */
+interface SurfaceEscapeSystemState {
+  name: string;
+  de: EscapeDE;
+  queries: Vec3[];
+  /** `estimateEscapeDistance` (f64) — the CPU oracle. */
+  cpu64: number[];
+  /** `estimateEscapeDistanceF32` — the bench's fround twin, evaluated at
+   * the SAME points, so any gap against `cpu64` isolates f32-vs-f64 orbit
+   * divergence from kernel arithmetic (see its doc). */
+  cpu32: number[];
+  /** Per-query stability: `|cpu32 − cpu64| <= tol/2`. Only stable queries
+   * enter the GPU agreement gate — see `compareSurfaceEscapeAgreement`. */
+  stable: boolean[];
+  buffers?: {
+    params: GPUBuffer;
     input: GPUBuffer;
     output: GPUBuffer;
     staging: GPUBuffer;
@@ -3298,6 +3557,36 @@ function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
         binding: 1,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "storage" },
+      },
+    ],
+  });
+}
+
+/** The escape core's 3-binding interface (surface-de-gpu.ts's contract): 0 =
+ * params uniform, 2 = input storage read, 3 = output storage read_write —
+ * binding 1 (maps) is not declared by the escape kernel (its one forward
+ * map rides the params uniform's 208..271 variant block instead), so it is
+ * not declared here either. A bind group built against this layout must
+ * skip binding 1 too, or `createBindGroup` throws (extra entry, no matching
+ * layout slot). */
+function surfaceEscapeBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
+  return device.createBindGroupLayout({
+    label: "surface-de escape bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform" },
       },
       {
         binding: 2,
@@ -3432,10 +3721,91 @@ function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
   sys.buffers = undefined;
 }
 
+/** {@link ensureSurfaceEvalBuffers}'s escape-core twin (fr-dlxh): the same
+ * lazy-create-once contract, minus the maps buffer/binding — the escape
+ * kernel's one forward map rides `packEscapeGpuParams`' params uniform,
+ * never a storage binding (see {@link surfaceEscapeBindGroupLayout}). */
+async function ensureSurfaceEscapeEvalBuffers(
+  device: GPUDevice,
+  layout: GPUBindGroupLayout,
+  sys: SurfaceEscapeSystemState,
+): Promise<NonNullable<SurfaceEscapeSystemState["buffers"]>> {
+  if (sys.buffers) return sys.buffers;
+  const n = sys.queries.length;
+  const paramsData = packEscapeGpuParams(sys.de, { itemCount: n, cutoff: 0 });
+  const inputData = new Float32Array(n * 4);
+  sys.queries.forEach((q, i) => {
+    inputData[i * 4] = q[0];
+    inputData[i * 4 + 1] = q[1];
+    inputData[i * 4 + 2] = q[2];
+  });
+  const params = await createSurfaceBuffer(
+    device,
+    `surface-de escape params ${sys.name}`,
+    paramsData.byteLength,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(params, 0, paramsData);
+  const input = await createSurfaceBuffer(
+    device,
+    `surface-de escape queries ${sys.name}`,
+    inputData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(input, 0, inputData);
+  const output = await createSurfaceBuffer(
+    device,
+    `surface-de escape results ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  );
+  const staging = await createSurfaceBuffer(
+    device,
+    `surface-de escape staging ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  );
+  const bindGroup = device.createBindGroup({
+    label: `surface-de escape bind group ${sys.name}`,
+    layout,
+    entries: [
+      { binding: 0, resource: { buffer: params } },
+      { binding: 2, resource: { buffer: input } },
+      { binding: 3, resource: { buffer: output } },
+    ],
+  });
+  sys.buffers = { params, input, output, staging, bindGroup };
+  return sys.buffers;
+}
+
+function destroySurfaceEscapeEvalBuffers(sys: SurfaceEscapeSystemState): void {
+  if (!sys.buffers) return;
+  sys.buffers.params.destroy();
+  sys.buffers.input.destroy();
+  sys.buffers.output.destroy();
+  sys.buffers.staging.destroy();
+  sys.buffers = undefined;
+}
+
+/** Shared by every eval leg (fold/affine/lens AND escape, fr-dlxh): the
+ * dispatch body only ever touches the query count and the three bindings
+ * every eval bind group carries in common (results/staging/bindGroup — the
+ * escape core's params/queries/results trio, or the maps-bound legs'
+ * params/maps/queries/results, land the same three names either way), so
+ * ONE function serves both {@link SurfaceSystemState} and {@link
+ * SurfaceEscapeSystemState} through this narrower structural parameter
+ * type rather than forking a byte-identical twin. */
 async function runSurfaceEvalDispatch(
   device: GPUDevice,
   pipeline: GPUComputePipeline,
-  sys: SurfaceSystemState,
+  sys: {
+    queries: Vec3[];
+    buffers?: {
+      output: GPUBuffer;
+      staging: GPUBuffer;
+      bindGroup: GPUBindGroup;
+    };
+  },
   wg: number,
 ): Promise<Float32Array> {
   const bufs = sys.buffers;
@@ -3454,6 +3824,13 @@ async function runSurfaceEvalDispatch(
   const out = new Float32Array(bufs.staging.getMappedRange().slice(0));
   bufs.staging.unmap();
   return out;
+}
+
+/** The standard surface eval tolerance — `compareSurfaceAgreement`'s formula,
+ * factored out so its escape-leg twin ({@link compareSurfaceEscapeAgreement})
+ * uses the IDENTICAL bound rather than a second copy that could drift. */
+function surfaceEvalTol(cpu: number, R: number): number {
+  return Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
 }
 
 function compareSurfaceAgreement(
@@ -3480,7 +3857,7 @@ function compareSurfaceAgreement(
     if (signed < minGpuMinusCpu) minGpuMinusCpu = signed;
     const rel = err / Math.max(Math.abs(cpu), 0.05 * R);
     if (rel > maxRelErr) maxRelErr = rel;
-    const tol = Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
+    const tol = surfaceEvalTol(cpu, R);
     if (err > tol) {
       failures++;
       if (signed > 0) failuresOver++;
@@ -3512,6 +3889,144 @@ function compareSurfaceAgreement(
     minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
     failuresOver,
     failuresByClass,
+  };
+}
+
+/**
+ * {@link compareSurfaceAgreement}'s escape-leg twin (fr-dlxh). A forward
+ * escape-time orbit is CHAOTIC — with no beam-of-several-chains to absorb a
+ * clamp-boundary rounding flip the way the IFS beam estimators do, an f32
+ * trajectory can diverge from its f64 twin long before either orbit
+ * escapes, producing total DE disagreement that is orbit chaos, not a
+ * kernel bug (measured on the canonical query mix: 2/700 on the axis-aligned
+ * mandelbox, 28/700 on the rotated, negative-weight one, both at
+ * `maxAbs` ~1.17). So this gate compares GPU against the f64 oracle only on
+ * queries `sys.stable` already marked f32-stable against that SAME f64
+ * oracle — `excluded` reports how many were skipped, and the caller pins
+ * that fraction (never silently loses its teeth) by failing the section
+ * outright if too many queries end up excluded. */
+/**
+ * fr-dlxh: the eval leg's POST-HOC flip verification — fr-7tl3's
+ * per-mismatch discipline lifted from the march legs. A stable-classified
+ * query can still fail when the GPU's f32 rounding seeds (FMA
+ * contraction, reciprocal rounding) push a marginal orbit across the
+ * escape dichotomy in a direction none of the classifier's seven fround
+ * orbits explored — measured on real Iris: 6 such flips under the
+ * single-twin classifier, still 2 under the ensemble. Chaos guarantees
+ * SOME orbit always sits in the crack, so instead of ever-wider pre-hoc
+ * exclusion, each residual failure must PROVE itself a shadow flip: some
+ * fround orbit within a 1..4-ULP single-axis perturbation family of the
+ * query must reproduce the GPU's value within tolerance — i.e. the GPU
+ * answered with a legitimate f32 shadow of a neighboring orbit. An
+ * unverified failure stays a failure (a kernel arithmetic bug's wrong
+ * value matches no neighbor's orbit), and verified flips are counted and
+ * capped ({@link SURFACE_ESCAPE_FLIP_CAP}) — a systematic bug
+ * masquerading as chaos would blow past both the cap and the stable
+ * rows' fail=0 gate long before it could hide here.
+ */
+function escapeShadowFlipVerified(
+  de: EscapeDE,
+  q: Vec3,
+  gpuValue: number,
+  tol: number,
+): boolean {
+  for (let ulps = 1; ulps <= 4; ulps++) {
+    for (let axis = 0; axis < 3; axis++) {
+      for (const dir of [1, -1]) {
+        const p: Vec3 = [q[0], q[1], q[2]];
+        const base = Math.fround(p[axis]);
+        const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38) * ulps;
+        p[axis] = Math.fround(base + dir * step);
+        if (Math.abs(estimateEscapeDistanceF32(de, p) - gpuValue) <= tol) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/** Verified chaotic flips tolerated per escape system before the leg
+ * fails anyway (1%): isolated shadow flips are the chaos tax, dozens are
+ * a bug wearing its costume. Measured on real Iris: 2/700. */
+const SURFACE_ESCAPE_FLIP_CAP = 7;
+
+function compareSurfaceEscapeAgreement(
+  sys: SurfaceEscapeSystemState,
+  cfg: SurfaceKernelConfig,
+  gpu: Float32Array,
+  compileMs: number,
+  gpuMs: number,
+): SurfaceAgreementRow {
+  const R = sys.de.boundingRadius;
+  const absErrs: number[] = [];
+  let stableCount = 0;
+  let maxAbsErr = 0;
+  let maxRelErr = 0;
+  let failures = 0;
+  let chaoticFlips = 0;
+  let maxGpuMinusCpu = -Infinity;
+  let minGpuMinusCpu = Infinity;
+  let failuresOver = 0;
+  for (let i = 0; i < sys.cpu64.length; i++) {
+    if (!sys.stable[i]) continue;
+    stableCount++;
+    const cpu = sys.cpu64[i];
+    const signed = gpu[i] - cpu;
+    const err = Math.abs(signed);
+    const tol = surfaceEvalTol(cpu, R);
+    if (
+      err > tol &&
+      escapeShadowFlipVerified(sys.de, sys.queries[i], gpu[i], tol)
+    ) {
+      // A verified shadow flip: the GPU's value IS a neighboring orbit's
+      // value — excluded from the error statistics like the pre-hoc
+      // unstable set, but counted separately so it stays visible.
+      chaoticFlips++;
+      continue;
+    }
+    absErrs.push(err);
+    if (err > maxAbsErr) maxAbsErr = err;
+    if (signed > maxGpuMinusCpu) maxGpuMinusCpu = signed;
+    if (signed < minGpuMinusCpu) minGpuMinusCpu = signed;
+    const rel = err / Math.max(Math.abs(cpu), 0.05 * R);
+    if (rel > maxRelErr) maxRelErr = rel;
+    if (err > tol) {
+      failures++;
+      if (signed > 0) failuresOver++;
+    }
+  }
+  absErrs.sort((a, b) => a - b);
+  const p99AbsErr =
+    absErrs.length > 0
+      ? absErrs[Math.min(absErrs.length - 1, Math.floor(0.99 * absErrs.length))]
+      : 0;
+  return {
+    system: sys.name,
+    core: cfg.core,
+    variant: cfg.variant,
+    width: cfg.width,
+    stage2: cfg.stage2,
+    wg: cfg.wg,
+    n: sys.cpu64.length,
+    maxAbsErr,
+    maxRelErr,
+    p99AbsErr,
+    // Escape rows always gate, like affine: the forward loop has no width
+    // sweep, so there is no narrower-than-production row to demote.
+    gating: true,
+    failures,
+    maxGpuMinusCpu: Number.isFinite(maxGpuMinusCpu) ? maxGpuMinusCpu : 0,
+    minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
+    failuresOver,
+    // Not meaningful here — surfaceQueries' jittered/uniform/exact layout
+    // doesn't describe escapeQueries' uniform/boundary/cluster mix. This
+    // leg's own query-mix diagnostic is `excluded` below.
+    failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
+    excluded: sys.cpu64.length - stableCount,
+    chaoticFlips,
+    compileMs,
+    gpuMs,
   };
 }
 
@@ -4225,7 +4740,7 @@ async function runSurfaceComputeFrameLeg(
   activity.setState("gpu", "Surface compute frame (app path)");
   status("compute frame: creating SurfaceComputeRenderer…");
   const renderer = await SurfaceComputeRenderer.create(
-    sys.de,
+    { kind: "ifs", de: sys.de },
     colors,
     trapIndices,
   );
@@ -4284,6 +4799,148 @@ async function runSurfaceComputeFrameLeg(
       passes: frame.passes,
       truncated: frame.truncated,
       counts: frame.counts,
+    };
+  } finally {
+    renderer.destroy();
+  }
+}
+
+/**
+ * Leg B's escape twin (fr-dlxh): one end-to-end frame through the
+ * PRODUCTION renderer with a `{ kind: "escape" }` target — the app path
+ * for `analyzeEscapeSystem` sessions (forward-orbit core, no maps buffer,
+ * one shade slot). Geometry sanity is a strided CPU march compared as HIT
+ * RATES (the timing legs' `SURFACE_SANITY_HIT_RATE_TOL` idiom), NOT the
+ * per-pixel fr-7tl3 status-exclusion tiers — deliberate: the march entry
+ * text is shared across cores (test-pinned) and the escape DE is
+ * eval-pinned over 700 stability-gated queries per system, so a rate band
+ * absorbs the boundary flips a chaotic forward orbit produces without
+ * duplicating that machinery for a second DE type.
+ */
+async function runSurfaceComputeFrameEscapeLeg(
+  sys: SurfaceEscapeSystemState,
+  software: boolean,
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<SurfaceComputeFrameRow> {
+  const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
+  const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
+  const budgetMs = software
+    ? SURFACE_FRAME_BUDGET_SW_MS
+    : SURFACE_FRAME_BUDGET_MS;
+  const R = sys.de.boundingRadius;
+  // The bailout ball is the escape session's whole visible world — the
+  // same pose/unproject math as leg B, framed on R.
+  const pose = buildSurfacePose({ visibleBoundingRadius: R }, width, height);
+  const invProjView = surfaceInvProjView({ boundingRadius: R }, pose);
+
+  activity.setState("gpu", "Surface compute frame (escape app path)");
+  status("compute frame escape: creating SurfaceComputeRenderer…");
+  const renderer = await SurfaceComputeRenderer.create(
+    { kind: "escape", de: sys.de },
+    [[0.8, 0.5, 0.2]],
+    [0],
+  );
+  try {
+    const canvas = surfaceLabeledCanvas(
+      dom,
+      "frame-escape",
+      `compute frame escape — ${sys.name}`,
+      width,
+      height,
+    );
+    const spec: SurfaceComputeFrameSpec = {
+      width,
+      height,
+      invProjView,
+      camPos: pose.ro,
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+      // The orbit's iteration budget — scene.ts's
+      // enterSurfaceComputeEscapeSession sets the same full depth.
+      maxDepth: ESCAPE_TIME_ITERATIONS,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+    };
+    status(`compute frame escape: rendering ${width}x${height}…`);
+    console.info(
+      `[surface-bench] compute frame escape: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
+    );
+    const frame = await renderer.renderFrame(spec, {
+      budgetMs,
+      onProgress: (pixels) => {
+        drawSurfaceComputeFrame(canvas, pixels, width, height);
+      },
+    });
+    if (!frame) {
+      throw new Error(
+        "renderFrame resolved null — the escape app path produced no frame",
+      );
+    }
+    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
+    // Strided CPU sanity march: the kernel's own unproject rays
+    // (surfaceUnprojectRay over the identical f32 matrix), the escape
+    // marcher's exact quantities — 1.02R gate, eps = max(acceptEps·t,
+    // R·hitFloor), t += d·ESCAPE_STEP_SCALE — over every 8th pixel.
+    let cpuHits = 0;
+    const sampled = surfaceSanityPixels(width, height);
+    for (const ray of sampled) {
+      const px = ray % width;
+      const py = Math.floor(ray / width);
+      const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+      const ro = pose.ro;
+      const radius = R * 1.02;
+      const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+      const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+      const disc = b * b - c;
+      if (disc < 0) continue;
+      const sq = Math.sqrt(disc);
+      const tFar = -b + sq;
+      if (tFar <= 0) continue;
+      let t = Math.max(-b - sq, 0);
+      for (let i = 0; i < SURFACE_MARCH_STEPS && t <= tFar; i++) {
+        const eps = Math.max(SURFACE_PIXEL_EPS * t, R * SURFACE_GPU_HIT_FLOOR);
+        const d = estimateEscapeDistance(sys.de, [
+          ro[0] + rd[0] * t,
+          ro[1] + rd[1] * t,
+          ro[2] + rd[2] * t,
+        ]);
+        if (d < eps) {
+          cpuHits++;
+          break;
+        }
+        t += d * ESCAPE_STEP_SCALE;
+      }
+    }
+    const sanityGpuHitRate = frame.counts.hit / (width * height);
+    const sanityCpuHitRate = cpuHits / Math.max(1, sampled.length);
+    console.info(
+      `[surface-bench] compute frame escape: done — ${String(frame.passes)} passes, ` +
+        `${frame.wallMs.toFixed(0)}ms wall, hit=${String(frame.counts.hit)} ` +
+        `(gpu rate ${sanityGpuHitRate.toFixed(3)} vs cpu sanity ${sanityCpuHitRate.toFixed(3)})` +
+        `${frame.truncated ? ", TRUNCATED" : ""}`,
+    );
+    return {
+      width: frame.width,
+      height: frame.height,
+      wallMs: frame.wallMs,
+      gpuMs: frame.gpuMs,
+      passes: frame.passes,
+      truncated: frame.truncated,
+      counts: frame.counts,
+      sanityGpuHitRate,
+      sanityCpuHitRate,
     };
   } finally {
     renderer.destroy();
@@ -4424,9 +5081,12 @@ async function ensureRenderer(
 ): Promise<SurfaceComputeRenderer> {
   if (current && !current.lost) return current;
   current?.destroy();
-  return SurfaceComputeRenderer.create(de, colors, trapIndices, {
-    shadeDeWidth,
-  });
+  return SurfaceComputeRenderer.create(
+    { kind: "ifs", de },
+    colors,
+    trapIndices,
+    { shadeDeWidth },
+  );
 }
 
 /**
@@ -4883,6 +5543,111 @@ async function runSurfaceDeSection(
     }
     render();
   }
+
+  // ----- Escape-time systems (fr-dlxh): a SEPARATE gate + CPU oracle -----
+  // `buildSurfaceDE` refuses these shapes by design (single non-contracting
+  // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
+  // they never enter `systemDefs`/`systems` above and never touch
+  // `deHasFolds`/fold/affine routing. Four systems: both fold arms gated
+  // solo (boxfold, spherefold), both together (mandelbox), and an off-axis
+  // rotated/scaled matrix with a negative fold weight.
+  const escapeSystemDefs: {
+    name: string;
+    transforms: Transform[];
+    seed: number;
+  }[] = [
+    {
+      name: "escMandelbox",
+      seed: 401,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+      ],
+    },
+    {
+      name: "escBoxfold",
+      seed: 402,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 2 }],
+        },
+      ],
+    },
+    {
+      name: "escSpherefold",
+      seed: 403,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "spherefold", weight: 2 }],
+        },
+      ],
+    },
+    {
+      name: "escMandelboxRot",
+      seed: 404,
+      transforms: [
+        {
+          id: 0,
+          position: [0.2, -0.3, 0.35],
+          rotation: [0.3, 0.2, 0.5],
+          scale: [1.1, 0.9, 1.2],
+          variations: [{ type: "mandelbox", weight: -2.2 }],
+        },
+      ],
+    },
+  ];
+  const escapeSystems: SurfaceEscapeSystemState[] = [];
+  for (const def of escapeSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface escape CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const eligibility = analyzeEscapeSystem(def.transforms);
+      if (eligibility.status === "ineligible") {
+        results.notes.push(
+          `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildEscapeDE(def.transforms);
+        const queries = escapeQueries(de, def.seed);
+        const cpu64 = queries.map((q) => estimateEscapeDistance(de, q));
+        const cpu32 = queries.map((q) => estimateEscapeDistanceF32(de, q));
+        const R = de.boundingRadius;
+        // The f32-stability gate (compareSurfaceEscapeAgreement's doc):
+        // only queries the ENSEMBLE classifier (escapeQueryStable — the
+        // fround twin at the query plus its six one-ULP neighbors, all
+        // agreeing with the f64 oracle) enter the GPU comparison below.
+        const stable = cpu64.map((c64, i) =>
+          escapeQueryStable(de, queries[i], c64, surfaceEvalTol(c64, R)),
+        );
+        escapeSystems.push({
+          name: def.name,
+          de,
+          queries,
+          cpu64,
+          cpu32,
+          stable,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
   // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
   // (the wrapper is generated source), while the fold/affine legs share
   // one pipeline per CONFIG — a lens system run through those pipelines
@@ -4995,11 +5760,19 @@ async function runSurfaceDeSection(
   results.adapter = acquired.adapterInfo;
   results.limits = acquired.limits;
   let compileFailed = false;
+  // fr-dlxh: set when the escape eval leg's f32-stability gate excludes too
+  // large a fraction of a system's 700 queries (SURFACE_ESCAPE_EXCLUDED_CAP)
+  // — separate from `anyAgreementFail` (computed at verdict time from
+  // `results.agreement`) because an over-wide exclusion is a red flag even
+  // when the surviving `failures` count itself is 0.
+  let escapeGateFail = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
       ? `affine-ladder w${cfg.width} wg${cfg.wg}`
-      : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+      : cfg.core === "escape"
+        ? `escape-forward wg${cfg.wg}`
+        : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
   const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
     cfg.variant === "shared"
       ? surfaceGpuWorkgroupBytes({
@@ -5171,6 +5944,101 @@ async function runSurfaceDeSection(
       }
       render();
       await new Promise<void>((resolve) => setTimeout(resolve));
+    }
+
+    // ----- M2 (fr-dlxh): the ESCAPE core's agreement leg — GATING -----
+    // Forward escape-time systems never enter `systems` above — `buildSurfaceDE`
+    // refuses their shape by design — so `escapeSystems` (built right after
+    // the systemDefs CPU-oracle loop) is the only source for this leg. One
+    // pipeline for all four systems: the escape core takes no width/variant/
+    // stage2 sweep (inert, like the affine ladder), and it never declares
+    // binding 1 (surface-de-gpu.ts module doc — its one forward map rides
+    // the params uniform's variant block), so this leg gets its own bind
+    // group layout and buffers helper rather than `ensureSurfaceEvalBuffers`'s
+    // maps-bound one.
+    if (escapeSystems.length > 0) {
+      const escapeEvalConfig: SurfaceKernelConfig = {
+        core: "escape",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(escapeEvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const escapeLayout = surfaceEscapeBindGroupLayout(device);
+      const escapePipelineLayout = device.createPipelineLayout({
+        label: "surface-de escape pipeline layout",
+        bindGroupLayouts: [escapeLayout],
+      });
+      let escapePipeline: GPUComputePipeline | null = null;
+      let escapeCompileMs = 0;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "escape",
+          width: escapeEvalConfig.width,
+          workgroupSize: escapeEvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: escapePipeline, compileMs: escapeCompileMs } =
+          await buildSurfacePipeline(
+            device,
+            escapePipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (escapePipeline !== null) {
+        const pipeline = escapePipeline;
+        for (const sys of escapeSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceEscapeEvalBuffers(device, escapeLayout, sys);
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            escapeEvalConfig.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceEscapeAgreement(
+            sys,
+            escapeEvalConfig,
+            gpu,
+            escapeCompileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          const excluded = row.excluded ?? 0;
+          if (excluded > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                `queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP}) from the ` +
+                "f32-stability gate — see compareSurfaceEscapeAgreement's doc",
+            );
+          }
+          const flips = row.chaoticFlips ?? 0;
+          if (flips > SURFACE_ESCAPE_FLIP_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape agreement ${sys.name}: ${flips} verified chaotic ` +
+                `flips (> ${SURFACE_ESCAPE_FLIP_CAP}) — a systematic ` +
+                "disagreement is wearing chaos's costume; failing the leg",
+            );
+          }
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
     }
 
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
@@ -5625,6 +6493,70 @@ async function runSurfaceDeSection(
         }
       }
       render();
+
+      // fr-dlxh: leg B over the escape class — the PRODUCTION renderer on
+      // escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
+      // maps buffer). Same gates, plus the strided CPU sanity march's
+      // hit-rate band on real hardware (see the leg's design comment).
+      const escSys = escapeSystems.find((s) => s.name === "escMandelbox");
+      if (!escSys) {
+        results.computeFrameEscape = {
+          skipped: "escMandelbox did not build (see notes)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFrameEscapeLeg(
+            escSys,
+            acquired.software,
+            dom,
+            status,
+            activity,
+          );
+          results.computeFrameEscape = row;
+          if (row.counts.hit === 0 && !acquired.software) {
+            frameFailed = true;
+            results.notes.push(
+              "compute frame escape: zero hit rays on a real adapter — failing the leg",
+            );
+          }
+          // A truncated frame's counts.hit undercounts (rays still
+          // `active` haven't resolved to hit/miss/exhausted), so its rate
+          // isn't comparable to the CPU sanity march's always-complete
+          // sample — skip the gate while truncated, mirroring the timing
+          // legs' `sanity = "skipped (truncated)"` convention
+          // (SurfaceTimingRow) rather than risking a false fail from an
+          // incomplete frame.
+          if (row.truncated) {
+            results.notes.push(
+              `compute frame escape: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                (acquired.software
+                  ? " — accepted on a software adapter"
+                  : " — informational (only hit=0 or a null frame gate; the rate-band check is skipped while truncated)"),
+            );
+          } else {
+            const gap = Math.abs(
+              (row.sanityGpuHitRate ?? 0) - (row.sanityCpuHitRate ?? 0),
+            );
+            if (gap > SURFACE_SANITY_HIT_RATE_TOL) {
+              if (acquired.software) {
+                results.notes.push(
+                  `compute frame escape: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march — informational on a software adapter`,
+                );
+              } else {
+                frameFailed = true;
+                results.notes.push(
+                  `compute frame escape: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+                );
+              }
+            }
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrameEscape = { skipped: describeError(e) };
+          results.notes.push(`compute frame escape: ${describeError(e)}`);
+        }
+      }
+      render();
     }
 
     // ----- Shade A/B leg (fr-p8bc): cheap shading-probe-width vs the -----
@@ -5672,7 +6604,8 @@ async function runSurfaceDeSection(
       anyAgreementFail ||
       anyCrossFail ||
       unprojFailed ||
-      frameFailed
+      frameFailed ||
+      escapeGateFail
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -5683,7 +6616,9 @@ async function runSurfaceDeSection(
             ? "shared-vs-private exact-equality mismatch — see crossChecks"
             : unprojFailed
               ? "march-unproject (app ray path) agreement failure — see marchUnproject/notes"
-              : "compute-frame (app path) failure — see computeFrame/notes";
+              : frameFailed
+                ? "compute-frame (app path) failure — see computeFrame/notes"
+                : "escape agreement leg excluded too many queries from its f32-stability gate — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -5698,6 +6633,7 @@ async function runSurfaceDeSection(
     results.reason = `section error: ${describeError(e)}`;
   } finally {
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
+    for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
     device.destroy();
   }
   status(results.verdict + (results.reason ? ` — ${results.reason}` : ""));

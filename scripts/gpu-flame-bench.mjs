@@ -216,11 +216,18 @@ function printSurfaceSummary(surfaceDe) {
     // measure expected narrow-width erosion — labeled so a nonzero
     // "fail=" count there is not misread as kernel disagreement.
     const tag = r.gating === false ? "info " : "agree";
+    // fr-dlxh escape rows: the marginal-orbit exclusion count and any
+    // verified chaotic flips must be VISIBLE (a silently shrinking
+    // stable set would read as clean).
+    const excluded =
+      (r.excluded !== undefined ? ` excluded=${r.excluded}` : "") +
+      (r.chaoticFlips ? ` flips=${r.chaoticFlips}` : "");
     console.log(
       `  ${tag} ${r.system} ${r.variant} w${r.width} s2=${r.stage2 ? "on" : "off"} wg${r.wg}: ` +
         `n=${r.n} fail=${r.failures} maxAbs=${r.maxAbsErr.toExponential(2)} ` +
         `maxRel=${r.maxRelErr.toExponential(2)} p99Abs=${r.p99AbsErr.toExponential(2)} ` +
         `signed=[${r.minGpuMinusCpu.toExponential(2)}, ${r.maxGpuMinusCpu.toExponential(2)}]` +
+        excluded +
         failureDetail,
     );
   }
@@ -293,6 +300,25 @@ function printSurfaceSummary(surfaceDe) {
           `gpu=${cfl.gpuMs.toFixed(0)}ms passes=${cfl.passes} ` +
           `hit=${cfl.counts.hit} miss=${cfl.counts.miss} exh=${cfl.counts.exhausted} ` +
           `active=${cfl.counts.active}${cfl.truncated ? " TRUNCATED" : ""}`,
+      );
+    }
+  }
+  // fr-dlxh: leg B over the escape class (production renderer on
+  // escMandelbox, forward-orbit core) + its CPU sanity-march rate band.
+  const cfe = surfaceDe.computeFrameEscape;
+  if (cfe) {
+    if (cfe.skipped) {
+      console.log(`  frame-escape: skipped — ${cfe.skipped}`);
+    } else {
+      const sanity =
+        cfe.sanityGpuHitRate !== undefined
+          ? ` rate gpu=${cfe.sanityGpuHitRate.toFixed(3)} cpu=${(cfe.sanityCpuHitRate ?? 0).toFixed(3)}`
+          : "";
+      console.log(
+        `  frame-escape ${cfe.width}x${cfe.height}: wall=${cfe.wallMs.toFixed(0)}ms ` +
+          `gpu=${cfe.gpuMs.toFixed(0)}ms passes=${cfe.passes} ` +
+          `hit=${cfe.counts.hit} miss=${cfe.counts.miss} exh=${cfe.counts.exhausted} ` +
+          `active=${cfe.counts.active}${sanity}${cfe.truncated ? " TRUNCATED" : ""}`,
       );
     }
   }

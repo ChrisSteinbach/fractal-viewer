@@ -156,8 +156,10 @@ export type SurfaceComputeBlock = "flag" | "unavailable" | "failed";
  * couldn't get.
  *
  * @param foldShaped Whether the active system is fold-shaped — i.e. the
- *   class `surface-compute.ts` would prefer. Affine/escape/4D systems have
- *   nothing to explain: WebGL is their natural engine, not a fallback.
+ *   class `surface-compute.ts` would prefer: base-map folds, a fold FINAL
+ *   lens, or (fr-dlxh) the escape-time single pure-fold map. Affine/4D
+ *   systems have nothing to explain: WebGL is their natural engine, not a
+ *   fallback.
  * @param supported Whether WebGPU is even available (`navigator.gpu` exists
  *   and `requestAdapter()` returned an adapter, upstream of any session).
  * @param block The surface session's own compute-adapter outcome, or `null`
