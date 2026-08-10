@@ -739,7 +739,8 @@ export class SurfaceComputeRenderer {
     // below keep entry 1 (a layout may carry entries a shader ignores),
     // so the escape target binds one zero stride there rather than
     // forking every layout/bind-group path. A 4D target packs the
-    // GpuMap4 layout (same 96-byte stride, its own field contract).
+    // GpuMap4 layout (128-byte stride since fr-rsp6 grew it to eight
+    // vec4s for the fold lanes; its own field contract).
     const mapsData =
       target.kind === "escape"
         ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
