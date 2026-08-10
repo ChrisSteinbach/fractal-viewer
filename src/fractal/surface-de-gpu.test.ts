@@ -1738,6 +1738,73 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
   });
 });
 
+describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe for fr-b72d)", () => {
+  it("defaults to true: explicit and omitted produce identical eval-mode source", () => {
+    const omitted = surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }));
+    const explicit = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", slabExt: true }),
+    );
+    expect(explicit).toBe(omitted);
+  });
+
+  it("false strips the fr-wa6o half-extent machinery from the eval-mode descent (fn refinedCert / fn surfaceDE), leaving the shared segmentRadius4 helper declared but uncalled", () => {
+    const withExt = surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }));
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", slabExt: false }),
+    );
+    expect(withoutExt).not.toBe(withExt);
+    expect(withoutExt).not.toContain("let segment");
+    expect(withoutExt).not.toContain("aExt");
+    expect(withoutExt).not.toContain("imgExt");
+    // The helper FUNCTION DEFINITION survives (dead code Tint DCEs it);
+    // every CALL site in refinedCert/surfaceDE is gone, so the sole
+    // surviving occurrence of the substring is that definition line.
+    expect([...withoutExt.matchAll(/segmentRadius4\(/g)].length).toBe(1);
+    expect(withoutExt).toContain("fn segmentRadius4(");
+    expect(withoutExt).toContain("length(q)");
+    expect(withoutExt).toContain("length(img)");
+
+    for (const wgsl of [withExt, withoutExt]) {
+      const opens = [...wgsl.matchAll(/\{/g)].length;
+      const closes = [...wgsl.matchAll(/\}/g)].length;
+      expect(closes).toBe(opens);
+    }
+  });
+
+  it("carries the same absences into mode 'shade', which additionally exercises the affine4 hit-info descent", () => {
+    const withExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4" }),
+    );
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4", slabExt: false }),
+    );
+    expect(withoutExt).not.toBe(withExt);
+    expect(withoutExt).not.toContain("let segment");
+    expect(withoutExt).not.toContain("aExt");
+    expect(withoutExt).not.toContain("imgExt");
+    expect([...withoutExt.matchAll(/segmentRadius4\(/g)].length).toBe(1);
+    expect(withoutExt).toContain("fn segmentRadius4(");
+    expect(withoutExt).toContain("length(q)");
+    expect(withoutExt).toContain("length(img)");
+
+    for (const wgsl of [withExt, withoutExt]) {
+      const opens = [...wgsl.matchAll(/\{/g)].length;
+      const closes = [...wgsl.matchAll(/\}/g)].length;
+      expect(closes).toBe(opens);
+    }
+  });
+
+  it("is inert outside core 'affine4' — fold/affine/escape generate byte-identical source with slabExt false or absent", () => {
+    for (const core of ["fold", "affine", "escape"] as const) {
+      const base = surfaceDeKernelWgsl(kernelOpts({ core }));
+      const withFalse = surfaceDeKernelWgsl(
+        kernelOpts({ core, slabExt: false }),
+      );
+      expect(withFalse).toBe(base);
+    }
+  });
+});
+
 /** Two-map 4D system, the second map's w block making the system genuinely
  * 4D (not a flat 3D lift) — a minimal ELIGIBLE system for buildSurfaceDE4,
  * so the affine4 packer's byte layout is pinned against a real SurfaceDE4
