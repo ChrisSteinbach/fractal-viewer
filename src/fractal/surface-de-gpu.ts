@@ -29,11 +29,12 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
- * FOUR KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
- * the third and — its 4D cut — the fourth). Which estimator a system is
- * entitled to is decided exactly as on the CPU — its BASE maps for the
- * two 3D descents, the escape gate for the forward loop, the 4D gate
- * (`analyzeSurfaceSystem4`) for the 4D ladder:
+ * FIVE KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
+ * the third and — its 4D cut — the fourth, fr-rsp6 phase 2A the fifth).
+ * Which estimator a system is entitled to is decided exactly as on the
+ * CPU — its BASE maps for the two 3D descents AND for the two 4D ones
+ * (`deHasFolds` / `deHasFolds4`), the escape gate for the forward loop,
+ * with the 4D gate (`analyzeSurfaceSystem4`) admitting the pair:
  *
  * - `core: "fold"` (the default, and every config that predates fr-55s1)
  *   emits the width-`width` fold frontier above — `descendFold` refine=
@@ -82,14 +83,38 @@ import type { Vec3 } from "./types";
  *   "affine" (the ladder is fixed at the oracle's `beamWidth` 4; no
  *   frontier, no probe), `footprint` THROWS at pack (the 4D oracle has
  *   no cone-footprint cap; hosts pass 0), and a fold-final `lens`
- *   THROWS (4D fold finals are fr-rsp6's scope).
+ *   THROWS (4D fold finals are fr-rsp6 phase 2B).
+ * - `core: "fold4"` (fr-rsp6 phase 2A) is the FOLD frontier one
+ *   dimension up — `surface-de-4d.ts`'s `descendFold4` refine=FALSE,
+ *   behind the identical view lift — for the 4D systems whose BASE maps
+ *   fold (`deHasFolds4`, the CPU's own routing key). refine=false is
+ *   3D's fold-core precedent, not a shortcut: the fold GLSL marches the
+ *   plain estimator, and phase 1 measured refinement a value no-op on
+ *   pure-fold systems. FOUR DELTAS from the 3D fold core, all the
+ *   oracle's: the branch fans are 81 boxfold / 3 spherefold / 243
+ *   mandelbox (`b = selX + 3·selY + 9·selZ + 27·selW`, mandelbox
+ *   `b = boxIndex + 81·sphereIndex`, so the sphere branch turns over
+ *   every 81st index and the mid-branch shell guard skips `b += 80`);
+ *   every radius is `segmentRadius4` (the fr-wa6o slab, per-axis
+ *   region-distance relaxation included); the kaleidoscope sweeps ONE
+ *   backward-step 4x4; and there is NO bound centre and NO fr-3c0k
+ *   footprint cap (the loop runs plain `params.maxDepth`). Pack exactly
+ *   like "affine4". `width` and `shadeDeWidth` are LIVE (the frontier
+ *   and its fr-p8bc probe); `sharedFrontier` and `bnbStage2` are inert
+ *   by 3D's measured verdicts — shared frontier 2-3.3x slower,
+ *   stage-2 skips 1.4-1.6x slower — so this core emits the private
+ *   frontier and the stage-1 floor prune ALONE. The skips are value
+ *   no-ops, so agreement against the oracle is untouched by their
+ *   absence. `lens` THROWS (phase 2B).
  *
- * All three bodies share the public signature — `surfaceDE(pIn, cutoff,
+ * All five bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
- * whichever core is picked. The two DESCENT cores additionally share the
- * descent PROLOGUE text (lens, sphere bound, bail threshold, fr-3c0k
+ * whichever core is picked. The two 3D DESCENT cores additionally share
+ * the descent PROLOGUE text (lens, sphere bound, bail threshold, fr-3c0k
  * depth cap) for the same reason `renameToProbe` exists: one text cannot
- * drift from itself. (The escape core deliberately has NO prologue —
+ * drift from itself; the two 4D cores share the same prologue SHAPE
+ * (view lift, slab seed, 4D lens, sphere bound, bail threshold) written
+ * per body, since only one of them carries a frontier to seed. (The escape core deliberately has NO prologue —
  * those are inverse-descent concepts, and its GLSL arm replaces the
  * descent bodies wholesale.) `core: "affine"` IGNORES `width` (the
  * ladder is fixed at the oracle's production `beamWidth` 4),
@@ -303,11 +328,20 @@ import type { Vec3 } from "./types";
  *   bnb = bnbDir xyz, invTNorm
  *   p1  = invMSigmaMin, 0, 0, 0
  *
- * 4D maps storage (`core: "affine4"`) — {@link SURFACE_GPU_MAP4_VEC4}
- * vec4f per map (the same 96-byte stride by arithmetic coincidence),
- * matching WGSL `struct GpuMap4`:
+ * 4D maps storage (`core: "affine4"` / `core: "fold4"`) — {@link
+ * SURFACE_GPU_MAP4_VEC4} vec4f per map, matching WGSL `struct GpuMap4`:
  *   r0..r3 = invM rows 0..3 (row-major)    t = invT
- *   p0     = sigmaMin, 0, 0, 0
+ *   p0     = sigmaMin, foldInvW, foldSigma, foldKind (0/1/2/3 as f32)
+ *   bnb    = bnbDir (a whole vec4 up here — 3D squeezes invTNorm into
+ *            its .w; in 4D the direction fills the lane)
+ *   p1     = invTNorm, invMSigmaMin, 0, 0
+ * ONE layout for both 4D cores, exactly as the 3D GpuMap carries the
+ * fold lanes for a core ("affine") that never reads them (fr-rsp6
+ * phase 2A): the affine4 body reads `p0.x` alone, the fold4 body reads
+ * the whole `p0`, and NEITHER reads `bnb`/`p1` — those are packed for
+ * layout parity with 3D and for the stage-2 branch-and-bound work the
+ * fold4 kernel deliberately does not emit (fr-kidj's skips measured
+ * 1.4-1.6x SLOWER GPU-side in 3D).
  *
  * March state — one vec4f per ray: (t, status, steps, lastD), host-
  * initialized to `(-1, 0, 0, 0)`; `t < 0` means the sphere gate has not
@@ -365,10 +399,12 @@ export const SURFACE_GPU_PARAMS_BYTES = 272;
 export const SURFACE_GPU_PARAMS4_BYTES = 432;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
-/** vec4f slots per 4D map (`struct GpuMap4`) — the same stride as the 3D
- * GpuMap by arithmetic coincidence (3+1+2 = 4+1+1), so shared host
- * sizing math keeps working; the field layout is its own contract. */
-export const SURFACE_GPU_MAP4_VEC4 = 6;
+/** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
+ * the three parameter lanes p0/bnb/p1 (fr-rsp6 phase 2A grew it from 6 —
+ * the fold lanes the fold4 core decodes, plus the stage-2 lanes both 4D
+ * cores leave unread). The field layout is its own contract; nothing
+ * shares sizing math with the 3D {@link SURFACE_GPU_MAP_VEC4}. */
+export const SURFACE_GPU_MAP4_VEC4 = 8;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). */
 export const SURFACE_GPU_SHADE_BYTES = 128;
@@ -405,8 +441,18 @@ export interface SurfaceGpuKernelOptions {
    * systems: pack with {@link packSurface4GpuParams} +
    * {@link packSurfaceGpuMaps4} (binding 1 is `array<GpuMap4>`), same
    * inert options as "affine", `lens` throws (4D fold finals are
-   * fr-rsp6's scope) and a nonzero `footprint` throws at pack. */
-  core?: "fold" | "affine" | "escape" | "affine4";
+   * fr-rsp6's scope) and a nonzero `footprint` throws at pack.
+   * "fold4" (fr-rsp6 phase 2A) is the FOLD frontier one dimension up —
+   * `surface-de-4d.ts`'s `descendFold4` refine=FALSE (3D's fold-core
+   * precedent: refinement measured a value no-op on pure-fold systems)
+   * behind the same view lift — for 4D systems whose base maps fold.
+   * Pack it exactly like "affine4" (same params tail, same `GpuMap4`
+   * maps, same footprint throw); `width` is LIVE here as it is under
+   * "fold", `shadeDeWidth` emits the same probe descent, and
+   * `sharedFrontier`/`bnbStage2` are inert by measured 3D verdict (see
+   * their own docs). `lens` throws — 4D fold FINALS are fr-rsp6 phase
+   * 2B. */
+  core?: "fold" | "affine" | "escape" | "affine4" | "fold4";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
    * is renamed `surfaceDECore` and a new `surfaceDE` sweeps the lens's
@@ -427,40 +473,56 @@ export interface SurfaceGpuKernelOptions {
    * Ignored outside march mode. */
   rays?: "pose" | "unproject";
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
-   * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve.
-   * IGNORED under `core: "affine"`, whose ladder is fixed at 4 (still
-   * validated, so a bad value is caught wherever it came from). */
+   * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. LIVE
+   * under `core: "fold"` and `core: "fold4"`. IGNORED under the fixed
+   * width-4 ladders `core: "affine"`/`"affine4"` (still validated, so a
+   * bad value is caught wherever it came from). */
   width: number;
   /** Shade-mode only: frontier width for the shading PROBE evals — the
    * normal/shadow/AO taps in `shadeRays` (fr-p8bc; module doc). When set
    * and ≠ `width`, a second descent `surfaceDEProbe` is emitted at this
    * width (always private frontier arrays) and the probe taps call it.
    * Absent or equal to `width` reproduces the pre-fr-p8bc source byte
-   * for byte. Ignored outside shade mode. */
+   * for byte. Honored by both FRONTIER cores ("fold" and, since fr-rsp6
+   * phase 2A, "fold4" — same one-text-two-names derivation). Ignored
+   * outside shade mode. */
   shadeDeWidth?: number;
   /** Threads per workgroup. */
   workgroupSize: number;
   /** Workgroup-shared (banked, transposed) frontier vs private arrays.
-   * Inert under `core: "affine"` — the unrolled ladder keeps its four
-   * chains in scalars, so there is no frontier to place. */
+   * Inert under `core: "affine"`/`"affine4"` — the unrolled ladders keep
+   * their four chains in scalars, so there is no frontier to place — and
+   * under `core: "fold4"`, whose frontier is ALWAYS function-scope
+   * private: 3D measured the workgroup-shared variant 2-3.3x SLOWER, so
+   * the 4D port ships the winner alone rather than re-emitting a banked
+   * body no one would select ({@link surfaceGpuWorkgroupBytes} stays 0
+   * there). */
   sharedFrontier: boolean;
   /** Include the fr-kidj stage-2 branch-and-bound skips (value no-ops).
-   * Inert under `core: "affine"` — the skips bound FOLD branch
-   * enumeration, and the affine ladder enumerates none. */
+   * Inert under `core: "affine"`/`"affine4"` — the skips bound FOLD
+   * branch enumeration, and the ladders enumerate none — and under
+   * `core: "fold4"`, which does not emit them at all: 3D measured them
+   * 1.4-1.6x slower GPU-side at both far-field and near-surface poses,
+   * and they are value no-ops, so their absence costs the 4D kernel
+   * nothing against its oracle (the 4D oracle additionally bypasses them
+   * whole under a slab query — `descendFold4`'s SEGMENT BYPASS note). */
   bnbStage2: boolean;
   /** fr-d0nn's register-pressure probe for fr-b72d (module doc): the
    * order-6 kaleidoscope-4D sweep runs ~35x slower on compute than the
    * same estimator's fragment GLSL, and the suspected mechanism is the
    * extra live `ext` vec4f registers the fr-wa6o slab threads through
-   * every beam-ladder tuple. Meaningful ONLY under `core: "affine4"` —
-   * inert everywhere else, exactly like `width`/`sharedFrontier`/
+   * every beam-ladder tuple. Meaningful ONLY under the 4D cores
+   * `"affine4"` and `"fold4"` (fr-rsp6 phase 2A) — inert everywhere
+   * else, exactly like `width`/`sharedFrontier`/
    * `bnbStage2` under `core: "affine"`. Absent or `true` reproduces
    * today's fr-wa6o slab source byte for byte. `false` emits the
-   * affine4 descent and hit-info bodies WITHOUT the half-extent
+   * 4D descent and hit-info bodies WITHOUT the half-extent
    * machinery: every `segmentRadius4(x, xExt)` call becomes `length(x)`,
    * and the `ext`/`aExt`/…/`imgExt`/`jExt` registers plus their
-   * `if (params.sliceHalfW > 0.0)` propagation disappear — the
-   * h=0-only kernel. The shared helpers `segmentRadius4`/
+   * `if (params.sliceHalfW > 0.0)` propagation disappear — under
+   * "fold4" that set is `ext`/`sExt`/`eu`/`preExt`/`imgExt` plus the
+   * `fcExt`/`fnExt` frontier arrays and the u-space region-distance
+   * relaxation the segment needs — the h=0-only kernel. The shared helpers `segmentRadius4`/
    * `mapApplyLinear4`/`finalApplyLinear4`/`rotorInvWCol4` stay declared
    * either way (a struct/function never reads past its own use; Tint
    * DCEs the unused ones). HOST CONTRACT: a `slabExt: false` pipeline
@@ -474,9 +536,11 @@ export interface SurfaceGpuKernelOptions {
 /** Workgroup shared-memory bytes the generated kernel declares — what the
  * bench must cover via `maxComputeWorkgroupStorageSize` when it exceeds
  * the 16 384-byte WebGPU default. Zero for the private variant, and zero
- * for every non-fold core at any `sharedFrontier` (the affine ladder
- * declares no frontier arrays at all — fr-55s1 — and the escape loop has
- * no frontier concept to begin with — fr-dlxh). */
+ * for every non-`"fold"` core at any `sharedFrontier`: the affine
+ * ladders declare no frontier arrays at all (fr-55s1, fr-dlxh's 4D cut),
+ * the escape loop has no frontier concept to begin with (fr-dlxh), and
+ * the fold4 frontier is private BY CONSTRUCTION (fr-rsp6 phase 2A — 3D
+ * measured shared 2-3.3x slower, so the option is inert there). */
 export function surfaceGpuWorkgroupBytes(
   opts: Pick<
     SurfaceGpuKernelOptions,
@@ -845,9 +909,11 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   return out;
 }
 
-/** Pack the per-map storage array for `core: "affine4"` (layout
- * contract above): invM rows row-major, then invT, then sigmaMin in
- * p0.x. Pads to one zero stride when empty, like
+/** Pack the per-map storage array for the 4D cores (`core: "affine4"` /
+ * `core: "fold4"`; layout contract above): invM rows row-major, then
+ * invT, then the p0/bnb/p1 parameter lanes. ONE layout for both cores —
+ * the fold lanes ride along inert under "affine4" exactly as they do for
+ * the 3D "affine" core. Pads to one zero stride when empty, like
  * {@link packSurfaceGpuMaps}. */
 export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
   const out = new Float32Array(
@@ -862,7 +928,20 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 17] = m.invT[1];
     out[base + 18] = m.invT[2];
     out[base + 19] = m.invT[3];
+    // p0 = the 3D lane order (sigmaMin, foldInvW, foldSigma, foldKind),
+    // so the fold4 kernel's decode is the 3D one's text.
     out[base + 20] = m.sigmaMin;
+    out[base + 21] = m.foldInvW;
+    out[base + 22] = m.foldSigma;
+    out[base + 23] = m.foldKind;
+    // bnb/p1 — fr-kidj stage-2 bound data, packed for layout parity and
+    // read by no kernel today (module doc).
+    out[base + 24] = m.bnbDir[0];
+    out[base + 25] = m.bnbDir[1];
+    out[base + 26] = m.bnbDir[2];
+    out[base + 27] = m.bnbDir[3];
+    out[base + 28] = m.invTNorm;
+    out[base + 29] = m.invMSigmaMin;
   });
   return out;
 }
@@ -963,11 +1042,24 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "(4D fold finals are fr-rsp6's scope)",
     );
   }
+  if (core === "fold4" && lens) {
+    // `descendLens4` (the 4D fold-FINAL branch sweep) is fr-rsp6 phase
+    // 2B; phase 2A ports the BASE-map frontier alone, so no wrapper text
+    // exists to mirror it. Loud beats generating an unpinned shape.
+    throw new Error(
+      "surface-de-gpu: the fold4 core cannot take a fold-final lens " +
+        "(the 4D fold-final lens is fr-rsp6 phase 2B)",
+    );
+  }
+  // The 4D cores: one view lift, one params tail, one maps layout. The
+  // shared header/entry interpolations below key on this, so a fifth
+  // core cannot forget one of them.
+  const core4 = core === "affine4" || core === "fold4";
   // fr-d0nn: the fr-wa6o slab register-pressure probe (option doc).
-  // Meaningful only under "affine4" — every other core reads `true`
+  // Meaningful only under the 4D cores — every other core reads `true`
   // unconditionally, so `opts.slabExt` is never even consulted for them
   // and the inertness is structural, not just documented.
-  const slabExt = core === "affine4" ? (opts.slabExt ?? true) : true;
+  const slabExt = core4 ? (opts.slabExt ?? true) : true;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -985,11 +1077,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // fr-p8bc: an active probe width means shade mode's normal/shadow/AO
   // taps call a second, narrower descent (module doc). Equal widths stay
   // a single descent so the "off" state is byte-identical source. The
-  // AFFINE core ignores it (fr-55s1 stage C): its ladder has one width
-  // and no branch fan to cheapen — the GLSL affine arm carries no probe
-  // either — so the taps ride the full descent there.
+  // AFFINE cores ignore it (fr-55s1 stage C): their ladders have one
+  // width and no branch fan to cheapen — the GLSL affine arms carry no
+  // probe either — so the taps ride the full descent there. Both
+  // FRONTIER cores honor it (fr-rsp6 phase 2A adds "fold4").
   const probeWidth =
-    core === "fold" &&
+    (core === "fold" || core === "fold4") &&
     mode === "shade" &&
     opts.shadeDeWidth !== undefined &&
     opts.shadeDeWidth !== width
@@ -1028,10 +1121,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const ixBody = sharedFrontier
     ? `return slot * ${workgroupSize}u + li;`
     : `return slot;`;
-  // The fold frontier's storage and its index helper. The non-fold cores
-  // declare NEITHER — the affine ladder's four chains live in scalars
-  // (fr-55s1) and the escape loop has no frontier concept (fr-dlxh) —
-  // which is also why their kernels need no workgroup budget at any
+  // The 3D fold frontier's MODULE-SCOPE storage and its index helper.
+  // No other core declares either — the affine ladders' four chains live
+  // in scalars (fr-55s1, fr-dlxh's 4D cut), the escape loop has no
+  // frontier concept (fr-dlxh), and fold4's frontier is function-scope
+  // private by construction, declared inside its own body (fr-rsp6 phase
+  // 2A) — which is also why none of them needs a workgroup budget at any
   // `sharedFrontier` ({@link surfaceGpuWorkgroupBytes}).
   const frontierBlock =
     core !== "fold"
@@ -1922,6 +2017,354 @@ ${
   return info;
 }`;
 
+  // 4D FOLD hit-info descent (fr-rsp6 phase 2A): the 3D fold twin's
+  // GREEDY width-1 chain — at each level the smallest floored-key
+  // candidate over every (sector, map, BRANCH) triple — one dimension
+  // up, behind the value body's view lift. Colors only (the value side
+  // never steers it), so no frontier, no prunes and no shell
+  // certificate on the mid-branch guard, exactly the 3D fold hit-info's
+  // conventions; plain params.maxDepth, like every other hit-info body.
+  const fold4HitInfoText = (slabExt: boolean): string => /* wgsl */ `${
+    slabExt
+      ? `// 4D fold hit-info descent (surface-de-4d.ts's descendFold4
+// trajectory, the 3D fold hit-info's shape one dimension up): a greedy
+// width-1 chain over every (sector, map, branch) triple, one vec4f
+// half-extent riding beside the chain point (fr-wa6o), feeding colors
+// only. Branch fans 81/3/243 (foldBranchCount4).
+`
+      : `// 4D fold hit-info descent (surface-de-4d.ts's descendFold4
+// trajectory, the 3D fold hit-info's shape one dimension up): a greedy
+// width-1 chain over every (sector, map, branch) triple, feeding colors
+// only. Branch fans 81/3/243 (foldBranchCount4). fr-d0nn slabExt=false
+// (fr-b72d probe): no fr-wa6o half-extent registers — every radius
+// below is a plain length.
+`
+  }fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var q = rotorInvApply4(vec4f(p, params.w0));
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
+  var ext = vec4f(0.0);
+  if (segment) {
+    ext = rotorInvWCol4() * params.sliceHalfW;
+  }
+`
+    : ``
+}  q = finalApply4(q);
+${
+  slabExt
+    ? `  if (segment) {
+    ext = finalApplyLinear4(ext);
+  }
+`
+    : ``
+}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var trapAcc = 0.0;
+  var trapNorm = 0.0;
+  var trapW = 1.0;
+  var chQ = q;
+${
+  slabExt
+    ? `  var chExt = ext;
+`
+    : ``
+}  var chScale = 1.0;
+  var chFloor = 0.0;
+  var live = true;
+  let R = params.boundingRadius;
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (!live) {
+      break;
+    }
+    var lbKey = 1e30;
+    var lbMap = 0u;
+    var lbR = 0.0;
+    var lbAbsY = 0.0;
+    var lbQ = vec4f(0.0);
+${
+  slabExt
+    ? `    var lbExt = vec4f(0.0);
+`
+    : ``
+}    var lbScale = 1.0;
+    var lbFloor = 0.0;
+    let pScale = chScale;
+    let pFloor = chFloor;
+    var sQ = chQ;
+${
+  slabExt
+    ? `    var sExt = chExt;
+`
+    : ``
+}    for (var k = 0u; k < params.symOrder; k++) {
+      if (k > 0u) {
+        sQ = stepSector4(sQ);
+${
+  slabExt
+    ? `        if (segment) {
+          sExt = stepSector4(sExt);
+        }
+`
+    : ``
+}      }
+      for (var j = 0u; j < params.mapCount; j++) {
+        let m = maps[j];
+        let kind = u32(m.p0.w);
+        var branchCount = 1u;
+        if (kind == 1u) {
+          branchCount = 81u;
+        } else if (kind == 2u) {
+          branchCount = 3u;
+        } else if (kind == 3u) {
+          branchCount = 243u;
+        }
+        let mapSigma = m.p0.x;
+        let absW = m.p0.z / mapSigma;
+        var u = vec4f(0.0);
+${
+  slabExt
+    ? `        var eu = vec4f(0.0);
+`
+    : ``
+}        var ru = 0.0;
+        var pre0 = vec4f(0.0);
+        var pre1 = vec4f(0.0);
+        var pre2 = vec4f(0.0);
+        var dUp = vec4f(0.0);
+        var dDn = vec4f(0.0);
+        var v = vec4f(0.0);
+        var sfSigma = 1.0;
+        var sfRd = 0.0;
+        if (kind != 0u) {
+          u = sQ * m.p0.y;
+${
+  slabExt
+    ? `          if (segment) {
+            eu = sExt * m.p0.y;
+          }
+`
+    : ``
+}          if (kind == 1u) {
+            pre0 = u;
+            pre1 = 2.0 - u;
+            pre2 = -2.0 - u;
+            dUp = max(u - 1.0, vec4f(0.0));
+            dDn = max(-1.0 - u, vec4f(0.0));
+${
+  slabExt
+    ? `            if (segment) {
+              let ae = abs(eu);
+              dUp = max(dUp - ae, vec4f(0.0));
+              dDn = max(dDn - ae, vec4f(0.0));
+            }
+`
+    : ``
+}          } else {
+            ru = length(u);
+          }
+        }
+        for (var b = 0u; b < branchCount; b++) {
+          var img: vec4f;
+${
+  slabExt
+    ? `          var imgExt = vec4f(0.0);
+`
+    : ``
+}          var branchSigma: f32;
+          var branchRd = 0.0;
+          if (kind == 0u) {
+            img = mapApply4(m, sQ);
+${
+  slabExt
+    ? `            if (segment) {
+              imgExt = mapApplyLinear4(m, sExt);
+            }
+`
+    : ``
+}            branchSigma = mapSigma;
+          } else {
+            if (kind == 2u || (kind == 3u && (b % 81u) == 0u)) {
+              var s = b;
+              if (kind == 3u) {
+                s = b / 81u;
+              }
+              if (s == 0u) {
+                v = u;
+                sfSigma = 1.0;
+                sfRd = max(1.0 - ru, 0.0);
+              } else if (s == 1u) {
+                v = 0.25 * u;
+                sfSigma = 4.0;
+                sfRd = max(ru - 2.0, 0.0);
+              } else {
+                if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  // GLSL parity: plain skip — the shading chain folds no
+                  // shell certificate (there is no best to fold it into).
+                  // The mandelbox box expansion is 81 wide up here.
+                  if (kind == 3u) {
+                    b += 80u;
+                  }
+                  continue;
+                }
+                let invR2 = 1.0 / (ru * ru);
+                v = u * invR2;
+                sfSigma = ru;
+                sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+              }
+              if (kind == 3u) {
+                pre0 = v;
+                pre1 = 2.0 - v;
+                pre2 = -2.0 - v;
+                dUp = max(v - 1.0, vec4f(0.0));
+                dDn = max(-1.0 - v, vec4f(0.0));
+              }
+            }
+            var pre: vec4f;
+${
+  slabExt
+    ? `            var preExt = vec4f(0.0);
+`
+    : ``
+}            if (kind == 2u) {
+              pre = v;
+              branchRd = sfRd;
+            } else {
+              // Box branch decode: per-axis preimage selectors, x
+              // fastest, FOUR digits
+              // (b = selX + 3*selY + 9*selZ + 27*selW).
+              var bb = b;
+              if (kind == 3u) {
+                bb = b % 81u;
+              }
+              let selX = bb % 3u;
+              let selY = (bb / 3u) % 3u;
+              let selZ = (bb / 9u) % 3u;
+              let selW = bb / 27u;
+              pre = vec4f(
+                select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+                select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+                select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+                select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
+              );
+${
+  slabExt
+    ? `              if (segment) {
+                preExt = vec4f(
+                  select(-eu.x, eu.x, selX == 0u),
+                  select(-eu.y, eu.y, selY == 0u),
+                  select(-eu.z, eu.z, selZ == 0u),
+                  select(-eu.w, eu.w, selW == 0u),
+                );
+              }
+`
+    : ``
+}              let dd = vec4f(
+                select(
+                  select(dDn.x, dUp.x, selX == 1u),
+                  max(dUp.x, dDn.x),
+                  selX == 0u,
+                ),
+                select(
+                  select(dDn.y, dUp.y, selY == 1u),
+                  max(dUp.y, dDn.y),
+                  selY == 0u,
+                ),
+                select(
+                  select(dDn.z, dUp.z, selZ == 1u),
+                  max(dUp.z, dDn.z),
+                  selZ == 0u,
+                ),
+                select(
+                  select(dDn.w, dUp.w, selW == 1u),
+                  max(dUp.w, dDn.w),
+                  selW == 0u,
+                ),
+              );
+              let boxRd = length(dd);
+              if (kind == 1u) {
+                branchRd = boxRd;
+              } else {
+                branchRd = max(sfRd, sfSigma * boxRd);
+              }
+            }
+            img = mapApply4(m, pre);
+${
+  slabExt
+    ? `            if (segment) {
+              imgExt = mapApplyLinear4(m, preExt);
+            }
+`
+    : ``
+}            branchSigma = m.p0.z * sfSigma;
+          }
+${
+  slabExt
+    ? `          let r = segmentRadius4(img, imgExt);
+`
+    : `          let r = length(img);
+`
+}          var candFloor = pFloor;
+          if (branchRd > 0.0) {
+            candFloor = max(candFloor, pScale * absW * branchRd);
+          }
+          var key = pScale * (r - R);
+          if (candFloor > 0.0 && candFloor > key) {
+            key = candFloor;
+          }
+          if (key < lbKey) {
+            lbKey = key;
+            lbMap = j;
+            lbR = r;
+            lbAbsY = abs(img.y);
+            lbQ = img;
+${
+  slabExt
+    ? `            lbExt = imgExt;
+`
+    : ``
+}            lbScale = pScale * branchSigma;
+            lbFloor = candFloor;
+          }
+        }
+      }
+    }
+    if (lbKey >= 1e29) {
+      break;
+    }
+    if (depth == 0u) {
+      info.firstChoice = i32(lbMap);
+    }
+    trapAcc += trapW * shadeMaps[lbMap].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;
+${
+  slabExt
+    ? `    // Under a slab query rings rides the SEGMENT radius (lbR is one);
+    // sheets keeps reading the segment's CENTRE y by design — a shading
+    // extra, and a coordinate is what the plane trap wants (fr-wa6o).
+`
+    : ``
+}    info.rings = min(info.rings, lbR / R);
+    info.sheets = min(info.sheets, lbAbsY / R);
+    if (lbR > params.escapeRadius) {
+      live = false;
+    } else {
+      chQ = lbQ;
+${
+  slabExt
+    ? `      chExt = lbExt;
+`
+    : ``
+}      chScale = lbScale;
+      chFloor = lbFloor;
+    }
+  }
+  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}`;
+
   // Escape hit-info (fr-dlxh — the GLSL SURFACE_ESCAPE shading overload,
   // term for term): the same forward orbit with the classic escape-time
   // extras — trap is the ESCAPE FRACTION escapedAt/maxDepth (the
@@ -2114,7 +2557,9 @@ ${
         ? escapeHitInfoText
         : core === "affine4"
           ? affine4HitInfoText(slabExt)
-          : foldHitInfoText;
+          : core === "fold4"
+            ? fold4HitInfoText(slabExt)
+            : foldHitInfoText;
   const hitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
@@ -2129,23 +2574,21 @@ ${lensHitWrapText}`
   // The two LUT color sources whose NORMALIZER is dimension-specific
   // (fr-dlxh's 4D cut; every other shade term reconciles under the
   // packing contract). The 3D cores read the visible radius straight —
-  // for affine4 that slot carries the slice-adjusted march gate, which
-  // is what the sphere gate/shadow clamp/fog want but would make these
-  // two colorings SWIM as w0 slides — so the 4D arm mirrors
+  // for the 4D cores that slot carries the slice-adjusted march gate,
+  // which is what the sphere gate/shadow clamp/fog want but would make
+  // these two colorings SWIM as w0 slides — so the 4D arm mirrors
   // surface-material-4d.ts instead: HEIGHT normalizes by the FULL 4D
   // visible radius (params.visRadius4), and RADIUS lifts the hit
   // through the rotor for the TRUE 4D radius, rotor/slice-invariant
   // (fr-9c9e tracks reading the slab hit's own w rather than the slice
   // plane's).
-  const shadeHeightU =
-    core === "affine4"
-      ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
-      : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
-  const shadeRadiusU =
-    core === "affine4"
-      ? `let q4c = rotorInvApply4(vec4f(pos, params.w0));
+  const shadeHeightU = core4
+    ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
+    : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
+  const shadeRadiusU = core4
+    ? `let q4c = rotorInvApply4(vec4f(pos, params.w0));
       u = clamp(length(q4c) / params.visRadius4, 0.0, 1.0);`
-      : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+    : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
   const entry =
     mode === "eval"
@@ -2500,7 +2943,7 @@ struct Params {
   escM2: vec3f,
   escT2: f32,
   escParams: vec4f,`
-        : core === "affine4"
+        : core4
           ? /* wgsl */ `
   rotorInvR0: vec4f,
   rotorInvR1: vec4f,
@@ -2524,7 +2967,7 @@ struct Params {
 }${
     core === "escape"
       ? ""
-      : core === "affine4"
+      : core4
         ? /* wgsl */ `
 
 struct GpuMap4 {
@@ -2534,6 +2977,8 @@ struct GpuMap4 {
   r3: vec4f,
   t: vec4f,
   p0: vec4f,
+  bnb: vec4f,
+  p1: vec4f,
 }`
         : /* wgsl */ `
 
@@ -2551,11 +2996,11 @@ struct GpuMap {
     // The escape core reads its one forward map from the params variant
     // block and never touches per-map storage; a declared-but-unused
     // binding would drop out of the auto layout anyway (module doc), so
-    // it is not declared and hosts skip buffer 1. The affine4 core's
-    // maps are the 4D layout (GpuMap4).
+    // it is not declared and hosts skip buffer 1. Both 4D cores' maps
+    // are the 4D layout (GpuMap4) — one binding text for the pair.
     core === "escape"
       ? ""
-      : core === "affine4"
+      : core4
         ? `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;`
         : `
@@ -2565,7 +3010,7 @@ ${io}
 ${frontierBlock}${
     core === "escape"
       ? ""
-      : core === "affine4"
+      : core4
         ? /* wgsl */ `
 // Row-major 4×4 apply — every matrix in this core's wire format stores
 // the ROW-MAJOR bytes of the matrix the body applies (module doc), so
@@ -4009,6 +4454,545 @@ ${
   return max(best, sphereBound) * params.final4SigmaMin;
 }`;
 
+  // The FOLD4 core (fr-rsp6 phase 2A): `descendFold4`'s refine=FALSE
+  // path (surface-de-4d.ts) — the 3D fold core's width-parameterized
+  // frontier ONE DIMENSION UP, behind the affine4 core's view lift.
+  // refine=false is the fold cores' standing precedent (the fold GLSL
+  // marches the plain estimator; phase 1 measured refinement a value
+  // no-op on pure-fold systems), so `refinedCert` has no counterpart
+  // here and an evicted tuple's POINT is dead — only its radius,
+  // certificate and floor ever fold. Width is a REAL template parameter
+  // (small integer literals collide with body constants, so a post-hoc
+  // rename could never be safe), the frontier is ALWAYS function-scope
+  // private (3D measured shared 2-3.3x slower), and the fr-kidj stage-2
+  // skips are NOT emitted (3D measured them 1.4-1.6x slower GPU-side;
+  // they are value no-ops, so the oracle agreement is untouched) — the
+  // stage-1 floor prune, priced before the child transform, is the
+  // whole branch-and-bound story in this body.
+  const fold4DescentFnText = (
+    w: number,
+    slabExt: boolean,
+  ): string => /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  // The width-${w} frontier, in FUNCTION-SCOPE PRIVATE arrays: this core
+  // emits no workgroup-shared variant, so sharedFrontier is inert and
+  // li — kept for signature parity with every other core — indexes
+  // nothing.
+  var fcQ: array<vec4f, ${w}>;
+${
+  slabExt
+    ? `  var fcExt: array<vec4f, ${w}>;
+`
+    : ``
+}  var fcScale: array<f32, ${w}>;
+  var fcFloor: array<f32, ${w}>;
+  var fcR: array<f32, ${w}>;
+  var fnKey: array<f32, ${w}>;
+  var fnQ: array<vec4f, ${w}>;
+${
+  slabExt
+    ? `  var fnExt: array<vec4f, ${w}>;
+`
+    : ``
+}  var fnScale: array<f32, ${w}>;
+  var fnFloor: array<f32, ${w}>;
+  var fnR: array<f32, ${w}>;
+  var fnCert: array<f32, ${w}>;
+${
+  slabExt
+    ? `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
+  // is an isometry, so distances, steps and gradients survive the lift
+  // unchanged; then the affine final lens, exactly as the oracle's
+  // prologue (a fold-BASE system may still carry an affine final; a fold
+  // FINAL is fr-rsp6 phase 2B and the lens option throws here). The slab
+  // query's half-extent (fr-wa6o) is the rotor's w column times
+  // sliceHalfW, and the lens moves it by its LINEAR part alone.
+`
+    : `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
+  // is an isometry, so distances, steps and gradients survive the lift
+  // unchanged; then the affine final lens, exactly as the oracle's
+  // prologue (a fold-BASE system may still carry an affine final; a fold
+  // FINAL is fr-rsp6 phase 2B and the lens option throws here). fr-d0nn
+  // slabExt=false (fr-b72d probe): no fr-wa6o half-extent register — q
+  // is a point, not a segment.
+`
+}  var q = rotorInvApply4(vec4f(pIn, params.w0));
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
+  var ext = vec4f(0.0);
+  if (segment) {
+    ext = rotorInvWCol4() * params.sliceHalfW;
+  }
+`
+    : ``
+}  q = finalApply4(q);
+${
+  slabExt
+    ? `  if (segment) {
+    ext = finalApplyLinear4(ext);
+  }
+`
+    : ``
+}  let R = params.boundingRadius;
+${
+  slabExt
+    ? `  let startR = segmentRadius4(q, ext);
+`
+    : `  let startR = length(q);
+`
+}  let sphereBound = startR - R;
+  var best = 1e30;
+  var bailBelow = -1e30;
+  if (cutoff > 0.0 && sphereBound * params.final4SigmaMin < cutoff) {
+    bailBelow = cutoff;
+  }
+  var chainCount = 1u;
+  fcQ[0] = q;
+${
+  slabExt
+    ? `  fcExt[0] = ext;
+`
+    : ``
+}  fcScale[0] = 1.0;
+  fcFloor[0] = 0.0;
+  fcR[0] = startR;
+  // NO fr-3c0k footprint depth cap in this core — the 4D oracle takes
+  // none (packSurface4GpuParams throws on a nonzero footprint), so the
+  // loop runs plain params.maxDepth.
+  for (var depth = 0u; depth < params.maxDepth; depth++) {
+    if (chainCount == 0u) {
+      break;
+    }
+    var keptCount = 0u;
+    var fnWorstKey = -1e30;
+    var fnWorstIdx = 0u;
+    for (var c = 0u; c < chainCount; c++) {
+      let pScale = fcScale[c];
+      let pFloor = fcFloor[c];
+      var sQ = fcQ[c];
+${
+  slabExt
+    ? `      var sExt = fcExt[c];
+`
+    : ``
+}      for (var k = 0u; k < params.symOrder; k++) {
+        if (k > 0u) {
+          sQ = stepSector4(sQ);
+${
+  slabExt
+    ? `          if (segment) {
+            sExt = stepSector4(sExt);
+          }
+`
+    : ``
+}        }
+        for (var j = 0u; j < params.mapCount; j++) {
+          let m = maps[j];
+          let kind = u32(m.p0.w);
+          // Fold-branch fans ONE DIMENSION UP (foldBranchCount4): the
+          // boxfold folds four axes (3^4 = 81), the spherefold stays
+          // radial (3), the mandelbox chains them (3 * 81 = 243).
+          var branchCount = 1u;
+          if (kind == 1u) {
+            branchCount = 81u;
+          } else if (kind == 2u) {
+            branchCount = 3u;
+          } else if (kind == 3u) {
+            branchCount = 243u;
+          }
+          let mapSigma = m.p0.x;
+          let absW = m.p0.z / mapSigma;
+          var u = vec4f(0.0);
+${
+  slabExt
+    ? `          var eu = vec4f(0.0);
+`
+    : ``
+}          var ru = 0.0;
+          var pre0 = vec4f(0.0);
+          var pre1 = vec4f(0.0);
+          var pre2 = vec4f(0.0);
+          var dUp = vec4f(0.0);
+          var dDn = vec4f(0.0);
+          var v = vec4f(0.0);
+          var sfSigma = 1.0;
+          var sfRd = 0.0;
+          if (kind != 0u) {
+            u = sQ * m.p0.y;
+${
+  slabExt
+    ? `            // u-space is a SCALAR multiple of world space, so the
+            // half-extent scales with the point and stays a segment.
+            if (segment) {
+              eu = sExt * m.p0.y;
+            }
+`
+    : ``
+}            if (kind == 1u) {
+              pre0 = u;
+              pre1 = 2.0 - u;
+              pre2 = -2.0 - u;
+              dUp = max(u - 1.0, vec4f(0.0));
+              dDn = max(-1.0 - u, vec4f(0.0));
+${
+  slabExt
+    ? `              // REGION DISTANCES UNDER A SEGMENT (fr-wa6o x fr-rsp6):
+              // each per-axis distance is 1-Lipschitz in its own axis,
+              // so relaxing it by |e_a| bounds the whole segment from
+              // below, and the cell distance composes those bounds
+              // independently. Relaxing HERE — before any selector reads
+              // them — also covers the in-box selector's max(dUp, dDn),
+              // since relaxation is monotone. Only BOXFOLD branches ever
+              // transport a segment (slabExact4), so the mandelbox
+              // refresh below needs no counterpart.
+              if (segment) {
+                let ae = abs(eu);
+                dUp = max(dUp - ae, vec4f(0.0));
+                dDn = max(dDn - ae, vec4f(0.0));
+              }
+`
+    : ``
+}            } else {
+              ru = length(u);
+            }
+          }
+          for (var b = 0u; b < branchCount; b++) {
+            var img: vec4f;
+${
+  slabExt
+    ? `            // Zeroed per BRANCH where the oracle keeps one module
+            // scratch vector across them: the two differ only for a
+            // spherefold/mandelbox branch under a segment query, and
+            // slabExact4 refuses that system outright (the CPU entries
+            // throw), so no reachable query separates them.
+            var imgExt = vec4f(0.0);
+`
+    : ``
+}            var branchSigma: f32;
+            // The candidate's floor is knowable BEFORE the child
+            // transform (fr-kidj stage 1), so the floor-vs-best prune
+            // runs first and only surviving branches pay the inverse
+            // application — the oracle's exact order. Stage 2 is
+            // deliberately not emitted (option doc).
+            var candFloor = pFloor;
+            if (kind == 0u) {
+              if (candFloor > 0.0 && candFloor >= best) {
+                continue;
+              }
+              img = mapApply4(m, sQ);
+${
+  slabExt
+    ? `              if (segment) {
+                imgExt = mapApplyLinear4(m, sExt);
+              }
+`
+    : ``
+}              branchSigma = mapSigma;
+            } else {
+              var branchRd: f32;
+              if (kind == 2u || (kind == 3u && (b % 81u) == 0u)) {
+                // (Re)compute the spherefold branch this b enters, with
+                // its distance to the branch's OUTPUT region. Every one
+                // of those is a RADIAL statement, so the 3D constants
+                // carry up unchanged — only ru gained a term. The
+                // mandelbox's box expansion is 81 wide here, so its
+                // sphere branch turns over every 81st index (3D: 27th).
+                var s = b;
+                if (kind == 3u) {
+                  s = b / 81u;
+                }
+                if (s == 0u) {
+                  v = u;
+                  sfSigma = 1.0;
+                  sfRd = max(1.0 - ru, 0.0);
+                } else if (s == 1u) {
+                  v = 0.25 * u;
+                  sfSigma = 4.0;
+                  sfRd = max(ru - 2.0, 0.0);
+                } else {
+                  if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                    // f32 overflow guard: fold the unit-shell bound and
+                    // skip the branch + its box expansion (81 wide up
+                    // here). A settled fold, so the standard exits apply.
+                    var shellCert = pScale * absW * (1.0 - ru);
+                    shellCert = max(shellCert, pFloor);
+                    if (shellCert < best) {
+                      best = shellCert;
+                      if (
+                        best <= sphereBound ||
+                        best * params.final4SigmaMin < bailBelow
+                      ) {
+                        return max(best, sphereBound) * params.final4SigmaMin;
+                      }
+                    }
+                    if (kind == 3u) {
+                      b += 80u;
+                    }
+                    continue;
+                  }
+                  let invR2 = 1.0 / (ru * ru);
+                  v = u * invR2;
+                  sfSigma = ru;
+                  sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                }
+                if (kind == 3u) {
+${
+  slabExt
+    ? `                  // No segment relaxation on this refresh — a mandelbox
+                  // map never transports one (slabExact4).
+`
+    : ``
+}                  pre0 = v;
+                  pre1 = 2.0 - v;
+                  pre2 = -2.0 - v;
+                  dUp = max(v - 1.0, vec4f(0.0));
+                  dDn = max(-1.0 - v, vec4f(0.0));
+                }
+              }
+              var pre: vec4f;
+${
+  slabExt
+    ? `              var preExt = vec4f(0.0);
+`
+    : ``
+}              if (kind == 2u) {
+                pre = v;
+                branchRd = sfRd;
+              } else {
+                // Box branch decode: per-axis preimage selectors, x
+                // fastest, FOUR digits
+                // (b = selX + 3*selY + 9*selZ + 27*selW).
+                var bb = b;
+                if (kind == 3u) {
+                  bb = b % 81u;
+                }
+                let selX = bb % 3u;
+                let selY = (bb / 3u) % 3u;
+                let selZ = (bb / 9u) % 3u;
+                let selW = bb / 27u;
+                pre = vec4f(
+                  select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+                  select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+                  select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+                  select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
+                );
+${
+  slabExt
+    ? `                // The branch's own derivative is diag(+-1): the in-box
+                // preimage is u (+1), both folded ones are +-2 - u (-1).
+                // A reflection takes a segment to a segment, so the
+                // half-extent just picks up those signs.
+                if (segment) {
+                  preExt = vec4f(
+                    select(-eu.x, eu.x, selX == 0u),
+                    select(-eu.y, eu.y, selY == 0u),
+                    select(-eu.z, eu.z, selZ == 0u),
+                    select(-eu.w, eu.w, selW == 0u),
+                  );
+                }
+`
+    : ``
+}                let dd = vec4f(
+                  select(
+                    select(dDn.x, dUp.x, selX == 1u),
+                    max(dUp.x, dDn.x),
+                    selX == 0u,
+                  ),
+                  select(
+                    select(dDn.y, dUp.y, selY == 1u),
+                    max(dUp.y, dDn.y),
+                    selY == 0u,
+                  ),
+                  select(
+                    select(dDn.z, dUp.z, selZ == 1u),
+                    max(dUp.z, dDn.z),
+                    selZ == 0u,
+                  ),
+                  select(
+                    select(dDn.w, dUp.w, selW == 1u),
+                    max(dUp.w, dDn.w),
+                    selW == 0u,
+                  ),
+                );
+                let boxRd = length(dd);
+                if (kind == 1u) {
+                  branchRd = boxRd;
+                } else {
+                  branchRd = max(sfRd, sfSigma * boxRd);
+                }
+              }
+              if (branchRd > 0.0) {
+                candFloor = max(candFloor, pScale * absW * branchRd);
+              }
+              // Floor-vs-best prune: the subtree's every fold is >= its
+              // floor, which already cannot advance the min.
+              if (candFloor > 0.0 && candFloor >= best) {
+                continue;
+              }
+              img = mapApply4(m, pre);
+${
+  slabExt
+    ? `              if (segment) {
+                imgExt = mapApplyLinear4(m, preExt);
+              }
+`
+    : ``
+}              branchSigma = m.p0.z * sfSigma;
+            }
+${
+  slabExt
+    ? `            let r = segmentRadius4(img, imgExt);
+`
+    : `            let r = length(img);
+`
+}            let childScale = pScale * branchSigma;
+            var key = pScale * (r - R);
+            if (candFloor > 0.0 && candFloor > key) {
+              key = candFloor;
+            }
+            var cert = childScale * (r - R);
+            if (candFloor > 0.0 && candFloor > cert) {
+              cert = candFloor;
+            }
+            // Past the escape radius deeper refinement cannot improve
+            // the min: fold the (floor-raised) certificate plain.
+            if (r > params.escapeRadius) {
+              if (cert < best) {
+                best = cert;
+                if (
+                  best <= sphereBound ||
+                  best * params.final4SigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * params.final4SigmaMin;
+                }
+              }
+              continue;
+            }
+            // Frontier insertion: unsorted storage, worst-slot replace,
+            // ties evicting the newcomer (the oracle's structure, term
+            // for term). Whatever leaves the kept set folds plain:
+            // escaped tuples their (floor-raised) certificate, in-sphere
+            // tuples their floor — the drop-fold rule.
+            var evR = 0.0;
+            var evCert = 0.0;
+            var evFloor = 0.0;
+            var evHas = false;
+            if (keptCount == ${w}u && key >= fnWorstKey) {
+              evR = r;
+              evCert = cert;
+              evFloor = candFloor;
+              evHas = true;
+            } else {
+              var slot = keptCount;
+              if (keptCount == ${w}u) {
+                slot = fnWorstIdx;
+                evR = fnR[slot];
+                evCert = fnCert[slot];
+                evFloor = fnFloor[slot];
+                evHas = true;
+              } else {
+                keptCount++;
+              }
+              fnKey[slot] = key;
+              fnQ[slot] = img;
+${
+  slabExt
+    ? `              fnExt[slot] = imgExt;
+`
+    : ``
+}              fnScale[slot] = childScale;
+              fnFloor[slot] = candFloor;
+              fnR[slot] = r;
+              fnCert[slot] = cert;
+              // Recompute the worst kept key once the frontier is full
+              // — a fixed-bound scan of reads, first max wins.
+              if (keptCount == ${w}u) {
+                fnWorstKey = -1e30;
+                fnWorstIdx = 0u;
+                for (var s2 = 0u; s2 < ${w}u; s2++) {
+                  if (fnKey[s2] > fnWorstKey) {
+                    fnWorstKey = fnKey[s2];
+                    fnWorstIdx = s2;
+                  }
+                }
+              }
+            }
+            if (evHas) {
+              if (evR > R) {
+                if (evCert < best) {
+                  best = evCert;
+                  if (
+                    best <= sphereBound ||
+                    best * params.final4SigmaMin < bailBelow
+                  ) {
+                    return max(best, sphereBound) * params.final4SigmaMin;
+                  }
+                }
+              } else if (evFloor > 0.0 && evFloor < best) {
+                best = evFloor;
+                if (
+                  best <= sphereBound ||
+                  best * params.final4SigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * params.final4SigmaMin;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+${
+  slabExt
+    ? `    // The kept tuples become the next frontier (key/cert are selection
+    // artifacts; the chains carry point, half-extent, scale, floor and
+    // radius).
+`
+    : `    // The kept tuples become the next frontier (key/cert are selection
+    // artifacts; the chains carry point, scale, floor and radius).
+`
+}    for (var i2 = 0u; i2 < keptCount; i2++) {
+      fcQ[i2] = fnQ[i2];
+${
+  slabExt
+    ? `      fcExt[i2] = fnExt[i2];
+`
+    : ``
+}      fcScale[i2] = fnScale[i2];
+      fcFloor[i2] = fnFloor[i2];
+      fcR[i2] = fnR[i2];
+    }
+    chainCount = keptCount;
+  }
+  // Floor-raised KIFS terminals for every chain alive at the depth cap.
+  for (var cc = 0u; cc < chainCount; cc++) {
+    var terminal = fcScale[cc] * (fcR[cc] - R);
+    let tFloor = fcFloor[cc];
+    if (tFloor > 0.0 && tFloor > terminal) {
+      terminal = tFloor;
+    }
+    best = min(best, terminal);
+  }
+  return max(best, sphereBound) * params.final4SigmaMin;
+}`;
+
+  // The fold4 probe (fr-p8bc's discipline in 4D): the SAME body text at
+  // the probe width under a second name. Both instantiations keep their
+  // frontier in function-scope arrays — distinct scopes, so unlike 3D
+  // there is nothing to rename but the declaration itself.
+  const renameToProbe4 = (text: string): string =>
+    text.replace("fn surfaceDE(", "fn surfaceDEProbe(");
+  const probe4DeFns =
+    probeWidth === null || core !== "fold4"
+      ? ""
+      : `
+
+// fr-p8bc: the CHEAP descent for the shading probe taps — normal,
+// shadow and AO light a hit the full-width march already certified, so
+// they ride a width-${probeWidth} frontier (width 1 = the greedy
+// descent). Same body as surfaceDE, renamed.
+${renameToProbe4(fold4DescentFnText(probeWidth, slabExt))}`;
+
   // The ESCAPE core (fr-dlxh): escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
   // DE = |v| / dr — in the SURFACE_ESCAPE GLSL arm's f32 formulation
@@ -4067,7 +5051,11 @@ ${escapeDescentText}`
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4 (fr-dlxh's 4D cut).
 ${affine4DescentText(slabExt)}`
-          : `// descendFold's refine=false path (surface-de.ts), the estimator the
+          : core === "fold4"
+            ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
+// view lift — the 4D fold-branch frontier, f32 (fr-rsp6 phase 2A).
+${fold4DescentFnText(width, slabExt)}${probe4DeFns}`
+            : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
 
