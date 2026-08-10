@@ -550,6 +550,13 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `slider-scroll-guard.ts` — undoes tap-jump on panel sliders when touch
     becomes a scroll (tested).
   - `main.ts` — entry point; wires state <-> scene <-> ui <-> interactions.
+    `?surfacestate` publishes `window.__surfaceState()` (fr-opgk), the
+    read-only settle latch `scripts/surface-repro.verify.mjs` — and any
+    future visual-regression script — waits on: the surface renderer is
+    bit-reproducible run to run once truly settled, PROVIDED the scene
+    document pins its camera (a pose-less scene auto-frames from a
+    `Math.random()`-seeded cloud and drifts ~0.3%/load, lighting up 1-9%
+    of pixels).
   - `regen-scheduler.ts` — rAF coalescer: one generation request per frame.
   - `cloud-worker.ts` / `cloud-worker-core.ts` — point cloud generation worker:
     one-shot request/response, seeded chaos game, colors + 4D transforms
