@@ -13,11 +13,33 @@
  * box: headless Chromium falls back to SwiftShader regardless of ANGLE
  * flags.
  *
+ * fr-jmat re-verified every scenario's fold-shapedness directly (decoding
+ * each hash and running it through `analyzeSurfaceSystem`/`buildSurfaceDE`,
+ * then confirming live on real Iris via `installFoldProbe` below): all four
+ * are exactly what their comments claim. BOXFOLD_HASH in particular decodes
+ * to two single-variation boxfold maps (`pureFoldVariation` requires
+ * EXACTLY one active variation on a map, of a fold type — see
+ * `surface-de.ts`) with `deHasFolds(de) === true` and eligibility
+ * `"eligible"` (isotropic scale ⇒ anisotropy 1) — a prior field observation
+ * of `foldShaped=false` for this hash (fr-tmgf, the predecessor of the
+ * `computeShaped` param below) did not reproduce against the unchanged
+ * classification code, on the dev server or this production build; the
+ * `--scenario=hash` runs below are the reproducible record.
+ *
  * What it reports: the UNMASKED renderer string (so you know which driver
  * you actually measured), the Surface button's eligibility state, page
  * console errors (shader compile failures land there), a 1s-granularity
  * main-thread stall profile after entering the mode (compile + first-frame
- * cost), and a screenshot to eyeball.
+ * cost), the surface progress row's live text (fr-tmgf's engine-disclosure
+ * label, e.g. "Preview · WebGL 18%" or "Full detail · WebGPU 76%" — hidden
+ * once/if a cheap system settles faster than this script polls), an
+ * OBJECTIVE fold-path verdict (fr-jmat, `installFoldProbe`: which
+ * `SURFACE_FOLDS`/`SURFACE_FOLD_LENS`/`SURFACE_ESCAPE` defines Three.js
+ * actually compiled into a WebGL program and whether `linkProgram` — the
+ * historical failure point — succeeded, plus whether a WebGPU compute
+ * pipeline was created; timing-independent, unlike the progress row, so it
+ * cannot race a settle faster than the poll cadence), and a screenshot to
+ * eyeball.
  *
  * Usage (dev server already running):
  *   node scripts/surface-fold.verify.mjs --url=https://localhost:5174 \
@@ -35,8 +57,16 @@
  *   --query     extra query string (no leading "?") inserted before the
  *               scene hash — `--query=surfacegl` forces the WebGL fold
  *               tracer now that fold sessions prefer WebGPU compute
- *               (fr-tzdg), which is required for this script's original
- *               purpose; `surfacegl&surfperf` adds strip-cost logging.
+ *               (fr-tzdg) for every scenario above (hash/preset ⇒
+ *               SURFACE_FOLDS, lens ⇒ SURFACE_FOLD_LENS, escape ⇒ the
+ *               compute escape kernel's WebGL fallback), which is required
+ *               for this script's original purpose — verified for all four
+ *               (fr-jmat): without the flag every scenario here now creates
+ *               WebGPU compute pipelines and links no fold-family GLSL
+ *               program at all (`surfaceComputeEligible` in main.ts refuses
+ *               to even upload the GLSL system); with it, every scenario
+ *               links its fold-family program with `LINK_STATUS` true on
+ *               real Iris. `surfacegl&surfperf` adds strip-cost logging.
  */
 import path from "node:path";
 import process from "node:process";
@@ -57,6 +87,100 @@ const LENS_HASH =
  * its ESCAPE-TIME set instead (fr-kltj's SURFACE_ESCAPE variant). */
 const ESCAPE_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNiwwLjQ1LDAuM10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzEsMSwxXSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6Mn1dfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJheGlzIjoieSJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
+/**
+ * fr-jmat: an OBJECTIVE, timing-independent fold-path verdict, so this
+ * script's claim of "the fold path engaged" is an observed browser-API
+ * fact rather than an inference from a screenshot or a UI progress row
+ * (the surface progress row can settle in under a second for a cheap
+ * 2-map pair — well inside this script's polling cadence — so a row-text
+ * probe would race and could false-negative on the exact scenario this
+ * script exists to verify).
+ *
+ * Installed before the app's first line runs (`addInitScript`, survives
+ * the isolation reload): wraps WebGL's `shaderSource`/`linkProgram` to
+ * record which `SURFACE_FOLDS`/`SURFACE_FOLD_LENS`/`SURFACE_ESCAPE`
+ * defines Three.js compiled into each program (`createSurfaceMaterial`'s
+ * `material.defines`, generated as literal `#define NAME VALUE` lines) and
+ * whether `linkProgram` actually succeeded — the exact failure this script
+ * was built to catch (VALIDATE_STATUS false, empty info log, context lost
+ * on real Mesa/Iris). Also wraps `navigator.gpu.requestAdapter` and
+ * `GPUDevice.prototype.createComputePipelineAsync` (`surface-compute.ts`
+ * builds every kernel pipeline through the async form, never the sync one —
+ * both are wrapped anyway, cheap insurance against that changing) so a
+ * fold-shaped session's WebGPU compute route (fr-tzdg's default preference
+ * over the GLSL fold tracer) is equally observable, cumulative for the
+ * page's lifetime.
+ */
+async function installFoldProbe(page) {
+  await page.addInitScript(() => {
+    const probe = {
+      shaders: [],
+      links: [],
+      gpuAdapterRequests: 0,
+      computePipelines: 0,
+    };
+    window.__foldProbe = probe;
+    const DEFINE_RE =
+      /#define\s+(SURFACE_FOLDS|SURFACE_FOLD_LENS|SURFACE_ESCAPE)\s+(\d+)/g;
+    const shaderDefines = new WeakMap();
+    for (const ctor of [
+      window.WebGL2RenderingContext,
+      window.WebGLRenderingContext,
+    ]) {
+      if (!ctor) continue;
+      const origShaderSource = ctor.prototype.shaderSource;
+      ctor.prototype.shaderSource = function (shader, source) {
+        const defines = {};
+        let m;
+        DEFINE_RE.lastIndex = 0;
+        while ((m = DEFINE_RE.exec(source))) defines[m[1]] = Number(m[2]);
+        if (Object.keys(defines).length > 0) {
+          shaderDefines.set(shader, defines);
+          probe.shaders.push(defines);
+        }
+        return origShaderSource.call(this, shader, source);
+      };
+      const origLinkProgram = ctor.prototype.linkProgram;
+      ctor.prototype.linkProgram = function (program) {
+        const result = origLinkProgram.call(this, program);
+        const shaders = (this.getAttachedShaders(program) || []).filter((s) =>
+          shaderDefines.has(s),
+        );
+        if (shaders.length > 0) {
+          const ok = this.getProgramParameter(program, this.LINK_STATUS);
+          probe.links.push({
+            defines: shaders.map((s) => shaderDefines.get(s)),
+            ok,
+            info: ok ? "" : this.getProgramInfoLog(program) || "",
+          });
+        }
+        return result;
+      };
+    }
+    if (window.navigator?.gpu) {
+      const origRequestAdapter = navigator.gpu.requestAdapter.bind(
+        navigator.gpu,
+      );
+      navigator.gpu.requestAdapter = async (...args) => {
+        probe.gpuAdapterRequests++;
+        return origRequestAdapter(...args);
+      };
+    }
+    if (window.GPUDevice) {
+      const origCreate = GPUDevice.prototype.createComputePipeline;
+      GPUDevice.prototype.createComputePipeline = function (...args) {
+        probe.computePipelines++;
+        return origCreate.apply(this, args);
+      };
+      const origCreateAsync = GPUDevice.prototype.createComputePipelineAsync;
+      GPUDevice.prototype.createComputePipelineAsync = function (...args) {
+        probe.computePipelines++;
+        return origCreateAsync.apply(this, args);
+      };
+    }
+  });
+}
 
 function parseArgs(argv) {
   const args = {
@@ -134,6 +258,7 @@ async function main() {
     page.on("pageerror", (err) => {
       console.error(`[page:uncaught] ${err.stack ?? err.message}`);
     });
+    await installFoldProbe(page);
 
     // `--query=surfacegl` forces the WebGL fold tracer (fr-096u): since
     // fr-tzdg, fold sessions PREFER the WebGPU compute path when an
@@ -234,6 +359,43 @@ async function main() {
     console.error(
       `[probe] responsiveness after enter: ${pings} pings ok, ~${stalls}s stalled, total ${((Date.now() - t0) / 1000).toFixed(1)}s`,
     );
+
+    // The human-readable sibling of the verdict below (fr-tmgf's engine
+    // disclosure row) — cheap to read, and worth a line for anyone eyeballing
+    // output rather than grepping it.
+    const progressRow = await page.evaluate(() => {
+      const el = document.getElementById("surfaceProgress");
+      return el && !el.classList.contains("hidden") ? el.textContent : null;
+    });
+    console.error(`[probe] surface progress row: ${progressRow ?? "(hidden)"}`);
+
+    // fr-jmat: the objective fold-path verdict — see installFoldProbe.
+    const foldProbe = await page.evaluate(() => window.__foldProbe);
+    console.error(
+      `[probe] shader programs with fold-family defines linked: ${JSON.stringify(foldProbe.links)}`,
+    );
+    console.error(
+      `[probe] WebGPU: requestAdapter() calls=${foldProbe.gpuAdapterRequests}, compute pipelines created=${foldProbe.computePipelines}`,
+    );
+    const foldLinks = foldProbe.links.filter((l) =>
+      l.defines.some(
+        (d) =>
+          d.SURFACE_FOLDS === 1 ||
+          d.SURFACE_FOLD_LENS === 1 ||
+          d.SURFACE_ESCAPE === 1,
+      ),
+    );
+    const foldLinkOk = foldLinks.some((l) => l.ok);
+    const foldLinkFailed = foldLinks.some((l) => !l.ok);
+    const usedCompute = foldProbe.computePipelines > 0;
+    console.error(
+      `[probe] VERDICT: GLSL fold-family variant linked=${foldLinkOk} failed=${foldLinkFailed} (${foldLinks.length} program(s)); WebGPU compute pipeline created=${usedCompute}`,
+    );
+    if (foldLinkFailed) {
+      for (const l of foldLinks.filter((l) => !l.ok)) {
+        console.error(`[probe] LINK FAILURE info log: ${l.info}`);
+      }
+    }
 
     await page.screenshot({ path: args.shot });
     console.error(`[probe] screenshot: ${args.shot}`);
