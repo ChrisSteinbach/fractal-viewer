@@ -100,6 +100,21 @@ export interface Transform {
    * start rather than mid-ramp). All three read it only with a gradient
    * palette active, and in all three an absent value renders exactly as it
    * did before this field existed.
+   *
+   * Since fr-axxl, the IDENTITY-hue palette (`color.ts`'s `transformColors`)
+   * reads it too — a second, independent mechanism: a map's `colorIndex`
+   * picks its position on the hue wheel instead of the even `i / count`
+   * spread (note the different derived fallback from the structural readers
+   * above — `i / count`, not `derivedColorIndex`'s `i / (n - 1)` — the two
+   * were already independent conventions before this field existed, and stay
+   * that way). This is the "By Transform" identity color read everywhere a
+   * map needs one consistent color across views, gradient palette or not:
+   * the explorer's point-cloud and solid "By Transform" modes, the legend
+   * and transform-list swatches, the surface tracers' By Transform slot
+   * colors (`surfaceSlotColors`, alongside `surfaceTrapIndices` above), and
+   * mutation-grid thumbnails. Absent renders exactly as it did before this
+   * field existed here too, so no scene repaints until one authors
+   * `colorIndex`.
    */
   colorIndex?: number;
   /**

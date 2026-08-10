@@ -2770,13 +2770,13 @@ export class Ui {
     // main.ts once at arm time) so any updateLabels sync that runs
     // mid-replay repaints the showcase legend rather than clobbering it.
     if (this.replayShowcaseLegend) {
-      this.showLegendSwatchStrip(state.transforms.length);
+      this.showLegendSwatchStrip(state.transforms);
       return;
     }
     if (nonFlat) {
       const mode = state.fourDColor;
       if (mode === "transform") {
-        this.showLegendSwatchStrip(state.transforms.length);
+        this.showLegendSwatchStrip(state.transforms);
         return;
       }
       if (mode === "radius") {
@@ -2805,7 +2805,7 @@ export class Ui {
     if (state.renderMode === "surface") {
       const source = state.surface.colorSource;
       if (source === "transform") {
-        this.showLegendSwatchStrip(state.transforms.length);
+        this.showLegendSwatchStrip(state.transforms);
         return;
       }
       // The key samples the EXACT ramp the tracer samples: surfaceColorLUT
@@ -2888,7 +2888,7 @@ export class Ui {
       return;
     }
     if (mode === "transform") {
-      this.showLegendSwatchStrip(state.transforms.length);
+      this.showLegendSwatchStrip(state.transforms);
       return;
     }
     // position: the three axis colors, labeled — not a 1-D ramp.
@@ -2907,13 +2907,14 @@ export class Ui {
   /** Show the legend as the per-transform swatch strip, hiding the bar
    * variant — shared by the 3D "By Transform" color mode and the 4D
    * projection's baked transform mode (fr-d47), which use the identical
-   * {@link transformColors} palette. */
-  private showLegendSwatchStrip(count: number): void {
+   * {@link transformColors} palette. Takes the full transform list, not just
+   * a count, so an authored `colorIndex` (fr-axxl) reaches the palette. */
+  private showLegendSwatchStrip(transforms: readonly Transform[]): void {
     this.legend.classList.remove("hidden");
     this.legendBar.classList.add("hidden");
     this.legendLabels.classList.add("hidden");
     this.legendSwatches.classList.remove("hidden");
-    this.renderLegendSwatches(count);
+    this.renderLegendSwatches(transforms);
   }
 
   /** Show the legend as a gradient bar with low/mid/high labels (empty
@@ -2960,9 +2961,13 @@ export class Ui {
 
   /** Rebuild the "by transform" swatch strip from the current palette,
    * capped at {@link LEGEND_MAX_SWATCHES} with a trailing "+N" indicator. */
-  private renderLegendSwatches(count: number): void {
+  private renderLegendSwatches(transforms: readonly Transform[]): void {
     this.legendSwatches.replaceChildren();
-    const palette = transformColors(count);
+    const count = transforms.length;
+    const palette = transformColors(
+      count,
+      transforms.map((t) => t.colorIndex),
+    );
     const shown = Math.min(count, LEGEND_MAX_SWATCHES);
     for (let i = 0; i < shown; i++) {
       const [r, g, b] = palette[i];
@@ -3216,7 +3221,10 @@ export class Ui {
       }),
     );
 
-    const palette = transformColors(transforms.length);
+    const palette = transformColors(
+      transforms.length,
+      transforms.map((t) => t.colorIndex),
+    );
     transforms.forEach((t, i) => {
       const [r, g, b] = palette[i];
       const accent = `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`;

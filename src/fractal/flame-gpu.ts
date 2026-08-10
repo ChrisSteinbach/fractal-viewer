@@ -798,11 +798,13 @@ export interface PackedGpuSystem {
  * lens never rotates). Absent ⇒ the slot stays at the `ArrayBuffer`'s zero
  * default and `hasFinal` is `false`.
  *
- * **Colors**: `palette === "legacy"` packs `transformColors
- * (baseTransformCount)` (one entry per BASE map, `colorMode = 0`); anything
- * else packs the 256-entry `buildPaletteLUT(palette)` gradient (`colorMode =
- * 1`). Either way each channel goes through {@link writeColorEntry}'s
- * fixed-point scale.
+ * **Colors**: `palette === "legacy"` packs `transformColors(baseTransformCount,
+ * colorIndexes)` (one entry per BASE map, `colorMode = 0`) — each map's
+ * authored `colorIndex` (fr-axxl) picks its hue exactly like the CPU legacy
+ * path, since the shader only ever indexes this precomputed table, never
+ * computes a hue itself; anything else packs the 256-entry
+ * `buildPaletteLUT(palette)` gradient (`colorMode = 1`). Either way each
+ * channel goes through {@link writeColorEntry}'s fixed-point scale.
  */
 export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   const { transforms, finalTransform, symmetry, palette } = spec;
@@ -888,8 +890,15 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   if (colorMode === 0) {
     // Named `transformPalette`, not `palette` — the spec's own `palette` is
     // in scope here, and a same-named inner local would be easy to misread
-    // even though this legacy branch never touches the outer one.
-    const transformPalette = transformColors(baseTransformCount);
+    // even though this legacy branch never touches the outer one. Authored
+    // colorIndexes (fr-axxl) ride the same `transforms` already in scope for
+    // the affine/variation packing above — the shader itself never computes
+    // a hue; it only indexes this precomputed table, so this one call site
+    // is the whole GPU-side fix.
+    const transformPalette = transformColors(
+      baseTransformCount,
+      transforms.map((t) => t.colorIndex),
+    );
     for (let i = 0; i < transformPalette.length; i++) {
       const [r, g, b] = transformPalette[i];
       writeColorEntry(colorsU32, i, r, g, b);

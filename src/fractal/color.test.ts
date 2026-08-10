@@ -20,7 +20,7 @@ import { mulberry32 } from "./rng";
 import { defaultTransforms } from "./presets";
 import type { ChaosGameResult } from "./chaos-game";
 import type { ChaosGame4Result } from "./chaos-game-4d";
-import type { Bounds, Bounds4 } from "./types";
+import type { Bounds, Bounds4, Transform } from "./types";
 
 function expectRgbClose(actual: number[], expected: number[]): void {
   expected.forEach((value, i) => expect(actual[i]).toBeCloseTo(value, 4));
@@ -49,6 +49,47 @@ describe("transformColors", () => {
 
   it("starts at red for the first transform", () => {
     expectRgbClose(transformColors(4)[0], hslToRgb(0, 0.8, 0.6));
+  });
+
+  it("with no colorIndexes argument, reproduces the even i/count spread exactly (fr-axxl)", () => {
+    const withoutArg = transformColors(4);
+    const withUndefinedArray = transformColors(4, [
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    for (let i = 0; i < 4; i++) {
+      expectRgbClose(withoutArg[i], hslToRgb(i / 4, 0.8, 0.6));
+      expectRgbClose(withUndefinedArray[i], hslToRgb(i / 4, 0.8, 0.6));
+    }
+  });
+
+  it("an authored colorIndex picks the hue position instead of the even spread (fr-axxl)", () => {
+    const colors = transformColors(4, [undefined, 0.5, undefined, undefined]);
+    // Map 1 authors 0.5 — same hue an even-spread map would get AT hue 0.5,
+    // not the i/count spread's 1/4 it would otherwise land on.
+    expectRgbClose(colors[1], hslToRgb(0.5, 0.8, 0.6));
+  });
+
+  it("mixed authored/absent: each map resolves independently", () => {
+    const colors = transformColors(3, [0.9, undefined, 0.1]);
+    expectRgbClose(colors[0], hslToRgb(0.9, 0.8, 0.6));
+    // Map 1 authored nothing — falls back to its own i/count spread (1/3).
+    expectRgbClose(colors[1], hslToRgb(1 / 3, 0.8, 0.6));
+    expectRgbClose(colors[2], hslToRgb(0.1, 0.8, 0.6));
+  });
+
+  it("honors an authored 0 instead of silently falling back to the spread (?? not ||)", () => {
+    // Map 1's authored 0 is falsy — a `||`-based fallback would read out the
+    // derived i/count spread (1/3) instead of the authored value.
+    const colors = transformColors(3, [undefined, 0, undefined]);
+    expectRgbClose(colors[1], hslToRgb(0, 0.8, 0.6));
+  });
+
+  it("wraps an authored colorIndex of 1 to hue 0, matching hslToRgb's own cyclic convention", () => {
+    const colors = transformColors(3, [undefined, 1, undefined]);
+    expectRgbClose(colors[1], hslToRgb(0, 0.8, 0.6));
   });
 });
 
@@ -98,6 +139,39 @@ describe("buildColors", () => {
     const colors = buildColors(flat, defaultTransforms(), "height");
     expect(colors).toHaveLength(6);
     expect(Number.isFinite(colors[0])).toBe(true);
+  });
+
+  it("transform mode: an authored colorIndex sets that map's identity hue (fr-axxl)", () => {
+    const transforms: Transform[] = [
+      { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        colorIndex: 0.9,
+      },
+      { id: 2, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ];
+    const tiny: ChaosGameResult = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      transformIndices: new Uint8Array([0, 1, 2]),
+      count: 3,
+      bounds: zeroRangeBounds(),
+    };
+    const colors = buildColors(tiny, transforms, "transform");
+    // Map 1 authored 0.9 — its point takes that hue, not the even 3-map
+    // spread's 1/3 it would otherwise derive to.
+    expectRgbClose([colors[3], colors[4], colors[5]], hslToRgb(0.9, 0.8, 0.6));
+    // Its unauthored neighbours still land on their own i/count spread.
+    expectRgbClose(
+      [colors[0], colors[1], colors[2]],
+      hslToRgb(0 / 3, 0.8, 0.6),
+    );
+    expectRgbClose(
+      [colors[6], colors[7], colors[8]],
+      hslToRgb(2 / 3, 0.8, 0.6),
+    );
   });
 });
 
@@ -669,6 +743,35 @@ describe("buildColors4", () => {
     expect(colors[0]).toBeCloseTo(1, 5);
     expect(colors[1]).toBeCloseTo(1, 5);
     expect(colors[2]).toBeCloseTo(1, 5);
+  });
+
+  it("transform mode: an authored colorIndex sets that map's identity hue (fr-axxl)", () => {
+    const result: ChaosGame4Result = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      w: new Float32Array([0, 0, 0]),
+      transformIndices: new Uint8Array([0, 1, 2]),
+      count: 3,
+      bounds: zeroBounds4(),
+      center: [0, 0, 0, 0],
+      radius: 1,
+    };
+    // Map 1 authors 0.9 (its neighbours don't) — threaded through as the
+    // parallel colorIndexes array, exactly like buildColors' own transform
+    // branch threads transforms.map(t => t.colorIndex).
+    const colors = buildColors4(result, 3, "transform", "legacy", [
+      undefined,
+      0.9,
+      undefined,
+    ]);
+    expectRgbClose(
+      [colors[0], colors[1], colors[2]],
+      hslToRgb(0 / 3, 0.8, 0.6),
+    );
+    expectRgbClose([colors[3], colors[4], colors[5]], hslToRgb(0.9, 0.8, 0.6));
+    expectRgbClose(
+      [colors[6], colors[7], colors[8]],
+      hslToRgb(2 / 3, 0.8, 0.6),
+    );
   });
 
   it("radius mode spans the warm→cool ramp over 4D distance from the center", () => {

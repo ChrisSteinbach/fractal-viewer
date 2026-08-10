@@ -70,11 +70,34 @@ function writeHsl(
   out[o + 2] = hue2rgb(q, p, hue - 1 / 3);
 }
 
-/** Evenly spaced hues, one per transform — the "by transform" palette. */
-export function transformColors(count: number): Vec3[] {
+/**
+ * Evenly spaced hues, one per transform — the "by transform" palette: the
+ * explorer's "By Transform" point-cloud/solid mode, the legend and
+ * transform-list swatches, the surface tracers' By Transform slot colors
+ * (`surface-slots.ts`'s `surfaceSlotColors`), mutation thumbnails, and both
+ * flame kernels' legacy (non-gradient) per-transform color.
+ *
+ * `colorIndexes` (fr-axxl) lets a map's authored {@link Transform.colorIndex}
+ * pick its position on the hue wheel instead of the even `i / count` spread —
+ * agreeing with `surface-slots.ts`'s `surfaceTrapIndices`, which already lets
+ * an authored `colorIndex` win over its own derived spread for the orbit-trap
+ * coordinate. Entry `i` is `colorIndexes?.[i] ?? i / count`, so an absent
+ * array, or an absent/undefined entry within it, reproduces the old even
+ * spread exactly — every scene authored before fr-axxl has no `colorIndex`
+ * anywhere, so this is byte-for-byte unchanged for it. `colorIndex` is cyclic
+ * on `[0, 1]` like any hue (`hslToRgb` wraps), so an authored `1` reads as
+ * hue `0`; two maps authoring the same value legitimately land on the same
+ * hue (flam3 semantics — matching how the structural color walk already
+ * treats a shared `colorIndex`).
+ */
+export function transformColors(
+  count: number,
+  colorIndexes?: readonly (number | undefined)[],
+): Vec3[] {
   const colors: Vec3[] = [];
   for (let i = 0; i < count; i++) {
-    colors.push(hslToRgb(i / count, 0.8, 0.6));
+    const hue = colorIndexes?.[i] ?? i / count;
+    colors.push(hslToRgb(hue, 0.8, 0.6));
   }
   return colors;
 }
@@ -336,7 +359,10 @@ export function buildColors(
 
   switch (mode) {
     case "transform": {
-      const tColors = transformColors(transforms.length);
+      const tColors = transformColors(
+        transforms.length,
+        transforms.map((t) => t.colorIndex),
+      );
       for (let i = 0; i < count; i++) {
         const rgb = tColors[transformIndices[i]] ?? [1, 1, 1];
         const o = i * 3;
@@ -559,7 +585,11 @@ export function fourDColorNeedsAttribute(
  *
  * - `"transform"`: the same evenly-spaced-hue palette as the 3D "By
  *   Transform" mode ({@link transformColors}), keyed by the transform that
- *   produced each point. Rotation-invariant by construction.
+ *   produced each point. Rotation-invariant by construction. `colorIndexes`
+ *   (fr-axxl) threads each BASE transform's authored {@link Transform.colorIndex}
+ *   through to {@link transformColors} exactly like `buildColors`' own
+ *   `"transform"` branch; absent (or an absent entry within it) keeps the
+ *   derived `i / count` spread.
  * - `"radius"`: the same ramp as the 3D "By Radius" mode (the ONE ramp
  *   definition — `writeRadiusColor`, or {@link writePaletteRampColor} under a
  *   non-`"legacy"` `rampPalette`), over each point's 4D Euclidean distance
@@ -591,12 +621,13 @@ export function buildColors4(
   transformCount: number,
   mode: FourDAttributeColorMode,
   rampPalette: PaletteSpec = "legacy",
+  colorIndexes?: readonly (number | undefined)[],
 ): Float32Array {
   const { positions, w, transformIndices, count, center } = result;
   const colors = new Float32Array(count * 3);
 
   if (mode === "transform") {
-    const tColors = transformColors(transformCount);
+    const tColors = transformColors(transformCount, colorIndexes);
     for (let i = 0; i < count; i++) {
       const rgb = tColors[transformIndices[i]] ?? [1, 1, 1];
       const o = i * 3;

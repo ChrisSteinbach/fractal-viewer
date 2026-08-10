@@ -37,13 +37,20 @@ export interface SurfaceSlot {
  * `color.ts`'s {@link transformColors}, the same palette — keyed on the same
  * authored transform count — that colors the explorer's point cloud and the
  * legend, so a map is the same color in the tracer as in the cloud it was
- * framed from.
+ * framed from. Since fr-axxl this palette honors each map's authored
+ * {@link Transform.colorIndex} over the even hue spread, exactly like
+ * {@link surfaceTrapIndices} below already lets an authored `colorIndex` win
+ * over its own derived spread — By Transform and the orbit-trap coordinate
+ * now share the same authored-wins rule.
  */
 export function surfaceSlotColors(
   transforms: readonly Transform[],
   maps: readonly SurfaceSlot[],
 ): Vec3[] {
-  const palette = transformColors(transforms.length);
+  const palette = transformColors(
+    transforms.length,
+    transforms.map((t) => t.colorIndex),
+  );
   return maps.map((m) => palette[m.baseIndex]);
 }
 

@@ -1973,6 +1973,7 @@ function main(): void {
           state.transforms.length,
           mode,
           resolvePalette(state.rampPaletteId, state.customPalette),
+          state.transforms.map((t) => t.colorIndex),
         ),
       });
     } else {
@@ -2006,6 +2007,7 @@ function main(): void {
             state.transforms.length,
             "transform",
             resolvePalette(state.rampPaletteId, state.customPalette),
+            state.transforms.map((t) => t.colorIndex),
           ),
           fourDResult.transformIndices,
           fourDResult.count,
@@ -2819,7 +2821,10 @@ function main(): void {
       0,
       state.transforms.findIndex((t) => (t.weight ?? 1) > 0),
     );
-    return transformColors(state.transforms.length)[active];
+    return transformColors(
+      state.transforms.length,
+      state.transforms.map((t) => t.colorIndex),
+    )[active];
   }
 
   function teardownSurfaceCompute(): void {

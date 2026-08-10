@@ -120,6 +120,7 @@ import type {
   Rotation4,
   SymmetryParams,
   Transform,
+  Transform4,
   Vec3,
   Vec4,
 } from "../../fractal/types";
@@ -1032,7 +1033,10 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
     def.finalTransform,
     def.symmetry,
   );
-  const palette: Vec3[] = transformColors(def.transforms.length);
+  const palette: Vec3[] = transformColors(
+    def.transforms.length,
+    def.transforms.map((t) => t.colorIndex),
+  );
   const lut = buildPaletteLUT(def.paletteId) ?? undefined;
   const projection = buildProjection(
     ACCUM_WIDTH,
@@ -1135,7 +1139,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
   }
   if (!Number.isFinite(radiusMin)) radiusMin = 0;
 
-  const color = buildBenchFourDColor(def, transforms4.length, {
+  const color = buildBenchFourDColor(def, transforms4, {
     center,
     radiusMin,
     radiusMax,
@@ -1199,10 +1203,15 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
  * `"legacy"` dispatches on the explorer color mode — same precedence, same
  * LUT/palette constructors, so the bench renders the exact color pipeline
  * the app would for that palette/mode combination.
+ *
+ * Takes the BASE 4D transforms (not just a count) so the `"transform"` case
+ * can thread each map's authored `colorIndex` (fr-axxl) through to
+ * {@link transformColors}, exactly like the worker's own `buildFourDColor`
+ * reuses its stored `baseTransforms4`.
  */
 function buildBenchFourDColor(
   def: ScenarioDef4D,
-  transformCount: number,
+  transforms4: Transform4[],
   cloudStats: { center: Vec4; radiusMin: number; radiusMax: number },
 ): FourDRenderColor {
   const lut = buildPaletteLUT(def.paletteId);
@@ -1215,7 +1224,13 @@ function buildBenchFourDColor(
     case "wCyanMagenta":
       return { kind: "wRamp", side: W_SIDE_PALETTES[def.colorMode] };
     case "transform":
-      return { kind: "transform", palette: transformColors(transformCount) };
+      return {
+        kind: "transform",
+        palette: transformColors(
+          transforms4.length,
+          transforms4.map((t) => t.colorIndex),
+        ),
+      };
     case "radius":
       return {
         kind: "radius",

@@ -582,7 +582,10 @@ export class VoxelWorkerSession {
       cmd.finalTransform,
       this.symmetry3D(),
     );
-    this.palette = transformColors(cmd.transforms.length);
+    this.palette = transformColors(
+      cmd.transforms.length,
+      cmd.transforms.map((t) => t.colorIndex),
+    );
     this.rng = mulberry32(cmd.seed);
     this.colorMode = cmd.colorMode;
     this.positionAxisColors = cmd.positionAxisColors;
@@ -685,7 +688,13 @@ export class VoxelWorkerSession {
           // `accumulateVoxels4` indexes this by `idx % baseTransformCount`,
           // so every kaleidoscope copy takes the color of the map it copies
           // — and the hues stay put when the kaleidoscope's order changes.
-          palette: transformColors(this.prepared4?.baseTransformCount ?? 0),
+          // colorIndexes (fr-axxl) come from the same `baseTransforms4` the
+          // structural walk already resolves its own colorIndex/colorSpeed
+          // pair from — no second wire channel needed.
+          palette: transformColors(
+            this.prepared4?.baseTransformCount ?? 0,
+            this.baseTransforms4.map((t) => t.colorIndex),
+          ),
         };
       case "radius":
         return {

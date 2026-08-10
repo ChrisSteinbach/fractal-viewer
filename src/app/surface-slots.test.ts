@@ -131,4 +131,23 @@ describe("surfaceSlotColors", () => {
       palette[3],
     ]);
   });
+
+  it("honors an authored colorIndex as the slot's hue, matching transformColors directly (fr-axxl)", () => {
+    const transforms = [
+      transform({ id: 0 }),
+      transform({ id: 1, colorIndex: 0.9 }),
+      transform({ id: 2 }),
+    ];
+    const slots: SurfaceSlot[] = [
+      { baseIndex: 0 },
+      { baseIndex: 1 },
+      { baseIndex: 2 },
+    ];
+    const palette = transformColors(3, [undefined, 0.9, undefined]);
+    expect(surfaceSlotColors(transforms, slots)).toEqual([
+      palette[0],
+      palette[1],
+      palette[2],
+    ]);
+  });
 });
