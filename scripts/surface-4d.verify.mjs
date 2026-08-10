@@ -113,6 +113,18 @@ const ARM_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--arm="));
 /** "compute" | "surfacegl" | "both" */
 const ARM_SELECT = ARM_FLAG ? ARM_FLAG.split("=")[1] : "both";
 
+// fr-1znb instruments: `--force-liveness` runs the w-slice drag leg even on
+// fragment-routed scenes (the leg normally pins the COMPUTE arm's per-frame
+// view4 re-read, so it skips scenes EXPECT_COMPUTE_BY_SCENE routes to the
+// fragment tracer — but kaleido4's fragment-arm post-drag re-settle is
+// exactly fr-1znb's bug, so the repro needs the leg back). `--query=<qs>`
+// appends extra query params (no leading "?") to every arm's URL —
+// `--query=surfperf` turns on scene.ts's strip/evidence logging, the
+// fr-1znb diagnosis channel.
+const FORCE_LIVENESS = EXTRA_ARGS.includes("--force-liveness");
+const QUERY_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--query="));
+const EXTRA_QUERY = QUERY_FLAG ? QUERY_FLAG.split("=").slice(1).join("=") : "";
+
 // ROUTING-VERIFY mode (916813c re-verification): the 4D branch now routes
 // SHAPE-KEYED (main.ts's compute4Shaped = de.symmetry.order <= 1) rather
 // than "always prefer compute" — plain 4D (order 1) still prefers compute,
@@ -543,9 +555,10 @@ async function main() {
 
     /** One arm (compute or WebGL fallback) of one scene. */
     async function runArm(scene, armLabel, { forceWebgl }) {
-      const url = forceWebgl
-        ? `${BASE}/?surfacegl#${scene.hash}`
-        : `${BASE}/#${scene.hash}`;
+      const qs = [forceWebgl ? "surfacegl" : "", EXTRA_QUERY]
+        .filter(Boolean)
+        .join("&");
+      const url = `${BASE}/${qs ? `?${qs}` : ""}#${scene.hash}`;
       console.error(`[surface-4d] ==== ${scene.name}/${armLabel}: ${url} ====`);
       const result = {
         scene: scene.name,
@@ -1442,9 +1455,24 @@ async function main() {
       // scene shape-routed to the fragment arm it would re-test the long-
       // proven WebGL live-uniform path at order-6 cost instead (measured
       // 2026-08-10: the post-drag re-settle blew the 90s poll window at
-      // 95.6s, fr-1znb — the fr-id9r over-stripping residual, not a
-      // liveness failure), so it runs only where the routing says compute.
-      if (EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true) {
+      // 95.6s). fr-1znb's diagnosis (2026-08-11, --force-liveness +
+      // ?surfperf evidence logging): NOT the fr-id9r over-stripping
+      // residual this comment first suspected — the evidence chain stayed
+      // clean (partial=0 throughout, strips averaged ~67ms against the
+      // 75ms target) and the cost is POSE-INTRINSIC: kaleido4's w=0 slice
+      // is uniquely cheap, and ANY off-center slice costs ~20-40x more
+      // per pixel (one 0.01 slider step: preview 0.0041 -> 0.0795 ms/px,
+      // settle 2.1s -> 60.9s GPU; a FRESH session jumped straight to the
+      // 30-step pose measures the same class: 0.0736 ms/px, 42.3s settle
+      // — fr-b8o5 has the numbers). A re-settle after any slice drag is
+      // an honest minute-plus grind at order 6, so the leg stays skipped
+      // where routing says fragment unless --force-liveness asks.
+      if (FORCE_LIVENESS || (EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true)) {
+        if (FORCE_LIVENESS && !(EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true)) {
+          console.error(
+            `[surface-4d] ${scene.name}: liveness leg FORCED on a fragment-routed scene (--force-liveness, fr-1znb's repro).`,
+          );
+        }
         await testLiveness(scene, compute.settledShotBuf);
       } else {
         console.error(
