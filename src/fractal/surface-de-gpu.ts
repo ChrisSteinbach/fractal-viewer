@@ -283,12 +283,17 @@ import type { Vec3 } from "./types";
  *                  no final, like the 3D finalM rows
  *              400 vec4f final4T
  *              416 f32 w0             420 f32 sliceHalfW
- *              424 f32 final4SigmaMin 428 f32 (pad)
+ *              424 f32 final4SigmaMin 428 f32 visRadius4
  *              In this core the frozen block's `visibleRadius` carries
  *              the SLICE-ADJUSTED sliceVisR (the slab's widest 3D
- *              shadow, surface-material-4d.ts's march gate) and
- *              `boundCenter` packs the origin (the 4D oracle is
- *              origin-anchored by construction).
+ *              shadow, surface-material-4d.ts's march gate — what the
+ *              sphere gate, shadow clamp and fog want), `visRadius4`
+ *              keeps the FULL 4D visible radius (the height/radius
+ *              color sources' slice-INVARIANT normalizer — the 4D GLSL
+ *              deliberately divides by the full radius so coloring
+ *              doesn't swim as w0 slides), and `boundCenter` packs the
+ *              origin (the 4D oracle is origin-anchored by
+ *              construction).
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -780,6 +785,10 @@ export function packSurface4GpuParams(
   view.setFloat32(416, view4.w0, true);
   view.setFloat32(420, view4.sliceHalfW, true);
   view.setFloat32(424, f ? f.sigmaMin : 1, true);
+  // The FULL 4D visible radius — the height/radius color sources'
+  // slice-invariant normalizer (the frozen visibleRadius slot carries
+  // the slice-ADJUSTED march gate above).
+  view.setFloat32(428, de.visibleBoundingRadius, true);
   return buf;
 }
 
@@ -1938,6 +1947,27 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
 ${lensHitWrapText}`
     : coreHitInfoText;
 
+  // The two LUT color sources whose NORMALIZER is dimension-specific
+  // (fr-dlxh's 4D cut; every other shade term reconciles under the
+  // packing contract). The 3D cores read the visible radius straight —
+  // for affine4 that slot carries the slice-adjusted march gate, which
+  // is what the sphere gate/shadow clamp/fog want but would make these
+  // two colorings SWIM as w0 slides — so the 4D arm mirrors
+  // surface-material-4d.ts instead: HEIGHT normalizes by the FULL 4D
+  // visible radius (params.visRadius4), and RADIUS lifts the hit
+  // through the rotor for the TRUE 4D radius, rotor/slice-invariant
+  // (fr-9c9e tracks reading the slab hit's own w rather than the slice
+  // plane's).
+  const shadeHeightU =
+    core === "affine4"
+      ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
+      : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
+  const shadeRadiusU =
+    core === "affine4"
+      ? `let q4c = rotorInvApply4(vec4f(pos, params.w0));
+      u = clamp(length(q4c) / params.visRadius4, 0.0, 1.0);`
+      : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+
   const entry =
     mode === "eval"
       ? `
@@ -2094,9 +2124,9 @@ fn shadeRays(
     if (shade.colorSource == 1u) {
       u = hi.trap;
     } else if (shade.colorSource == 2u) {
-      u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);
+      ${shadeHeightU}
     } else if (shade.colorSource == 3u) {
-      u = clamp(length(pos) / visR, 0.0, 1.0);
+      ${shadeRadiusU}
     } else if (shade.colorSource == 4u) {
       u = hi.rings;
     } else {
@@ -2309,7 +2339,7 @@ struct Params {
   w0: f32,
   sliceHalfW: f32,
   final4SigmaMin: f32,
-  pad4: f32,`
+  visRadius4: f32,`
           : ""
   }
 }${
