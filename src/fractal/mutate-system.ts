@@ -463,15 +463,20 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
  * OF its already-widened field jitter:
  *
  * - if `baseMap` carries at least one non-`linear` variation, one
- *   uniformly-chosen non-linear entry's `type` is replaced by a different
- *   type drawn uniformly from {@link NON_LINEAR_VARIATION_TYPES} (excluding
- *   its own current type) — its (already-jittered) weight is left alone, so
- *   only the warp changes, not its strength;
- * - otherwise (a purely affine map, or one with only a `linear` entry, has
- *   no variation to swap) the map's rotation is rerolled ENTIRELY, uniform
- *   `±π` per axis — a bolder structural change than any additive jitter
- *   could read as, standing in for the variation swap this map has no
- *   variation to receive.
+ *   uniformly-chosen non-linear entry's `type` is replaced by a type drawn
+ *   uniformly from {@link NON_LINEAR_VARIATION_TYPES} minus every type the
+ *   map ALREADY carries — its (already-jittered) weight is left alone, so
+ *   only the warp changes, not its strength. The exclusion covers the
+ *   entry's own current type and its siblings' alike: a blend is a
+ *   type -> weight map (see `types.ts`'s `Variation`), so landing on a
+ *   sibling's type would merge the two into one warp at the summed weight —
+ *   a structural kick that changed nothing structural;
+ * - otherwise (a purely affine map, one with only a `linear` entry, or the
+ *   degenerate map already carrying every non-linear warp — no unused type
+ *   to swap TO) the map's rotation is rerolled ENTIRELY, uniform `±π` per
+ *   axis — a bolder structural change than any additive jitter could read
+ *   as, standing in for the variation swap this map has no variation to
+ *   receive.
  *
  * Decided from `baseMap` (not the already-jittered `jitteredMap`) so the
  * branch taken reflects the base system's own structure, not an artifact of
@@ -487,15 +492,17 @@ function applyStructuralKick(
   );
   if (nonLinearIndices.length > 0) {
     const pick = nonLinearIndices[Math.floor(rng() * nonLinearIndices.length)];
-    const currentType = baseMap.variations![pick].type;
+    const carried = new Set(baseMap.variations!.map((v) => v.type));
     const candidates = NON_LINEAR_VARIATION_TYPES.filter(
-      (type) => type !== currentType,
+      (type) => !carried.has(type),
     );
-    const newType = candidates[Math.floor(rng() * candidates.length)];
-    const variations = jitteredMap.variations!.map((v, i) =>
-      i === pick ? { type: newType, weight: v.weight } : v,
-    );
-    return { ...jitteredMap, variations };
+    if (candidates.length > 0) {
+      const newType = candidates[Math.floor(rng() * candidates.length)];
+      const variations = jitteredMap.variations!.map((v, i) =>
+        i === pick ? { type: newType, weight: v.weight } : v,
+      );
+      return { ...jitteredMap, variations };
+    }
   }
   const rotation: Vec3 = [
     uniform(rng, -Math.PI, Math.PI),

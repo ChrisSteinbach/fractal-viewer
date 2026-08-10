@@ -268,6 +268,38 @@ describe("mutateSystem wildcard structural kick", () => {
     }
     expect(mapsWithBigJump).toBe(1);
   });
+
+  it("swaps into a warp the map does not already carry, never merging two entries of one type", () => {
+    // Two nonlinear warps per map, so the swap has a same-map type it could
+    // land on. It must not: two `swirl` entries are just swirl at the summed
+    // weight, so such a "structural kick" changes nothing structural — and
+    // one entry per type is the lane budget `flame-gpu.ts`'s Slot assumes.
+    const twoWarps = (
+      id: number,
+      position: Transform["position"],
+    ): Transform => ({
+      id,
+      position,
+      rotation: [0, 0, 0.4],
+      scale: [0.6, 0.6, 0.6],
+      variations: [
+        { type: "spherical", weight: 0.5 },
+        { type: "swirl", weight: 0.4 },
+        { type: "linear", weight: 0.6 },
+      ],
+    });
+    const base = system({
+      transforms: [twoWarps(0, [0.3, 0.2, 0]), twoWarps(1, [-0.3, -0.2, 0])],
+    });
+
+    for (let seed = 0; seed < 100; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
+      for (const t of mutant.transforms) {
+        const types = (t.variations ?? []).map((v) => v.type);
+        expect(new Set(types).size).toBe(types.length);
+      }
+    }
+  });
 });
 
 describe("mutateSystem quality gate", () => {
