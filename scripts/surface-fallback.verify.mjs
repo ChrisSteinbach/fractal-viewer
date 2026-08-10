@@ -249,6 +249,27 @@ async function main() {
     // the condition 2ca508b's race needed to strand the session.
     await page.emulateMedia({ reducedMotion: "reduce" });
 
+    // CRITICAL: page.goto() between two URLs differing ONLY in the hash
+    // fragment (same origin+path+query) is a SAME-DOCUMENT navigation —
+    // the browser does not reload, so the app's JS context (and whatever
+    // scene was already loaded) survives untouched. The app has no
+    // `hashchange` listener (loadScene() only runs once at boot), so a
+    // later case's page.goto(differentHashSameOrigin) silently strands
+    // the session on an EARLIER case's scene while location.hash in the
+    // address bar still updates — confirmed empirically with a throwaway
+    // diagnostic (a window marker set after the first load survives a
+    // second goto to a different-hash, same-query URL). Found via a
+    // downstream script's bug (see surface-4d.verify.mjs's gotoFresh):
+    // this script's own case a (bare "/") -> b/c/d (hash-only) chain has
+    // the EXACT same shape and was equally exposed — cases b/c/d in every
+    // "all"-mode run before this fix never actually loaded their intended
+    // scenes; only case a was ever a genuine load. Bouncing through
+    // about:blank forces a real navigation every time.
+    async function gotoFresh(url, opts) {
+      await page.goto("about:blank");
+      await page.goto(url, opts);
+    }
+
     /** Canvas-only screenshot — NOT the full viewport. The control panel
      * opens by default at this width (800 > MOBILE_BREAKPOINT's 640) and
      * its accordion reflows on every render-mode switch (different
@@ -333,7 +354,7 @@ async function main() {
       const pageErrorsBefore = pageErrors.length;
       const consoleBefore = consoleMessages.length;
 
-      await page.goto(`${BASE}/${hashPath}`, {
+      await gotoFresh(`${BASE}/${hashPath}`, {
         waitUntil: "load",
         timeout: 30_000,
       });
