@@ -70,7 +70,8 @@ the previous (fr-zoi), so the whole panel stays about one phone-screen tall
 instead of demanding a long scroll. The Flame, Solid, and Surface render
 modes get the same treatment (fr-99o) — **Tone** / **Blur** / **Quality** for
 Flame, **Surface** / **Lighting** / **Quality** for Solid, and **Surface
-Look** for Surface itself (see **◈ Surface** below) — with a status block
+Look** for Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface**
+below) — with a status block
 pinned above the sections (a progress readout for Flame/Solid, an instant
 hint for Surface), and the panel remembers which section was open in each
 mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
@@ -86,6 +87,97 @@ morphs into place instead of snapping (see **Presets** below).
   articles, plus Barnsley's _Fractals Everywhere_) and its own
   **▶ Watch it build** button (below). Escape, the backdrop, or the header ✕
   close it.
+- **Render mode** — the segmented switch directly below picks what draws the
+  current system: **∴ Points** (the live, interactive cloud), **✺ Flame**,
+  **◆ Solid**, or **◈ Surface**. Each of the three renders brings its own
+  accordion sections and a status block, all described below. The mode itself
+  is session-only and never rides in a link, so a shared scene or scene file
+  always opens in Points — a **Collection** entry or a timeline keyframe can
+  still be _tagged_ with the mode it was saved from, which is what re-enters
+  the renderer on load (see those sections). If the browser turns out to be
+  rasterizing WebGL in software instead of on the GPU, a warning at the top of
+  the panel names the renderer in every mode: everything still works, but
+  renders run 10–50× slower, and the fix is usually a browser GPU setting
+  rather than anything in the app.
+- **✺ Flame** — the classic fractal-flame exposure: millions of chaos-game
+  samples accumulated into a histogram, then tone-mapped into a soft, glowing
+  image. The camera _freezes_ on entry — the render converges through the view
+  you left — so switch back to **∴ Points** to keep exploring. A status block
+  above the sections counts progress ("12.4M / 20.0M iterations (62%)"), says
+  **applying density estimate…** while the blur pass re-runs, and names the
+  engine doing the accumulating: the GPU (with the adapter's name where the
+  browser reports one) or the CPU, saying which way it fell back when the GPU
+  was tried and refused.
+  - **Tone** — **Exposure** (0.2×–4×), **Gamma** (1–6, default 2.4) and
+    **Vibrancy** (0–100%) all re-map the histogram that is already
+    accumulated, so each applies instantly and none costs a restart. Gamma
+    reshapes the density curve: 1 is the raw curve, and raising it — 2.4 by
+    default — lifts faint structure toward the brightest buckets, the punchy
+    flame look. Exposure then multiplies the color that curve produced, so it
+    brightens or dims the finished image. Vibrancy fades between
+    the density-scaled color at 100% and a flat, density-blind one at 0. The
+    very lowest densities ride a straight line instead of the curve, so a
+    single stray early sample can't flare into a bright speckle on an
+    unconverged frame. **Palette (restarts render)** picks the gradient (see
+    **Appearance → Custom** for the shared editor), and it does mean the
+    restart: the accumulated color sums have the old palette baked into them.
+  - **Blur** — flam3's _density estimation_, which smooths sparse regions
+    while leaving converged ones sharp. Every output cell picks its own blur
+    radius from how many samples landed there: **Blur Radius** (1–15px,
+    default 6) is the widest, used where almost nothing landed; **Sharp
+    Radius** (0–15px, default 0) is the floor it narrows to once a cell is
+    well sampled; and **Blur Falloff** (0.1–3, default 0.4) is how fast it
+    travels between the two as the count climbs — below 1 leaves some
+    smoothing on middling cells, above 1 snaps to the floor after a handful
+    of hits. All three re-run only that one pass over the existing histogram,
+    never a re-accumulation, and a change made while a render is still
+    converging takes effect when it finishes. (Sharp Radius may be dragged
+    above Blur Radius, but nothing comes of it — the render caps it there.)
+  - **Quality** — the **Quality** slider steps a 1-2-5 ladder of iteration
+    budgets from 1M to 2B (default 20.0M). Raising it _extends_ the run in
+    place instead of starting over, so a converged flame can always be pushed
+    further; lowering it below what has already accumulated finishes the
+    render where it stands. **Supersample (restarts render)** (1×–3×, default
+    2×) accumulates into a correspondingly larger histogram and downfilters it
+    for every displayed frame, trading memory and time for smoother edges —
+    and when the requested factor doesn't fit in memory a note under the
+    slider says what it was reduced to.
+- **◆ Solid** — the attractor as a lit, shadowed solid: the chaos game fills a
+  cubic density grid and a raymarcher lifts a surface out of it, colored by
+  the explorer's **Color Mode** or by a gradient. Unlike the flame's frozen
+  still the camera stays live while it converges, and the surface and lighting
+  controls react at full frame rate. Its status block counts the same way
+  ("12.3M / 20.0M iterations (61%)"); until the worker's first grid lands there
+  is nothing in the volume for rays to hit, so the point cloud deliberately
+  stays on screen rather than flashing an empty frame at you.
+  - **Surface** — **Surface Level** (0.02–0.95, default 0.30) is where the
+    surface is cut through the density, measured on a log scale so that a
+    given level lines up with what reads as "bright" in a Flame of the same
+    system. Lower values wrap the shape around fainter, sparser hits —
+    bulkier, noisier, diffuse edges included; higher values keep only the
+    densest core, crisper but liable to thin fine structure away entirely.
+    **Palette (restarts render)** offers the same gradients as the flame's,
+    plus **By Color Mode (legacy)**, which hands coloring back to
+    **Appearance**'s **Color Mode**; the restart is needed because each
+    voxel's running mean color already has the old palette in it.
+  - **Lighting** — **Light Angle** (−180°–180°, default 135°) swings a single
+    directional light around the shape; **Light Height** (5°–85°, default
+    50°) raises it from the horizon — the 5° floor is deliberate, since a
+    light at grazing height puts the whole volume in its own shadow; and
+    **Ambient** (0–80%, default 25%) sets how bright fully shadowed faces
+    stay, topping out below 100% because a full ambient floor would erase
+    every shading cue at once. All three are plain shader uniforms, so they
+    redraw instantly with nothing to re-accumulate.
+  - **Quality** — **Quality** (1M–100M iterations, default 20M) behaves like
+    the flame's: raise it and accumulation continues past what already looked
+    done, lower it and the render finishes where it stands. **Detail
+    (restarts render)** (64³–512³ in steps of 32, default 192³) is the grid's
+    voxels per axis, and its restart is the heaviest kind: the whole render
+    session is torn down and begun again, because a grid's dimensions are
+    fixed when it is allocated and nothing can be reused. Cost grows with the _cube_ of that
+    number, which is why 192³ is the shipped detail-vs-memory compromise and
+    256³ already costs about 2.4× the memory; when the requested size doesn't
+    fit, a note under the slider says what was built instead.
 - **◈ Surface** (fr-7jlk) — a fourth render alongside Flame and Solid: the
   attractor as a true implicit surface, sphere-traced live against an
   analytic distance estimator instead of accumulated from chaos-game
@@ -235,6 +327,25 @@ morphs into place instead of snapping (see **Presets** below).
   Loading one — like Surprise Me and a gallery load — morphs the attractor
   smoothly from the current shape into the new one instead of snapping; the
   OS's reduced-motion preference opts out to the instant snap (fr-a04l).
+- **Surprise Me** — rolls a whole new random system rather than a named one:
+  two to four maps, a kaleidoscope about 30% of the time, a final-transform
+  lens about 25% of the time, and about 25% of rolls 4D (which since fr-msw5
+  may be 4D kaleidoscopes). Rolls are quality-gated — each candidate is probed
+  with a short chaos game and rejected if it collapses to a point, escapes, or
+  otherwise fills too little of its own bounds, and the roll retries up to
+  forty times. Exhausting all forty is a backstop that measurement says
+  effectively never fires; when it does, the best-scoring candidate is used
+  rather than nothing. Like a preset it morphs in and is a single undo step.
+- **🧬 Mutate** (fr-3vly) — the middle ground between the sliders and a total
+  reroll: a 3×3 modal of small variations _around_ the current system, with the
+  system itself pinned in the center for comparison. Eight candidates are
+  nudged from it — every field perturbed a little, quality-gated the same way
+  Surprise Me's rolls are — and the last cell is a bolder **wild** one that
+  also kicks the structure rather than only the numbers. Cells fill in one at a
+  time so the modal opens instantly. Clicking one morphs into it as a normal
+  undoable load and re-seeds the grid around your pick, so you can keep walking
+  outward a step at a time; **↻ Mutate again** rolls eight fresh variations of
+  where you are now. Nothing touches the scene until you pick.
 - **▶ Drift** (fr-wavo) — next to **Surprise Me**: an ambient, ever-evolving
   show for leaving the explorer running (a TV via the PWA, a second screen).
   While drifting, the explorer dwells on the current attractor for about five
@@ -409,6 +520,20 @@ morphs into place instead of snapping (see **Presets** below).
 - **Point Size** — slider scaling the rendered point size from 0.25× to 4× the
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
+- **Adaptive resolution** — on by default: when frames get slow the explorer
+  quietly draws at a lower internal resolution and scales it up, stepping down
+  a five-rung ladder to half linear resolution at worst. Recovery is
+  deliberately unhurried — one rung back only after frames have been
+  comfortably fast for a few seconds, so the picture can't flap between
+  sharpness levels — which means climbing back from the floor takes on the
+  order of ten seconds of easy frames. Untick it to pin full resolution and
+  accept the frame rate, e.g. while judging fine detail. It never scales
+  exports, a rolling video capture, or the Flame render (whose accumulation
+  buffer is sized separately), and the Surface render ignores it entirely —
+  that mode has its own preview/settle ladder. The Solid render's raymarch
+  _is_ governed, so a slow solid trace goes soft before it goes choppy; its
+  voxel grid is unaffected either way (see **Detail**). Session-only: it is a
+  device preference, so it never rides in a link or scene file.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
 - **Ramp Palette** (fr-3b6) — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
@@ -472,9 +597,26 @@ morphs into place instead of snapping (see **Presets** below).
   automatic exposure alone. Applies live, with no regenerate, and persists in
   the link and scene file.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
+- **Capture size** — in the **Capture** section, the resolution **Save PNG**
+  renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×
+  (print)**. It is a real re-render at that size, not an upscale — the Solid
+  and Surface renders re-trace, and changing it while a Flame is up restarts
+  that render so it accumulates at the new size and its grain matches the
+  output. Large sizes get clamped: the long side never exceeds 8192px, the
+  device's own texture limit can cut it further, and a live flame is capped
+  again by its accumulation memory. While a video recording is rolling, Save
+  PNG is pinned to 1× whatever this says — resizing the shared canvas
+  mid-stream would break the capture.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
   captures whatever depth style and color mode are active.
+- **● Record video** — records the canvas as you drive it: orbit, drag sliders,
+  run a Drift or a timeline, and press the button again to finish. While
+  rolling it becomes **■ Stop** with the elapsed time, and it stops itself at
+  the 2:00 cap. The clip downloads as MP4 where the browser can encode it and
+  WebM otherwise, with its duration metadata patched in so players scrub it
+  properly. For an authored clip that is frame-exact rather than realtime, use
+  **Timeline → ⏺ Export clip** instead.
 - **⤓ Save scene file** (fr-de9t) — download the current scene as a small JSON
   file: the same document bytes as 🔗 Copy link (camera pose included),
   wrapped in a file envelope instead of a URL, for keeping scenes where a
