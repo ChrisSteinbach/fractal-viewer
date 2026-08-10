@@ -147,8 +147,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). THREE
-    KERNEL CORES (fr-55s1 added the second, fr-dlxh the third):
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). FOUR
+    KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and — its
+    4D cut — the fourth):
     `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot
     REFINED ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
     estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
@@ -167,8 +168,42 @@ and UI**, so the interesting math is unit-tested without a browser:
     bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
     trap as the escape fraction (`escapedAt/maxDepth`, the canonical
     Mandelbox palette coordinate) with rings/sheets over the orbit's
-    closest approaches — the descent cores' colors-only convention. All
-    three share the public `surfaceDE(pIn, cutoff, li)` signature, so the
+    closest approaches — the descent cores' colors-only convention.
+    `core:"affine4"` (fr-dlxh's 4D cut) is the refined ladder ONE
+    DIMENSION UP — `surface-de-4d.ts`'s `estimateDistance4Refined`
+    behind the app's view lift, the estimator `surface-material-4d.ts`
+    marches: the body's prologue does `rotorInv · vec4f(p, w0)` (the
+    GLSL's uInvRotor line), the fr-wa6o slab rides one vec4f
+    half-extent register beside every point (linear parts alone, gated
+    on the dynamically uniform `sliceHalfW > 0`), and the fr-u91x
+    kaleidoscope sweeps ONE backward-step 4×4 where 3D swept a
+    (cos, sin) pair. Its params variant tail (208..431,
+    `SURFACE_GPU_PARAMS4_BYTES` 432, `packSurface4GpuParams` + a
+    per-frame `SurfaceGpu4View`) holds rotor/stepBack/4D-lens rows as
+    row-vec4 quartets — the buffer always stores the ROW-MAJOR bytes of
+    the matrix the body applies, the packer performing the one real
+    transpose (pose rotor → world-to-attractor, `setSurfaceView4`'s
+    exact dance) — plus w0/sliceHalfW/`visRadius4`; maps are the
+    `GpuMap4` layout (`packSurfaceGpuMaps4`, same 96-byte stride). Two
+    frozen slots carry 4D semantics: `visibleRadius` packs the
+    SLICE-ADJUSTED sliceVisR so the shared march entry's sphere gate is
+    the 4D GLSL's textually unchanged, while the tail's `visRadius4`
+    keeps the FULL radius for the height/radius color sources
+    (slice-invariant, the 4D GLSL's deliberate choice — those two shade
+    lines are the one core-conditional interpolation in the shared
+    entry text). Fixed width 4 (inert knobs like "affine"),
+    `lens` THROWS (4D fold finals are fr-rsp6), nonzero `footprint`
+    THROWS at pack (the 4D oracle has no cone cap). Its eval-agreement
+    leg (M3) gates fail=0 under a pure ORACLE-CONTINUITY classifier —
+    the f64 oracle at the query's six ±1-ULP axis neighbors within
+    tol/2 — because chord-bisected queries can park exactly ON a
+    beam-selection discontinuity (~3e-2 value step ~1 ULP wide) where
+    both sides are valid conservative bounds and pointwise comparison
+    is the wrong question (measured: the oracle itself returns the
+    GPU's value 1-2 query-ULPs away); exclusions disclosed per system
+    (5/2800 on SwiftShader) and capped at 3% — the escape leg's
+    ensemble shape minus the GPU modeling a ladder doesn't need. All
+    four share the public `surfaceDE(pIn, cutoff, li)` signature, so the
     Modes below are textually identical whichever core is picked. And
     `lens:true` wraps EITHER descent core in `descendLens`'s fold-FINAL
     branch sweep — the body token-renames to `surfaceDECore` (hit-info to
@@ -614,24 +649,37 @@ and UI**, so the interesting math is unit-tested without a browser:
     guaranteed 16KB, where default-block arrays would have taken 192 of the
     guaranteed 224 fragment uniform vectors), and the kaleidoscope SWEEPS
     like 3D's (fr-u91x), so 24 slots means 24 transforms at any order.
+    The FALLBACK arm since fr-dlxh's 4D cut: 4D sessions prefer
+    `surface-compute.ts`'s affine4 kernel where an adapter exists, and
+    this tracer serves `?surfacegl` / no-adapter / device-loss.
   - `surface-compute.ts` — WebGPU compute renderer for fold-shaped 3D
     surface sessions (fr-tzdg): systems with base-map folds OR a fold
     FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
     the kernel core and the lens wrapper, and the two first-sizing
-    priors scale by the lens branch count 27/3/81 ÷ 8), and — since
+    priors scale by the lens branch count 27/3/81 ÷ 8), — since
     fr-dlxh — escape-time sessions (the single non-contracting pure-fold
-    map the IFS gate refuses) ALL PREFER it when an adapter exists
-    — no fold GLSL ever compiles (the ~25s Mesa link / ~5.7s lens link /
-    fr-096u entry hazards never engage), no grid request (gridless by
-    decision, measured). `create()` takes a `SurfaceComputeTarget` union
-    (`{kind:"ifs"|"escape"}`) whose `kind` picks the kernel core, the
-    params packer and the maps buffer's existence — the bounded
-    march/shade host loop, progressive presents and failure ladder stay
-    shared regardless. Escape targets scale no priors: the forward loop
-    is phone-cheap, and the pessimistic base priors elsewhere only err
-    toward smaller first slices. `SURFACE_ESCAPE` GLSL is now the
-    fallback arm (`?surfacegl` / no adapter / device loss), exactly like
-    `SURFACE_FOLD_LENS`. MEASURED (fr-55s1, Iris Xe real driver, dev
+    map the IFS gate refuses), and — since fr-dlxh's 4D cut — ALL 4D
+    surface sessions: every one of them PREFERS it when an adapter
+    exists — no fold GLSL ever compiles (the ~25s Mesa link / ~5.7s
+    lens link / fr-096u entry hazards never engage), no grid request
+    (gridless by decision, measured). `create()` takes a
+    `SurfaceComputeTarget` union (`{kind:"ifs"|"escape"|"ifs4"}`) whose
+    `kind` picks the kernel core, the params packer and the maps
+    buffer's layout/existence — the bounded march/shade host loop,
+    progressive presents and failure ladder stay shared regardless.
+    Escape and ifs4 targets scale no priors: the forward loop is
+    phone-cheap, no 4D lens exists, and the pessimistic base priors
+    elsewhere only err toward smaller first slices. The ifs4 kind's
+    rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`, re-read
+    from the scene's `setSurface4View` state at every spec assembly and
+    repacked per pass — the fragment tracer's live-uniform discipline
+    across the WebGPU seam; a missing view4 throws), and
+    `surfaceComputeForceFrameKey` includes the pose so a timeline leg's
+    rotor/slice glide never re-presents a stale frame. `SURFACE_ESCAPE`
+    GLSL and the fragment 4D tracer are the fallback arms (`?surfacegl`
+    / no adapter / device loss), exactly like `SURFACE_FOLD_LENS`; the
+    fr-tmgf detail vocabulary widened with them (`surfaceWebglDetail`'s
+    param is `computeShaped` now — every 4D system is compute-shaped). MEASURED (fr-55s1, Iris Xe real driver, dev
     regime): the fr-g58b lens archetype previews in 0.94s and settles a
     full 1280x720 frame in 9.4s (0 exhausted) where the WebGL A/B of the
     same hash was 43% settled at 30s; the 81-branch mandelbox field
