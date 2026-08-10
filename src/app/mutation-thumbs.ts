@@ -196,7 +196,10 @@ export function renderSystemThumb(
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const colors = transformColors(transforms.length);
+    const colors = transformColors(
+      transforms.length,
+      transforms.map((t) => t.colorIndex),
+    );
 
     // Pass 2: accumulate each point's base-transform color into its pixel.
     for (let i = 0; i < count; i++) {

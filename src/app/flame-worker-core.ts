@@ -1296,7 +1296,10 @@ export class FlameWorkerSession {
       this.symmetry3D(),
     );
     this.projection = cmd.projection;
-    this.palette = transformColors(cmd.transforms.length);
+    this.palette = transformColors(
+      cmd.transforms.length,
+      cmd.transforms.map((t) => t.colorIndex),
+    );
     // null for "legacy" — accumulateFlame then colors by transform (palette).
     this.colorLUT = buildPaletteLUT(cmd.palette);
     this.paletteSpec = cmd.palette;
@@ -1419,8 +1422,14 @@ export class FlameWorkerSession {
           // `accumulateFlame4` (and the GPU kernel) index this by
           // `idx % baseTransformCount`, so every kaleidoscope copy takes the
           // color of the map it copies — and the hues stay put when the
-          // kaleidoscope's order changes.
-          palette: transformColors(this.prepared4?.baseTransformCount ?? 0),
+          // kaleidoscope's order changes. colorIndexes (fr-axxl) come from
+          // the same `baseTransforms4` the structural walk already resolves
+          // its own colorIndex/colorSpeed pair from — no second wire channel
+          // needed.
+          palette: transformColors(
+            this.prepared4?.baseTransformCount ?? 0,
+            this.baseTransforms4.map((t) => t.colorIndex),
+          ),
         };
       case "radius":
         return {

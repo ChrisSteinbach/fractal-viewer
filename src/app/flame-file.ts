@@ -869,7 +869,12 @@ function probeFraming(
 /** The 256-entry palette block: the scene's resolved gradient palette, or —
  * for the `"legacy"` per-transform mode, which has no gradient — the
  * per-transform hues laid out as equal blocks so each xform's `color` index
- * lands on its own hue. */
+ * lands on its own hue. The block hues themselves come from `transformColors`,
+ * so an authored `colorIndex` (fr-axxl) picks a block's hue exactly like it
+ * does for the in-app legacy-palette render this file exports — independent
+ * of the block BOUNDARIES below, which stay evenly spaced (they only need to
+ * agree with the xform `color` attribute's own derived-spread fallback,
+ * unchanged here). */
 function paletteBlock(s: SceneSnapshot, transformCount: number): string {
   const lut = buildPaletteLUT(
     resolvePalette(s.flame.paletteId, s.customPalette),
@@ -885,7 +890,10 @@ function paletteBlock(s: SceneSnapshot, transformCount: number): string {
       hex += byte(lut[i * 3]) + byte(lut[i * 3 + 1]) + byte(lut[i * 3 + 2]);
     }
   } else {
-    const colors = transformColors(transformCount);
+    const colors = transformColors(
+      transformCount,
+      s.transforms.map((t) => t.colorIndex),
+    );
     for (let i = 0; i < 256; i++) {
       const c =
         colors[

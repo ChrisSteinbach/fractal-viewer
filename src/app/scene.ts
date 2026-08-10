@@ -1227,7 +1227,10 @@ export class FractalScene {
       disposeTree(cube);
     }
 
-    const palette = transformColors(transforms.length);
+    const palette = transformColors(
+      transforms.length,
+      transforms.map((t) => t.colorIndex),
+    );
     this.guideShears = transforms.map((t) => clone3(t.shear ?? NO_SHEAR));
     this.guideCubes = transforms.map((t, i) => {
       const selectedHere = selected === i;
