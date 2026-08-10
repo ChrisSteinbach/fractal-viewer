@@ -5,14 +5,63 @@ description: Build, serve, and drive the production app (including the service-w
 
 # Verifying changes by running the app
 
-## Headless WebGL: boot the app on a no-GPU / CI box
+## Headless WebGL: the MCP browser can run the app
 
-The default MCP Playwright browser (HeadlessChrome) and the system
-`google-chrome` both return `null` from `canvas.getContext("webgl2")`, so
-`main.ts`'s `webglAvailable()` boot guard trips ("WebGL is not supported"),
-`FractalScene` is never constructed, and the Render buttons never appear — **no
-frontend change can be verified in the browser.** A real software-GL context
-(ANGLE + SwiftShader) fixes this.
+**Start with the MCP Playwright browser — it has WebGL.** Measured 2026-08-10 on
+the pinned `@playwright/mcp@latest` (resolved 0.0.79, HeadlessChrome 150):
+`canvas.getContext("webgl2")` returns a live context on `ANGLE (Google, Vulkan
+1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`, `main.ts`'s
+`webglAvailable()` guard passes, and the dev server's app boots and renders
+(default preset: 314,000 pts, full panel, all four Render buttons). A whole
+multi-scenario verification runs through `browser_navigate` / `browser_click` /
+`browser_evaluate` / `browser_take_screenshot` with no bespoke script (fr-k9nx).
+
+The note this replaces said the MCP browser had **no** WebGL, which cost sessions
+a detour into scripting or into skipping the browser check entirely. Re-measure
+before believing either claim if the pin moves — `@latest` is not a pin:
+
+```js
+// browser_evaluate
+() => { const g = document.createElement("canvas").getContext("webgl2");
+  const d = g && g.getExtension("WEBGL_debug_renderer_info");
+  return d ? g.getParameter(d.UNMASKED_RENDERER_WEBGL) : !!g; }
+```
+
+Caveats the SwiftShader context brings, all measured on that pin:
+
+- **No WebGPU adapter.** `navigator.gpu` exists but `requestAdapter()` resolves
+  `null` — the MCP launch passes none of the SwiftShader-Vulkan flags
+  `scripts/gpu-flame-bench.mjs` uses. Both render paths say so in the panel, which
+  is the cheap way to check: Flame prints "CPU accumulation — no GPU API in this
+  browser", and the surface progress row's fr-tmgf engine label reads
+  "Preview · **WebGL** …%". So flame takes the CPU backend and surface takes the
+  **WebGL arms** (`SURFACE_FOLD_LENS`, `SURFACE_ESCAPE`, the 4D fragment tracer),
+  never `surface-compute.ts`. Anything that must exercise WebGPU goes through
+  `npm run bench:gpu` / `npm run bench:surface`, not this browser.
+- **The app announces the software renderer too.** A red "Software WebGL renderer
+  — ANGLE (… SwiftShader …). The browser is not using the GPU, so renders run
+  10–50× slower" block sits in the panel. Expected here, and it makes panel
+  screenshots differ from a GPU box.
+- **Renders are software-slow, but they do arrive.** Measured on the default
+  6-map preset at 1280×720: Points immediate, Flame converging within ~8s,
+  Surface still at "Preview 57%" after 25s. Wait on the panel's own progress
+  text, not a fixed sleep, and expect `render-tier.ts` to sit at coarse preview
+  rungs far longer than on a GPU. Fold-heavy systems (Mandelbox KIFS) will be
+  much worse — they are minutes on real hardware.
+- **Canvas pixel readback is BLACK unless you sample inside the render frame.**
+  The renderer runs without `preserveDrawingBuffer`, so `drawImage(canvas)` from
+  a plain `browser_evaluate` gets a cleared buffer. Invalidate, then read from a
+  `requestAnimationFrame` callback registered *after* the app's own — it runs
+  later in the same frame, with the buffer still live:
+
+  ```js
+  () => new Promise((res) => { window.dispatchEvent(new Event("resize"));
+    requestAnimationFrame(() => { /* drawImage(canvas) → real pixels here */ }); })
+  ```
+
+  One frame later (or in a `setTimeout`) it is black again.
+
+## The headless smoke gate
 
 **One command** — spawns the dev server, boots the app under SwiftShader, and
 asserts a WebGL context + no boot error + a non-zero point count (exit 0 =
@@ -24,27 +73,34 @@ node scripts/webgl-smoke.mjs --url=https://localhost:5173   # reuse a running se
 node scripts/webgl-smoke.mjs --screenshot=smoke.png         # + capture a frame
 ```
 
-A correct boot logs the renderer as `ANGLE (… SwiftShader …)`. Use it as a fast
-regression gate for anything touching the boot path, the scene, or WebGL. It is
-the committed form of the recipe below.
+A correct boot logs the renderer as `ANGLE (… SwiftShader …)`. This is a fast,
+committed **regression gate** for anything touching the boot path, the scene, or
+WebGL (`npm run smoke` is the same thing) — not the only way to see the app run;
+for exploratory verification the MCP browser above is cheaper.
 
-**Driving a browser yourself** (a bespoke Playwright script — *not* the MCP
-browser, which has no WebGL) needs the same four things lined up;
-`scripts/webgl-smoke.mjs` and the `scripts/gpu-flame-*.mjs` monitors are the
-worked examples:
+**Writing your own Playwright script** (`scripts/webgl-smoke.mjs` and the
+`scripts/gpu-flame-*.mjs` monitors are the worked examples) — what those scripts
+pin, and how much of it still load-bears, measured 2026-08-10 on
+Chrome/Chromium 149–150:
 
-- **Bundled Chromium, not system Chrome** — only Playwright's bundle ships
-  SwiftShader/ANGLE: `executablePath: chromium.executablePath()`
-  (`playwright-core`).
-- **`headless: false` + pass `--headless=new` yourself** — asking Playwright
-  for `headless: true` gets Chrome's OLD headless mode, which never yields a
-  WebGL context. `false` stops Playwright injecting that old flag; new headless
-  is then requested explicitly via the arg.
-- **Clear `DISPLAY`** (`delete env.DISPLAY` in the child env) — otherwise Chrome
-  tries a (broken, over-SSH) X11 GLX instead of the offscreen SwiftShader path.
+- **`newPage({ ignoreHTTPSErrors: true })`** for the dev server's self-signed
+  cert. Still required.
 - **`args: --headless=new --enable-unsafe-swiftshader --use-gl=angle
-  --use-angle=swiftshader --no-sandbox`**, plus `newPage({ ignoreHTTPSErrors:
-  true })` for the dev server's self-signed cert.
+  --use-angle=swiftshader --no-sandbox`** — now *determinism* insurance, not a
+  prerequisite: they force SwiftShader whatever the host GPU is. Plain
+  `headless: true` with only `--no-sandbox` also came up WebGL2/SwiftShader.
+- **Bundled Chromium** (`executablePath: chromium.executablePath()` from
+  `playwright-core`) — keeps the browser version pinned to the repo. The old
+  reason ("only Playwright's bundle ships SwiftShader/ANGLE") is stale: system
+  `google-chrome` 150 ships `libvk_swiftshader.so` and probes WebGL2/SwiftShader
+  in `--headless=new` too.
+- **`headless: false` + an explicit `--headless=new`** was needed when
+  Playwright's `headless: true` meant Chrome's OLD headless mode, which yielded
+  no WebGL context. Chrome removed old headless, so `headless: true` is the new
+  mode now; the two-step spelling survives in the scripts and is harmless.
+- **Clearing `DISPLAY`** (`delete env.DISPLAY`) guarded against a broken,
+  over-SSH X11 GLX path. New headless does not touch the display: probes with
+  `DISPLAY=:0` kept came back SwiftShader either way.
 
 ## Dev server (no service worker)
 
@@ -55,10 +111,12 @@ wrong surface for anything touching `register-sw.ts` or `sw/sw.ts`.
 ## Production build + service worker
 
 The SW path (registration, isolation dance, waiting-update flow) only exists
-in a production build. `npm run preview` works but is HTTPS with a self-signed cert,
-which browser automation may reject. A plain HTTP static server on localhost is
-equivalent (localhost is a secure context, and Chromium honors SW-injected
-COOP/COEP there — `crossOriginIsolated` comes back `true`):
+in a production build. `npm run preview` is HTTPS with a self-signed cert; the
+MCP browser is launched with `--ignore-https-errors` (`.mcp.json`) and takes it
+without complaint, as it does the dev server. A plain HTTP static server on
+localhost is still the simplest surface, and is equivalent (localhost is a secure
+context, and Chromium honors SW-injected COOP/COEP there — `crossOriginIsolated`
+comes back `true`):
 
 ```bash
 npm run build
