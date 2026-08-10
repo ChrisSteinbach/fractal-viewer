@@ -172,10 +172,10 @@ describe("unmaskedWebglRenderer", () => {
 });
 
 describe("surfaceWebglDetail", () => {
-  it("returns null when the system isn't fold-shaped, regardless of support or block", () => {
+  it("returns null when the system isn't compute-shaped, regardless of support or block", () => {
     expect(
       surfaceWebglDetail({
-        foldShaped: false,
+        computeShaped: false,
         supported: false,
         block: "failed",
       }),
@@ -184,14 +184,18 @@ describe("surfaceWebglDetail", () => {
 
   it("returns 'compute unavailable' when WebGPU isn't supported at all", () => {
     expect(
-      surfaceWebglDetail({ foldShaped: true, supported: false, block: null }),
+      surfaceWebglDetail({
+        computeShaped: true,
+        supported: false,
+        block: null,
+      }),
     ).toBe("compute unavailable");
   });
 
   it("returns 'compute unavailable' when the session's block is 'unavailable', even though supported is true", () => {
     expect(
       surfaceWebglDetail({
-        foldShaped: true,
+        computeShaped: true,
         supported: true,
         block: "unavailable",
       }),
@@ -201,7 +205,7 @@ describe("surfaceWebglDetail", () => {
   it("returns 'compute failed' when the session's block is 'failed'", () => {
     expect(
       surfaceWebglDetail({
-        foldShaped: true,
+        computeShaped: true,
         supported: true,
         block: "failed",
       }),
@@ -210,13 +214,17 @@ describe("surfaceWebglDetail", () => {
 
   it("returns null when block is 'flag' (the user's own ?surfacegl escape hatch)", () => {
     expect(
-      surfaceWebglDetail({ foldShaped: true, supported: true, block: "flag" }),
+      surfaceWebglDetail({
+        computeShaped: true,
+        supported: true,
+        block: "flag",
+      }),
     ).toBeNull();
   });
 
   it("returns null when supported and there is no block to explain", () => {
     expect(
-      surfaceWebglDetail({ foldShaped: true, supported: true, block: null }),
+      surfaceWebglDetail({ computeShaped: true, supported: true, block: null }),
     ).toBeNull();
   });
 });

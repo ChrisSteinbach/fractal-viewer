@@ -2777,9 +2777,10 @@ function main(): void {
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
   // Compute is on the table at all — no block latched, an API present.
-  // The escape branch consults this alone (fr-dlxh: a single pure-fold
-  // map is always compute-shaped); the IFS branch adds its shape test
-  // below. 4D still routes before either is consulted.
+  // The escape and 4D branches consult this alone (fr-dlxh: a single
+  // pure-fold map is always compute-shaped, and the 4D cut made every
+  // 4D system compute-shaped — the affine4 core is the 4D home); the 3D
+  // IFS branch adds its shape test below.
   function surfaceComputeAvailable(): boolean {
     return surfaceComputeBlock === null && SurfaceComputeRenderer.supported();
   }
@@ -2855,16 +2856,16 @@ function main(): void {
   ): void {
     SurfaceComputeRenderer.create(
       target,
-      // Per-slot shading inputs by kind: the IFS session shades
-      // de.maps[j] (fr-c6yd's shared derivation); the escape session has
-      // ONE slot — the active map's color, trap index 0, the GLSL
-      // setEscapeSystem shape.
-      target.kind === "ifs"
-        ? surfaceSlotColors(state.transforms, target.de.maps)
-        : [escapeSlotColor()],
-      target.kind === "ifs"
-        ? surfaceTrapIndices(state.transforms, target.de.maps)
-        : [0],
+      // Per-slot shading inputs by kind: the IFS sessions (3D and 4D
+      // alike) shade de.maps[j] (fr-c6yd's shared derivation); the
+      // escape session has ONE slot — the active map's color, trap
+      // index 0, the GLSL setEscapeSystem shape.
+      target.kind === "escape"
+        ? [escapeSlotColor()]
+        : surfaceSlotColors(state.transforms, target.de.maps),
+      target.kind === "escape"
+        ? [0]
+        : surfaceTrapIndices(state.transforms, target.de.maps),
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -3035,6 +3036,16 @@ function main(): void {
       spec.colorSource,
       spec.colorSpeed,
       spec.lightDir.join(","),
+      // The 4D pose (fr-dlxh 4D cut): a timeline leg glides rotor/slice
+      // with the camera parked, so a key without them would re-present a
+      // stale pose across every dwell frame of the glide.
+      ...(spec.view4
+        ? [
+            Array.from(spec.view4.rotor).join(","),
+            spec.view4.w0,
+            spec.view4.sliceHalfW,
+          ]
+        : []),
     ].join("|");
   }
 
@@ -3110,12 +3121,13 @@ function main(): void {
   const surfaceSession = new RenderSession<never>({
     start: () => {
       // Set when this session routes to the WebGPU compute path (fr-tzdg;
-      // fr-dlxh widened it to the escape kind) — the gate below then
-      // awaits device + pipeline instead of the GLSL link.
+      // fr-dlxh widened it to the escape kind, then — the 4D cut — to
+      // ifs4) — the gate below then awaits device + pipeline instead of
+      // the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
-      // Recomputed by the routing below (fr-tmgf); the 4D and plain-affine
-      // branches keep null — WebGL is their natural engine, nothing to
-      // explain.
+      // Recomputed by the routing below (fr-tmgf); only the plain-affine
+      // 3D branch keeps null unconditionally — WebGL is its natural
+      // engine, nothing to explain.
       surfaceWebglDetailToken = null;
       try {
         if (
@@ -3125,33 +3137,53 @@ function main(): void {
             state.symmetry,
           )
         ) {
-          // A 4D system: the slice-mode tracer (fr-vxoj), marching the
-          // w = sliceCenter cross-section of the rotor-posed attractor.
-          // Rotor + slice are LIVE view uniforms (tickRender pushes them
-          // per frame): unlike flame/solid-4D's frozen pose snapshot —
-          // frozen there because a pose change invalidates their whole
-          // accumulation — the tracer recomputes every pixel every frame,
-          // so the 4D pose stays exactly as live as the camera. The
-          // document's kaleidoscope rides into the DE (fr-u91x): the 4D
-          // descent sweeps its sectors — w-planes and twists included —
-          // so the surfaced set is the plotted set.
+          // A 4D system: the w = sliceCenter cross-section (or fr-wa6o
+          // slab) of the rotor-posed attractor. Rotor + slice are LIVE
+          // per frame (tickRender pushes them every tick): unlike
+          // flame/solid-4D's frozen pose snapshot — frozen there because
+          // a pose change invalidates their whole accumulation — the
+          // surface recomputes every pixel every frame, so the 4D pose
+          // stays exactly as live as the camera. The document's
+          // kaleidoscope rides into the DE (fr-u91x): the 4D descent
+          // sweeps its sectors — w-planes and twists included — so the
+          // surfaced set is the plotted set. Since fr-dlxh's 4D cut the
+          // 4D kind PREFERS the compute renderer (the affine4 kernel
+          // core; rotor/slice ride every frame spec); the fragment
+          // tracer (fr-vxoj) is the fallback arm (?surfacegl / no
+          // adapter / device loss).
           const de = buildSurfaceDE4(
             state.transforms,
             state.finalTransform ?? null,
             state.symmetry,
           );
-          scene.setSurfaceSystem4(
-            de,
-            surfaceSlotColors(state.transforms, de.maps),
-            surfaceTrapIndices(state.transforms, de.maps),
-          );
+          surfaceSessionIs4D = true;
+          if (surfaceComputeAvailable()) {
+            // No GLSL system upload — the enter twin owns the session
+            // resets, and the live view flows through setSurface4View
+            // into the scene state every frame spec re-reads.
+            computeTarget = { kind: "ifs4", de };
+            scene.enterSurfaceCompute4Session(de);
+          } else {
+            // fr-tmgf: compute is the 4D home since the 4D cut — the
+            // WebGL session says why it passed (null for the deliberate
+            // ?surfacegl flag).
+            surfaceWebglDetailToken = surfaceWebglDetail({
+              computeShaped: true,
+              supported: SurfaceComputeRenderer.supported(),
+              block: surfaceComputeBlock,
+            });
+            scene.setSurfaceSystem4(
+              de,
+              surfaceSlotColors(state.transforms, de.maps),
+              surfaceTrapIndices(state.transforms, de.maps),
+            );
+          }
           scene.setSurface4View(
             fourDView.matrix(),
             fourDView.sliceCenter,
             fourDView.sliceThickness,
           );
-          surfaceSessionIs4D = true;
-          // No grid for the 4D tracer (the live rotor/slice would
+          // No grid for the 4D surface (the live rotor/slice would
           // invalidate one per frame) — and a still-building 3D grid from
           // a previous session must not land mid-4D-session.
           surfaceGrid.cancel();
@@ -3178,11 +3210,11 @@ function main(): void {
             computeTarget = { kind: "escape", de };
             scene.enterSurfaceComputeEscapeSession();
           } else {
-            // fr-tmgf: a pure-fold map is fold-shaped — compute is its
-            // home, so the WebGL session says why it passed (null for
-            // the deliberate ?surfacegl flag).
+            // fr-tmgf: a pure-fold map is compute-shaped — compute is
+            // its home, so the WebGL session says why it passed (null
+            // for the deliberate ?surfacegl flag).
             surfaceWebglDetailToken = surfaceWebglDetail({
-              foldShaped: true,
+              computeShaped: true,
               supported: SurfaceComputeRenderer.supported(),
               block: surfaceComputeBlock,
             });
@@ -3230,7 +3262,7 @@ function main(): void {
             // row says why compute passed, when it did (null for affine
             // systems and the ?surfacegl flag: deliberate choices).
             surfaceWebglDetailToken = surfaceWebglDetail({
-              foldShaped: deHasFolds(de) || de.foldFinal !== null,
+              computeShaped: deHasFolds(de) || de.foldFinal !== null,
               supported: SurfaceComputeRenderer.supported(),
               block: surfaceComputeBlock,
             });
