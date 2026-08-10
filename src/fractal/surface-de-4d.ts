@@ -489,6 +489,26 @@ export function deHasFolds4(de: SurfaceDE4): boolean {
   return de.maps.some((m) => m.foldKind !== SURFACE_FOLD_NONE);
 }
 
+/** True when the DOCUMENT is fold-shaped for a 4D surface session — any
+ * ACTIVE pure-fold base map or a pure-fold final — WITHOUT building the DE
+ * (fr-rsp6 phase 3): the eligibility gate consults this per edit, and a
+ * fold-shaped 4D system renders ONLY on the WebGPU compute path (the
+ * fragment 4D tracer carries no fold GLSL — deliberately: the 3D fold GLSL
+ * already sits at Mesa's link cliff, and a 243-branch 4D body there would
+ * be unshippable), so the gate refuses it with a disclosure when compute
+ * is unavailable rather than letting a fold-blind tracer render the wrong
+ * object. Derived from transforms, never stored — the house predicate
+ * discipline. */
+export function systemFoldShaped4(
+  transforms: Transform[],
+  finalTransform: Transform | null,
+): boolean {
+  return (
+    transforms.some((t) => isActive(t) && pureFoldVariation(t) !== null) ||
+    (finalTransform !== null && pureFoldVariation(finalTransform) !== null)
+  );
+}
+
 /** True when every fold branch in the system (base maps AND a fold final
  * lens) is AFFINE — i.e. the fold set is at most {boxfold} — so the
  * fr-wa6o slab query's segment threading stays exact (affine maps take

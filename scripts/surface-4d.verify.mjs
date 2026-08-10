@@ -126,7 +126,12 @@ const VERIFY_ROUTING_MODE = EXTRA_ARGS.includes("--verify-routing");
 /** name -> whether main.ts's compute4Shaped should be true for it (mirrors
  * the scenes' own minted symmetry.order: plain4 is order 1, kaleido4 is
  * order 6 — see the SCENES hashes below). */
-const EXPECT_COMPUTE_BY_SCENE = { plain4: true, kaleido4: false };
+const EXPECT_COMPUTE_BY_SCENE = { plain4: true, kaleido4: false, fold4: true };
+/** Scenes whose ?surfacegl arm asserts the ELIGIBILITY REFUSAL instead of
+ * a WebGL render (fr-rsp6: fold-shaped 4D systems have no fragment arm —
+ * forcing WebGL makes compute unavailable, and the gate refuses with the
+ * WebGPU reason rather than letting a fold-blind tracer render). */
+const EXPECT_WEBGL_REFUSAL_BY_SCENE = { fold4: true };
 /** Generous enough for either arm's measured settle (plain4 compute ~4.6s,
  * kaleido4 WebGL ~10.9s per 916813c's own commit message) with real
  * headroom, not a tight bound. */
@@ -168,9 +173,19 @@ const PLAIN4_HASH =
 const KALEIDO4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6MC40LCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuNCwicm90YXRpb24iOnsieXciOjAuM319fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjo2LCJwbGFuZSI6Inh6IiwidHdpc3QiOjF9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
+// fr-rsp6 phase 3: the fold-4D scene — the CPU/GPU fold fixtures' pure-
+// boxfold pair (two 0.5-scale maps with live w blocks, boxfold weight 1
+// each, order 1), minted the same initialState/toSnapshot/encodeScene way
+// as the two above. Fold-shaped 4D systems are COMPUTE-ONLY (the fragment
+// 4D tracer carries no fold GLSL), so this scene's ?surfacegl arm asserts
+// the REFUSAL — Surface disabled with the WebGPU reason — not a render.
+const FOLD4_HASH =
+  "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6MC4zLCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6LTAuMywicm90YXRpb24iOnsieXciOjAuMjV9fX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
 const SCENES = [
   { name: "plain4", hash: PLAIN4_HASH },
   { name: "kaleido4", hash: KALEIDO4_HASH },
+  { name: "fold4", hash: FOLD4_HASH },
 ].filter((s) => SCENE_FILTER === "all" || SCENE_FILTER.includes(s.name));
 
 /** Overall budget for one arm's console+progress+settle poll (real
@@ -364,6 +379,16 @@ async function main() {
      */
     async function pollUntilSettled(result, t0, consoleBaseIdx, deadline) {
       let lastCheckpointShot = null;
+      // The settle verdict must not fire before the session has PRESENTED
+      // anything: a slow renderer create (measured: the fold4 compute
+      // session compiles four fold-frontier kernels, ~3s on Iris) leaves
+      // the canvas showing the previous mode's static point cloud with
+      // the progress row hidden — two identical checkpoints there read
+      // "settled" while the engine line prints just after the poll
+      // returns. A surface render never byte-matches the point cloud, so
+      // requiring one canvas CHANGE since entry closes the window without
+      // caring which engine the arm runs.
+      const entryShot = await canvasShot(null);
       // Bug fixed during verification: this MUST start at the loop's own
       // start time, not 0 -- Date.now() is an absolute epoch value, so a
       // 0 baseline made "now - lastCheckpointAt >= SETTLE_CHECK_INTERVAL_MS"
@@ -404,7 +429,12 @@ async function main() {
         ) {
           result.progressSamples.push({ ...progress, atMs: now - t0 });
         }
-        if (progress.visible && progress.text) {
+        // Engine evidence is the TEXT, not the row's visibility: the row
+        // hides between paints and on fast settles the 150ms cadence can
+        // land every poll in a hidden moment (measured: kaleido4 settling
+        // in ~6s produced only hidden "· WebGL 91%" samples and flaked
+        // the arm) — the engine token identifies the arm either way.
+        if (progress.text) {
           if (progress.text.includes("· WebGPU"))
             result.webgpuProgressSeen = true;
           if (progress.text.includes("· WebGL"))
@@ -416,6 +446,7 @@ async function main() {
           if (
             lastCheckpointShot &&
             shot.equals(lastCheckpointShot) &&
+            !shot.equals(entryShot) &&
             !progress.visible
           ) {
             return { settled: true, elapsedMs: now - t0, shot };
@@ -540,6 +571,31 @@ async function main() {
       await page.waitForTimeout(1_000);
 
       const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
+      // fr-rsp6: a fold-shaped 4D scene's ?surfacegl arm EXPECTS the
+      // refusal — compute is unavailable by the flag's own hand and no
+      // fragment arm exists, so a disabled Surface control naming the
+      // WebGPU reason IS the pass, and the arm ends here (nothing to
+      // settle, nothing to screenshot).
+      if (forceWebgl && (EXPECT_WEBGL_REFUSAL_BY_SCENE[scene.name] ?? false)) {
+        check(
+          disabled,
+          `${scene.name}/${armLabel}: Surface control refused under ?surfacegl (fold-4D has no fragment arm)`,
+        );
+        if (disabled) {
+          const reason = await page
+            .$eval("#modeSurfaceBtn", (b) => b.title || "")
+            .catch(() => "");
+          check(
+            /WebGPU/i.test(reason),
+            `${scene.name}/${armLabel}: refusal names WebGPU (${reason})`,
+          );
+        }
+        result.aborted = !disabled;
+        result.abortReason = disabled ? null : "expected refusal, got enabled";
+        result.refused = disabled;
+        armResults.push(result);
+        return result;
+      }
       check(
         !disabled,
         `${scene.name}/${armLabel}: Surface mode control enabled`,
@@ -1397,6 +1453,12 @@ async function main() {
       }
 
       const fallback = await runArm(scene, "surfacegl", { forceWebgl: true });
+      if (fallback.refused) {
+        console.error(
+          `[surface-4d] ${scene.name}: ?surfacegl arm refused as expected (fold-4D has no fragment arm) -- no parity to compute.`,
+        );
+        continue;
+      }
       if (fallback.aborted) {
         console.error(
           `[surface-4d] ${scene.name}: fallback arm aborted (${fallback.abortReason}) -- skipping parity for this scene.`,

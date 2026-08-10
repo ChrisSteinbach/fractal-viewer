@@ -975,6 +975,12 @@ export class Ui {
    * and re-marches the w slice every frame. It changes what the slice block
    * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
+  /** False while the live 4D surface session's fold set breaks segment
+   * exactness (fr-rsp6 × fr-wa6o: spherefold/mandelbox branches take
+   * segments to arcs, so the session clamps the slab to 0) — the
+   * thickness row hides rather than showing a slider the session ignores.
+   * Session-scoped, set by main.ts's routing; true outside such sessions. */
+  private fourDSlabAvailable = true;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
   // the slice controls above. The toggle's own wrapper row (fr-osgs) hides —
   // with the speed row — in a live 4D surface session, where the ambient
@@ -1656,8 +1662,17 @@ export class Ui {
     );
     this.fourDSliceThicknessRow.classList.toggle(
       "hidden",
-      !this.fourDSurfaceLive,
+      !this.fourDSurfaceLive || !this.fourDSlabAvailable,
     );
+  }
+
+  /** fr-rsp6: whether the live 4D surface session can take a slab at all
+   * (see {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4`
+   * at session routing and resets it true on session end. */
+  setFourDSlabAvailable(available: boolean): void {
+    if (this.fourDSlabAvailable === available) return;
+    this.fourDSlabAvailable = available;
+    this.syncFourDViewRows();
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so

@@ -147,6 +147,15 @@ const FOLD_HASH =
 const PLAIN4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
+/** fr-rsp6 phase 3 (case e): the fold-4D scene — a pure-boxfold 4D pair,
+ * the CPU/GPU fold fixtures' shape, order 1. Fold-shaped 4D systems are
+ * COMPUTE-ONLY (no fold GLSL exists in the fragment 4D tracer), so with
+ * navigator.gpu stubbed away the expected behavior is the REFUSAL: the
+ * Surface control disabled with the WebGPU reason — never a fold-blind
+ * render. */
+const FOLD4_HASH =
+  "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6MC4zLCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6LTAuMywicm90YXRpb24iOnsieXciOjAuMjV9fX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
 /** Upper bound for the WebGL compile gate + first traced preview to land,
  * per case. The fold-descent GLSL variant (case c) links in ~25s on
  * desktop Mesa per surface-material.ts's module docs; SwiftShader is
@@ -523,6 +532,7 @@ async function main() {
     const wantsB = CASE_FILTER === "all" || CASE_FILTER.includes("b");
     const wantsC = CASE_FILTER === "all" || CASE_FILTER.includes("c");
     const wantsD = CASE_FILTER === "all" || CASE_FILTER.includes("d");
+    const wantsE = CASE_FILTER === "all" || CASE_FILTER.includes("e");
 
     // ---- Case a: default scene — plain-affine WebGL arm --------------------
     let a = null;
@@ -569,6 +579,37 @@ async function main() {
         expect4DDetailToken: true,
         pollMs: 250,
       });
+    }
+
+    // ---- Case e: fold-4D scene — the fr-rsp6 REFUSAL arm -------------------
+    // Not a render case at all: fold-shaped 4D systems have no fragment
+    // arm, so a browser without WebGPU must refuse the mode with the
+    // reason — a disabled control here is the PASS, and an enabled one
+    // would mean a fold-blind tracer is about to render the wrong object.
+    if (wantsE) {
+      console.error(
+        `[surface-fallback] ==== case e-fold4-refusal: #${FOLD4_HASH.slice(0, 24)}… ====`,
+      );
+      await gotoFresh(`${BASE}/#${FOLD4_HASH}`, {
+        waitUntil: "load",
+        timeout: 30_000,
+      });
+      await waitForPointCount();
+      await page.waitForTimeout(1_000);
+      const gpuGone = await page.evaluate(() => navigator.gpu === undefined);
+      check(gpuGone, "e-fold4-refusal: navigator.gpu is undefined");
+      const surfBtn = await page.$eval("#modeSurfaceBtn", (b) => ({
+        disabled: b.disabled,
+        title: b.title || "",
+      }));
+      check(
+        surfBtn.disabled,
+        `e-fold4-refusal: Surface control disabled (fold-4D needs compute)`,
+      );
+      check(
+        /WebGPU/i.test(surfBtn.title),
+        `e-fold4-refusal: reason names WebGPU (${surfBtn.title})`,
+      );
     }
 
     console.error("[surface-fallback] ======== CASE SUMMARY ========");
