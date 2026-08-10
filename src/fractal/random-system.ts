@@ -7,7 +7,7 @@ import {
 import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { Rng } from "./rng";
-import { VARIATION_TYPES } from "./types";
+import { SYMMETRY_PLANES, VARIATION_TYPES } from "./types";
 import type {
   Bounds,
   Bounds4,
@@ -28,14 +28,15 @@ import type {
  * projection instead of the flat point cloud. The final transform never
  * carries a `w` block — see {@link randomFinalTransform}.
  *
- * `symmetry` (fr-wti's follow-up, landed via fr-d61) is rolled for FLAT
- * systems only — see {@link randomSymmetry}. `null` means "no kaleidoscope",
- * and is also what every non-flat roll carries unconditionally (a deliberate
- * deferral now that the 4D pipeline renders one — see the
- * {@link SYMMETRY_PROBABILITY} doc). Like
- * `finalTransform`, the consumer must apply this field to the app's
- * symmetry state INCLUDING resetting it to order 1 on `null`, so a previous
- * session's kaleidoscope never survives a roll that landed on no symmetry. */
+ * `symmetry` (fr-wti's follow-up, landed via fr-d61, widened to non-flat
+ * candidates via fr-msw5) is rolled for BOTH arms: a flat candidate via
+ * {@link randomSymmetry} (order 2..6, always about `"xz"`), a non-flat one
+ * via {@link randomSymmetry4} (order 2..6, any of the six
+ * {@link SYMMETRY_PLANES}, occasionally a twist). `null` means "no
+ * kaleidoscope" either way. Like `finalTransform`, the consumer must apply
+ * this field to the app's symmetry state INCLUDING resetting it to order 1
+ * on `null`, so a previous session's kaleidoscope never survives a roll that
+ * landed on no symmetry. */
 export interface RandomSystem {
   transforms: Transform[];
   finalTransform: Transform | null;
@@ -170,24 +171,45 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
  * {@link SYMMETRY_ORDER_SPAN}`)`), comfortably inside the UI slider's 1..12
  * range (1..9 before fr-xkkb).
  *
- * The plane is ALWAYS `"xz"` (the pre-fr-q0h6 `"y"` axis renamed), never
- * rolled: every rolled map already carries a uniformly random rotation, so
- * changing which w-free plane the kaleidoscope turns in amounts to a global
- * reorientation of the whole cloud — and the free-orbiting camera erases any
- * difference reorientation would make. It would be a draw spent on no added
- * variety. (A w-plane or twist would be genuinely different — it makes the
- * system 4D — but that falls under the deferral below.)
+ * The plane is ALWAYS `"xz"` (the pre-fr-q0h6 `"y"` axis renamed) for this
+ * FLAT roll, never rolled: every rolled map already carries a uniformly
+ * random rotation, so changing which w-free plane the kaleidoscope turns in
+ * amounts to a global reorientation of the whole cloud — and the
+ * free-orbiting camera erases any difference reorientation would make. It
+ * would be a draw spent on no added variety. (A w-plane or twist would be
+ * genuinely different — it makes the system 4D — which is exactly what the
+ * non-flat roll below spends its extra draws on.)
  *
- * 4D candidates NEVER roll symmetry (see {@link randomCandidate}). Not
- * because the dial is inert anymore — since fr-q0h6 the 4D pipeline renders
- * a kaleidoscope like any other — but because letting them roll one would
- * spend extra rng draws and shift the documented candidate draw order,
- * changing every existing 4D Surprise Me result. A deliberate deferral
- * recorded on fr-3rem, not an oversight.
+ * fr-msw5 lifted the deferral this paragraph used to record: 4D candidates
+ * now roll too, via {@link randomSymmetry4}, at the SAME last-drawn position
+ * in {@link randomCandidate} (`transforms` → `finalTransform` →
+ * `symmetry`) — not because the dial only just became live (since fr-q0h6
+ * the 4D pipeline has rendered a kaleidoscope like any other, and since
+ * fr-x6hz {@link scoreSystem} already threads a non-flat candidate's
+ * `symmetry` through its `runChaosGame4` probe) but because, until now,
+ * rolling one would have spent extra rng draws BEFORE `symmetry`'s position
+ * and shifted the documented candidate draw order, changing every existing
+ * 4D "Surprise Me" result for no reason (fr-3rem's original deferral).
+ * Placed at the same LAST position instead, the extra draws land strictly
+ * after everything the candidate already rolls, so a flat candidate's
+ * sequence is untouched and a 4D candidate's `transforms`/`finalTransform`
+ * stay bit-identical for a given seed — only `symmetry` (and anything drawn
+ * after it) changes. This constant, and {@link SYMMETRY_ORDER_MIN}/
+ * {@link SYMMETRY_ORDER_SPAN} below, are shared by both rolls.
  */
 const SYMMETRY_PROBABILITY = 0.3;
 const SYMMETRY_ORDER_MIN = 2;
 const SYMMETRY_ORDER_SPAN = 5;
+/**
+ * Odds that a rolled 4D symmetry ({@link randomSymmetry4}) also carries a
+ * twist, once the symmetry itself has already landed: mostly absent (a
+ * simple rotation), occasionally the extra flourish — the same "mostly one,
+ * sometimes a second" shape as {@link SECOND_VARIATION_PROBABILITY} /
+ * {@link FOUR_D_SECOND_ROTATION_PROBABILITY}, and numerically equal to the
+ * latter. Never an independent draw on a candidate whose symmetry roll
+ * itself missed.
+ */
+const SYMMETRY_TWIST_PROBABILITY = 0.25;
 
 /**
  * Rare-spice roll (fr-bf6.5): one system-level draw deciding whether THIS
@@ -624,32 +646,97 @@ function randomSymmetry(rng: Rng): SymmetryParams | null {
     order: SYMMETRY_ORDER_MIN + Math.floor(rng() * SYMMETRY_ORDER_SPAN),
     // The pre-fr-q0h6 "y" axis, renamed: the same rotation, so every rolled
     // kaleidoscope is the one this generator always rolled. Deliberately not
-    // widened to the six planes here — a 4D candidate still rolls no symmetry
-    // at all (see randomCandidate), and spending draws on a plane/twist would
-    // shift the documented draw order.
+    // widened to the six planes here: every rolled map already carries a
+    // uniformly random rotation, so for a FLAT candidate a different w-free
+    // plane is just a global reorientation of the same attractor, which the
+    // free-orbiting camera erases — no added variety. A non-flat candidate
+    // rolls its own, wider symmetry instead (see randomSymmetry4), where
+    // that argument doesn't carry over.
     plane: "xz",
   };
 }
 
 /**
+ * Roll an optional kaleidoscope for a NON-FLAT candidate (fr-msw5, lifting
+ * the deferral fr-3rem recorded): since fr-q0h6 the 4D pipeline renders a
+ * kaleidoscope end-to-end, and since fr-x6hz {@link scoreSystem} already
+ * threads a non-flat candidate's `symmetry` through its `runChaosGame4`
+ * probe — a rolled w-plane/twisted kaleidoscope is judged by the shape it
+ * actually renders, with {@link isAcceptableSystem4}'s bounds/radius/
+ * w-extent caps applying to the kaleidoscoped cloud exactly as they do to an
+ * unkaleidoscoped one — so the only piece missing was the roll itself.
+ *
+ * Same gate and order range as {@link randomSymmetry}
+ * ({@link SYMMETRY_PROBABILITY}, {@link SYMMETRY_ORDER_MIN}/
+ * {@link SYMMETRY_ORDER_SPAN}: a miss costs exactly one draw, matching
+ * flat-parity discoverability), but two things widen for the non-flat case:
+ *
+ * - the PLANE is rolled here, uniformly over all six {@link SYMMETRY_PLANES}
+ *   — unlike {@link randomSymmetry}'s hardcoded `"xz"`. That roll's
+ *   rationale doesn't carry over: every rolled map already carries a
+ *   uniformly random rotation, so for a FLAT candidate a different w-free
+ *   plane is just a global reorientation of the same attractor, erased by
+ *   the free-orbiting camera. A non-flat candidate's `w` blocks, though,
+ *   live on SPECIFIC planes (xw/yw/zw rotation kicks, a `w.position`
+ *   offset), so conjugating the kaleidoscope's plane is NOT a reorientation
+ *   of the same attractor — each of the six planes is genuine variety. The
+ *   plane draw also picks the twist's geometry: `affine4.ts`'s
+ *   `symmetryRotation4` applies the twist angle in `COMPLEMENT_PLANE[plane]`,
+ *   so plane and twist together select which double rotation a hit
+ *   produces.
+ * - a TWIST is occasionally rolled ({@link SYMMETRY_TWIST_PROBABILITY}):
+ *   rare spice, the same "mostly one, sometimes the extra flourish" shape as
+ *   {@link SECOND_VARIATION_PROBABILITY}/
+ *   {@link FOUR_D_SECOND_ROTATION_PROBABILITY} (0.25 matches the latter
+ *   exactly). When it lands, the value is drawn from `1..order - 1` — the
+ *   only integers `SymmetryParams.twist` gives distinct meaning to
+ *   (`types.ts`: values at or past `order` just restate lower ones; `1` and
+ *   `order - 1` are the two isoclinic cases). A rolled twist is never
+ *   `0` by construction, and even so the field is never STORED as `0`:
+ *   absent means simple rotation, matching `state.ts`'s `setSymmetryTwist`
+ *   and `persist.ts`'s `decodeSymmetry`, which both normalize a `0` twist to
+ *   an absent field rather than storing it.
+ *
+ * No `blend` here, same as {@link randomSymmetry}: that field only ever
+ * appears on a morph's synthesized intermediate samples (`morph.ts`), never
+ * on an authored or rolled document.
+ */
+function randomSymmetry4(rng: Rng): SymmetryParams | null {
+  if (rng() >= SYMMETRY_PROBABILITY) return null;
+  const order = SYMMETRY_ORDER_MIN + Math.floor(rng() * SYMMETRY_ORDER_SPAN);
+  const plane = SYMMETRY_PLANES[Math.floor(rng() * SYMMETRY_PLANES.length)];
+  if (rng() < SYMMETRY_TWIST_PROBABILITY) {
+    const twist = 1 + Math.floor(rng() * (order - 1));
+    return { order, plane, twist };
+  }
+  return { order, plane };
+}
+
+/**
  * Roll a full candidate: the base maps, the optional final-transform lens,
- * and (flat candidates only) an optional symmetry. Draw order is `fourD`
- * gate → `transforms` → `finalTransform` → `symmetry`. The
+ * and an optional symmetry — now rolled for BOTH arms (fr-msw5). Draw order
+ * is `fourD` gate → `transforms` → `finalTransform` → `symmetry`. The
  * {@link FOUR_D_PROBABILITY} roll is deliberately the FIRST draw of a
  * candidate — a single leading `rng()` call — so a miss leaves every
  * subsequent roll's sequence (and the rng values it consumes) exactly as it
  * was before this feature existed; only a hit spends any further draws on
- * `w`. `symmetry` is rolled LAST, and only for a flat candidate (see
- * {@link randomSymmetry}): a `fourD` hit skips it for free (`null`, costing
- * no draw), matching that a non-flat system has nowhere to put a
- * kaleidoscope.
+ * `w`. `symmetry` is rolled LAST for both arms — {@link randomSymmetry} for a
+ * flat candidate, {@link randomSymmetry4} for a non-flat one — which is
+ * exactly what let fr-msw5 widen the 4D roll without a version bump: placed
+ * after every draw the candidate already makes, the extra draws a 4D
+ * symmetry roll spends land strictly AFTER `transforms`/`finalTransform`, so
+ * (i) a FLAT candidate's rng sequence is completely unaffected by this
+ * change, and (ii) a 4D candidate's `transforms`/`finalTransform` for a
+ * given seed stay bit-identical to what the same seed rolled before —
+ * only `symmetry`, and everything the candidate (or a later candidate)
+ * draws after it, differs.
  */
 function randomCandidate(rng: Rng): RandomSystem {
   const fourD = rng() < FOUR_D_PROBABILITY;
   return {
     transforms: randomTransforms(rng, fourD),
     finalTransform: randomFinalTransform(rng),
-    symmetry: fourD ? null : randomSymmetry(rng),
+    symmetry: fourD ? randomSymmetry4(rng) : randomSymmetry(rng),
   };
 }
 
@@ -908,9 +995,11 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
  * reach anywhere the manual editor can — and, occasionally
  * ({@link FOUR_D_PROBABILITY}), a sparse `w` extension on some of the base
  * maps (fr-bf6.5), landing a genuinely 4D system — itself occasionally
- * w-mirrored ({@link FOUR_D_REFLECTION_PROBABILITY} — fr-bew). A flat
- * candidate additionally has a chance ({@link SYMMETRY_PROBABILITY}) of a
- * rolled rotational symmetry ({@link randomSymmetry}).
+ * w-mirrored ({@link FOUR_D_REFLECTION_PROBABILITY} — fr-bew). Every
+ * candidate, flat or non-flat, additionally has a chance
+ * ({@link SYMMETRY_PROBABILITY}) of a rolled rotational symmetry —
+ * {@link randomSymmetry} for a flat candidate, {@link randomSymmetry4} for a
+ * non-flat one (fr-msw5).
  *
  * Each candidate is probed ({@link scoreSystem} — bounds sanity plus
  * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate
