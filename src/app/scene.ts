@@ -672,6 +672,12 @@ export class FractalScene {
    * compute path exists to avoid, and {@link captureThumbnail} reads the
    * last presented frame instead of tracing. */
   private surfaceComputeActive = false;
+  /** Whether that compute session is the 4D kind (fr-dlxh's 4D cut) —
+   * set by {@link enterSurfaceCompute4Session}. While true every frame
+   * spec carries the live rotor/slice view4 for the affine4 kernel's
+   * params tail (per-frame, the fragment tracer's live-uniform
+   * discipline across the WebGPU seam). */
+  private surfaceCompute4 = false;
   /** Last compute frame, uploaded as a plain RGBA8 texture and stretched
    * over the canvas by the shared surface blit — the same presentation
    * seam as the preview/settle targets, so capture and the recorder keep
@@ -2394,6 +2400,7 @@ export class FractalScene {
   enterSurfaceComputeSession(de: SurfaceDE): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
+    this.surfaceCompute4 = false;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
@@ -2409,7 +2416,27 @@ export class FractalScene {
   enterSurfaceComputeEscapeSession(): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
+    this.surfaceCompute4 = false;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+  }
+
+  /**
+   * {@link enterSurfaceComputeSession}'s 4D twin (fr-dlxh's 4D cut): the
+   * same session-entry resets {@link setSurfaceSystem4} makes — the 4D
+   * DE's own full depth for the preview clamp, a plain governor reset
+   * (no 4D descent cost weight exists yet; the governor's EMA re-prices
+   * within a few frames) — without touching either GLSL material. While
+   * active, every frame spec carries the live rotor/slice view
+   * ({@link setSurface4View} keeps feeding the scene state exactly as in
+   * the fragment path — one funnel, both tracers).
+   */
+  enterSurfaceCompute4Session(de: SurfaceDE4): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = true;
+    this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
   }
@@ -2419,6 +2446,7 @@ export class FractalScene {
    * frame holds megabytes of GPU memory nothing will re-present. */
   exitSurfaceComputeSession(): void {
     this.surfaceComputeActive = false;
+    this.surfaceCompute4 = false;
     this.surfaceComputeTexture?.dispose();
     this.surfaceComputeTexture = null;
   }
@@ -2498,6 +2526,20 @@ export class FractalScene {
         (this.surfaceLUTTexture?.image.data as Uint8Array | undefined) ?? null,
       lutVersion: this.surfaceLUTVersion,
       dither: true,
+      // The 4D session's live pose (fr-dlxh 4D cut): the same
+      // (rotor, w0, halfW) state setSurface4View maintains — already
+      // CONVERTED to literal world w (fr-33yb happens at the setter),
+      // re-read at every spec assembly so the compute frames track the
+      // tumble/slider exactly as the fragment tracer's uniforms would.
+      ...(this.surfaceCompute4
+        ? {
+            view4: {
+              rotor: [...this.surface4Rot],
+              w0: this.surface4W0,
+              sliceHalfW: this.surface4HalfW,
+            },
+          }
+        : {}),
     };
   }
 

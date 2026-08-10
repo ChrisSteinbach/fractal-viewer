@@ -58,14 +58,20 @@
  */
 
 import type { EscapeDE } from "../fractal/escape-de";
-import type { SurfaceGpuRunParams } from "../fractal/surface-de-gpu";
+import type {
+  SurfaceGpu4View,
+  SurfaceGpuRunParams,
+} from "../fractal/surface-de-gpu";
 import {
   packEscapeGpuParams,
+  packSurface4GpuParams,
   packSurfaceGpuMaps,
+  packSurfaceGpuMaps4,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_MAP_VEC4,
+  SURFACE_GPU_PARAMS4_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -79,6 +85,7 @@ import {
   SURFACE_FOLD_BEAM_WIDTH,
   type SurfaceDE,
 } from "../fractal/surface-de";
+import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
@@ -127,14 +134,19 @@ export class SurfaceComputeUnavailableError extends Error {}
 /**
  * What one compute session traces (fr-dlxh): an IFS attractor descent
  * (the fr-tzdg/fr-55s1 fold and fold-lens classes, `SurfaceDE` frozen at
- * enter) or an escape-time forward orbit (`EscapeDE`, the systems
- * `analyzeEscapeSystem` admits — the IFS gate's complement). The kind
- * picks the kernel core, the params packer and the maps buffer's
- * existence; everything else — the bounded march/shade host loop, the
- * progressive presents, the failure ladder — is shared.
+ * enter), an escape-time forward orbit (`EscapeDE`, the systems
+ * `analyzeEscapeSystem` admits — the IFS gate's complement), or a 4D IFS
+ * descent (`SurfaceDE4`, the fr-dlxh 4D cut — the systems
+ * `analyzeSurfaceSystem4` admits; its rotor/slice VIEW is per-frame SPEC
+ * state, never frozen here). The kind picks the kernel core, the params
+ * packer and the maps buffer's layout; everything else — the bounded
+ * march/shade host loop, the progressive presents, the failure ladder —
+ * is shared.
  */
 export type SurfaceComputeTarget =
-  { kind: "ifs"; de: SurfaceDE } | { kind: "escape"; de: EscapeDE };
+  | { kind: "ifs"; de: SurfaceDE }
+  | { kind: "escape"; de: EscapeDE }
+  | { kind: "ifs4"; de: SurfaceDE4 };
 
 /** Everything one frame needs beyond the session-frozen DE: raster size,
  * camera, tier budgets, live lighting/color params. Assembled by scene.ts
@@ -172,6 +184,14 @@ export interface SurfaceComputeFrameSpec {
    * when the ramp actually changed. */
   lutVersion: number;
   dither: boolean;
+  /** The 4D session's LIVE view (fr-dlxh 4D cut): the same (rotor, w0,
+   * sliceHalfW) triple `setSurfaceView4` receives, re-read from scene
+   * state at every spec assembly — the spec is rebuilt per renderFrame,
+   * which is exactly what keeps the rotor/slice as live as the camera.
+   * REQUIRED for an `ifs4` target (runFrame throws without it — a 4D
+   * frame with no pose is a contract bug, not a default); ignored for
+   * the 3D kinds. */
+  view4?: SurfaceGpu4View;
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -468,10 +488,11 @@ export class SurfaceComputeRenderer {
   /**
    * Acquire a device and build the session pipeline for `target` (frozen
    * — a system edit re-enters the session, never retargets a live
-   * renderer). `colors[j]`/`trapIndices[j]` shade `de.maps[j]` for the
-   * IFS kind — the same per-slot inputs the GLSL packer takes — and slot
-   * 0 alone for the escape kind (one map, the GLSL `setEscapeSystem`
-   * shape). `opts.shadeDeWidth` overrides the shipped shade probe width
+   * renderer; an ifs4 target's rotor/slice view is per-frame SPEC state,
+   * the one deliberately live input). `colors[j]`/`trapIndices[j]` shade
+   * `de.maps[j]` for the IFS kinds (3D and 4D alike) — the same per-slot
+   * inputs the GLSL packers take — and slot 0 alone for the escape kind
+   * (one map, the GLSL `setEscapeSystem` shape). `opts.shadeDeWidth` overrides the shipped shade probe width
    * ({@link SURFACE_COMPUTE_SHADE_DE_WIDTH}) — the gpu-bench A/B knob,
    * never set by the app; inert for escape (its loop has no width).
    * Rejects with {@link SurfaceComputeUnavailableError} when WebGPU is
@@ -567,13 +588,17 @@ export class SurfaceComputeRenderer {
           // are inert there) — and a fold FINAL lens wraps either core in
           // descendLens's branch sweep. fr-dlxh: an escape target takes
           // the forward-orbit core instead (no lens — the escape gate
-          // refuses final transforms).
+          // refuses final transforms), and a 4D target the affine4
+          // ladder (no lens either — 4D fold finals are fr-rsp6's
+          // scope; the 4D gate refuses them today).
           core:
             target.kind === "escape"
               ? "escape"
-              : deHasFolds(target.de)
-                ? "fold"
-                : "affine",
+              : target.kind === "ifs4"
+                ? "affine4"
+                : deHasFolds(target.de)
+                  ? "fold"
+                  : "affine",
           lens: target.kind === "ifs" && target.de.foldFinal !== null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
@@ -656,7 +681,12 @@ export class SurfaceComputeRenderer {
     ]);
 
     const paramsBuf = device.createBuffer({
-      size: SURFACE_GPU_PARAMS_BYTES,
+      // The affine4 core's params carry the 4D variant tail (rotor,
+      // sector step, 4D lens, w0/sliceHalfW) past the frozen block.
+      size:
+        target.kind === "ifs4"
+          ? SURFACE_GPU_PARAMS4_BYTES
+          : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({
@@ -669,11 +699,14 @@ export class SurfaceComputeRenderer {
     // DECLARES the maps binding, but the explicit bind group layouts
     // below keep entry 1 (a layout may carry entries a shader ignores),
     // so the escape target binds one zero stride there rather than
-    // forking every layout/bind-group path.
+    // forking every layout/bind-group path. A 4D target packs the
+    // GpuMap4 layout (same 96-byte stride, its own field contract).
     const mapsData =
       target.kind === "escape"
         ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
-        : new Float32Array(packSurfaceGpuMaps(target.de));
+        : target.kind === "ifs4"
+          ? new Float32Array(packSurfaceGpuMaps4(target.de))
+          : new Float32Array(packSurfaceGpuMaps(target.de));
     const mapsBuf = device.createBuffer({
       size: mapsData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -1039,7 +1072,10 @@ export class SurfaceComputeRenderer {
     // from a proportionally raised prior and stays watchdog-safe before
     // the EMAs take over.
     // (Escape targets scale nothing: the forward loop is phone-cheap and
-    // the pessimistic base priors only err toward smaller first slices.)
+    // the pessimistic base priors only err toward smaller first slices.
+    // 4D targets scale nothing either — no lens exists there, and the
+    // affine-shaped ladder starts from the same pessimistic base priors
+    // the 3D affine class would.)
     const lensKind =
       this.target.kind === "ifs"
         ? this.target.de.foldFinal?.foldKind
@@ -1056,6 +1092,27 @@ export class SurfaceComputeRenderer {
     let truncated = false;
     let lastProgress = wallStart;
 
+    // One packer per frame, kind-routed once: the 4D packer additionally
+    // closes over the spec's live view (rotor/slice re-read per frame by
+    // scene.ts) — an ifs4 frame without one is a contract bug, thrown
+    // loud here rather than defaulted (a 4D frame with no pose has no
+    // meaningful default).
+    const target = this.target;
+    const packParams: (run: SurfaceGpuRunParams) => ArrayBuffer =
+      target.kind === "escape"
+        ? (run) => packEscapeGpuParams(target.de, run)
+        : target.kind === "ifs4"
+          ? (() => {
+              const view4 = spec.view4;
+              if (!view4) {
+                throw new Error(
+                  "Surface compute: an ifs4 frame spec must carry view4",
+                );
+              }
+              return (run: SurfaceGpuRunParams) =>
+                packSurface4GpuParams(target.de, view4, run);
+            })()
+          : (run) => packSurfaceGpuParams(target.de, run);
     const writeParams = (itemCount: number, steps: number): void => {
       const run: SurfaceGpuRunParams = {
         itemCount,
@@ -1080,13 +1137,7 @@ export class SurfaceComputeRenderer {
           pixelEps: spec.acceptPixelEps,
         },
       };
-      device.queue.writeBuffer(
-        this.paramsBuf,
-        0,
-        this.target.kind === "escape"
-          ? packEscapeGpuParams(this.target.de, run)
-          : packSurfaceGpuParams(this.target.de, run),
-      );
+      device.queue.writeBuffer(this.paramsBuf, 0, packParams(run));
     };
     const dispatchTimed = async (
       pipeline: GPUComputePipeline,
