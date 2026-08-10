@@ -11,6 +11,7 @@ import { ESCAPE_LIMIT, runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { doubleRotation, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
+import { SYMMETRY_PLANES } from "./types";
 import type { Bounds, Bounds4, Transform } from "./types";
 
 const SEED_SAMPLE_SIZE = 50;
@@ -304,7 +305,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
   });
 });
 
-describe("randomSystem's symmetry roll (fr-d61)", () => {
+describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
   it("rolls symmetry on roughly 3 in 10 flat systems: integer order 2..6 about y, null otherwise", () => {
     let flatSystemsSeen = 0;
     let symmetryHits = 0;
@@ -318,6 +319,10 @@ describe("randomSystem's symmetry roll (fr-d61)", () => {
       expect(symmetry.order).toBeGreaterThanOrEqual(2);
       expect(symmetry.order).toBeLessThanOrEqual(6);
       expect(symmetry.plane).toBe("xz");
+      // The flat roll's vocabulary stays frozen -- fr-msw5 only widened the
+      // non-flat roll below, never this one -- so a flat roll never carries
+      // a twist key.
+      expect(symmetry).not.toHaveProperty("twist");
     }
     const fraction = symmetryHits / flatSystemsSeen;
     // Generous band around the 0.3 design target (SYMMETRY_PROBABILITY):
@@ -327,22 +332,65 @@ describe("randomSystem's symmetry roll (fr-d61)", () => {
     expect(fraction).toBeLessThanOrEqual(0.45);
   });
 
-  it("never attaches symmetry to a non-flat system (the 4D pipeline has no symmetry support)", () => {
+  it("rolls symmetry on roughly 3 in 10 non-flat systems: order 2..6, a rolled plane, occasional twist (fr-msw5)", () => {
     let nonFlatSystemsSeen = 0;
+    let symmetryHits = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const { transforms, symmetry } = randomSystem(mulberry32(seed));
       if (systemIsFlat(transforms)) continue;
       nonFlatSystemsSeen++;
-      expect(symmetry).toBeNull();
+      if (symmetry === null) continue;
+      symmetryHits++;
+      expect(Number.isInteger(symmetry.order)).toBe(true);
+      expect(symmetry.order).toBeGreaterThanOrEqual(2);
+      expect(symmetry.order).toBeLessThanOrEqual(6);
+      expect(
+        (SYMMETRY_PLANES as readonly string[]).includes(symmetry.plane),
+      ).toBe(true);
+      if ("twist" in symmetry) {
+        expect(Number.isInteger(symmetry.twist)).toBe(true);
+        expect(symmetry.twist).toBeGreaterThanOrEqual(1);
+        expect(symmetry.twist).toBeLessThanOrEqual(symmetry.order - 1);
+      }
+      expect(symmetry).not.toHaveProperty("blend");
     }
     expect(nonFlatSystemsSeen).toBeGreaterThan(0);
+    const fraction = symmetryHits / nonFlatSystemsSeen;
+    // Generous band around the same 0.3 design target
+    // (SYMMETRY_PROBABILITY, shared with the flat roll above): loose enough
+    // to never flake, tight enough to catch a broken or always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.15);
+    expect(fraction).toBeLessThanOrEqual(0.45);
+  });
+
+  it("reaches more than one plane and at least one twisted kaleidoscope across a seed batch (fr-msw5)", () => {
+    const planesSeen = new Set<string>();
+    let twistsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = randomSystem(mulberry32(seed));
+      if (systemIsFlat(transforms) || symmetry === null) continue;
+      planesSeen.add(symmetry.plane);
+      if ("twist" in symmetry) twistsSeen++;
+    }
+    // Measured at FOUR_D_SEED_SAMPLE_SIZE=200 (fr-msw5): 4 distinct planes
+    // and 3 twists turn up, comfortably above the floor below -- no
+    // widening needed.
+    expect(planesSeen.size).toBeGreaterThanOrEqual(2);
+    expect(twistsSeen).toBeGreaterThanOrEqual(1);
   });
 
   it("re-probing a symmetric system WITH its rolled symmetry still lands acceptable bounds", () => {
     let symmetricSystemsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const system = randomSystem(mulberry32(seed));
-      if (system.symmetry === null) continue;
+      // fr-msw5: a non-flat system can now also carry symmetry, occasionally
+      // on a w-mixing plane (randomSymmetry4) -- runChaosGame's
+      // symmetryRotation throws on those by design (a w-plane must route to
+      // the 4D path), so this flat-only 3D re-probe is scoped to flat
+      // systems; the non-flat case gets its own runChaosGame4 re-probe below.
+      if (system.symmetry === null || !systemIsFlat(system.transforms)) {
+        continue;
+      }
       symmetricSystemsSeen++;
       // A fresh, independent rng stream -- not a replay of the internal
       // generation-time probe -- so this genuinely re-verifies the system
@@ -361,6 +409,33 @@ describe("randomSystem's symmetry roll (fr-d61)", () => {
       expect(isAcceptableSystem(result.bounds)).toBe(true);
     }
     expect(symmetricSystemsSeen).toBeGreaterThan(0);
+  });
+
+  it("re-probing a non-flat system WITH its rolled symmetry still lands acceptable bounds (fr-msw5)", () => {
+    let nonFlatSymmetricSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const system = randomSystem(mulberry32(seed));
+      if (systemIsFlat(system.transforms) || system.symmetry === null) {
+        continue;
+      }
+      nonFlatSymmetricSeen++;
+      const finalTransform4 = system.finalTransform
+        ? toTransform4(system.finalTransform)
+        : null;
+      // A fresh, independent rng stream -- not a replay of the internal
+      // generation-time probe -- so this genuinely re-verifies the system
+      // rather than trivially repeating the check that already accepted it.
+      // Mirrors scoreSystem's own runChaosGame4 call (symmetry included).
+      const result = runChaosGame4(
+        system.transforms.map(toTransform4),
+        6000,
+        mulberry32(seed * 7919 + 1),
+        finalTransform4,
+        system.symmetry,
+      );
+      expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
+    }
+    expect(nonFlatSymmetricSeen).toBeGreaterThan(0);
   });
 });
 
