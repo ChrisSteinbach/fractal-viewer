@@ -78,6 +78,11 @@ function wrapInvMElementCounter(
       if (typeof prop === "string" && /^\d+$/.test(prop)) {
         counter.n++;
       }
+      // A Proxy `get` trap must pass through EVERY property read (numeric
+      // elements, `.length`, `.map`, `Symbol.iterator`, ...), so its return
+      // is `any` by the lib's own ProxyHandler.get signature -- no narrower
+      // honest type exists to assert here.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       return Reflect.get(target, prop, receiver);
     },
   });

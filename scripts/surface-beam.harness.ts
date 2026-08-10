@@ -313,10 +313,15 @@ function countingDE4(
   counter: { n: number };
 } {
   const counter = { n: 0 };
+  // Spread first, then re-define invM as the counting getter (later literal
+  // members win): every data field -- INCLUDING ones added to SurfaceDE4Map
+  // after this file was written -- passes through untouched. Mirrors
+  // harness-profiles.ts's countingDE, which learned this the hard way: an
+  // explicit field list here had silently dropped SurfaceDE4Map's newer fold
+  // fields (foldKind/foldInvW/foldSigma/invMSigmaMin/invTNorm/bnbDir),
+  // caught only once fr-dyof wired scripts/ into `tsc --noEmit`.
   const maps = de.maps.map((m): SurfaceDE4Map => ({
-    invT: m.invT,
-    sigmaMin: m.sigmaMin,
-    baseIndex: m.baseIndex,
+    ...m,
     get invM() {
       counter.n++;
       return m.invM;
