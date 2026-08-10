@@ -59,13 +59,34 @@
  *      Surface through the exact same single action: clicking
  *      `#modeSurfaceBtn`.
  *
- * Both hashes were minted by a throwaway `npx tsx` script that called the
+ *   d. (fr-dlxh 4D cut) a 4D scene: three contracting affine maps, one
+ *      carrying a live `w` block (`w: {position, rotation: {xw}}`), flat
+ *      kaleidoscope — `systemPartsAreNonFlat` true, `analyzeSurfaceSystem4`
+ *      eligible (verified at mint time like b/c). Since the fr-dlxh 4D cut,
+ *      a 4D surface session PREFERS the WebGPU compute renderer (the
+ *      affine4 kernel core) and the fragment 4D tracer
+ *      (`surface-material-4d.ts`) is now the FALLBACK arm — exactly like
+ *      the fold/escape 3D kinds already were — so with WebGPU disabled
+ *      this case exercises that same fallback arm, one dimension up, and
+ *      the fr-yvcw compile-gate fix (shared code — `compileSurfaceMaterial`
+ *      is reached from every WebGL-arm branch, 3D and 4D alike). ALSO
+ *      carries the fr-tmgf disclosure token: `render-backend.ts`'s
+ *      `surfaceWebglDetail` treats any 4D system as `computeShaped`, so a
+ *      WebGL 4D fallback session's progress row should trail
+ *      `" — compute unavailable"` — checked and reported verbatim, not just
+ *      asserted, since a fast settle can outrun the poll before the row is
+ *      ever caught visible.
+ *
+ * Both 3D hashes were minted by a throwaway `npx tsx` script that called the
  * app's own `initialState`/`toSnapshot`/`encodeScene`
  * (src/app/state.ts, src/app/persist.ts) and round-tripped the result
  * through `decodeScene` before printing it — so each is exactly what the
  * app's own encoder produces and exactly what its own strict decoder
  * accepts (the throwaway script lived in /tmp, per the task's
- * constraints, and is not part of this repo).
+ * constraints, and is not part of this repo). Case d's hash was minted the
+ * same way, with the additional pre/post-decode check that
+ * `systemPartsAreNonFlat` and `analyzeSurfaceSystem4` both agree the
+ * DECODED document (not just the authored one) gates the same way.
  *
  * THE CORE ASSERTION, per case: screenshot the CANVAS ELEMENT ONLY (not
  * the full viewport — the control panel opens by default at this
@@ -79,10 +100,15 @@
  * expires. `#surfaceProgress` is read every poll and its (visible, text)
  * pair recorded on every change — the element idles HIDDEN whenever the
  * session is settled or has no in-flight strip job, which means DONE, not
- * "never started"; this script never mistakes hidden for stalled.
+ * "never started"; this script never mistakes hidden for stalled. Case d
+ * additionally scans EVERY recorded sample (visible or not — `ui.ts`'s
+ * `setSurfaceProgress(null)` never clears stale textContent, only the
+ * `hidden` class) for the "compute unavailable" token, asserting it only
+ * when the row was actually caught visible at least once.
  *
- * Usage: node scripts/surface-fallback.verify.mjs [url]
- * (url defaults to https://localhost:5173 — start a dev server first.)
+ * Usage: node scripts/surface-fallback.verify.mjs [url] [caseFilter]
+ * (url defaults to https://localhost:5173 — start a dev server first.
+ * caseFilter is a substring match over "abcd", default "all".)
  * Screenshots land in .playwright-mcp/ (gitignored) for eyeballing.
  */
 import { mkdir } from "node:fs/promises";
@@ -110,6 +136,16 @@ const ESCAPE_HASH =
  * `deHasFolds` true (verified at mint time). */
 const FOLD_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNywwLjcsMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6WzAuNywwLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlswLjcsLTAuNywwLjddLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjE5LDAuMTksMC4xOV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJtYW5kZWxib3giLCJ3ZWlnaHQiOjEuMn1dfSx7InBvc2l0aW9uIjpbMC43LC0wLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlstMC43LDAuNywwLjddLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjE5LDAuMTksMC4xOV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJtYW5kZWxib3giLCJ3ZWlnaHQiOjEuMn1dfSx7InBvc2l0aW9uIjpbLTAuNywwLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlstMC43LC0wLjcsMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6Wy0wLjcsLTAuNywtMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6WzAuNjIsMC42MiwwLjYyXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC42NiwwLjY2LDAuNjZdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MX1dfSx7InBvc2l0aW9uIjpbMC42MiwtMC42MiwtMC42Ml0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNjYsMC42NiwwLjY2XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XX0seyJwb3NpdGlvbiI6Wy0wLjYyLDAuNjIsLTAuNjJdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjY2LDAuNjYsMC42Nl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjoxfV19LHsicG9zaXRpb24iOlstMC42MiwtMC42MiwwLjYyXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC42NiwwLjY2LDAuNjZdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MX1dfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJwbGFuZSI6Inh6In0sImdsb3dCcmlnaHRuZXNzIjoxfQ";
+
+/** Case D (fr-dlxh 4D cut): three contracting affine maps (one carrying a
+ * live `w` block: position 0.5, an xw rotation of 0.3), flat kaleidoscope
+ * (order 1) -> systemPartsAreNonFlat true, analyzeSurfaceSystem4 eligible
+ * (verified at mint time, including a POST-decode re-check with the same
+ * gate functions). Routes to the 4D fragment tracer fallback arm when
+ * WebGPU is unavailable (the fr-dlxh 4D cut's new preferred engine is the
+ * WebGPU compute affine4 kernel; this hash exercises its fallback). */
+const PLAIN4_HASH =
+  "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
 /** Upper bound for the WebGL compile gate + first traced preview to land,
  * per case. The fold-descent GLSL variant (case c) links in ~25s on
@@ -273,7 +309,8 @@ async function main() {
      * further input — poll canvas screenshots against that baseline until
      * a material difference appears or the budget expires.
      */
-    async function runCase(label, hashPath, screenshotPrefix) {
+    async function runCase(label, hashPath, screenshotPrefix, opts = {}) {
+      const { expect4DDetailToken = false, pollMs = POLL_MS } = opts;
       console.error(
         `[surface-fallback] ==== case ${label}: ${hashPath || "(default)"} ====`,
       );
@@ -289,6 +326,7 @@ async function main() {
         contextLost: null,
         newPageErrors: [],
         sawComputeActive: false,
+        sawComputeUnavailableToken: null,
         before: null,
         after: null,
       };
@@ -358,7 +396,7 @@ async function main() {
         const cur = await canvasShot(null);
         lastDiff = pngDiffPct(before, cur);
         if (lastDiff > PAINT_DIFF_PCT || Date.now() > deadline) break;
-        await page.waitForTimeout(POLL_MS);
+        await page.waitForTimeout(pollMs);
       }
       result.elapsedMs = Date.now() - t0;
       result.finalDiffPct = lastDiff;
@@ -407,6 +445,47 @@ async function main() {
         );
       }
 
+      // fr-tmgf's 4D disclosure token (fr-dlxh 4D cut widened
+      // surfaceWebglDetail's computeShaped test to every 4D system): a 4D
+      // WebGL-fallback session's progress row should trail
+      // " — compute unavailable". Scan EVERY recorded sample, visible or
+      // not — ui.ts's setSurfaceProgress(null) only toggles the "hidden"
+      // class, it never clears stale textContent — but only ASSERT the
+      // token when the row was actually caught visible at least once; a
+      // settle that outran the poll cadence is reported, not failed.
+      if (expect4DDetailToken) {
+        const anySampleWithToken = result.progressObservations.filter(
+          (o) => o.text && o.text.includes("compute unavailable"),
+        );
+        console.error(
+          `[surface-fallback] ${label}: samples (visible or not) containing "compute unavailable": ${
+            anySampleWithToken.length
+              ? anySampleWithToken
+                  .map(
+                    (o) =>
+                      `@${o.atMs}ms visible=${o.visible} ${JSON.stringify(o.text)}`,
+                  )
+                  .join(" | ")
+              : "none"
+          }`,
+        );
+        if (shownTexts.length > 0) {
+          const sawTokenWhileVisible = shownTexts.some((o) =>
+            o.text.includes("compute unavailable"),
+          );
+          result.sawComputeUnavailableToken = sawTokenWhileVisible;
+          check(
+            sawTokenWhileVisible,
+            `${label}: visible progress row discloses "compute unavailable" (${shownTexts.map((o) => o.text).join(" | ")})`,
+          );
+        } else {
+          result.sawComputeUnavailableToken = false;
+          console.error(
+            `[surface-fallback] ${label}: #surfaceProgress never observed visible -- cannot confirm the "compute unavailable" disclosure token (settled faster than the poll cadence); not asserted.`,
+          );
+        }
+      }
+
       caseResults.push(result);
       return result;
     }
@@ -422,6 +501,7 @@ async function main() {
     const wantsA = CASE_FILTER === "all" || CASE_FILTER.includes("a");
     const wantsB = CASE_FILTER === "all" || CASE_FILTER.includes("b");
     const wantsC = CASE_FILTER === "all" || CASE_FILTER.includes("c");
+    const wantsD = CASE_FILTER === "all" || CASE_FILTER.includes("d");
 
     // ---- Case a: default scene — plain-affine WebGL arm --------------------
     let a = null;
@@ -449,10 +529,31 @@ async function main() {
       );
     }
 
+    // ---- Case d: 4D scene — the fr-dlxh 4D cut's WebGL fallback arm --------
+    // Deliberately NOT chained to case c's budget outcome: c's cost driver
+    // (the fold-descent GLSL link) has nothing to do with d's (the
+    // fragment 4D tracer, a different program entirely), so a slow/failed
+    // fold compile says nothing about whether the 4D arm will compile
+    // fine. Still gated behind wantsD so a caller can skip it.
+    let d = null;
+    if (wantsD) {
+      // Tighter poll cadence than a/b/c: catching the "compute unavailable"
+      // disclosure token needs the row observed mid-flight, and the 4D
+      // fragment tracer's compile is fast enough under SwiftShader that
+      // the shared 1500ms cadence routinely missed it entirely in earlier
+      // runs (settle landed between polls). 250ms costs more screenshots
+      // over a short session but doesn't touch a/b/c's already-proven
+      // cadence.
+      d = await runCase("d-4d", `#${PLAIN4_HASH}`, "case-d-4d", {
+        expect4DDetailToken: true,
+        pollMs: 250,
+      });
+    }
+
     console.error("[surface-fallback] ======== CASE SUMMARY ========");
     for (const r of caseResults) {
       console.error(
-        `[surface-fallback] ${r.label}: entered=${r.entered} painted=${r.painted} diff=${r.finalDiffPct?.toFixed(1)}% elapsed=${r.elapsedMs}ms gpuUndefined=${r.gpuUndefined} contextLost=${r.contextLost} progressObservations=${r.progressObservations.length}`,
+        `[surface-fallback] ${r.label}: entered=${r.entered} painted=${r.painted} diff=${r.finalDiffPct?.toFixed(1)}% elapsed=${r.elapsedMs}ms gpuUndefined=${r.gpuUndefined} contextLost=${r.contextLost} progressObservations=${r.progressObservations.length} sawComputeUnavailableToken=${r.sawComputeUnavailableToken}`,
       );
     }
 

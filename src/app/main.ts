@@ -2777,10 +2777,11 @@ function main(): void {
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
   // Compute is on the table at all — no block latched, an API present.
-  // The escape and 4D branches consult this alone (fr-dlxh: a single
-  // pure-fold map is always compute-shaped, and the 4D cut made every
-  // 4D system compute-shaped — the affine4 core is the 4D home); the 3D
-  // IFS branch adds its shape test below.
+  // The escape branch consults this alone (fr-dlxh: a single pure-fold
+  // map is always compute-shaped); the 3D IFS branch adds its shape
+  // test below, and the 4D branch its own (the 4D cut's measured
+  // verdict: plain 4D is compute-shaped, kaleidoscope 4D is not —
+  // fr-b72d).
   function surfaceComputeAvailable(): boolean {
     return surfaceComputeBlock === null && SurfaceComputeRenderer.supported();
   }
@@ -3157,18 +3158,30 @@ function main(): void {
             state.symmetry,
           );
           surfaceSessionIs4D = true;
-          if (surfaceComputeAvailable()) {
+          // Routing by MEASURED verdict (fr-dlxh 4D cut, real Iris Xe,
+          // 1024x640): PLAIN 4D systems prefer compute — settle 4.6s vs
+          // the fragment arm's 8.9s, object-mask IoU 0.996 between the
+          // arms — but KALEIDOSCOPE 4D stays on the fragment tracer:
+          // the WGSL ladder's sector sweep measured ~35x slower than
+          // the GLSL's at order 6 (a 6-minute observation never settled
+          // and plateaued at 88% where ?surfacegl settled the same
+          // scene in 10.9s; fr-b72d tracks the kernel-side sweep cost).
+          // The 3D shape-split precedent — affine stays WebGL, folds
+          // prefer compute — one dimension up.
+          const compute4Shaped = de.symmetry.order <= 1;
+          if (compute4Shaped && surfaceComputeAvailable()) {
             // No GLSL system upload — the enter twin owns the session
             // resets, and the live view flows through setSurface4View
             // into the scene state every frame spec re-reads.
             computeTarget = { kind: "ifs4", de };
             scene.enterSurfaceCompute4Session(de);
           } else {
-            // fr-tmgf: compute is the 4D home since the 4D cut — the
-            // WebGL session says why it passed (null for the deliberate
-            // ?surfacegl flag).
+            // fr-tmgf: the WebGL session says why compute passed, when
+            // it was the preferred engine (null for kaleidoscope 4D —
+            // WebGL is its MEASURED home, nothing to explain — and for
+            // the deliberate ?surfacegl flag).
             surfaceWebglDetailToken = surfaceWebglDetail({
-              computeShaped: true,
+              computeShaped: compute4Shaped,
               supported: SurfaceComputeRenderer.supported(),
               block: surfaceComputeBlock,
             });

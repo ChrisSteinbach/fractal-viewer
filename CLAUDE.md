@@ -649,20 +649,28 @@ and UI**, so the interesting math is unit-tested without a browser:
     guaranteed 16KB, where default-block arrays would have taken 192 of the
     guaranteed 224 fragment uniform vectors), and the kaleidoscope SWEEPS
     like 3D's (fr-u91x), so 24 slots means 24 transforms at any order.
-    The FALLBACK arm since fr-dlxh's 4D cut: 4D sessions prefer
-    `surface-compute.ts`'s affine4 kernel where an adapter exists, and
-    this tracer serves `?surfacegl` / no-adapter / device-loss.
+    Since fr-dlxh's 4D cut this tracer is the PLAIN-4D fallback arm
+    (`?surfacegl` / no adapter / device loss — compute is 1.7x faster
+    there) and the kaleidoscope-4D MEASURED HOME: the WGSL sector sweep
+    ran ~35x slower at order 6 (fr-b72d), so order > 1 routes here by
+    verdict, caveat-free.
   - `surface-compute.ts` — WebGPU compute renderer for fold-shaped 3D
     surface sessions (fr-tzdg): systems with base-map folds OR a fold
     FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
     the kernel core and the lens wrapper, and the two first-sizing
     priors scale by the lens branch count 27/3/81 ÷ 8), — since
     fr-dlxh — escape-time sessions (the single non-contracting pure-fold
-    map the IFS gate refuses), and — since fr-dlxh's 4D cut — ALL 4D
-    surface sessions: every one of them PREFERS it when an adapter
-    exists — no fold GLSL ever compiles (the ~25s Mesa link / ~5.7s
-    lens link / fr-096u entry hazards never engage), no grid request
-    (gridless by decision, measured). `create()` takes a
+    map the IFS gate refuses), and — since fr-dlxh's 4D cut — PLAIN 4D
+    surface sessions (symmetry order 1): those ALL PREFER it when an
+    adapter exists — no fold GLSL ever compiles (the ~25s Mesa link /
+    ~5.7s lens link / fr-096u entry hazards never engage), no grid
+    request (gridless by decision, measured). KALEIDOSCOPE 4D stays on
+    the fragment tracer by MEASURED verdict (real Iris, 1024x640: plain
+    4D compute settles 4.6s vs fragment 8.9s with object-mask IoU
+    0.996, but at order 6 the WGSL sector sweep never settled a
+    6-minute observation the fragment arm settled in 10.9s — ~35x;
+    fr-b72d tracks the kernel-side cost, fr-d0nn's h=0 register
+    variant is the adjacent lever). `create()` takes a
     `SurfaceComputeTarget` union (`{kind:"ifs"|"escape"|"ifs4"}`) whose
     `kind` picks the kernel core, the params packer and the maps
     buffer's layout/existence — the bounded march/shade host loop,

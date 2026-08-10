@@ -1,0 +1,970 @@
+#!/usr/bin/env node
+/**
+ * fr-dlxh (4D cut): real-driver browser verification of the 4D surface
+ * session's TWO arms now that a 4D surface session PREFERS the WebGPU
+ * compute renderer (the new affine4 kernel core, `kind: "ifs4"` in
+ * `surface-compute.ts`) — the fragment 4D tracer (`surface-material-4d.ts`)
+ * is the fallback arm (`?surfacegl` / no adapter / device loss), exactly
+ * mirroring how the 3D fold/escape kinds already worked before this cut.
+ *
+ * Unlike `surface-fallback.verify.mjs` (SwiftShader, `navigator.gpu`
+ * stubbed away to force the fallback arm), THIS script drives a REAL
+ * Chrome window against a REAL display so the COMPUTE arm actually has a
+ * WebGPU adapter to find — the launch idiom is `scripts/gpu-flame-bench.mjs`'s
+ * `--display` branch (real driver: `--enable-unsafe-webgpu`,
+ * `--enable-features=Vulkan`, `--ignore-gpu-blocklist`, `--no-sandbox`,
+ * NO `--headless=new`, NO SwiftShader flags, `env.DISPLAY` set) copied
+ * verbatim, plus this project's `ignoreHTTPSErrors`/console-forwarding/
+ * `emulateMedia({reducedMotion: "reduce"})` pattern.
+ *
+ * REDUCED MOTION IS REQUIRED here for a reason beyond the usual SwiftShader
+ * settle-pinning trap: a 4D system auto-tumbles and NEVER settles under
+ * normal motion (`four-d-view.ts`'s `tumbleOn` default), which would starve
+ * every settle-based assertion below forever. Reduced motion's `reset()`
+ * parks `tumbleOn` false and pre-seeds a deterministic (identity) rotor —
+ * confirmed by reading `four-d-view.ts` directly — which is also what makes
+ * the parity/IoU comparison between the two arms meaningful: both arms
+ * render the exact same 4D pose, so a low IoU would mean a real rendering
+ * difference, not two different camera angles of the same object.
+ *
+ * TWO SCENES (both minted the same way as surface-fallback.verify.mjs's
+ * b/c/d hashes — a throwaway `npx tsx` script calling the app's own
+ * initialState/toSnapshot/encodeScene, round-tripped through decodeScene,
+ * and independently re-verified against systemPartsAreNonFlat +
+ * analyzeSurfaceSystem4 both pre- and post-decode):
+ *   - "plain4": the SAME light system as surface-fallback.verify.mjs's
+ *     case d (three contracting affine maps, one with a live `w` block),
+ *     flat kaleidoscope (order 1).
+ *   - "kaleido4": two maps with live `w` blocks + an order-6 `xz`
+ *     kaleidoscope with a twist-1 double rotation (fr-q0h6) — order 6 +
+ *     twist 1 was accepted directly at mint time (verified against
+ *     `analyzeSurfaceSystem4`/`systemPartsAreNonFlat`), so no fallback to
+ *     order 3 was needed.
+ *
+ * PER SCENE:
+ *   a. load `#v1=...`, wait for boot, click #modeSurfaceBtn (compute arm:
+ *      no `?surfacegl`).
+ *   b. bounded combined poll (150ms cadence): console line containing
+ *      "WebGPU compute tracer active", `#surfaceProgress` text containing
+ *      "· WebGPU" at least once, then the session SETTLES (row hidden AND
+ *      two consecutive canvas screenshots ~1.5s apart byte-identical).
+ *      Any FAILURE here (no compute-active line, no WebGPU progress
+ *      sample, or a settle timeout) dumps the full console log + a
+ *      screenshot and STOPS this scene's protocol — no improvised
+ *      recovery, per the task brief.
+ *   c. LIVENESS on the settled compute session: open the "4D View"
+ *      accordion section (closed by default under `surfaceLookSection`'s
+ *      auto-open — see ui.ts's `openSectionByMode`), focus
+ *      `#fourDSliceSlider`, press ArrowRight 30 times (keyboard, not
+ *      pointer drag — avoids touch/scroll traps), assert the canvas
+ *      changed, then assert it re-settles.
+ *   d. FALLBACK A/B: reload the SAME hash with `?surfacegl` appended,
+ *      assert NO "WebGPU compute tracer active" console line ever
+ *      appears, assert any visible progress text says "· WebGL" with NO
+ *      trailing detail token (the deliberate-flag rule —
+ *      `render-backend.ts`'s `surfaceWebglDetail` returns null for
+ *      `block === "flag"`), settle.
+ *   e. PARITY: an object-mask IoU between the two arms' settled canvas
+ *      PNGs, computed INSIDE THE BROWSER (no new npm dependency): decode
+ *      both PNGs onto a `<canvas>`, classify each pixel as object/
+ *      background by whether it deviates more than 12/255 from its ROW's
+ *      median luminance (the backdrop is a smooth vertical gradient), and
+ *      intersect/union the two boolean masks. >= 0.8 reported as-is,
+ *      [0.5, 0.8) as WARN (lighting/dither may legitimately differ),
+ *      < 0.5 as FAIL.
+ *
+ * Usage: node scripts/surface-4d.verify.mjs [url] [sceneFilter]
+ * (url defaults to https://localhost:5173 — start a dev server first;
+ * sceneFilter is a substring match over "plain4kaleido4", default "all".)
+ * Requires a real X display (DISPLAY=:0 hardcoded below — this is a
+ * real-driver script, not a SwiftShader one). Screenshots + console dumps
+ * land in .playwright-mcp/ (gitignored).
+ */
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
+const BASE = (process.argv[2] ?? "https://localhost:5173").replace(/\/+$/, "");
+const SCENE_FILTER = (process.argv[3] ?? "all").toLowerCase();
+
+// Long-window OBSERVE mode (fr-dlxh follow-up, kaleido4 A/B): bypasses the
+// normal per-scene protocol (runArm/testLiveness/computeIoU) entirely and
+// instead watches ONE arm at a time for `minutes` (default 6) via a
+// gap-free MutationObserver log — a polling read of #surfaceProgress can
+// miss a state that writes and reverts between two poll ticks (this
+// script's own earlier settle-detection bug found exactly that shape of
+// mistake), so this mode never polls the DOM for progress at all; it only
+// ever reads the accumulated window.__progressLog, which cannot have gaps
+// because the observer fires on every actual mutation regardless of when
+// Node chooses to look. --arm selects which arm(s) to observe.
+const EXTRA_ARGS = process.argv.slice(4);
+const OBSERVE_FLAG = EXTRA_ARGS.find(
+  (a) => a === "--observe" || a.startsWith("--observe="),
+);
+const OBSERVE_MODE = OBSERVE_FLAG !== undefined;
+const OBSERVE_MINUTES = OBSERVE_FLAG?.includes("=")
+  ? Number(OBSERVE_FLAG.split("=")[1])
+  : 6;
+const ARM_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--arm="));
+/** "compute" | "surfacegl" | "both" */
+const ARM_SELECT = ARM_FLAG ? ARM_FLAG.split("=")[1] : "both";
+
+/** The real X display this script drives Chrome against — see the module
+ * doc's launch-idiom paragraph. Confirmed live (`xdpyinfo`) before writing
+ * this script. */
+const REAL_DISPLAY = ":0";
+
+// ---------------------------------------------------------------------------
+// Minted scenes (see the module doc for provenance + eligibility math).
+// ---------------------------------------------------------------------------
+
+/** Scene A "plain4": three contracting affine maps, one carrying a live
+ * `w` block (position 0.5, an xw rotation of 0.3), flat kaleidoscope.
+ * Byte-identical to surface-fallback.verify.mjs's case-d hash. */
+const PLAIN4_HASH =
+  "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
+/** Scene B "kaleido4": two maps with live `w` blocks + an order-6 `xz`
+ * kaleidoscope with a twist-1 double rotation (fr-q0h6). */
+const KALEIDO4_HASH =
+  "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6MC40LCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuNCwicm90YXRpb24iOnsieXciOjAuM319fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjo2LCJwbGFuZSI6Inh6IiwidHdpc3QiOjF9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
+
+const SCENES = [
+  { name: "plain4", hash: PLAIN4_HASH },
+  { name: "kaleido4", hash: KALEIDO4_HASH },
+].filter((s) => SCENE_FILTER === "all" || SCENE_FILTER.includes(s.name));
+
+/** Overall budget for one arm's console+progress+settle poll (real
+ * hardware; measured compute settles elsewhere in this codebase run
+ * ~1-55s even for MUCH heavier systems, so this is generous headroom, not
+ * a tight bound). */
+const ARM_BUDGET_MS = 90_000;
+/** Cadence for the console/progress scan within the combined poll — fast
+ * enough that a quick compute preview isn't missed between polls. */
+const FAST_POLL_MS = 150;
+/** Minimum spacing between settle-checkpoint screenshots (the "~1.5s
+ * apart" byte-identity check the task brief specifies). */
+const SETTLE_CHECK_INTERVAL_MS = 1_500;
+/** Same 2%-of-PNG-bytes threshold surface-fallback.verify.mjs uses for
+ * "materially different canvas". */
+const PAINT_DIFF_PCT = 2;
+
+const failures = [];
+function check(ok, label) {
+  console.error(`[surface-4d] ${ok ? "ok " : "FAIL"} ${label}`);
+  if (!ok) failures.push(label);
+}
+
+function pngDiffPct(a, b) {
+  const len = Math.max(a.length, b.length);
+  if (len === 0) return 0;
+  let diff = Math.abs(a.length - b.length);
+  const minLen = Math.min(a.length, b.length);
+  for (let i = 0; i < minLen; i++) {
+    if (a[i] !== b[i]) diff++;
+  }
+  return (diff / len) * 100;
+}
+
+async function main() {
+  await mkdir(OUT_DIR, { recursive: true });
+  const env = { ...process.env, DISPLAY: REAL_DISPLAY };
+  // Real-driver launch idiom (scripts/gpu-flame-bench.mjs's --display
+  // branch, copied verbatim): WebGPU reaches the real GPU through Vulkan,
+  // independent of the SwiftShader/ANGLE flags a WebGL-only script needs
+  // — and NONE of those SwiftShader flags are present here, deliberately.
+  const browser = await chromium.launch({
+    executablePath: chromium.executablePath(),
+    headless: false,
+    env,
+    args: [
+      "--enable-unsafe-webgpu",
+      "--enable-features=Vulkan",
+      "--ignore-gpu-blocklist",
+      "--no-sandbox",
+    ],
+  });
+  const pageErrors = [];
+  const consoleMessages = [];
+  let page = null;
+  /** {scene, arm, ...} rows for the final timing/evidence tables. */
+  const armResults = [];
+  const iouResults = [];
+  try {
+    page = await browser.newPage({
+      ignoreHTTPSErrors: true,
+      viewport: { width: 1024, height: 640 },
+    });
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+    page.on("console", (msg) => {
+      consoleMessages.push({ type: msg.type(), text: msg.text() });
+      console.error(`[page:${msg.type()}] ${msg.text()}`);
+    });
+    page.setDefaultTimeout(ARM_BUDGET_MS + 30_000);
+    // REQUIRED here beyond the usual SwiftShader reason: a 4D system
+    // auto-tumbles and never settles under normal motion; reduced motion
+    // parks the tumble at a deterministic (identity) rotor (confirmed by
+    // reading four-d-view.ts's reset()), which is also what makes the
+    // compute-vs-fallback IoU comparison meaningful (same pose, not two
+    // different camera angles of the same object).
+    await page.emulateMedia({ reducedMotion: "reduce" });
+
+    // Gap-free progress history via MutationObserver, installed fresh on
+    // EVERY navigation (addInitScript persists across this page's
+    // page.goto calls): records every actual DOM mutation of
+    // #surfaceProgress as it happens, so reading window.__progressLog
+    // later is a complete transcript, not a poll-cadence sample that can
+    // miss a write-then-revert between two ticks. Used by observeArm
+    // (OBSERVE mode); the normal runArm/pollUntilSettled path still polls
+    // the live DOM directly and does not depend on this.
+    await page.addInitScript(() => {
+      window.__progressLog = [];
+      function record(el) {
+        window.__progressLog.push({
+          t: Date.now(),
+          visible: !el.classList.contains("hidden"),
+          text: el.textContent,
+        });
+      }
+      function install() {
+        const el = document.getElementById("surfaceProgress");
+        if (!el) {
+          requestAnimationFrame(install);
+          return;
+        }
+        record(el);
+        new MutationObserver(() => record(el)).observe(el, {
+          attributes: true,
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", install);
+      } else {
+        install();
+      }
+    });
+
+    const canvasShot = (name) =>
+      page
+        .locator("canvas")
+        .first()
+        .screenshot({
+          type: "png",
+          ...(name ? { path: path.join(OUT_DIR, name) } : {}),
+        });
+
+    const readSurfaceProgress = () =>
+      page.evaluate(() => {
+        const el = document.getElementById("surfaceProgress");
+        if (!el) return { visible: false, text: null };
+        return {
+          visible: !el.classList.contains("hidden"),
+          text: el.textContent,
+        };
+      });
+
+    const armContextLossTripwire = () =>
+      page.evaluate(() => {
+        window.__glLost = false;
+        document
+          .querySelector("canvas")
+          ?.addEventListener("webglcontextlost", () => {
+            window.__glLost = true;
+          });
+      });
+
+    const waitForPointCount = () =>
+      page.waitForFunction(
+        () => {
+          const el = document.getElementById("pointCount");
+          return (
+            !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0
+          );
+        },
+        undefined,
+        { timeout: 30_000, polling: 100 },
+      );
+
+    /**
+     * Combined bounded poll: scans new console messages for
+     * "WebGPU compute tracer active" and "Surface compute preview" lines,
+     * records every distinct (visible, text) #surfaceProgress sample, and
+     * checks for settle (row hidden AND two canvas screenshots >=1.5s
+     * apart byte-identical) every SETTLE_CHECK_INTERVAL_MS. Mutates
+     * `result` in place; returns { settled, elapsedMs }.
+     */
+    async function pollUntilSettled(result, t0, consoleBaseIdx, deadline) {
+      let lastCheckpointShot = null;
+      // Bug fixed during verification: this MUST start at the loop's own
+      // start time, not 0 -- Date.now() is an absolute epoch value, so a
+      // 0 baseline made "now - lastCheckpointAt >= SETTLE_CHECK_INTERVAL_MS"
+      // true on the very FIRST iteration (epoch millis are always >>
+      // 1500), collapsing the intended ~1.5s-apart byte-identity check
+      // into a ~150ms-apart one and reporting false "settled" on scenes
+      // whose canvas happens to look unchanged for one fast-poll tick
+      // (observed: kaleido4's compute arm settling in 1680ms and never
+      // showing "· WebGPU" progress, when the console's own "Surface
+      // compute settle" line reported multi-second multi-pass work still
+      // in flight).
+      let lastCheckpointAt = Date.now();
+      for (;;) {
+        const now = Date.now();
+        const newConsole = consoleMessages.slice(consoleBaseIdx);
+        if (
+          !result.computeActiveSeen &&
+          newConsole.some((m) =>
+            m.text.includes("WebGPU compute tracer active"),
+          )
+        ) {
+          result.computeActiveSeen = true;
+        }
+        for (const m of newConsole) {
+          if (
+            m.text.startsWith("Surface compute preview") &&
+            !result.previewLines.includes(m.text)
+          ) {
+            result.previewLines.push(m.text);
+          }
+        }
+        const progress = await readSurfaceProgress();
+        const lastObs = result.progressSamples.at(-1);
+        if (
+          !lastObs ||
+          lastObs.visible !== progress.visible ||
+          lastObs.text !== progress.text
+        ) {
+          result.progressSamples.push({ ...progress, atMs: now - t0 });
+        }
+        if (progress.visible && progress.text) {
+          if (progress.text.includes("· WebGPU"))
+            result.webgpuProgressSeen = true;
+          if (progress.text.includes("· WebGL"))
+            result.webglProgressSeen = true;
+        }
+
+        if (now - lastCheckpointAt >= SETTLE_CHECK_INTERVAL_MS) {
+          const shot = await canvasShot(null);
+          if (
+            lastCheckpointShot &&
+            shot.equals(lastCheckpointShot) &&
+            !progress.visible
+          ) {
+            return { settled: true, elapsedMs: now - t0, shot };
+          }
+          lastCheckpointShot = shot;
+          lastCheckpointAt = now;
+        }
+        if (now > deadline) {
+          return {
+            settled: false,
+            elapsedMs: now - t0,
+            shot: lastCheckpointShot ?? (await canvasShot(null)),
+          };
+        }
+        await page.waitForTimeout(FAST_POLL_MS);
+      }
+    }
+
+    /** Object-mask IoU between two settled canvas PNGs, computed entirely
+     * inside the page (no new npm dependency): per-row median-luminance
+     * background classifier, threshold 12/255. */
+    async function computeIoU(pngA, pngB) {
+      return page.evaluate(
+        async ({ a, b }) => {
+          async function decode(base64) {
+            const img = new Image();
+            img.src = `data:image/png;base64,${base64}`;
+            await img.decode();
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+            return {
+              data: ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+              width: canvas.width,
+              height: canvas.height,
+            };
+          }
+          const imgA = await decode(a);
+          const imgB = await decode(b);
+          if (imgA.width !== imgB.width || imgA.height !== imgB.height) {
+            return {
+              error: `size mismatch: ${imgA.width}x${imgA.height} vs ${imgB.width}x${imgB.height}`,
+            };
+          }
+          const { width, height } = imgA;
+          function maskOf(img) {
+            const mask = new Uint8Array(width * height);
+            const rowLum = new Float64Array(width);
+            for (let y = 0; y < height; y++) {
+              for (let x = 0; x < width; x++) {
+                const i = (y * width + x) * 4;
+                rowLum[x] =
+                  0.299 * img.data[i] +
+                  0.587 * img.data[i + 1] +
+                  0.114 * img.data[i + 2];
+              }
+              const sorted = Array.from(rowLum).sort((p, q) => p - q);
+              const median = sorted[Math.floor(sorted.length / 2)];
+              for (let x = 0; x < width; x++) {
+                mask[y * width + x] = Math.abs(rowLum[x] - median) > 12 ? 1 : 0;
+              }
+            }
+            return mask;
+          }
+          const maskA = maskOf(imgA);
+          const maskB = maskOf(imgB);
+          let intersection = 0;
+          let union = 0;
+          let countA = 0;
+          let countB = 0;
+          for (let i = 0; i < maskA.length; i++) {
+            const va = maskA[i];
+            const vb = maskB[i];
+            if (va) countA++;
+            if (vb) countB++;
+            if (va && vb) intersection++;
+            if (va || vb) union++;
+          }
+          return {
+            width,
+            height,
+            countA,
+            countB,
+            intersection,
+            union,
+            iou: union > 0 ? intersection / union : null,
+          };
+        },
+        { a: pngA.toString("base64"), b: pngB.toString("base64") },
+      );
+    }
+
+    /** One arm (compute or WebGL fallback) of one scene. */
+    async function runArm(scene, armLabel, { forceWebgl }) {
+      const url = forceWebgl
+        ? `${BASE}/?surfacegl#${scene.hash}`
+        : `${BASE}/#${scene.hash}`;
+      console.error(`[surface-4d] ==== ${scene.name}/${armLabel}: ${url} ====`);
+      const result = {
+        scene: scene.name,
+        arm: armLabel,
+        computeActiveSeen: false,
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+        settled: false,
+        settleMs: null,
+        aborted: false,
+        abortReason: null,
+        screenshotPath: null,
+        settledShotBuf: null,
+      };
+      const consoleBaseIdx = consoleMessages.length;
+      const pageErrorsBefore = pageErrors.length;
+
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await waitForPointCount();
+      await armContextLossTripwire();
+      await page.waitForTimeout(1_000);
+
+      const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
+      check(
+        !disabled,
+        `${scene.name}/${armLabel}: Surface mode control enabled`,
+      );
+      if (disabled) {
+        result.aborted = true;
+        result.abortReason = "Surface mode control disabled";
+        armResults.push(result);
+        return result;
+      }
+
+      const t0 = Date.now();
+      await page.click("#modeSurfaceBtn");
+
+      const poll = await pollUntilSettled(
+        result,
+        t0,
+        consoleBaseIdx,
+        t0 + ARM_BUDGET_MS,
+      );
+      result.settled = poll.settled;
+      result.settleMs = poll.elapsedMs;
+
+      const failReasons = [];
+      if (!forceWebgl) {
+        if (!result.computeActiveSeen) {
+          failReasons.push('no "WebGPU compute tracer active" console line');
+        }
+        if (!result.webgpuProgressSeen) {
+          failReasons.push('#surfaceProgress never showed "· WebGPU" text');
+        }
+      } else {
+        if (result.computeActiveSeen) {
+          failReasons.push(
+            '?surfacegl session still claimed "WebGPU compute tracer active"',
+          );
+        }
+      }
+      if (!result.settled) failReasons.push("never settled within budget");
+
+      if (failReasons.length > 0) {
+        // Per the task brief: capture full console log + screenshot and
+        // STOP this scene's protocol — no improvised recovery.
+        const dumpName = `${scene.name}-${armLabel}-FAILURE`;
+        const failShot = await canvasShot(`${dumpName}.png`);
+        const dumpPath = path.join(OUT_DIR, `${dumpName}-console.log`);
+        await writeFile(
+          dumpPath,
+          consoleMessages
+            .slice(consoleBaseIdx)
+            .map((m) => `[${m.type}] ${m.text}`)
+            .join("\n") +
+            `\n\n-- pollResult --\n${JSON.stringify(poll.settled ? { settled: true } : { settled: false }, null, 2)}` +
+            `\n-- progressSamples --\n${JSON.stringify(result.progressSamples, null, 2)}`,
+        );
+        result.aborted = true;
+        result.abortReason = failReasons.join("; ");
+        result.screenshotPath = `${dumpName}.png`;
+        result.settledShotBuf = failShot;
+        check(
+          false,
+          `${scene.name}/${armLabel}: ${failReasons.join("; ")} (console+screenshot dumped: ${dumpName}.*)`,
+        );
+        armResults.push(result);
+        return result;
+      }
+
+      check(true, `${scene.name}/${armLabel}: settled in ${result.settleMs}ms`);
+      // Fallback arm's own detail-token rule: the deliberate ?surfacegl
+      // flag must carry NO trailing " — compute ..." caveat.
+      if (forceWebgl) {
+        const shownTexts = result.progressSamples.filter(
+          (o) => o.visible && o.text,
+        );
+        if (shownTexts.length > 0) {
+          check(
+            shownTexts.every(
+              (o) => o.text.includes("· WebGL") && !o.text.includes(" — "),
+            ),
+            `${scene.name}/${armLabel}: visible progress says "· WebGL" with no detail token (${shownTexts.map((o) => o.text).join(" | ")})`,
+          );
+        } else {
+          console.error(
+            `[surface-4d] ${scene.name}/${armLabel}: #surfaceProgress never observed visible (settled faster than the poll cadence) -- WebGL-label check not asserted.`,
+          );
+        }
+      }
+
+      const screenshotName = `${scene.name}-${forceWebgl ? "surfacegl" : "compute"}.png`;
+      const settledShot = await canvasShot(screenshotName);
+      result.screenshotPath = screenshotName;
+      result.settledShotBuf = settledShot;
+
+      result.newPageErrors = pageErrors.slice(pageErrorsBefore);
+      check(
+        result.newPageErrors.length === 0,
+        `${scene.name}/${armLabel}: no page errors (${result.newPageErrors.join("|")})`,
+      );
+
+      armResults.push(result);
+      return result;
+    }
+
+    /** Liveness on the (already settled) compute arm: keyboard-drag the
+     * w-slice slider and assert the canvas changes, then re-settles. */
+    async function testLiveness(scene, settledShot) {
+      console.error(`[surface-4d] ==== ${scene.name}/liveness ====`);
+      // The "4D View" accordion section is closed by default in Surface
+      // mode (surfaceLookSection auto-opens instead — ui.ts's
+      // openSectionByMode) even though the section itself is visible for
+      // a non-flat document in a live (non-frozen) render — click its
+      // summary to expand it, a normal user action.
+      const summary = page.locator("#fourDControls > summary");
+      const isOpen = await page
+        .locator("#fourDControls")
+        .evaluate((el) => el.open);
+      if (!isOpen) await summary.click();
+      const slider = page.locator("#fourDSliceSlider");
+      await slider.waitFor({ state: "visible", timeout: 10_000 });
+      await slider.focus();
+      const t0 = Date.now();
+      for (let i = 0; i < 30; i++) {
+        await page.keyboard.press("ArrowRight");
+      }
+      await page.waitForTimeout(300);
+      const afterDrag = await canvasShot(`${scene.name}-liveness-during.png`);
+      const diffPct = pngDiffPct(settledShot, afterDrag);
+      check(
+        diffPct > PAINT_DIFF_PCT,
+        `${scene.name}/liveness: w-slice keyboard drag changed the canvas (diff ${diffPct.toFixed(1)}%)`,
+      );
+
+      const consoleBaseIdx = consoleMessages.length;
+      const reResult = {
+        computeActiveSeen: true, // not re-checked; already proven this arm
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+      };
+      const poll = await pollUntilSettled(
+        reResult,
+        t0,
+        consoleBaseIdx,
+        Date.now() + ARM_BUDGET_MS,
+      );
+      check(
+        poll.settled,
+        `${scene.name}/liveness: re-settled after slider drag in ${poll.elapsedMs}ms`,
+      );
+      await canvasShot(`${scene.name}-liveness-resettled.png`);
+      return { diffPct, resettleMs: poll.settled ? poll.elapsedMs : null };
+    }
+
+    /**
+     * OBSERVE mode (fr-dlxh follow-up): watch ONE arm for `minutes`
+     * (default 6, not the normal 90s ARM_BUDGET_MS) using window.__progressLog
+     * (installed above) instead of racing a poll loop. Records a screenshot
+     * every 60s plus a final one, drains "Surface compute preview/settle"
+     * console lines, and checks settle (row hidden AND two canvas
+     * screenshots >=1.5s apart byte-identical -- the SAME definition
+     * pollUntilSettled uses) at a coarse cadence, since there is no fast
+     * transition to race here, only a slow grind to document faithfully.
+     */
+    async function observeArm(scene, armLabel, { forceWebgl, minutes }) {
+      const url = forceWebgl
+        ? `${BASE}/?surfacegl#${scene.hash}`
+        : `${BASE}/#${scene.hash}`;
+      console.error(
+        `[surface-4d] ==== OBSERVE ${scene.name}/${armLabel} (${minutes}min): ${url} ====`,
+      );
+      const result = {
+        scene: scene.name,
+        arm: armLabel,
+        aborted: false,
+        abortReason: null,
+        settled: false,
+        settleAtMs: null,
+        progressLog: [],
+        previewLines: [],
+        settleLines: [],
+        screenshots: [],
+        computeActiveSeen: false,
+      };
+
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await waitForPointCount();
+      await armContextLossTripwire();
+      await page.waitForTimeout(1_000);
+
+      const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
+      check(
+        !disabled,
+        `${scene.name}/${armLabel}: Surface mode control enabled`,
+      );
+      if (disabled) {
+        result.aborted = true;
+        result.abortReason = "Surface mode control disabled";
+        return result;
+      }
+
+      const consoleBaseIdx = consoleMessages.length;
+      const t0 = Date.now();
+      await page.click("#modeSurfaceBtn");
+
+      const deadline = t0 + minutes * 60_000;
+      const SHOT_INTERVAL_MS = 60_000;
+      let nextShotMinute = 1;
+      let lastLogLen = 0;
+      let lastSettleShot = null;
+      let lastSettleAt = t0;
+
+      for (;;) {
+        const now = Date.now();
+        const elapsed = now - t0;
+
+        // Drain the gap-free progress log -- never polls live DOM state.
+        const fullLog = await page.evaluate(() => window.__progressLog);
+        if (fullLog.length > lastLogLen) {
+          for (const entry of fullLog.slice(lastLogLen)) {
+            const atMs = entry.t - t0;
+            result.progressLog.push({
+              atMs,
+              visible: entry.visible,
+              text: entry.text,
+            });
+            console.error(
+              `[surface-4d] ${scene.name}/${armLabel} progress @${atMs}ms: visible=${entry.visible} text=${JSON.stringify(entry.text)}`,
+            );
+          }
+          lastLogLen = fullLog.length;
+        }
+
+        const newConsole = consoleMessages.slice(consoleBaseIdx);
+        if (
+          !result.computeActiveSeen &&
+          newConsole.some((m) =>
+            m.text.includes("WebGPU compute tracer active"),
+          )
+        ) {
+          result.computeActiveSeen = true;
+        }
+        for (const m of newConsole) {
+          if (
+            m.text.startsWith("Surface compute preview") &&
+            !result.previewLines.includes(m.text)
+          ) {
+            result.previewLines.push(m.text);
+          }
+          if (
+            m.text.startsWith("Surface compute settle") &&
+            !result.settleLines.includes(m.text)
+          ) {
+            result.settleLines.push(m.text);
+          }
+        }
+
+        const minuteMark = Math.floor(elapsed / SHOT_INTERVAL_MS);
+        if (minuteMark >= nextShotMinute) {
+          const name = `${scene.name}-${armLabel}-${nextShotMinute * 60}s.png`;
+          const buf = await canvasShot(name);
+          result.screenshots.push({ atMs: elapsed, name, buf });
+          console.error(
+            `[surface-4d] ${scene.name}/${armLabel}: screenshot ${name} @${elapsed}ms`,
+          );
+          nextShotMinute++;
+        }
+
+        // Settle check, same definition as pollUntilSettled, coarse
+        // cadence: "currently visible" comes from the LAST log entry, not
+        // a fresh DOM read -- one fewer place this could race.
+        const currentlyVisible = result.progressLog.at(-1)?.visible ?? false;
+        if (now - lastSettleAt >= SETTLE_CHECK_INTERVAL_MS) {
+          const shot = await canvasShot(null);
+          if (
+            lastSettleShot &&
+            shot.equals(lastSettleShot) &&
+            !currentlyVisible
+          ) {
+            result.settled = true;
+            result.settleAtMs = elapsed;
+            break;
+          }
+          lastSettleShot = shot;
+          lastSettleAt = now;
+        }
+
+        if (now > deadline) break;
+        await page.waitForTimeout(2_000);
+      }
+
+      const finalName = `${scene.name}-${armLabel}-final.png`;
+      const finalBuf = await canvasShot(finalName);
+      result.screenshots.push({
+        atMs: Date.now() - t0,
+        name: finalName,
+        buf: finalBuf,
+      });
+      check(
+        true,
+        `${scene.name}/${armLabel}: observed ${minutes}min -- settled=${result.settled}${result.settled ? ` at ${result.settleAtMs}ms` : ""}`,
+      );
+
+      return result;
+    }
+
+    /** For each whole minute in [1, minutes], the last progress-log entry
+     * observed at or before that mark -- the coordinator's requested
+     * "last % at each minute" trajectory. */
+    function minuteTrajectory(progressLog, minutes) {
+      const rows = [];
+      for (let m = 1; m <= minutes; m++) {
+        const cutoff = m * 60_000;
+        let last = null;
+        for (const entry of progressLog) {
+          if (entry.atMs <= cutoff) last = entry;
+          else break;
+        }
+        rows.push({
+          minute: m,
+          atMs: last?.atMs ?? null,
+          visible: last?.visible ?? null,
+          text: last?.text ?? null,
+        });
+      }
+      return rows;
+    }
+
+    if (OBSERVE_MODE) {
+      const observeResults = [];
+      for (const scene of SCENES) {
+        if (ARM_SELECT === "compute" || ARM_SELECT === "both") {
+          observeResults.push(
+            await observeArm(scene, "compute", {
+              forceWebgl: false,
+              minutes: OBSERVE_MINUTES,
+            }),
+          );
+        }
+        if (ARM_SELECT === "surfacegl" || ARM_SELECT === "both") {
+          observeResults.push(
+            await observeArm(scene, "surfacegl", {
+              forceWebgl: true,
+              minutes: OBSERVE_MINUTES,
+            }),
+          );
+        }
+      }
+
+      console.error("[surface-4d] ======== OBSERVE COMPARISON ========");
+      for (const r of observeResults) {
+        console.error(`[surface-4d] ---- ${r.scene}/${r.arm} ----`);
+        if (r.aborted) {
+          console.error(`[surface-4d]   aborted: ${r.abortReason}`);
+          continue;
+        }
+        console.error(
+          `[surface-4d]   settled=${r.settled}${r.settled ? ` @${r.settleAtMs}ms` : ""} computeActiveSeen=${r.computeActiveSeen}`,
+        );
+        for (const row of minuteTrajectory(r.progressLog, OBSERVE_MINUTES)) {
+          console.error(
+            `[surface-4d]   minute ${row.minute}: ${
+              row.text === null
+                ? "(no sample yet)"
+                : `visible=${row.visible} ${JSON.stringify(row.text)} (last update @${row.atMs}ms)`
+            }`,
+          );
+        }
+        console.error(
+          `[surface-4d]   previewLines=${r.previewLines.length} settleLines=${r.settleLines.length}`,
+        );
+        for (const line of r.previewLines.slice(0, 3)) {
+          console.error(`[surface-4d]     preview: ${line}`);
+        }
+        for (const line of r.settleLines.slice(0, 3)) {
+          console.error(`[surface-4d]     settle : ${line}`);
+        }
+        console.error(
+          `[surface-4d]   screenshots: ${r.screenshots.map((s) => s.name).join(", ")}`,
+        );
+        for (let i = 1; i < r.screenshots.length; i++) {
+          const diff = pngDiffPct(
+            r.screenshots[i - 1].buf,
+            r.screenshots[i].buf,
+          );
+          console.error(
+            `[surface-4d]     ${r.screenshots[i - 1].name} -> ${r.screenshots[i].name}: diff ${diff.toFixed(2)}%`,
+          );
+        }
+      }
+
+      check(
+        pageErrors.length === 0,
+        `no page errors across the whole observe run (${pageErrors.join(" | ")})`,
+      );
+      console.error("[surface-4d] ======== SUMMARY ========");
+      console.error(
+        `[surface-4d] VERDICT: ${failures.length === 0 ? "PASS" : `FAIL (${failures.length}: ${failures.join("; ")})`}`,
+      );
+      process.exitCode = failures.length === 0 ? 0 : 1;
+      return;
+    }
+
+    for (const scene of SCENES) {
+      const compute = await runArm(scene, "compute", { forceWebgl: false });
+      if (compute.aborted) {
+        console.error(
+          `[surface-4d] ${scene.name}: compute arm aborted (${compute.abortReason}) -- skipping liveness/fallback/parity for this scene per the task brief.`,
+        );
+        continue;
+      }
+
+      await testLiveness(scene, compute.settledShotBuf);
+
+      const fallback = await runArm(scene, "surfacegl", { forceWebgl: true });
+      if (fallback.aborted) {
+        console.error(
+          `[surface-4d] ${scene.name}: fallback arm aborted (${fallback.abortReason}) -- skipping parity for this scene.`,
+        );
+        continue;
+      }
+
+      const iou = await computeIoU(
+        compute.settledShotBuf,
+        fallback.settledShotBuf,
+      );
+      if (iou.error) {
+        check(false, `${scene.name}: IoU could not be computed (${iou.error})`);
+      } else {
+        const verdict =
+          iou.iou >= 0.8 ? "OK" : iou.iou >= 0.5 ? "WARN" : "FAIL";
+        console.error(
+          `[surface-4d] ${scene.name}: IoU ${iou.iou.toFixed(3)} (${verdict}) -- ` +
+            `compute object px=${iou.countA}, surfacegl object px=${iou.countB}, ` +
+            `intersection=${iou.intersection}, union=${iou.union}, ${iou.width}x${iou.height}`,
+        );
+        if (verdict === "FAIL") {
+          check(false, `${scene.name}: IoU ${iou.iou.toFixed(3)} < 0.5`);
+        } else {
+          check(true, `${scene.name}: IoU ${iou.iou.toFixed(3)} (${verdict})`);
+        }
+        iouResults.push({ scene: scene.name, ...iou, verdict });
+      }
+    }
+
+    console.error("[surface-4d] ======== ARM SUMMARY ========");
+    for (const r of armResults) {
+      console.error(
+        `[surface-4d] ${r.scene}/${r.arm}: aborted=${r.aborted}${r.aborted ? ` (${r.abortReason})` : ""} settled=${r.settled} settleMs=${r.settleMs} computeActiveSeen=${r.computeActiveSeen} webgpuProgressSeen=${r.webgpuProgressSeen} webglProgressSeen=${r.webglProgressSeen} previewLines=${r.previewLines.length}`,
+      );
+      if (r.previewLines.length > 0) {
+        console.error(
+          `[surface-4d]   preview line sample: ${r.previewLines[0]}${r.previewLines.length > 1 ? ` (+${r.previewLines.length - 1} more)` : ""}`,
+        );
+      }
+    }
+    console.error("[surface-4d] ======== IoU SUMMARY ========");
+    for (const r of iouResults) {
+      console.error(
+        `[surface-4d] ${r.scene}: IoU=${r.iou.toFixed(3)} (${r.verdict})`,
+      );
+    }
+
+    check(
+      pageErrors.length === 0,
+      `no page errors across the whole run (${pageErrors.join(" | ")})`,
+    );
+  } finally {
+    if (page && !page.isClosed()) {
+      const lost = await page
+        .evaluate(() => window.__glLost)
+        .catch(() => "unknown");
+      console.error(`[surface-4d] final context-lost tripwire: ${lost}`);
+    }
+    if (pageErrors.length) {
+      console.error(`[surface-4d] page errors: ${pageErrors.join(" | ")}`);
+    }
+    await browser.close();
+  }
+  console.error("[surface-4d] ======== SUMMARY ========");
+  console.error(
+    `[surface-4d] VERDICT: ${failures.length === 0 ? "PASS" : `FAIL (${failures.length}: ${failures.join("; ")})`}`,
+  );
+  process.exitCode = failures.length === 0 ? 0 : 1;
+}
+
+main().catch((err) => {
+  console.error("[surface-4d] fatal:", err);
+  process.exitCode = 1;
+});

@@ -157,12 +157,14 @@ export type SurfaceComputeBlock = "flag" | "unavailable" | "failed";
  *
  * @param computeShaped Whether the active system is a class
  *   `surface-compute.ts` would prefer: base-map folds, a fold FINAL lens,
- *   (fr-dlxh) the escape-time single pure-fold map, or (fr-dlxh's 4D cut)
- *   any 4D system — the affine4 kernel is the 4D home, with the fragment
- *   tracer as its fallback arm. (The param was `foldShaped` until the 4D
- *   cut made that name a lie; the semantics only ever widened.) Plain 3D
- *   affine systems have nothing to explain: WebGL is their natural
- *   engine, not a fallback.
+ *   (fr-dlxh) the escape-time single pure-fold map, or (fr-dlxh's 4D
+ *   cut) a PLAIN 4D system — the affine4 kernel is measured 1.7x faster
+ *   there, with the fragment tracer as its fallback arm. (The param was
+ *   `foldShaped` until the 4D cut made that name a lie; the semantics
+ *   only ever widened.) Plain 3D affine systems and KALEIDOSCOPE 4D
+ *   systems have nothing to explain: WebGL is their natural engine by
+ *   design and by measured verdict respectively (the WGSL sector sweep
+ *   measured ~35x slower at order 6 — fr-b72d), not a fallback.
  * @param supported Whether WebGPU is even available (`navigator.gpu` exists
  *   and `requestAdapter()` returned an adapter, upstream of any session).
  * @param block The surface session's own compute-adapter outcome, or `null`
