@@ -3996,7 +3996,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
 });
 
 // A live 4D surface session (fr-b30z) is the one case where the 4D View
-// block's tumble/slice controls stay meaningful DURING a render: unlike
+// block's slice controls stay meaningful DURING a render: unlike
 // flame/solid, which freeze the rotor/slice into a worker snapshot, the
 // surface tracer re-poses the rotor and re-marches the w slice every frame
 // (main.ts's setSurface4View), so the sliders are the only controls that
@@ -4004,7 +4004,11 @@ describe("Ui 4D view gating (fr-bf6)", () => {
 // `sliceOn` never reaches the tracer (main.ts pushes only `sliceCenter` into
 // setSurface4View) — so the on/off toggle would be a lie there, while the
 // position slider is the mode's defining control; slice-relative color only
-// remaps the w-depth palette the tracer doesn't have, so it hides too.
+// remaps the w-depth palette the tracer doesn't have, so it hides too. The
+// TUMBLE half is the exception since fr-osgs: the ambient tumble parks in
+// surface mode (its every tick would pin the tier scheduler in preview and
+// the settle could never arm), so its controls hide whole — the user's
+// checkbox state surviving for the projection view.
 describe("Ui 4D surface session controls (fr-b30z)", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
@@ -4138,6 +4142,46 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
 
     expect(el("fourDSliceToggleRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
+  });
+
+  // fr-osgs: the ambient tumble PARKS in surface mode (main.ts skips the
+  // tick — every one would invalidate the frame and pin the tier scheduler
+  // in preview, so the settle could never arm), and a visible toggle whose
+  // motion never happens reads as a broken view — both tumble rows hide.
+  it("hides the auto-tumble toggle and speed rows in a live 4D surface session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDTumbleToggle") as HTMLInputElement).checked = true;
+
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(true);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
+  });
+
+  it("restores the tumble controls — checkbox state untouched — after leaving surface mode", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDTumbleToggle") as HTMLInputElement).checked = true;
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.updateLabels(nonFlat);
+
+    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(false);
+    expect((el("fourDTumbleToggle") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("keeps the speed row hidden after surface mode when the user's tumble toggle was off", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    (el("fourDTumbleToggle") as HTMLInputElement).checked = false;
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    ui.updateLabels(nonFlat);
+
+    expect(el("fourDTumbleToggleRow").classList.contains("hidden")).toBe(false);
+    expect(el("fourDTumbleRow").classList.contains("hidden")).toBe(true);
   });
 
   // Guards against the gate keying on render mode alone rather than the

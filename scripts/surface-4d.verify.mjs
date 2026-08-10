@@ -132,6 +132,22 @@ const EXPECT_COMPUTE_BY_SCENE = { plain4: true, kaleido4: false };
  * headroom, not a tight bound. */
 const ROUTING_VERIFY_BUDGET_MS = 60_000;
 
+// TUMBLE-PARK verify mode (fr-osgs, uncommitted working tree): the 4D
+// ambient auto-tumble now PARKS during a live surface session
+// (main.ts's surface tick: `if (fourDTween.active) advanceFourDPose(dt4)`
+// — ambient ticks skipped, directed pose glides still live) and the panel
+// hides #fourDTumbleToggleRow + #fourDTumbleRow while a live 4D surface
+// session shows (ui.ts's syncFourDViewRows). Previously the tumble
+// invalidated every frame and the settle never armed WITHOUT
+// reducedMotion -- which is why every other mode in this script emulates
+// it and none of them ever saw this bug. This mode deliberately does NOT
+// emulate reducedMotion -- that is the whole point -- so it is gated
+// through its own page-setup branch rather than the shared one.
+const TUMBLE_PARK_MODE = EXTRA_ARGS.includes("--verify-tumble-park");
+/** Generous for a first-ever no-reducedMotion settle measurement -- this
+ * mode exists specifically to find out what that number even is. */
+const TUMBLE_PARK_BUDGET_MS = 60_000;
+
 /** The real X display this script drives Chrome against — see the module
  * doc's launch-idiom paragraph. Confirmed live (`xdpyinfo`) before writing
  * this script. */
@@ -229,8 +245,13 @@ async function main() {
     // parks the tumble at a deterministic (identity) rotor (confirmed by
     // reading four-d-view.ts's reset()), which is also what makes the
     // compute-vs-fallback IoU comparison meaningful (same pose, not two
-    // different camera angles of the same object).
-    await page.emulateMedia({ reducedMotion: "reduce" });
+    // different camera angles of the same object). TUMBLE_PARK_MODE is
+    // the deliberate exception: it exists specifically to verify the
+    // fr-osgs fix under NORMAL (non-reduced) motion, since reducedMotion
+    // masked the bug in every other mode here.
+    if (!TUMBLE_PARK_MODE) {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+    }
 
     // Gap-free progress history via MutationObserver, installed fresh on
     // EVERY navigation (addInitScript persists across this page's
@@ -950,6 +971,269 @@ async function main() {
       );
 
       return result;
+    }
+
+    /**
+     * TUMBLE-PARK case 1 (fr-osgs), standalone and reusable: load the
+     * scene fresh (gotoFresh), enter Surface, zero further input, assert
+     * settled within budgetMs. This is the exact assertion that FAILED
+     * before the fix (ambient tumble invalidated every frame, so the tier
+     * scheduler never left preview and pollUntilSettled's byte-identity
+     * check never had two stable frames to compare) — it must now pass on
+     * BOTH the compute arm and the WebGL fragment arm.
+     */
+    async function caseOneSettle(scene, forceWebgl, label, budgetMs) {
+      const url = forceWebgl
+        ? `${BASE}/?surfacegl#${scene.hash}`
+        : `${BASE}/#${scene.hash}`;
+      console.error(
+        `[surface-4d] ==== TUMBLE-PARK case1 ${label}: ${url} ====`,
+      );
+      const result = {
+        label,
+        computeActiveSeen: false,
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+        settled: false,
+        settleMs: null,
+      };
+      await gotoFresh(url, { waitUntil: "load", timeout: 30_000 });
+      await waitForPointCount();
+      await armContextLossTripwire();
+      await page.waitForTimeout(1_000);
+
+      const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
+      check(!disabled, `case1 ${label}: Surface mode control enabled`);
+      if (disabled) return result;
+
+      const consoleBaseIdx = consoleMessages.length;
+      const t0 = Date.now();
+      await page.click("#modeSurfaceBtn");
+      const poll = await pollUntilSettled(
+        result,
+        t0,
+        consoleBaseIdx,
+        t0 + budgetMs,
+      );
+      result.settled = poll.settled;
+      result.settleMs = poll.elapsedMs;
+      check(
+        result.settled,
+        `case1 ${label}: settled${result.settled ? ` in ${result.settleMs}ms (first-ever no-reducedMotion measurement)` : ` -- FAILED to settle within ${budgetMs}ms (tumble may still be invalidating frames)`}`,
+      );
+      const shownTexts = result.progressSamples.filter(
+        (o) => o.visible && o.text,
+      );
+      if (shownTexts.length > 0) {
+        console.error(
+          `[surface-4d] case1 ${label}: progress row WAS observed visible (${shownTexts.length} sample(s)), e.g. ${JSON.stringify(shownTexts[0].text)}`,
+        );
+      } else {
+        console.error(
+          `[surface-4d] case1 ${label}: progress row never observed visible (settled faster than the poll cadence, or genuinely instant) -- "appears then hides" not directly confirmed, only the settle itself.`,
+        );
+      }
+      await canvasShot(`${scene.name}-tumble-park-case1-${label}.png`);
+      return result;
+    }
+
+    /**
+     * TUMBLE-PARK cases 2-4 (fr-osgs), run on the ALREADY-SETTLED compute
+     * session case1 leaves behind (same page, zero navigation): the
+     * tumble-row hidden state in-mode, the resume-on-exit behavior
+     * (rows reappear, checkbox state survives, the EXPLORER projection
+     * genuinely tumbles again with zero input -- proving the park is
+     * scoped to surface sessions, not a global disable), and the slice
+     * slider's continued liveness after re-entering.
+     */
+    async function verifyTumbleParkCases234(scene) {
+      const result = { case2: null, case3: null, case4: null };
+
+      // ---- Case 2: tumble controls hidden while the surface session is live.
+      const rowState = await page.evaluate(() => ({
+        toggleRowHidden: document
+          .getElementById("fourDTumbleToggleRow")
+          ?.classList.contains("hidden"),
+        speedRowHidden: document
+          .getElementById("fourDTumbleRow")
+          ?.classList.contains("hidden"),
+      }));
+      result.case2 = rowState;
+      check(
+        rowState.toggleRowHidden === true,
+        `case2: #fourDTumbleToggleRow carries "hidden" while surface session is live`,
+      );
+      check(
+        rowState.speedRowHidden === true,
+        `case2: #fourDTumbleRow carries "hidden" while surface session is live`,
+      );
+
+      // ---- Case 3: resume on exit -- rows reappear, checkbox state
+      // survives, and the EXPLORER projection genuinely tumbles again.
+      const checkedBefore = await page.evaluate(
+        () => document.getElementById("fourDTumbleToggle")?.checked,
+      );
+      await page.click("#modePointsBtn");
+      await page.waitForTimeout(500);
+      const afterExit = await page.evaluate(() => ({
+        toggleRowHidden: document
+          .getElementById("fourDTumbleToggleRow")
+          ?.classList.contains("hidden"),
+        checked: document.getElementById("fourDTumbleToggle")?.checked,
+      }));
+      check(
+        afterExit.toggleRowHidden === false,
+        `case3: #fourDTumbleToggleRow visible again after exiting to points mode`,
+      );
+      check(
+        afterExit.checked === checkedBefore,
+        `case3: tumble checkbox state preserved across the mode switch (was ${checkedBefore}, still ${afterExit.checked})`,
+      );
+      const shotA = await canvasShot(null);
+      await page.waitForTimeout(1_000);
+      const shotB = await canvasShot(
+        `${scene.name}-tumble-park-case3-resumed.png`,
+      );
+      const resumeDiffPct = pngDiffPct(shotA, shotB);
+      check(
+        resumeDiffPct > PAINT_DIFF_PCT,
+        `case3: explorer projection tumbles again with zero input (diff ${resumeDiffPct.toFixed(1)}% over 1s)`,
+      );
+      result.case3 = { checkedBefore, afterExit, resumeDiffPct };
+
+      // ---- Case 4: re-enter Surface, wait settled, keyboard-drag the
+      // slice slider, assert the canvas changes then re-settles (the
+      // established liveness pattern from the normal per-scene protocol).
+      const consoleBaseIdx4 = consoleMessages.length;
+      const t0d = Date.now();
+      await page.click("#modeSurfaceBtn");
+      const enterResult = {
+        computeActiveSeen: false,
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+      };
+      const enterPoll = await pollUntilSettled(
+        enterResult,
+        t0d,
+        consoleBaseIdx4,
+        t0d + TUMBLE_PARK_BUDGET_MS,
+      );
+      check(
+        enterPoll.settled,
+        `case4: re-entered Surface and settled${enterPoll.settled ? ` in ${enterPoll.elapsedMs}ms` : " -- FAILED to re-settle"}`,
+      );
+      if (!enterPoll.settled) {
+        result.case4 = { reenterSettled: false };
+        return result;
+      }
+      const settledShot = await canvasShot(null);
+
+      const summary = page.locator("#fourDControls > summary");
+      const isOpen = await page
+        .locator("#fourDControls")
+        .evaluate((el) => el.open);
+      if (!isOpen) await summary.click();
+      const slider = page.locator("#fourDSliceSlider");
+      await slider.waitFor({ state: "visible", timeout: 10_000 });
+      await slider.focus();
+      const t0e = Date.now();
+      for (let i = 0; i < 30; i++) {
+        await page.keyboard.press("ArrowRight");
+      }
+      await page.waitForTimeout(300);
+      const afterDrag = await canvasShot(
+        `${scene.name}-tumble-park-case4-during.png`,
+      );
+      const dragDiffPct = pngDiffPct(settledShot, afterDrag);
+      check(
+        dragDiffPct > PAINT_DIFF_PCT,
+        `case4: slice slider keyboard-drag changed the canvas (diff ${dragDiffPct.toFixed(1)}%)`,
+      );
+
+      const consoleBaseIdx5 = consoleMessages.length;
+      const resettleResult = {
+        computeActiveSeen: false,
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+      };
+      const resettlePoll = await pollUntilSettled(
+        resettleResult,
+        t0e,
+        consoleBaseIdx5,
+        t0e + TUMBLE_PARK_BUDGET_MS,
+      );
+      check(
+        resettlePoll.settled,
+        `case4: re-settled after slice drag${resettlePoll.settled ? ` in ${resettlePoll.elapsedMs}ms` : " -- FAILED"}`,
+      );
+      await canvasShot(`${scene.name}-tumble-park-case4-resettled.png`);
+      result.case4 = {
+        reenterSettleMs: enterPoll.elapsedMs,
+        dragDiffPct,
+        resettleMs: resettlePoll.settled ? resettlePoll.elapsedMs : null,
+      };
+      return result;
+    }
+
+    if (TUMBLE_PARK_MODE) {
+      const scene = SCENES.find((s) => s.name === "plain4") ?? SCENES[0];
+      console.error(
+        `[surface-4d] ======== TUMBLE-PARK VERIFY (${scene.name}, reducedMotion NOT emulated) ========`,
+      );
+      const case1Compute = await caseOneSettle(
+        scene,
+        false,
+        "compute",
+        TUMBLE_PARK_BUDGET_MS,
+      );
+      let cases234 = null;
+      if (case1Compute.settled) {
+        cases234 = await verifyTumbleParkCases234(scene);
+      } else {
+        console.error(
+          "[surface-4d] case1 compute did not settle -- skipping cases 2-4 (they depend on a settled compute session).",
+        );
+      }
+      const case1Surfacegl = await caseOneSettle(
+        scene,
+        true,
+        "surfacegl",
+        TUMBLE_PARK_BUDGET_MS,
+      );
+
+      console.error("[surface-4d] ======== TUMBLE-PARK SUMMARY ========");
+      console.error(
+        `[surface-4d] case1 compute:   settled=${case1Compute.settled} settleMs=${case1Compute.settleMs}`,
+      );
+      console.error(
+        `[surface-4d] case1 surfacegl: settled=${case1Surfacegl.settled} settleMs=${case1Surfacegl.settleMs}`,
+      );
+      if (cases234) {
+        console.error(
+          `[surface-4d] case2: toggleRowHidden=${cases234.case2.toggleRowHidden} speedRowHidden=${cases234.case2.speedRowHidden}`,
+        );
+        console.error(
+          `[surface-4d] case3: checkedBefore=${cases234.case3.checkedBefore} afterExit=${JSON.stringify(cases234.case3.afterExit)} resumeDiffPct=${cases234.case3.resumeDiffPct.toFixed(1)}%`,
+        );
+        console.error(`[surface-4d] case4: ${JSON.stringify(cases234.case4)}`);
+      }
+
+      check(
+        pageErrors.length === 0,
+        `no page errors across the whole tumble-park run (${pageErrors.join(" | ")})`,
+      );
+      console.error("[surface-4d] ======== SUMMARY ========");
+      console.error(
+        `[surface-4d] VERDICT: ${failures.length === 0 ? "PASS" : `FAIL (${failures.length}: ${failures.join("; ")})`}`,
+      );
+      process.exitCode = failures.length === 0 ? 0 : 1;
+      return;
     }
 
     if (VERIFY_ROUTING_MODE) {
