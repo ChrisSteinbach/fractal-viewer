@@ -24,6 +24,14 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
     invT: [0, 0, 0, 0],
     sigmaMin: 0.5,
     baseIndex: 0,
+    // Inert affine-slot defaults for the fr-rsp6 fold fields — this
+    // packer predates fold-4D and packs none of them.
+    foldKind: 0,
+    foldInvW: 1,
+    foldSigma: 0.5,
+    invMSigmaMin: 0.5,
+    invTNorm: 0,
+    bnbDir: [0, 0, 0, 0],
     ...overrides,
   };
 }
@@ -46,6 +54,7 @@ function de4(
     beamWidth: 4,
     stepScale: 1,
     final: null,
+    foldFinal: null,
   };
 }
 
