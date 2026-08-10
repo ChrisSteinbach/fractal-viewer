@@ -43,6 +43,20 @@
  * back is not a stall, it's a device where every frame is that bad, and from
  * there they count (clamped) so even catastrophic hardware steps down.
  *
+ * That sample stream has a blind spot: it only exists between consecutively
+ * RENDERED frames, and this app renders on demand. An interaction can step
+ * the ladder down and then simply stop — the view settles, the user's hand
+ * leaves the canvas — and render-on-demand then produces no more frames at
+ * all, so no more samples ever arrive to earn the resolution back; a still
+ * parked mid-interaction would stay downscaled indefinitely.
+ * {@link ResolutionGovernor.idleRestore} is that missing recovery edge
+ * (fr-vxbo): fed quiet time since the last RENDERED frame instead of a dt
+ * between two of them, and once that quiet stretch clears
+ * {@link GOVERNOR_IDLE_RESTORE_MS} it restores straight to full resolution
+ * and forgets all timing state in one shot — a parked still costs nothing
+ * extra to show at full scale, and a genuinely slow device just earns its
+ * way back down again once interaction and sampling resume.
+ *
  * Pure and clock-free like `exposure.ts` and `morph-budget.ts`: dt arrives as
  * a plain number the caller measured against its own clock, so tests drive
  * the governor directly with synthetic samples — no fake timers, no
@@ -88,6 +102,19 @@ export const GOVERNOR_OUTLIER_MS = 250;
  */
 export const GOVERNOR_OUTLIER_STREAK = 5;
 
+/**
+ * Quiet time (ms) with no RENDERED frame after which a below-full scale
+ * restores to full (fr-vxbo). Render-on-demand means the sample stream
+ * {@link ResolutionGovernor.sample} depends on can simply stop — the
+ * interaction that stepped the ladder down ends, and no more frames ever
+ * arrive on their own to earn the resolution back. Long enough that a mere
+ * hiccup between interactions never trips it, far shorter than "parked
+ * forever": a parked still exerts no per-frame GPU pressure, so displaying
+ * it at full resolution is free, and if interaction resumes on a genuinely
+ * slow device the ladder simply steps back down on fresh evidence.
+ */
+export const GOVERNOR_IDLE_RESTORE_MS = 2000;
+
 export interface ResolutionGovernor {
   /** Current scale — the last value {@link sample} returned, 1 initially. */
   readonly scale: number;
@@ -97,6 +124,16 @@ export interface ResolutionGovernor {
    * {@link scale}), else null.
    */
   sample(dtMs: number): number | null;
+  /**
+   * Report how long it has been (ms) since the last RENDERED frame — the
+   * render-on-demand recovery edge {@link sample} can't provide on its own,
+   * because a parked still produces no frames to sample at all. Once that
+   * quiet stretch reaches {@link GOVERNOR_IDLE_RESTORE_MS} AND the scale is
+   * below full, restores to full resolution (returning 1) and forgets all
+   * timing state — exactly {@link reset}'s semantics. Returns null
+   * otherwise, including when already at full scale.
+   */
+  idleRestore(quietMs: number): number | null;
   /** Forget all timing state and return to full resolution (scale 1). */
   reset(): void;
 }
@@ -121,6 +158,19 @@ export function createResolutionGovernor(): ResolutionGovernor {
     upMs = 0;
     holdoffMs = GOVERNOR_HOLDOFF_MS;
     return RESOLUTION_SCALE_STEPS[stepIndex];
+  }
+
+  // Forget all timing state and park at full resolution — the shared body of
+  // `reset()` and a fired `idleRestore()`: after a multi-second quiet
+  // stretch the EMA and accruals describe a regime that no longer applies,
+  // so recovery starts clean rather than resuming a stale average.
+  function forgetAll(): void {
+    stepIndex = 0;
+    ema = null;
+    downMs = 0;
+    upMs = 0;
+    holdoffMs = 0;
+    outlierStreak = 0;
   }
 
   return {
@@ -182,13 +232,14 @@ export function createResolutionGovernor(): ResolutionGovernor {
       return null;
     },
 
+    idleRestore(quietMs: number): number | null {
+      if (stepIndex === 0 || quietMs < GOVERNOR_IDLE_RESTORE_MS) return null;
+      forgetAll();
+      return RESOLUTION_SCALE_STEPS[0];
+    },
+
     reset(): void {
-      stepIndex = 0;
-      ema = null;
-      downMs = 0;
-      upMs = 0;
-      holdoffMs = 0;
-      outlierStreak = 0;
+      forgetAll();
     },
   };
 }

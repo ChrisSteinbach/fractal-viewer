@@ -364,9 +364,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `exposure.ts` — `glowExposure`: density-adaptive brightness for the
     `"glow"` render style (not the flame tone-map). Pure, tested.
   - `resolution-governor.ts` — adaptive resolution: frame-time ladder (EMA +
-    hysteresis) trades pixels for frame rate. Exports/flame stay unscaled.
-    Session-only `adaptiveResolution` opt-out. Bypassed in surface mode
-    (render-tier.ts owns that cost). Pure, tested.
+    hysteresis) trades pixels for frame rate; a parked still restores to full
+    after ~2s quiet (fr-vxbo, render-on-demand starves the sample stream).
+    Exports/flame stay unscaled. Session-only `adaptiveResolution` opt-out.
+    Bypassed in surface mode (render-tier.ts owns that cost). Pure, tested.
   - `render-tier.ts` — surface-mode interaction tier (fr-5ne3): invalidated
     frames trace a cheap preview into an offscreen target at an adaptive
     (scale, depth) rung picked from measured trace cost (fr-hith:
