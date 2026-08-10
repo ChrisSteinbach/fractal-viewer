@@ -660,7 +660,14 @@ rotation is an isometry, so the marched field is just
 untouched — meaning the pose stays exactly as live as the camera (tumble,
 Shift-drag, and slice sweeps all keep working inside the mode), where
 flame/solid-4D freeze theirs at session start because a pose change would
-invalidate their accumulated content.
+invalidate their accumulated content. Since fr-dlxh's 4D cut the same
+estimator ALSO lives in `src/fractal/surface-de-gpu.ts` as the compute
+kernel's fourth core (`core:"affine4"`), and 4D surface sessions prefer
+`src/app/surface-compute.ts`'s WebGPU renderer wherever an adapter
+exists — the rotor/slice ride every frame spec (`view4`, re-read from
+the same scene state `setSurface4View` maintains), so the live-pose
+discipline survives the seam — leaving this fragment tracer as the
+fallback arm (`?surfacegl` / no adapter / device loss).
 
 That slice has a **thickness** (fr-wa6o). At the shipped default of 0 it is
 the zero-thickness hyperplane described above, value for value. Above 0 the
