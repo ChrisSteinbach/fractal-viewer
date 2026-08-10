@@ -1805,6 +1805,316 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
   });
 });
 
+describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
+  it("throws when combined with a fold-final lens — the 4D fold-final sweep is phase 2B, so no shape is pinned", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "fold4", lens: true })),
+    ).toThrow(/phase 2B/);
+  });
+
+  it("validates width and workgroup size, which this core actually uses", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "fold4", width: 0 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "fold4", width: 2.5 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "fold4", workgroupSize: 0 })),
+    ).toThrow();
+  });
+
+  it("mode 'eval' emits the fold4 frontier body once over the 4D uniform/maps interface, carrying none of the other cores' markers", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "fold4" }),
+    );
+    expect(wgsl).toContain("fn evalQueries");
+    expect(
+      wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
+    ).toBe(2);
+    for (const marker of [
+      "var fcQ: array<vec4f, 4>;",
+      "var fnCert: array<f32, 4>;",
+      "fnWorstIdx",
+      "rotorInvApply4",
+      "segmentRadius4",
+      "stepSector4",
+      "struct GpuMap4",
+      "array<GpuMap4>",
+      "final4SigmaMin",
+    ]) {
+      expect(wgsl).toContain(marker);
+    }
+    // The 3D fold core's frontier plumbing, the affine ladders' refined
+    // certificate, and every other core's variant block.
+    for (const marker of [
+      "frontierIx",
+      "var fcX",
+      "fn refinedCert",
+      "fn mapApply(m: GpuMap,",
+      "fn stepSector(v: vec3f)",
+      "params.footprint",
+      "params.finalSigmaMin",
+      "params.boundCenter",
+      "escParams",
+      "lensParams",
+      "surfaceDECore",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+  });
+
+  it("enumerates the 4D branch fans — 81 boxfold / 3 spherefold / 243 mandelbox — and skips the mandelbox box expansion 80 wide, never 3D's 27/26", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "fold4" }),
+    );
+    expect(wgsl).toContain("branchCount = 81u;");
+    expect(wgsl).toContain("branchCount = 3u;");
+    expect(wgsl).toContain("branchCount = 243u;");
+    // Mandelbox decode: b = boxIndex + 81 * sphereIndex, and the shell
+    // guard skips the whole 81-wide expansion.
+    expect(wgsl).toContain("(b % 81u) == 0u");
+    expect(wgsl).toContain("s = b / 81u;");
+    expect(wgsl).toContain("bb = b % 81u;");
+    expect(wgsl).toContain("b += 80u;");
+    // The FOUR-digit box code: selW is the 27s digit (3D stops at selZ).
+    expect(wgsl).toContain("let selW = bb / 27u;");
+    expect(wgsl).not.toContain("branchCount = 27u;");
+    expect(wgsl).not.toContain("b += 26u;");
+  });
+
+  it("mode 'march' keeps the shared march entry and the same absence set, and rays 'unproject' composes normally", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold4" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    expect(wgsl).toContain("let d = surfaceDE(ro + rd * t, eps, li);");
+    for (const marker of ["frontierIx", "var fcX", "escParams", "lensParams"]) {
+      expect(wgsl).not.toContain(marker);
+    }
+
+    const unprojected = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold4", rays: "unproject" }),
+    );
+    expect(unprojected).toContain("shade.invProjView");
+    expect(unprojected).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+  });
+
+  it("mode 'shade' emits the greedy fold4 hit-info once, with the 4D color normalizers, over the full shading interface", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4" }),
+    );
+    expect(wgsl).toContain("fn shadeRays");
+    expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+    // The greedy width-1 chain's argmin state (the 3D fold hit-info's
+    // vocabulary) over the 4D branch fan.
+    expect(wgsl).toContain("var lbKey = 1e30;");
+    expect(wgsl).toContain("lbMap = j;");
+    expect(wgsl).toContain("trapAcc += trapW * shadeMaps[lbMap].w;");
+    expect(wgsl).toContain("branchCount = 243u;");
+    expect(wgsl).toContain("rotorInvApply4");
+    // Slice-invariant height/radius normalizers, like the affine4 core.
+    expect(wgsl).toContain("params.visRadius4");
+    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, params.w0))");
+    expect(wgsl).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(wgsl).not.toContain("fn surfaceDEProbe");
+  });
+
+  it("honors width — the frontier arrays and the full-slot comparisons scale with it", () => {
+    const w4 = surfaceDeKernelWgsl(kernelOpts({ mode: "eval", core: "fold4" }));
+    const w12 = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "fold4", width: 12 }),
+    );
+    expect(w12).not.toBe(w4);
+    expect(w12).toContain("var fcQ: array<vec4f, 12>;");
+    expect(w12).toContain("if (keptCount == 12u && key >= fnWorstKey) {");
+    expect(w12).toContain("for (var s2 = 0u; s2 < 12u; s2++) {");
+    expect(w4).toContain("if (keptCount == 4u && key >= fnWorstKey) {");
+  });
+
+  it("ignores sharedFrontier and bnbStage2 — the frontier is private by measured verdict and stage 2 is never emitted", () => {
+    const base = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "fold4", width: 12 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "eval",
+          core: "fold4",
+          width: 12,
+          sharedFrontier: true,
+        }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "fold4", width: 12, bnbStage2: true }),
+      ),
+    ).toBe(base);
+    expect(base).not.toContain("var<workgroup>");
+    expect(base).not.toContain("bnbSigmaSq");
+    expect(base).not.toContain("m.bnb");
+    expect(base).not.toContain("m.p1");
+  });
+
+  it("emits the fr-p8bc probe from the same body at the probe width, with no index helper to rename (both frontiers are function-scope)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", width: 12, shadeDeWidth: 1 }),
+    );
+    expect(wgsl).toContain("fn surfaceDEProbe(pIn: vec3f");
+    expect(wgsl).not.toContain("probeIx");
+    const sizes = (text: string): number[] =>
+      [...text.matchAll(/array<(?:vec4f|f32), (\d+)>/g)].map((m) =>
+        Number(m[1]),
+      );
+    const probeAt = wgsl.indexOf("fn surfaceDEProbe(");
+    const mainAt = wgsl.indexOf("fn surfaceDE(pIn: vec3f");
+    const mainSizes = sizes(wgsl.slice(mainAt, probeAt));
+    const probeSizes = sizes(wgsl.slice(probeAt));
+    expect(mainSizes.length).toBe(12);
+    expect(new Set(mainSizes)).toEqual(new Set([12]));
+    expect(probeSizes.length).toBe(12);
+    expect(new Set(probeSizes)).toEqual(new Set([1]));
+    // Every shading tap rides the cheap descent, none the full frontier.
+    expect(wgsl).toContain("surfaceDEProbe(pos + e.xyy * h, 0.0, li)");
+    expect(wgsl).toContain("surfaceDEProbe(sp, 0.0, li)");
+    expect(wgsl).toContain("surfaceDEProbe(pos + n * hh, 0.0, li)");
+    expect(wgsl).not.toContain("surfaceDE(sp, 0.0, li)");
+  });
+
+  it("keeps shadeDeWidth's off state byte-identical (omitted or equal to width) and inert outside shade mode", () => {
+    const shadeBase = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", width: 12 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core: "fold4",
+          width: 12,
+          shadeDeWidth: 12,
+        }),
+      ),
+    ).toBe(shadeBase);
+    expect(shadeBase).not.toContain("surfaceDEProbe");
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "fold4", shadeDeWidth: 1 }),
+      ),
+    ).toBe(surfaceDeKernelWgsl(kernelOpts({ mode: "eval", core: "fold4" })));
+  });
+
+  it("surfaceGpuWorkgroupBytes returns 0 for core 'fold4' even under sharedFrontier — its frontier is function-scope by construction", () => {
+    expect(
+      surfaceGpuWorkgroupBytes({
+        core: "fold4",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+      }),
+    ).toBe(0);
+  });
+
+  it("carries no fold4 markers into the affine4 core, which shares its uniform/maps interface", () => {
+    for (const mode of ["eval", "march", "shade"] as const) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode, core: "affine4" }));
+      for (const marker of [
+        "var fcQ",
+        "branchCount = 81u;",
+        "branchCount = 243u;",
+        "b += 80u;",
+        "let selW",
+      ]) {
+        expect(wgsl).not.toContain(marker);
+      }
+    }
+  });
+});
+
+describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)", () => {
+  it("defaults to true: explicit and omitted produce identical eval-mode source", () => {
+    const omitted = surfaceDeKernelWgsl(kernelOpts({ core: "fold4" }));
+    const explicit = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", slabExt: true }),
+    );
+    expect(explicit).toBe(omitted);
+  });
+
+  it("false strips the fr-wa6o half-extent machinery from the eval-mode descent, leaving the shared segmentRadius4 helper declared but uncalled", () => {
+    const withExt = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", width: 12 }),
+    );
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", width: 12, slabExt: false }),
+    );
+    expect(withoutExt).not.toBe(withExt);
+    expect(withoutExt).not.toContain("let segment");
+    // Every extent register the frontier, the u-space hoist and the
+    // branch decode carry under a slab query.
+    for (const marker of [
+      "fcExt",
+      "fnExt",
+      "sExt",
+      "imgExt",
+      "preExt",
+      "var eu",
+    ]) {
+      expect(withExt).toContain(marker);
+      expect(withoutExt).not.toContain(marker);
+    }
+    // The helper FUNCTION DEFINITION survives (Tint DCEs it); every call
+    // site is gone, so the sole surviving occurrence is that line.
+    expect([...withoutExt.matchAll(/segmentRadius4\(/g)].length).toBe(1);
+    expect(withoutExt).toContain("fn segmentRadius4(");
+    expect(withoutExt).toContain("let startR = length(q);");
+    expect(withoutExt).toContain("let r = length(img);");
+    // The frontier itself narrows by the two extent arrays.
+    expect([...withExt.matchAll(/array<(?:vec4f|f32), 12>/g)].length).toBe(12);
+    expect([...withoutExt.matchAll(/array<(?:vec4f|f32), 12>/g)].length).toBe(
+      10,
+    );
+
+    for (const wgsl of [withExt, withoutExt]) {
+      const opens = [...wgsl.matchAll(/\{/g)].length;
+      const closes = [...wgsl.matchAll(/\}/g)].length;
+      expect(closes).toBe(opens);
+    }
+  });
+
+  it("carries the same absences into mode 'shade', which additionally exercises the fold4 hit-info and its probe", () => {
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        width: 12,
+        shadeDeWidth: 1,
+        slabExt: false,
+      }),
+    );
+    expect(withoutExt).toContain("fn surfaceDEHitInfo(");
+    expect(withoutExt).toContain("fn surfaceDEProbe(");
+    expect(withoutExt).not.toContain("let segment");
+    for (const marker of [
+      "fcExt",
+      "fnExt",
+      "sExt",
+      "imgExt",
+      "chExt",
+      "lbExt",
+    ]) {
+      expect(withoutExt).not.toContain(marker);
+    }
+    expect([...withoutExt.matchAll(/segmentRadius4\(/g)].length).toBe(1);
+    const opens = [...withoutExt.matchAll(/\{/g)].length;
+    const closes = [...withoutExt.matchAll(/\}/g)].length;
+    expect(closes).toBe(opens);
+  });
+});
+
 /** Two-map 4D system, the second map's w block making the system genuinely
  * 4D (not a flat 3D lift) — a minimal ELIGIBLE system for buildSurfaceDE4,
  * so the affine4 packer's byte layout is pinned against a real SurfaceDE4
@@ -1822,6 +2132,32 @@ function fourDSystemTransforms(): Transform[] {
       position: [-0.25, 0.2, 0.1],
       rotation: [0, 0.3, 0.1],
       scale: [0.45, 0.45, 0.45],
+      w: { position: 0.4, rotation: { xw: 0.3 } },
+    },
+  ];
+}
+
+/** Two-map 4D system whose BASE maps FOLD (fr-rsp6 phase 2A) — the 3D
+ * foldSystemTransforms() shape with a genuine w block, and deliberately
+ * non-unit boxfold weights so `foldInvW` (1/w) and `foldSigma` (|w|·sigmaMin)
+ * land away from the affine defaults 1 / sigmaMin that would let a lane
+ * swap hide. The routing key `deHasFolds4` sends this system to
+ * `descendFold4` on the CPU and to `core: "fold4"` on the GPU. */
+function fourDFoldSystemTransforms(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [{ type: "boxfold", weight: 1.25 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "boxfold", weight: 0.9 }],
       w: { position: 0.4, rotation: { xw: 0.3 } },
     },
   ];
@@ -2164,14 +2500,20 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
   });
 });
 
-describe("packSurfaceGpuMaps4 (fr-dlxh 4D)", () => {
-  it("packs each map's invM rows / invT / sigmaMin at the documented word offsets, per SURFACE_GPU_MAP4_VEC4 stride", () => {
-    expect(SURFACE_GPU_MAP4_VEC4).toBe(6);
-    const de = buildSurfaceDE4(fourDSystemTransforms());
+describe("packSurfaceGpuMaps4 (fr-dlxh 4D; fr-rsp6 phase 2A lanes)", () => {
+  it("packs each map's invM rows / invT / p0 fold lanes / bnb / p1 at the documented word offsets, per SURFACE_GPU_MAP4_VEC4 stride", () => {
+    // Grown 6 -> 8 by fr-rsp6 phase 2A: ONE layout for both 4D cores,
+    // exactly as the 3D GpuMap carries fold lanes the affine core never
+    // reads.
+    expect(SURFACE_GPU_MAP4_VEC4).toBe(8);
+    const de = buildSurfaceDE4(fourDFoldSystemTransforms());
     const out = packSurfaceGpuMaps4(de);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
     expect(out).toBeInstanceOf(Float32Array);
     expect(out.length).toBe(de.maps.length * stride);
+    // The fixture is a real FOLD system, so the p0 lanes carry live
+    // values rather than the affine defaults pinned below.
+    expect(de.maps.some((m) => m.foldKind === SURFACE_FOLD_BOXFOLD)).toBe(true);
 
     de.maps.forEach((m, j) => {
       const base = j * stride;
@@ -2184,10 +2526,33 @@ describe("packSurfaceGpuMaps4 (fr-dlxh 4D)", () => {
       expect(out[base + 17]).toBe(Math.fround(m.invT[1]));
       expect(out[base + 18]).toBe(Math.fround(m.invT[2]));
       expect(out[base + 19]).toBe(Math.fround(m.invT[3]));
-      // p0 = sigmaMin, 0, 0, 0.
+      // p0 = sigmaMin, foldInvW, foldSigma, foldKind — the 3D lane order.
       expect(out[base + 20]).toBe(Math.fround(m.sigmaMin));
-      expect(out[base + 21]).toBe(0);
-      expect(out[base + 22]).toBe(0);
+      expect(out[base + 21]).toBe(Math.fround(m.foldInvW));
+      expect(out[base + 22]).toBe(Math.fround(m.foldSigma));
+      expect(out[base + 23]).toBe(m.foldKind);
+      // bnb = the whole bnbDir (4D fills the lane 3D squeezes invTNorm
+      // into).
+      expect(out[base + 24]).toBe(Math.fround(m.bnbDir[0]));
+      expect(out[base + 25]).toBe(Math.fround(m.bnbDir[1]));
+      expect(out[base + 26]).toBe(Math.fround(m.bnbDir[2]));
+      expect(out[base + 27]).toBe(Math.fround(m.bnbDir[3]));
+      // p1 = invTNorm, invMSigmaMin, 0, 0.
+      expect(out[base + 28]).toBe(Math.fround(m.invTNorm));
+      expect(out[base + 29]).toBe(Math.fround(m.invMSigmaMin));
+      expect(out[base + 30]).toBe(0);
+      expect(out[base + 31]).toBe(0);
+    });
+  });
+
+  it("packs an AFFINE 4D system's fold lanes as the inert defaults the affine4 core never reads: kind 0, invW 1, foldSigma = sigmaMin", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const out = packSurfaceGpuMaps4(de);
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    de.maps.forEach((m, j) => {
+      const base = j * stride;
+      expect(out[base + 21]).toBe(1);
+      expect(out[base + 22]).toBe(Math.fround(m.sigmaMin));
       expect(out[base + 23]).toBe(0);
     });
   });
