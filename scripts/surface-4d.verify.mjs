@@ -113,6 +113,25 @@ const ARM_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--arm="));
 /** "compute" | "surfacegl" | "both" */
 const ARM_SELECT = ARM_FLAG ? ARM_FLAG.split("=")[1] : "both";
 
+// ROUTING-VERIFY mode (916813c re-verification): the 4D branch now routes
+// SHAPE-KEYED (main.ts's compute4Shaped = de.symmetry.order <= 1) rather
+// than "always prefer compute" — plain 4D (order 1) still prefers compute,
+// kaleidoscope 4D (order > 1) goes straight to the fragment tracer,
+// caveat-free (surfaceWebglDetail's computeShaped arg is now
+// compute4Shaped itself, so it returns null before ever checking
+// supported/block). Always the PLAIN hash URL — no ?surfacegl, no
+// navigator.gpu stub — WebGPU genuinely available, so a real routing
+// decision is being exercised, not a forced fallback.
+const VERIFY_ROUTING_MODE = EXTRA_ARGS.includes("--verify-routing");
+/** name -> whether main.ts's compute4Shaped should be true for it (mirrors
+ * the scenes' own minted symmetry.order: plain4 is order 1, kaleido4 is
+ * order 6 — see the SCENES hashes below). */
+const EXPECT_COMPUTE_BY_SCENE = { plain4: true, kaleido4: false };
+/** Generous enough for either arm's measured settle (plain4 compute ~4.6s,
+ * kaleido4 WebGL ~10.9s per 916813c's own commit message) with real
+ * headroom, not a tight bound. */
+const ROUTING_VERIFY_BUDGET_MS = 60_000;
+
 /** The real X display this script drives Chrome against — see the module
  * doc's launch-idiom paragraph. Confirmed live (`xdpyinfo`) before writing
  * this script. */
@@ -250,6 +269,28 @@ async function main() {
         install();
       }
     });
+
+    // CRITICAL: page.goto() between two URLs that differ ONLY in the hash
+    // fragment (same origin+path+query) is a SAME-DOCUMENT navigation per
+    // web platform semantics -- the browser does NOT reload the page, so
+    // the app's JS context (and with it, whatever scene was already
+    // loaded) survives untouched. The app has no `hashchange` listener
+    // (grepped: none exists) -- `loadScene()` only ever runs once at
+    // initial boot -- so a second `page.goto(differentHashSameOrigin)`
+    // silently strands the session on the FIRST scene forever, while
+    // location.hash in the address bar still updates (confirmed
+    // empirically with a throwaway diagnostic: a window.__marker set
+    // after the first load survives a second goto to a different-hash,
+    // same-origin, same-query URL; it does NOT survive when the query
+    // string also changes, e.g. adding/removing ?surfacegl). This
+    // wrapper forces a REAL navigation every time by bouncing through
+    // about:blank first -- the standard fix for this exact Playwright
+    // trap -- so no caller here can ever be silently testing a stale
+    // scene from a previous step.
+    async function gotoFresh(url, opts) {
+      await page.goto("about:blank");
+      await page.goto(url, opts);
+    }
 
     const canvasShot = (name) =>
       page
@@ -472,7 +513,7 @@ async function main() {
       const consoleBaseIdx = consoleMessages.length;
       const pageErrorsBefore = pageErrors.length;
 
-      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await gotoFresh(url, { waitUntil: "load", timeout: 30_000 });
       await waitForPointCount();
       await armContextLossTripwire();
       await page.waitForTimeout(1_000);
@@ -663,7 +704,7 @@ async function main() {
         computeActiveSeen: false,
       };
 
-      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await gotoFresh(url, { waitUntil: "load", timeout: 30_000 });
       await waitForPointCount();
       await armContextLossTripwire();
       await page.waitForTimeout(1_000);
@@ -804,6 +845,151 @@ async function main() {
         });
       }
       return rows;
+    }
+
+    /**
+     * ROUTING-VERIFY mode (916813c): loads the PLAIN hash URL (no
+     * ?surfacegl, no stub — WebGPU genuinely available) and asserts the
+     * NEW shape-keyed routing lands on the expected engine:
+     *   expectCompute=true  -> "WebGPU compute tracer active" console
+     *     line, a visible "· WebGPU" progress sample, settles.
+     *   expectCompute=false -> NO compute-active line ever, every visible
+     *     progress sample says "· WebGL" with NO trailing detail token
+     *     (surfaceWebglDetail returns null before checking
+     *     supported/block once computeShaped is false -- kaleidoscope 4D
+     *     on WebGL is now the MEASURED home, not a fallback), settles.
+     * Reuses pollUntilSettled (the same settle definition every other
+     * mode in this script uses: row hidden AND two canvas screenshots
+     * >=1.5s apart byte-identical).
+     */
+    async function checkRouting(scene, expectCompute, budgetMs) {
+      const url = `${BASE}/#${scene.hash}`;
+      console.error(
+        `[surface-4d] ==== ROUTING-VERIFY ${scene.name} (expect ${expectCompute ? "compute" : "WebGL"}): ${url} ====`,
+      );
+      const result = {
+        scene: scene.name,
+        expectCompute,
+        computeActiveSeen: false,
+        webgpuProgressSeen: false,
+        webglProgressSeen: false,
+        previewLines: [],
+        progressSamples: [],
+        settled: false,
+        settleMs: null,
+        screenshotPath: null,
+      };
+      const consoleBaseIdx = consoleMessages.length;
+      const pageErrorsBefore = pageErrors.length;
+
+      await gotoFresh(url, { waitUntil: "load", timeout: 30_000 });
+      await waitForPointCount();
+      await armContextLossTripwire();
+      await page.waitForTimeout(1_000);
+
+      const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
+      check(!disabled, `${scene.name}: Surface mode control enabled`);
+      if (disabled) return result;
+
+      const t0 = Date.now();
+      await page.click("#modeSurfaceBtn");
+
+      const poll = await pollUntilSettled(
+        result,
+        t0,
+        consoleBaseIdx,
+        t0 + budgetMs,
+      );
+      result.settled = poll.settled;
+      result.settleMs = poll.elapsedMs;
+
+      check(
+        result.settled,
+        `${scene.name}: settled${result.settled ? ` in ${result.settleMs}ms` : ` -- FAILED to settle within ${budgetMs}ms`}`,
+      );
+
+      if (expectCompute) {
+        check(
+          result.computeActiveSeen,
+          `${scene.name}: console shows "WebGPU compute tracer active"`,
+        );
+        check(
+          result.webgpuProgressSeen,
+          `${scene.name}: a visible progress sample says "· WebGPU"`,
+        );
+      } else {
+        check(
+          !result.computeActiveSeen,
+          `${scene.name}: console NEVER claims "WebGPU compute tracer active"`,
+        );
+        const shownTexts = result.progressSamples.filter(
+          (o) => o.visible && o.text,
+        );
+        if (shownTexts.length > 0) {
+          check(
+            shownTexts.every(
+              (o) => o.text.includes("· WebGL") && !o.text.includes(" — "),
+            ),
+            `${scene.name}: every visible progress sample says "· WebGL" with NO detail token (${shownTexts.map((o) => o.text).join(" | ")})`,
+          );
+        } else {
+          console.error(
+            `[surface-4d] ${scene.name}: #surfaceProgress never observed visible (settled faster than the poll cadence) -- WebGL/no-token check not asserted.`,
+          );
+        }
+      }
+
+      const screenshotName = `${scene.name}-routing-verify.png`;
+      await canvasShot(screenshotName);
+      result.screenshotPath = screenshotName;
+
+      const newPageErrors = pageErrors.slice(pageErrorsBefore);
+      check(
+        newPageErrors.length === 0,
+        `${scene.name}: no page errors (${newPageErrors.join("|")})`,
+      );
+
+      return result;
+    }
+
+    if (VERIFY_ROUTING_MODE) {
+      const routingResults = [];
+      for (const scene of SCENES) {
+        const expectCompute = EXPECT_COMPUTE_BY_SCENE[scene.name];
+        if (expectCompute === undefined) {
+          console.error(
+            `[surface-4d] ${scene.name}: no EXPECT_COMPUTE_BY_SCENE entry -- skipping (routing-verify only knows plain4/kaleido4).`,
+          );
+          continue;
+        }
+        routingResults.push(
+          await checkRouting(scene, expectCompute, ROUTING_VERIFY_BUDGET_MS),
+        );
+      }
+
+      console.error("[surface-4d] ======== ROUTING-VERIFY SUMMARY ========");
+      for (const r of routingResults) {
+        console.error(
+          `[surface-4d] ${r.scene}: expectCompute=${r.expectCompute} computeActiveSeen=${r.computeActiveSeen} webgpuProgressSeen=${r.webgpuProgressSeen} webglProgressSeen=${r.webglProgressSeen} settled=${r.settled} settleMs=${r.settleMs}`,
+        );
+        const shown = r.progressSamples.filter((o) => o.visible && o.text);
+        for (const o of shown) {
+          console.error(
+            `[surface-4d]   progress @${o.atMs}ms: ${JSON.stringify(o.text)}`,
+          );
+        }
+      }
+
+      check(
+        pageErrors.length === 0,
+        `no page errors across the whole routing-verify run (${pageErrors.join(" | ")})`,
+      );
+      console.error("[surface-4d] ======== SUMMARY ========");
+      console.error(
+        `[surface-4d] VERDICT: ${failures.length === 0 ? "PASS" : `FAIL (${failures.length}: ${failures.join("; ")})`}`,
+      );
+      process.exitCode = failures.length === 0 ? 0 : 1;
+      return;
     }
 
     if (OBSERVE_MODE) {
