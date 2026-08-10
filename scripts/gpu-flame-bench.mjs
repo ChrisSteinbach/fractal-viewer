@@ -21,6 +21,7 @@
  *     [--surface-size=320x180] [--surface-cap-ms=120000]
  *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
  *     [--surface-force=1] [--surface-shade-width=1,4]
+ *     [--surface-aff4-sweep=1]
  *
  * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
@@ -113,6 +114,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // measure against the shipped full-width baseline (e.g. "1,4"); absent =
   // the leg is skipped (see parseSurfaceConfig's doc).
   "surface-shade-width": "surfaceShadeWidth",
+  // fr-b72d opt-in leg: "1" times the affine4 eval kernel per
+  // kaleidoscope order (1,2,3,4,6), slab vs no-slab; absent/anything else
+  // = the leg is skipped (see runSurfaceAff4SweepLeg's doc in main.ts).
+  "surface-aff4-sweep": "surfaceAff4Sweep",
 };
 
 function parseArgs(argv) {
@@ -441,8 +446,15 @@ async function screenshotBestEffort(page, filePath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const surfaceRequested = args.surface || args.surfaceOnly;
+  // fr-b72d's opt-in sweep leg is the same shape as fr-p8bc's shade A/B
+  // leg for this purpose — an extra heavy pass layered on top of the
+  // standard surface section, capable of running long on a real driver
+  // (the sweep's own point is to measure the slow end of the affine4
+  // kernel's cost curve) — so it earns the same wider wait cap.
+  const surfaceHeavyLeg =
+    args.surfaceParams.surfaceShadeWidth || args.surfaceParams.surfaceAff4Sweep;
   const benchTimeoutMs = surfaceRequested
-    ? args.surfaceParams.surfaceShadeWidth
+    ? surfaceHeavyLeg
       ? SURFACE_SHADE_AB_TIMEOUT_MS
       : SURFACE_BENCH_TIMEOUT_MS
     : BENCH_TIMEOUT_MS;
