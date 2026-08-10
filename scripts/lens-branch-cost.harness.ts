@@ -505,7 +505,6 @@ describe("fr-ybtq fold-lens branch sweep cost", () => {
       );
       lines.push("");
     }
-    // eslint-disable-next-line no-console
     console.log(lines.join("\n"));
 
     // The harness asserts only that it measured something coherent — the
@@ -565,7 +564,6 @@ describe("fr-ybtq fold-lens branch sweep cost", () => {
       }
       lines.push("");
     }
-    // eslint-disable-next-line no-console
     console.log(lines.join("\n"));
     expect(lines.length).toBeGreaterThan(0);
   });

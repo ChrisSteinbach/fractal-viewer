@@ -1,0 +1,33 @@
+{
+  // Type-checks scripts/*.harness.ts (the project's measurement record) and
+  // vitest.harness.config.ts against the same src/ they import from (fr-dyof):
+  // the root tsconfig.json's "include": ["src"] never sees this directory, so
+  // a harness could silently stop compiling against a source change it
+  // measures. `npm run lint` type-checks it via a second `tsc -p scripts`,
+  // mirroring how src/app/sw/tsconfig.json covers the service worker's own
+  // program.
+  //
+  // rootDir is the repo root ("..") rather than ".": the include list spans
+  // both scripts/ and ../src/, and noEmit means no output path is ever
+  // computed from it, so widening rootDir costs nothing. declaration/
+  // sourceMap/outDir are dropped outright for the same reason the root
+  // config keeps them -- they only matter when something emits.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["vitest/globals", "node", "vite/client", "@webgpu/types"]
+  },
+  "include": ["../src", "."],
+  // Same conflict the root tsconfig.json avoids (see its own comment): the
+  // service worker needs the WebWorker lib, which this program doesn't set,
+  // so it type-checks separately under its own src/app/sw/tsconfig.json.
+  "exclude": ["../src/app/sw"]
+}
