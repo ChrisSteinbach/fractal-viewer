@@ -1,11 +1,15 @@
 import {
   packEscapeGpuParams,
+  packSurface4GpuParams,
   packSurfaceGpuMaps,
+  packSurfaceGpuMaps4,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
+  SURFACE_GPU_PARAMS4_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -16,6 +20,7 @@ import {
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
 import type {
+  SurfaceGpu4View,
   SurfaceGpuKernelOptions,
   SurfaceGpuPose,
   SurfaceGpuShadeParams,
@@ -27,6 +32,8 @@ import {
 } from "./escape-de";
 import { buildSurfaceDE, SURFACE_FOLD_BOXFOLD } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
+import { buildSurfaceDE4 } from "./surface-de-4d";
+import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Transform } from "./types";
 
 /** Two-map pure-boxfold system (the fr-5rvk shape used throughout
@@ -1526,5 +1533,583 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
         sharedFrontier: true,
       }),
     ).toBe(0);
+  });
+});
+
+describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
+  it("throws when combined with a fold-final lens — 4D fold finals are fr-rsp6's scope, so no shape is pinned", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", lens: true })),
+    ).toThrow(/fr-rsp6/);
+  });
+
+  it("still validates width and workgroupSize, even though the fixed-width ladder ignores both", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", width: 0 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", workgroupSize: 0 })),
+    ).toThrow();
+  });
+
+  it("mode 'eval' emits the affine4 ladder body once, declares the 4D variant uniform fields, and carries none of the fold/affine/escape/lens descent markers", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "affine4" }),
+    );
+    expect(wgsl).toContain("fn evalQueries");
+    expect(
+      wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
+    ).toBe(2);
+    for (const marker of [
+      "fn refinedCert(img: vec4f",
+      "rotorInvApply4",
+      "segmentRadius4",
+      "stepSector4",
+      "struct GpuMap4",
+      "array<GpuMap4>",
+      "rotorInvR0",
+      "stepBack4R0",
+      "final4MR0",
+      "final4T",
+      "w0",
+      "sliceHalfW",
+      "final4SigmaMin",
+    ]) {
+      expect(wgsl).toContain(marker);
+    }
+    // Every other core's identity, and the 3D-only surface it replaces.
+    // The Params struct still DECLARES boundCenter/footprint/finalSigmaMin
+    // for every core (module doc: "a struct never reads past its own
+    // size"), so the absence check is on the READ site ("params."-
+    // prefixed), never the bare field name.
+    for (const marker of [
+      "frontierIx",
+      "fcX",
+      "escParams",
+      "escM0",
+      "lensParams",
+      "surfaceDECore",
+      "struct GpuMap {",
+      "fn mapApply(m: GpuMap,",
+      "fn stepSector(v: vec3f)",
+      "params.footprint",
+      "params.finalSigmaMin",
+      "params.boundCenter",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+  });
+
+  it("mode 'march' keeps the same absence set under pose rays, and rays 'unproject' composes normally with ShadeParams at binding 4", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "affine4" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    for (const marker of [
+      "frontierIx",
+      "fcX",
+      "escParams",
+      "escM0",
+      "lensParams",
+      "surfaceDECore",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+
+    const unprojected = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "affine4", rays: "unproject" }),
+    );
+    expect(unprojected).toContain("fn marchRays");
+    expect(unprojected).toContain("shade.invProjView");
+    expect(unprojected).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+  });
+
+  it("mode 'shade' emits the 4D hit-info descent once, with its own segment-aware markers, over the full shading interface", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4" }),
+    );
+    expect(wgsl).toContain("fn shadeRays");
+    expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+    expect(wgsl).toContain("c1Map");
+    expect(wgsl).toContain("c1Ext");
+    expect(wgsl).toContain("shade.colorSpeed");
+    expect(wgsl).toContain("rotorInvApply4");
+    expect(wgsl).toContain(
+      "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(wgsl).toContain(
+      "@group(0) @binding(7) var lutTex: texture_2d<f32>;",
+    );
+    expect(wgsl).toContain("@group(0) @binding(8) var lutSamp: sampler;");
+    expect(wgsl).not.toContain("fn surfaceDEProbe");
+  });
+
+  it("ignores width, sharedFrontier and bnbStage2 — all producing identical eval source", () => {
+    const base = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "affine4", width: 4 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine4", width: 12 }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine4", sharedFrontier: true }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "affine4", bnbStage2: true }),
+      ),
+    ).toBe(base);
+  });
+
+  it("ignores shadeDeWidth in shade mode too — no probe descent for a fixed-width ladder with nothing to narrow", () => {
+    const shadeBase = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4" }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core: "affine4", shadeDeWidth: 1 }),
+      ),
+    ).toBe(shadeBase);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core: "affine4", shadeDeWidth: 12 }),
+      ),
+    ).toBe(shadeBase);
+    expect(shadeBase).not.toContain("surfaceDEProbe");
+  });
+
+  it("surfaceGpuWorkgroupBytes returns 0 for core 'affine4' even under sharedFrontier — the fixed-width ladder declares no frontier arrays", () => {
+    expect(
+      surfaceGpuWorkgroupBytes({
+        core: "affine4",
+        width: 12,
+        workgroupSize: 32,
+        sharedFrontier: true,
+      }),
+    ).toBe(0);
+  });
+
+  it("carries no affine4 markers into any fold/affine/escape config — the byte-identity guard for the fourth core", () => {
+    const affine4Markers = [
+      "GpuMap4",
+      "rotorInvR0",
+      "segmentRadius4",
+      "final4SigmaMin",
+    ];
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { core: "fold", mode: "eval", width: 12 },
+      { core: "fold", mode: "march", width: 12 },
+      { core: "fold", mode: "march", rays: "unproject", width: 12 },
+      { core: "fold", mode: "shade", width: 12 },
+      { core: "fold", mode: "eval", width: 12, lens: true },
+      { core: "fold", mode: "shade", width: 12, lens: true },
+      { core: "affine", mode: "eval", width: 4 },
+      { core: "affine", mode: "march", width: 4 },
+      { core: "affine", mode: "shade", width: 4 },
+      { core: "affine", mode: "eval", width: 4, lens: true },
+      { core: "affine", mode: "shade", width: 4, lens: true },
+      { core: "escape", mode: "eval" },
+      { core: "escape", mode: "march" },
+      { core: "escape", mode: "march", rays: "unproject" },
+      { core: "escape", mode: "shade" },
+    ];
+    for (const overrides of cases) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts(overrides));
+      for (const marker of affine4Markers) {
+        expect(wgsl).not.toContain(marker);
+      }
+    }
+  });
+});
+
+/** Two-map 4D system, the second map's w block making the system genuinely
+ * 4D (not a flat 3D lift) — a minimal ELIGIBLE system for buildSurfaceDE4,
+ * so the affine4 packer's byte layout is pinned against a real SurfaceDE4
+ * (mirrors surface-de-4d.test.ts's map4 idiom, lifted to two maps). */
+function fourDSystemTransforms(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, 0.1, -0.2],
+      rotation: [0.2, 0.1, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 1,
+      position: [-0.25, 0.2, 0.1],
+      rotation: [0, 0.3, 0.1],
+      scale: [0.45, 0.45, 0.45],
+      w: { position: 0.4, rotation: { xw: 0.3 } },
+    },
+  ];
+}
+
+/** Plain affine 4D final transform (no variations, w block included) —
+ * gives SurfaceDE4.final a real, non-identity lens to round-trip the
+ * packer's final4M/final4T/final4SigmaMin offsets against, the 4D
+ * counterpart of affineFinalTransform() above. */
+function fourDFinalTransform(): Transform {
+  return {
+    id: 99,
+    position: [0.2, -0.1, 0.15],
+    rotation: [0.3, -0.2, 0.1],
+    scale: [0.7, 0.7, 0.7],
+    w: { position: -0.2, rotation: { yw: 0.2 } },
+  };
+}
+
+/** Default SurfaceGpu4View, overridable per test — mirrors kernelOpts()'s
+ * convention. Identity rotor, zero-thickness slice (the shipped default,
+ * point-query value for value). */
+function view4(overrides: Partial<SurfaceGpu4View> = {}): SurfaceGpu4View {
+  return {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0,
+    sliceHalfW: 0,
+    ...overrides,
+  };
+}
+
+describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS4_BYTES — the frozen 0..207 block plus the 4D variant tail (432 bytes, per the module doc)", () => {
+    expect(SURFACE_GPU_PARAMS4_BYTES).toBe(432);
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const buf = packSurface4GpuParams(de, view4(), { itemCount: 5 });
+    expect(buf).toBeInstanceOf(ArrayBuffer);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_BYTES);
+  });
+
+  it("packs the origin as boundCenter, and boundingRadius/escapeRadius/stepScale/mapCount/maxDepth straight from the built DE", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    // boundCenter packs the origin — the 4D oracle is origin-anchored by
+    // construction (surface-de-4d.ts carries no boundCenter field of its
+    // own to round-trip here, unlike 3D's SurfaceDE).
+    expect(view.getFloat32(0, true)).toBe(0);
+    expect(view.getFloat32(4, true)).toBe(0);
+    expect(view.getFloat32(8, true)).toBe(0);
+    expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
+    expect(view.getFloat32(16, true)).toBe(Math.fround(de.escapeRadius));
+    expect(view.getFloat32(20, true)).toBe(Math.fround(de.stepScale));
+    expect(view.getUint32(48, true)).toBe(de.maps.length);
+    expect(view.getUint32(52, true)).toBe(de.maxDepth);
+  });
+
+  it("packs slowestSigma/stepCos/stepSin/symPlane as the benign never-read constants 1/1/0/1 — this core has no footprint cap or (cos, sin) sector step", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(28, true)).toBe(1); // slowestSigma
+    expect(view.getFloat32(32, true)).toBe(1); // stepCos
+    expect(view.getFloat32(36, true)).toBe(0); // stepSin
+    expect(view.getUint32(44, true)).toBe(1); // symPlane
+  });
+
+  it("packs symOrder at offset 40 from de.symmetry.order", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms(), null, {
+      order: 3,
+      plane: "xz",
+      twist: 1,
+    });
+    expect(de.symmetry.order).toBe(3);
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getUint32(40, true)).toBe(3);
+  });
+
+  it("packs maxDepth at offset 52 as de.maxDepth by default, overridden by run.maxDepth (the preview clamp door)", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const def = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(def.getUint32(52, true)).toBe(de.maxDepth);
+
+    const clamped = new DataView(
+      packSurface4GpuParams(de, view4(), {
+        itemCount: 1,
+        maxDepth: de.maxDepth + 5,
+      }),
+    );
+    expect(clamped.getUint32(52, true)).toBe(de.maxDepth + 5);
+  });
+
+  it("round-trips the run params' itemCount/stepsThisPass/cutoff/marchSteps at their documented offsets, leaving footprint (68) at its unwritten 0", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), {
+        itemCount: 321,
+        stepsThisPass: 9,
+        cutoff: 0.04,
+        marchSteps: 96,
+      }),
+    );
+    expect(view.getUint32(56, true)).toBe(321);
+    expect(view.getUint32(60, true)).toBe(9);
+    expect(view.getFloat32(64, true)).toBe(Math.fround(0.04));
+    expect(view.getUint32(72, true)).toBe(96);
+    expect(view.getFloat32(68, true)).toBe(0);
+  });
+
+  it("packs hitFloorEps at offset 80 as fround(boundingRadius * SURFACE_GPU_HIT_FLOOR) by default, and fround(boundingRadius * run.hitFloor) when given", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const def = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(def.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR),
+    );
+    const overridden = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1, hitFloor: 0.02 }),
+    );
+    expect(overridden.getFloat32(80, true)).toBe(
+      Math.fround(de.boundingRadius * 0.02),
+    );
+  });
+
+  it("packs the 3D-frozen finalM rows as identity, finalT as zero and finalSigmaMin as 1 — the 4D lens rides the variant tail alone", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(96, true)).toBe(1);
+    expect(view.getFloat32(100, true)).toBe(0);
+    expect(view.getFloat32(104, true)).toBe(0);
+    expect(view.getFloat32(108, true)).toBe(0);
+    expect(view.getFloat32(112, true)).toBe(0);
+    expect(view.getFloat32(116, true)).toBe(1);
+    expect(view.getFloat32(120, true)).toBe(0);
+    expect(view.getFloat32(124, true)).toBe(0);
+    expect(view.getFloat32(128, true)).toBe(0);
+    expect(view.getFloat32(132, true)).toBe(0);
+    expect(view.getFloat32(136, true)).toBe(1);
+    expect(view.getFloat32(140, true)).toBe(0);
+    expect(view.getFloat32(156, true)).toBe(1); // finalSigmaMin
+  });
+
+  it("packs pose ro/right/up/fwd/tanHalf/aspect/pixelEps/raster at their documented offsets, and the documented defaults when no pose is given", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const pose: SurfaceGpuPose = {
+      ro: [1.1, 2.2, 3.3],
+      right: [1, 0, 0],
+      up: [0, 1, 0],
+      fwd: [0, 0, -1],
+      tanHalf: 0.5773,
+      aspect: 1.7778,
+      rasterWidth: 640,
+      rasterHeight: 360,
+      pixelEps: 0.0007,
+    };
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1, pose }),
+    );
+    expect(view.getFloat32(76, true)).toBe(Math.fround(pose.pixelEps));
+    expect(view.getUint32(84, true)).toBe(pose.rasterWidth);
+    expect(view.getUint32(88, true)).toBe(pose.rasterHeight);
+    expect(view.getFloat32(144, true)).toBe(Math.fround(pose.ro[0]));
+    expect(view.getFloat32(148, true)).toBe(Math.fround(pose.ro[1]));
+    expect(view.getFloat32(152, true)).toBe(Math.fround(pose.ro[2]));
+    expect(view.getFloat32(160, true)).toBe(Math.fround(pose.right[0]));
+    expect(view.getFloat32(164, true)).toBe(Math.fround(pose.right[1]));
+    expect(view.getFloat32(168, true)).toBe(Math.fround(pose.right[2]));
+    expect(view.getFloat32(172, true)).toBe(Math.fround(pose.tanHalf));
+    expect(view.getFloat32(176, true)).toBe(Math.fround(pose.up[0]));
+    expect(view.getFloat32(180, true)).toBe(Math.fround(pose.up[1]));
+    expect(view.getFloat32(184, true)).toBe(Math.fround(pose.up[2]));
+    expect(view.getFloat32(188, true)).toBe(Math.fround(pose.aspect));
+    expect(view.getFloat32(192, true)).toBe(Math.fround(pose.fwd[0]));
+    expect(view.getFloat32(196, true)).toBe(Math.fround(pose.fwd[1]));
+    expect(view.getFloat32(200, true)).toBe(Math.fround(pose.fwd[2]));
+
+    const noPose = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(noPose.getFloat32(76, true)).toBe(0);
+    expect(noPose.getUint32(84, true)).toBe(0);
+    expect(noPose.getUint32(88, true)).toBe(0);
+    expect(noPose.getFloat32(144, true)).toBe(0);
+    expect(noPose.getFloat32(148, true)).toBe(0);
+    expect(noPose.getFloat32(152, true)).toBe(0);
+    expect(noPose.getFloat32(160, true)).toBe(1);
+    expect(noPose.getFloat32(164, true)).toBe(0);
+    expect(noPose.getFloat32(168, true)).toBe(0);
+    expect(noPose.getFloat32(172, true)).toBe(0);
+    expect(noPose.getFloat32(176, true)).toBe(0);
+    expect(noPose.getFloat32(180, true)).toBe(1);
+    expect(noPose.getFloat32(184, true)).toBe(0);
+    expect(noPose.getFloat32(188, true)).toBe(1);
+    expect(noPose.getFloat32(192, true)).toBe(0);
+    expect(noPose.getFloat32(196, true)).toBe(0);
+    expect(noPose.getFloat32(200, true)).toBe(1);
+  });
+
+  it("packs visibleRadius at offset 24 as the slice-adjusted sliceVisR: sqrt(visR² − minW²) with minW = max(|w0| − sliceHalfW, 0), clamped to 0", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const visR = de.visibleBoundingRadius;
+    const cases: [number, number][] = [
+      [0, 0], // zero-thickness point query at w0 0: minW 0, full visR.
+      [visR * 0.5, 0], // w0 partway out, zero thickness.
+      [visR * 0.3, visR * 0.5], // sliceHalfW re-covers a w0 outside it.
+      [visR * 1.5, 0], // w0 beyond the visible ball entirely: 0.
+    ];
+    for (const [w0, sliceHalfW] of cases) {
+      const minW = Math.max(Math.abs(w0) - sliceHalfW, 0);
+      const expected = Math.fround(
+        Math.sqrt(Math.max(visR * visR - minW * minW, 0)),
+      );
+      const view = new DataView(
+        packSurface4GpuParams(de, view4({ w0, sliceHalfW }), {
+          itemCount: 1,
+        }),
+      );
+      expect(view.getFloat32(24, true)).toBe(expected);
+    }
+  });
+
+  it("packs the rotorInv tail as the TRANSPOSE of the input rotor: row i holds column i of the packed 4x4", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    // Sixteen distinct values so a row/column mixup cannot hide behind a
+    // repeated entry.
+    const rotor = Array.from({ length: 16 }, (_, i) => i + 1);
+    const view = new DataView(
+      packSurface4GpuParams(de, view4({ rotor }), { itemCount: 1 }),
+    );
+    for (let i = 0; i < 4; i++) {
+      const at = 208 + i * 16;
+      expect(view.getFloat32(at, true)).toBe(rotor[i]);
+      expect(view.getFloat32(at + 4, true)).toBe(rotor[4 + i]);
+      expect(view.getFloat32(at + 8, true)).toBe(rotor[8 + i]);
+      expect(view.getFloat32(at + 12, true)).toBe(rotor[12 + i]);
+    }
+  });
+
+  it("packs stepBack4 sequentially from de.symmetry.stepBack under a real kaleidoscope (order 3, plane xz, twist 1)", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms(), null, {
+      order: 3,
+      plane: "xz",
+      twist: 1,
+    });
+    // A twisted kaleidoscope's backward step has no repeated axis block
+    // (order 1's stepBack is ~identity), so a transposed or reordered
+    // write cannot hide behind a symmetric matrix here.
+    expect(de.symmetry.order).toBe(3);
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    for (let i = 0; i < 16; i++) {
+      expect(view.getFloat32(272 + i * 4, true)).toBe(
+        Math.fround(de.symmetry.stepBack[i]),
+      );
+    }
+  });
+
+  it("packs final4M as the identity, final4T as zero and final4SigmaMin as 1 when the DE has no final transform", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    expect(de.final).toBeNull();
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        expect(view.getFloat32(336 + (r * 4 + c) * 4, true)).toBe(
+          r === c ? 1 : 0,
+        );
+      }
+    }
+    expect(view.getFloat32(400, true)).toBe(0);
+    expect(view.getFloat32(404, true)).toBe(0);
+    expect(view.getFloat32(408, true)).toBe(0);
+    expect(view.getFloat32(412, true)).toBe(0);
+    expect(view.getFloat32(424, true)).toBe(1); // final4SigmaMin
+  });
+
+  it("round-trips a real final transform's invM rows / invT / sigmaMin at the documented 336..431 offsets", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms(), fourDFinalTransform());
+    if (!de.final) throw new Error("expected a 4D final lens");
+    const f = de.final;
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    for (let i = 0; i < 16; i++) {
+      expect(view.getFloat32(336 + i * 4, true)).toBe(Math.fround(f.invM[i]));
+    }
+    expect(view.getFloat32(400, true)).toBe(Math.fround(f.invT[0]));
+    expect(view.getFloat32(404, true)).toBe(Math.fround(f.invT[1]));
+    expect(view.getFloat32(408, true)).toBe(Math.fround(f.invT[2]));
+    expect(view.getFloat32(412, true)).toBe(Math.fround(f.invT[3]));
+    expect(view.getFloat32(424, true)).toBe(Math.fround(f.sigmaMin));
+  });
+
+  it("packs w0 and sliceHalfW verbatim at offsets 416 and 420", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4({ w0: 0.37, sliceHalfW: 0.08 }), {
+        itemCount: 1,
+      }),
+    );
+    expect(view.getFloat32(416, true)).toBe(Math.fround(0.37));
+    expect(view.getFloat32(420, true)).toBe(Math.fround(0.08));
+  });
+
+  it("throws when a footprint is requested — the 4D oracle takes no cone-footprint depth cap", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    expect(() =>
+      packSurface4GpuParams(de, view4(), { itemCount: 1, footprint: 0.1 }),
+    ).toThrow(/footprint/);
+    expect(() =>
+      packSurface4GpuParams(de, view4(), { itemCount: 1, footprint: 0 }),
+    ).not.toThrow();
+  });
+});
+
+describe("packSurfaceGpuMaps4 (fr-dlxh 4D)", () => {
+  it("packs each map's invM rows / invT / sigmaMin at the documented word offsets, per SURFACE_GPU_MAP4_VEC4 stride", () => {
+    expect(SURFACE_GPU_MAP4_VEC4).toBe(6);
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const out = packSurfaceGpuMaps4(de);
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(de.maps.length * stride);
+
+    de.maps.forEach((m, j) => {
+      const base = j * stride;
+      // r0..r3 = invM rows 0..3, row-major, 16 floats sequential.
+      for (let i = 0; i < 16; i++) {
+        expect(out[base + i]).toBe(Math.fround(m.invM[i]));
+      }
+      // t = invT.
+      expect(out[base + 16]).toBe(Math.fround(m.invT[0]));
+      expect(out[base + 17]).toBe(Math.fround(m.invT[1]));
+      expect(out[base + 18]).toBe(Math.fround(m.invT[2]));
+      expect(out[base + 19]).toBe(Math.fround(m.invT[3]));
+      // p0 = sigmaMin, 0, 0, 0.
+      expect(out[base + 20]).toBe(Math.fround(m.sigmaMin));
+      expect(out[base + 21]).toBe(0);
+      expect(out[base + 22]).toBe(0);
+      expect(out[base + 23]).toBe(0);
+    });
+  });
+
+  it("returns one stride worth of zeros when the DE has no active maps", () => {
+    const zeroMapDe: SurfaceDE4 = {
+      ...buildSurfaceDE4(fourDSystemTransforms()),
+      maps: [],
+    };
+    const out = packSurfaceGpuMaps4(zeroMapDe);
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    expect(out.length).toBe(stride);
+    expect(Array.from(out)).toEqual(new Array(stride).fill(0));
   });
 });
