@@ -10,6 +10,7 @@ import {
   SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BYTES,
+  SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -1537,10 +1538,12 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
 });
 
 describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
-  it("throws when combined with a fold-final lens — 4D fold finals are fr-rsp6's scope, so no shape is pinned", () => {
-    expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", lens: true })),
-    ).toThrow(/fr-rsp6/);
+  it("accepts a fold-final lens since fr-rsp6 phase 2B — descendLens4's sweep around the REFINED ladder", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", lens: true }),
+    );
+    expect(wgsl).toContain("fn surfaceDECore(qIn: vec4f, qExt: vec4f,");
+    expect(wgsl).toContain("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)");
   });
 
   it("still validates width and workgroupSize, even though the fixed-width ladder ignores both", () => {
@@ -1806,10 +1809,10 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
 });
 
 describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
-  it("throws when combined with a fold-final lens — the 4D fold-final sweep is phase 2B, so no shape is pinned", () => {
-    expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ core: "fold4", lens: true })),
-    ).toThrow(/phase 2B/);
+  it("accepts a fold-final lens since phase 2B — descendLens4's sweep around the PLAIN frontier", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ core: "fold4", lens: true }));
+    expect(wgsl).toContain("fn surfaceDECore(qIn: vec4f, qExt: vec4f,");
+    expect(wgsl).toContain("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)");
   });
 
   it("validates width and workgroup size, which this core actually uses", () => {
@@ -2115,6 +2118,219 @@ describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)
   });
 });
 
+describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens, fr-rsp6 phase 2B)", () => {
+  it("omitted and explicit lens:false stay byte-identical for both 4D cores, at either slabExt", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", core: "affine4" },
+      { mode: "eval", core: "affine4", slabExt: false },
+      { mode: "march", core: "fold4", width: 12 },
+      { mode: "shade", core: "fold4", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "fold4", width: 12, slabExt: false },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, lens: false }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("surfaceDECore");
+      expect(omitted).not.toContain("lens4Params");
+    }
+  });
+
+  it("renames the core, hoists the VIEW LIFT into the wrapper, and declares the lens4 params block — for both 4D cores", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts({ core, lens: true }));
+      // Exactly one renamed core and one public wrapper, wrapper last.
+      expect(wgsl.split("fn surfaceDECore(").length).toBe(2);
+      expect(wgsl.split("fn surfaceDE(").length).toBe(2);
+      expect(wgsl.indexOf("fn surfaceDECore(")).toBeLessThan(
+        wgsl.indexOf("fn surfaceDE("),
+      );
+      // The 4D deviation: the core takes the LIFTED 4D query (plus its
+      // half-extent under a slab), and the wrapper does the one rotor
+      // apply — so exactly one rotorInvApply4 of the incoming vec3f is
+      // left in the value path, in the wrapper.
+      expect(wgsl).toContain(
+        "fn surfaceDECore(qIn: vec4f, qExt: vec4f, cutoff: f32, li: u32) -> f32 {",
+      );
+      expect(wgsl).toContain("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)");
+      expect(wgsl).toContain("let p = rotorInvApply4(vec4f(pIn, params.w0));");
+      // …and that wrapper line is the ONLY lift left: the core reads its
+      // query straight off the parameter.
+      expect([...wgsl.matchAll(/rotorInvApply4\(vec4f\(pIn/g)].length).toBe(1);
+      expect(wgsl).toContain("  var q = qIn;");
+      // The appended params block, and NOT the 3D lens block.
+      expect(wgsl).toContain("lens4Params: vec4f");
+      expect(wgsl).toContain("lens4MR3: vec4f");
+      expect(wgsl).not.toContain("lensParams: vec4f");
+      // The 4D tail is still declared — a lensed 4D kernel needs both.
+      expect(wgsl).toContain("rotorInvR0: vec4f");
+      expect(wgsl).toContain("visRadius4: f32");
+    }
+  });
+
+  it("sweeps the 4D branch fans (81/3/243, four-digit box code, b += 80u) — never 3D's 27/26", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", lens: true }),
+    );
+    expect(wgsl).toContain("branchCount = 81u;");
+    expect(wgsl).toContain("branchCount = 3u;");
+    expect(wgsl).toContain("var branchCount = 243u;");
+    expect(wgsl).toContain("(b % 81u) == 0u");
+    expect(wgsl).toContain("s = b / 81u;");
+    expect(wgsl).toContain("bb = b % 81u;");
+    expect(wgsl).toContain("b += 80u;");
+    expect(wgsl).toContain("let selW = bb / 27u;");
+    expect(wgsl).not.toContain("branchCount = 27u;");
+    expect(wgsl).not.toContain("b += 26u;");
+  });
+
+  it("floors the sweep on the FULL 4D visible radius, not the slice-adjusted march gate", () => {
+    // params.visibleRadius carries the slice's shadow for this core
+    // (packing contract); descendLens4's visible ball is the full 4D one,
+    // so a wrapper reading the frozen slot would shrink its pin as w0
+    // slides.
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", lens: true }),
+    );
+    expect(wgsl).toContain(
+      "let visBound = segmentRadius4(p, pExt) - params.visRadius4;",
+    );
+    expect(wgsl).not.toContain("- params.visibleRadius;");
+    const noslab = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", lens: true, slabExt: false }),
+    );
+    expect(noslab).toContain("let visBound = length(p) - params.visRadius4;");
+  });
+
+  it("hands the REFINED core the fr-55r5 inner cutoff and the PLAIN core cutoff 0 — descendLens4's `refine ? innerCutoff : 0` seam", () => {
+    const affine4 = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", lens: true }),
+    );
+    expect(affine4).toContain("innerCutoff = min(best, cutoff) / factor;");
+    expect(affine4).toContain("surfaceDECore(q, qExt, innerCutoff, li)");
+
+    const fold4 = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", lens: true, width: 12 }),
+    );
+    expect(fold4).toContain("surfaceDECore(q, qExt, 0.0, li)");
+    expect(fold4).not.toContain("innerCutoff = min(best, cutoff) / factor;");
+  });
+
+  it("threads the fr-wa6o segment through the branch transport under slabExt, and drops it entirely without", () => {
+    const withExt = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", lens: true, width: 12 }),
+    );
+    // u-space scaling, the boxfold branch's diag(+-1) transport, the
+    // lens's linear part on the branch extent, and the segment radius in
+    // place of every length.
+    expect(withExt).toContain("eu = pExt * params.lens4Params.y;");
+    expect(withExt).toContain("select(-eu.w, eu.w, selW == 0u),");
+    expect(withExt).toContain("qExt = vec4f(");
+    expect(withExt).toContain("let rq = segmentRadius4(q, qExt);");
+
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", lens: true, width: 12, slabExt: false }),
+    );
+    expect(withoutExt).toContain("let rq = length(q);");
+    expect(withoutExt).toContain("surfaceDECore(q, 0.0, li)");
+    for (const marker of ["let segment", "pExt", "qExt", "preExt", "var eu"]) {
+      expect(withoutExt).not.toContain(marker);
+    }
+  });
+
+  it("keeps the wrapper out of the entry text — the 4D entries call surfaceDE exactly as without the lens", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const plain = surfaceDeKernelWgsl(kernelOpts({ mode, core: "fold4" }));
+      const lensed = surfaceDeKernelWgsl(
+        kernelOpts({ mode, core: "fold4", lens: true }),
+      );
+      const entryCall =
+        mode === "eval"
+          ? "surfaceDE(queries[i].xyz, params.cutoff, li)"
+          : "surfaceDE(ro + rd * t, eps, li)";
+      expect(plain).toContain(entryCall);
+      expect(lensed).toContain(entryCall);
+    }
+  });
+
+  it("mode 'shade' renames the 4D hit-info behind its own argmin sweep, which hands the core the winning branch's lifted query", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, lens: true }),
+      );
+      expect(wgsl.split("fn surfaceDEHitInfoCore(").length).toBe(2);
+      expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+      expect(wgsl).toContain(
+        "fn surfaceDEHitInfoCore(qIn: vec4f, qExt: vec4f, li: u32)",
+      );
+      expect(wgsl).toContain("fn surfaceDEHitInfo(p: vec3f, li: u32)");
+      // Shading conventions: zero-cutoff full-width core calls, one core
+      // hit call on the argmin branch — the 3D wrapper's shape.
+      expect(wgsl).toContain("surfaceDECore(q, qExt, 0.0, li)");
+      expect(wgsl).toContain(
+        "return surfaceDEHitInfoCore(bestQ, bestExt, li);",
+      );
+    }
+    const noslab = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", lens: true, slabExt: false }),
+    );
+    expect(noslab).toContain("return surfaceDEHitInfoCore(bestQ, li);");
+  });
+
+  it("fold4 shade with a probe width renames the probe body and gives the taps their own 4D lens sweep", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        lens: true,
+        width: 12,
+        shadeDeWidth: 1,
+      }),
+    );
+    expect(wgsl.split("fn surfaceDEProbeCore(").length).toBe(2);
+    expect(wgsl.split("fn surfaceDEProbe(").length).toBe(2);
+    expect(wgsl).toContain(
+      "fn surfaceDEProbeCore(qIn: vec4f, qExt: vec4f, cutoff: f32, li: u32)",
+    );
+    expect(wgsl).toContain("surfaceDEProbeCore(q, qExt, 0.0, li)");
+    // The probe's own frontier narrows to the probe width, the main
+    // descent keeps its own — one text, three names.
+    expect(wgsl).toContain("var fcQ: array<vec4f, 1>;");
+    expect(wgsl).toContain("var fcQ: array<vec4f, 12>;");
+
+    const noProbe = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", lens: true, width: 12 }),
+    );
+    expect(noProbe).not.toContain("surfaceDEProbe");
+  });
+
+  it("balances every brace across the lens matrix — the generated wrapper is one text per (core, mode, slabExt)", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        for (const slabExt of [true, false]) {
+          const wgsl = surfaceDeKernelWgsl(
+            kernelOpts({ core, mode, slabExt, lens: true, width: 4 }),
+          );
+          expect([...wgsl.matchAll(/\}/g)].length).toBe(
+            [...wgsl.matchAll(/\{/g)].length,
+          );
+          expect([...wgsl.matchAll(/\)/g)].length).toBe(
+            [...wgsl.matchAll(/\(/g)].length,
+          );
+        }
+      }
+    }
+  });
+
+  it("still refuses a lensed ESCAPE kernel — that gate is unchanged by the 4D lift", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape", lens: true })),
+    ).toThrow(/escape core cannot take a fold-final lens/);
+  });
+});
+
 /** Two-map 4D system, the second map's w block making the system genuinely
  * 4D (not a flat 3D lift) — a minimal ELIGIBLE system for buildSurfaceDE4,
  * so the affine4 packer's byte layout is pinned against a real SurfaceDE4
@@ -2161,6 +2377,47 @@ function fourDFoldSystemTransforms(): Transform[] {
       w: { position: 0.4, rotation: { xw: 0.3 } },
     },
   ];
+}
+
+/** Two-map 4D system whose base maps SPHEREFOLD — the fold family whose
+ * mid branch is an inversion, so `slabExact4` refuses it and a slab query
+ * is unsound (surface-de-4d.ts). Mirrors that module's own
+ * pureSpherefoldPair4 fixture; used here to pin the packer's slab guard. */
+function fourDSpherefoldSystemTransforms(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.2, 0.2, 0.2],
+      variations: [{ type: "spherefold", weight: 1 }],
+      w: { position: 0.2, rotation: { yw: 0.2 } },
+    },
+    {
+      id: 1,
+      position: [-0.1, 0.1, -0.05],
+      rotation: [0, 0, 0],
+      scale: [0.22, 0.22, 0.22],
+      variations: [{ type: "spherefold", weight: 0.9 }],
+      w: { position: -0.2, rotation: { yw: 0.2 } },
+    },
+  ];
+}
+
+/** A boxfold FINAL lens over a 4D base — the fr-rsp6 phase 2B archetype,
+ * mirroring surface-de-4d.test.ts's boxfoldFinal4(). The SMALL weight
+ * matters: `u = p/w` reaches past the fold planes, so the non-identity
+ * branches carry real geometry instead of degenerating to the affine part,
+ * and boxfold is the ONE fold family a slab query survives (slabExact4). */
+function fourDBoxfoldFinalTransform(): Transform {
+  return {
+    id: 99,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "boxfold", weight: 0.55 }],
+    w: { position: 0.1, rotation: { yw: 0.2 } },
+  };
 }
 
 /** Plain affine 4D final transform (no variations, w block included) —
@@ -2496,6 +2753,139 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
     ).toThrow(/footprint/);
     expect(() =>
       packSurface4GpuParams(de, view4(), { itemCount: 1, footprint: 0 }),
+    ).not.toThrow();
+  });
+});
+
+describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () => {
+  it("keeps the 432-byte buffer without a foldFinal and grows to SURFACE_GPU_PARAMS4_LENS_BYTES with one", () => {
+    expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(528);
+    const plain = buildSurfaceDE4(fourDSystemTransforms());
+    expect(plain.foldFinal).toBeNull();
+    expect(
+      packSurface4GpuParams(plain, view4(), { itemCount: 1 }).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_BYTES);
+
+    const lensed = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    expect(lensed.foldFinal).not.toBeNull();
+    expect(
+      packSurface4GpuParams(lensed, view4(), { itemCount: 1 }).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_LENS_BYTES);
+  });
+
+  it("leaves the frozen 0..431 block byte-identical to the no-lens packing of the same base system", () => {
+    // The lens block is APPENDED: a 4D kernel without the lens declares a
+    // struct that ends at 432 and never reads past it, so nothing before
+    // that offset may move.
+    const base = fourDSystemTransforms();
+    const plain = packSurface4GpuParams(buildSurfaceDE4(base), view4(), {
+      itemCount: 7,
+    });
+    const lensed = packSurface4GpuParams(
+      buildSurfaceDE4(base, fourDBoxfoldFinalTransform()),
+      view4(),
+      { itemCount: 7 },
+    );
+    const a = new DataView(plain);
+    const b = new DataView(lensed);
+    for (let off = 0; off < SURFACE_GPU_PARAMS4_BYTES; off += 4) {
+      // Only the two radii legitimately differ (a fold final expands the
+      // VISIBLE set), so compare the layout everywhere else.
+      if (off === 24 || off === 428) continue;
+      expect(b.getUint32(off, true)).toBe(a.getUint32(off, true));
+    }
+  });
+
+  it("round-trips the built lens's invM rows / invT / lens4Params at the documented 432..527 offsets", () => {
+    const de = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    const lens = de.foldFinal;
+    if (!lens) throw new Error("expected a 4D foldFinal lens");
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    // Row-major bytes of the matrix the body applies (dot(rowN, v)) —
+    // the file's standing 4D convention, same as final4M/stepBack4.
+    for (let i = 0; i < 16; i++) {
+      expect(view.getFloat32(432 + i * 4, true)).toBe(
+        Math.fround(lens.invM[i]),
+      );
+    }
+    expect(view.getFloat32(496, true)).toBe(Math.fround(lens.invT[0]));
+    expect(view.getFloat32(500, true)).toBe(Math.fround(lens.invT[1]));
+    expect(view.getFloat32(504, true)).toBe(Math.fround(lens.invT[2]));
+    expect(view.getFloat32(508, true)).toBe(Math.fround(lens.invT[3]));
+    // lens4Params — (foldKind, invW, absW, sigmaMin), the GLSL
+    // uLensParams order the wrapper reads.
+    expect(view.getFloat32(512, true)).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(view.getFloat32(516, true)).toBe(Math.fround(lens.invW));
+    expect(view.getFloat32(520, true)).toBe(Math.fround(lens.absW));
+    expect(view.getFloat32(524, true)).toBe(Math.fround(lens.sigmaMin));
+    // A real lens, not a degenerate one: weight 0.55 gives invW ~1.82.
+    expect(lens.absW).toBeCloseTo(0.55, 12);
+  });
+
+  it("packs the cores' OWN final rows as identity/zero/1 under a foldFinal — the wrapper alone applies the lens", () => {
+    const de = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    // buildSurfaceDE4 keeps the two exclusive, which is what lets the
+    // cores run their no-lens arithmetic verbatim under the wrapper.
+    expect(de.final).toBeNull();
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        expect(view.getFloat32(336 + (r * 4 + c) * 4, true)).toBe(
+          r === c ? 1 : 0,
+        );
+      }
+    }
+    expect(view.getFloat32(400, true)).toBe(0);
+    expect(view.getFloat32(404, true)).toBe(0);
+    expect(view.getFloat32(408, true)).toBe(0);
+    expect(view.getFloat32(412, true)).toBe(0);
+    expect(view.getFloat32(424, true)).toBe(1);
+  });
+
+  it("refuses a slab query for a system slabExact4 rejects, and allows one for a boxfold-only system", () => {
+    // A spherefold branch takes a segment to an ARC, so the segment
+    // certificate is unsound (not merely loose) — the CPU entries throw
+    // and the app clamps sliceHalfW; this is the kernel-side belt.
+    const spherefold = buildSurfaceDE4(fourDSpherefoldSystemTransforms());
+    expect(() =>
+      packSurface4GpuParams(spherefold, view4({ sliceHalfW: 0.05 }), {
+        itemCount: 1,
+      }),
+    ).toThrow(/slabExact4/);
+    // Zero thickness is the point query, admissible for any system.
+    expect(() =>
+      packSurface4GpuParams(spherefold, view4({ sliceHalfW: 0 }), {
+        itemCount: 1,
+      }),
+    ).not.toThrow();
+
+    const boxfoldBase = buildSurfaceDE4(fourDFoldSystemTransforms());
+    expect(() =>
+      packSurface4GpuParams(boxfoldBase, view4({ sliceHalfW: 0.05 }), {
+        itemCount: 1,
+      }),
+    ).not.toThrow();
+    const boxfoldLens = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    expect(() =>
+      packSurface4GpuParams(boxfoldLens, view4({ sliceHalfW: 0.05 }), {
+        itemCount: 1,
+      }),
     ).not.toThrow();
   });
 });

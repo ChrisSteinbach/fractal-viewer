@@ -9,7 +9,7 @@ import {
   SYM_PLANE_CODE,
   type SurfaceDE,
 } from "./surface-de";
-import type { SurfaceDE4 } from "./surface-de-4d";
+import { slabExact4, type SurfaceDE4 } from "./surface-de-4d";
 import type { Vec3 } from "./types";
 
 /**
@@ -83,7 +83,9 @@ import type { Vec3 } from "./types";
  *   "affine" (the ladder is fixed at the oracle's `beamWidth` 4; no
  *   frontier, no probe), `footprint` THROWS at pack (the 4D oracle has
  *   no cone-footprint cap; hosts pass 0), and a fold-final `lens`
- *   THROWS (4D fold finals are fr-rsp6 phase 2B).
+ *   wraps it in `descendLens4`'s branch sweep at refine=TRUE (fr-rsp6
+ *   phase 2B: this core IS the refined estimator, so its root descents
+ *   take the inner cutoff — THE FOLD-LENS WRAPPER below).
  * - `core: "fold4"` (fr-rsp6 phase 2A) is the FOLD frontier one
  *   dimension up — `surface-de-4d.ts`'s `descendFold4` refine=FALSE,
  *   behind the identical view lift — for the 4D systems whose BASE maps
@@ -105,7 +107,9 @@ import type { Vec3 } from "./types";
  *   stage-2 skips 1.4-1.6x slower — so this core emits the private
  *   frontier and the stage-1 floor prune ALONE. The skips are value
  *   no-ops, so agreement against the oracle is untouched by their
- *   absence. `lens` THROWS (phase 2B).
+ *   absence. `lens` wraps it in the SAME `descendLens4` sweep at
+ *   refine=FALSE (fr-rsp6 phase 2B): the wrapper hands this core cutoff
+ *   0, exactly the CPU's `refine ? innerCutoff : 0`.
  *
  * All five bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
@@ -152,6 +156,41 @@ import type { Vec3 } from "./types";
  * {@link estimateDistance}, each still "the estimator the GLSL marches"
  * for its class. `lens: false` (and absent) generates byte-identical
  * source to the pre-lens generator for every config.
+ *
+ * THE 4D ARM (fr-rsp6 phase 2B) lifts the same wrapper to `core:
+ * "affine4"`/`"fold4"` as `descendLens4` (surface-de-4d.ts), with three
+ * deltas the 3D text has no room for:
+ *
+ * - THE WRAPPER OWNS THE VIEW LIFT. 3D's cores take world points and
+ *   keep their signatures untouched under the lens; the 4D cores derive
+ *   their 4D query in their own PROLOGUE, so the sweep would redo the
+ *   rotor apply per branch and — worse — could not hand a branch its
+ *   transported preimage at all. Under the lens the prologue's lift and
+ *   slab seed hoist into the wrapper, once, and the core's signature
+ *   becomes `surfaceDECore(qIn: vec4f[, qExt: vec4f], cutoff, li)` (the
+ *   hit-info and probe twins likewise). Everything after that line is
+ *   the no-lens body's own text: the cores keep their `finalApply4`
+ *   lines, which the packer's IDENTITY final rows make a bit-exact
+ *   no-op ({@link packSurface4GpuParams}, `final` null whenever
+ *   `foldFinal` is set — 3D's invariant one dimension up).
+ * - THE REFINE SEAM. `descendLens4` routes its root descents
+ *   `hasFolds ? descendFold4(…, refine ? innerCutoff : 0) : refine ?
+ *   descend4Refined(…, innerCutoff) : descend4(…)`, and each kernel core
+ *   mirrors ONE arm: "affine4" is the REFINED estimator, so it takes the
+ *   fr-55r5 inner cutoff `min(best, cutoff) / factor`; "fold4" is the
+ *   PLAIN frontier, so it takes 0. Swapping them would silently mirror
+ *   an estimator no oracle pins.
+ * - THE 4D QUANTITIES. 81/3/243 branch fans with the four-digit box code
+ *   (mandelbox sphere branch every 81st index, shell guard skipping
+ *   `b += 80u`), `segmentRadius4` in place of every `length` so a
+ *   fr-wa6o slab rides through the lens (boxfold lenses only —
+ *   `slabExact4`, which the packer now enforces), and an ORIGIN-anchored
+ *   visible ball at the FULL 4D radius `params.visRadius4`, NOT the
+ *   frozen `visibleRadius` slot this core fills with the slice-adjusted
+ *   march gate. The lens itself rides the params block APPENDED past the
+ *   4D tail ({@link SURFACE_GPU_PARAMS4_LENS_BYTES}), declared in the
+ *   `Params` struct only under the lens, so every no-lens 4D kernel's
+ *   text stays byte-identical.
  *
  * TWO FRONTIER VARIANTS, selected at source-generation time so the bench
  * can A/B them with everything else held equal:
@@ -239,10 +278,12 @@ import type { Vec3 } from "./types";
  *
  * Scope: BASE fold/affine maps + kaleidoscope sector sweep + affine
  * final lens; and, since fr-55s1 stage B, the FOLD final lens — `lens:
- * true` wraps either core in `descendLens`'s branch sweep (THE
+ * true` wraps any DESCENT core in `descendLens`'s branch sweep (both 3D
+ * cores; both 4D cores as `descendLens4` since fr-rsp6 phase 2B — THE
  * FOLD-LENS WRAPPER above), with the lens fields appended to the params
  * uniform. Footprint under a lens stays out ({@link
- * packSurfaceGpuParams} throws — the app path always passes 0). Stage C
+ * packSurfaceGpuParams} throws for 3D; the 4D packer refuses ANY
+ * footprint already — the app path always passes 0). Stage C
  * finished the shade half: a per-core hit-info descent (the affine one
  * ports its GLSL twin's TRAJECTORY, colors only — the value side never
  * steers the ladder), and under the lens the hit-info renames to
@@ -316,9 +357,23 @@ import type { Vec3 } from "./types";
  *              keeps the FULL 4D visible radius (the height/radius
  *              color sources' slice-INVARIANT normalizer — the 4D GLSL
  *              deliberately divides by the full radius so coloring
- *              doesn't swim as w0 slides), and `boundCenter` packs the
- *              origin (the 4D oracle is origin-anchored by
+ *              doesn't swim as w0 slides, and `descendLens4`'s visible
+ *              ball is that same full radius), and `boundCenter` packs
+ *              the origin (the 4D oracle is origin-anchored by
  *              construction).
+ *          · a 4D core under `lens: true` (fr-rsp6 phase 2B) — the tail
+ *              GROWS again, APPENDED past 432: {@link
+ *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 528 bytes total, and
+ *              {@link packSurface4GpuParams} returns exactly this size
+ *              when (and only when) the DE carries a `foldFinal`:
+ *              432 vec4f lens4M row0..row3   (..495)
+ *              496 vec4f lens4T
+ *              512 vec4f lens4Params — (foldKind as f32, invW, absW,
+ *                  sigmaMin), the GLSL `uLensParams` order again.
+ *              The cores' own final4M/final4T rows still pack
+ *              IDENTITY/0 here (`final` is null whenever `foldFinal` is
+ *              set), so the core bodies run their no-lens arithmetic
+ *              and the wrapper alone applies the lens.
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -397,6 +452,13 @@ export const SURFACE_GPU_PARAMS_BYTES = 272;
  * structs still end at 208/272; binding the larger buffer to them would
  * be valid, but hosts size per core. */
 export const SURFACE_GPU_PARAMS4_BYTES = 432;
+/** Params size for a 4D core under `lens: true` (fr-rsp6 phase 2B): the
+ * 432-byte tail above plus the appended lens4 block (layout contract in
+ * the module doc). {@link packSurface4GpuParams} returns THIS size exactly
+ * when the DE carries a `foldFinal`, and the 432-byte buffer byte for byte
+ * when it does not — a no-lens kernel's struct ends at 432 and never reads
+ * past it. */
+export const SURFACE_GPU_PARAMS4_LENS_BYTES = 528;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
@@ -440,8 +502,9 @@ export interface SurfaceGpuKernelOptions {
    * lift (rotor + w0 + fr-wa6o slab) — for `analyzeSurfaceSystem4`
    * systems: pack with {@link packSurface4GpuParams} +
    * {@link packSurfaceGpuMaps4} (binding 1 is `array<GpuMap4>`), same
-   * inert options as "affine", `lens` throws (4D fold finals are
-   * fr-rsp6's scope) and a nonzero `footprint` throws at pack.
+   * inert options as "affine", and a nonzero `footprint` throws at pack.
+   * `lens` is LIVE since fr-rsp6 phase 2B — `descendLens4`'s branch
+   * sweep around this REFINED core, i.e. `descendLens4(refine=true)`.
    * "fold4" (fr-rsp6 phase 2A) is the FOLD frontier one dimension up —
    * `surface-de-4d.ts`'s `descendFold4` refine=FALSE (3D's fold-core
    * precedent: refinement measured a value no-op on pure-fold systems)
@@ -450,19 +513,25 @@ export interface SurfaceGpuKernelOptions {
    * maps, same footprint throw); `width` is LIVE here as it is under
    * "fold", `shadeDeWidth` emits the same probe descent, and
    * `sharedFrontier`/`bnbStage2` are inert by measured 3D verdict (see
-   * their own docs). `lens` throws — 4D fold FINALS are fr-rsp6 phase
-   * 2B. */
+   * their own docs). `lens` wraps it in the same sweep at
+   * `descendLens4(refine=FALSE)` — the core cutoff the wrapper hands
+   * down is the CPU's `refine ? innerCutoff : 0`, so this arm passes 0. */
   core?: "fold" | "affine" | "escape" | "affine4" | "fold4";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
-   * `descendLens`, fr-g58b's vocabulary): the descent body (either core)
-   * is renamed `surfaceDECore` and a new `surfaceDE` sweeps the lens's
-   * inverse fold branches around it, each an affine-lensed core descent
-   * — so the mode entries' call sites are untouched text. Absent or
-   * false reproduces the no-lens source byte for byte. Branch kind and
-   * count are RUNTIME params (one pipeline per session, GLSL parity).
-   * In shade mode the hit-info descent gets the same treatment (renamed
-   * core + argmin-sweep wrapper) and the probe, when emitted, its own
-   * renamed sweep — fr-55s1 stage C. */
+   * `descendLens`, fr-g58b's vocabulary; fr-rsp6 phase 2B lifts it to
+   * the 4D cores as `descendLens4`): the descent body (any core but
+   * "escape") is renamed `surfaceDECore` and a new `surfaceDE` sweeps
+   * the lens's inverse fold branches around it, each an affine-lensed
+   * core descent — so the mode entries' call sites are untouched text.
+   * Absent or false reproduces the no-lens source byte for byte. Branch
+   * kind and count are RUNTIME params (one pipeline per session, GLSL
+   * parity). In shade mode the hit-info descent gets the same treatment
+   * (renamed core + argmin-sweep wrapper) and the probe, when emitted,
+   * its own renamed sweep — fr-55s1 stage C. Under the 4D cores the
+   * wrapper additionally OWNS THE VIEW LIFT — a documented deviation
+   * from 3D's untouched-core signatures, forced by where the lift lives
+   * (THE FOLD-LENS WRAPPER in the module doc) — and the lens rides the
+   * appended {@link SURFACE_GPU_PARAMS4_LENS_BYTES} params block. */
   lens?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
@@ -792,6 +861,32 @@ export interface SurfaceGpu4View {
  * never-uninitialized convention), and a nonzero `footprint` THROWS:
  * the 4D oracle takes no footprint argument, and the app path always
  * passes 0.
+ *
+ * A `foldFinal` DE (fr-rsp6 phase 2B) APPENDS the lens4 block and returns
+ * {@link SURFACE_GPU_PARAMS4_LENS_BYTES} bytes — the 4D twin of the 3D
+ * packer's 208..271 lens block, one dimension up: `invM` as four
+ * row-vec4s, `invT`, then `(foldKind, invW, absW, sigmaMin)` in the GLSL
+ * `uLensParams` order. Without one the buffer is the 432-byte block
+ * unchanged, byte for byte. The cores' own final4M/final4T slots still
+ * pack IDENTITY/0/1 there, because `buildSurfaceDE4` keeps `final` null
+ * whenever `foldFinal` is set (3D's invariant one dimension up): the
+ * cores run their no-lens arithmetic verbatim and the wrapper alone
+ * applies the lens.
+ *
+ * HOST CONTRACT for that growth: size the uniform buffer from the
+ * RETURNED `byteLength` (or from {@link SURFACE_GPU_PARAMS4_LENS_BYTES}
+ * whenever `de.foldFinal` is set — the two agree) and generate the
+ * kernel with `lens: true` for the same DE. A host that sizes 432
+ * unconditionally will fail validation the moment a 4D fold FINAL
+ * reaches it, and one that packs the block into a no-lens kernel simply
+ * renders without the lens (the struct ends at 432 and never reads it).
+ * `src/app/gpu-bench/` already sizes off `byteLength`.
+ *
+ * A slab query (`sliceHalfW > 0`) THROWS for a system whose fold set
+ * breaks segment exactness ({@link slabExact4}) — the kernel-side belt
+ * for the CPU entries' own refusal (a spherefold branch takes a segment
+ * to an ARC, so the certificate is unsound, not merely loose). The app
+ * clamps `sliceHalfW` to 0 for such sessions.
  */
 export function packSurface4GpuParams(
   de: SurfaceDE4,
@@ -804,7 +899,17 @@ export function packSurface4GpuParams(
         "(the 4D oracle takes no footprint argument; hosts pass 0)",
     );
   }
-  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS4_BYTES);
+  if (view4.sliceHalfW > 0 && !slabExact4(de)) {
+    throw new Error(
+      "surface-de-gpu: slab queries are unsound under spherefold/mandelbox " +
+        "branches (segment -> arc under inversion) — clamp sliceHalfW to 0 " +
+        "for this system (slabExact4)",
+    );
+  }
+  const lens4 = de.foldFinal;
+  const buf = new ArrayBuffer(
+    lens4 ? SURFACE_GPU_PARAMS4_LENS_BYTES : SURFACE_GPU_PARAMS4_BYTES,
+  );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
   view.setFloat32(16, de.escapeRadius, true);
@@ -874,6 +979,25 @@ export function packSurface4GpuParams(
   // slice-invariant normalizer (the frozen visibleRadius slot carries
   // the slice-ADJUSTED march gate above).
   view.setFloat32(428, de.visibleBoundingRadius, true);
+  // fr-rsp6 phase 2B: the appended lens4 block, present exactly when the
+  // DE carries a fold FINAL (a no-lens 4D kernel's struct ends at 432 and
+  // never reads past it, so its buffer simply stops here). Same row-major
+  // convention as every other 4D matrix on this wire, and the tail vec4f
+  // is the GLSL uLensParams order (kind, invW, absW, sigmaMin), so the
+  // wrapper reads like descendLens4 line for line.
+  if (lens4) {
+    for (let i = 0; i < 16; i++) {
+      view.setFloat32(432 + i * 4, lens4.invM[i], true);
+    }
+    view.setFloat32(496, lens4.invT[0], true);
+    view.setFloat32(500, lens4.invT[1], true);
+    view.setFloat32(504, lens4.invT[2], true);
+    view.setFloat32(508, lens4.invT[3], true);
+    view.setFloat32(512, lens4.foldKind, true);
+    view.setFloat32(516, lens4.invW, true);
+    view.setFloat32(520, lens4.absW, true);
+    view.setFloat32(524, lens4.sigmaMin, true);
+  }
   return buf;
 }
 
@@ -1031,24 +1155,6 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     // arm pins a lensed escape shape — loud beats generating one.
     throw new Error(
       "surface-de-gpu: the escape core cannot take a fold-final lens",
-    );
-  }
-  if (core === "affine4" && lens) {
-    // analyzeSurfaceSystem4 blanket-refuses fold finals today — the 4D
-    // fold-branch sweep is fr-rsp6's scope — so no oracle pins a lensed
-    // 4D shape. Loud beats generating one.
-    throw new Error(
-      "surface-de-gpu: the affine4 core cannot take a fold-final lens " +
-        "(4D fold finals are fr-rsp6's scope)",
-    );
-  }
-  if (core === "fold4" && lens) {
-    // `descendLens4` (the 4D fold-FINAL branch sweep) is fr-rsp6 phase
-    // 2B; phase 2A ports the BASE-map frontier alone, so no wrapper text
-    // exists to mirror it. Loud beats generating an unpinned shape.
-    throw new Error(
-      "surface-de-gpu: the fold4 core cannot take a fold-final lens " +
-        "(the 4D fold-final lens is fr-rsp6 phase 2B)",
     );
   }
   // The 4D cores: one view lift, one params tail, one maps layout. The
@@ -1624,31 +1730,56 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
 
-  // 4D hit-info (fr-dlxh's 4D cut): surface-material-4d.ts's shading
-  // overload (the out-param surfaceDE), trajectory term for term — the
-  // width-4 refined ladder behind the SAME view lift as the value body,
-  // under the colors-only convention the fold/affine twins set: best and
-  // refinedCert never steer the ladder (keys route the beam,
-  // escape/bounding radii route the chains), and the GLSL overload's
-  // returned distance is exactly the value side trimmed here. Plain
-  // params.maxDepth on purpose, like the other twins.
-  const affine4HitInfoText = (slabExt: boolean): string => /* wgsl */ `${
-    slabExt
-      ? `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
-// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
-// spill, sector-major enumeration, one vec4f half-extent per register
-// (fr-wa6o) — behind the value body's view lift, feeding colors only
-// (the value side never steers it; see the generator comment).
+  // THE 4D CORES' PROLOGUE — one text, four bodies (the affine4 ladder,
+  // the fold4 frontier and both hit-info twins), for renameToProbe's
+  // reason: view -> attractor frame (the 4D GLSL's uInvRotor line), the
+  // fr-wa6o slab seed, then the affine final lens.
+  //
+  // Under the fr-rsp6 phase 2B LENS the wrapper owns that lift instead
+  // (module doc, THE FOLD-LENS WRAPPER): the sweep lifts ONCE and hands
+  // each branch's transported query straight in, so the core's signature
+  // takes the 4D point (and, under a slab, its half-extent) rather than
+  // the view-frame vec3f. The final-lens lines STAY — `buildSurfaceDE4`
+  // keeps `final` null whenever `foldFinal` is set, so the packer packs
+  // final4M/final4T IDENTITY/0 and these dot-products reproduce their
+  // arguments bit for bit — which keeps the rest of every body the
+  // no-lens body's own text.
+  const core4Params = (arg: string, slabExt: boolean, lens: boolean): string =>
+    !lens
+      ? `${arg}: vec3f`
+      : slabExt
+        ? "qIn: vec4f, qExt: vec4f"
+        : "qIn: vec4f";
+  const lift4Text = (
+    arg: string,
+    comment: string,
+    slabExt: boolean,
+    lens: boolean,
+  ): string =>
+    lens
+      ? `  // The lens wrapper lifted this query into the attractor frame and
+  // transported it through ONE inverse fold branch (its half-extent too,
+  // under a slab — fr-wa6o), so the core opens on the 4D point it would
+  // otherwise derive. The affine final lens below is the packer's
+  // IDENTITY under a foldFinal, left in place so the rest of this body
+  // stays the no-lens body's own text (fr-rsp6 phase 2B).
+  var q = qIn;
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
+  var ext = qExt;
 `
-      : `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
-// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
-// spill, sector-major enumeration — behind the value body's view lift,
-// feeding colors only (the value side never steers it; see the
-// generator comment). fr-d0nn slabExt=false (fr-b72d probe): no
-// fr-wa6o half-extent registers — every radius below is a plain length.
+    : ``
+}  q = finalApply4(q);
+${
+  slabExt
+    ? `  if (segment) {
+    ext = finalApplyLinear4(ext);
+  }
 `
-  }fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var q = rotorInvApply4(vec4f(p, params.w0));
+    : ``
+}`
+      : `${comment}  var q = rotorInvApply4(vec4f(${arg}, params.w0));
 ${
   slabExt
     ? `  let segment = params.sliceHalfW > 0.0;
@@ -1666,7 +1797,40 @@ ${
   }
 `
     : ``
-}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+}`;
+
+  // 4D hit-info (fr-dlxh's 4D cut): surface-material-4d.ts's shading
+  // overload (the out-param surfaceDE), trajectory term for term — the
+  // width-4 refined ladder behind the SAME view lift as the value body,
+  // under the colors-only convention the fold/affine twins set: best and
+  // refinedCert never steer the ladder (keys route the beam,
+  // escape/bounding radii route the chains), and the GLSL overload's
+  // returned distance is exactly the value side trimmed here. Plain
+  // params.maxDepth on purpose, like the other twins.
+  const affine4HitInfoText = (
+    slabExt: boolean,
+    lens: boolean,
+  ): string => /* wgsl */ `${
+    slabExt
+      ? `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
+// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
+// spill, sector-major enumeration, one vec4f half-extent per register
+// (fr-wa6o) — behind the value body's view lift, feeding colors only
+// (the value side never steers it; see the generator comment).
+`
+      : `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
+// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
+// spill, sector-major enumeration — behind the value body's view lift,
+// feeding colors only (the value side never steers it; see the
+// generator comment). fr-d0nn slabExt=false (fr-b72d probe): no
+// fr-wa6o half-extent registers — every radius below is a plain length.
+`
+  }fn surfaceDEHitInfo(${core4Params(
+    "p",
+    slabExt,
+    lens,
+  )}, li: u32) -> SurfaceHitInfo {
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -2024,7 +2188,10 @@ ${
   // never steers it), so no frontier, no prunes and no shell
   // certificate on the mid-branch guard, exactly the 3D fold hit-info's
   // conventions; plain params.maxDepth, like every other hit-info body.
-  const fold4HitInfoText = (slabExt: boolean): string => /* wgsl */ `${
+  const fold4HitInfoText = (
+    slabExt: boolean,
+    lens: boolean,
+  ): string => /* wgsl */ `${
     slabExt
       ? `// 4D fold hit-info descent (surface-de-4d.ts's descendFold4
 // trajectory, the 3D fold hit-info's shape one dimension up): a greedy
@@ -2039,26 +2206,12 @@ ${
 // (fr-b72d probe): no fr-wa6o half-extent registers — every radius
 // below is a plain length.
 `
-  }fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var q = rotorInvApply4(vec4f(p, params.w0));
-${
-  slabExt
-    ? `  let segment = params.sliceHalfW > 0.0;
-  var ext = vec4f(0.0);
-  if (segment) {
-    ext = rotorInvWCol4() * params.sliceHalfW;
-  }
-`
-    : ``
-}  q = finalApply4(q);
-${
-  slabExt
-    ? `  if (segment) {
-    ext = finalApplyLinear4(ext);
-  }
-`
-    : ``
-}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  }fn surfaceDEHitInfo(${core4Params(
+    "p",
+    slabExt,
+    lens,
+  )}, li: u32) -> SurfaceHitInfo {
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -2550,15 +2703,247 @@ ${
   return surfaceDEHitInfoCore(bestQ, li);
 }`;
 
+  // The 4D lens hit-info wrapper (fr-rsp6 phase 2B): the sweep above one
+  // dimension up, sharing every 4D delta the value wrapper's comment
+  // lists (81/3/243 fans, the four-digit box code, segmentRadius4) and
+  // the same hoisted VIEW LIFT — the core hit-info takes the lifted 4D
+  // query here, exactly like the value core. Shading conventions are the
+  // 3D wrapper's: FULL-width zero-cutoff core calls, no visible pin and
+  // no cutoff exits (a shading call has neither), the shell guard plain-
+  // skipping, and an identity-branch fallback so a fully pruned loop
+  // still hands the core hit call a sane point.
+  const lens4HitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let pq = rotorInvApply4(vec4f(p, params.w0));
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
+  var pExt = vec4f(0.0);
+  if (segment) {
+    pExt = rotorInvWCol4() * params.sliceHalfW;
+  }
+`
+    : ``
+}  let kind = u32(params.lens4Params.x);
+  let absW = params.lens4Params.z;
+  let u = pq * params.lens4Params.y;
+${
+  slabExt
+    ? `  var eu = vec4f(0.0);
+  if (segment) {
+    eu = pExt * params.lens4Params.y;
+  }
+`
+    : ``
+}  var best = 1e30;
+  var ru = 0.0;
+  var pre0 = vec4f(0.0);
+  var pre1 = vec4f(0.0);
+  var pre2 = vec4f(0.0);
+  var dUp = vec4f(0.0);
+  var dDn = vec4f(0.0);
+  var v = vec4f(0.0);
+  var sfSigma = 1.0;
+  var sfRd = 0.0;
+  var bestQ = vec4f(
+    dot(params.lens4MR0, u),
+    dot(params.lens4MR1, u),
+    dot(params.lens4MR2, u),
+    dot(params.lens4MR3, u),
+  ) + params.lens4T;
+${
+  slabExt
+    ? `  var bestExt = vec4f(0.0);
+  if (segment) {
+    bestExt = vec4f(
+      dot(params.lens4MR0, eu),
+      dot(params.lens4MR1, eu),
+      dot(params.lens4MR2, eu),
+      dot(params.lens4MR3, eu),
+    );
+  }
+`
+    : ``
+}  if (kind == 1u) {
+    pre0 = u;
+    pre1 = 2.0 - u;
+    pre2 = -2.0 - u;
+    dUp = max(u - 1.0, vec4f(0.0));
+    dDn = max(-1.0 - u, vec4f(0.0));
+${
+  slabExt
+    ? `    if (segment) {
+      let ae = abs(eu);
+      dUp = max(dUp - ae, vec4f(0.0));
+      dDn = max(dDn - ae, vec4f(0.0));
+    }
+`
+    : ``
+}  } else {
+    ru = length(u);
+  }
+  var branchCount = 243u;
+  if (kind == 1u) {
+    branchCount = 81u;
+  } else if (kind == 2u) {
+    branchCount = 3u;
+  }
+  for (var b = 0u; b < branchCount; b++) {
+    if (kind == 2u || (kind == 3u && (b % 81u) == 0u)) {
+      var s = b;
+      if (kind == 3u) {
+        s = b / 81u;
+      }
+      if (s == 0u) {
+        v = u;
+        sfSigma = 1.0;
+        sfRd = max(1.0 - ru, 0.0);
+      } else if (s == 1u) {
+        v = 0.25 * u;
+        sfSigma = 4.0;
+        sfRd = max(ru - 2.0, 0.0);
+      } else {
+        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          if (kind == 3u) {
+            b += 80u;
+          }
+          continue;
+        }
+        let invR2 = 1.0 / (ru * ru);
+        v = u * invR2;
+        sfSigma = ru;
+        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+      }
+      if (kind == 3u) {
+        pre0 = v;
+        pre1 = 2.0 - v;
+        pre2 = -2.0 - v;
+        dUp = max(v - 1.0, vec4f(0.0));
+        dDn = max(-1.0 - v, vec4f(0.0));
+      }
+    }
+    var pre: vec4f;
+${
+  slabExt
+    ? `    var preExt = vec4f(0.0);
+`
+    : ``
+}    var branchRd: f32;
+    if (kind == 2u) {
+      pre = v;
+      branchRd = sfRd;
+    } else {
+      var bb = b;
+      if (kind == 3u) {
+        bb = b % 81u;
+      }
+      let selX = bb % 3u;
+      let selY = (bb / 3u) % 3u;
+      let selZ = (bb / 9u) % 3u;
+      let selW = bb / 27u;
+      pre = vec4f(
+        select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+        select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+        select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+        select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
+      );
+${
+  slabExt
+    ? `      if (segment) {
+        preExt = vec4f(
+          select(-eu.x, eu.x, selX == 0u),
+          select(-eu.y, eu.y, selY == 0u),
+          select(-eu.z, eu.z, selZ == 0u),
+          select(-eu.w, eu.w, selW == 0u),
+        );
+      }
+`
+    : ``
+}      let dd = vec4f(
+        select(
+          select(dDn.x, dUp.x, selX == 1u),
+          max(dUp.x, dDn.x),
+          selX == 0u,
+        ),
+        select(
+          select(dDn.y, dUp.y, selY == 1u),
+          max(dUp.y, dDn.y),
+          selY == 0u,
+        ),
+        select(
+          select(dDn.z, dUp.z, selZ == 1u),
+          max(dUp.z, dDn.z),
+          selZ == 0u,
+        ),
+        select(
+          select(dDn.w, dUp.w, selW == 1u),
+          max(dUp.w, dDn.w),
+          selW == 0u,
+        ),
+      );
+      let boxRd = length(dd);
+      if (kind == 1u) {
+        branchRd = boxRd;
+      } else {
+        branchRd = max(sfRd, sfSigma * boxRd);
+      }
+    }
+    let flr = absW * branchRd;
+    if (flr > 0.0 && flr >= best) {
+      continue;
+    }
+    let q = vec4f(
+      dot(params.lens4MR0, pre),
+      dot(params.lens4MR1, pre),
+      dot(params.lens4MR2, pre),
+      dot(params.lens4MR3, pre),
+    ) + params.lens4T;
+${
+  slabExt
+    ? `    var qExt = vec4f(0.0);
+    if (segment) {
+      qExt = vec4f(
+        dot(params.lens4MR0, preExt),
+        dot(params.lens4MR1, preExt),
+        dot(params.lens4MR2, preExt),
+        dot(params.lens4MR3, preExt),
+      );
+    }
+`
+    : ``
+}    let factor = absW * sfSigma * params.lens4Params.w;
+${
+  slabExt
+    ? `    let rq = segmentRadius4(q, qExt);
+`
+    : `    let rq = length(q);
+`
+}    if (factor * (rq - params.boundingRadius) >= best) {
+      continue;
+    }
+    var term = factor * surfaceDECore(q, ${slabExt ? "qExt, " : ""}0.0, li);
+    term = max(term, flr);
+    if (term < best) {
+      best = term;
+      bestQ = q;
+${
+  slabExt
+    ? `      bestExt = qExt;
+`
+    : ``
+}    }
+  }
+  return surfaceDEHitInfoCore(bestQ, ${slabExt ? "bestExt, " : ""}li);
+}`;
+
   const coreHitInfoText =
     core === "affine"
       ? affineHitInfoText
       : core === "escape"
         ? escapeHitInfoText
         : core === "affine4"
-          ? affine4HitInfoText(slabExt)
+          ? affine4HitInfoText(slabExt, lens)
           : core === "fold4"
-            ? fold4HitInfoText(slabExt)
+            ? fold4HitInfoText(slabExt, lens)
             : foldHitInfoText;
   const hitInfoText = lens
     ? `${coreHitInfoText.replace(
@@ -2568,7 +2953,7 @@ ${
 
 // The lens hit-info argmin sweep (fr-55s1 stage C) — around the renamed
 // core hit-info, like the value pair below.
-${lensHitWrapText}`
+${core4 ? lens4HitWrapText : lensHitWrapText}`
     : coreHitInfoText;
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
@@ -2925,26 +3310,12 @@ struct Params {
   aspect: f32,
   fwd: vec3f,
   pad1: f32,${
-    lens
+    // The 4D tail comes FIRST in this chain (fr-rsp6 phase 2B): a lensed
+    // 4D kernel needs both the tail AND its own appended lens4 block, so
+    // core4 owns the variant block and the 3D lens fields stay the 3D
+    // cores' alone. Every no-lens branch below is textually what it was.
+    core4
       ? /* wgsl */ `
-  lensM0: vec3f,
-  lensT0: f32,
-  lensM1: vec3f,
-  lensT1: f32,
-  lensM2: vec3f,
-  lensT2: f32,
-  lensParams: vec4f,`
-      : core === "escape"
-        ? /* wgsl */ `
-  escM0: vec3f,
-  escT0: f32,
-  escM1: vec3f,
-  escT1: f32,
-  escM2: vec3f,
-  escT2: f32,
-  escParams: vec4f,`
-        : core4
-          ? /* wgsl */ `
   rotorInvR0: vec4f,
   rotorInvR1: vec4f,
   rotorInvR2: vec4f,
@@ -2961,7 +3332,40 @@ struct Params {
   w0: f32,
   sliceHalfW: f32,
   final4SigmaMin: f32,
-  visRadius4: f32,`
+  visRadius4: f32,${
+    // fr-rsp6 phase 2B: the lens4 block, APPENDED past the 4D tail
+    // (432..527) and declared only under the lens. A smaller struct
+    // reading a larger buffer is valid WebGPU, so keeping it
+    // struct-conditional is what keeps every no-lens 4D kernel's text
+    // byte-identical.
+    lens
+      ? /* wgsl */ `
+  lens4MR0: vec4f,
+  lens4MR1: vec4f,
+  lens4MR2: vec4f,
+  lens4MR3: vec4f,
+  lens4T: vec4f,
+  lens4Params: vec4f,`
+      : ""
+  }`
+      : lens
+        ? /* wgsl */ `
+  lensM0: vec3f,
+  lensT0: f32,
+  lensM1: vec3f,
+  lensT1: f32,
+  lensM2: vec3f,
+  lensT2: f32,
+  lensParams: vec4f,`
+        : core === "escape"
+          ? /* wgsl */ `
+  escM0: vec3f,
+  escT0: f32,
+  escM1: vec3f,
+  escT1: f32,
+  escM2: vec3f,
+  escT2: f32,
+  escParams: vec4f,`
           : ""
   }
 }${
@@ -3828,7 +4232,10 @@ ${descentPrologue}
   // footprint depth cap (the 4D oracle takes none; the packer throws on
   // one), so the loop runs plain params.maxDepth. `opts.width`,
   // `sharedFrontier` and `bnbStage2` are all inert here, like "affine".
-  const affine4DescentText = (slabExt: boolean): string => /* wgsl */ `${
+  const affine4DescentText = (
+    slabExt: boolean,
+    lens: boolean,
+  ): string => /* wgsl */ `${
     slabExt
       ? `// One extra Hutchinson level on a frozen escaped candidate's own
 // inverse image (the oracle's refinedCert closure — fr-beck's measured
@@ -3904,8 +4311,9 @@ ${
   return childScale * max(r - params.boundingRadius, inner);
 }
 
-fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-${
+fn surfaceDE(${core4Params("pIn", slabExt, lens)}, cutoff: f32, li: u32) -> f32 {
+${lift4Text(
+  "pIn",
   slabExt
     ? `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
   // is an isometry, so distances, steps and gradients survive the lift
@@ -3920,26 +4328,10 @@ ${
   // unchanged; then the affine final lens, exactly as the oracle's
   // prologue. fr-d0nn slabExt=false (fr-b72d probe): no fr-wa6o
   // half-extent register — q is a point, not a segment.
-`
-}  var q = rotorInvApply4(vec4f(pIn, params.w0));
-${
-  slabExt
-    ? `  let segment = params.sliceHalfW > 0.0;
-  var ext = vec4f(0.0);
-  if (segment) {
-    ext = rotorInvWCol4() * params.sliceHalfW;
-  }
-`
-    : ``
-}  q = finalApply4(q);
-${
-  slabExt
-    ? `  if (segment) {
-    ext = finalApplyLinear4(ext);
-  }
-`
-    : ``
-}  let R = params.boundingRadius;
+`,
+  slabExt,
+  lens,
+)}  let R = params.boundingRadius;
 ${
   slabExt
     ? `  let startR = segmentRadius4(q, ext);
@@ -4472,7 +4864,12 @@ ${
   const fold4DescentFnText = (
     w: number,
     slabExt: boolean,
-  ): string => /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+    lens: boolean,
+  ): string => /* wgsl */ `fn surfaceDE(${core4Params(
+    "pIn",
+    slabExt,
+    lens,
+  )}, cutoff: f32, li: u32) -> f32 {
   // The width-${w} frontier, in FUNCTION-SCOPE PRIVATE arrays: this core
   // emits no workgroup-shared variant, so sharedFrontier is inert and
   // li — kept for signature parity with every other core — indexes
@@ -4497,13 +4894,15 @@ ${
   var fnFloor: array<f32, ${w}>;
   var fnR: array<f32, ${w}>;
   var fnCert: array<f32, ${w}>;
-${
+${lift4Text(
+  "pIn",
   slabExt
     ? `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
   // is an isometry, so distances, steps and gradients survive the lift
   // unchanged; then the affine final lens, exactly as the oracle's
   // prologue (a fold-BASE system may still carry an affine final; a fold
-  // FINAL is fr-rsp6 phase 2B and the lens option throws here). The slab
+  // FINAL routes through the lens wrapper, which owns this lift —
+  // fr-rsp6 phase 2B). The slab
   // query's half-extent (fr-wa6o) is the rotor's w column times
   // sliceHalfW, and the lens moves it by its LINEAR part alone.
 `
@@ -4511,29 +4910,14 @@ ${
   // is an isometry, so distances, steps and gradients survive the lift
   // unchanged; then the affine final lens, exactly as the oracle's
   // prologue (a fold-BASE system may still carry an affine final; a fold
-  // FINAL is fr-rsp6 phase 2B and the lens option throws here). fr-d0nn
+  // FINAL routes through the lens wrapper, which owns this lift —
+  // fr-rsp6 phase 2B). fr-d0nn
   // slabExt=false (fr-b72d probe): no fr-wa6o half-extent register — q
   // is a point, not a segment.
-`
-}  var q = rotorInvApply4(vec4f(pIn, params.w0));
-${
-  slabExt
-    ? `  let segment = params.sliceHalfW > 0.0;
-  var ext = vec4f(0.0);
-  if (segment) {
-    ext = rotorInvWCol4() * params.sliceHalfW;
-  }
-`
-    : ``
-}  q = finalApply4(q);
-${
-  slabExt
-    ? `  if (segment) {
-    ext = finalApplyLinear4(ext);
-  }
-`
-    : ``
-}  let R = params.boundingRadius;
+`,
+  slabExt,
+  lens,
+)}  let R = params.boundingRadius;
 ${
   slabExt
     ? `  let startR = segmentRadius4(q, ext);
@@ -4991,7 +5375,7 @@ ${
 // shadow and AO light a hit the full-width march already certified, so
 // they ride a width-${probeWidth} frontier (width 1 = the greedy
 // descent). Same body as surfaceDE, renamed.
-${renameToProbe4(fold4DescentFnText(probeWidth, slabExt))}`;
+${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
 
   // The ESCAPE core (fr-dlxh): escape-de.ts's estimateEscapeDistance —
   // the forward fold orbit with the Buddhi/Rrrola scalar derivative,
@@ -5050,11 +5434,11 @@ ${escapeDescentText}`
           ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4 (fr-dlxh's 4D cut).
-${affine4DescentText(slabExt)}`
+${affine4DescentText(slabExt, lens)}`
           : core === "fold4"
             ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32 (fr-rsp6 phase 2A).
-${fold4DescentFnText(width, slabExt)}${probe4DeFns}`
+${fold4DescentFnText(width, slabExt, lens)}${probe4DeFns}`
             : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
@@ -5234,6 +5618,287 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   return max(best, visBound);
 }`;
 
+  // THE 4D FOLD FINAL LENS (fr-rsp6 phase 2B): `descendLens4`
+  // (surface-de-4d.ts) — the wrapper above one dimension up, with every
+  // dimension-sensitive quantity the 4D one: 81/3/243 branches decoded
+  // `b = selX + 3*selY + 9*selZ + 27*selW` (the mandelbox's sphere branch
+  // turning over every 81st index, its shell guard skipping `b += 80u`),
+  // `segmentRadius4` in place of every `length` so a fr-wa6o slab rides
+  // through the lens (boxfold lenses only — `slabExact4` refuses the
+  // rest, and {@link packSurface4GpuParams} throws rather than pack one),
+  // and an ORIGIN-anchored visible ball at the FULL 4D radius
+  // `params.visRadius4` — NOT the frozen `visibleRadius` slot, which
+  // carries this core's slice-adjusted march gate (packing contract).
+  //
+  // The wrapper also owns the VIEW LIFT: the 4D cores keep theirs in
+  // their own prologue, so under the lens it is hoisted here and each
+  // branch hands the core an already-lifted 4D query — the documented
+  // deviation from 3D's untouched-core signatures (module doc, THE
+  // FOLD-LENS WRAPPER).
+  //
+  // THE REFINE SEAM. `descendLens4` routes its inner descent
+  // `hasFolds ? descendFold4(…, refine ? innerCutoff : 0) : refine ?
+  // descend4Refined(…, innerCutoff) : descend4(…)`, and each kernel core
+  // mirrors ONE arm: "affine4" IS the refined estimator, so it takes the
+  // fr-55r5 inner cutoff `min(best, cutoff) / factor`; "fold4" is the
+  // PLAIN frontier (refine=false), so it takes cutoff 0 and the inner
+  // cutoff is never even computed. Swapping them would silently mirror a
+  // different estimator than the oracle the bench pins against.
+  const lens4Refined = core === "affine4";
+  const lens4CoreCall = `surfaceDECore(q, ${slabExt ? "qExt, " : ""}${
+    lens4Refined ? "innerCutoff" : "0.0"
+  }, li)`;
+  const lens4WrapText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  // The cores' view lift, hoisted: ONE rotor apply for the whole sweep
+  // (and one half-extent seed under a slab), where the no-lens bodies do
+  // it per call.
+  let p = rotorInvApply4(vec4f(pIn, params.w0));
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
+  var pExt = vec4f(0.0);
+  if (segment) {
+    pExt = rotorInvWCol4() * params.sliceHalfW;
+  }
+  let visBound = segmentRadius4(p, pExt) - params.visRadius4;
+`
+    : `  let visBound = length(p) - params.visRadius4;
+`
+}  let kind = u32(params.lens4Params.x);
+  let absW = params.lens4Params.z;
+  let u = p * params.lens4Params.y;
+${
+  slabExt
+    ? `  // u-space is a SCALAR multiple of world space, so the half-extent
+  // scales with the point and stays a segment.
+  var eu = vec4f(0.0);
+  if (segment) {
+    eu = pExt * params.lens4Params.y;
+  }
+`
+    : ``
+}  var best = 1e30;
+  var ru = 0.0;
+  var pre0 = vec4f(0.0);
+  var pre1 = vec4f(0.0);
+  var pre2 = vec4f(0.0);
+  var dUp = vec4f(0.0);
+  var dDn = vec4f(0.0);
+  var v = vec4f(0.0);
+  var sfSigma = 1.0;
+  var sfRd = 0.0;
+  if (kind == 1u) {
+    pre0 = u;
+    pre1 = 2.0 - u;
+    pre2 = -2.0 - u;
+    dUp = max(u - 1.0, vec4f(0.0));
+    dDn = max(-1.0 - u, vec4f(0.0));
+${
+  slabExt
+    ? `    // Per-axis segment relaxation, applied BEFORE any selector reads
+    // them (the frontier body's argument verbatim): each per-axis
+    // distance is 1-Lipschitz in its own axis, so relaxing it by |e_a|
+    // bounds the whole segment from below, and monotonicity carries it
+    // into the in-box max(dUp, dDn). Only a BOXFOLD lens ever transports
+    // a segment (slabExact4), so the mandelbox refresh below needs no
+    // counterpart.
+    if (segment) {
+      let ae = abs(eu);
+      dUp = max(dUp - ae, vec4f(0.0));
+      dDn = max(dDn - ae, vec4f(0.0));
+    }
+`
+    : ``
+}  } else {
+    ru = length(u);
+  }
+  var branchCount = 243u;
+  if (kind == 1u) {
+    branchCount = 81u;
+  } else if (kind == 2u) {
+    branchCount = 3u;
+  }
+  for (var b = 0u; b < branchCount; b++) {
+    if (kind == 2u || (kind == 3u && (b % 81u) == 0u)) {
+      var s = b;
+      if (kind == 3u) {
+        s = b / 81u;
+      }
+      if (s == 0u) {
+        v = u;
+        sfSigma = 1.0;
+        sfRd = max(1.0 - ru, 0.0);
+      } else if (s == 1u) {
+        v = 0.25 * u;
+        sfSigma = 4.0;
+        sfRd = max(ru - 2.0, 0.0);
+      } else {
+        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          // Shell guard (the oracle's): fold the settled shell bound,
+          // skip the branch + its 81-wide box expansion.
+          let shellCert = absW * (1.0 - ru);
+          if (shellCert < best) {
+            best = shellCert;
+            if (best <= visBound) {
+              return visBound;
+            }
+            if (cutoff > 0.0 && best < cutoff) {
+              return max(best, visBound);
+            }
+          }
+          if (kind == 3u) {
+            b += 80u;
+          }
+          continue;
+        }
+        let invR2 = 1.0 / (ru * ru);
+        v = u * invR2;
+        sfSigma = ru;
+        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+      }
+      if (kind == 3u) {
+        pre0 = v;
+        pre1 = 2.0 - v;
+        pre2 = -2.0 - v;
+        dUp = max(v - 1.0, vec4f(0.0));
+        dDn = max(-1.0 - v, vec4f(0.0));
+      }
+    }
+    var pre: vec4f;
+${
+  slabExt
+    ? `    var preExt = vec4f(0.0);
+`
+    : ``
+}    var branchRd: f32;
+    if (kind == 2u) {
+      pre = v;
+      branchRd = sfRd;
+    } else {
+      // Box branch decode: per-axis preimage selectors, x fastest, FOUR
+      // digits (b = selX + 3*selY + 9*selZ + 27*selW).
+      var bb = b;
+      if (kind == 3u) {
+        bb = b % 81u;
+      }
+      let selX = bb % 3u;
+      let selY = (bb / 3u) % 3u;
+      let selZ = (bb / 9u) % 3u;
+      let selW = bb / 27u;
+      pre = vec4f(
+        select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),
+        select(select(pre2.y, pre1.y, selY == 1u), pre0.y, selY == 0u),
+        select(select(pre2.z, pre1.z, selZ == 1u), pre0.z, selZ == 0u),
+        select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),
+      );
+${
+  slabExt
+    ? `      // The branch's own derivative is diag(+-1): the in-box preimage
+      // is u (+1), both folded ones are +-2 - u (-1). A reflection takes
+      // a segment to a segment, so the half-extent picks up those signs.
+      if (segment) {
+        preExt = vec4f(
+          select(-eu.x, eu.x, selX == 0u),
+          select(-eu.y, eu.y, selY == 0u),
+          select(-eu.z, eu.z, selZ == 0u),
+          select(-eu.w, eu.w, selW == 0u),
+        );
+      }
+`
+    : ``
+}      let dd = vec4f(
+        select(
+          select(dDn.x, dUp.x, selX == 1u),
+          max(dUp.x, dDn.x),
+          selX == 0u,
+        ),
+        select(
+          select(dDn.y, dUp.y, selY == 1u),
+          max(dUp.y, dDn.y),
+          selY == 0u,
+        ),
+        select(
+          select(dDn.z, dUp.z, selZ == 1u),
+          max(dUp.z, dDn.z),
+          selZ == 0u,
+        ),
+        select(
+          select(dDn.w, dUp.w, selW == 1u),
+          max(dUp.w, dDn.w),
+          selW == 0u,
+        ),
+      );
+      let boxRd = length(dd);
+      if (kind == 1u) {
+        branchRd = boxRd;
+      } else {
+        branchRd = max(sfRd, sfSigma * boxRd);
+      }
+    }
+    let flr = absW * branchRd;
+    if (flr > 0.0 && flr >= best) {
+      continue;
+    }
+    let q = vec4f(
+      dot(params.lens4MR0, pre),
+      dot(params.lens4MR1, pre),
+      dot(params.lens4MR2, pre),
+      dot(params.lens4MR3, pre),
+    ) + params.lens4T;
+${
+  slabExt
+    ? `    // The lens's AFFINE part carries the branch half-extent by its
+    // LINEAR part alone (a translation slides a segment's centre, never
+    // its extent).
+    var qExt = vec4f(0.0);
+    if (segment) {
+      qExt = vec4f(
+        dot(params.lens4MR0, preExt),
+        dot(params.lens4MR1, preExt),
+        dot(params.lens4MR2, preExt),
+        dot(params.lens4MR3, preExt),
+      );
+    }
+`
+    : ``
+}    let factor = absW * sfSigma * params.lens4Params.w;
+${
+  slabExt
+    ? `    let rq = segmentRadius4(q, qExt);
+`
+    : `    let rq = length(q);
+`
+}    // The core never undercuts its own depth-0 sphere bound, so a branch
+    // whose scaled sphere certificate reaches the running min cannot
+    // advance it — an exact skip.
+    if (factor * (rq - params.boundingRadius) >= best) {
+      continue;
+    }
+${
+  lens4Refined
+    ? `    var innerCutoff = 0.0;
+    if (cutoff > 0.0) {
+      innerCutoff = min(best, cutoff) / factor;
+    }
+`
+    : `    // refine=false arm (see THE REFINE SEAM): the plain frontier core
+    // takes cutoff 0, exactly the oracle's \`refine ? innerCutoff : 0\`.
+`
+}    var term = factor * ${lens4CoreCall};
+    term = max(term, flr);
+    if (term < best) {
+      best = term;
+      if (best <= visBound) {
+        return visBound;
+      }
+      if (cutoff > 0.0 && best < cutoff) {
+        return max(best, visBound);
+      }
+    }
+  }
+  return max(best, visBound);
+}`;
+
   // Under the lens the probe descent (when emitted) gets the main
   // descent's exact treatment one name over: its body renames to
   // `surfaceDEProbeCore` and a probe lens wrapper — the SAME sweep text,
@@ -5246,20 +5911,29 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
       "surfaceDECore(q, innerCutoff, li)",
       "surfaceDEProbeCore(q, innerCutoff, li)",
     );
+  const probeLens4WrapText = lens4WrapText
+    .replace("fn surfaceDE(", "fn surfaceDEProbe(")
+    .replace(
+      lens4CoreCall,
+      lens4CoreCall.replace("surfaceDECore(", "surfaceDEProbeCore("),
+    );
   const bodyBlock = lens
     ? `${descentBlock
         .replace("fn surfaceDE(", "fn surfaceDECore(")
         .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCore(")}
 
-// descendLens (surface-de.ts) — the fold FINAL lens's branch sweep
-// around the untouched core (fr-g58b's vocabulary, fr-55s1 stage B).
-${lensWrapText}${
+// ${
+        core4
+          ? "descendLens4 (surface-de-4d.ts) — the 4D fold FINAL lens's\n// branch sweep around the core, whose view lift it now owns\n// (fr-rsp6 phase 2B)."
+          : "descendLens (surface-de.ts) — the fold FINAL lens's branch sweep\n// around the untouched core (fr-g58b's vocabulary, fr-55s1 stage B)."
+      }
+${core4 ? lens4WrapText : lensWrapText}${
         probeWidth === null
           ? ""
           : `
 
 // The probe taps' own lens sweep (fr-55s1 stage C) — same text, renamed.
-${probeLensWrapText}`
+${core4 ? probeLens4WrapText : probeLensWrapText}`
       }`
     : descentBlock;
 
