@@ -75,6 +75,7 @@ import {
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BYTES,
+  SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -89,6 +90,7 @@ import {
   type SurfaceDE,
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
@@ -592,18 +594,21 @@ export class SurfaceComputeRenderer {
           // are inert there) — and a fold FINAL lens wraps either core in
           // descendLens's branch sweep. fr-dlxh: an escape target takes
           // the forward-orbit core instead (no lens — the escape gate
-          // refuses final transforms), and a 4D target the affine4
-          // ladder (no lens either — 4D fold finals are fr-rsp6's
-          // scope; the 4D gate refuses them today).
+          // refuses final transforms). fr-rsp6: a 4D target routes the
+          // SAME way one dimension up — fold base maps the fold4
+          // frontier, fold-free ones the affine4 ladder, and a 4D fold
+          // FINAL wraps either in descendLens4's sweep.
           core:
             target.kind === "escape"
               ? "escape"
               : target.kind === "ifs4"
-                ? "affine4"
+                ? deHasFolds4(target.de)
+                  ? "fold4"
+                  : "affine4"
                 : deHasFolds(target.de)
                   ? "fold"
                   : "affine",
-          lens: target.kind === "ifs" && target.de.foldFinal !== null,
+          lens: target.kind !== "escape" && target.de.foldFinal !== null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -677,11 +682,16 @@ export class SurfaceComputeRenderer {
     // where the slab pair's ext registers are pure occupancy tax. Both
     // pairs share the explicit bind group layouts below, so bind groups
     // stay variant-agnostic and runFrame's pick is a pipeline handle.
-    const wantNoSlab = target.kind === "ifs4";
+    // fr-rsp6: a !slabExact4 system (spherefold/mandelbox folds) can
+    // NEVER take a slab query — the packer throws on sliceHalfW > 0 and
+    // the app clamps the thickness slider — so its ONE pair compiles
+    // slab-free outright and the A/B pair is skipped.
+    const canSlab = target.kind !== "ifs4" || slabExact4(target.de);
+    const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
       await Promise.all([
-        compileEntry("march", true),
-        compileEntry("shade", true),
+        compileEntry("march", canSlab),
+        compileEntry("shade", canSlab),
         wantNoSlab ? compileEntry("march", false) : null,
         wantNoSlab ? compileEntry("shade", false) : null,
       ]);
@@ -724,7 +734,11 @@ export class SurfaceComputeRenderer {
       // sector step, 4D lens, w0/sliceHalfW) past the frozen block.
       size:
         target.kind === "ifs4"
-          ? SURFACE_GPU_PARAMS4_BYTES
+          ? target.de.foldFinal !== null
+            ? // fr-rsp6 phase 2B: a fold FINAL grows the params with the
+              // lens block past the 4D tail.
+              SURFACE_GPU_PARAMS4_LENS_BYTES
+            : SURFACE_GPU_PARAMS4_BYTES
           : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -1119,17 +1133,47 @@ export class SurfaceComputeRenderer {
     // the EMAs take over.
     // (Escape targets scale nothing: the forward loop is phone-cheap and
     // the pessimistic base priors only err toward smaller first slices.
-    // 4D targets scale nothing either — no lens exists there, and the
-    // affine-shaped ladder starts from the same pessimistic base priors
-    // the 3D affine class would.)
+    // Affine 4D targets scale nothing either — the affine4 ladder starts
+    // from the same pessimistic base priors the 3D affine class would.
+    // FOLD-shaped 4D targets scale (fr-rsp6): the base priors absorbed
+    // the 3D fold class's 27/81-branch fans, and the 4D fans are 3x
+    // wider — 81 boxfold / 243 mandelbox — so the first slice scales by
+    // maxFan/27 (spherefold's 3 stays at the floor); a 4D fold FINAL
+    // multiplies its own fan/8 exactly like the 3D lens.)
     const lensKind =
-      this.target.kind === "ifs"
+      this.target.kind !== "escape"
         ? this.target.de.foldFinal?.foldKind
         : undefined;
+    const lensFan4 =
+      this.target.kind === "ifs4" && lensKind !== undefined
+        ? lensKind === 1
+          ? 81
+          : lensKind === 2
+            ? 3
+            : 243
+        : undefined;
+    const baseFoldScale =
+      this.target.kind === "ifs4"
+        ? Math.max(
+            1,
+            this.target.de.maps.reduce(
+              (acc, m) =>
+                Math.max(
+                  acc,
+                  m.foldKind === 1 ? 81 : m.foldKind === 3 ? 243 : 1,
+                ),
+              1,
+            ) / 27,
+          )
+        : 1;
     const lensCostScale =
-      lensKind === undefined
+      baseFoldScale *
+      (lensKind === undefined
         ? 1
-        : Math.max(1, (lensKind === 1 ? 27 : lensKind === 2 ? 3 : 81) / 8);
+        : Math.max(
+            1,
+            (lensFan4 ?? (lensKind === 1 ? 27 : lensKind === 2 ? 3 : 81)) / 8,
+          ));
     let shadeHitEmaUs = SURFACE_COMPUTE_INITIAL_HIT_SHADE_US * lensCostScale;
     let passes = 0;
     let gpuMs = 0;

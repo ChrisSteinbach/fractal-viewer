@@ -33,6 +33,9 @@ import {
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
+  deHasFolds4,
+  slabExact4,
+  systemFoldShaped4,
 } from "../fractal/surface-de-4d";
 import { surfaceSlotColors, surfaceTrapIndices } from "./surface-slots";
 import { SURFACE_MAX_MAPS } from "./surface-material";
@@ -2711,6 +2714,11 @@ function main(): void {
   // the live document's flatness may drift until the next enter). Gates
   // tickRender's per-frame rotor/slice push.
   let surfaceSessionIs4D = false;
+  // fr-rsp6: false while the live 4D surface session's fold set breaks
+  // segment exactness (spherefold/mandelbox — slabExact4), where every
+  // view push clamps the fr-wa6o thickness to 0 and the panel hides the
+  // row. Session-scoped like the flag above.
+  let surface4SlabExact = true;
 
   // Monotonic token guarding the async shader-compile gate (fr-du81): each
   // start() takes a fresh one, and a compile promise resolving for a
@@ -3158,6 +3166,13 @@ function main(): void {
             state.symmetry,
           );
           surfaceSessionIs4D = true;
+          // The fr-wa6o thickness slider is live only where the slab is
+          // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
+          // to arcs, so those sessions clamp sliceHalfW to 0 at every
+          // view push below (the packer's own guard would throw) and the
+          // panel hides the thickness row.
+          surface4SlabExact = slabExact4(de);
+          ui.setFourDSlabAvailable(surface4SlabExact);
           // Routing by MEASURED verdict (fr-dlxh 4D cut, real Iris Xe,
           // 1024x640): PLAIN 4D systems prefer compute — settle 4.6s vs
           // the fragment arm's 8.9s, object-mask IoU 0.996 between the
@@ -3167,14 +3182,35 @@ function main(): void {
           // and plateaued at 88% where ?surfacegl settled the same
           // scene in 10.9s; fr-b72d tracks the kernel-side sweep cost).
           // The 3D shape-split precedent — affine stays WebGL, folds
-          // prefer compute — one dimension up.
-          const compute4Shaped = de.symmetry.order <= 1;
+          // prefer compute — one dimension up. FOLD-shaped 4D systems
+          // (fr-rsp6) are compute-only at EVERY order: the fragment 4D
+          // tracer carries no fold GLSL (deliberately — the 3D fold GLSL
+          // already sits at Mesa's link cliff, and a 243-branch 4D body
+          // there would be unshippable), so there is no fragment arm to
+          // route them to; at order > 1 the fr-b72d sweep cost is
+          // disclosed by the honest progress row, never a refusal.
+          const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
+          const compute4Shaped = foldShaped4 || de.symmetry.order <= 1;
           if (compute4Shaped && surfaceComputeAvailable()) {
             // No GLSL system upload — the enter twin owns the session
             // resets, and the live view flows through setSurface4View
             // into the scene state every frame spec re-reads.
             computeTarget = { kind: "ifs4", de };
             scene.enterSurfaceCompute4Session(de);
+          } else if (foldShaped4) {
+            // Reachable only through mid-session compute loss (device
+            // loss / create failure re-enter this routing with the block
+            // latched) — the eligibility gate refuses fold-4D ENTRY when
+            // compute is unavailable. There is no tracer that can render
+            // this session: exit the mode with the reason rather than
+            // hand a fold-blind tracer the wrong object. Deferred a tick
+            // exactly like the build-failure fallback below — enter()
+            // stores the handle only after start() returns, and exit()
+            // has to see it.
+            ui.flashToast(
+              "Surface render stopped: 4D folds need WebGPU compute, which just became unavailable.",
+            );
+            queueMicrotask(() => surfaceSession.exit());
           } else {
             // fr-tmgf: the WebGL session says why compute passed, when
             // it was the preferred engine (null for kaleidoscope 4D —
@@ -3194,7 +3230,7 @@ function main(): void {
           scene.setSurface4View(
             fourDView.matrix(),
             fourDView.sliceCenter,
-            fourDView.sliceThickness,
+            surface4SlabExact ? fourDView.sliceThickness : 0,
           );
           // No grid for the 4D surface (the live rotor/slice would
           // invalidate one per frame) — and a still-building 3D grid from
@@ -3443,6 +3479,8 @@ function main(): void {
       // offline exporter.
       surfaceGrid.cancel();
       surfaceSessionIs4D = false;
+      surface4SlabExact = true;
+      ui.setFourDSlabAvailable(true);
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {
@@ -3631,6 +3669,23 @@ function main(): void {
       );
       if (analysis.status === "ineligible") {
         ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
+        return;
+      }
+      // fr-rsp6: fold-shaped 4D systems render ONLY on the WebGPU compute
+      // path — the fragment 4D tracer carries no fold GLSL (the 3D fold
+      // GLSL already sits at Mesa's link cliff; a 243-branch 4D body
+      // there would be unshippable), so with compute unavailable (no
+      // adapter, a latched device-loss block, or the deliberate
+      // ?surfacegl flag) the mode refuses with the reason rather than
+      // letting a fold-blind tracer render the wrong object.
+      if (
+        systemFoldShaped4(state.transforms, state.finalTransform ?? null) &&
+        !surfaceComputeAvailable()
+      ) {
+        ui.setSurfaceEligibility(
+          "ineligible",
+          "4D folds render on WebGPU compute, which is unavailable here",
+        );
         return;
       }
       // The 4D tracer's uniform cap. No symmetry multiplier — the 4D
@@ -5573,7 +5628,9 @@ function main(): void {
         scene.setSurface4View(
           fourDView.matrix(),
           fourDView.sliceCenter,
-          fourDView.sliceThickness,
+          // fr-rsp6: sessions whose fold set breaks segment exactness
+          // clamp the fr-wa6o thickness to 0 (the row is hidden too).
+          surface4SlabExact ? fourDView.sliceThickness : 0,
         );
       }
       if (surfaceSession.hasFirstFrame) {
