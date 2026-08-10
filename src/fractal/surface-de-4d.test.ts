@@ -1,13 +1,32 @@
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
+  deHasFolds4,
   estimateDistance4,
   estimateDistance4Refined,
+  foldBranchCount4,
+  setFoldFrontierTap4,
   singularValues4,
+  slabExact4,
   transformSigmas4,
 } from "./surface-de-4d";
-import type { SurfaceDE4, SurfaceDE4Map } from "./surface-de-4d";
-import { singularValues3 } from "./surface-de";
+import type {
+  FoldFrontierCandidate4,
+  SurfaceDE4,
+  SurfaceDE4Map,
+} from "./surface-de-4d";
+import {
+  DEPTH_RESOLUTION,
+  MAX_DESCENT_DEPTH,
+  NEAR_ZERO_FOLD_WEIGHT,
+  singularValues3,
+  SPHEREFOLD_LIPSCHITZ,
+  SURFACE_FOLD_BEAM_WIDTH,
+  SURFACE_FOLD_BOXFOLD,
+  SURFACE_FOLD_MANDELBOX,
+  SURFACE_FOLD_NONE,
+  SURFACE_FOLD_SPHEREFOLD,
+} from "./surface-de";
 import { composeAffine } from "./affine";
 import {
   applyAffine4,
@@ -192,6 +211,123 @@ function jitteredQueries(cloud: ChaosGame4Result, count: number): Vec4[] {
     ]);
   }
   return queries;
+}
+
+// -----------------------------------------------------------------------
+// fr-rsp6: pure-fold base maps and pure-fold FINAL lenses, one dimension up
+// from `surface-de.test.ts`'s fr-5rvk/fr-g58b fixtures. Each pure-fold
+// fixture below carries a live `w` block (position plus one w-mixing
+// rotation plane) so the fold genuinely acts on all four axes rather than
+// merely riding along at w = 0 — the 4D point of this port.
+// -----------------------------------------------------------------------
+
+/** Two-map pure-boxfold 4D system: both maps carry exactly one active
+ * boxfold variation and nothing else — isometric branches only (sigma_c = 1
+ * on every one of the 81) — mirroring 3D's `pureBoxfoldPair`
+ * (surface-de.test.ts) with a live w block spliced onto each map. */
+function pureBoxfoldPair4(): Transform[] {
+  return [
+    map4({
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      w: { position: 0.3, rotation: { xw: 0.3 } },
+      variations: [{ type: "boxfold", weight: 1 }],
+    }),
+    map4({
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: -0.3, rotation: { xw: 0.3 } },
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    }),
+  ];
+}
+
+/** Two-map pure-mandelbox 4D system — the widest fold class (243 branches
+ * per map). Branch competitiveness (how many candidates stay in play before
+ * one clearly escapes) turns out to track `foldInvW = 1/w`, not scale: a
+ * smaller |w| (this file's first attempt used ~0.55/0.5, matched to 3D's
+ * exact weight/scale rescaled) spreads u-space out and lets branches escape
+ * too cleanly, so the width-12 frontier never actually saturates (measured
+ * empirically — see fr-rsp6's frontier-replay test below, which needs
+ * genuine saturation to exercise the replacement path). Weight 1.3/1.2 (a
+ * notch past 3D's 1.1/0.9) against a small scale restores saturation
+ * (measured: candidate counts up to ~18 at some level) while a small SCALE
+ * keeps the composite Lipschitz bound `|w| * 4 * sigma_max` (measured here:
+ * ~0.62) comfortably under CONTRACTION_LIMIT and maxDepth shallow (~20) —
+ * the 243-branch frontier is CPU-heavy, so depth stays well short of the
+ * eligibility boundary the way `doubleRotation` sits for the plain affine
+ * ladder. */
+function pureMandelboxPair4(): Transform[] {
+  return [
+    map4({
+      position: [0.3, -0.15, 0.1],
+      rotation: [0.2, 0.4, 0],
+      scale: [0.12, 0.12, 0.12],
+      w: { position: 0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.3 }],
+    }),
+    map4({
+      id: 1,
+      position: [-0.25, 0.2, -0.2],
+      rotation: [0.1, 0, 0.3],
+      scale: [0.13, 0.13, 0.13],
+      w: { position: -0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.2 }],
+    }),
+  ];
+}
+
+/** Two-map pure-spherefold 4D system — the query-dependent mid-branch sigma
+ * case, folded through all four axes (`variations4.ts`'s spherefold reads
+ * `x*x + y*y + z*z + w*w`). Mirrors 3D's inline spherefold-guard fixture
+ * (surface-de.test.ts) with a live w block. */
+function pureSpherefoldPair4(): Transform[] {
+  return [
+    map4({
+      scale: [0.2, 0.2, 0.2],
+      w: { position: 0.2, rotation: { yw: 0.2 } },
+      variations: [{ type: "spherefold", weight: 1 }],
+    }),
+    map4({
+      id: 1,
+      position: [-0.1, 0.1, -0.05],
+      scale: [0.22, 0.22, 0.22],
+      w: { position: -0.2, rotation: { yw: 0.2 } },
+      variations: [{ type: "spherefold", weight: 0.9 }],
+    }),
+  ];
+}
+
+/** A boxfold FINAL lens over an affine 4D base — the fr-g58b/fr-rsp6
+ * archetype one dimension up, mirroring 3D's `boxfoldFinal`
+ * (surface-de.test.ts). The SMALL weight matters: `u = p/w` reaches past
+ * the fold planes, so the non-identity branches carry real geometry rather
+ * than the lens degenerating to its affine part alone. Live w block: the
+ * lens itself has a genuine 4D pose. */
+function boxfoldFinal4(): Transform {
+  return map4({
+    id: 99,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    w: { position: 0.1, rotation: { yw: 0.2 } },
+    variations: [{ type: "boxfold", weight: 0.55 }],
+  });
+}
+
+/** A mandelbox FINAL lens (243 branches — the region-floor stress case),
+ * mirroring 3D's inline mandelbox-lens fixture (surface-de.test.ts). */
+function mandelboxFinal4(): Transform {
+  return map4({
+    id: 99,
+    position: [0.05, 0.1, 0],
+    rotation: [0.3, 0, 0.2],
+    scale: [0.85, 0.85, 0.85],
+    variations: [{ type: "mandelbox", weight: 0.6 }],
+  });
 }
 
 describe("singularValues4", () => {
@@ -1878,11 +2014,32 @@ function expandedReference4(
     );
     const rotT = transpose4x4(rot);
     for (const base of de.maps) {
+      const [gx, gy, gz, gw] = base.bnbDir;
       maps.push({
         invM: multiply4x4(base.invM, rotT),
         invT: base.invT,
         sigmaMin: base.sigmaMin,
         baseIndex: base.baseIndex,
+        // Copied through for type completeness exactly like 3D's
+        // expandedReference: fold slots are never run through this
+        // expansion oracle (a fold does not commute with the copy
+        // rotation, so an expanded fold slot would be algebraically
+        // wrong — fold-kaleidoscope agreement is tested against clouds
+        // and frontier replays instead).
+        foldKind: base.foldKind,
+        foldInvW: base.foldInvW,
+        foldSigma: base.foldSigma,
+        // Rotations leave singular values (and invT) alone; the
+        // directional bound rotates with the matrix:
+        // (invM·rotT)^T · d = rot · (invM^T · d).
+        invMSigmaMin: base.invMSigmaMin,
+        invTNorm: base.invTNorm,
+        bnbDir: [
+          rot[0] * gx + rot[1] * gy + rot[2] * gz + rot[3] * gw,
+          rot[4] * gx + rot[5] * gy + rot[6] * gz + rot[7] * gw,
+          rot[8] * gx + rot[9] * gy + rot[10] * gz + rot[11] * gw,
+          rot[12] * gx + rot[13] * gy + rot[14] * gz + rot[15] * gw,
+        ],
       });
     }
   }
@@ -2361,6 +2518,1239 @@ describe("twisted symmetry on an off-origin attractor stays conservative (fr-u91
         estimateDistance4Refined(reference, p),
         9,
       );
+    }
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-rsp6: the fold port, one dimension up from `surface-de.test.ts`'s
+// fr-5rvk (pure-fold base maps) and fr-g58b (pure-fold FINAL lens) suites.
+// Every describe below mirrors a named group in that file; see each one's
+// doc comment for its 3D template.
+// -----------------------------------------------------------------------
+
+describe("analyzeSurfaceSystem4 eligibility for pure-fold maps (fr-rsp6)", () => {
+  it("classifies a pure-boxfold map with a live w block (plus a plain affine map) as not ineligible", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        w: { position: 0.3, rotation: { xw: 0.3 } },
+        variations: [{ type: "boxfold", weight: 1 }],
+      }),
+      map4({ id: 1 }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("keeps a blended fold+linear map ineligible, naming it a variations map — blends stay out forever", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        variations: [
+          { type: "mandelbox", weight: 1.2 },
+          { type: "linear", weight: 0.25 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 uses variations"]);
+  });
+
+  it("keeps a map blending two fold variations ineligible — a sum of folds is not a composition", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        variations: [
+          { type: "boxfold", weight: 1 },
+          { type: "spherefold", weight: 0.5 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 uses variations"]);
+  });
+
+  it("treats a weight-0 extra variation as inert alongside a pure-fold entry", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        scale: [0.2, 0.2, 0.2],
+        variations: [
+          { type: "mandelbox", weight: 1 },
+          { type: "linear", weight: 0 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("gates a spherefold map on the composite Lipschitz bound, not the affine scale alone", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        scale: [0.3, 0.3, 0.3],
+        variations: [{ type: "spherefold", weight: 1.2 }],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 does not contract"]);
+  });
+
+  it("lets a boxfold map at the same weight and scale contract, since its Lipschitz bound is 1 not 4", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        scale: [0.3, 0.3, 0.3],
+        variations: [{ type: "boxfold", weight: 1.2 }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("lets a small fold weight rescue an affine part that alone would expand", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        scale: [5, 5, 5],
+        variations: [{ type: "boxfold", weight: 0.1 }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("admits a pure-fold final transform — the lens expands into one round of branch root descents (fr-g58b one dimension up)", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
+    );
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("puts no contraction gate on a pure-fold final — an un-iterated lens needs none", () => {
+    // Weight 2 mandelbox: iterated it would need sigma_max < 0.125; as a
+    // lens it is applied once and any weight is admissible.
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ id: 99, variations: [{ type: "mandelbox", weight: 2 }] }),
+    );
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("keeps a BLENDED final transform ineligible — a weighted sum has no branch decomposition", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({
+        id: 99,
+        variations: [
+          { type: "boxfold", weight: 1 },
+          { type: "linear", weight: 0.25 },
+        ],
+      }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["final transform uses variations"]);
+  });
+
+  it("refuses a fold map whose 4D LIFT breaks contraction even though its 3D part alone would contract — the composite gate prices the lifted sigmas", () => {
+    // Boxfold Lipschitz is 1, so the composite bound is |w| * sigma_max: the
+    // 3D part (scale 0.3) contracts comfortably, but an explicit w.scale of
+    // 1.5 makes the LIFTED sigma_max 1.5, past CONTRACTION_LIMIT — exactly
+    // the "sigmas here are the LIFTED map's" guarantee in the module doc.
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        scale: [0.3, 0.3, 0.3],
+        w: { scale: 1.5 },
+        variations: [{ type: "boxfold", weight: 1 }],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 does not contract"]);
+  });
+});
+
+describe("reasons-array hygiene (fr-rsp6)", () => {
+  it("still names a fold+swirl blend map with 'uses variations', matching the plain-swirl and fold+linear pins above", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        variations: [
+          { type: "boxfold", weight: 1 },
+          { type: "swirl", weight: 0.4 },
+        ],
+      }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 uses variations"]);
+  });
+});
+
+describe("fold-weight eligibility floor (fr-rsp6)", () => {
+  it("refuses a boxfold map whose weight is just under the floor, though the composite Lipschitz gate alone would pass", () => {
+    // A smaller |w| only ever HELPS the composite contraction bound (it
+    // shrinks as w -> 0), so nothing here fails on that gate — the descent
+    // divides the chain point by w instead, and NEAR_ZERO_FOLD_WEIGHT is the
+    // only thing standing between this and that division blowing up.
+    const analysis = analyzeSurfaceSystem4([
+      map4({ variations: [{ type: "boxfold", weight: 5e-5 }] }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 fold weight ≈ 0"]);
+  });
+
+  it("refuses the same weight negated — the floor is on |w|; folds are odd, so negative weights are otherwise legal above it", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({ variations: [{ type: "boxfold", weight: -5e-5 }] }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 1 fold weight ≈ 0"]);
+  });
+
+  it("admits a weight exactly at the floor — the gate is a strict less-than", () => {
+    const analysis = analyzeSurfaceSystem4([
+      map4({
+        variations: [{ type: "boxfold", weight: NEAR_ZERO_FOLD_WEIGHT }],
+      }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("refuses a pure-fold FINAL transform at a near-zero weight — the lens has no contraction gate to catch it otherwise", () => {
+    const analysis = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ id: 99, variations: [{ type: "mandelbox", weight: 5e-5 }] }),
+    );
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["final transform fold weight ≈ 0"]);
+  });
+
+  it("leaves a weight-0 fold variation inert rather than naming it near-zero — it is not a fold map at all", () => {
+    // composeVariations' active filter drops weight-0 entries outright, so
+    // pureFoldVariation sees no active variation here; the floor must never
+    // misfire on an entry that was never a fold map to begin with.
+    const analysis = analyzeSurfaceSystem4([
+      map4({ variations: [{ type: "boxfold", weight: 0 }] }),
+    ]);
+    expect(analysis.status).not.toBe("ineligible");
+    expect(analysis.reasons).toEqual([]);
+  });
+
+  it("makes buildSurfaceDE4 throw for a near-zero-weight fold system", () => {
+    const ineligible = [
+      map4({ variations: [{ type: "boxfold", weight: 5e-5 }] }),
+    ];
+    expect(() => buildSurfaceDE4(ineligible)).toThrow(/fold weight/);
+  });
+});
+
+describe("buildSurfaceDE4 fold fields and depth sizing (fr-rsp6)", () => {
+  it("gives a plain affine map the inert fold defaults and a pure-fold map its signed weight and branch kind", () => {
+    const transforms: Transform[] = [
+      map4(),
+      map4({
+        id: 1,
+        scale: [0.16, 0.16, 0.16],
+        variations: [{ type: "mandelbox", weight: -1.25 }],
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    const [affineMap, foldMap] = de.maps;
+    expect(affineMap.foldKind).toBe(SURFACE_FOLD_NONE);
+    expect(affineMap.foldInvW).toBe(1);
+    expect(affineMap.foldSigma).toBe(affineMap.sigmaMin);
+    expect(foldMap.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
+    expect(foldMap.sigmaMin).toBe(0.16);
+    expect(foldMap.foldInvW).toBe(1 / -1.25);
+    expect(foldMap.foldSigma).toBe(Math.abs(-1.25) * 0.16);
+  });
+
+  it("sizes maxDepth from the slowest fold branch factor, not the affine sigmaMin", () => {
+    const transforms: Transform[] = [
+      map4({ scale: [0.2, 0.2, 0.2] }),
+      map4({
+        id: 1,
+        scale: [0.24, 0.24, 0.24],
+        variations: [{ type: "spherefold", weight: 0.9 }],
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    // The spherefold branch factor (|w| * sigmaMin * SPHEREFOLD_LIPSCHITZ)
+    // beats the affine map's plain sigmaMin (0.2), so it drives the cap.
+    const slowest = 0.9 * 0.24 * SPHEREFOLD_LIPSCHITZ;
+    const expected = Math.min(
+      MAX_DESCENT_DEPTH,
+      Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
+    );
+    expect(de.maxDepth).toBe(expected);
+  });
+});
+
+describe("foldBranchCount4", () => {
+  it("maps each fold kind to its branch count: 1 affine, 81 boxfold, 3 spherefold, 243 mandelbox", () => {
+    expect(foldBranchCount4(SURFACE_FOLD_NONE)).toBe(1);
+    expect(foldBranchCount4(SURFACE_FOLD_BOXFOLD)).toBe(81);
+    expect(foldBranchCount4(SURFACE_FOLD_SPHEREFOLD)).toBe(3);
+    expect(foldBranchCount4(SURFACE_FOLD_MANDELBOX)).toBe(243);
+  });
+});
+
+describe("deHasFolds4", () => {
+  it("is false for an affine-only system", () => {
+    expect(deHasFolds4(buildSurfaceDE4(pentatope()))).toBe(false);
+  });
+
+  it("is true once any map carries a fold", () => {
+    expect(deHasFolds4(buildSurfaceDE4(pureBoxfoldPair4()))).toBe(true);
+  });
+});
+
+describe("slabExact4 truth table (fr-rsp6 x fr-wa6o)", () => {
+  it("reads true for an affine-only system", () => {
+    expect(slabExact4(buildSurfaceDE4(pentatope()))).toBe(true);
+  });
+
+  it("reads true for a boxfold-only system", () => {
+    expect(slabExact4(buildSurfaceDE4(pureBoxfoldPair4()))).toBe(true);
+  });
+
+  it("reads false for a spherefold system", () => {
+    expect(slabExact4(buildSurfaceDE4(pureSpherefoldPair4()))).toBe(false);
+  });
+
+  it("reads false for a mandelbox system", () => {
+    expect(slabExact4(buildSurfaceDE4(pureMandelboxPair4()))).toBe(false);
+  });
+
+  it("reads true for a boxfold map mixed with a plain affine map", () => {
+    const de = buildSurfaceDE4([
+      map4({ variations: [{ type: "boxfold", weight: 1 }] }),
+      map4({ id: 1 }),
+    ]);
+    expect(slabExact4(de)).toBe(true);
+  });
+
+  it("reads true for an affine base under a boxfold FINAL lens", () => {
+    const de = buildSurfaceDE4([map4()], boxfoldFinal4());
+    expect(slabExact4(de)).toBe(true);
+  });
+
+  it("reads false for an affine base under a mandelbox FINAL lens", () => {
+    const de = buildSurfaceDE4([map4()], mandelboxFinal4());
+    expect(slabExact4(de)).toBe(false);
+  });
+});
+
+describe("estimateDistance4 / estimateDistance4Refined validity on a pure-boxfold-4D system (fr-rsp6)", () => {
+  it("keeps both estimators below the brute-force nearest cloud distance, jittered and uniform probes alike", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    expect(de.maps[0].foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(de.maps[1].foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const rng = mulberry32(202);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 150; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+        cloud.w[idx] + (rng() - 0.5) * 0.3,
+      ]);
+    }
+    for (let i = 0; i < 100; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    for (const p of probes) {
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays within 0.02R of the attractor for points sampled exactly on it (no erosion)", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    for (let i = 0; i < 50; i++) {
+      const idx = (i * 337) % cloud.count;
+      const p: Vec4 = [
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(0.02 * R);
+    }
+  });
+
+  it("has zero void false hits: the refined estimate never dips below 0.01R once the true distance clears 0.15R", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const rng = mulberry32(303);
+    let voidProbes = 0;
+    for (let i = 0; i < 150; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      if (nearest <= 0.15 * R) continue;
+      voidProbes++;
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
+    }
+    expect(voidProbes).toBeGreaterThan(0);
+  });
+
+  it("never has the refined estimate fall below the base estimate", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const R = de.boundingRadius;
+    const rng = mulberry32(404);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(
+        estimateDistance4(de, p) - 1e-12,
+      );
+    }
+  });
+});
+
+describe("estimateDistance4Refined on a pure-mandelbox-4D system (fr-rsp6)", () => {
+  it("never falls below the base estimate", () => {
+    const transforms = pureMandelboxPair4();
+    const de = buildSurfaceDE4(transforms);
+    const R = de.boundingRadius;
+    const rng = mulberry32(404);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(
+        estimateDistance4(de, p) - 1e-12,
+      );
+    }
+  }, 20000);
+
+  it("honors the early-out cutoff contract on a fold system: clearing the cutoff matches the full descent bit-for-bit, dipping under it implies the full descent does too", () => {
+    const transforms = pureMandelboxPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const cutoff = 0.02 * R;
+    const rng = mulberry32(505);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 40; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const jitter = [0.004, 0.05, 0.3][i % 3];
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * jitter,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * jitter,
+        cloud.w[idx] + (rng() - 0.5) * jitter,
+      ]);
+    }
+    for (let i = 0; i < 20; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    let cleared = 0;
+    let dipped = 0;
+    for (const q of probes) {
+      const full = estimateDistance4Refined(de, q);
+      const cut = estimateDistance4Refined(de, q, cutoff);
+      if (cut >= cutoff) {
+        cleared++;
+        expect(cut).toBe(full);
+      } else {
+        dipped++;
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+    expect(cleared).toBeGreaterThan(0);
+    expect(dipped).toBeGreaterThan(0);
+  }, 20000);
+
+  it("keeps both estimators below the brute-force nearest cloud distance (validity spot check)", () => {
+    const transforms = pureMandelboxPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const rng = mulberry32(606);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  }, 20000);
+});
+
+describe("spherefold mid-branch guard (fr-rsp6)", () => {
+  it("returns a finite estimate at and near the sector origin, where the mid branch's inversion would otherwise overflow", () => {
+    const de = buildSurfaceDE4(pureSpherefoldPair4());
+    expect(de.maps[0].foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    expect(de.maps[1].foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    const points: Vec4[] = [
+      [0, 0, 0, 0],
+      [1e-9, 0, 0, 0],
+    ];
+    for (const p of points) {
+      expect(Number.isFinite(estimateDistance4Refined(de, p))).toBe(true);
+    }
+  });
+});
+
+describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-rsp6)", () => {
+  it("stays a sound bound under a kaleidoscope sweep combined with pure-fold maps", () => {
+    const transforms = pureBoxfoldPair4();
+    const symmetry: SymmetryParams = { order: 3, plane: "zw", twist: 1 };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+      null,
+      symmetry,
+    );
+    const R = de.boundingRadius;
+    const rng = mulberry32(606);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("returns identical estimates whether the DE reports beamWidth 4 or is forced to 1 — the fold frontier ignores it", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    expect(de.beamWidth).toBe(4);
+    const narrow = { ...de, beamWidth: 1 as const };
+    const R = de.boundingRadius;
+    const rng = mulberry32(707);
+    for (let i = 0; i < 20; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      expect(estimateDistance4(narrow, p)).toBe(estimateDistance4(de, p));
+    }
+  });
+});
+
+// -----------------------------------------------------------------------
+// The 4D mirror of `surface-de.test.ts`'s "descendFold frontier kept set
+// (fr-2v0y)": a direct pin on the KEPT SET itself, not just estimator
+// validity — a dropped candidate always folds a VALID (if looser) bound, so
+// the validity suites above would stay green through a kept-set regression.
+// -----------------------------------------------------------------------
+
+describe("descendFold4 frontier kept set (fr-rsp6)", () => {
+  // The tap reports every candidate that reaches frontier insertion
+  // (arrival order) and each completed level's kept slots (slot order);
+  // replayFrontier4 below is a brute-force model of the CONTRACT — fill in
+  // arrival order; once full, replace the FIRST-scanned worst slot (strict
+  // `>` scan from index 0) only when a STRICTLY smaller key arrives; ties
+  // evict the newcomer — and the tests below demand slot-exact agreement.
+
+  function replayFrontier4(candidates: FoldFrontierCandidate4[]): {
+    slots: FoldFrontierCandidate4[];
+    replacements: number;
+  } {
+    const slots: FoldFrontierCandidate4[] = [];
+    let replacements = 0;
+    for (const c of candidates) {
+      if (slots.length < SURFACE_FOLD_BEAM_WIDTH) {
+        slots.push(c);
+        continue;
+      }
+      let worst = 0;
+      for (let i = 1; i < slots.length; i++) {
+        if (slots[i].key > slots[worst].key) worst = i;
+      }
+      if (c.key < slots[worst].key) {
+        slots[worst] = c;
+        replacements++;
+      }
+    }
+    return { slots, replacements };
+  }
+
+  /** Installs the tap for one `estimateDistance4` call and hands back every
+   * candidate seen (by depth) alongside every completed level's kept slots. */
+  function tapDescent4(
+    de: SurfaceDE4,
+    p: Vec4,
+  ): {
+    candidates: Map<number, FoldFrontierCandidate4[]>;
+    levels: Map<number, FoldFrontierCandidate4[]>;
+  } {
+    const candidates = new Map<number, FoldFrontierCandidate4[]>();
+    const levels = new Map<number, FoldFrontierCandidate4[]>();
+    setFoldFrontierTap4({
+      candidate(depth, c) {
+        let list = candidates.get(depth);
+        if (!list) {
+          list = [];
+          candidates.set(depth, list);
+        }
+        list.push(c);
+      },
+      level(depth, kept) {
+        levels.set(depth, kept);
+      },
+    });
+    try {
+      estimateDistance4(de, p);
+    } finally {
+      setFoldFrontierTap4(null);
+    }
+    return { candidates, levels };
+  }
+
+  it("agrees slot-for-slot with the replay on a pure-boxfold pair (81-branch isometries)", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(2101),
+    );
+    const R = de.boundingRadius;
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ]);
+    }
+    const rng = mulberry32(2102);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent4(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier4(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+  });
+
+  it("agrees slot-for-slot with the replay on a pure-mandelbox pair (243-branch worst case, saturation guaranteed)", () => {
+    const transforms = pureMandelboxPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(2201),
+    );
+    const R = de.boundingRadius;
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ]);
+    }
+    const rng = mulberry32(2202);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent4(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier4(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
+  }, 20000);
+
+  it("agrees slot-for-slot with the replay under a kaleidoscope sweep over a pure-boxfold pair", () => {
+    const transforms = pureBoxfoldPair4();
+    const symmetry: SymmetryParams = { order: 3, plane: "zw", twist: 1 };
+    const de = buildSurfaceDE4(transforms, null, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(2301),
+      null,
+      symmetry,
+    );
+    const R = de.boundingRadius;
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ]);
+    }
+    const rng = mulberry32(2302);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent4(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier4(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
+  });
+
+  it("agrees slot-for-slot with the replay on a mixed boxfold + plain-affine pair (a single-candidate arm competing in the same stream)", () => {
+    const transforms: Transform[] = [
+      map4({ variations: [{ type: "boxfold", weight: 1 }] }),
+      map4({ id: 1, position: [0.1001, 0.2, 0.3] }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(2401),
+    );
+    const R = de.boundingRadius;
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 8; i++) {
+      const idx = (i * 337) % cloud.count;
+      probes.push([
+        cloud.positions[idx * 3],
+        cloud.positions[idx * 3 + 1],
+        cloud.positions[idx * 3 + 2],
+        cloud.w[idx],
+      ]);
+    }
+    const rng = mulberry32(2402);
+    for (let i = 0; i < 16; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+
+    let levelsChecked = 0;
+    let saturated = false;
+    let replacements = 0;
+    for (const p of probes) {
+      const { candidates, levels } = tapDescent4(de, p);
+      for (const [depth, kept] of levels) {
+        const atDepth = candidates.get(depth) ?? [];
+        const replay = replayFrontier4(atDepth);
+        expect(kept).toEqual(replay.slots);
+        levelsChecked++;
+        replacements += replay.replacements;
+        if (atDepth.length > SURFACE_FOLD_BEAM_WIDTH) saturated = true;
+      }
+    }
+    expect(levelsChecked).toBeGreaterThan(0);
+    expect(saturated).toBe(true);
+    expect(replacements).toBeGreaterThan(0);
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-rsp6: the pure-fold FINAL lens, one dimension up from
+// `surface-de.test.ts`'s fr-g58b suites ("buildSurfaceDE with a pure-fold
+// final lens" and "estimateDistance / estimateDistanceRefined with a fold
+// final lens"). Base transforms are `pentatope()` throughout (5 maps,
+// affine-only) — 4D's analogue of 3D's `sierpinskiTetrahedron()` base.
+// -----------------------------------------------------------------------
+
+describe("buildSurfaceDE4 with a pure-fold final lens (fr-rsp6)", () => {
+  it("builds foldFinal (and no affine final) with the lens's kind, weight and affine part", () => {
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(pentatope(), final);
+    expect(de.final).toBeNull();
+    expect(de.foldFinal).not.toBeNull();
+    expect(de.foldFinal!.foldKind).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(de.foldFinal!.invW).toBeCloseTo(1 / 0.55, 12);
+    expect(de.foldFinal!.absW).toBeCloseTo(0.55, 12);
+    expect(de.foldFinal!.sigmaMin).toBeCloseTo(0.9, 12);
+  });
+
+  it("bounds the visible set: every plotted point of a lensed boxfold cloud sits inside visibleBoundingRadius", () => {
+    const transforms = pentatope();
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(11),
+      toTransform4(final),
+    );
+    let maxR = 0;
+    for (let i = 0; i < cloud.count; i++) {
+      const x = cloud.positions[i * 3];
+      const y = cloud.positions[i * 3 + 1];
+      const z = cloud.positions[i * 3 + 2];
+      const w = cloud.w[i];
+      const r = Math.sqrt(x * x + y * y + z * z + w * w);
+      if (r > maxR) maxR = r;
+    }
+    expect(maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+  });
+
+  it("bounds the visible set of a mandelbox lens the same way (the sqrt(r^2 + 4) bound)", () => {
+    const transforms = pentatope();
+    const final = mandelboxFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    expect(de.foldFinal!.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(11),
+      toTransform4(final),
+    );
+    let maxR = 0;
+    for (let i = 0; i < cloud.count; i++) {
+      const x = cloud.positions[i * 3];
+      const y = cloud.positions[i * 3 + 1];
+      const z = cloud.positions[i * 3 + 2];
+      const w = cloud.w[i];
+      const r = Math.sqrt(x * x + y * y + z * z + w * w);
+      if (r > maxR) maxR = r;
+    }
+    expect(maxR).toBeLessThanOrEqual(de.visibleBoundingRadius);
+  });
+});
+
+describe("estimateDistance4 / estimateDistance4Refined with a fold final lens (fr-rsp6)", () => {
+  it("keeps both estimators below the brute-force nearest distance to the LENSED cloud, jittered and uniform probes alike", () => {
+    const transforms = pentatope();
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      60000,
+      mulberry32(101),
+      toTransform4(final),
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(202);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 60; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      probes.push([
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+        cloud.w[idx] + (rng() - 0.5) * 0.3,
+      ]);
+    }
+    for (let i = 0; i < 30; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ]);
+    }
+    for (const p of probes) {
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("absorbs a negative lens weight through |w| — both estimators stay sound", () => {
+    const transforms = pentatope();
+    const final = map4({
+      id: 99,
+      position: [0.1, 0, -0.1],
+      rotation: [0, 0.4, 0.2],
+      scale: [0.8, 0.8, 0.8],
+      variations: [{ type: "boxfold", weight: -0.6 }],
+    });
+    const de = buildSurfaceDE4(transforms, final);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      40000,
+      mulberry32(31),
+      toTransform4(final),
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(32);
+    for (let i = 0; i < 60; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("stays sound with a boxfold lens OVER a pure-fold base — lens branches seeding fold-frontier root descents", () => {
+    const transforms = pureBoxfoldPair4();
+    const final = map4({
+      id: 99,
+      position: [0.1, -0.05, 0.1],
+      rotation: [0.15, 0.25, 0],
+      scale: [0.9, 0.9, 0.9],
+      variations: [{ type: "boxfold", weight: 0.6 }],
+    });
+    const de = buildSurfaceDE4(transforms, final);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      40000,
+      mulberry32(51),
+      toTransform4(final),
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(52);
+    for (let i = 0; i < 40; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  }, 20000);
+
+  it("stays sound under a kaleidoscope sweep beneath the lens", () => {
+    const transforms = pentatope();
+    const symmetry: SymmetryParams = { order: 3, plane: "xw" };
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final, symmetry);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      40000,
+      mulberry32(61),
+      toTransform4(final),
+      symmetry,
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(62);
+    for (let i = 0; i < 40; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+        (rng() - 0.5) * 2.4 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-9,
+      );
+    }
+  });
+
+  it("honors the cutoff contract: values at or above the cutoff equal the full result, values below imply the full result is below too", () => {
+    const transforms = pentatope();
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(72);
+    for (let i = 0; i < 100; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.6 * R,
+        (rng() - 0.5) * 2.6 * R,
+        (rng() - 0.5) * 2.6 * R,
+        (rng() - 0.5) * 2.6 * R,
+      ];
+      const cutoff = rng() * 0.2 * R;
+      const full = estimateDistance4Refined(de, p);
+      const cut = estimateDistance4Refined(de, p, cutoff);
+      if (cut >= cutoff) {
+        expect(cut).toBe(full);
+      } else {
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+  });
+
+  it("reports positive distance across deep voids of the lensed set — the region floors close vacuous branch terms", () => {
+    const transforms = pentatope();
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      80000,
+      mulberry32(81),
+      toTransform4(final),
+    );
+    const R = de.visibleBoundingRadius;
+    const rng = mulberry32(82);
+    let deepVoidProbes = 0;
+    for (let i = 0; i < 150; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 2.2 * R,
+        (rng() - 0.5) * 2.2 * R,
+        (rng() - 0.5) * 2.2 * R,
+        (rng() - 0.5) * 2.2 * R,
+      ];
+      const nearest = nearestDistance4(cloud, p);
+      if (nearest <= 0.15 * R) continue;
+      deepVoidProbes++;
+      expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
+    }
+    expect(deepVoidProbes).toBeGreaterThan(10);
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-rsp6 x fr-wa6o: the slab query (`halfExtent`) crossed with the fold
+// port. No 3D template exists — `halfExtent` is a 4D-only concept (fr-wa6o
+// thickens a `w = w0` SLICE, and 3D never slices a hyperplane) — so these
+// tests are new, exercising exactly the interaction `slabExact4`'s doc
+// describes: boxfold branch inverses are per-axis reflections (affine, so
+// segment-exact), while spherefold/mandelbox's inversion branch takes a
+// segment to an ARC and is refused outright.
+// -----------------------------------------------------------------------
+
+describe("slab queries through the fold frontier (fr-rsp6 x fr-wa6o)", () => {
+  it("keeps both estimators sound against the segment-sampled nearest on a pure-boxfold pair", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    for (const q of jitteredQueries(cloud, 40)) {
+      const truth = nearestSegmentDistance4(
+        cloud.positions,
+        cloud.w,
+        cloud.count,
+        q,
+        halfExtent,
+      );
+      expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+        truth + 1e-9,
+      );
+      expect(
+        estimateDistance4Refined(de, q, 0, halfExtent),
+      ).toBeLessThanOrEqual(truth + 1e-9);
+    }
+  });
+
+  it("never returns a slab value greater than the point-query value at the same center — enlarging the query set can only shrink the infimum", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    const R = de.boundingRadius;
+    const halfExtent: Vec4 = [0, 0, 0, 0.1 * R];
+    for (const q of validityQueries(cloud)) {
+      const pointBase = estimateDistance4(de, q);
+      const pointRefined = estimateDistance4Refined(de, q);
+      expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+        pointBase + 1e-9,
+      );
+      expect(
+        estimateDistance4Refined(de, q, 0, halfExtent),
+      ).toBeLessThanOrEqual(pointRefined + 1e-9);
+    }
+  });
+
+  it("matches the point-query path bit-for-bit at a null or all-zero half-extent, through the fold frontier", () => {
+    const transforms = pureBoxfoldPair4();
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(101),
+    );
+    for (const q of jitteredQueries(cloud, 30)) {
+      const base = estimateDistance4(de, q);
+      expect(estimateDistance4(de, q, null)).toBe(base);
+      expect(estimateDistance4(de, q, [0, 0, 0, 0])).toBe(base);
+
+      const refined = estimateDistance4Refined(de, q);
+      expect(estimateDistance4Refined(de, q, 0, null)).toBe(refined);
+      expect(estimateDistance4Refined(de, q, 0, [0, 0, 0, 0])).toBe(refined);
+    }
+  });
+
+  it("throws on a nonzero half-extent for a spherefold system", () => {
+    const de = buildSurfaceDE4(pureSpherefoldPair4());
+    const halfExtent: Vec4 = [0, 0, 0, 0.05];
+    expect(() => estimateDistance4(de, [0.2, 0, 0, 0], halfExtent)).toThrow(
+      /slab queries are unsound/,
+    );
+    expect(() =>
+      estimateDistance4Refined(de, [0.2, 0, 0, 0], 0, halfExtent),
+    ).toThrow(/slab queries are unsound/);
+  });
+
+  it("throws on a nonzero half-extent for a mandelbox system", () => {
+    const de = buildSurfaceDE4(pureMandelboxPair4());
+    const halfExtent: Vec4 = [0, 0, 0, 0.05];
+    expect(() => estimateDistance4(de, [0.2, 0, 0, 0], halfExtent)).toThrow(
+      /slab queries are unsound/,
+    );
+    expect(() =>
+      estimateDistance4Refined(de, [0.2, 0, 0, 0], 0, halfExtent),
+    ).toThrow(/slab queries are unsound/);
+  }, 20000);
+
+  it("keeps both estimators sound against the segment-sampled nearest through a boxfold FINAL lens", () => {
+    const transforms = pentatope();
+    const final = boxfoldFinal4();
+    const de = buildSurfaceDE4(transforms, final);
+    expect(slabExact4(de)).toBe(true);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      40000,
+      mulberry32(17),
+      toTransform4(final),
+    );
+    const rng = mulberry32(18);
+    const halfExtent: Vec4 = [0, 0, 0, 0.08];
+    for (let i = 0; i < 30; i++) {
+      const idx = Math.floor(rng() * cloud.count);
+      const q: Vec4 = [
+        cloud.positions[idx * 3] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 1] + (rng() - 0.5) * 0.3,
+        cloud.positions[idx * 3 + 2] + (rng() - 0.5) * 0.3,
+        cloud.w[idx] + (rng() - 0.5) * 0.3,
+      ];
+      const truth = nearestSegmentDistance4(
+        cloud.positions,
+        cloud.w,
+        cloud.count,
+        q,
+        halfExtent,
+      );
+      expect(estimateDistance4(de, q, halfExtent)).toBeLessThanOrEqual(
+        truth + 1e-9,
+      );
+      expect(
+        estimateDistance4Refined(de, q, 0, halfExtent),
+      ).toBeLessThanOrEqual(truth + 1e-9);
     }
   });
 });
