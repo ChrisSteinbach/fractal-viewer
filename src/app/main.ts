@@ -436,6 +436,13 @@ function main(): void {
   // chain of consecutively rendered frames breaks (a skipped frame, a mode
   // where sampling is off), so a gap never reads as one huge dt.
   let lastGovernedFrameMs: number | null = null;
+  // Timestamp of the last RENDERED frame, independent of the sample chain
+  // above (fr-vxbo): render-on-demand means a parked still produces no more
+  // frames to sample at all, so this is what governResolution measures quiet
+  // time against for the idle-restore path below. Unlike lastGovernedFrameMs
+  // it survives across the idle frames in between — reset only when a
+  // restore actually fires or governing stops.
+  let lastRenderedFrameAtMs: number | null = null;
   // Surface-mode interaction tier (fr-5ne3): cheap preview traces while the
   // view is moving, one full-quality settle frame once it parks. Owns the
   // surface render's cost outright — the resolution governor takes its
@@ -5357,7 +5364,13 @@ function main(): void {
    * (the preview/settle tier owns its cost — fr-5ne3 — and the settled
    * still must display at full resolution; the ladder would fight the tier,
    * and render-on-demand starves it of the step-up samples it needs to
-   * recover, parking stills blurry).
+   * recover, parking stills blurry). The governed points/solid modes have
+   * their own version of that same starvation (fr-vxbo): interaction can
+   * stop with the scale stepped down, and render-on-demand then produces no
+   * more frames to sample at all — so the `!rendered` branch below tracks
+   * quiet time since the last rendered frame and calls
+   * resolutionGovernor.idleRestore to snap a parked still back to full once
+   * that quiet stretch runs long enough.
    */
   function governResolution(now: number, rendered: boolean): void {
     if (
@@ -5371,10 +5384,25 @@ function main(): void {
         scene.setResolutionScale(1);
       }
       lastGovernedFrameMs = null;
+      lastRenderedFrameAtMs = null;
       return;
     }
     if (!rendered) {
       lastGovernedFrameMs = null;
+      if (lastRenderedFrameAtMs !== null) {
+        const restored = resolutionGovernor.idleRestore(
+          now - lastRenderedFrameAtMs,
+        );
+        if (restored !== null) {
+          scene.setResolutionScale(1);
+          // Same quiet trace as the ladder step below, so a parked still
+          // snapping back to full is just as visible in a bug report.
+          console.info(
+            `Adaptive resolution: render scale ×${restored} (idle restore)`,
+          );
+          lastRenderedFrameAtMs = null;
+        }
+      }
       return;
     }
     if (lastGovernedFrameMs !== null) {
@@ -5388,6 +5416,7 @@ function main(): void {
       }
     }
     lastGovernedFrameMs = now;
+    lastRenderedFrameAtMs = now;
   }
 
   function animate(): void {

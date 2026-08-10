@@ -4,6 +4,7 @@ import {
   GOVERNOR_DOWN_MS,
   GOVERNOR_DOWN_SUSTAIN_MS,
   GOVERNOR_HOLDOFF_MS,
+  GOVERNOR_IDLE_RESTORE_MS,
   GOVERNOR_OUTLIER_MS,
   GOVERNOR_OUTLIER_STREAK,
   GOVERNOR_UP_SUSTAIN_MS,
@@ -214,5 +215,45 @@ describe("createResolutionGovernor", () => {
     const results = feed(governor, 1000 / 30, 1000);
     expect(results.every((r) => r === null)).toBe(true);
     expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[0]);
+  });
+
+  it("idleRestore below the threshold returns null and leaves a stepped-down scale untouched", () => {
+    const governor = createResolutionGovernor();
+    const samplesToStep = Math.ceil(GOVERNOR_DOWN_SUSTAIN_MS / 50);
+    feed(governor, 50, samplesToStep);
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[1]);
+
+    expect(governor.idleRestore(GOVERNOR_IDLE_RESTORE_MS - 1)).toBeNull();
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[1]);
+
+    // Not just a no-op return value: the miss didn't quietly consume or
+    // forget anything either, so the threshold is still there to clear on a
+    // later call.
+    expect(governor.idleRestore(GOVERNOR_IDLE_RESTORE_MS)).toBe(1);
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[0]);
+  });
+
+  it("idleRestore returns null at full scale, however long the quiet stretch runs", () => {
+    const governor = createResolutionGovernor();
+    expect(governor.idleRestore(GOVERNOR_IDLE_RESTORE_MS)).toBeNull();
+    expect(governor.idleRestore(GOVERNOR_IDLE_RESTORE_MS * 10)).toBeNull();
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[0]);
+  });
+
+  it("idleRestore at the threshold restores a stepped-down scale to full and forgets timing state entirely", () => {
+    const governor = createResolutionGovernor();
+    const samplesToStep = Math.ceil(GOVERNOR_DOWN_SUSTAIN_MS / 50);
+    feed(governor, 50, samplesToStep);
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[1]);
+
+    expect(governor.idleRestore(GOVERNOR_IDLE_RESTORE_MS)).toBe(1);
+    expect(governor.scale).toBe(RESOLUTION_SCALE_STEPS[0]);
+
+    // Forgotten, not just stepped: a fresh 50ms stream needs the FULL
+    // sustain again, exactly like a brand-new governor — a stale accrual
+    // surviving the restore would tip this one sample early.
+    const results = feed(governor, 50, samplesToStep - 1);
+    expect(results.every((r) => r === null)).toBe(true);
+    expect(governor.sample(50)).toBe(RESOLUTION_SCALE_STEPS[1]);
   });
 });
