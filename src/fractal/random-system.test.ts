@@ -90,11 +90,17 @@ describe("randomSystem", () => {
   });
 
   it("never rolls one type twice in a blend, so a second variation is always a second warp", () => {
-    // Larger sample than SEED_SAMPLE_SIZE: only ~12% of maps roll a second
-    // nonlinear variation at all, and a collision needs that roll to land on
-    // the type already there — rare enough per map that a 50-seed sweep
-    // could miss it by luck.
-    for (let seed = 0; seed < 400; seed++) {
+    // Sized like FOUR_D_SEED_SAMPLE_SIZE, and for the same reason: a
+    // collision needs a map to roll a SECOND nonlinear variation (12% of
+    // maps) that then lands on the type already there (1 in 14), so
+    // SEED_SAMPLE_SIZE could miss a regression by luck. 200 seeds is ~590
+    // maps, i.e. ~5 expected collisions if the exclusion were dropped and
+    // under a 1% chance of seeing none — and it stays inside the default
+    // 5s test timeout on a loaded CI runner, which 400 did not. Spelled out
+    // rather than sharing FOUR_D_SEED_SAMPLE_SIZE, whose value is tuned for
+    // the 4D roll's own shapes — retuning that should not quietly change
+    // this test's detection power.
+    for (let seed = 0; seed < 200; seed++) {
       const { transforms } = randomSystem(mulberry32(seed));
       for (const t of transforms) {
         const types = (t.variations ?? []).map((v) => v.type);
