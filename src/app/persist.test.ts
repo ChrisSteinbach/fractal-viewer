@@ -12,6 +12,7 @@ import {
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
+import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import {
@@ -648,6 +649,46 @@ describe("decodeScene transform variations", () => {
     const weight = result!.transforms[0].variations![0].weight;
     expect(weight).toBeGreaterThan(0);
     expect(weight).toBeLessThanOrEqual(100);
+  });
+
+  it("accepts a blend as wide as the variation vocabulary — one entry per type", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: VARIATION_TYPES.map((type) => ({ type, weight: 0.5 })),
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].variations).toHaveLength(
+      VARIATION_TYPES.length,
+    );
+  });
+
+  it("returns null for a blend longer than the variation vocabulary (fr-qgxi)", () => {
+    // No producer can author this — the editor's add-dropdown hides types the
+    // transform already carries — and it is one lane more than the flame GPU
+    // Slot carries, so the decoder refuses it rather than handing the packer
+    // a list it must throw on.
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: Array.from(
+            { length: VARIATION_TYPES.length + 1 },
+            () => ({ type: "spherical", weight: 1 }),
+          ),
+        },
+      ],
+    };
+    expect(decodeScene("v1=" + b64url(JSON.stringify(raw)))).toBeNull();
   });
 });
 

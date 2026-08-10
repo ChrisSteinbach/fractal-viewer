@@ -46,6 +46,19 @@ export type VariationType = (typeof VARIATION_TYPES)[number];
  * sum `Σ weight · V(type)` over its variations (flame-style blending), so a map
  * can mix, say, mostly `spherical` with a little `swirl`. Weight 0 disables the
  * variation; the weights are *not* normalised — they are free strengths.
+ *
+ * A list carries AT MOST ONE ENTRY PER TYPE — every producer treats it as a
+ * type -> weight map: the editor's add-dropdown hides types the transform
+ * already carries, `random-system.ts`/`mutate-system.ts` never roll or swap
+ * onto a type already there, `flame-file.ts` reads one weight per (unique)
+ * XML attribute name, `morph.ts` folds a union by type, and `persist.ts`
+ * caps untrusted input at {@link VARIATION_TYPES}`.length`. That
+ * makes the type vocabulary itself the bound on a blend's length, which is
+ * what lets the GPU flame kernels give a Slot a fixed count of variation
+ * lanes (`flame-gpu.ts`'s `MAX_SLOT_VARIATIONS`, fr-qgxi). Readers don't
+ * depend on it — a repeated type simply adds, both on the CPU
+ * (`composeVariations`) and in the kernels — so it is a budget convention,
+ * not a parsing rule.
  */
 export interface Variation {
   type: VariationType;
