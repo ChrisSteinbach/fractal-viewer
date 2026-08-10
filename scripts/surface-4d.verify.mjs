@@ -565,11 +565,32 @@ async function main() {
 
       const failReasons = [];
       if (!forceWebgl) {
-        if (!result.computeActiveSeen) {
-          failReasons.push('no "WebGPU compute tracer active" console line');
-        }
-        if (!result.webgpuProgressSeen) {
-          failReasons.push('#surfaceProgress never showed "· WebGPU" text');
+        // The un-flagged arm asserts the SHAPE-KEYED ROUTING DECISION
+        // (fr-dlxh 4D, commit 85918b5): order <= 1 scenes must land on
+        // the compute tracer, order > 1 scenes on the fragment arm — the
+        // same expectation table --verify-routing uses, so a future
+        // routing flip edits EXPECT_COMPUTE_BY_SCENE once and both modes
+        // follow. (This branch asserted compute unconditionally when the
+        // script predated the routing split, which failed kaleido4's
+        // correctly-fragment-routed session as if it were a regression.)
+        const expectCompute = EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true;
+        if (expectCompute) {
+          if (!result.computeActiveSeen) {
+            failReasons.push('no "WebGPU compute tracer active" console line');
+          }
+          if (!result.webgpuProgressSeen) {
+            failReasons.push('#surfaceProgress never showed "· WebGPU" text');
+          }
+        } else {
+          if (result.computeActiveSeen) {
+            failReasons.push(
+              "un-flagged session took the compute arm where shape-keyed " +
+                "routing says fragment",
+            );
+          }
+          if (!result.webglProgressSeen) {
+            failReasons.push('#surfaceProgress never showed "· WebGL" text');
+          }
         }
       } else {
         if (result.computeActiveSeen) {
@@ -1360,7 +1381,20 @@ async function main() {
         continue;
       }
 
-      await testLiveness(scene, compute.settledShotBuf);
+      // The liveness leg pins the COMPUTE arm's per-frame view4 re-read
+      // (the ifs4 live-uniform discipline across the WebGPU seam) — on a
+      // scene shape-routed to the fragment arm it would re-test the long-
+      // proven WebGL live-uniform path at order-6 cost instead (measured
+      // 2026-08-10: the post-drag re-settle blew the 90s poll window at
+      // 95.6s, fr-1znb — the fr-id9r over-stripping residual, not a
+      // liveness failure), so it runs only where the routing says compute.
+      if (EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true) {
+        await testLiveness(scene, compute.settledShotBuf);
+      } else {
+        console.error(
+          `[surface-4d] ${scene.name}: fragment-routed scene -- liveness leg (a compute-arm view4 re-read pin) skipped.`,
+        );
+      }
 
       const fallback = await runArm(scene, "surfacegl", { forceWebgl: true });
       if (fallback.aborted) {
