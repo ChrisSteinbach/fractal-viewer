@@ -308,11 +308,16 @@ const LEGACY_AXIS_PLANE: Readonly<Record<string, SymmetryPlane>> = {
 const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
 
 /**
- * Cap on variations per transform when decoding untrusted input. There are only
- * a dozen distinct warps, so this is generous headroom while still bounding what
- * a hand-crafted URL can allocate.
+ * Cap on variations per transform when decoding untrusted input: one lane per
+ * distinct warp. Every producer treats a variation list as a type -> weight map
+ * (see `types.ts`'s {@link Variation}), so a longer list is either redundant or
+ * hand-crafted — and it has to be exactly this tight rather than generous
+ * headroom (fr-qgxi): `flame-gpu.ts`'s Slot carries `MAX_SLOT_VARIATIONS`
+ * variation lanes, itself `VARIATION_TYPES.length`, and its packer throws past
+ * that, so a longer blend would decode fine, render fine on every CPU path,
+ * and then knock a flame session off the GPU onto its permanent CPU fallback.
  */
-const MAX_VARIATIONS = 32;
+const MAX_VARIATIONS = VARIATION_TYPES.length;
 
 /** Reject wildly out-of-range blend weights from hand-crafted input; clamp the rest. */
 const MAX_VARIATION_WEIGHT = 100;

@@ -171,7 +171,13 @@ function variationWeights(
  * to weight 0 there) and lerp each type's weight — weights are free
  * strengths, never renormalized. Deterministic order: `a`'s types in `a`'s
  * order, then `b`'s remaining types in `b`'s order. `undefined` when the
- * union is empty. */
+ * union is empty.
+ *
+ * Keying the union by TYPE (rather than concatenating the two lists) is also
+ * what bounds a sample's blend LENGTH at the type vocabulary's own size, so
+ * even a fully disjoint pair stays inside the GPU flame Slot's fixed
+ * variation lanes — `flame-gpu.ts`'s `MAX_SLOT_VARIATIONS`, whose packer
+ * throws past them (fr-qgxi). */
 function lerpVariations(
   a: Variation[] | undefined,
   b: Variation[] | undefined,

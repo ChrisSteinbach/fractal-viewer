@@ -637,10 +637,12 @@ function writeSlotPost(
  * compacted out rather than left as gaps.
  *
  * Throws `RangeError` if more than {@link MAX_SLOT_VARIATIONS} survive the
- * filter. Defensive: `VariationType` has exactly {@link MAX_SLOT_VARIATIONS}
- * members (one per variation — see `types.ts`), so every legal transform
- * already fits; this only fires if that union ever grows without a matching
- * bump to the Slot layout.
+ * filter. Defensive: the lane count IS `VariationType`'s member count, and a
+ * transform carries at most one entry per type (see `types.ts`'s `Variation`
+ * for the convention and its enforcers — of which `morph.ts`'s type-keyed
+ * union and `persist.ts`'s decode cap are the two that matter here, fr-qgxi),
+ * so every legal transform already fits; this only fires if that union ever
+ * grows without a matching bump to the Slot layout.
  *
  * Exported (fr-e26) for `flame-gpu-4d.ts`: a variation list is
  * dimension-free data (`Variation[]` is shared by `Transform` and

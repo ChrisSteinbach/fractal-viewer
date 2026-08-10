@@ -2,7 +2,8 @@ import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
-import type { Transform } from "./types";
+import { VARIATION_TYPES } from "./types";
+import type { Transform, VariationType } from "./types";
 
 function transform(overrides: Partial<Transform> = {}): Transform {
   return {
@@ -122,6 +123,56 @@ describe("lerpSystem variations", () => {
       { type: "spherical", weight: 0.5 },
       { type: "swirl", weight: 0.25 },
     ]);
+  });
+
+  it("folds a side's own repeated entries of one type into a single lane at their summed weight", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [
+            { type: "swirl", weight: 0.5 },
+            { type: "swirl", weight: 0.25 },
+          ],
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [transform({ variations: [{ type: "swirl", weight: 1.5 }] })],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    // a's two swirl entries sum to 0.75 — the same blend, since a weighted
+    // sum of one warp IS that warp at the summed weight — and 0.75 lerps
+    // halfway to b's 1.5.
+    expect(mid.transforms[0].variations).toEqual([
+      { type: "swirl", weight: 1.125 },
+    ]);
+  });
+
+  it("keeps the widest union a morph can build — the whole vocabulary, split disjointly — at one entry per type", () => {
+    const blend = (types: readonly VariationType[]) =>
+      types.map((type) => ({ type, weight: 1 }));
+    const split = Math.ceil(VARIATION_TYPES.length / 2);
+    const a = system({
+      transforms: [
+        transform({ variations: blend(VARIATION_TYPES.slice(0, split)) }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({ variations: blend(VARIATION_TYPES.slice(split)) }),
+      ],
+    });
+
+    const types = (lerpSystem(a, b, 0.5).transforms[0].variations ?? []).map(
+      (v) => v.type,
+    );
+
+    // The union is keyed by TYPE rather than concatenated, so no morph
+    // sample can ever carry more variations than the vocabulary has types —
+    // the bound `flame-gpu.ts`'s fixed-count variation lanes rely on
+    // (fr-qgxi).
+    expect(types).toHaveLength(VARIATION_TYPES.length);
+    expect(new Set(types).size).toBe(VARIATION_TYPES.length);
   });
 });
 

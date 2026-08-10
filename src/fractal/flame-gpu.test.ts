@@ -22,10 +22,12 @@ import { MAX_TRANSFORMS, prepareChaosGame } from "./chaos-game";
 import { transformColors } from "./color";
 import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
+import { lerpSystem } from "./morph";
+import type { MorphSystem } from "./morph";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 import { VARIATION_TYPES } from "./types";
-import type { SymmetryParams, Transform } from "./types";
+import type { SymmetryParams, Transform, VariationType } from "./types";
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -90,6 +92,31 @@ describe("packGpuSystem validation", () => {
       variations: tooManyVariations,
     }));
     expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(RangeError);
+  });
+
+  it("packs the widest variation blend a morph can build — the whole vocabulary at once (fr-qgxi)", () => {
+    // `morph.ts` unions both sides' variation types, so a morph's worst case
+    // is a fully DISJOINT pair: every warp in the vocabulary alive in one
+    // transform. That union is keyed by type, so it lands at exactly
+    // MAX_SLOT_VARIATIONS lanes and the Slot fits it — a mid-morph sample
+    // can't throw here and knock a live flame session onto its CPU fallback.
+    const side = (types: readonly VariationType[]): MorphSystem => ({
+      transforms: makeTransforms(1).map((t) => ({
+        ...t,
+        variations: types.map((type) => ({ type, weight: 1 })),
+      })),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+    });
+    const split = Math.ceil(VARIATION_TYPES.length / 2);
+    const mid = lerpSystem(
+      side(VARIATION_TYPES.slice(0, split)),
+      side(VARIATION_TYPES.slice(split)),
+      0.5,
+    );
+
+    const packed = packGpuSystem(baseSpec({ transforms: mid.transforms }));
+    expect(new Uint32Array(packed.slots)[VAR_COUNT]).toBe(MAX_SLOT_VARIATIONS);
   });
 });
 
