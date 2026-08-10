@@ -5,7 +5,10 @@
  * fragment tracer is unbounded (>1300µs/ray), and compiles in ~0.1-0.3s
  * where the fold GLSL links in ~25s on Mesa (fr-096u's entry cliff).
  *
- * A frame is TWO pipelines, both bounded by construction (no submission
+ * A frame is TWO pipelines (an ifs4 session holds two PAIRS — fr-d0nn:
+ * a slab-free variant serves every sliceHalfW=0 frame at a measured
+ * 2.2-2.4x kernel discount, the full fr-wa6o pair any h > 0 frame),
+ * both bounded by construction (no submission
  * ever outruns the i915 watchdog): MARCH passes advance every active ray
  * by `stepsThisPass` DE steps (the bench's proven register-light kernel,
  * ray derivation swapped to the GLSL tracer's unproject), with the active
@@ -577,6 +580,7 @@ export class SurfaceComputeRenderer {
     // submission is ever unbounded.
     const compileEntry = async (
       mode: "march" | "shade",
+      slabExt: boolean,
     ): Promise<GPUShaderModule> => {
       const module = device.createShaderModule({
         code: surfaceDeKernelWgsl({
@@ -605,6 +609,13 @@ export class SurfaceComputeRenderer {
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
           sharedFrontier: false,
           bnbStage2: false,
+          // fr-d0nn: the fr-wa6o slab half-extent registers cost the
+          // affine4 kernel a measured 2.2-2.4x at EVERY kaleidoscope
+          // order on Iris (occupancy — they are live whether or not the
+          // slab is on), so an ifs4 session compiles BOTH variants and
+          // runFrame picks per frame by the live sliceHalfW. Inert for
+          // every other core.
+          slabExt,
         }),
       });
       const info = await module.getCompilationInfo();
@@ -661,23 +672,51 @@ export class SurfaceComputeRenderer {
         },
       ],
     });
-    const [marchModule, shadeModule] = await Promise.all([
-      compileEntry("march"),
-      compileEntry("shade"),
-    ]);
-    const [marchPipeline, shadePipeline] = await Promise.all([
+    // An ifs4 target compiles a SECOND, slab-free kernel pair beside the
+    // full one (fr-d0nn): the shipped slider position is sliceHalfW 0,
+    // where the slab pair's ext registers are pure occupancy tax. Both
+    // pairs share the explicit bind group layouts below, so bind groups
+    // stay variant-agnostic and runFrame's pick is a pipeline handle.
+    const wantNoSlab = target.kind === "ifs4";
+    const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
+      await Promise.all([
+        compileEntry("march", true),
+        compileEntry("shade", true),
+        wantNoSlab ? compileEntry("march", false) : null,
+        wantNoSlab ? compileEntry("shade", false) : null,
+      ]);
+    const marchPipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [marchLayout],
+    });
+    const shadePipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [shadeLayout],
+    });
+    const [
+      marchPipeline,
+      shadePipeline,
+      marchPipelineNoSlab,
+      shadePipelineNoSlab,
+    ] = await Promise.all([
       device.createComputePipelineAsync({
-        layout: device.createPipelineLayout({
-          bindGroupLayouts: [marchLayout],
-        }),
+        layout: marchPipelineLayout,
         compute: { module: marchModule, entryPoint: "marchRays" },
       }),
       device.createComputePipelineAsync({
-        layout: device.createPipelineLayout({
-          bindGroupLayouts: [shadeLayout],
-        }),
+        layout: shadePipelineLayout,
         compute: { module: shadeModule, entryPoint: "shadeRays" },
       }),
+      marchModuleNoSlab
+        ? device.createComputePipelineAsync({
+            layout: marchPipelineLayout,
+            compute: { module: marchModuleNoSlab, entryPoint: "marchRays" },
+          })
+        : null,
+      shadeModuleNoSlab
+        ? device.createComputePipelineAsync({
+            layout: shadePipelineLayout,
+            compute: { module: shadeModuleNoSlab, entryPoint: "shadeRays" },
+          })
+        : null,
     ]);
 
     const paramsBuf = device.createBuffer({
@@ -754,6 +793,8 @@ export class SurfaceComputeRenderer {
       marchLayout,
       shadePipeline,
       shadeLayout,
+      marchPipelineNoSlab,
+      shadePipelineNoSlab,
       paramsBuf,
       shadeBuf,
       mapsBuf,
@@ -803,6 +844,10 @@ export class SurfaceComputeRenderer {
     private readonly marchLayout: GPUBindGroupLayout,
     private readonly shadePipeline: GPUComputePipeline,
     private readonly shadeLayout: GPUBindGroupLayout,
+    /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
+     * frame rides — null for every other target kind. */
+    private readonly marchPipelineNoSlab: GPUComputePipeline | null,
+    private readonly shadePipelineNoSlab: GPUComputePipeline | null,
     private readonly paramsBuf: GPUBuffer,
     private readonly shadeBuf: GPUBuffer,
     private readonly mapsBuf: GPUBuffer,
@@ -1113,6 +1158,24 @@ export class SurfaceComputeRenderer {
                 packSurface4GpuParams(target.de, view4, run);
             })()
           : (run) => packSurfaceGpuParams(target.de, run);
+    // fr-d0nn: an ifs4 frame at the shipped sliceHalfW 0 rides the
+    // slab-free kernel pair (measured 2.2-2.4x cheaper at every
+    // kaleidoscope order — the fr-wa6o ext registers are occupancy tax
+    // even when dynamically dead); any h > 0 frame takes the full slab
+    // pair. Per frame, not per session — the thickness slider is live
+    // and can cross 0 mid-session. Non-ifs4 targets carry no noslab
+    // pair, so they always resolve to the main one. The h = 0 outputs
+    // are bit-identical between the pairs (segmentRadius4 at e = 0 IS
+    // length(q)), pinned by the bench's aff4 sweep agreement gate.
+    const slabFrame = (spec.view4?.sliceHalfW ?? 0) > 0;
+    const marchPipeline =
+      !slabFrame && this.marchPipelineNoSlab !== null
+        ? this.marchPipelineNoSlab
+        : this.marchPipeline;
+    const shadePipeline =
+      !slabFrame && this.shadePipelineNoSlab !== null
+        ? this.shadePipelineNoSlab
+        : this.shadePipeline;
     const writeParams = (itemCount: number, steps: number): void => {
       const run: SurfaceGpuRunParams = {
         itemCount,
@@ -1223,7 +1286,7 @@ export class SurfaceComputeRenderer {
           writeParams(slice.length, stepsThisPass);
           device.queue.writeBuffer(buffers.active, 0, slice);
           const marchMs = await dispatchTimed(
-            this.marchPipeline,
+            marchPipeline,
             buffers.marchBindGroup,
             slice.length,
           );
@@ -1295,7 +1358,7 @@ export class SurfaceComputeRenderer {
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
         const shadeMs = await dispatchTimed(
-          this.shadePipeline,
+          shadePipeline,
           buffers.shadeBindGroup,
           batch.length,
         );
