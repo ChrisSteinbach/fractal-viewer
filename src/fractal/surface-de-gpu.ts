@@ -448,6 +448,27 @@ export interface SurfaceGpuKernelOptions {
    * Inert under `core: "affine"` — the skips bound FOLD branch
    * enumeration, and the affine ladder enumerates none. */
   bnbStage2: boolean;
+  /** fr-d0nn's register-pressure probe for fr-b72d (module doc): the
+   * order-6 kaleidoscope-4D sweep runs ~35x slower on compute than the
+   * same estimator's fragment GLSL, and the suspected mechanism is the
+   * extra live `ext` vec4f registers the fr-wa6o slab threads through
+   * every beam-ladder tuple. Meaningful ONLY under `core: "affine4"` —
+   * inert everywhere else, exactly like `width`/`sharedFrontier`/
+   * `bnbStage2` under `core: "affine"`. Absent or `true` reproduces
+   * today's fr-wa6o slab source byte for byte. `false` emits the
+   * affine4 descent and hit-info bodies WITHOUT the half-extent
+   * machinery: every `segmentRadius4(x, xExt)` call becomes `length(x)`,
+   * and the `ext`/`aExt`/…/`imgExt`/`jExt` registers plus their
+   * `if (params.sliceHalfW > 0.0)` propagation disappear — the
+   * h=0-only kernel. The shared helpers `segmentRadius4`/
+   * `mapApplyLinear4`/`finalApplyLinear4`/`rotorInvWCol4` stay declared
+   * either way (a struct/function never reads past its own use; Tint
+   * DCEs the unused ones). HOST CONTRACT: a `slabExt: false` pipeline
+   * must never be fed a packed `sliceHalfW > 0` — the params struct
+   * still declares the field, merely unread, so the body would
+   * silently render the h=0 slice; the packer cannot see kernel
+   * options, so keeping the two in sync is the caller's obligation. */
+  slabExt?: boolean;
 }
 
 /** Workgroup shared-memory bytes the generated kernel declares — what the
@@ -942,6 +963,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "(4D fold finals are fr-rsp6's scope)",
     );
   }
+  // fr-d0nn: the fr-wa6o slab register-pressure probe (option doc).
+  // Meaningful only under "affine4" — every other core reads `true`
+  // unconditionally, so `opts.slabExt` is never even consulted for them
+  // and the inertness is structural, not just documented.
+  const slabExt = core === "affine4" ? (opts.slabExt ?? true) : true;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -1511,42 +1537,76 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   // escape/bounding radii route the chains), and the GLSL overload's
   // returned distance is exactly the value side trimmed here. Plain
   // params.maxDepth on purpose, like the other twins.
-  const affine4HitInfoText = /* wgsl */ `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
+  const affine4HitInfoText = (slabExt: boolean): string => /* wgsl */ `${
+    slabExt
+      ? `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
 // width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
 // spill, sector-major enumeration, one vec4f half-extent per register
 // (fr-wa6o) — behind the value body's view lift, feeding colors only
 // (the value side never steers it; see the generator comment).
-fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+`
+      : `// 4D hit-info descent (surface-material-4d.ts's shading overload): the
+// width-4 ladder's TRAJECTORY — top-2 beam + fr-jkpn rank-3/4 validity
+// spill, sector-major enumeration — behind the value body's view lift,
+// feeding colors only (the value side never steers it; see the
+// generator comment). fr-d0nn slabExt=false (fr-b72d probe): no
+// fr-wa6o half-extent registers — every radius below is a plain length.
+`
+  }fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var q = rotorInvApply4(vec4f(p, params.w0));
-  let segment = params.sliceHalfW > 0.0;
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
   var ext = vec4f(0.0);
   if (segment) {
     ext = rotorInvWCol4() * params.sliceHalfW;
   }
-  q = finalApply4(q);
-  if (segment) {
+`
+    : ``
+}  q = finalApply4(q);
+${
+  slabExt
+    ? `  if (segment) {
     ext = finalApplyLinear4(ext);
   }
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+`
+    : ``
+}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
   let R = params.boundingRadius;
   var aQ = q;
-  var aExt = ext;
-  var aScale = 1.0;
+${
+  slabExt
+    ? `  var aExt = ext;
+`
+    : ``
+}  var aScale = 1.0;
   var aLive = true;
   var bQ = vec4f(0.0);
-  var bExt = vec4f(0.0);
-  var bScale = 1.0;
+${
+  slabExt
+    ? `  var bExt = vec4f(0.0);
+`
+    : ``
+}  var bScale = 1.0;
   var bLive = false;
   var v1Q = vec4f(0.0);
-  var v1Ext = vec4f(0.0);
-  var v1Scale = 1.0;
+${
+  slabExt
+    ? `  var v1Ext = vec4f(0.0);
+`
+    : ``
+}  var v1Scale = 1.0;
   var v1Live = false;
   var v2Q = vec4f(0.0);
-  var v2Ext = vec4f(0.0);
-  var v2Scale = 1.0;
+${
+  slabExt
+    ? `  var v2Ext = vec4f(0.0);
+`
+    : ``
+}  var v2Scale = 1.0;
   var v2Live = false;
   for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
@@ -1554,136 +1614,235 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     }
     var c1Key = 1e30;
     var c1Q = vec4f(0.0);
-    var c1Ext = vec4f(0.0);
-    var c1Scale = 1.0;
+${
+  slabExt
+    ? `    var c1Ext = vec4f(0.0);
+`
+    : ``
+}    var c1Scale = 1.0;
     var c1R = 0.0;
     var c1Map = 0u;
     var c2Key = 1e30;
     var c2Q = vec4f(0.0);
-    var c2Ext = vec4f(0.0);
-    var c2Scale = 1.0;
+${
+  slabExt
+    ? `    var c2Ext = vec4f(0.0);
+`
+    : ``
+}    var c2Scale = 1.0;
     var c2R = 0.0;
     var c3Key = 1e30;
     var c3Q = vec4f(0.0);
-    var c3Ext = vec4f(0.0);
-    var c3Scale = 1.0;
+${
+  slabExt
+    ? `    var c3Ext = vec4f(0.0);
+`
+    : ``
+}    var c3Scale = 1.0;
     var c3R = 0.0;
     var c4Key = 1e30;
     var c4Q = vec4f(0.0);
-    var c4Ext = vec4f(0.0);
-    var c4Scale = 1.0;
+${
+  slabExt
+    ? `    var c4Ext = vec4f(0.0);
+`
+    : ``
+}    var c4Scale = 1.0;
     var c4R = 0.0;
     for (var c = 0u; c < 4u; c++) {
       var pQ = vec4f(0.0);
-      var pExt = vec4f(0.0);
-      var pScale = 1.0;
+${
+  slabExt
+    ? `      var pExt = vec4f(0.0);
+`
+    : ``
+}      var pScale = 1.0;
       if (c == 0u) {
         if (!aLive) {
           continue;
         }
         pQ = aQ;
-        pExt = aExt;
-        pScale = aScale;
+${
+  slabExt
+    ? `        pExt = aExt;
+`
+    : ``
+}        pScale = aScale;
       } else if (c == 1u) {
         if (!bLive) {
           continue;
         }
         pQ = bQ;
-        pExt = bExt;
-        pScale = bScale;
+${
+  slabExt
+    ? `        pExt = bExt;
+`
+    : ``
+}        pScale = bScale;
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
         }
         pQ = v1Q;
-        pExt = v1Ext;
-        pScale = v1Scale;
+${
+  slabExt
+    ? `        pExt = v1Ext;
+`
+    : ``
+}        pScale = v1Scale;
       } else {
         if (!v2Live) {
           continue;
         }
         pQ = v2Q;
-        pExt = v2Ext;
-        pScale = v2Scale;
+${
+  slabExt
+    ? `        pExt = v2Ext;
+`
+    : ``
+}        pScale = v2Scale;
       }
-      // Sector sweep (fr-u91x): sector-major enumeration, the
+${
+  slabExt
+    ? `      // Sector sweep (fr-u91x): sector-major enumeration, the
       // expansion's order, so ladder tie-breaks match the oracle's; the
       // half-extent turns through the same backward step (an isometry
       // maps segments to segments).
-      var sQ = pQ;
-      var sExt = pExt;
-      for (var k = 0u; k < params.symOrder; k++) {
+`
+    : `      // Sector sweep (fr-u91x): sector-major enumeration, the
+      // expansion's order, so ladder tie-breaks match the oracle's.
+`
+}      var sQ = pQ;
+${
+  slabExt
+    ? `      var sExt = pExt;
+`
+    : ``
+}      for (var k = 0u; k < params.symOrder; k++) {
         if (k > 0u) {
           sQ = stepSector4(sQ);
-          if (segment) {
+${
+  slabExt
+    ? `          if (segment) {
             sExt = stepSector4(sExt);
           }
-        }
+`
+    : ``
+}        }
         for (var j = 0u; j < params.mapCount; j++) {
           let m = maps[j];
           let img = mapApply4(m, sQ);
-          var imgExt = vec4f(0.0);
+${
+  slabExt
+    ? `          var imgExt = vec4f(0.0);
           if (segment) {
             imgExt = mapApplyLinear4(m, sExt);
           }
           let r = segmentRadius4(img, imgExt);
-          let key = pScale * (r - R);
+`
+    : `          let r = length(img);
+`
+}          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-          // Top-2 insert-shift; the displaced tuple (or the candidate
+${
+  slabExt
+    ? `          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii and extents flow through —
           // the spill ladder routes on radii, the chains descend the
           // extents.
-          var eKey = key;
+`
+    : `          // Top-2 insert-shift; the displaced tuple (or the candidate
+          // itself) spills into the rank-3/4 ladder. Certificates are
+          // value-side and trimmed; radii flow through — the spill
+          // ladder routes on radii.
+`
+}          var eKey = key;
           var eQ = img;
-          var eExt = imgExt;
-          var eScale = childScale;
+${
+  slabExt
+    ? `          var eExt = imgExt;
+`
+    : ``
+}          var eScale = childScale;
           var eR = r;
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
+${
+  slabExt
+    ? `            eExt = c2Ext;
+`
+    : ``
+}            eScale = c2Scale;
             eR = c2R;
             c2Key = c1Key;
             c2Q = c1Q;
-            c2Ext = c1Ext;
-            c2Scale = c1Scale;
+${
+  slabExt
+    ? `            c2Ext = c1Ext;
+`
+    : ``
+}            c2Scale = c1Scale;
             c2R = c1R;
             c1Key = key;
             c1Q = img;
-            c1Ext = imgExt;
-            c1Scale = childScale;
+${
+  slabExt
+    ? `            c1Ext = imgExt;
+`
+    : ``
+}            c1Scale = childScale;
             c1R = r;
             c1Map = j;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
+${
+  slabExt
+    ? `            eExt = c2Ext;
+`
+    : ``
+}            eScale = c2Scale;
             eR = c2R;
             c2Key = key;
             c2Q = img;
-            c2Ext = imgExt;
-            c2Scale = childScale;
+${
+  slabExt
+    ? `            c2Ext = imgExt;
+`
+    : ``
+}            c2Scale = childScale;
             c2R = r;
           }
           if (eKey < c3Key) {
             c4Key = c3Key;
             c4Q = c3Q;
-            c4Ext = c3Ext;
-            c4Scale = c3Scale;
+${
+  slabExt
+    ? `            c4Ext = c3Ext;
+`
+    : ``
+}            c4Scale = c3Scale;
             c4R = c3R;
             c3Key = eKey;
             c3Q = eQ;
-            c3Ext = eExt;
-            c3Scale = eScale;
+${
+  slabExt
+    ? `            c3Ext = eExt;
+`
+    : ``
+}            c3Scale = eScale;
             c3R = eR;
           } else if (eKey < c4Key) {
             c4Key = eKey;
             c4Q = eQ;
-            c4Ext = eExt;
-            c4Scale = eScale;
+${
+  slabExt
+    ? `            c4Ext = eExt;
+`
+    : ``
+}            c4Scale = eScale;
             c4R = eR;
           }
         }
@@ -1695,10 +1854,14 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     trapAcc += trapW * shadeMaps[c1Map].w;
     trapNorm += trapW;
     trapW *= shade.colorSpeed;
-    // Under a slab query rings rides the SEGMENT radius (c1R is one);
+${
+  slabExt
+    ? `    // Under a slab query rings rides the SEGMENT radius (c1R is one);
     // sheets keeps reading the segment's CENTRE y by design — a shading
     // extra, and a coordinate is what the plane trap wants (fr-wa6o).
-    info.rings = min(info.rings, c1R / R);
+`
+    : ``
+}    info.rings = min(info.rings, c1R / R);
     info.sheets = min(info.sheets, abs(c1Q.y) / R);
     aLive = false;
     bLive = false;
@@ -1707,32 +1870,48 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     if (c1Key < 1e29) {
       if (c1R <= params.escapeRadius) {
         aQ = c1Q;
-        aExt = c1Ext;
-        aScale = c1Scale;
+${
+  slabExt
+    ? `        aExt = c1Ext;
+`
+    : ``
+}        aScale = c1Scale;
         aLive = true;
       }
     }
     if (c2Key < 1e29) {
       if (c2R <= params.escapeRadius) {
         bQ = c2Q;
-        bExt = c2Ext;
-        bScale = c2Scale;
+${
+  slabExt
+    ? `        bExt = c2Ext;
+`
+    : ``
+}        bScale = c2Scale;
         bLive = true;
       }
     }
     if (c3Key < 1e29) {
       if (c3R <= R) {
         v1Q = c3Q;
-        v1Ext = c3Ext;
-        v1Scale = c3Scale;
+${
+  slabExt
+    ? `        v1Ext = c3Ext;
+`
+    : ``
+}        v1Scale = c3Scale;
         v1Live = true;
       }
     }
     if (c4Key < 1e29) {
       if (c4R <= R) {
         v2Q = c4Q;
-        v2Ext = c4Ext;
-        v2Scale = c4Scale;
+${
+  slabExt
+    ? `        v2Ext = c4Ext;
+`
+    : ``
+}        v2Scale = c4Scale;
         v2Live = true;
       }
     }
@@ -1934,7 +2113,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       : core === "escape"
         ? escapeHitInfoText
         : core === "affine4"
-          ? affine4HitInfoText
+          ? affine4HitInfoText(slabExt)
           : foldHitInfoText;
   const hitInfoText = lens
     ? `${coreHitInfoText.replace(
@@ -3204,7 +3383,9 @@ ${descentPrologue}
   // footprint depth cap (the 4D oracle takes none; the packer throws on
   // one), so the loop runs plain params.maxDepth. `opts.width`,
   // `sharedFrontier` and `bnbStage2` are all inert here, like "affine".
-  const affine4DescentText = /* wgsl */ `// One extra Hutchinson level on a frozen escaped candidate's own
+  const affine4DescentText = (slabExt: boolean): string => /* wgsl */ `${
+    slabExt
+      ? `// One extra Hutchinson level on a frozen escaped candidate's own
 // inverse image (the oracle's refinedCert closure — fr-beck's measured
 // ghost-eliminator, with fr-1z6p's guard riding at every call site):
 // the certificate becomes childScale * max(r - R, min_j sigmaMin_j *
@@ -3214,84 +3395,168 @@ ${descentPrologue}
 // LINEAR parts alone (fr-wa6o); segment is recomputed from
 // params.sliceHalfW — the 4D GLSL's free-function move, dynamically
 // uniform, so both branches cost nothing across a dispatch.
-fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32) -> f32 {
-  let segment = params.sliceHalfW > 0.0;
-  var inner = 1e30;
+`
+      : `// One extra Hutchinson level on a frozen escaped candidate's own
+// inverse image (the oracle's refinedCert closure — fr-beck's measured
+// ghost-eliminator, with fr-1z6p's guard riding at every call site):
+// the certificate becomes childScale * max(r - R, min_j sigmaMin_j *
+// (length(invMap_j(img)) - R)) — never below the plain childScale *
+// (r - R). "Every map" means every (sector, base map) pair (fr-u91x).
+// fr-d0nn slabExt=false (fr-b72d probe): no fr-wa6o half-extent
+// register — img is a point, not a segment.
+`
+  }${
+    slabExt
+      ? `fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32) -> f32 {
+`
+      : `fn refinedCert(img: vec4f, r: f32, childScale: f32) -> f32 {
+`
+  }${
+    slabExt
+      ? `  let segment = params.sliceHalfW > 0.0;
+`
+      : ``
+  }  var inner = 1e30;
   var sImg = img;
-  var sExt = imgExt;
-  for (var k = 0u; k < params.symOrder; k++) {
+${
+  slabExt
+    ? `  var sExt = imgExt;
+`
+    : ``
+}  for (var k = 0u; k < params.symOrder; k++) {
     if (k > 0u) {
       sImg = stepSector4(sImg);
-      if (segment) {
+${
+  slabExt
+    ? `      if (segment) {
         sExt = stepSector4(sExt);
       }
-    }
+`
+    : ``
+}    }
     for (var j = 0u; j < params.mapCount; j++) {
       let m = maps[j];
       let jImg = mapApply4(m, sImg);
-      var jExt = vec4f(0.0);
+${
+  slabExt
+    ? `      var jExt = vec4f(0.0);
       if (segment) {
         jExt = mapApplyLinear4(m, sExt);
       }
-      inner = min(
+`
+    : ``
+}      inner = min(
         inner,
-        m.p0.x * (segmentRadius4(jImg, jExt) - params.boundingRadius),
-      );
+${
+  slabExt
+    ? `        m.p0.x * (segmentRadius4(jImg, jExt) - params.boundingRadius),
+`
+    : `        m.p0.x * (length(jImg) - params.boundingRadius),
+`
+}      );
     }
   }
   return childScale * max(r - params.boundingRadius, inner);
 }
 
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
+${
+  slabExt
+    ? `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
   // is an isometry, so distances, steps and gradients survive the lift
   // unchanged; then the affine final lens, exactly as the oracle's
   // prologue. The slab query's half-extent (fr-wa6o) is the rotor's w
   // column times sliceHalfW — a view-frame w displacement lifted into
   // the attractor frame — and the lens moves it by its LINEAR part
   // alone (a translation slides a segment's centre, never its extent).
-  var q = rotorInvApply4(vec4f(pIn, params.w0));
-  let segment = params.sliceHalfW > 0.0;
+`
+    : `  // View -> attractor frame (the 4D GLSL's uInvRotor line): a rotation
+  // is an isometry, so distances, steps and gradients survive the lift
+  // unchanged; then the affine final lens, exactly as the oracle's
+  // prologue. fr-d0nn slabExt=false (fr-b72d probe): no fr-wa6o
+  // half-extent register — q is a point, not a segment.
+`
+}  var q = rotorInvApply4(vec4f(pIn, params.w0));
+${
+  slabExt
+    ? `  let segment = params.sliceHalfW > 0.0;
   var ext = vec4f(0.0);
   if (segment) {
     ext = rotorInvWCol4() * params.sliceHalfW;
   }
-  q = finalApply4(q);
-  if (segment) {
+`
+    : ``
+}  q = finalApply4(q);
+${
+  slabExt
+    ? `  if (segment) {
     ext = finalApplyLinear4(ext);
   }
-  let R = params.boundingRadius;
-  let startR = segmentRadius4(q, ext);
-  let sphereBound = startR - R;
+`
+    : ``
+}  let R = params.boundingRadius;
+${
+  slabExt
+    ? `  let startR = segmentRadius4(q, ext);
+`
+    : `  let startR = length(q);
+`
+}  let sphereBound = startR - R;
   var best = 1e30;
   var bailBelow = -1e30;
   if (cutoff > 0.0 && sphereBound * params.final4SigmaMin < cutoff) {
     bailBelow = cutoff;
   }
-  // Chain A starts at the (lifted, lensed) query; B idles until beam
+${
+  slabExt
+    ? `  // Chain A starts at the (lifted, lensed) query; B idles until beam
   // selection fills it. Each chain carries the contraction accumulated
   // INCLUDING its own map, the radius it was selected at — scale *
   // (r - R) is its terminal bound — and its own segment half-extent,
   // one vec4f where the oracle unrolls a 4-element buffer. The validity
   // chains carry no R field: unlike A/B they never fold a terminal (see
   // past the loop), and expansion re-derives every child radius.
-  var aQ = q;
-  var aExt = ext;
-  var aScale = 1.0;
+`
+    : `  // Chain A starts at the (lifted, lensed) query; B idles until beam
+  // selection fills it. Each chain carries the contraction accumulated
+  // INCLUDING its own map and the radius it was selected at — scale *
+  // (r - R) is its terminal bound. The validity chains carry no R
+  // field: unlike A/B they never fold a terminal (see past the loop),
+  // and expansion re-derives every child radius.
+`
+}  var aQ = q;
+${
+  slabExt
+    ? `  var aExt = ext;
+`
+    : ``
+}  var aScale = 1.0;
   var aR = startR;
   var aLive = true;
   var bQ = vec4f(0.0);
-  var bExt = vec4f(0.0);
-  var bScale = 1.0;
+${
+  slabExt
+    ? `  var bExt = vec4f(0.0);
+`
+    : ``
+}  var bScale = 1.0;
   var bR = 0.0;
   var bLive = false;
   var v1Q = vec4f(0.0);
-  var v1Ext = vec4f(0.0);
-  var v1Scale = 1.0;
+${
+  slabExt
+    ? `  var v1Ext = vec4f(0.0);
+`
+    : ``
+}  var v1Scale = 1.0;
   var v1Live = false;
   var v2Q = vec4f(0.0);
-  var v2Ext = vec4f(0.0);
-  var v2Scale = 1.0;
+${
+  slabExt
+    ? `  var v2Ext = vec4f(0.0);
+`
+    : ``
+}  var v2Scale = 1.0;
   var v2Live = false;
   // NO fr-3c0k footprint depth cap in this core — the 4D oracle takes
   // none (packSurface4GpuParams throws on a nonzero footprint), so the
@@ -3305,14 +3570,22 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // fold below.
     var c1Key = 1e30;
     var c1Q = vec4f(0.0);
-    var c1Ext = vec4f(0.0);
-    var c1Scale = 1.0;
+${
+  slabExt
+    ? `    var c1Ext = vec4f(0.0);
+`
+    : ``
+}    var c1Scale = 1.0;
     var c1R = 0.0;
     var c1Cert = 0.0;
     var c2Key = 1e30;
     var c2Q = vec4f(0.0);
-    var c2Ext = vec4f(0.0);
-    var c2Scale = 1.0;
+${
+  slabExt
+    ? `    var c2Ext = vec4f(0.0);
+`
+    : ``
+}    var c2Scale = 1.0;
     var c2R = 0.0;
     var c2Cert = 0.0;
     // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
@@ -3320,69 +3593,116 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // the level's third- and fourth-smallest keys.
     var c3Key = 1e30;
     var c3Q = vec4f(0.0);
-    var c3Ext = vec4f(0.0);
-    var c3Scale = 1.0;
+${
+  slabExt
+    ? `    var c3Ext = vec4f(0.0);
+`
+    : ``
+}    var c3Scale = 1.0;
     var c3R = 0.0;
     var c3Cert = 0.0;
     var c4Key = 1e30;
     var c4Q = vec4f(0.0);
-    var c4Ext = vec4f(0.0);
-    var c4Scale = 1.0;
+${
+  slabExt
+    ? `    var c4Ext = vec4f(0.0);
+`
+    : ``
+}    var c4Scale = 1.0;
     var c4R = 0.0;
     var c4Cert = 0.0;
     for (var c = 0u; c < 4u; c++) {
       var pQ = vec4f(0.0);
-      var pExt = vec4f(0.0);
-      var pScale = 1.0;
+${
+  slabExt
+    ? `      var pExt = vec4f(0.0);
+`
+    : ``
+}      var pScale = 1.0;
       if (c == 0u) {
         if (!aLive) {
           continue;
         }
         pQ = aQ;
-        pExt = aExt;
-        pScale = aScale;
+${
+  slabExt
+    ? `        pExt = aExt;
+`
+    : ``
+}        pScale = aScale;
       } else if (c == 1u) {
         if (!bLive) {
           continue;
         }
         pQ = bQ;
-        pExt = bExt;
-        pScale = bScale;
+${
+  slabExt
+    ? `        pExt = bExt;
+`
+    : ``
+}        pScale = bScale;
       } else if (c == 2u) {
         if (!v1Live) {
           continue;
         }
         pQ = v1Q;
-        pExt = v1Ext;
-        pScale = v1Scale;
+${
+  slabExt
+    ? `        pExt = v1Ext;
+`
+    : ``
+}        pScale = v1Scale;
       } else {
         if (!v2Live) {
           continue;
         }
         pQ = v2Q;
-        pExt = v2Ext;
-        pScale = v2Scale;
+${
+  slabExt
+    ? `        pExt = v2Ext;
+`
+    : ``
+}        pScale = v2Scale;
       }
-      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
+${
+  slabExt
+    ? `      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
       // chain point — and, under a slab query, its half-extent, since
       // the backward step is an isometry taking segments to segments —
       // turns one step per kaleidoscope sector and every BASE map is
       // applied to it there, SECTOR-MAJOR (the expansion's k*n + i slot
       // order), so the candidate stream and the ladders' tie-breaks are
       // exactly the expansion's.
-      var sQ = pQ;
-      var sExt = pExt;
-      for (var k = 0u; k < params.symOrder; k++) {
+`
+    : `      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
+      // chain point turns one step per kaleidoscope sector and every
+      // BASE map is applied to it there, SECTOR-MAJOR (the expansion's
+      // k*n + i slot order), so the candidate stream and the ladders'
+      // tie-breaks are exactly the expansion's.
+`
+}      var sQ = pQ;
+${
+  slabExt
+    ? `      var sExt = pExt;
+`
+    : ``
+}      for (var k = 0u; k < params.symOrder; k++) {
         if (k > 0u) {
           sQ = stepSector4(sQ);
-          if (segment) {
+${
+  slabExt
+    ? `          if (segment) {
             sExt = stepSector4(sExt);
           }
-        }
+`
+    : ``
+}        }
         for (var j = 0u; j < params.mapCount; j++) {
           let m = maps[j];
           let img = mapApply4(m, sQ);
-          // GpuMap4 keeps translation in its own t field, so the
+${
+  slabExt
+    ? `          // GpuMap4 keeps translation in its own t field, so the
           // linear apply IS the inverse map's linear part — all a
           // segment's half-extent ever sees (fr-wa6o).
           var imgExt = vec4f(0.0);
@@ -3390,7 +3710,10 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
             imgExt = mapApplyLinear4(m, sExt);
           }
           let r = segmentRadius4(img, imgExt);
-          let key = pScale * (r - R);
+`
+    : `          let r = length(img);
+`
+}          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
           let cert = childScale * (r - R);
           // Exactly one tuple leaves the top-2 ladder per candidate —
@@ -3400,87 +3723,149 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
           // inserts, r = 0 never folds).
           var eKey = key;
           var eQ = img;
-          var eExt = imgExt;
-          var eScale = childScale;
+${
+  slabExt
+    ? `          var eExt = imgExt;
+`
+    : ``
+}          var eScale = childScale;
           var eR = r;
           var eCert = cert;
           if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
+${
+  slabExt
+    ? `            eExt = c2Ext;
+`
+    : ``
+}            eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = c1Key;
             c2Q = c1Q;
-            c2Ext = c1Ext;
-            c2Scale = c1Scale;
+${
+  slabExt
+    ? `            c2Ext = c1Ext;
+`
+    : ``
+}            c2Scale = c1Scale;
             c2R = c1R;
             c2Cert = c1Cert;
             c1Key = key;
             c1Q = img;
-            c1Ext = imgExt;
-            c1Scale = childScale;
+${
+  slabExt
+    ? `            c1Ext = imgExt;
+`
+    : ``
+}            c1Scale = childScale;
             c1R = r;
             c1Cert = cert;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
-            eExt = c2Ext;
-            eScale = c2Scale;
+${
+  slabExt
+    ? `            eExt = c2Ext;
+`
+    : ``
+}            eScale = c2Scale;
             eR = c2R;
             eCert = c2Cert;
             c2Key = key;
             c2Q = img;
-            c2Ext = imgExt;
-            c2Scale = childScale;
+${
+  slabExt
+    ? `            c2Ext = imgExt;
+`
+    : ``
+}            c2Scale = childScale;
             c2R = r;
             c2Cert = cert;
           }
-          // Spill into the rank-3/4 ladder (unconditional at width 4);
+${
+  slabExt
+    ? `          // Spill into the rank-3/4 ladder (unconditional at width 4);
           // what THAT evicts — or the spilled tuple itself, when it
           // beats neither slot — falls through to the fold below. The
           // evicted KEY is dead past this point: only the folded fields
           // (point, extent, scale, radius, certificate) survive, and
           // width 4 is fixed here, so there is no tKey.
-          if (eKey < c3Key) {
+`
+    : `          // Spill into the rank-3/4 ladder (unconditional at width 4);
+          // what THAT evicts — or the spilled tuple itself, when it
+          // beats neither slot — falls through to the fold below. The
+          // evicted KEY is dead past this point: only the folded fields
+          // (point, scale, radius, certificate) survive, and width 4 is
+          // fixed here, so there is no tKey.
+`
+}          if (eKey < c3Key) {
             let tQ = c4Q;
-            let tExt = c4Ext;
-            let tScale = c4Scale;
+${
+  slabExt
+    ? `            let tExt = c4Ext;
+`
+    : ``
+}            let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
             c4Key = c3Key;
             c4Q = c3Q;
-            c4Ext = c3Ext;
-            c4Scale = c3Scale;
+${
+  slabExt
+    ? `            c4Ext = c3Ext;
+`
+    : ``
+}            c4Scale = c3Scale;
             c4R = c3R;
             c4Cert = c3Cert;
             c3Key = eKey;
             c3Q = eQ;
-            c3Ext = eExt;
-            c3Scale = eScale;
+${
+  slabExt
+    ? `            c3Ext = eExt;
+`
+    : ``
+}            c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
             eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
+${
+  slabExt
+    ? `            eExt = tExt;
+`
+    : ``
+}            eScale = tScale;
             eR = tR;
             eCert = tCert;
           } else if (eKey < c4Key) {
             let tQ = c4Q;
-            let tExt = c4Ext;
-            let tScale = c4Scale;
+${
+  slabExt
+    ? `            let tExt = c4Ext;
+`
+    : ``
+}            let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
             c4Key = eKey;
             c4Q = eQ;
-            c4Ext = eExt;
-            c4Scale = eScale;
+${
+  slabExt
+    ? `            c4Ext = eExt;
+`
+    : ``
+}            c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
             eQ = tQ;
-            eExt = tExt;
-            eScale = tScale;
+${
+  slabExt
+    ? `            eExt = tExt;
+`
+    : ``
+}            eScale = tScale;
             eR = tR;
             eCert = tCert;
           }
@@ -3493,8 +3878,13 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
           // here past FOUR smaller keys, the shrunken fr-jkpn residual
           // drop.
           if (eR > R && eCert < best) {
-            best = min(best, refinedCert(eQ, eExt, eR, eScale));
-            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
+${
+  slabExt
+    ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale));
+`
+    : `            best = min(best, refinedCert(eQ, eR, eScale));
+`
+}            // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
             // the folded certificate is FINALIZED (already refined) and
             // best only falls from here, so once best is at or below
             // sphereBound the return is pinned no matter how much
@@ -3525,8 +3915,12 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
         best = min(best, c1Cert);
       } else {
         aQ = c1Q;
-        aExt = c1Ext;
-        aScale = c1Scale;
+${
+  slabExt
+    ? `        aExt = c1Ext;
+`
+    : ``
+}        aScale = c1Scale;
         aR = c1R;
         aLive = true;
       }
@@ -3536,8 +3930,12 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
         best = min(best, c2Cert);
       } else {
         bQ = c2Q;
-        bExt = c2Ext;
-        bScale = c2Scale;
+${
+  slabExt
+    ? `        bExt = c2Ext;
+`
+    : ``
+}        bScale = c2Scale;
         bR = c2R;
         bLive = true;
       }
@@ -3545,24 +3943,42 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     if (c3Key < 1e29) {
       if (c3R > R) {
         if (c3Cert < best) {
-          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale));
-        }
+${
+  slabExt
+    ? `          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale));
+`
+    : `          best = min(best, refinedCert(c3Q, c3R, c3Scale));
+`
+}        }
       } else {
         v1Q = c3Q;
-        v1Ext = c3Ext;
-        v1Scale = c3Scale;
+${
+  slabExt
+    ? `        v1Ext = c3Ext;
+`
+    : ``
+}        v1Scale = c3Scale;
         v1Live = true;
       }
     }
     if (c4Key < 1e29) {
       if (c4R > R) {
         if (c4Cert < best) {
-          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale));
-        }
+${
+  slabExt
+    ? `          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale));
+`
+    : `          best = min(best, refinedCert(c4Q, c4R, c4Scale));
+`
+}        }
       } else {
         v2Q = c4Q;
-        v2Ext = c4Ext;
-        v2Scale = c4Scale;
+${
+  slabExt
+    ? `        v2Ext = c4Ext;
+`
+    : ``
+}        v2Scale = c4Scale;
         v2Live = true;
       }
     }
@@ -3650,7 +4066,7 @@ ${escapeDescentText}`
           ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4 (fr-dlxh's 4D cut).
-${affine4DescentText}`
+${affine4DescentText(slabExt)}`
           : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
