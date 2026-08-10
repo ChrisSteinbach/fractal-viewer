@@ -68,6 +68,7 @@ import {
   doubleRotation,
   hyperfern,
   mandelboxKifs,
+  pentatope,
   sierpinskiTetrahedron,
   swirlFlame,
 } from "../../fractal/presets";
@@ -2036,7 +2037,12 @@ interface SurfaceAgreementRow {
    * production width is the same fixed `SURFACE_FOLD_BEAM_WIDTH`
    * constant, one dimension up, so only rows at that width compare like
    * against like — narrower rows are the same fr-5rvk erosion
-   * measurement, informational only. */
+   * measurement, informational only. The M5 LENS leg's rows (fr-rsp6
+   * phase 2B) gate exactly like whichever core the lens wraps — a
+   * `core: "affine4"` lens row always gates, a `core: "fold4"` one only at
+   * `SURFACE_FOLD_BEAM_WIDTH` — since {@link compareSurface4Agreement}/
+   * {@link compareSurfaceFold4Agreement} read `cfg.core`/`cfg.width` alone
+   * and never look at whether a lens rides along. */
   gating: boolean;
   /** Queries whose error exceeded
    * `max(2e-4·R, 2e-3·max(|cpu|, 0.05·R))` — any nonzero count on a
@@ -2062,15 +2068,20 @@ interface SurfaceAgreementRow {
    * doesn't share this layout, and `excluded` below is that leg's own
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
-  /** fr-dlxh escape + affine4 legs, and fr-rsp6's fold4 leg: queries a
-   * pre-hoc stability gate excluded before computing `failures` —
-   * `n - stableCount`. The escape leg's gate is the f32-vs-f64 orbit
-   * ensemble (`compareSurfaceEscapeAgreement`'s doc); the affine4 and
-   * fold4 legs' is the oracle-continuity classifier ({@link
-   * surface4QueryStable} — bisection queries parked on beam-selection
-   * discontinuities), fold4's evaluated against the PLAIN `estimateDistance4`
-   * composed oracle rather than the refined one. `undefined` on every
-   * 3D fold/affine/lens row (nothing is ever excluded there). */
+  /** fr-dlxh escape + affine4 legs, fr-rsp6's fold4 leg, and (phase 2B) the
+   * M5 lens4 leg: queries a pre-hoc stability gate excluded before
+   * computing `failures` — `n - stableCount`. The escape leg's gate is the
+   * f32-vs-f64 orbit ensemble (`compareSurfaceEscapeAgreement`'s doc); the
+   * affine4, fold4 AND lens4 legs' is the SAME oracle-continuity classifier
+   * ({@link surface4QueryStable} — bisection queries parked on
+   * beam-selection discontinuities), evaluated against whichever composed
+   * oracle that system's `refined` flag selects (fold4 and lens4-over-fold
+   * PLAIN `estimateDistance4`; affine4 and lens4-over-affine
+   * `estimateDistance4Refined`) — the lens argmin adds its OWN
+   * discontinuity set on top, so a lens4 row's exclusion count typically
+   * runs higher than its non-lensed counterpart, per
+   * {@link SURFACE_LENS4_EXCLUDED_CAP}'s doc. `undefined` on every 3D
+   * fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
   /** fr-dlxh escape leg only: stable-classified failures POST-HOC
    * verified as shadow flips (the GPU's value matched a 1..4-ULP
@@ -2520,6 +2531,35 @@ const SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES: Record<string, number> = {};
 function fold4ExcludedCap(system: string): number {
   return (
     SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES[system] ?? SURFACE_FOLD4_EXCLUDED_CAP
+  );
+}
+
+/** fr-rsp6 phase 2B: the M5 LENS agreement leg's own exclusion cap — the
+ * same 3% starting point as {@link SURFACE_AFFINE4_EXCLUDED_CAP} /
+ * {@link SURFACE_FOLD4_EXCLUDED_CAP}, one selection-discontinuity source
+ * further over: the lens wrapper's own branch-argmin (`descendLens4`) adds
+ * a SECOND discontinuity set on top of whichever beam it wraps (the
+ * affine4 ladder's or fold4 frontier's own), so a denser exclusion census
+ * than M3/M4's is plausible on its own — not proof of a kernel bug — but
+ * every widening past this starting point stays disclosed the same way:
+ * an entry in {@link SURFACE_LENS4_EXCLUDED_CAP_OVERRIDES}, never a
+ * silently raised floor. Shared by every lens4 row regardless of which
+ * core it wraps (`compareSurface4Agreement` and
+ * `compareSurfaceFold4Agreement` both feed `sys.stable`/`excluded` from
+ * the SAME {@link surface4QueryStable} classifier). */
+const SURFACE_LENS4_EXCLUDED_CAP = 21;
+
+/** Per-system overrides for {@link SURFACE_LENS4_EXCLUDED_CAP} — same
+ * `ceil(measured * 1.5) / 700` widening rule as {@link
+ * SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES}, filled in only after a real
+ * SwiftShader run measured that system's exclusion census past the 3%
+ * starting point. Empty until measurement says otherwise. */
+const SURFACE_LENS4_EXCLUDED_CAP_OVERRIDES: Record<string, number> = {};
+
+/** {@link SURFACE_LENS4_EXCLUDED_CAP}'s per-system lookup, overrides first. */
+function lens4ExcludedCap(system: string): number {
+  return (
+    SURFACE_LENS4_EXCLUDED_CAP_OVERRIDES[system] ?? SURFACE_LENS4_EXCLUDED_CAP
   );
 }
 
@@ -3018,6 +3058,49 @@ function surfaceFold4Mandelbox(): Transform[] {
   ];
 }
 
+/** fr-rsp6 phase 2B's boxfold LENS final — `surface-de-4d.test.ts`'s
+ * `boxfoldFinal4` verbatim (same numbers, same live w block): bench and
+ * CPU tests pin the identical lens, the same discipline
+ * `surfaceFold4Boxfold`'s `pureBoxfoldPair4` copy above already follows.
+ * Reused over BOTH an affine base (`lens4BoxOverAffine`, and re-viewed
+ * through `aff4Slab`'s own slab as `lens4Slab`) and a fold base
+ * (`lens4BoxOverFold`, "the same boxfold final" over `fold4Boxfold`'s own
+ * pair) rather than forking a second fixture per base — one lens, three
+ * views/bases, mirroring how `fold4Kaleido`/`fold4Slab` reuse
+ * `surfaceFold4Boxfold` above. */
+function surfaceLens4BoxfoldFinal(): Transform {
+  return {
+    id: 199,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    w: { position: 0.1, rotation: { yw: 0.2 } },
+    variations: [{ type: "boxfold", weight: 0.55 }],
+  };
+}
+
+/** fr-rsp6 phase 2B's mandelbox LENS final over the affine (`pentatope`)
+ * base — `lens4MandelboxOverAffine`, the 243-branch lens fan and this
+ * leg's widest per-query branch count. A FRESH weight (~1.1, an
+ * EXPANDING lens) rather than `surface-de-4d.test.ts`'s own
+ * `mandelboxFinal4` (weight 0.6, shrinking): mirrors 3D's own M1b
+ * decision (`surfaceLensMandelboxFinal`, weight 1 vs `surface-de.test.ts`'s
+ * own mandelbox-lens fixture) to retune the CPU test's fixture for this
+ * leg's field-class/worst-case role rather than reuse it verbatim — a
+ * growing lens is also the shape that most exercises the
+ * `surface4ToleranceR` fix above (its `visibleBoundingRadius` clears its
+ * `boundingRadius` by a wide margin). */
+function surfaceLens4MandelboxFinal(): Transform {
+  return {
+    id: 198,
+    position: [0.1, 0.05, -0.1],
+    rotation: [0.15, -0.2, 0.25],
+    scale: [0.85, 0.85, 0.85],
+    w: { position: -0.08, rotation: { yw: -0.2 } },
+    variations: [{ type: "mandelbox", weight: 1.1 }],
+  };
+}
+
 function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
   if (raw === null) return fallback;
   const parsed = raw
@@ -3235,9 +3318,22 @@ function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
  * the visible set, so error scales from the set the DE actually describes —
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
  * dimension up. ONE definition, shared by the query generator and the
- * comparator so the two cannot drift. */
+ * comparator so the two cannot drift. Checks BOTH lens shapes
+ * (`de.final`, the plain affine lens M3's `aff4Final` carries, and
+ * `de.foldFinal`, the fr-rsp6 phase 2B fold lens the M5 leg's lens4
+ * systems carry — the two are mutually exclusive on any built DE, so this
+ * is never ambiguous): `visibleBoundingRadius` already equals
+ * `boundingRadius` bit-for-bit whenever NEITHER is set
+ * (`buildSurfaceDE4`'s `let visibleBoundingRadius = boundingRadius`
+ * default), so widening the condition here is purely additive — every
+ * existing (non-lens, plain-affine-lens) row reads the identical value it
+ * always did, and only a fold-lens system's tolerance/query-ball scale
+ * changes, from the unlensed base radius it was wrongly reading to the
+ * correct (often larger — e.g. a growing mandelbox lens) visible one. */
 function surface4ToleranceR(de: SurfaceDE4): number {
-  return de.final ? de.visibleBoundingRadius : de.boundingRadius;
+  return de.final || de.foldFinal
+    ? de.visibleBoundingRadius
+    : de.boundingRadius;
 }
 
 /**
@@ -7276,6 +7372,199 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // fr-rsp6 phase 2B: the 4D LENS fixture family (M5 below) — a fold FINAL
+  // over the affine4/fold4 fixtures' own base shapes, `descendLens4`'s
+  // branch sweep exercised one dimension up. Same "def-time eligibility
+  // gate throws" idiom as affine4SystemDefs/fold4SystemDefs above (fixed
+  // fixtures; an ineligible one is a bench bug, not a leg quietly running
+  // short). The base for the affine-ladder trio is `pentatope()` —
+  // `surface-de-4d.test.ts`'s fr-rsp6 lens suite uses it throughout ("Base
+  // transforms are pentatope() ... 4D's analogue of 3D's
+  // sierpinskiTetrahedron() base"), so bench and CPU tests pin the same
+  // lensed systems, exactly like `fold4Boxfold` already pins
+  // `pureBoxfoldPair4` verbatim.
+  //
+  // Three systems wrap the REFINED affine4 ladder: `pentatope()` carries no
+  // fold maps of its own (`deHasFolds4` false), so `descendLens4`'s root
+  // descents run the plain ladder and the lens mirrors
+  // `estimateDistance4Refined` — `lens4BoxOverAffine` (the boxfold lens at
+  // the shipped identity-rotor view), `lens4MandelboxOverAffine` (the
+  // 243-branch mandelbox lens fan, this leg's widest per-query branch
+  // count), and `lens4Slab` (the SAME boxfold lens re-viewed through
+  // `aff4Slab`'s exact slab — boxfold-only on both the base, trivially
+  // true here, and the lens keeps `slabExact4` true, so the fr-wa6o
+  // segment machinery rides through the lens too). The fourth,
+  // `lens4BoxOverFold`, wraps the FOLD frontier instead: the same boxfold
+  // lens over `fold4Boxfold`'s own pair (`pureBoxfoldPair4`, fold maps at
+  // the base), so `descendLens4`'s root descents route through
+  // `descendFold4` and the lens mirrors PLAIN `estimateDistance4` — the
+  // M4 fold row's estimator, one lens over.
+  const lens4AffineSystemDefs: {
+    name: string;
+    seed: number;
+    transforms: Transform[];
+    finalTransform: Transform;
+    view4: (de: SurfaceDE4) => SurfaceGpu4View;
+  }[] = [
+    {
+      name: "lens4BoxOverAffine",
+      seed: 541,
+      transforms: pentatope(),
+      finalTransform: surfaceLens4BoxfoldFinal(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "lens4MandelboxOverAffine",
+      seed: 542,
+      transforms: pentatope(),
+      finalTransform: surfaceLens4MandelboxFinal(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "lens4Slab",
+      seed: 543,
+      transforms: pentatope(),
+      finalTransform: surfaceLens4BoxfoldFinal(),
+      view4: (de) => ({
+        rotor: symmetryRotation4("yw", 0.55),
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0.1 * de.boundingRadius,
+      }),
+    },
+  ];
+  const lens4AffineSystems: Surface4SystemState[] = [];
+  for (const def of lens4AffineSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface lens4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    const eligibility = analyzeSurfaceSystem4(
+      def.transforms,
+      def.finalTransform,
+    );
+    if (eligibility.status === "ineligible") {
+      throw new Error(
+        `lens4 bench fixture ${def.name} is ineligible: ` +
+          eligibility.reasons.join("; "),
+      );
+    }
+    const de = buildSurfaceDE4(def.transforms, def.finalTransform);
+    if (de.foldFinal === null) {
+      throw new Error(
+        `lens4 bench fixture ${def.name} did not build a fold-final lens ` +
+          "(regressed to an affine final, or none at all)",
+      );
+    }
+    const view4 = def.view4(de);
+    const queries = affine4Queries(de, view4, def.seed);
+    const cpu = queries.map((q) => estimateSurface4Composed(de, view4, q));
+    const R = surface4ToleranceR(de);
+    const stable = cpu.map((c, i) =>
+      surface4QueryStable(de, view4, queries[i], c, surfaceEvalTol(c, R)),
+    );
+    lens4AffineSystems.push({
+      name: def.name,
+      de,
+      view4,
+      transforms: def.transforms,
+      queries,
+      cpu,
+      stable,
+    });
+    render();
+  }
+
+  // fr-rsp6 phase 2B: the ONE lens4 system that wraps the FOLD frontier —
+  // see the block comment above for why this def is separate from
+  // lens4AffineSystemDefs (a different base, a different core, a
+  // different CPU estimator — `estimateDistance4` plain, not refined).
+  const lens4FoldSystemDefs: {
+    name: string;
+    seed: number;
+    transforms: Transform[];
+    finalTransform: Transform;
+    view4: (de: SurfaceDE4) => SurfaceGpu4View;
+  }[] = [
+    {
+      name: "lens4BoxOverFold",
+      seed: 551,
+      transforms: surfaceFold4Boxfold(),
+      finalTransform: surfaceLens4BoxfoldFinal(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+  ];
+  const lens4FoldSystems: Surface4SystemState[] = [];
+  for (const def of lens4FoldSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface lens4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    const eligibility = analyzeSurfaceSystem4(
+      def.transforms,
+      def.finalTransform,
+    );
+    if (eligibility.status === "ineligible") {
+      throw new Error(
+        `lens4 bench fixture ${def.name} is ineligible: ` +
+          eligibility.reasons.join("; "),
+      );
+    }
+    const de = buildSurfaceDE4(def.transforms, def.finalTransform);
+    if (de.foldFinal === null) {
+      throw new Error(
+        `lens4 bench fixture ${def.name} did not build a fold-final lens ` +
+          "(regressed to an affine final, or none at all)",
+      );
+    }
+    if (!deHasFolds4(de)) {
+      throw new Error(
+        `lens4 bench fixture ${def.name} has no base fold maps — ` +
+          "descendLens4 would route through the plain ladder, not " +
+          "descendFold4, pinning the wrong estimator",
+      );
+    }
+    const view4 = def.view4(de);
+    // refined=false throughout: this system's lens wraps descendFold4, so
+    // both the query mix's boundary bisection and the CPU oracle values
+    // below use the PLAIN estimateDistance4 (estimateSurface4Composed's
+    // doc) — the fold4SystemDefs loop's convention, one lens over.
+    const queries = affine4Queries(de, view4, def.seed, false);
+    const cpu = queries.map((q) =>
+      estimateSurface4Composed(de, view4, q, false),
+    );
+    const R = surface4ToleranceR(de);
+    const stable = cpu.map((c, i) =>
+      surface4QueryStable(
+        de,
+        view4,
+        queries[i],
+        c,
+        surfaceEvalTol(c, R),
+        false,
+      ),
+    );
+    lens4FoldSystems.push({
+      name: def.name,
+      de,
+      view4,
+      transforms: def.transforms,
+      queries,
+      cpu,
+      stable,
+    });
+    render();
+  }
+
   // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
   // (the wrapper is generated source), while the fold/affine legs share
   // one pipeline per CONFIG — a lens system run through those pipelines
@@ -7407,6 +7696,16 @@ async function runSurfaceDeSection(
   // be mathematically bit-identical (runSurfaceAff4SweepLeg's own gate,
   // one estimator class over).
   let fold4SlabExtFailed = false;
+  // fr-rsp6 phase 2B: the M5 lens4 leg's analog of affine4GateFail/
+  // fold4GateFail — per-system cap (lens4ExcludedCap), checked on every
+  // GATING lens4 row (the three affine4-cored rows always gate; the one
+  // fold4-cored row only at its production width, mirroring M4).
+  let lens4GateFail = false;
+  // fr-rsp6 phase 2B: the pack-guard pin (CPU-only, no GPU dispatch) —
+  // `packSurface4GpuParams` must THROW for a spherefold-final DE queried
+  // through a nonzero sliceHalfW (the slabExact4 refusal, surface-de-gpu.ts).
+  // Set when it does NOT throw, or throws for an unrelated reason.
+  let lens4PackGuardFailed = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
@@ -7942,6 +8241,214 @@ async function runSurfaceDeSection(
           results.notes.push(`fold4 slabExt A/B: ${describeError(e)}`);
         }
         render();
+      }
+    }
+
+    // ----- M5 (fr-rsp6 phase 2B): the 4D LENS agreement leg -----
+    // The fold-FINAL lens (`descendLens4`) wrapped around EITHER 4D core,
+    // pinned against the SAME composed-oracle machinery M3/M4 already use —
+    // `de.foldFinal` alone routes `estimateDistance4`/`estimateDistance4Refined`
+    // through `descendLens4` (surface-de-4d.ts), so `estimateSurface4Composed`'s
+    // calls in the fixture loop above already pin the lens; this leg only
+    // adds the GPU side. `lens4AffineSystems` (three systems) wrap the
+    // REFINED affine4 ladder — fold-free base maps (`pentatope`), so the
+    // wrapper's root descents are the plain refined descent, mirroring
+    // `estimateDistance4Refined` exactly like M3's rows — and ALWAYS gate,
+    // one fixed-width-4 pipeline for all three (M3's shape). `lens4FoldSystems`
+    // (one system) wraps the FOLD frontier — a fold base (`fold4Boxfold`'s
+    // pair), so the wrapper routes through `descendFold4` and mirrors PLAIN
+    // `estimateDistance4` — and sweeps the SAME two widths as M4 (12 gates,
+    // 4 is the fr-5rvk narrow-width erosion measurement, informational).
+    if (lens4AffineSystems.length > 0) {
+      const lens4AffineConfig: SurfaceKernelConfig = {
+        core: "affine4",
+        variant: "private",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = `lens4 ${configLabel(lens4AffineConfig)}`;
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      let lens4AffinePipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine4",
+          lens: true,
+          width: lens4AffineConfig.width,
+          workgroupSize: lens4AffineConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: lens4AffinePipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (lens4AffinePipeline !== null) {
+        const pipeline = lens4AffinePipeline;
+        for (const sys of lens4AffineSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            lens4AffineConfig.wg,
+          );
+          const row = compareSurface4Agreement(sys, lens4AffineConfig, gpu);
+          results.agreement.push(row);
+          const excluded = row.excluded ?? 0;
+          const cap = lens4ExcludedCap(sys.name);
+          if (excluded > cap) {
+            lens4GateFail = true;
+            results.notes.push(
+              `lens4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                `queries (> ${cap}) from the oracle-continuity gate — ` +
+                "see surface4QueryStable's doc",
+            );
+          }
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    if (lens4FoldSystems.length > 0) {
+      const lens4FoldConfigs: SurfaceKernelConfig[] = [
+        {
+          core: "fold4",
+          variant: "private",
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        },
+        {
+          core: "fold4",
+          variant: "private",
+          width: 4,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        },
+      ];
+      for (const cfg of lens4FoldConfigs) {
+        const label = `lens4 ${configLabel(cfg)}`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let lens4FoldPipeline: GPUComputePipeline | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: "fold4",
+            lens: true,
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          ({ pipeline: lens4FoldPipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (lens4FoldPipeline !== null) {
+          const pipeline = lens4FoldPipeline;
+          for (const sys of lens4FoldSystems) {
+            status(`agreement: ${label} × ${sys.name}…`);
+            await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+            const gpu = await runSurfaceEvalDispatch(
+              device,
+              pipeline,
+              sys,
+              cfg.wg,
+            );
+            const row = compareSurfaceFold4Agreement(sys, cfg, gpu);
+            results.agreement.push(row);
+            if (cfg.width === SURFACE_FOLD_BEAM_WIDTH) {
+              const excluded = row.excluded ?? 0;
+              const cap = lens4ExcludedCap(sys.name);
+              if (excluded > cap) {
+                lens4GateFail = true;
+                results.notes.push(
+                  `lens4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                    `queries (> ${cap}) from the oracle-continuity gate — ` +
+                    "see surface4QueryStable's doc",
+                );
+              }
+            }
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        render();
+      }
+    }
+
+    // fr-rsp6 phase 2B pack-guard pin (CPU-only, no GPU dispatch): a
+    // spherefold-final DE queried through a nonzero sliceHalfW must be
+    // REFUSED by `packSurface4GpuParams` (`slabExact4` — a spherefold
+    // branch takes a segment to an ARC under inversion, so a segment
+    // certificate there is unsound, not merely loose) — the kernel-side
+    // belt for the CPU entries' own `slabExact4` throw
+    // (`estimateDistance4`/`estimateDistance4Refined`). This system never
+    // touches the GPU (the pack alone is under test), so it runs once here
+    // rather than joining either fixture array above. Checks the CAUGHT
+    // message too, not just "did it throw": a throw for the WRONG reason
+    // (e.g. the footprint guard, which this call deliberately avoids by
+    // omitting `footprint`) would false-pass a regressed slab guard.
+    {
+      const guardFinal: Transform = {
+        id: 197,
+        position: [0.05, 0.1, 0],
+        rotation: [0.2, 0.1, 0],
+        scale: [0.8, 0.8, 0.8],
+        w: { position: 0.07, rotation: { yw: -0.15 } },
+        variations: [{ type: "spherefold", weight: 0.6 }],
+      };
+      const guardDe = buildSurfaceDE4(pentatope(), guardFinal);
+      let threw = false;
+      let message = "";
+      try {
+        packSurface4GpuParams(
+          guardDe,
+          {
+            rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            w0: 0,
+            sliceHalfW: 0.1 * guardDe.boundingRadius,
+          },
+          { itemCount: 1, cutoff: 0 },
+        );
+      } catch (e) {
+        threw = true;
+        message = describeError(e);
+      }
+      if (!threw || !message.includes("slabExact4")) {
+        lens4PackGuardFailed = true;
+        results.notes.push(
+          threw
+            ? `pack-guard: packSurface4GpuParams threw for the WRONG reason — "${message}" — expected the slabExact4 slab refusal`
+            : "pack-guard: packSurface4GpuParams did NOT throw for a " +
+                "spherefold-final DE under sliceHalfW > 0 — the slabExact4 " +
+                "refusal regressed (surface-de-gpu.ts)",
+        );
+      } else {
+        results.notes.push(
+          `pack-guard: spherefold-final slab refusal confirmed — ${message}`,
+        );
       }
     }
 
@@ -8652,6 +9159,8 @@ async function runSurfaceDeSection(
       affine4GateFail ||
       fold4GateFail ||
       fold4SlabExtFailed ||
+      lens4GateFail ||
+      lens4PackGuardFailed ||
       aff4SweepFailed
     ) {
       results.verdict = "fail";
@@ -8673,7 +9182,11 @@ async function runSurfaceDeSection(
                       ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
                       : fold4SlabExtFailed
                         ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
-                        : "aff4 sweep leg: slab/no-slab kernels disagree beyond tolerance — see notes";
+                        : lens4GateFail
+                          ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                          : lens4PackGuardFailed
+                            ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
+                            : "aff4 sweep leg: slab/no-slab kernels disagree beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -8691,6 +9204,8 @@ async function runSurfaceDeSection(
     for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
+    for (const sys of lens4AffineSystems) destroySurface4EvalBuffers(sys);
+    for (const sys of lens4FoldSystems) destroySurface4EvalBuffers(sys);
     device.destroy();
   }
   status(results.verdict + (results.reason ? ` — ${results.reason}` : ""));
