@@ -238,7 +238,7 @@ export interface UiHandlers {
    * HALF-thickness in the same normalized rotated-w units as
    * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row is
    * shown exactly in a live 4D surface session (see
-   * {@link Ui.syncFourDSliceRows}), whose tracer renders everything within
+   * {@link Ui.syncFourDViewRows}), whose tracer renders everything within
    * that much of the slice plane instead of the plane alone. */
   onFourDSliceThicknessInput: (value: number) => void;
   /** The slice-relative color option (fr-nn6) was toggled — recenter the
@@ -961,7 +961,7 @@ export class Ui {
   // Slice thickness (fr-wa6o): lives inside fourDSliceRow like the rel-color
   // row below, but with the OPPOSITE surface gate — a slab only means
   // something to the tracer that marches one, so its row shows exactly in a
-  // live 4D surface session (see syncFourDSliceRows).
+  // live 4D surface session (see syncFourDViewRows).
   private readonly fourDSliceThicknessRow: HTMLElement;
   private readonly fourDSliceThicknessSlider: HTMLInputElement;
   private readonly fourDSliceThicknessLabel: HTMLElement;
@@ -973,11 +973,14 @@ export class Ui {
   /** True while the panel is showing a LIVE 4D surface session (fr-b30z):
    * a non-flat system in Surface mode, where the tracer re-poses the rotor
    * and re-marches the w slice every frame. It changes what the slice block
-   * means, so {@link syncFourDSliceRows} keys on it — see updateLabels. */
+   * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
-  // the slice controls above.
+  // the slice controls above. The toggle's own wrapper row (fr-osgs) hides —
+  // with the speed row — in a live 4D surface session, where the ambient
+  // tumble is PARKED (see syncFourDViewRows).
   private readonly fourDTumbleToggle: HTMLInputElement;
+  private readonly fourDTumbleToggleRow: HTMLElement;
   private readonly fourDTumbleRow: HTMLElement;
   private readonly fourDTumbleSpeedSlider: HTMLInputElement;
   private readonly fourDTumbleSpeedLabel: HTMLElement;
@@ -985,7 +988,7 @@ export class Ui {
    * `fourDView.tumbleOn`, whose default this matches)? Mirrored here because
    * the canvas help box names the motion (fr-k9nx) and would otherwise claim
    * a tumble that is parked. Deliberately not the checkbox — unlike `sliceOn`
-   * (see updateLabels' syncFourDSliceRows call), the control is not the truth:
+   * (see updateLabels' syncFourDViewRows call), the control is not the truth:
    * a build replay's showcase forces the tumble on for its duration WITHOUT
    * touching the user's control (main.ts's replayShowcase), and the help box
    * describes the canvas, not the panel. Kept in step by
@@ -1211,6 +1214,7 @@ export class Ui {
     this.autoOrbitSpeedSlider = this.byId("autoOrbitSpeedSlider");
     this.autoOrbitSpeedLabel = this.byId("autoOrbitSpeedLabel");
     this.fourDTumbleToggle = this.byId("fourDTumbleToggle");
+    this.fourDTumbleToggleRow = this.byId("fourDTumbleToggleRow");
     this.fourDTumbleRow = this.byId("fourDTumbleRow");
     this.fourDTumbleSpeedSlider = this.byId("fourDTumbleSpeedSlider");
     this.fourDTumbleSpeedLabel = this.byId("fourDTumbleSpeedLabel");
@@ -1519,8 +1523,9 @@ export class Ui {
       const on = this.fourDTumbleToggle.checked;
       // The speed slider only means anything while the tumble is running —
       // same "row hides with its toggle" pattern as the slice below (tumble
-      // state is session-only and never enters AppState).
-      this.fourDTumbleRow.classList.toggle("hidden", !on);
+      // state is session-only and never enters AppState); the shared sync
+      // also keeps the surface-mode gate honest (fr-osgs).
+      this.syncFourDViewRows();
       // Set BEFORE the handler: main.ts answers this one with an
       // updateLabels, which reads the flag to word the help box (fr-k9nx).
       this.fourDTumbleActive = on;
@@ -1536,7 +1541,7 @@ export class Ui {
       // The position slider only means anything while the slice is on — a
       // pure view reveal, so the UI owns it (slice state is session-only and
       // never enters AppState).
-      this.syncFourDSliceRows(on);
+      this.syncFourDViewRows();
       handlers.onFourDSliceToggle(on);
     });
     this.fourDSliceSlider.addEventListener("input", () => {
@@ -1602,7 +1607,7 @@ export class Ui {
     thickness: number,
   ): void {
     this.fourDSliceToggle.checked = on;
-    this.syncFourDSliceRows(on);
+    this.syncFourDViewRows();
     this.fourDSliceSlider.value = String(center);
     this.fourDSliceLabel.textContent = center.toFixed(2);
     this.fourDSliceThicknessSlider.value = String(thickness);
@@ -1611,11 +1616,13 @@ export class Ui {
   }
 
   /**
-   * Show or hide the slice sub-rows for the mode the panel is in. Normally
-   * the position slider rides the W-slice toggle — a pure view reveal the UI
-   * owns, since slice state is session-only and never enters AppState.
+   * Show or hide the 4D View rows for the mode the panel is in, reading the
+   * toggles' own live `checked` state. Normally the position slider rides
+   * the W-slice toggle and the speed slider rides the tumble toggle — pure
+   * view reveals the UI owns, since both are session-only and never enter
+   * AppState.
    *
-   * A LIVE 4D surface session (fr-b30z) has no such choice to offer. That
+   * A LIVE 4D surface session (fr-b30z) has no slice choice to offer. That
    * tracer marches a `w = w0` cross-section unconditionally — `sliceOn`
    * never reaches it (main.ts pushes only `sliceCenter`/`sliceThickness`
    * into `setSurface4View`) — so the toggle would be a lie, while the
@@ -1627,12 +1634,25 @@ export class Ui {
    * slab it widens is a property of the tracer's own distance estimator, so
    * it shows ONLY in a live surface session. The point cloud's slice has a
    * fixed Gaussian width of its own that this control does not touch.
+   *
+   * The TUMBLE rows hide whole in that session too (fr-osgs): the ambient
+   * tumble PARKS there — every tick would invalidate the frame and pin the
+   * tier scheduler in preview, so the settle could never arm — and a
+   * visible toggle whose motion never happens reads as a broken view. The
+   * user's checkbox state survives untouched for the projection view.
    */
-  private syncFourDSliceRows(on: boolean): void {
+  private syncFourDViewRows(): void {
+    const sliceOn = this.fourDSliceToggle.checked;
+    const tumbleOn = this.fourDTumbleToggle.checked;
+    this.fourDTumbleToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
+    this.fourDTumbleRow.classList.toggle(
+      "hidden",
+      this.fourDSurfaceLive || !tumbleOn,
+    );
     this.fourDSliceToggleRow.classList.toggle("hidden", this.fourDSurfaceLive);
     this.fourDSliceRow.classList.toggle(
       "hidden",
-      !this.fourDSurfaceLive && !on,
+      !this.fourDSurfaceLive && !sliceOn,
     );
     this.fourDSliceThicknessRow.classList.toggle(
       "hidden",
@@ -1667,7 +1687,7 @@ export class Ui {
    * (fr-g98). */
   resetFourDTumble(on: boolean): void {
     this.fourDTumbleToggle.checked = on;
-    this.fourDTumbleRow.classList.toggle("hidden", !on);
+    this.syncFourDViewRows();
     this.fourDTumbleSpeedSlider.value = "1";
     this.fourDTumbleSpeedLabel.textContent = "1.0×";
     this.fourDTumbleActive = on;
@@ -1794,10 +1814,10 @@ export class Ui {
       state.renderMode !== "surface",
     );
     this.fourDControls.classList.toggle("hidden", !nonFlat || frozenRender);
-    // The slice sub-rows read differently in a live surface session — see
-    // syncFourDSliceRows. `sliceOn` is session-only view state the UI owns,
-    // so the checkbox itself is the truth to re-apply here.
-    this.syncFourDSliceRows(this.fourDSliceToggle.checked);
+    // The slice and tumble rows read differently in a live surface session
+    // — see syncFourDViewRows. Both toggles are session-only view state the
+    // UI owns, so the checkboxes themselves are the truth it re-applies.
+    this.syncFourDViewRows();
     // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
     // its row hides under the baked fr-d47 modes — the same single source of
     // truth (color.ts) the shader's bake-vs-uniform dispatch keys on — and

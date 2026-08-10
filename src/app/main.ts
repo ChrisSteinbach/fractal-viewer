@@ -5559,7 +5559,17 @@ function main(): void {
       if (surfaceSessionIs4D) {
         const dt4 = Math.min((now - lastMotionTickMs) / 1000, 0.1);
         lastMotionTickMs = now;
-        advanceFourDPose(dt4);
+        // The ambient tumble PARKS in surface mode (fr-osgs): every tick
+        // would invalidate the frame, pinning the tier scheduler in
+        // preview so the settle never arms — on non-trivial systems not
+        // even the preview completes between ticks. Directed pose glides
+        // (timeline legs) stay live — they are finite, and the settle
+        // arms the moment one lands — and user motion (Shift-drag rotor,
+        // slice slider) still flows through setSurface4View below. The
+        // user's tumble preference is untouched; the projection view
+        // resumes it on exit. The panel hides the tumble controls
+        // in-mode (ui.ts's syncFourDViewRows).
+        if (fourDTween.active) advanceFourDPose(dt4);
         scene.setSurface4View(
           fourDView.matrix(),
           fourDView.sliceCenter,
