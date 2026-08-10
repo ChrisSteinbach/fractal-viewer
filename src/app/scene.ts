@@ -2986,6 +2986,19 @@ export class FractalScene {
     // systems was seconds of GPU in the one unmeasured submission).
     const previewPrior =
       pxCostMs ?? (this.surfaceDeFoldClass ? STRIP_FOLD_PRIOR_MS_PER_PX : null);
+    if (SURFPERF) {
+      // The evidence-chain components behind worst= (fr-1znb diagnosis):
+      // evidenced= is the completed-job floor (null until one completes),
+      // partial= the superseded-job term — both RAW, before
+      // STRIP_WORST_EVIDENCE_SAFETY scales them into worst.
+      console.log(
+        `[surfperf] preview armed ${String(w)}x${String(h)}` +
+          ` prior=${String(previewPrior)}` +
+          ` worst=${this.surfaceStripWorstMsPerPx().toFixed(2)}` +
+          ` evidenced=${String(this.surfaceStripEvidencedWorstMsPerPx)}` +
+          ` partial=${this.surfaceStripPartialWorstMsPerPx.toFixed(3)}`,
+      );
+    }
     this.surfacePreviewJob = this.newStripJob(
       createStripPlanner(h, w, {
         targetMs: SURFACE_PREVIEW_STRIP_TARGET_MS,
@@ -3253,7 +3266,9 @@ export class FractalScene {
     if (SURFPERF) {
       console.log(
         `[surfperf] settle armed prior=${String(this.surfaceStripPriorMsPerPx())}` +
-          ` worst=${this.surfaceStripWorstMsPerPx().toFixed(2)}`,
+          ` worst=${this.surfaceStripWorstMsPerPx().toFixed(2)}` +
+          ` evidenced=${String(this.surfaceStripEvidencedWorstMsPerPx)}` +
+          ` partial=${this.surfaceStripPartialWorstMsPerPx.toFixed(3)}`,
       );
     }
     this.surfaceStripJob = this.newStripJob(
