@@ -1636,6 +1636,12 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
     expect(wgsl).toContain("c1Ext");
     expect(wgsl).toContain("shade.colorSpeed");
     expect(wgsl).toContain("rotorInvApply4");
+    // The dimension-specific color normalizers (module doc): height over
+    // the FULL 4D visible radius, radius as the rotor-lifted TRUE 4D
+    // radius — the slice-invariant 4D GLSL forms, not the 3D entries'
+    // straight visibleRadius reads.
+    expect(wgsl).toContain("params.visRadius4");
+    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, params.w0))");
     expect(wgsl).toContain(
       "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
     );
@@ -1704,6 +1710,7 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
       "rotorInvR0",
       "segmentRadius4",
       "final4SigmaMin",
+      "visRadius4",
     ];
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { core: "fold", mode: "eval", width: 12 },
@@ -2061,6 +2068,22 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
     );
     expect(view.getFloat32(416, true)).toBe(Math.fround(0.37));
     expect(view.getFloat32(420, true)).toBe(Math.fround(0.08));
+  });
+
+  it("packs the FULL 4D visible radius at offset 428 (visRadius4) even while the frozen visibleRadius slot carries the slice-adjusted gate", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4({ w0: 0.3 * de.boundingRadius }), {
+        itemCount: 1,
+      }),
+    );
+    // The two radii deliberately diverge whenever |w0| > 0: 24 holds the
+    // slice's shadow (the march gate), 428 the slice-INVARIANT color
+    // normalizer.
+    expect(view.getFloat32(428, true)).toBe(
+      Math.fround(de.visibleBoundingRadius),
+    );
+    expect(view.getFloat32(24, true)).toBeLessThan(de.visibleBoundingRadius);
   });
 
   it("throws when a footprint is requested — the 4D oracle takes no cone-footprint depth cap", () => {
