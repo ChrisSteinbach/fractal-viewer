@@ -29,7 +29,11 @@
  */
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
-import { rotationMatrix4, toTransform4 } from "../../fractal/affine4";
+import {
+  rotationMatrix4,
+  symmetryRotation4,
+  toTransform4,
+} from "../../fractal/affine4";
 import { prepareChaosGame, runChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
@@ -82,6 +86,12 @@ import {
 } from "../../fractal/surface-de";
 import type { SurfaceDE } from "../../fractal/surface-de";
 import {
+  analyzeSurfaceSystem4,
+  buildSurfaceDE4,
+  estimateDistance4Refined,
+} from "../../fractal/surface-de-4d";
+import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
+import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
@@ -90,13 +100,18 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
   packEscapeGpuParams,
+  packSurface4GpuParams,
   packSurfaceGpuMaps,
+  packSurfaceGpuMaps4,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "../../fractal/surface-de-gpu";
-import type { SurfaceGpuPose } from "../../fractal/surface-de-gpu";
+import type {
+  SurfaceGpu4View,
+  SurfaceGpuPose,
+} from "../../fractal/surface-de-gpu";
 import type {
   FourDColorMode,
   Rotation4,
@@ -1971,8 +1986,10 @@ interface SurfaceKernelConfig {
    * generator ignores them) and `width` is always the ladder's own 4;
    * "escape" is the forward escape-time loop, where `variant`/`stage2` are
    * likewise inert and `width` is carried only for a readable label (the
-   * generator ignores it too). */
-  core: "fold" | "affine" | "escape";
+   * generator ignores it too); "affine4" is that ladder ONE DIMENSION UP
+   * behind the view lift (fr-dlxh M3) — same inert options as "affine",
+   * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`). */
+  core: "fold" | "affine" | "escape" | "affine4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -1981,7 +1998,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine" | "escape";
+  core: "fold" | "affine" | "escape" | "affine4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2001,7 +2018,8 @@ interface SurfaceAgreementRow {
    * not kernel disagreement). AFFINE-core rows always gate (fr-55s1):
    * their ladder is fixed at {@link SURFACE_AFFINE_LADDER_WIDTH}, which
    * IS the oracle's production `beamWidth`, so there is no width sweep
-   * and every row is like against like. */
+   * and every row is like against like. Escape and affine4 rows gate the
+   * same way (fr-dlxh) — neither has a width to sweep. */
   gating: boolean;
   /** Queries whose error exceeded
    * `max(2e-4·R, 2e-3·max(|cpu|, 0.05·R))` — any nonzero count on a
@@ -2027,10 +2045,13 @@ interface SurfaceAgreementRow {
    * doesn't share this layout, and `excluded` below is that leg's own
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
-  /** fr-dlxh escape leg only: queries the f32-vs-f64 orbit-stability gate
-   * excluded before computing `failures` — `n - stableCount` (see
-   * `compareSurfaceEscapeAgreement`'s doc). `undefined` on every
-   * fold/affine/lens row (nothing is ever excluded there). */
+  /** fr-dlxh escape + affine4 legs only: queries a pre-hoc stability gate
+   * excluded before computing `failures` — `n - stableCount`. The escape
+   * leg's gate is the f32-vs-f64 orbit ensemble
+   * (`compareSurfaceEscapeAgreement`'s doc); the affine4 leg's is the
+   * oracle-continuity classifier ({@link surface4QueryStable} — bisection
+   * queries parked on beam-selection discontinuities). `undefined` on
+   * every fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
   /** fr-dlxh escape leg only: stable-classified failures POST-HOC
    * verified as shadow flips (the GPU's value matched a 1..4-ULP
@@ -2347,6 +2368,17 @@ const SURFACE_AFFINE_LADDER_WIDTH = 4;
  * noise. */
 const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
 
+/** fr-dlxh M3: how many of the affine4 leg's 700 queries per system the
+ * oracle-continuity gate ({@link surface4QueryStable}) may exclude before
+ * the leg stops trusting its own `failures` count and fails the section —
+ * 3%. Structural, like the escape cap: far above the measured census
+ * (5/2800 total, worst system 3/700 — see the classifier's doc) but tight
+ * enough that growth means something changed: a beam ladder whose
+ * discontinuity set fattens from "bisection-parked knife edges" to a
+ * measurable fraction of a uniform-ball mix is masking real kernel
+ * disagreement behind "edge-parked", not absorbing expected f32 noise. */
+const SURFACE_AFFINE4_EXCLUDED_CAP = 21;
+
 /** `surface-de.ts`'s `NO_SYMMETRY`, duplicated (it isn't exported) like
  * this file's other cross-module mirrors. */
 const SURFACE_NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
@@ -2631,6 +2663,116 @@ function surfaceFoldBoxfoldNegPlusAffine(): Transform[] {
   ];
 }
 
+/** fr-dlxh M3 (a): the affine4 core's pure-DE baseline — four contracting,
+ * near-isotropic maps whose LIVE w blocks (positions straddling 0, three
+ * w-mixing rotations, one explicitly pinned `w.scale`) push the attractor
+ * genuinely off the `w = 0` slice, so the 4x4 inverse maps carry real w
+ * arithmetic everywhere. Queried at the identity rotor / `w0 = 0` /
+ * zero-thickness slice (the shipped default view). Also aff4Slab's base:
+ * that def re-views these EXACT maps through a w-mixing rotor + thick
+ * slab, so any disagreement there isolates the view/segment machinery. */
+function surfaceAff4Tetra(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.35, 0.3],
+      rotation: [0, 0, 0],
+      scale: [0.52, 0.52, 0.52],
+      w: { position: 0.12, rotation: { xw: 0.4 } },
+    },
+    {
+      id: 1,
+      position: [-0.45, 0.3, -0.25],
+      rotation: [0.2, 0.1, 0],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: -0.1, rotation: { yw: 0.3 } },
+    },
+    {
+      id: 2,
+      position: [0.3, -0.4, 0.2],
+      rotation: [0, 0.3, 0.1],
+      scale: [0.48, 0.48, 0.48],
+      w: { position: 0.08, rotation: { zw: -0.35 } },
+    },
+    {
+      id: 3,
+      position: [-0.2, -0.3, -0.35],
+      rotation: [0.1, 0, 0.25],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: -0.14, scale: 0.48 },
+    },
+  ];
+}
+
+/** fr-dlxh M3 (b): the fr-u91x sector-sweep case — two 4D maps under a
+ * TWISTED order-3 kaleidoscope (`plane: "xz", twist: 1`, a genuine double
+ * rotation), so `stepSector4`'s one whole backward 4x4 (`stepBack4`, never
+ * a (cos, sin) pair) carries real w mixing. Queried at a NONZERO `w0`
+ * inside the attractor's w support (the def scales it from the probed
+ * radius), identity rotor. */
+function surfaceAff4Kaleido(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.45, 0.1, 0.2],
+      rotation: [0, 0.2, 0],
+      scale: [0.55, 0.55, 0.55],
+      w: { position: 0.3, rotation: { xw: 0.35 } },
+    },
+    {
+      id: 1,
+      position: [-0.2, 0.4, -0.3],
+      rotation: [0.15, 0, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: -0.2, rotation: { zw: 0.25 } },
+    },
+  ];
+}
+
+/** fr-dlxh M3 (c)'s BASE: three contracting maps with live w blocks — the
+ * 4D final-lens system's inner attractor (see {@link surfaceAff4Final}). */
+function surfaceAff4FinalBase(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.35, 0.25, -0.3],
+      rotation: [0.1, 0, 0.2],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: 0.1, rotation: { yw: 0.3 } },
+    },
+    {
+      id: 1,
+      position: [-0.3, 0.35, 0.25],
+      rotation: [0, 0.25, 0],
+      scale: [0.52, 0.52, 0.52],
+      w: { position: -0.12, rotation: { xw: -0.2 } },
+    },
+    {
+      id: 2,
+      position: [0.2, -0.35, -0.2],
+      rotation: [0.3, 0.1, 0],
+      scale: [0.48, 0.48, 0.48],
+      w: { position: 0.06, scale: 0.5 },
+    },
+  ];
+}
+
+/** fr-dlxh M3 (c): a 4D affine FINAL lens with a live w block (w offset +
+ * yw rotation over a rotated, offset, isotropically shrunk affine part —
+ * surface-de-gpu.test.ts's `fourDFinalTransform` shape with a smaller w
+ * offset, so the posed slice still cuts the lensed set), exercising the
+ * packed `final4M`/`final4T`/`final4SigmaMin` tail and the oracle's own
+ * lens prologue. The def views it through a NON-identity `xw` pose rotor. */
+function surfaceAff4Final(): Transform {
+  return {
+    id: 99,
+    position: [0.2, -0.1, 0.15],
+    rotation: [0.3, -0.2, 0.1],
+    scale: [0.7, 0.7, 0.7],
+    w: { position: -0.05, rotation: { yw: 0.2 } },
+  };
+}
+
 function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
   if (raw === null) return fallback;
   const parsed = raw
@@ -2836,6 +2978,185 @@ function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
       Math.fround(de.t[0] + (rng() - 0.5) * s),
       Math.fround(de.t[1] + (rng() - 0.5) * s),
       Math.fround(de.t[2] + (rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
+/** The affine4 leg's tolerance/query radius rule: the lens GROWS or shrinks
+ * the visible set, so error scales from the set the DE actually describes —
+ * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
+ * dimension up. ONE definition, shared by the query generator and the
+ * comparator so the two cannot drift. */
+function surface4ToleranceR(de: SurfaceDE4): number {
+  return de.final ? de.visibleBoundingRadius : de.boundingRadius;
+}
+
+/**
+ * fr-dlxh M3: the affine4 eval leg's COMPOSED f64 oracle — the exact
+ * function the kernel computes per query, CPU-side. The view lift first
+ * (`q4 = Mᵀ · (q, w0)` where M is the row-major pose rotor — component
+ * `i` reads M's COLUMN `i`, exactly the packed rotorInv rows), then the
+ * fr-wa6o half-extent seeded from M's w ROW times `sliceHalfW` (the
+ * kernel's `rotorInvWCol4() * params.sliceHalfW`), then
+ * `estimateDistance4Refined` at cutoff 0 — which applies `de.final`
+ * ITSELF, so nothing is pre-applied here. The kernel does the same lift
+ * in f32; the eval tolerance absorbs that quantization (the queries are
+ * already `Math.fround`ed, so both sides start from the identical point).
+ */
+function estimateSurface4Composed(
+  de: SurfaceDE4,
+  view4: SurfaceGpu4View,
+  q: Vec3,
+): number {
+  const rot = view4.rotor;
+  const p: Vec4 = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    p[i] =
+      rot[i] * q[0] +
+      rot[4 + i] * q[1] +
+      rot[8 + i] * q[2] +
+      rot[12 + i] * view4.w0;
+  }
+  let ext: Vec4 | null = null;
+  if (view4.sliceHalfW > 0) {
+    ext = [
+      rot[12] * view4.sliceHalfW,
+      rot[13] * view4.sliceHalfW,
+      rot[14] * view4.sliceHalfW,
+      rot[15] * view4.sliceHalfW,
+    ];
+  }
+  return estimateDistance4Refined(de, p, 0, ext);
+}
+
+/**
+ * fr-dlxh M3: the affine4 leg's ORACLE-CONTINUITY classifier — the escape
+ * leg's pre-hoc ensemble shape ({@link escapeQueryStable}) minus the GPU
+ * modeling it doesn't need: no fround twin, no shadow orbits, just the
+ * COMPOSED f64 oracle at the query's six ±1-f32-ULP axis neighbors (the
+ * queries are fround'ed, so that grid is the input's own resolution; the
+ * neighbor construction is escapeQueryStable's verbatim). STABLE iff all
+ * seven values lie within tol/2 of the value at `q`; unstable rows are
+ * excluded from the fail gate (capped — {@link
+ * SURFACE_AFFINE4_EXCLUDED_CAP}).
+ *
+ * WHY (first-SwiftShader-run verdict): the refined beam's mins absorb f32
+ * trajectory flips — but they cannot absorb standing ON a beam-SELECTION
+ * boundary. The query mix's 24-step chord bisection narrows its bracket
+ * to ~1 f32 ULP, so when a chord's predicate flip is caused by a
+ * beam-selection discontinuity (~3e-2 value step) rather than a smooth
+ * crossing, the pushed query parks exactly on the step. Measured: 2 of
+ * 2800 queries (one per w0≠0 system, both bisection-class) failed at
+ * +2.66e-2/−3.56e-2 while the f64 ORACLE ITSELF returned the GPU's value
+ * 1-2 query-ULPs away (gaps 1.3e-8 / 2.3e-9) — both sides of such an
+ * edge are valid conservative bounds, so pointwise comparison THERE is
+ * the wrong question, exactly the escape leg's chaotic-orbit exclusion
+ * one estimator class over (and cheaper: pure discontinuity detection).
+ * The full-mix census: 5/2800 excluded (1/1/0/3), both GPU flips among
+ * them — the other three parked rows happened to land the same side on
+ * both processors.
+ */
+function surface4QueryStable(
+  de: SurfaceDE4,
+  view4: SurfaceGpu4View,
+  q: Vec3,
+  cpu: number,
+  tol: number,
+): boolean {
+  for (let axis = 0; axis < 3; axis++) {
+    for (const dir of [1, -1]) {
+      const p: Vec3 = [q[0], q[1], q[2]];
+      const base = Math.fround(p[axis]);
+      const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38);
+      p[axis] = Math.fround(base + dir * step);
+      if (Math.abs(estimateSurface4Composed(de, view4, p) - cpu) > tol / 2) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * fr-dlxh M3: the affine4 eval leg's own query mix — `surfaceQueries`'
+ * 3D chaos-game sampling doesn't know the view lift, and `escapeQueries`'
+ * sizes assume an escape basin, so this leg samples VIEW-space directly
+ * (the kernel's own input space), `escapeQueries`' structure at the
+ * slice's scale: 400 uniform in the view-space ball of radius
+ * `1.2 · max(sliceVisR, 0.25 · R4)` centered on the origin (`sliceVisR`
+ * is the packer's slice-adjusted visible radius — the slab's widest 3D
+ * shadow — recomputed here from {@link surface4ToleranceR}; when the
+ * pose puts the whole slice outside the visible ball it degenerates to
+ * 0, so `0.5 · R4` stands in and queries still exist), 200 chord-bisected
+ * toward the COMPOSED oracle's `DE < 0.02 · R4` crossing (a slice through
+ * fractal dust has a THIN sublevel set, so chords that never straddle it
+ * simply converge near their far end — extra uniform samples, harmless
+ * and deterministic), and 100 clustered on the view origin (the slice's
+ * central region). 700 total, every component `Math.fround`ed — see
+ * `surfaceQueries`' doc for why (the kernel only ever sees f32 points).
+ */
+function affine4Queries(
+  de: SurfaceDE4,
+  view4: SurfaceGpu4View,
+  seed: number,
+): Vec3[] {
+  const R4 = de.boundingRadius;
+  const visR = surface4ToleranceR(de);
+  const minW = Math.max(Math.abs(view4.w0) - view4.sliceHalfW, 0);
+  const sliceVisRRaw = Math.sqrt(Math.max(visR * visR - minW * minW, 0));
+  const sliceVisR = sliceVisRRaw > 0 ? sliceVisRRaw : 0.5 * R4;
+  const rq = 1.2 * Math.max(sliceVisR, 0.25 * R4);
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const uniformBallPoint = (): Vec3 => {
+    // Rejection sampling off the enclosing cube — deterministic for a
+    // seeded RNG (acceptance ~52%, so the loop terminates fast).
+    for (;;) {
+      const x = (rng() - 0.5) * 2;
+      const y = (rng() - 0.5) * 2;
+      const z = (rng() - 0.5) * 2;
+      if (x * x + y * y + z * z <= 1) {
+        return [x * rq, y * rq, z * rq];
+      }
+    }
+  };
+  for (let i = 0; i < 400; i++) {
+    const p = uniformBallPoint();
+    out.push([Math.fround(p[0]), Math.fround(p[1]), Math.fround(p[2])]);
+  }
+  const threshold = 0.02 * R4;
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateSurface4Composed(de, view4, p) < threshold;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      (rng() - 0.5) * 0.5 * rq,
+      (rng() - 0.5) * 0.5 * rq,
+      (rng() - 0.5) * 0.5 * rq,
+    ];
+    let b = uniformBallPoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    // The final `a` — escapeQueries' convention, see its doc.
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5 * rq;
+    out.push([
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
     ]);
   }
   return out;
@@ -3541,6 +3862,34 @@ interface SurfaceEscapeSystemState {
   };
 }
 
+/** One affine4 (4D) agreement system's frozen state (fr-dlxh M3): the built
+ * `SurfaceDE4`, the frozen per-system view (rotor + w0 + sliceHalfW — the
+ * packer's {@link SurfaceGpu4View}), its own view-space query set
+ * ({@link affine4Queries}) and the COMPOSED f64 oracle values
+ * ({@link estimateSurface4Composed} — view lift + `estimateDistance4Refined`,
+ * the exact function the kernel computes). The buffer set mirrors
+ * {@link SurfaceSystemState}'s maps-bound shape: unlike escape, the affine4
+ * core DOES declare binding 1 (`array<GpuMap4>`, `packSurfaceGpuMaps4`). */
+interface Surface4SystemState {
+  name: string;
+  de: SurfaceDE4;
+  view4: SurfaceGpu4View;
+  queries: Vec3[];
+  cpu: number[];
+  /** Per-query oracle continuity: the six ±1-f32-ULP neighbors' f64 oracle
+   * values all within tol/2 of `cpu` ({@link surface4QueryStable}). Only
+   * stable queries enter the fail gate — see `compareSurface4Agreement`. */
+  stable: boolean[];
+  buffers?: {
+    params: GPUBuffer;
+    maps: GPUBuffer;
+    input: GPUBuffer;
+    output: GPUBuffer;
+    staging: GPUBuffer;
+    bindGroup: GPUBindGroup;
+  };
+}
+
 /** The section's fixed 4-binding interface (surface-de-gpu.ts's contract):
  * 0 = params uniform, 1 = maps storage read, 2 = input storage read,
  * 3 = output storage read_write. Shared by eval and march. */
@@ -3787,6 +4136,89 @@ function destroySurfaceEscapeEvalBuffers(sys: SurfaceEscapeSystemState): void {
   sys.buffers = undefined;
 }
 
+/** {@link ensureSurfaceEvalBuffers}' affine4 twin (fr-dlxh M3): the same
+ * lazy-create-once contract and the same four bindings, with the 4D packers
+ * — `packSurface4GpuParams` (the frozen block + the 208.. 4D variant tail,
+ * fed the system's frozen view) and `packSurfaceGpuMaps4` (`GpuMap4`
+ * layout at binding 1). Eval params mirror the composed oracle's call:
+ * itemCount = query count, cutoff 0, no footprint (the 4D packer THROWS on
+ * one — the oracle takes none). */
+async function ensureSurface4EvalBuffers(
+  device: GPUDevice,
+  layout: GPUBindGroupLayout,
+  sys: Surface4SystemState,
+): Promise<NonNullable<Surface4SystemState["buffers"]>> {
+  if (sys.buffers) return sys.buffers;
+  const n = sys.queries.length;
+  const paramsData = packSurface4GpuParams(sys.de, sys.view4, {
+    itemCount: n,
+    cutoff: 0,
+  });
+  // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
+  const mapsData = new Float32Array(packSurfaceGpuMaps4(sys.de));
+  const inputData = new Float32Array(n * 4);
+  sys.queries.forEach((q, i) => {
+    inputData[i * 4] = q[0];
+    inputData[i * 4 + 1] = q[1];
+    inputData[i * 4 + 2] = q[2];
+  });
+  const params = await createSurfaceBuffer(
+    device,
+    `surface-de affine4 params ${sys.name}`,
+    paramsData.byteLength,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(params, 0, paramsData);
+  const maps = await createSurfaceBuffer(
+    device,
+    `surface-de affine4 maps ${sys.name}`,
+    mapsData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(maps, 0, mapsData);
+  const input = await createSurfaceBuffer(
+    device,
+    `surface-de affine4 queries ${sys.name}`,
+    inputData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(input, 0, inputData);
+  const output = await createSurfaceBuffer(
+    device,
+    `surface-de affine4 results ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  );
+  const staging = await createSurfaceBuffer(
+    device,
+    `surface-de affine4 staging ${sys.name}`,
+    n * 4,
+    GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  );
+  const bindGroup = device.createBindGroup({
+    label: `surface-de affine4 bind group ${sys.name}`,
+    layout,
+    entries: [
+      { binding: 0, resource: { buffer: params } },
+      { binding: 1, resource: { buffer: maps } },
+      { binding: 2, resource: { buffer: input } },
+      { binding: 3, resource: { buffer: output } },
+    ],
+  });
+  sys.buffers = { params, maps, input, output, staging, bindGroup };
+  return sys.buffers;
+}
+
+function destroySurface4EvalBuffers(sys: Surface4SystemState): void {
+  if (!sys.buffers) return;
+  sys.buffers.params.destroy();
+  sys.buffers.maps.destroy();
+  sys.buffers.input.destroy();
+  sys.buffers.output.destroy();
+  sys.buffers.staging.destroy();
+  sys.buffers = undefined;
+}
+
 /** Shared by every eval leg (fold/affine/lens AND escape, fr-dlxh): the
  * dispatch body only ever touches the query count and the three bindings
  * every eval bind group carries in common (results/staging/bindGroup — the
@@ -4027,6 +4459,83 @@ function compareSurfaceEscapeAgreement(
     chaoticFlips,
     compileMs,
     gpuMs,
+  };
+}
+
+/**
+ * {@link compareSurfaceAgreement}'s affine4-leg twin (fr-dlxh M3): the
+ * identical per-row error math and {@link surfaceEvalTol} bound against the
+ * COMPOSED f64 oracle values, with `R` from {@link surface4ToleranceR}
+ * (the lens-aware radius the query generator already scaled from). The
+ * refined beam's mins absorb f32 trajectory flips exactly as the 3D M0
+ * ladder's do (the fr-dlxh verdict for ladder cores) — measured p99 ~2e-7
+ * across every system — so no per-flip machinery exists here. The ONE
+ * exclusion is pre-hoc: rows `sys.stable` marked as parked on a
+ * beam-selection discontinuity ({@link surface4QueryStable}'s doc carries
+ * the measured verdict) never enter the gate, `excluded` reports how many
+ * were skipped, and the caller pins that fraction ({@link
+ * SURFACE_AFFINE4_EXCLUDED_CAP}) so the classifier can never quietly eat
+ * the leg — the M2 escape row's shape, cheaper criterion.
+ */
+function compareSurface4Agreement(
+  sys: Surface4SystemState,
+  cfg: SurfaceKernelConfig,
+  gpu: Float32Array,
+): SurfaceAgreementRow {
+  const R = surface4ToleranceR(sys.de);
+  const absErrs: number[] = [];
+  let stableCount = 0;
+  let maxAbsErr = 0;
+  let maxRelErr = 0;
+  let failures = 0;
+  let maxGpuMinusCpu = -Infinity;
+  let minGpuMinusCpu = Infinity;
+  let failuresOver = 0;
+  for (let i = 0; i < sys.cpu.length; i++) {
+    if (!sys.stable[i]) continue;
+    stableCount++;
+    const cpu = sys.cpu[i];
+    const signed = gpu[i] - cpu;
+    const err = Math.abs(signed);
+    absErrs.push(err);
+    if (err > maxAbsErr) maxAbsErr = err;
+    if (signed > maxGpuMinusCpu) maxGpuMinusCpu = signed;
+    if (signed < minGpuMinusCpu) minGpuMinusCpu = signed;
+    const rel = err / Math.max(Math.abs(cpu), 0.05 * R);
+    if (rel > maxRelErr) maxRelErr = rel;
+    if (err > surfaceEvalTol(cpu, R)) {
+      failures++;
+      if (signed > 0) failuresOver++;
+    }
+  }
+  absErrs.sort((a, b) => a - b);
+  const p99AbsErr =
+    absErrs.length > 0
+      ? absErrs[Math.min(absErrs.length - 1, Math.floor(0.99 * absErrs.length))]
+      : 0;
+  return {
+    system: sys.name,
+    core: cfg.core,
+    variant: cfg.variant,
+    width: cfg.width,
+    stage2: cfg.stage2,
+    wg: cfg.wg,
+    n: sys.cpu.length,
+    maxAbsErr,
+    maxRelErr,
+    p99AbsErr,
+    // Affine4 rows always gate, like affine and escape: the 4D ladder is
+    // fixed at the oracle's beamWidth 4, so every row is like against like.
+    gating: true,
+    failures,
+    maxGpuMinusCpu: Number.isFinite(maxGpuMinusCpu) ? maxGpuMinusCpu : 0,
+    minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
+    failuresOver,
+    // Not meaningful here — surfaceQueries' jittered/uniform/exact layout
+    // doesn't describe affine4Queries' uniform/boundary/cluster mix (the
+    // escape rows' convention).
+    failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
+    excluded: sys.cpu.length - stableCount,
   };
 }
 
@@ -5648,6 +6157,110 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // ----- Affine4 (4D) systems (fr-dlxh M3): a THIRD separate gate -----
+  // `buildSurfaceDE` has no 4D shape at all — these systems live behind
+  // `analyzeSurfaceSystem4`/`buildSurfaceDE4` and the kernel's view lift,
+  // so like the escape leg they carry their own defs, query generator,
+  // comparator and (M3 below) leg. Each def freezes its own view (rotor +
+  // w0 + sliceHalfW), built AFTER the DE so w0/h can scale from the probed
+  // radius; together the four cover the pure DE at the identity view, the
+  // fr-u91x double-rotation sector sweep at a nonzero w0, the 4D final
+  // lens under a w-mixing pose rotor, and the fr-wa6o slab query (every
+  // ext register live). `symmetryRotation4` mints the pose rotors: any
+  // proper rotation works, and that constructor is already convention-safe
+  // (PLANE_SIGN) and in the import set.
+  const affine4SystemDefs: {
+    name: string;
+    seed: number;
+    transforms: Transform[];
+    finalTransform?: Transform;
+    symmetry?: SymmetryParams;
+    view4: (de: SurfaceDE4) => SurfaceGpu4View;
+  }[] = [
+    {
+      name: "aff4Tetra",
+      seed: 501,
+      transforms: surfaceAff4Tetra(),
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "aff4Kaleido",
+      seed: 502,
+      transforms: surfaceAff4Kaleido(),
+      symmetry: { order: 3, plane: "xz", twist: 1 },
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.2 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "aff4Final",
+      seed: 503,
+      transforms: surfaceAff4FinalBase(),
+      finalTransform: surfaceAff4Final(),
+      view4: () => ({
+        rotor: symmetryRotation4("xw", 0.7),
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "aff4Slab",
+      seed: 504,
+      transforms: surfaceAff4Tetra(),
+      view4: (de) => ({
+        rotor: symmetryRotation4("yw", 0.55),
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0.1 * de.boundingRadius,
+      }),
+    },
+  ];
+  const affine4Systems: Surface4SystemState[] = [];
+  for (const def of affine4SystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface affine4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    // Def-time eligibility gate — a THROW, deliberately NOT the fold/escape
+    // loops' note-and-skip: these are fixed fixtures, so an ineligible one
+    // is a bench bug, and a leg quietly running on fewer systems would keep
+    // passing while pinning less. Same reasoning for the absent try/catch
+    // around the build/oracle calls below — any throw here surfaces as a
+    // fatal `__BENCH_ERROR__`, never a degraded green run.
+    const eligibility = analyzeSurfaceSystem4(
+      def.transforms,
+      def.finalTransform ?? null,
+    );
+    if (eligibility.status === "ineligible") {
+      throw new Error(
+        `affine4 bench fixture ${def.name} is ineligible: ` +
+          eligibility.reasons.join("; "),
+      );
+    }
+    const de = buildSurfaceDE4(
+      def.transforms,
+      def.finalTransform ?? null,
+      def.symmetry ?? SURFACE_NO_SYMMETRY,
+    );
+    const view4 = def.view4(de);
+    const queries = affine4Queries(de, view4, def.seed);
+    const cpu = queries.map((q) => estimateSurface4Composed(de, view4, q));
+    // The oracle-continuity gate (surface4QueryStable's doc): only queries
+    // whose f64 oracle is flat across the ±1-ULP neighbor grid enter the
+    // GPU comparison below — the M2 loop's stability idiom, one estimator
+    // class over.
+    const R = surface4ToleranceR(de);
+    const stable = cpu.map((c, i) =>
+      surface4QueryStable(de, view4, queries[i], c, surfaceEvalTol(c, R)),
+    );
+    affine4Systems.push({ name: def.name, de, view4, queries, cpu, stable });
+    render();
+  }
+
   // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
   // (the wrapper is generated source), while the fold/affine legs share
   // one pipeline per CONFIG — a lens system run through those pipelines
@@ -5766,13 +6379,19 @@ async function runSurfaceDeSection(
   // `results.agreement`) because an over-wide exclusion is a red flag even
   // when the surviving `failures` count itself is 0.
   let escapeGateFail = false;
+  // fr-dlxh M3: the affine4 leg's analog — set when the oracle-continuity
+  // gate excludes more than SURFACE_AFFINE4_EXCLUDED_CAP of a system's
+  // queries, for exactly the reason above.
+  let affine4GateFail = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
       ? `affine-ladder w${cfg.width} wg${cfg.wg}`
-      : cfg.core === "escape"
-        ? `escape-forward wg${cfg.wg}`
-        : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+      : cfg.core === "affine4"
+        ? `affine4-ladder w${cfg.width} wg${cfg.wg}`
+        : cfg.core === "escape"
+          ? `escape-forward wg${cfg.wg}`
+          : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
   const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
     cfg.variant === "shared"
       ? surfaceGpuWorkgroupBytes({
@@ -6032,6 +6651,84 @@ async function runSurfaceDeSection(
               `escape agreement ${sys.name}: ${flips} verified chaotic ` +
                 `flips (> ${SURFACE_ESCAPE_FLIP_CAP}) — a systematic ` +
                 "disagreement is wearing chaos's costume; failing the leg",
+            );
+          }
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    // ----- M3 (fr-dlxh): the AFFINE4 core's agreement leg — GATING -----
+    // The 4D refined ladder behind the view lift — `estimateDistance4Refined`
+    // (surface-de-4d.ts) as `surface-material-4d.ts` marches it — pinned
+    // against the COMPOSED f64 oracle (`estimateSurface4Composed`: the same
+    // lift in f64, then the estimator, which applies `de.final` itself).
+    // One pipeline serves all four systems (the kernel source is
+    // system-independent — per-system data rides the params/maps buffers,
+    // exactly the M0/M2 shape), and it binds the SHARED 4-binding layout:
+    // unlike escape, the affine4 core DOES declare binding 1
+    // (`array<GpuMap4>`, packed by `packSurfaceGpuMaps4`). Every row GATES
+    // (fixed width 4 = the 4D oracle's `beamWidth`; variant/stage2 inert,
+    // like the affine ladder) at fail=0 over the ORACLE-CONTINUOUS rows —
+    // bisection queries parked on beam-selection discontinuities are
+    // excluded pre-hoc and capped (`surface4QueryStable`'s doc carries the
+    // measured verdict; the M2 exclusion shape, cheaper criterion).
+    if (affine4Systems.length > 0) {
+      const affine4EvalConfig: SurfaceKernelConfig = {
+        core: "affine4",
+        variant: "private",
+        // The 4D ladder's fixed width IS the 3D constant's value 4 —
+        // `buildSurfaceDE4` always emits `beamWidth` 4, like `buildSurfaceDE`.
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(affine4EvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      let affine4Pipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine4",
+          width: affine4EvalConfig.width,
+          workgroupSize: affine4EvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: affine4Pipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (affine4Pipeline !== null) {
+        const pipeline = affine4Pipeline;
+        for (const sys of affine4Systems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            affine4EvalConfig.wg,
+          );
+          const row = compareSurface4Agreement(sys, affine4EvalConfig, gpu);
+          results.agreement.push(row);
+          const excluded = row.excluded ?? 0;
+          if (excluded > SURFACE_AFFINE4_EXCLUDED_CAP) {
+            affine4GateFail = true;
+            results.notes.push(
+              `affine4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                `queries (> ${SURFACE_AFFINE4_EXCLUDED_CAP}) from the ` +
+                "oracle-continuity gate — see surface4QueryStable's doc",
             );
           }
           render();
@@ -6605,7 +7302,8 @@ async function runSurfaceDeSection(
       anyCrossFail ||
       unprojFailed ||
       frameFailed ||
-      escapeGateFail
+      escapeGateFail ||
+      affine4GateFail
     ) {
       results.verdict = "fail";
       results.reason = compileFailed
@@ -6618,7 +7316,9 @@ async function runSurfaceDeSection(
               ? "march-unproject (app ray path) agreement failure — see marchUnproject/notes"
               : frameFailed
                 ? "compute-frame (app path) failure — see computeFrame/notes"
-                : "escape agreement leg excluded too many queries from its f32-stability gate — see notes";
+                : escapeGateFail
+                  ? "escape agreement leg excluded too many queries from its f32-stability gate — see notes"
+                  : "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -6634,6 +7334,7 @@ async function runSurfaceDeSection(
   } finally {
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
     for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
+    for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     device.destroy();
   }
   status(results.verdict + (results.reason ? ` — ${results.reason}` : ""));
