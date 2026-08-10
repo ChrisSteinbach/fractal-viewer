@@ -88,6 +88,8 @@ import type { SurfaceDE } from "../../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
+  deHasFolds4,
+  estimateDistance4,
   estimateDistance4Refined,
 } from "../../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
@@ -1985,16 +1987,21 @@ interface SurfaceSectionConfig {
 }
 
 interface SurfaceKernelConfig {
-  /** Which descent body the kernel carries (fr-55s1; fr-dlxh). "fold" is
-   * the frontier this section was built around; "affine" is the fixed
-   * width-4 refined ladder, where `variant`/`stage2` are inert (the
+  /** Which descent body the kernel carries (fr-55s1; fr-dlxh; fr-rsp6).
+   * "fold" is the frontier this section was built around; "affine" is the
+   * fixed width-4 refined ladder, where `variant`/`stage2` are inert (the
    * generator ignores them) and `width` is always the ladder's own 4;
    * "escape" is the forward escape-time loop, where `variant`/`stage2` are
    * likewise inert and `width` is carried only for a readable label (the
    * generator ignores it too); "affine4" is that ladder ONE DIMENSION UP
    * behind the view lift (fr-dlxh M3) — same inert options as "affine",
-   * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`). */
-  core: "fold" | "affine" | "escape" | "affine4";
+   * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`); "fold4" (fr-rsp6
+   * M4) is the fold frontier ONE DIMENSION UP behind the same view lift —
+   * `variant` is always "private" (the frontier is function-scope private
+   * by construction, module doc) and `width` is LIVE like "fold"'s, so
+   * unlike "affine4" it keeps a real width sweep and its own
+   * production/informational split. */
+  core: "fold" | "affine" | "escape" | "affine4" | "fold4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2003,7 +2010,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine" | "escape" | "affine4";
+  core: "fold" | "affine" | "escape" | "affine4" | "fold4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2024,7 +2031,12 @@ interface SurfaceAgreementRow {
    * their ladder is fixed at {@link SURFACE_AFFINE_LADDER_WIDTH}, which
    * IS the oracle's production `beamWidth`, so there is no width sweep
    * and every row is like against like. Escape and affine4 rows gate the
-   * same way (fr-dlxh) — neither has a width to sweep. */
+   * same way (fr-dlxh) — neither has a width to sweep. FOLD4 rows gate
+   * like "fold"'s, not affine4's (fr-rsp6 M4): the fold frontier's
+   * production width is the same fixed `SURFACE_FOLD_BEAM_WIDTH`
+   * constant, one dimension up, so only rows at that width compare like
+   * against like — narrower rows are the same fr-5rvk erosion
+   * measurement, informational only. */
   gating: boolean;
   /** Queries whose error exceeded
    * `max(2e-4·R, 2e-3·max(|cpu|, 0.05·R))` — any nonzero count on a
@@ -2050,13 +2062,15 @@ interface SurfaceAgreementRow {
    * doesn't share this layout, and `excluded` below is that leg's own
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
-  /** fr-dlxh escape + affine4 legs only: queries a pre-hoc stability gate
-   * excluded before computing `failures` — `n - stableCount`. The escape
-   * leg's gate is the f32-vs-f64 orbit ensemble
-   * (`compareSurfaceEscapeAgreement`'s doc); the affine4 leg's is the
-   * oracle-continuity classifier ({@link surface4QueryStable} — bisection
-   * queries parked on beam-selection discontinuities). `undefined` on
-   * every fold/affine/lens row (nothing is ever excluded there). */
+  /** fr-dlxh escape + affine4 legs, and fr-rsp6's fold4 leg: queries a
+   * pre-hoc stability gate excluded before computing `failures` —
+   * `n - stableCount`. The escape leg's gate is the f32-vs-f64 orbit
+   * ensemble (`compareSurfaceEscapeAgreement`'s doc); the affine4 and
+   * fold4 legs' is the oracle-continuity classifier ({@link
+   * surface4QueryStable} — bisection queries parked on beam-selection
+   * discontinuities), fold4's evaluated against the PLAIN `estimateDistance4`
+   * composed oracle rather than the refined one. `undefined` on every
+   * 3D fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
   /** fr-dlxh escape leg only: stable-classified failures POST-HOC
    * verified as shadow flips (the GPU's value matched a 1..4-ULP
@@ -2076,8 +2090,16 @@ interface SurfaceCrossCheckRow {
    * (same arithmetic, different frontier storage) — mismatches fail the
    * verdict. "stage2-on-vs-off": informational only — the fr-kidj stage-2
    * skips are value no-ops in exact arithmetic, but f32 rounding may flip
-   * marginal frontier insertions, so deltas are reported, never gated. */
-  kind: "shared-vs-private" | "stage2-on-vs-off";
+   * marginal frontier insertions, so deltas are reported, never gated.
+   * "slabext-on-vs-off" (fr-rsp6 M4): the fold4 leg's `slabExt` A/B on
+   * `fold4Boxfold` (`sliceHalfW` 0) — `segmentRadius4(q, 0)` is `length(q)`
+   * bit for bit there (surface-de-gpu.ts's `slabExt` doc), so this is
+   * TOLERANCE-gated like the opt-in aff4 sweep leg's own slab/no-slab
+   * check ({@link SURFACE_AFF4_SWEEP_TOL_FACTOR}), not `shared-vs-private`'s
+   * exact-equality rule — mismatches past tolerance fail the verdict
+   * through the section's own `fold4SlabExtFailed` flag, not the generic
+   * any-mismatch cross-check gate. */
+  kind: "shared-vs-private" | "stage2-on-vs-off" | "slabext-on-vs-off";
   system: string;
   width: number;
   n: number;
@@ -2473,6 +2495,41 @@ const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
  * measurable fraction of a uniform-ball mix is masking real kernel
  * disagreement behind "edge-parked", not absorbing expected f32 noise. */
 const SURFACE_AFFINE4_EXCLUDED_CAP = 21;
+
+/** fr-rsp6 M4: the starting point for how many of the fold4 eval leg's 700
+ * queries per system the oracle-continuity gate ({@link surface4QueryStable},
+ * `refined=false`) may exclude before that system's row stops trusting its
+ * own `failures` count — {@link SURFACE_AFFINE4_EXCLUDED_CAP}'s 3%, one
+ * estimator class over. NOT a floor to silently widen: a system whose
+ * measured census clears this gets an entry in {@link
+ * SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES} instead, each with the measured
+ * number that justified it — fold frontiers select among far more branches
+ * per level (81/243 vs the affine ladder's 4), so a denser discontinuity
+ * set than M3's is plausible on its own, not proof of a kernel bug, but
+ * every widening stays disclosed rather than assumed. */
+const SURFACE_FOLD4_EXCLUDED_CAP = 21;
+
+/** Per-system overrides for {@link SURFACE_FOLD4_EXCLUDED_CAP} — each entry
+ * is `ceil(measured * 1.5) / 700` per this leg's own cap-widening rule,
+ * filled in only after a real SwiftShader run measured that system's
+ * exclusion census past the 3% starting point. Empty until measurement
+ * says otherwise. */
+const SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES: Record<string, number> = {};
+
+/** {@link SURFACE_FOLD4_EXCLUDED_CAP}'s per-system lookup, overrides first. */
+function fold4ExcludedCap(system: string): number {
+  return (
+    SURFACE_FOLD4_EXCLUDED_CAP_OVERRIDES[system] ?? SURFACE_FOLD4_EXCLUDED_CAP
+  );
+}
+
+/** fr-rsp6 M4's slabExt A/B gate on `fold4Boxfold` (`sliceHalfW` 0): the
+ * same noise/real boundary as {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}, scaled
+ * by the system's own `boundingRadius` like every other surface eval
+ * tolerance in this file — see `runSurfaceDeSection`'s fold4 slabExt block
+ * for why `sliceHalfW: 0` makes the two kernel variants mathematically
+ * bit-identical. */
+const SURFACE_FOLD4_SLABEXT_TOL_FACTOR = 1e-5;
 
 /** fr-b72d opt-in sweep leg (`runSurfaceAff4SweepLeg`): the kaleidoscope
  * orders it times the affine4 eval kernel at. 1 and 6 are the two measured
@@ -2903,6 +2960,64 @@ function surfaceAff4Final(): Transform {
   };
 }
 
+/** fr-rsp6 M4's boxfold base: `surface-de-4d.test.ts`'s `pureBoxfoldPair4`
+ * verbatim (same numbers, same seed of live w blocks) — bench and CPU
+ * tests pin the identical system on purpose. Isometric branches only
+ * (sigma_c = 1 on every one of the 81), so `fold4Boxfold` is the fold4
+ * leg's cheapest, cleanest-selection-boundary fixture; `fold4Kaleido` and
+ * `fold4Slab` below reuse it under different views/symmetry. */
+function surfaceFold4Boxfold(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      w: { position: 0.3, rotation: { xw: 0.3 } },
+      variations: [{ type: "boxfold", weight: 1 }],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.5, 0.5, 0.5],
+      w: { position: -0.3, rotation: { xw: 0.3 } },
+      variations: [{ type: "boxfold", weight: 0.9 }],
+    },
+  ];
+}
+
+/** fr-rsp6 M4's mandelbox base: `surface-de-4d.test.ts`'s
+ * `pureMandelboxPair4` verbatim — the RETUNED weights (1.3/1.2) and small
+ * scales (0.12/0.13) the CPU suite settled on so the width-12 frontier
+ * actually SATURATES at a shallow depth (~20): see that test file's doc
+ * for why a naive weight/scale rescale of 3D's own pair spreads u-space
+ * out too far and never saturates, which would defeat the point of a
+ * 243-branch (mandelbox = boxfold × spherefold) fixture. Do NOT swap in a
+ * deeper/heavier variant here — the CPU oracle at 243 branches × 700
+ * queries × 7 classifier probes is already this leg's most expensive CPU
+ * work. */
+function surfaceFold4Mandelbox(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, -0.15, 0.1],
+      rotation: [0.2, 0.4, 0],
+      scale: [0.12, 0.12, 0.12],
+      w: { position: 0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.3 }],
+    },
+    {
+      id: 1,
+      position: [-0.25, 0.2, -0.2],
+      rotation: [0.1, 0, 0.3],
+      scale: [0.13, 0.13, 0.13],
+      w: { position: -0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.2 }],
+    },
+  ];
+}
+
 function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
   if (raw === null) return fallback;
   const parsed = raw
@@ -3126,21 +3241,26 @@ function surface4ToleranceR(de: SurfaceDE4): number {
 }
 
 /**
- * fr-dlxh M3: the affine4 eval leg's COMPOSED f64 oracle — the exact
- * function the kernel computes per query, CPU-side. The view lift first
- * (`q4 = Mᵀ · (q, w0)` where M is the row-major pose rotor — component
- * `i` reads M's COLUMN `i`, exactly the packed rotorInv rows), then the
- * fr-wa6o half-extent seeded from M's w ROW times `sliceHalfW` (the
- * kernel's `rotorInvWCol4() * params.sliceHalfW`), then
- * `estimateDistance4Refined` at cutoff 0 — which applies `de.final`
- * ITSELF, so nothing is pre-applied here. The kernel does the same lift
- * in f32; the eval tolerance absorbs that quantization (the queries are
- * already `Math.fround`ed, so both sides start from the identical point).
+ * fr-dlxh M3 (fr-rsp6 M4 reuses it for fold4): the affine4/fold4 eval legs'
+ * COMPOSED f64 oracle — the exact function the kernel computes per query,
+ * CPU-side. The view lift first (`q4 = Mᵀ · (q, w0)` where M is the
+ * row-major pose rotor — component `i` reads M's COLUMN `i`, exactly the
+ * packed rotorInv rows), then the fr-wa6o half-extent seeded from M's w
+ * ROW times `sliceHalfW` (the kernel's `rotorInvWCol4() * params.sliceHalfW`),
+ * then the inner estimator at cutoff 0 — which applies `de.final`/kaleidoscope
+ * ITSELF, so nothing is pre-applied here. `refined` (default `true`, M3's
+ * only mode) picks `estimateDistance4Refined`; fold4 (M4) passes `false` for
+ * PLAIN `estimateDistance4` — `descendFold4`'s refine=FALSE path, the
+ * estimator the fold4 GLSL/WGSL body actually marches, 3D's fold-core
+ * precedent one dimension up. The kernel does the same lift in f32; the
+ * eval tolerance absorbs that quantization (the queries are already
+ * `Math.fround`ed, so both sides start from the identical point).
  */
 function estimateSurface4Composed(
   de: SurfaceDE4,
   view4: SurfaceGpu4View,
   q: Vec3,
+  refined = true,
 ): number {
   const rot = view4.rotor;
   const p: Vec4 = [0, 0, 0, 0];
@@ -3160,7 +3280,9 @@ function estimateSurface4Composed(
       rot[15] * view4.sliceHalfW,
     ];
   }
-  return estimateDistance4Refined(de, p, 0, ext);
+  return refined
+    ? estimateDistance4Refined(de, p, 0, ext)
+    : estimateDistance4(de, p, ext);
 }
 
 /**
@@ -3189,6 +3311,12 @@ function estimateSurface4Composed(
  * The full-mix census: 5/2800 excluded (1/1/0/3), both GPU flips among
  * them — the other three parked rows happened to land the same side on
  * both processors.
+ *
+ * fr-rsp6 M4 reuses this verbatim for the fold4 leg, `refined=false` so the
+ * probed neighbors and the caller's `cpu` value are the SAME PLAIN estimator
+ * — fold frontiers select among far more branches per level (81/243 vs the
+ * affine ladder's 4), so a denser discontinuity set is plausible on its own
+ * (see {@link SURFACE_FOLD4_EXCLUDED_CAP}'s doc).
  */
 function surface4QueryStable(
   de: SurfaceDE4,
@@ -3196,6 +3324,7 @@ function surface4QueryStable(
   q: Vec3,
   cpu: number,
   tol: number,
+  refined = true,
 ): boolean {
   for (let axis = 0; axis < 3; axis++) {
     for (const dir of [1, -1]) {
@@ -3203,7 +3332,10 @@ function surface4QueryStable(
       const base = Math.fround(p[axis]);
       const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38);
       p[axis] = Math.fround(base + dir * step);
-      if (Math.abs(estimateSurface4Composed(de, view4, p) - cpu) > tol / 2) {
+      if (
+        Math.abs(estimateSurface4Composed(de, view4, p, refined) - cpu) >
+        tol / 2
+      ) {
         return false;
       }
     }
@@ -3228,11 +3360,19 @@ function surface4QueryStable(
  * and deterministic), and 100 clustered on the view origin (the slice's
  * central region). 700 total, every component `Math.fround`ed — see
  * `surfaceQueries`' doc for why (the kernel only ever sees f32 points).
+ *
+ * fr-rsp6 M4 reuses this verbatim for the fold4 leg (`refined=false`,
+ * threaded into every `estimateSurface4Composed` call below including the
+ * boundary-bisection predicate) rather than forking a fold-shaped twin —
+ * the sampling GEOMETRY (ball radius, bisection depth, cluster spread)
+ * doesn't depend on which estimator decides "near the boundary", only on
+ * the system's own scale.
  */
 function affine4Queries(
   de: SurfaceDE4,
   view4: SurfaceGpu4View,
   seed: number,
+  refined = true,
 ): Vec3[] {
   const R4 = de.boundingRadius;
   const visR = surface4ToleranceR(de);
@@ -3260,7 +3400,7 @@ function affine4Queries(
   }
   const threshold = 0.02 * R4;
   const nearBoundary = (p: Vec3): boolean =>
-    estimateSurface4Composed(de, view4, p) < threshold;
+    estimateSurface4Composed(de, view4, p, refined) < threshold;
   for (let i = 0; i < 200; i++) {
     let a: Vec3 = [
       (rng() - 0.5) * 0.5 * rq,
@@ -4672,6 +4812,80 @@ function compareSurface4Agreement(
     // Not meaningful here — surfaceQueries' jittered/uniform/exact layout
     // doesn't describe affine4Queries' uniform/boundary/cluster mix (the
     // escape rows' convention).
+    failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
+    excluded: sys.cpu.length - stableCount,
+  };
+}
+
+/**
+ * {@link compareSurface4Agreement}'s fold4-leg twin (fr-rsp6 M4): the
+ * identical per-row error math, {@link surfaceEvalTol} bound, and pre-hoc
+ * oracle-continuity exclusion (`sys.cpu`/`sys.stable` already computed
+ * against the PLAIN composed oracle — `estimateSurface4Composed(...,
+ * false)`, `descendFold4` refine=false). The ONE difference from the
+ * fixed-width affine4 ladder: fold4 has a real frontier WIDTH to sweep
+ * (`width` is LIVE, surface-de-gpu.ts's module doc), so `gating` mirrors
+ * the 3D fold row's own idiom ({@link compareSurfaceAgreement}) instead of
+ * affine4's "always gate" — only rows at the CPU oracle's fixed
+ * `SURFACE_FOLD_BEAM_WIDTH` frontier width compare like against like;
+ * narrower rows are the same fr-5rvk narrow-width erosion measurement,
+ * informational only.
+ */
+function compareSurfaceFold4Agreement(
+  sys: Surface4SystemState,
+  cfg: SurfaceKernelConfig,
+  gpu: Float32Array,
+): SurfaceAgreementRow {
+  const R = surface4ToleranceR(sys.de);
+  const absErrs: number[] = [];
+  let stableCount = 0;
+  let maxAbsErr = 0;
+  let maxRelErr = 0;
+  let failures = 0;
+  let maxGpuMinusCpu = -Infinity;
+  let minGpuMinusCpu = Infinity;
+  let failuresOver = 0;
+  for (let i = 0; i < sys.cpu.length; i++) {
+    if (!sys.stable[i]) continue;
+    stableCount++;
+    const cpu = sys.cpu[i];
+    const signed = gpu[i] - cpu;
+    const err = Math.abs(signed);
+    absErrs.push(err);
+    if (err > maxAbsErr) maxAbsErr = err;
+    if (signed > maxGpuMinusCpu) maxGpuMinusCpu = signed;
+    if (signed < minGpuMinusCpu) minGpuMinusCpu = signed;
+    const rel = err / Math.max(Math.abs(cpu), 0.05 * R);
+    if (rel > maxRelErr) maxRelErr = rel;
+    if (err > surfaceEvalTol(cpu, R)) {
+      failures++;
+      if (signed > 0) failuresOver++;
+    }
+  }
+  absErrs.sort((a, b) => a - b);
+  const p99AbsErr =
+    absErrs.length > 0
+      ? absErrs[Math.min(absErrs.length - 1, Math.floor(0.99 * absErrs.length))]
+      : 0;
+  return {
+    system: sys.name,
+    core: cfg.core,
+    variant: cfg.variant,
+    width: cfg.width,
+    stage2: cfg.stage2,
+    wg: cfg.wg,
+    n: sys.cpu.length,
+    maxAbsErr,
+    maxRelErr,
+    p99AbsErr,
+    // Unlike affine4's fixed-width-4 ladder, fold4 keeps a real width
+    // sweep — the 3D fold row's own gating rule, one dimension up.
+    gating: cfg.width === SURFACE_FOLD_BEAM_WIDTH,
+    failures,
+    maxGpuMinusCpu: Number.isFinite(maxGpuMinusCpu) ? maxGpuMinusCpu : 0,
+    minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
+    failuresOver,
+    // Not meaningful here — see compareSurface4Agreement's identical note.
     failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
     excluded: sys.cpu.length - stableCount,
   };
@@ -6945,6 +7159,123 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // fr-rsp6 M4: the FOLD4 core's own fixed fixture family — the same
+  // "def-time eligibility gate throws" idiom as affine4SystemDefs above,
+  // for the same reason (fixed fixtures; an ineligible one is a bench bug).
+  // Four systems, each `surfaceFold4Boxfold`/`surfaceFold4Mandelbox`
+  // (`surface-de-4d.test.ts`'s fr-rsp6 fixtures verbatim, so bench and CPU
+  // tests pin the identical systems) under a different view/symmetry: the
+  // pure DE at a nonzero w0 (fold4Boxfold), the widest fold class at the
+  // same view (fold4Mandelbox, 243 branches per map), the fr-u91x
+  // kaleidoscope sweep through fold branches (fold4Kaleido), and the
+  // fr-wa6o slab query threaded through them (fold4Slab, every ext
+  // register live). `null` finalTransform always — fold4 FINAL lenses are
+  // fr-rsp6 phase 2B, out of this cut (surface-de-gpu.ts's module doc).
+  const fold4SystemDefs: {
+    name: string;
+    seed: number;
+    transforms: Transform[];
+    symmetry?: SymmetryParams;
+    view4: (de: SurfaceDE4) => SurfaceGpu4View;
+  }[] = [
+    {
+      name: "fold4Boxfold",
+      seed: 521,
+      transforms: surfaceFold4Boxfold(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.2 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "fold4Mandelbox",
+      seed: 522,
+      transforms: surfaceFold4Mandelbox(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.2 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "fold4Kaleido",
+      seed: 523,
+      transforms: surfaceFold4Boxfold(),
+      symmetry: { order: 3, plane: "zw", twist: 1 },
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "fold4Slab",
+      seed: 524,
+      transforms: surfaceFold4Boxfold(),
+      view4: (de) => ({
+        rotor: symmetryRotation4("yw", 0.55),
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0.1 * de.boundingRadius,
+      }),
+    },
+  ];
+  const fold4Systems: Surface4SystemState[] = [];
+  for (const def of fold4SystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface fold4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    // Same def-time-throw idiom as affine4SystemDefs above, plus a
+    // fold-shape assertion: a fixture that regressed to no fold maps would
+    // otherwise silently pass through estimateDistance4's plain-affine
+    // path and pin nothing about descendFold4.
+    const eligibility = analyzeSurfaceSystem4(def.transforms, null);
+    if (eligibility.status === "ineligible") {
+      throw new Error(
+        `fold4 bench fixture ${def.name} is ineligible: ` +
+          eligibility.reasons.join("; "),
+      );
+    }
+    const de = buildSurfaceDE4(
+      def.transforms,
+      null,
+      def.symmetry ?? SURFACE_NO_SYMMETRY,
+    );
+    if (!deHasFolds4(de)) {
+      throw new Error(`fold4 bench fixture ${def.name} has no fold maps`);
+    }
+    const view4 = def.view4(de);
+    // refined=false throughout: fold4 mirrors descendFold4's refine=FALSE
+    // path, so both the query mix's boundary bisection and the CPU oracle
+    // values below use the PLAIN estimateDistance4
+    // (estimateSurface4Composed's doc).
+    const queries = affine4Queries(de, view4, def.seed, false);
+    const cpu = queries.map((q) =>
+      estimateSurface4Composed(de, view4, q, false),
+    );
+    const R = surface4ToleranceR(de);
+    const stable = cpu.map((c, i) =>
+      surface4QueryStable(
+        de,
+        view4,
+        queries[i],
+        c,
+        surfaceEvalTol(c, R),
+        false,
+      ),
+    );
+    fold4Systems.push({
+      name: def.name,
+      de,
+      view4,
+      transforms: def.transforms,
+      queries,
+      cpu,
+      stable,
+    });
+    render();
+  }
+
   // Lens systems are their own leg: `lens` is a per-SYSTEM kernel option
   // (the wrapper is generated source), while the fold/affine legs share
   // one pipeline per CONFIG — a lens system run through those pipelines
@@ -7067,6 +7398,15 @@ async function runSurfaceDeSection(
   // gate excludes more than SURFACE_AFFINE4_EXCLUDED_CAP of a system's
   // queries, for exactly the reason above.
   let affine4GateFail = false;
+  // fr-rsp6 M4: the fold4 leg's analog of affine4GateFail, per-system cap
+  // (fold4ExcludedCap).
+  let fold4GateFail = false;
+  // fr-rsp6 M4: the fold4 leg's slabExt A/B on fold4Boxfold — set when the
+  // slabExt:true/false kernels disagree beyond SURFACE_FOLD4_SLABEXT_TOL_FACTOR
+  // at sliceHalfW 0, where surface-de-gpu.ts's slabExt doc says they must
+  // be mathematically bit-identical (runSurfaceAff4SweepLeg's own gate,
+  // one estimator class over).
+  let fold4SlabExtFailed = false;
 
   const configLabel = (cfg: SurfaceKernelConfig): string =>
     cfg.core === "affine"
@@ -7420,6 +7760,189 @@ async function runSurfaceDeSection(
         }
       }
       render();
+    }
+
+    // ----- M4 (fr-rsp6 phase 2A): the FOLD4 core's agreement leg -----
+    // The fold frontier one dimension up, behind the SAME view lift as M3
+    // — `descendFold4` refine=FALSE (surface-de-4d.ts) as the fold4
+    // GLSL/WGSL body marches it — pinned against the COMPOSED f64 oracle
+    // at `refined=false` (`estimateSurface4Composed`'s doc). TWO widths,
+    // one pipeline each, both dispatched against the SAME four systems'
+    // buffers (the params/maps/queries data doesn't depend on kernel
+    // width — only the compiled source does): `SURFACE_FOLD_BEAM_WIDTH`
+    // (12) is the CPU oracle's own fixed frontier width, so it GATES; 4 is
+    // the same fr-5rvk narrow-width erosion measurement 3D's fold rows
+    // already run, informational only
+    // (`compareSurfaceFold4Agreement`'s `gating` rule — the 3D fold row's
+    // idiom, not M3's fixed-width "always gate"). Private variant, stage2
+    // off always: the fold4 frontier is function-scope private by
+    // construction and the fr-kidj skips are not emitted at all
+    // (surface-de-gpu.ts's module doc), so there is no variant/stage2
+    // sweep to run here.
+    const gpuByFold4Key = new Map<string, Float32Array>();
+    if (fold4Systems.length > 0) {
+      const fold4Configs: SurfaceKernelConfig[] = [
+        {
+          core: "fold4",
+          variant: "private",
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        },
+        {
+          core: "fold4",
+          variant: "private",
+          width: 4,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        },
+      ];
+      for (const cfg of fold4Configs) {
+        const label = configLabel(cfg);
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let fold4Pipeline: GPUComputePipeline | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: "fold4",
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          ({ pipeline: fold4Pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (fold4Pipeline !== null) {
+          const pipeline = fold4Pipeline;
+          for (const sys of fold4Systems) {
+            status(`agreement: ${label} × ${sys.name}…`);
+            await ensureSurface4EvalBuffers(device, bindGroupLayout, sys);
+            const gpu = await runSurfaceEvalDispatch(
+              device,
+              pipeline,
+              sys,
+              cfg.wg,
+            );
+            gpuByFold4Key.set(`${sys.name}|${String(cfg.width)}`, gpu);
+            const row = compareSurfaceFold4Agreement(sys, cfg, gpu);
+            results.agreement.push(row);
+            // Excluded count doesn't depend on kernel width (the
+            // classifier is a pure CPU-oracle question, computed once at
+            // system-build time) — check the cap once, off the GATING
+            // row, so a system doesn't earn two identical notes.
+            if (cfg.width === SURFACE_FOLD_BEAM_WIDTH) {
+              const excluded = row.excluded ?? 0;
+              const cap = fold4ExcludedCap(sys.name);
+              if (excluded > cap) {
+                fold4GateFail = true;
+                results.notes.push(
+                  `fold4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                    `queries (> ${cap}) from the oracle-continuity gate — ` +
+                    "see surface4QueryStable's doc",
+                );
+              }
+            }
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        render();
+      }
+
+      // fr-rsp6 M4's slabExt A/B (mirrors runSurfaceAff4SweepLeg's own
+      // slab/no-slab comparison + note wording, one estimator class over):
+      // fold4Boxfold's own sliceHalfW is 0, so surface-de-gpu.ts's
+      // `slabExt` doc applies verbatim — segmentRadius4(q, 0) is length(q)
+      // bit for bit, so the slabExt:false kernel (the h=0-only body, no
+      // ext registers) must agree with the shipped slabExt (default/true)
+      // kernel elementwise on the SAME 700-query batch already dispatched
+      // above, at the production width.
+      const boxfold = fold4Systems.find((s) => s.name === "fold4Boxfold");
+      const gpuSlab = gpuByFold4Key.get(
+        `fold4Boxfold|${String(SURFACE_FOLD_BEAM_WIDTH)}`,
+      );
+      if (!boxfold || !gpuSlab) {
+        results.notes.push(
+          "fold4 slabExt A/B: skipped — fold4Boxfold's w12 row did not run (see notes)",
+        );
+      } else {
+        const wg = surfaceWgFor(config, "private");
+        status("fold4 slabExt A/B: compiling…");
+        activity.setState("gpu", "Surface DE fold4 slabExt A/B");
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: "fold4",
+            width: SURFACE_FOLD_BEAM_WIDTH,
+            workgroupSize: wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+            slabExt: false,
+          });
+          const { pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            "surface-de eval fold4 noslab",
+          );
+          status("fold4 slabExt A/B: fold4Boxfold…");
+          await ensureSurface4EvalBuffers(device, bindGroupLayout, boxfold);
+          const gpuNoslab = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            boxfold,
+            wg,
+          );
+          let mismatches = 0;
+          let maxAbs = 0;
+          for (let i = 0; i < gpuSlab.length; i++) {
+            if (gpuSlab[i] !== gpuNoslab[i]) {
+              mismatches++;
+              maxAbs = Math.max(maxAbs, Math.abs(gpuSlab[i] - gpuNoslab[i]));
+            }
+          }
+          const tol =
+            SURFACE_FOLD4_SLABEXT_TOL_FACTOR * boxfold.de.boundingRadius;
+          const withinTolerance = maxAbs <= tol;
+          results.crossChecks.push({
+            kind: "slabext-on-vs-off",
+            system: boxfold.name,
+            width: SURFACE_FOLD_BEAM_WIDTH,
+            n: gpuSlab.length,
+            mismatches,
+            maxDelta: maxAbs,
+            note:
+              mismatches === 0
+                ? "exact — sliceHalfW 0 makes segmentRadius4(q, 0) length(q) bit for bit"
+                : withinTolerance
+                  ? "sub-tolerance mismatches (fma/contraction noise)"
+                  : "MISMATCH — slabExt true/false must agree at sliceHalfW 0 (surface-de-gpu.ts's slabExt doc)",
+          });
+          if (!withinTolerance) {
+            fold4SlabExtFailed = true;
+            results.notes.push(
+              `fold4 slabExt A/B ${boxfold.name}: ${String(mismatches)} mismatches, ` +
+                `maxAbs ${maxAbs.toExponential(2)} exceeds tolerance ${tol.toExponential(2)} — ` +
+                "slabExt true/false DISAGREE at sliceHalfW 0, failing the leg",
+            );
+          }
+        } catch (e) {
+          fold4SlabExtFailed = true;
+          results.notes.push(`fold4 slabExt A/B: ${describeError(e)}`);
+        }
+        render();
+      }
     }
 
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
@@ -8127,6 +8650,8 @@ async function runSurfaceDeSection(
       frameFailed ||
       escapeGateFail ||
       affine4GateFail ||
+      fold4GateFail ||
+      fold4SlabExtFailed ||
       aff4SweepFailed
     ) {
       results.verdict = "fail";
@@ -8144,7 +8669,11 @@ async function runSurfaceDeSection(
                   ? "escape agreement leg excluded too many queries from its f32-stability gate — see notes"
                   : affine4GateFail
                     ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                    : "aff4 sweep leg: slab/no-slab kernels disagree beyond tolerance — see notes";
+                    : fold4GateFail
+                      ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                      : fold4SlabExtFailed
+                        ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
+                        : "aff4 sweep leg: slab/no-slab kernels disagree beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -8161,6 +8690,7 @@ async function runSurfaceDeSection(
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
     for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
+    for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
     device.destroy();
   }
   status(results.verdict + (results.reason ? ` — ${results.reason}` : ""));
