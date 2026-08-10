@@ -1660,10 +1660,31 @@ export class Ui {
       "hidden",
       !this.fourDSurfaceLive && !sliceOn,
     );
+    // The thickness row stays VISIBLE in every live 4D surface session
+    // and DISABLES with the reason when the session's fold set refuses
+    // the slab (fr-rsp6 × fr-wa6o) — a silently vanishing control reads
+    // as "impossible, no idea why", where the truth is a per-fold-family
+    // soundness rule the user can act on (boxfold keeps the slab).
     this.fourDSliceThicknessRow.classList.toggle(
       "hidden",
-      !this.fourDSurfaceLive || !this.fourDSlabAvailable,
+      !this.fourDSurfaceLive,
     );
+    const slabRefused = this.fourDSurfaceLive && !this.fourDSlabAvailable;
+    this.fourDSliceThicknessSlider.disabled = slabRefused;
+    if (slabRefused) {
+      // The session clamps the slab to 0 whatever the thumb says — show
+      // the clamped truth rather than a lying nonzero thumb. (Thickness
+      // is session view state; resetFourDSlice zeroes it on every 4D
+      // entry anyway, so no user-authored value is being discarded.)
+      this.fourDSliceThicknessSlider.value = "0";
+      this.fourDSliceThicknessLabel.textContent = "0.00";
+    }
+    this.fourDSliceThicknessRow.title = slabRefused
+      ? "Slab thickness is unavailable with sphere folds: the slab's " +
+        "segment certificates are unsound under the spherefold's " +
+        "inversion branch (mandelbox includes it). Box-fold-only systems " +
+        "keep the slab."
+      : "";
   }
 
   /** fr-rsp6: whether the live 4D surface session can take a slab at all
