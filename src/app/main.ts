@@ -308,6 +308,54 @@ function flamePerfEnabled(): boolean {
 }
 
 /**
+ * fr-opgk: the shape `?surfacestate` publishes as `window.__surfaceState()`
+ * — a read-only snapshot of the surface render's settle machinery, so a
+ * verification script can wait for the TRUE settled state instead of
+ * inferring it from the canvas.
+ *
+ * "Pixels stopped changing" is NOT that state: strip pacing (the
+ * strip-planner evidence chain) and the compute path's pass sizing are both
+ * MEASURED, so a poll cadence can freeze a timing-dependent MIX of preview
+ * and settle pixels — the reason a naive run-to-run A/B of this renderer
+ * measured 2.9% differing pixels and carried no signal. Nor is the
+ * `#surfaceProgress` row: it hides both BEFORE a job arms and after one
+ * finishes. `settled` below is the latch main.ts already keeps for the
+ * recorder's parked repaints — the settle target holds a COMPLETED
+ * full-quality frame for the CURRENT, uninvalidated view — so a script that
+ * polls it cannot miss the edge, whichever engine owns the session.
+ *
+ * Diagnostics only, absent unless the URL asks (the `?flameperf` /
+ * `?surfperf` convention), and it only READS live state: nothing here can
+ * change what gets drawn.
+ */
+interface SurfaceStateProbe {
+  /** The live render mode; "surface" exactly while a session runs. */
+  mode: RenderMode;
+  /** Which engine owns the session — null outside surface mode. */
+  engine: "compute" | "webgl" | null;
+  /** The session has traced its first frame (past the compile/pipeline
+   * gate). Until then the canvas still shows the explorer. */
+  firstFrame: boolean;
+  /** A COMPLETED full-quality frame is on screen for the current view.
+   * Any invalidation clears it. */
+  settled: boolean;
+  /** A settle verdict the tier clock fired while a preview was still in
+   * flight, waiting for that preview to finish. */
+  settlePending: boolean;
+  /** A preview frame (compute) or preview strip job (WebGL) is in flight. */
+  previewActive: boolean;
+  /** The full-quality frame (compute) or settle strip job (WebGL) is in
+   * flight. */
+  settleActive: boolean;
+}
+
+declare global {
+  interface Window {
+    __surfaceState?: () => SurfaceStateProbe;
+  }
+}
+
+/**
  * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
  * default 1× orbit speed (the user's speed slider multiplies it — see
  * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
@@ -5895,6 +5943,33 @@ function main(): void {
       saveIsolationHandoff({ renderMode: state.renderMode });
     },
   });
+
+  // fr-opgk: `?surfacestate`'s read-only settle disclosure — see
+  // SurfaceStateProbe. Installed last so every piece of state it closes
+  // over exists; the query survives the isolation reload with the rest of
+  // the URL, so a script that asked for it keeps it.
+  if (new URLSearchParams(window.location.search).has("surfacestate")) {
+    window.__surfaceState = () => ({
+      mode: state.renderMode,
+      engine:
+        state.renderMode !== "surface"
+          ? null
+          : surfaceComputeRenderer !== null
+            ? "compute"
+            : "webgl",
+      firstFrame: surfaceSession.hasFirstFrame,
+      settled: surfaceSettled,
+      settlePending: surfaceSettlePending,
+      previewActive:
+        surfaceComputeRenderer !== null
+          ? surfaceComputePreviewFlight || surfaceComputePreviewPending
+          : scene.surfacePreviewActive,
+      settleActive:
+        surfaceComputeRenderer !== null
+          ? surfaceComputeSettleFlight
+          : scene.surfaceSettleActive,
+    });
+  }
 
   animate();
 }
