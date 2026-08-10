@@ -2242,11 +2242,12 @@ interface SurfaceComputeFrameRow {
    * place of a per-pixel comparison (see the leg's design comment). */
   sanityGpuHitRate?: number;
   sanityCpuHitRate?: number;
-  /** ifs4 frame leg only (fr-dlxh 4D): a SECOND frame rendered by the
-   * SAME renderer at a different `view4` (rotated rotor, different w0) —
-   * the per-frame view-repack proof (`spec.view4` is per-renderFrame
-   * state, exactly scene.ts's live rotor/slice contract). Same numbers as
-   * the primary frame's, gated by the call site under the same rules. */
+  /** ifs4 frame leg only (fr-dlxh 4D; fr-rsp6 phase 3's fold4 invocation
+   * gets one too, same leg function): a SECOND frame rendered by the SAME
+   * renderer at a different `view4` (rotated rotor, different w0) — the
+   * per-frame view-repack proof (`spec.view4` is per-renderFrame state,
+   * exactly scene.ts's live rotor/slice contract). Same numbers as the
+   * primary frame's, gated by the call site under the same rules. */
   view2?: {
     wallMs: number;
     gpuMs: number;
@@ -2409,6 +2410,21 @@ interface SurfaceDeResults {
    * field — the row also lands in `notes` (the frame-row voice) so the
    * run's summary discloses it; results.json carries the full row. */
   computeFrame4?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-rsp6 phase 3: {@link computeFrame4}'s fold4 twin — the SAME leg
+   * body ({@link runSurfaceComputeFrame4Leg}) on `fold4Boxfold` instead of
+   * `aff4Kaleido`. An `ifs4` target whose DE carries fold maps routes
+   * `SurfaceComputeRenderer.create` to `core: "fold4"` on its own
+   * (`deHasFolds4`, surface-compute.ts) — nothing in the leg is
+   * aff4Kaleido-specific — so this pins the SAME production loop (4-pipeline
+   * compile, fold-fan prior scaling, march slices, shade batches, per-frame
+   * view4 repack) through the fold4 core the way {@link computeFrame4} pins
+   * it through affine4's. The CPU sanity march switches to the matching
+   * plain estimator (`surface4CpuSanityRate`'s `refined = false` here).
+   * Same gates as {@link computeFrame4}, verbatim — zero hits on real
+   * hardware, the rate band on untruncated frames, and the
+   * completed-empty-vs-CPU-hits clause. Same dual notes/results.json
+   * reporting. */
+  computeFrame4Fold?: SurfaceComputeFrameRow | SkippedResult;
   /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
    * `surfaceShadeWidths` is empty (the default, silent) or every requested
    * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
@@ -5904,13 +5920,18 @@ async function runSurfaceComputeFrameEscapeLeg(
   }
 }
 
-/** The ifs4 frame leg's strided CPU sanity march (fr-dlxh 4D): the
- * kernel's own unproject rays over the identical f32 matrix, the affine4
- * marcher's exact quantities — the SLICE-ADJUSTED sphere gate
- * (sliceVisR · 1.02, recomputed the packer's offset-24 way from
- * max(|w0| − h, 0)), cone eps = max(acceptEps·t, R4·hitFloor),
- * t += d·de.stepScale — with the COMPOSED f64 oracle as the estimator,
- * every 8th pixel in both axes. Returns the sampled hit rate. */
+/** The ifs4 frame leg's strided CPU sanity march (fr-dlxh 4D; fr-rsp6
+ * phase 3 widened it to the fold4 core): the kernel's own unproject rays
+ * over the identical f32 matrix, the affine4/fold4 marcher's shared
+ * quantities — the SLICE-ADJUSTED sphere gate (sliceVisR · 1.02,
+ * recomputed the packer's offset-24 way from max(|w0| − h, 0)), cone eps
+ * = max(acceptEps·t, R4·hitFloor), t += d·de.stepScale — with the
+ * COMPOSED f64 oracle as the estimator, every 8th pixel in both axes.
+ * `refined` picks the SAME oracle mode the kernel core marches
+ * (`estimateSurface4Composed`'s doc): callers pass `!deHasFolds4(de)` —
+ * `true` (the affine4 ladder's `estimateDistance4Refined`) for aff4Kaleido,
+ * `false` (fold4's plain `estimateDistance4`) for fold4Boxfold. Returns the
+ * sampled hit rate. */
 function surface4CpuSanityRate(
   de: SurfaceDE4,
   view4: SurfaceGpu4View,
@@ -5918,6 +5939,7 @@ function surface4CpuSanityRate(
   ro: Vec3,
   width: number,
   height: number,
+  refined: boolean,
 ): number {
   const R4 = de.boundingRadius;
   const visR = de.visibleBoundingRadius;
@@ -5940,11 +5962,12 @@ function surface4CpuSanityRate(
     let t = Math.max(-b - sq, 0);
     for (let i = 0; i < SURFACE_MARCH_STEPS && t <= tFar; i++) {
       const eps = Math.max(SURFACE_PIXEL_EPS * t, R4 * SURFACE_GPU_HIT_FLOOR);
-      const d = estimateSurface4Composed(de, view4, [
-        ro[0] + rd[0] * t,
-        ro[1] + rd[1] * t,
-        ro[2] + rd[2] * t,
-      ]);
+      const d = estimateSurface4Composed(
+        de,
+        view4,
+        [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t],
+        refined,
+      );
       if (d < eps) {
         cpuHits++;
         break;
@@ -5956,19 +5979,27 @@ function surface4CpuSanityRate(
 }
 
 /**
- * Leg B's ifs4 twin (fr-dlxh 4D, stage B2): TWO end-to-end frames through
- * the PRODUCTION renderer with ONE `{ kind: "ifs4" }` target — the app
- * path for `analyzeSurfaceSystem4` sessions (affine4 ladder core, GpuMap4
- * maps at binding 1, the REQUIRED spec-carried `view4`) — the second
- * frame at a DIFFERENT view4 (rotated rotor, different w0), proving the
- * per-frame view repack end to end on the same renderer: `spec.view4` is
- * per-renderFrame state, exactly scene.ts's live rotor/slice contract.
- * colorSource 3 (radius) so the rotor-lifted shade arm (the `visRadius4`
- * normalizer) executes; `lut: null` binds the renderer's white LUT — the
- * arm still samples it, geometry is what the leg gates. Sanity per frame
- * is the escape twin's strided CPU rate-band march
- * ({@link surface4CpuSanityRate}); no chaotic-flip machinery — the ladder
- * core's band absorbs edge pixels (per-query agreement is M3's job).
+ * Leg B's ifs4 twin (fr-dlxh 4D, stage B2; fr-rsp6 phase 3 widened it to
+ * the fold4 core): TWO end-to-end frames through the PRODUCTION renderer
+ * with ONE `{ kind: "ifs4" }` target — the app path for
+ * `analyzeSurfaceSystem4` sessions (GpuMap4 maps at binding 1, the
+ * REQUIRED spec-carried `view4`) — the second frame at a DIFFERENT view4
+ * (rotated rotor, different w0), proving the per-frame view repack end to
+ * end on the same renderer: `spec.view4` is per-renderFrame state, exactly
+ * scene.ts's live rotor/slice contract. Generic over `sys`:
+ * `SurfaceComputeRenderer.create` picks `core: "affine4"` vs `core:
+ * "fold4"` from `deHasFolds4(sys.de)` on its own (surface-compute.ts), so
+ * this same body backs both the affine4 leg (aff4Kaleido) and the fold4
+ * leg (fold4Boxfold) — nothing here is aff4Kaleido-specific. colorSource 3
+ * (radius) so the rotor-lifted shade arm (the `visRadius4` normalizer)
+ * executes; `lut: null` binds the renderer's white LUT — the arm still
+ * samples it, geometry is what the leg gates. Sanity per frame is the
+ * escape twin's strided CPU rate-band march ({@link
+ * surface4CpuSanityRate}), its `refined` flag matched to whichever core
+ * `create` picked so the sanity oracle never disagrees with the kernel
+ * over a refined-vs-plain tightness delta rather than a real miss; no
+ * chaotic-flip machinery — the ladder/frontier core's band absorbs edge
+ * pixels (per-query agreement is M3/M4's job).
  */
 async function runSurfaceComputeFrame4Leg(
   sys: Surface4SystemState,
@@ -5984,11 +6015,15 @@ async function runSurfaceComputeFrame4Leg(
     : SURFACE_FRAME_BUDGET_MS;
   // SurfaceDE4 carries the same radius fields the pose helpers pick
   // structurally, so the 3D pose/unproject math frames the slice's world
-  // (visR = R4 here — aff4Kaleido has no final lens).
+  // (visR = R4 here — aff4Kaleido/fold4Boxfold both carry no final lens).
   const pose = buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
   const colors = surfaceSlotColors(sys.transforms, sys.de.maps);
   const trapIndices = surfaceTrapIndices(sys.transforms, sys.de.maps);
+  // The CPU sanity march (in `runOne` below) must use the SAME oracle mode
+  // the renderer's kernel core marches — plain estimateDistance4 for a
+  // fold4-routed DE, refined otherwise (surface4CpuSanityRate's doc).
+  const sanityRefined = !deHasFolds4(sys.de);
 
   activity.setState("gpu", "Surface compute frame (ifs4 app path)");
   status("compute frame ifs4: creating SurfaceComputeRenderer…");
@@ -6059,6 +6094,7 @@ async function runSurfaceComputeFrame4Leg(
         pose.ro,
         width,
         height,
+        sanityRefined,
       );
       console.info(
         `[surface-bench] ${label}: done — ${String(frame.passes)} passes, ` +
@@ -9069,6 +9105,125 @@ async function runSurfaceDeSection(
           frameFailed = true;
           results.computeFrame4 = { skipped: describeError(e) };
           results.notes.push(`compute frame ifs4: ${describeError(e)}`);
+        }
+      }
+      render();
+
+      // fr-rsp6 phase 3: the fold4 twin of the leg above — the SAME
+      // runSurfaceComputeFrame4Leg body, on the fold4Slab fixture instead
+      // of aff4Kaleido. SurfaceComputeRenderer.create routes an ifs4
+      // target whose DE carries fold maps to core:"fold4" on its own
+      // (deHasFolds4, surface-compute.ts), so nothing here duplicates the
+      // leg's create/frame protocol — only this invocation block, mirroring
+      // how computeFrame/computeFrameLens already share one leg function
+      // with per-system invocation blocks. Same gates as the leg above.
+      // fold4Slab over fold4Boxfold deliberately: the boxfold pair's M4
+      // view slices EMPTY at this leg's raster (measured — GPU and CPU
+      // agreed on zero hits, pinning only the pipeline path), while the
+      // slab view's ±0.1R capture renders dense hits, so this leg
+      // exercises the shade batches AND the production slab-pipeline
+      // selection (runFrame picks the slab pair off the live
+      // sliceHalfW > 0) in one frame.
+      const fold4Sys = fold4Systems.find((s) => s.name === "fold4Slab");
+      if (!fold4Sys) {
+        results.computeFrame4Fold = {
+          skipped: "fold4Slab did not build (see notes)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFrame4Leg(
+            fold4Sys,
+            acquired.software,
+            dom,
+            status,
+            activity,
+          );
+          results.computeFrame4Fold = row;
+          const frames = [
+            {
+              label: "compute frame fold4",
+              wallMs: row.wallMs,
+              gpuMs: row.gpuMs,
+              passes: row.passes,
+              truncated: row.truncated,
+              counts: row.counts,
+              gpuRate: row.sanityGpuHitRate ?? 0,
+              cpuRate: row.sanityCpuHitRate ?? 0,
+            },
+            ...(row.view2
+              ? [
+                  {
+                    label: "compute frame fold4 view2",
+                    wallMs: row.view2.wallMs,
+                    gpuMs: row.view2.gpuMs,
+                    passes: row.view2.passes,
+                    truncated: row.view2.truncated,
+                    counts: row.view2.counts,
+                    gpuRate: row.view2.sanityGpuHitRate,
+                    cpuRate: row.view2.sanityCpuHitRate,
+                  },
+                ]
+              : []),
+          ];
+          for (const fr of frames) {
+            results.notes.push(
+              `${fr.label} ${row.width}x${row.height}: wall=${fr.wallMs.toFixed(0)}ms ` +
+                `gpu=${fr.gpuMs.toFixed(0)}ms passes=${String(fr.passes)} ` +
+                `hit=${String(fr.counts.hit)} miss=${String(fr.counts.miss)} ` +
+                `exh=${String(fr.counts.exhausted)} active=${String(fr.counts.active)} ` +
+                `rate gpu=${fr.gpuRate.toFixed(3)} cpu=${fr.cpuRate.toFixed(3)}` +
+                `${fr.truncated ? " TRUNCATED" : ""}`,
+            );
+            // Unlike the aff4Kaleido block above — whose two views were
+            // AUTHORED to hit, so any zero-hit real-adapter frame is
+            // breakage — this fixture's view2 hyperplane legitimately
+            // misses the attractor (deliberate: a completed empty frame
+            // the CPU sanity march ALSO reads empty pins the noslab
+            // pair's emptiness agreement). The zero-hit clause therefore
+            // defers to the CPU march on completed frames — the
+            // completed-empty-vs-CPU-hits clause below is the authority —
+            // and fails only truncated zero-hit frames, where agreement
+            // cannot be read.
+            if (fr.counts.hit === 0 && !acquired.software && fr.truncated) {
+              frameFailed = true;
+              results.notes.push(
+                `${fr.label}: zero hit rays in a truncated real-adapter frame — failing the leg`,
+              );
+            }
+            if (fr.truncated) {
+              results.notes.push(
+                `${fr.label}: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                  (acquired.software
+                    ? " — accepted on a software adapter"
+                    : " — informational (only hit=0 or a null frame gate; the rate-band check is skipped while truncated)"),
+              );
+            } else {
+              if (fr.counts.hit === 0 && fr.cpuRate > 0) {
+                frameFailed = true;
+                results.notes.push(
+                  `${fr.label}: completed with zero hit rays while the CPU sanity march hit ` +
+                    `(rate ${fr.cpuRate.toFixed(3)}) — deterministic breakage, failing the leg on any adapter`,
+                );
+              }
+              const gap = Math.abs(fr.gpuRate - fr.cpuRate);
+              if (gap > SURFACE_SANITY_HIT_RATE_TOL) {
+                if (acquired.software) {
+                  results.notes.push(
+                    `${fr.label}: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march — informational on a software adapter`,
+                  );
+                } else {
+                  frameFailed = true;
+                  results.notes.push(
+                    `${fr.label}: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+                  );
+                }
+              }
+            }
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrame4Fold = { skipped: describeError(e) };
+          results.notes.push(`compute frame fold4: ${describeError(e)}`);
         }
       }
       render();
