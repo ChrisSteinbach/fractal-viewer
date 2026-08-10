@@ -504,6 +504,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
     `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
     string equality).
+  - `viewer-prefs.ts` — per-browser preferences under their own
+    `fractal-viewer:prefs` localStorage key, deliberately OUTSIDE the scene
+    document (fr-0ya): a pref belongs to the person at this browser, so it
+    must never ride the `#v1=` hash a shared link carries. localStorage only,
+    never the URL/hash/`history`. Never-throwing load with strict validation
+    (`false` is a real choice and survives); currently one pref, `autoMotion`
+    — the shared 3D auto-orbit / 4D auto-tumble choice, `undefined` = never
+    chosen, so boot follows prefers-reduced-motion. Pure, tested.
   - `history.ts` — session-only undo/redo stacks (pure, tested).
   - `edit-session.ts` — burst-coalescing over `history.ts`: one undo checkpoint
     per slider drag + debounced save. All effects injected; pure, tested.
