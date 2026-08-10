@@ -89,6 +89,20 @@ describe("randomSystem", () => {
     }
   });
 
+  it("never rolls one type twice in a blend, so a second variation is always a second warp", () => {
+    // Larger sample than SEED_SAMPLE_SIZE: only ~12% of maps roll a second
+    // nonlinear variation at all, and a collision needs that roll to land on
+    // the type already there — rare enough per map that a 50-seed sweep
+    // could miss it by luck.
+    for (let seed = 0; seed < 400; seed++) {
+      const { transforms } = randomSystem(mulberry32(seed));
+      for (const t of transforms) {
+        const types = (t.variations ?? []).map((v) => v.type);
+        expect(new Set(types).size).toBe(types.length);
+      }
+    }
+  });
+
   it("gives every transform that has variations a linear companion", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = randomSystem(mulberry32(seed));

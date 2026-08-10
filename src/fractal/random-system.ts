@@ -431,30 +431,38 @@ function randomWeight(rng: Rng): number {
   return Math.floor(1 + WEIGHT_ROLL * rng() * rng());
 }
 
-function randomVariationType(rng: Rng): VariationType {
-  return NON_LINEAR_VARIATION_TYPES[
-    Math.floor(rng() * NON_LINEAR_VARIATION_TYPES.length)
-  ];
+/** Uniform pick from {@link NON_LINEAR_VARIATION_TYPES}, minus the type the
+ * map already carries: a blend is a type -> weight map (see `types.ts`'s
+ * {@link Variation}), so rolling one type twice would just be that one warp
+ * at the summed weight — the second roll's whole point is a SECOND warp. */
+function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
+  const candidates =
+    exclude === undefined
+      ? NON_LINEAR_VARIATION_TYPES
+      : NON_LINEAR_VARIATION_TYPES.filter((type) => type !== exclude);
+  return candidates[Math.floor(rng() * candidates.length)];
 }
 
 /**
  * Roll a transform's variation blend: 60% chance of one nonlinear variation,
- * then (only if the first landed) a further 20% chance of a second, each at
- * a weight in `[0.3, 0.9]`. Whenever at least one landed, a `linear`
- * companion at `[0.4, 0.8]` is appended. Returns `undefined` when nothing was
- * rolled, matching how a plain preset transform carries no `variations` key
- * at all (see e.g. `defaultTransforms`).
+ * then (only if the first landed) a further 20% chance of a second, DIFFERENT
+ * one (see {@link randomVariationType}), each at a weight in `[0.3, 0.9]`.
+ * Whenever at least one landed, a `linear` companion at `[0.4, 0.8]` is
+ * appended. Returns `undefined` when nothing was rolled, matching how a plain
+ * preset transform carries no `variations` key at all (see e.g.
+ * `defaultTransforms`).
  */
 function randomVariations(rng: Rng): Variation[] | undefined {
   const variations: Variation[] = [];
   if (rng() < FIRST_VARIATION_PROBABILITY) {
+    const first = randomVariationType(rng);
     variations.push({
-      type: randomVariationType(rng),
+      type: first,
       weight: uniform(rng, VARIATION_WEIGHT_MIN, VARIATION_WEIGHT_MAX),
     });
     if (rng() < SECOND_VARIATION_PROBABILITY) {
       variations.push({
-        type: randomVariationType(rng),
+        type: randomVariationType(rng, first),
         weight: uniform(rng, VARIATION_WEIGHT_MIN, VARIATION_WEIGHT_MAX),
       });
     }
