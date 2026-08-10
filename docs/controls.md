@@ -184,7 +184,8 @@ morphs into place instead of snapping (see **Presets** below).
   **Surface Look** section holds the mode's live look: a **Color source**
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
   ramp, Orbit rings, or Orbit sheets — with a **Palette** select underneath
-  (the same named gradients as Flame/Solid) that appears for the orbit-trap,
+  (the same named gradients as Flame/Solid, the shared **Custom** gradient
+  included — see **Appearance**) that appears for the orbit-trap,
   rings, and sheets sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
   color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
@@ -409,6 +410,45 @@ morphs into place instead of snapping (see **Presets** below).
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
+- **Ramp Palette** (fr-3b6) — appears while **Color Mode** is **By Height** or
+  **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
+  projection, while **4D Color** is **By 4D Radius** (fr-6ue) — naming the
+  gradient those ramps sample. **Built-in ramp** (the default) keeps the
+  original hand-tuned formulas (height's blue→green→red, radius's warm→cool);
+  the seven named gradients — **Spectrum**, **Sunset**, **Dusk**, **Lagoon**,
+  **Ember**, **Aurora**, **Moss** — swap in a cosine gradient read at the same
+  **Color Contrast**-mapped coordinate, and **Custom** selects your own
+  (below). The live cloud, the panel legend, and the Solid render — wherever
+  it takes its color from **Color Mode**, i.e. with its own **Palette** left
+  on **By Color Mode (legacy)** — all sample the one selection, so they can
+  never drift apart. Switching gradients recolors the cloud already on screen,
+  like **Color Mode** and **Color Contrast**; it is never a regenerate.
+  Persists in the link and scene file, and the row simply hides again under a
+  color mode with no ramp (By Transform, By Position, Uniform Cyan), holding
+  your choice for the next time one is active.
+- **Custom** — the gradient editor (fr-55k), which opens under whichever
+  palette select you set to **Custom**: a preview strip of the gradient, one
+  color swatch per stop, and **+ Stop** / **− Stop**. Stops sit evenly across
+  the ramp and blend linearly between neighbors; there may be 2 to 8 of them
+  and the buttons disable at those bounds. **+ Stop** appends a copy of the
+  last color, so the gradient doesn't jump until you recolor the new swatch.
+  A scene has exactly ONE custom gradient, and all four selects offering it
+  edit that same one: **Ramp Palette** here, **Palette (restarts render)** in
+  Flame's **Tone** section and in Solid's **Surface** section (those two
+  restart the accumulation, as their labels say, where this one and the
+  surface tracer's apply live), and **Palette** in **Surface Look**. A look
+  authored in one render is therefore one select away in the others. The first
+  select to reach **Custom** seeds the gradient by sampling the palette it just
+  replaced, so Custom always opens as a tweakable copy of what was on screen
+  rather than a blank ramp; it then survives switching back to a named palette,
+  and persists in the link and scene file, so an authored gradient is never
+  lost. Three of those selects also keep a legacy option that opts out of
+  gradients altogether: **Built-in ramp** here, **By Transform (legacy)** in
+  Flame (a flat per-map hue instead of a coordinate-driven gradient), and **By
+  Color Mode (legacy)** in Solid (the explorer's own **Color Mode** colors).
+  **Surface Look**'s select has none — it only appears for the color sources
+  that need a gradient, and its **By Transform** source is a sibling choice in
+  **Color source** above it.
 - **Axis Colors** (fr-8k7) — appears only while **Color Mode** is **By
   Position**: three pickers naming the color each axis contributes, blended by
   the point's normalized X/Y/Z (so a point near the far X corner reads mostly
