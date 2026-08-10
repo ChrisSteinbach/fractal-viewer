@@ -409,11 +409,28 @@ morphs into place instead of snapping (see **Presets** below).
   authored size; applies live (no regenerate) and carries across depth styles.
 - **Show guides** — toggle the grid, axes, and transform boxes.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
+- **Axis Colors** (fr-8k7) — appears only while **Color Mode** is **By
+  Position**: three pickers naming the color each axis contributes, blended by
+  the point's normalized X/Y/Z (so a point near the far X corner reads mostly
+  as the X color, one in the middle as the mix). **Reset** restores the classic
+  X→red, Y→green, Z→blue mapping, which is also the default. A dark-gray floor
+  keeps the near corner of the bounds from fading to black, and colors sharing
+  a channel deliberately wash toward their sum near the far corner rather than
+  being renormalized. The live cloud, the panel legend's swatches, and the
+  Solid render all read the same three colors, and they travel in the link and
+  scene file.
 - **Color Contrast** — visible for the Height/Radius/Position color modes; a
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
   the dense low end, right (>1) in the high end, center = linear.
 - **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting.
+- **Glow Brightness** (fr-8b1) — appears only while **Depth Style** is **Glow +
+  Bloom**: a 0.1×–3× manual multiplier on top of that style's automatic
+  exposure, which already dims dense clouds and lifts sparse ones so additive
+  points don't blow out to white. Reach for it when the automatic choice reads
+  too hot or too dim for a particular scene — 1.00× (the default) leaves the
+  automatic exposure alone. Applies live, with no regenerate, and persists in
+  the link and scene file.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
