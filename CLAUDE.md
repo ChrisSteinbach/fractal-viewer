@@ -129,7 +129,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     render mode over.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
     fr-beck spike): Jacobi `singularValues4`, `analyzeSurfaceSystem4`,
-    `buildSurfaceDE4` (final-transform lens included), beam
+    `buildSurfaceDE4` (final-transform lens included; also derives
+    `radiusBand` — the visible set's probe-seeded 4D center + [minD,
+    maxD] distance band, fr-skhv: the radius color source's normalizer,
+    matching `buildColors4`'s radius convention so the full ramp is in
+    play, slice/rotor-invariant), beam
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
     Measured verdict + numbers in the module doc. Both estimators take an
@@ -147,9 +151,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). FOUR
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). FIVE
     KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and — its
-    4D cut — the fourth):
+    4D cut — the fourth, fr-rsp6 phase 2A the fifth):
     `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot
     REFINED ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
     estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
@@ -177,23 +181,37 @@ and UI**, so the interesting math is unit-tested without a browser:
     half-extent register beside every point (linear parts alone, gated
     on the dynamically uniform `sliceHalfW > 0`), and the fr-u91x
     kaleidoscope sweeps ONE backward-step 4×4 where 3D swept a
-    (cos, sin) pair. Its params variant tail (208..431,
-    `SURFACE_GPU_PARAMS4_BYTES` 432, `packSurface4GpuParams` + a
+    (cos, sin) pair. Its params variant tail (208..463,
+    `SURFACE_GPU_PARAMS4_BYTES` 464, `packSurface4GpuParams` + a
     per-frame `SurfaceGpu4View`) holds rotor/stepBack/4D-lens rows as
     row-vec4 quartets — the buffer always stores the ROW-MAJOR bytes of
     the matrix the body applies, the packer performing the one real
     transpose (pose rotor → world-to-attractor, `setSurfaceView4`'s
-    exact dance) — plus w0/sliceHalfW/`visRadius4`; maps are the
-    `GpuMap4` layout (`packSurfaceGpuMaps4`, same 96-byte stride). Two
+    exact dance) — plus w0/sliceHalfW/`visRadius4` and the fr-skhv
+    radius-ramp band (`SurfaceDE4.radiusBand` as center4/minD/invRange);
+    maps are the
+    `GpuMap4` layout (`packSurfaceGpuMaps4`, 128-byte 4D stride). Two
     frozen slots carry 4D semantics: `visibleRadius` packs the
     SLICE-ADJUSTED sliceVisR so the shared march entry's sphere gate is
     the 4D GLSL's textually unchanged, while the tail's `visRadius4`
-    keeps the FULL radius for the height/radius color sources
-    (slice-invariant, the 4D GLSL's deliberate choice — those two shade
+    keeps the FULL radius for the height color source and the radius
+    source normalizes its center-relative distance over the band —
+    both slice-invariant, the 4D GLSL mirrored (those two shade
     lines are the one core-conditional interpolation in the shared
-    entry text). Fixed width 4 (inert knobs like "affine"),
-    `lens` THROWS (4D fold finals are fr-rsp6), nonzero `footprint`
-    THROWS at pack (the 4D oracle has no cone cap). Its eval-agreement
+    entry text). Fixed width 4 (inert knobs like "affine"); nonzero
+    `footprint`
+    THROWS at pack (the 4D oracle has no cone cap).
+    `core:"fold4"` (fr-rsp6 phase 2A) is the FOLD frontier one
+    dimension up — 4D fold base maps (`deHasFolds4`) marched as the
+    same width-configurable frontier as 3D "fold", slab(`ext`)-aware,
+    sharing `GpuMap4` and the affine4 tail; no stage-2 B&B emission by
+    the 3D measured verdict, and `lens:true` wraps either 4D core in
+    `descendLens4`'s branch sweep (fr-rsp6 phase 2B — the appended
+    lens4 params block at 464..559, `SURFACE_GPU_PARAMS4_LENS_BYTES`
+    560, packed exactly when the DE carries a `foldFinal`; the old
+    "4D lens throws" rule is gone). Bench legs fold4Boxfold/Mandelbox/
+    Kaleido/Slab + a fold4 compute-frame leg pin it. The affine4
+    eval-agreement
     leg (M3) gates fail=0 under a pure ORACLE-CONTINUITY classifier —
     the f64 oracle at the query's six ±1-ULP axis neighbors within
     tol/2 — because chord-bisected queries can park exactly ON a
@@ -203,7 +221,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     GPU's value 1-2 query-ULPs away); exclusions disclosed per system
     (5/2800 on SwiftShader) and capped at 3% — the escape leg's
     ensemble shape minus the GPU modeling a ladder doesn't need. All
-    four share the public `surfaceDE(pIn, cutoff, li)` signature, so the
+    five share the public `surfaceDE(pIn, cutoff, li)` signature, so the
     Modes below are textually identical whichever core is picked. And
     `lens:true` wraps EITHER descent core in `descendLens`'s fold-FINAL
     branch sweep — the body token-renames to `surfaceDECore` (hit-info to
@@ -680,7 +698,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     surface sessions (symmetry order 1): those ALL PREFER it when an
     adapter exists — no fold GLSL ever compiles (the ~25s Mesa link /
     ~5.7s lens link / fr-096u entry hazards never engage), no grid
-    request (gridless by decision, measured). KALEIDOSCOPE 4D stays on
+    request (gridless by decision, measured). FOLD-shaped 4D sessions
+    (fr-rsp6: 4D base-map folds or a 4D fold FINAL, any symmetry
+    order) are compute-ONLY — the fragment 4D tracer deliberately
+    carries no fold GLSL, so the eligibility gate refuses entry when
+    compute is unavailable, and a mid-session compute loss exits the
+    mode with a toast rather than falling back. KALEIDOSCOPE 4D
+    (non-fold, order > 1) stays on
     the fragment tracer by MEASURED verdict (real Iris, 1024x640: plain
     4D compute settles 4.6s vs fragment 8.9s with object-mask IoU
     0.996, but at order 6 the WGSL sector sweep never settled a
@@ -688,12 +712,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     fr-b72d tracks the kernel-side cost, fr-d0nn's h=0 register
     variant is the adjacent lever). `create()` takes a
     `SurfaceComputeTarget` union (`{kind:"ifs"|"escape"|"ifs4"}`) whose
-    `kind` picks the kernel core, the params packer and the maps
+    `kind` picks the kernel core (ifs4 → affine4 or fold4 off
+    `deHasFolds4`, the 3D `deHasFolds` split one dimension up), the
+    params packer and the maps
     buffer's layout/existence — the bounded march/shade host loop,
     progressive presents and failure ladder stay shared regardless.
-    Escape and ifs4 targets scale no priors: the forward loop is
-    phone-cheap, no 4D lens exists, and the pessimistic base priors
-    elsewhere only err toward smaller first slices. The ifs4 kind's
+    Escape and plain-affine ifs4 targets scale no priors (the forward
+    loop is phone-cheap and the pessimistic base priors elsewhere only
+    err toward smaller first slices); fold/lens-shaped ifs4 scales by
+    branch count like 3D. The ifs4 kind's
     rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`, re-read
     from the scene's `setSurface4View` state at every spec assembly and
     repacked per pass — the fragment tracer's live-uniform discipline
