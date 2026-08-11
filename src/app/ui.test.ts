@@ -703,6 +703,39 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendBar().classList.contains("hidden")).toBe(true);
   });
 
+  it("keys the legend on the surface colorSource for a 4D DOCUMENT too — never the points view's w ramp (fr-skhv round 2)", () => {
+    // The old order tested document 4D-ness before the render mode, so a
+    // 4D surface session rendered by-transform colors under the explorer's
+    // −w/+w ramp — a legend describing nothing on screen (the user-reported
+    // shape: pentatope in Surface mode, By Transform source, w-ramp bar).
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      renderMode: "surface",
+      transforms: base.transforms.map((t, i) =>
+        i === 0 ? { ...t, w: { position: 0.5 } } : t,
+      ),
+      surface: { ...base.surface, colorSource: "transform" },
+    });
+    expect(legendSwatches().classList.contains("hidden")).toBe(false);
+    expect(legendBar().classList.contains("hidden")).toBe(true);
+    expect(legendLabelMid().textContent).not.toBe("in our 3-space");
+  });
+
+  it("keeps the points view's 4D w-ramp legend when the explorer IS the active render", () => {
+    const ui = new Ui(document);
+    const base = initialState(true);
+    ui.updateLabels({
+      ...base,
+      transforms: base.transforms.map((t, i) =>
+        i === 0 ? { ...t, w: { position: 0.5 } } : t,
+      ),
+    });
+    expect(legendBar().classList.contains("hidden")).toBe(false);
+    expect(legendLabelMid().textContent).toBe("in our 3-space");
+  });
+
   it("shows the surface palette's own gradient and name for the orbit-trap source", () => {
     const ui = new Ui(document);
     const base = initialState(true);
