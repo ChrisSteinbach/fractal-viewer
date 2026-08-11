@@ -2824,6 +2824,25 @@ function main(): void {
   ).has("surfacegl")
     ? "flag"
     : null;
+  // fr-khxy: modern Firefox EXPOSES navigator.gpu while requestAdapter()
+  // can still return null (WebGPU ships progressively per platform), so
+  // the sync supported() gate admits fold-4D entry on the OBJECT alone
+  // and the failure then surfaces as a mid-entry toast + mode exit — a
+  // user who misses the toast just sees no preview ever appear. Probe a
+  // real adapter once at boot and latch the same one-way block a failed
+  // create() would have set: the eligibility gate then refuses fold-4D
+  // up front with the honest note, and every compute-preferring shape
+  // routes its WebGL fallback directly instead of through a doomed
+  // create(). A session already mid-entry when the probe lands keeps
+  // its own create() verdict — same end state, narrower window.
+  if (surfaceComputeBlock === null && SurfaceComputeRenderer.supported()) {
+    void SurfaceComputeRenderer.probeAdapter().then((ok) => {
+      if (!ok && surfaceComputeBlock === null) {
+        surfaceComputeBlock = "unavailable";
+        refreshSurfaceEligibility();
+      }
+    });
+  }
   let surfaceComputeRenderer: SurfaceComputeRenderer | null = null;
   // Latest-wins preview coalescing: `pending` latches every invalidation,
   // the single driver loop re-checks it after each completed frame — a
