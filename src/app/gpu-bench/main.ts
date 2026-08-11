@@ -34,6 +34,13 @@ import {
   symmetryRotation4,
   toTransform4,
 } from "../../fractal/affine4";
+import {
+  BALLOON_FAR_CAP_RHO,
+  balloonBall,
+  buildBalloon,
+  estimateBalloonDistance,
+} from "../../fractal/balloon-de";
+import type { Balloon } from "../../fractal/balloon-de";
 import { prepareChaosGame, runChaosGame } from "../../fractal/chaos-game";
 import type { PreparedChaosGame } from "../../fractal/chaos-game";
 import { runChaosGame4, prepareChaosGame4 } from "../../fractal/chaos-game-4d";
@@ -97,6 +104,7 @@ import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
+  SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -2423,6 +2431,15 @@ interface SurfaceDeResults {
    * mandelbox lens, marched by the app's exact ray derivation. Gates like
    * {@link marchUnproject}. */
   marchUnprojectLens?: SurfaceUnprojectRow | SkippedResult;
+  /** fr-5wlv.5 (balloonMarch): leg A over the balloon inverted-union —
+   * one fold system's kernel with `balloon: true` at the rest regime
+   * (R = 1.6, the state that persists — fr-5wlv.1's spike regimes),
+   * marched by the app's exact ray derivation through the balloon march
+   * entry (no visible-sphere gate, `t = 0` start, the oracle's far cap)
+   * against the CPU emulator's balloon arm (the union DE over the same
+   * core-routed estimator). Gates like {@link marchUnproject}, the
+   * silhouette-flip exclusion machinery included. */
+  marchUnprojectBalloon?: SurfaceUnprojectRow | SkippedResult;
   /** fr-tzdg leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
@@ -3805,6 +3822,33 @@ function surfaceMarchEstimate(de: SurfaceDE, p: Vec3, eps: number): number {
     : estimateDistanceRefined(de, p, eps);
 }
 
+/** The march emulators' balloon arm (fr-5wlv.5): the oracle ball in
+ * `buildBalloon`'s convention plus the march far cap — present exactly
+ * when a leg marches a `balloon: true` kernel. */
+interface SurfaceCpuBalloon {
+  b: Balloon;
+  far: number;
+}
+
+/** {@link surfaceMarchEstimate} under the balloon union (fr-5wlv.5):
+ * `estimateBalloonDistance` composed over the SAME core-routed estimator
+ * — the exact function the balloon kernels mirror (the wrapper over the
+ * public descent, `balloon-de.ts`'s oracle link). */
+function surfaceBalloonMarchEstimate(
+  de: SurfaceDE,
+  balloon: SurfaceCpuBalloon,
+  p: Vec3,
+  eps: number,
+): number {
+  return estimateBalloonDistance(
+    (d, q, cutoff = 0) => surfaceMarchEstimate(d, q, cutoff),
+    de,
+    balloon.b,
+    p,
+    eps,
+  ).d;
+}
+
 function surfaceCpuMarch(
   de: SurfaceDE,
   ro: Vec3,
@@ -3928,16 +3972,28 @@ function surfaceCpuMarchState(
   rd: Vec3,
   pixelEps: number,
   maxSteps: number,
+  balloon: SurfaceCpuBalloon | null = null,
 ): { status: number; t: number } {
-  const radius = de.visibleBoundingRadius * 1.02;
-  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
-  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
-  const disc = b * b - c;
-  if (disc < 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
-  const sq = Math.sqrt(disc);
-  const tFar = -b + sq;
-  if (tFar <= 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
-  let t = Math.max(-b - sq, 0);
+  let t: number;
+  let tFar: number;
+  if (balloon) {
+    // fr-5wlv.5: the balloon march entry, the kernel's marchGate mirrored
+    // — no visible-sphere gate (every ray can hit the enclosing shell),
+    // t = 0 start, far horizon |ro − c| + far; the DE below is the union.
+    const c = balloon.b.center;
+    tFar = Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far;
+    t = 0;
+  } else {
+    const radius = de.visibleBoundingRadius * 1.02;
+    const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+    const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+    const disc = b * b - c;
+    if (disc < 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
+    const sq = Math.sqrt(disc);
+    tFar = -b + sq;
+    if (tFar <= 0) return { status: SURFACE_GPU_RAY_MISS, t: -1 };
+    t = Math.max(-b - sq, 0);
+  }
   let steps = 0;
   for (;;) {
     if (t > tFar) return { status: SURFACE_GPU_RAY_MISS, t };
@@ -3947,7 +4003,9 @@ function surfaceCpuMarchState(
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = surfaceMarchEstimate(de, p, eps);
+    const d = balloon
+      ? surfaceBalloonMarchEstimate(de, balloon, p, eps)
+      : surfaceMarchEstimate(de, p, eps);
     steps++;
     if (d < eps) return { status: SURFACE_GPU_RAY_HIT, t };
     t += d * de.stepScale;
@@ -3984,16 +4042,27 @@ function surfaceCpuMarchApproach(
   rd: Vec3,
   pixelEps: number,
   maxSteps: number,
+  balloon: SurfaceCpuBalloon | null = null,
 ): { minRatio: number; tAtMin: number } {
-  const radius = de.visibleBoundingRadius * 1.02;
-  const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
-  const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
-  const disc = b * b - c;
-  if (disc < 0) return { minRatio: Infinity, tAtMin: -1 };
-  const sq = Math.sqrt(disc);
-  const tFar = -b + sq;
-  if (tFar <= 0) return { minRatio: Infinity, tAtMin: -1 };
-  let t = Math.max(-b - sq, 0);
+  let t: number;
+  let tFar: number;
+  if (balloon) {
+    // fr-5wlv.5: the balloon entry, exactly surfaceCpuMarchState's —
+    // the silhouette classifier must walk the same trajectory it judges.
+    const c = balloon.b.center;
+    tFar = Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far;
+    t = 0;
+  } else {
+    const radius = de.visibleBoundingRadius * 1.02;
+    const b = ro[0] * rd[0] + ro[1] * rd[1] + ro[2] * rd[2];
+    const c = ro[0] * ro[0] + ro[1] * ro[1] + ro[2] * ro[2] - radius * radius;
+    const disc = b * b - c;
+    if (disc < 0) return { minRatio: Infinity, tAtMin: -1 };
+    const sq = Math.sqrt(disc);
+    tFar = -b + sq;
+    if (tFar <= 0) return { minRatio: Infinity, tAtMin: -1 };
+    t = Math.max(-b - sq, 0);
+  }
   let minRatio = Infinity;
   let tAtMin = -1;
   for (let steps = 0; steps < maxSteps && t <= tFar; steps++) {
@@ -4002,7 +4071,9 @@ function surfaceCpuMarchApproach(
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
     const p: Vec3 = [ro[0] + rd[0] * t, ro[1] + rd[1] * t, ro[2] + rd[2] * t];
-    const d = surfaceMarchEstimate(de, p, eps);
+    const d = balloon
+      ? surfaceBalloonMarchEstimate(de, balloon, p, eps)
+      : surfaceMarchEstimate(de, p, eps);
     const ratio = d / eps;
     if (ratio < minRatio) {
       minRatio = ratio;
@@ -4049,6 +4120,7 @@ function describeSurfaceUnprojectMismatch(
     cpuT: number;
     tol: number;
   },
+  balloon: SurfaceCpuBalloon | null = null,
 ): string {
   const hitT =
     info.gpuStatus === SURFACE_GPU_RAY_HIT
@@ -4067,7 +4139,11 @@ function describeSurfaceUnprojectMismatch(
       pixelEps * hitT,
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
-    const d = estimateDistance(de, p, eps * 1.5);
+    // fr-5wlv.5: a balloon hit's endpoint can sit on the SHELL, so the
+    // on-surface question is the union's, not the fractal's alone.
+    const d = balloon
+      ? estimateBalloonDistance(estimateDistance, de, balloon.b, p, eps * 1.5).d
+      : estimateDistance(de, p, eps * 1.5);
     const side = info.gpuStatus === SURFACE_GPU_RAY_HIT ? "gpu" : "cpu";
     oracle =
       `${side} endpoint d/eps=${(d / eps).toExponential(2)} ` +
@@ -5265,6 +5341,12 @@ async function runSurfaceUnprojectMarch(
   software: boolean,
   capMs: number,
   onProgress: (text: string) => void,
+  balloon: {
+    center: Vec3;
+    rho: number;
+    R: number;
+    far: number;
+  } | null = null,
 ): Promise<SurfaceMarchOutcome> {
   const rays = pose.rasterWidth * pose.rasterHeight;
   const stateBytes = rays * 16;
@@ -5302,14 +5384,18 @@ async function runSurfaceUnprojectMarch(
       );
       if (offset > 0 || chunk < active.length) sweptWhole = false;
       const slice = active.subarray(offset, offset + chunk);
-      const params = packSurfaceGpuParams(de, {
-        itemCount: slice.length,
-        stepsThisPass,
-        marchSteps: SURFACE_MARCH_STEPS,
-        pose,
-        cutoff: 0,
-        footprint: 0,
-      });
+      const params = packSurfaceGpuParams(
+        de,
+        {
+          itemCount: slice.length,
+          stepsThisPass,
+          marchSteps: SURFACE_MARCH_STEPS,
+          pose,
+          cutoff: 0,
+          footprint: 0,
+        },
+        balloon,
+      );
       device.queue.writeBuffer(buffers.params, 0, params);
       device.queue.writeBuffer(buffers.active, 0, slice);
       const encoder = device.createCommandEncoder();
@@ -5385,12 +5471,36 @@ async function runSurfaceUnprojectLeg(
   software: boolean,
   status: (text: string) => void,
   activity: ActivityBadge,
+  balloonR: number | null = null,
 ): Promise<SurfaceUnprojectRow> {
   const width = SURFACE_UNPROJ_WIDTH;
   const height = SURFACE_UNPROJ_HEIGHT;
   const rays = width * height;
   const pose = buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
+  // fr-5wlv.5 (balloonMarch): a non-null balloonR marches the SAME system
+  // through the balloon kernel — buildBalloon's numbers packed at the
+  // frozen 272 offset, the balloon march entry replacing the sphere gate
+  // — against the CPU emulator's balloon arm. The pose stays the plain
+  // leg's (the app frames the attractor the same way; balloon rays that
+  // start outside the visible sphere are exactly the entry this leg
+  // exists to pin).
+  const balloonCpu: SurfaceCpuBalloon | null =
+    balloonR === null
+      ? null
+      : {
+          b: buildBalloon(sys.de, balloonR),
+          far: BALLOON_FAR_CAP_RHO * balloonBall(sys.de).radius,
+        };
+  const balloonPack =
+    balloonCpu === null
+      ? null
+      : {
+          center: balloonCpu.b.center,
+          rho: balloonCpu.b.rho,
+          R: balloonCpu.b.R,
+          far: balloonCpu.far,
+        };
 
   activity.setState("gpu", "Surface march-unproject agreement");
   status("march-unproject: compiling…");
@@ -5407,6 +5517,7 @@ async function runSurfaceUnprojectLeg(
     // source (explicit fold core + lens:false are the pinned off state).
     core: sys.core,
     lens: sys.de.foldFinal !== null,
+    balloon: balloonPack !== null,
     width:
       sys.core === "fold"
         ? SURFACE_FOLD_BEAM_WIDTH
@@ -5425,7 +5536,9 @@ async function runSurfaceUnprojectLeg(
   const params = await createSurfaceBuffer(
     device,
     "surface-de unproj params",
-    SURFACE_GPU_PARAMS_BYTES,
+    balloonPack !== null
+      ? SURFACE_GPU_PARAMS_BALLOON_BYTES
+      : SURFACE_GPU_PARAMS_BYTES,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
   // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
@@ -5506,6 +5619,7 @@ async function runSurfaceUnprojectLeg(
       software,
       SURFACE_UNPROJ_CAP_MS,
       (text) => status(`march-unproject: ${text}`),
+      balloonPack,
     );
     console.info(
       `[surface-bench] march-unproject: march done — ${String(outcome.passes)} passes, ` +
@@ -5525,7 +5639,7 @@ async function runSurfaceUnprojectLeg(
       "acceptance decided by f32-vs-f64 rounding. " +
       "Diverged trajectories and off-surface endpoints still fail.";
     const row: SurfaceUnprojectRow = {
-      system: sys.name,
+      system: balloonR === null ? sys.name : `${sys.name}+balloon@R${balloonR}`,
       width:
         sys.core === "fold"
           ? SURFACE_FOLD_BEAM_WIDTH
@@ -5572,6 +5686,7 @@ async function runSurfaceUnprojectLeg(
           rd,
           pose.pixelEps,
           SURFACE_MARCH_STEPS,
+          balloonCpu,
         );
         const ray = py * width + px;
         cpuStatus[ray] = res.status;
@@ -5621,6 +5736,7 @@ async function runSurfaceUnprojectLeg(
             rd,
             pose.pixelEps,
             SURFACE_MARCH_STEPS,
+            balloonCpu,
           );
           const hitT =
             gpuStatus === SURFACE_GPU_RAY_HIT
@@ -5653,6 +5769,7 @@ async function runSurfaceUnprojectLeg(
                     cpuT: ct,
                     tol,
                   },
+                  balloonCpu,
                 ),
             );
           }
@@ -5682,7 +5799,18 @@ async function runSurfaceUnprojectLeg(
             pose.pixelEps * gpuT,
             R * SURFACE_GPU_HIT_FLOOR,
           );
-          if (estimateDistance(sys.de, pGpu, epsGpu * 1.5) < epsGpu * 1.5) {
+          // fr-5wlv.5: under the balloon a both-hit endpoint can sit on
+          // the SHELL — confirm against the union, not the fractal alone.
+          const dGpu = balloonCpu
+            ? estimateBalloonDistance(
+                estimateDistance,
+                sys.de,
+                balloonCpu.b,
+                pGpu,
+                epsGpu * 1.5,
+              ).d
+            : estimateDistance(sys.de, pGpu, epsGpu * 1.5);
+          if (dGpu < epsGpu * 1.5) {
             row.hitTGrazes++;
           } else {
             row.hitTFailures++;
@@ -8491,6 +8619,131 @@ async function runSurfaceDeSection(
       await new Promise<void>((resolve) => setTimeout(resolve));
     }
 
+    // ----- balloonEval (fr-5wlv.5): the inverted-union eval leg — GATING -----
+    // Three systems — the affine default, one fold system, the fr-g58b
+    // lens archetype — x the spike's two R regimes (0.35 early / 1.6
+    // rest, fr-5wlv.1). Each pipeline compiles the system's OWN core+lens
+    // with `balloon: true`; the params pack `buildBalloon`'s numbers as
+    // the third argument (the oracle link), and the CPU oracle is
+    // `estimateBalloonDistance` over the same core-routed estimator the
+    // plain rows pinned. Same tolerance, fail=0 expected: both terms are
+    // certified descents the kernels already mirror — the wrapper adds
+    // ~3 flops. Rows gate through the standard agreement machinery.
+    const balloonEvalSystems = systems.filter((s) =>
+      ["affineTetra", "foldSpherefoldPair", "lensBoxfoldOverAffine"].includes(
+        s.name,
+      ),
+    );
+    for (const sys of balloonEvalSystems) {
+      for (const rMult of [0.35, 1.6]) {
+        const cfg: SurfaceKernelConfig = {
+          core: sys.core,
+          variant: "private",
+          width:
+            sys.core === "fold"
+              ? SURFACE_FOLD_BEAM_WIDTH
+              : SURFACE_AFFINE_LADDER_WIDTH,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        };
+        const label = `balloon@R${String(rMult)} ${configLabel(cfg)}`;
+        status(`agreement: compiling ${label} (${sys.name})…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let balloonParams: GPUBuffer | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: sys.core,
+            lens: sys.de.foldFinal !== null,
+            balloon: true,
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          const { pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label} ${sys.name}`,
+          );
+          status(`agreement: ${label} × ${sys.name}…`);
+          const ball = balloonBall(sys.de);
+          const b = buildBalloon(sys.de, rMult);
+          const balloon = {
+            center: b.center,
+            rho: b.rho,
+            R: b.R,
+            far: BALLOON_FAR_CAP_RHO * ball.radius,
+          };
+          const fn =
+            sys.core === "fold" ? estimateDistance : estimateDistanceRefined;
+          const cpu = sys.queries.map(
+            (q) => estimateBalloonDistance(fn, sys.de, b, q, 0, 0).d,
+          );
+          // The shared query/maps/output buffers, with a balloon-block
+          // params buffer (304 bytes) swapped into a leg-local bind group.
+          const bufs = await ensureSurfaceEvalBuffers(
+            device,
+            bindGroupLayout,
+            sys,
+          );
+          const paramsData = packSurfaceGpuParams(
+            sys.de,
+            { itemCount: sys.queries.length, cutoff: 0, footprint: 0 },
+            balloon,
+          );
+          balloonParams = await createSurfaceBuffer(
+            device,
+            `surface-de balloon params ${sys.name}`,
+            paramsData.byteLength,
+            GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          );
+          device.queue.writeBuffer(balloonParams, 0, paramsData);
+          const bindGroup = device.createBindGroup({
+            label: `surface-de balloon bind group ${sys.name}`,
+            layout: bindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: balloonParams } },
+              { binding: 1, resource: { buffer: bufs.maps } },
+              { binding: 2, resource: { buffer: bufs.input } },
+              { binding: 3, resource: { buffer: bufs.output } },
+            ],
+          });
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            {
+              queries: sys.queries,
+              buffers: {
+                output: bufs.output,
+                staging: bufs.staging,
+                bindGroup,
+              },
+            },
+            cfg.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(
+              { ...sys, name: `balloon(${sys.name})@R${String(rMult)}`, cpu },
+              cfg,
+              gpu,
+            ),
+          );
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(
+            `agreement ${label} ${sys.name}: ${describeError(e)}`,
+          );
+        } finally {
+          balloonParams?.destroy();
+        }
+        render();
+        await new Promise<void>((resolve) => setTimeout(resolve));
+      }
+    }
+
     // ----- M2 (fr-dlxh): the ESCAPE core's agreement leg — GATING -----
     // Forward escape-time systems never enter `systems` above — `buildSurfaceDE`
     // refuses their shape by design — so `escapeSystems` (built right after
@@ -9194,6 +9447,48 @@ async function runSurfaceDeSection(
           unprojFailed = true;
           results.marchUnprojectLens = { skipped: describeError(e) };
           results.notes.push(`march-unproject lens: ${describeError(e)}`);
+        }
+        render();
+      }
+
+      // fr-5wlv.5 (balloonMarch): the same gate through the balloon
+      // inverted-union — one fold system's kernel with `balloon: true` at
+      // the rest regime R = 1.6 (fr-5wlv.1: rest is what persists, and it
+      // measured clean; the 0.35 rough regime is the eval leg's to pin
+      // for values). Same truncation/failure gating as the legs above,
+      // the silhouette-flip machinery included (its caps unchanged).
+      const balloonSys = foldSystems.find(
+        (s) => s.name === "foldSpherefoldPair",
+      );
+      if (!balloonSys) {
+        results.marchUnprojectBalloon = {
+          skipped: "foldSpherefoldPair did not build (see notes)",
+        };
+        render();
+      } else {
+        try {
+          const row = await runSurfaceUnprojectLeg(
+            device,
+            balloonSys,
+            acquired.software,
+            status,
+            activity,
+            1.6,
+          );
+          results.marchUnprojectBalloon = row;
+          if (row.truncated) {
+            unprojFailed = true;
+            results.notes.push(
+              `march-unproject balloon: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
+                "agreement not verifiable, failing the leg",
+            );
+          } else if (row.failures > 0) {
+            unprojFailed = true;
+          }
+        } catch (e) {
+          unprojFailed = true;
+          results.marchUnprojectBalloon = { skipped: describeError(e) };
+          results.notes.push(`march-unproject balloon: ${describeError(e)}`);
         }
         render();
       }

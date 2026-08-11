@@ -279,6 +279,15 @@ function printSurfaceSummary(surfaceDe) {
       console.log(formatSurfaceUnprojectRow("unproj-lens", mul));
     }
   }
+  // fr-5wlv.5: leg A through the balloon inverted-union wrapper.
+  const mub = surfaceDe.marchUnprojectBalloon;
+  if (mub) {
+    if (mub.skipped) {
+      console.log(`  unproj-balloon: skipped — ${mub.skipped}`);
+    } else {
+      console.log(formatSurfaceUnprojectRow("unproj-balloon", mub));
+    }
+  }
   // fr-tzdg leg B: the end-to-end SurfaceComputeRenderer frame.
   const cf = surfaceDe.computeFrame;
   if (cf) {
