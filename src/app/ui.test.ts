@@ -508,6 +508,63 @@ describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
   });
 });
 
+describe("Ui surface balloon rows (fr-5wlv.4)", () => {
+  function surfaceBalloonRow(): HTMLElement {
+    return document.getElementById("surfaceBalloonRow") as HTMLElement;
+  }
+  function surfaceBalloonRadiusRow(): HTMLElement {
+    return document.getElementById("surfaceBalloonRadiusRow") as HTMLElement;
+  }
+
+  it("hides the radius row while the balloon is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: false,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the radius row while the balloon is on", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides both rows in a live 4D surface session (the balloon is 3D-only this cut)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      transforms: nonFlatTransforms(),
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps both rows for a non-flat system OUTSIDE surface mode (only the live 4D session hides them)", () => {
+    // The gate is fourDSurfaceLive — nonFlat && surface — not nonFlat
+    // alone (unlike the explorer echo's rows): the section is invisible
+    // outside surface mode anyway, so the rows stay stable for the next
+    // 3D surface entry.
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("Ui surface palette row (fr-7jlk)", () => {
   function surfacePaletteRow(): HTMLElement {
     return document.getElementById("surfacePaletteRow") as HTMLElement;
@@ -4840,6 +4897,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["pointSizeSlider", PARAM.pointSize],
     ["glowBrightnessSlider", PARAM.glowBrightness],
     ["balloonRadiusSlider", PARAM.balloonRadius],
+    ["surfaceBalloonRadiusSlider", PARAM.balloonRadius],
     ["flameExposureSlider", PARAM.flameExposure],
     ["flameGammaSlider", PARAM.flameGamma],
     ["flameVibrancySlider", PARAM.flameVibrancy],

@@ -1181,6 +1181,32 @@
               value="0.25"
             />
           </label>
+          <!-- The surface balloon (fr-5wlv.4): the explorer's balloon echo
+               (fr-5wlv.2) rendered as real geometry by the tracer. Binds the
+               SAME session-only state pair, so one balloon carries across
+               renderers. 3D-only this cut (hidden in a live 4D surface
+               session); no Inflate here (fr-5wlv.6). -->
+          <label
+            class="checkbox-label"
+            id="surfaceBalloonRow"
+            title="Enclose the render in its own sphere-inverted echo — the fractal's shadows fall on the cave wall around it"
+          >
+            <input type="checkbox" id="surfaceBalloonCheckbox" />
+            Balloon
+          </label>
+          <div id="surfaceBalloonRadiusRow" class="hidden">
+            <label class="select-label">
+              Balloon size: <span id="surfaceBalloonRadiusLabel">1.60×</span>
+              <input
+                type="range"
+                id="surfaceBalloonRadiusSlider"
+                min="0.05"
+                max="2.5"
+                step="0.01"
+                value="1.6"
+              />
+            </label>
+          </div>
         </details>
       </div>
 
