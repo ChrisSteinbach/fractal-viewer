@@ -210,7 +210,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     lens4 params block at 464..559, `SURFACE_GPU_PARAMS4_LENS_BYTES`
     560, packed exactly when the DE carries a `foldFinal`; the old
     "4D lens throws" rule is gone). Bench legs fold4Boxfold/Mandelbox/
-    Kaleido/Slab + a fold4 compute-frame leg pin it. The affine4
+    Kaleido/Slab + a fold4 compute-frame leg pin it. A `mapsUniform`
+    codegen option (fr-b72d probe) moves the 4D cores' maps binding to a
+    fixed 24-slot uniform array — REFUTED for production (0.99-1.02x at
+    every kaleidoscope order on Iris, values bit-identical) and kept as
+    the refutation's executable record, agreement-gated by the extended
+    opt-in `--surface-aff4-sweep` leg (5 arms x orders 1-6, pilot-sized
+    watchdog-safe batches); that leg + `scripts/aff4-order-cpu.harness.ts`
+    carry fr-b72d's closure verdict — the order superlinearity is the
+    ALGORITHM's own depth growth, CPU-oracle-matched, not kernel
+    realization. The affine4
     eval-agreement
     leg (M3) gates fail=0 under a pure ORACLE-CONTINUITY classifier —
     the f64 oracle at the query's six ±1-ULP axis neighbors within
@@ -685,9 +694,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     like 3D's (fr-u91x), so 24 slots means 24 transforms at any order.
     Since fr-dlxh's 4D cut this tracer is the PLAIN-4D fallback arm
     (`?surfacegl` / no adapter / device loss — compute is 1.7x faster
-    there) and the kaleidoscope-4D MEASURED HOME: the WGSL sector sweep
-    ran ~35x slower at order 6 (fr-b72d), so order > 1 routes here by
-    verdict, caveat-free.
+    there) and the kaleidoscope-4D MEASURED HOME: the compute arm never
+    settled a 6-minute order-6 observation this arm settled in 10.9s
+    (~35x), so order > 1 routes here by verdict, caveat-free. fr-b72d's
+    closure attributed that gap: the estimator's own cost is superlinear
+    in order for BOTH arms (algorithmic depth growth, CPU-oracle-matched
+    — `scripts/aff4-order-cpu.harness.ts`), and the compute arm's
+    additional collapse is its march-loop scheduling under that regime
+    (fr-fniy), not kernel codegen — the uniform-maps and
+    refinedCert-divergence kernel suspects were both refuted with data.
   - `surface-compute.ts` — WebGPU compute renderer for fold-shaped 3D
     surface sessions (fr-tzdg): systems with base-map folds OR a fold
     FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
@@ -709,8 +724,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     4D compute settles 4.6s vs fragment 8.9s with object-mask IoU
     0.996, but at order 6 the WGSL sector sweep never settled a
     6-minute observation the fragment arm settled in 10.9s — ~35x;
-    fr-b72d tracks the kernel-side cost, fr-d0nn's h=0 register
-    variant is the adjacent lever). `create()` takes a
+    fr-b72d's closure exonerated the kernel — the DE's cost is
+    algorithmically superlinear in order for both arms and the
+    uniform-maps/refinedCert kernel suspects were refuted on the
+    extended `--surface-aff4-sweep` leg — so the residual is this
+    module's march-loop scheduling under an expensive-DE regime,
+    fr-fniy). `create()` takes a
     `SurfaceComputeTarget` union (`{kind:"ifs"|"escape"|"ifs4"}`) whose
     `kind` picks the kernel core (ifs4 → affine4 or fold4 off
     `deHasFolds4`, the 3D `deHasFolds` split one dimension up), the
