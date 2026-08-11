@@ -18,6 +18,8 @@ import {
   setAdaptiveResolution,
   setAutoUpdate,
   setBackgroundMode,
+  setBalloonEcho,
+  setBalloonRadius,
   setColorGamma,
   setColorMode,
   setExportScale,
@@ -168,6 +170,14 @@ export interface ControlSceneEffects {
    * colorSources (see {@link surfaceColorLUT}) — uploaded once per change,
    * unlike `setSurfaceParams`' every-frame uniforms. */
   setSurfaceColorLUT(lut: Float32Array): void;
+  /** Toggle the balloon echo (fr-5wlv.2) — see `scene.ts`'s
+   * `setBalloonEchoEnabled`. */
+  setBalloonEchoEnabled(on: boolean): void;
+  /** Set the balloon echo's normalized radius — see `scene.ts`'s
+   * `setBalloonEchoRadius`. Also called every tick of the "Inflate" sweep
+   * (`main.ts`'s `onBalloonInflate`), so it must stay cheap when the value
+   * hasn't actually changed (the scene method's own equality guard). */
+  setBalloonEchoRadius(rMult: number): void;
 }
 
 /**
@@ -227,6 +237,17 @@ export interface ControlEffects {
    * {@link applyBackground}.
    */
   trackAutoBackground(): void;
+  /**
+   * Cancel an in-flight "Inflate" sweep (fr-5wlv.2, `main.ts`'s
+   * `onBalloonInflate`), if one is running. The balloon echo's checkbox and
+   * radius-slider effects call this so a genuine user edit — drag the
+   * slider, or turn the echo off — takes over from the replay instead of
+   * being overwritten by its next tick. Safe to call with no sweep active
+   * (a no-op). The sweep's OWN per-frame push writes state/scene directly
+   * rather than through this table's `onScalarControl` pipeline, so it can
+   * never reach (and cancel) itself.
+   */
+  cancelBalloonSweep(): void;
 }
 
 /**
@@ -554,6 +575,46 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     persisted: false,
     read: (s) => s.adaptiveResolution,
     apply: (s, checked) => setAdaptiveResolution(s, checked),
+  },
+  {
+    // The balloon echo checkbox (fr-5wlv.2): like adaptiveResolution, a
+    // session-only exploratory view toggle that never enters the encoded
+    // document. Applies both the enabled flag AND the current radius so
+    // switching on shows the echo at the slider's authored size, not
+    // whatever the scene's last (or never-set) radius happened to be.
+    // cancelBalloonSweep takes over from an in-flight Inflate replay — see
+    // its doc; this only ever runs from the DOM checkbox's own "change"
+    // event, never from the sweep's direct reducer calls.
+    kind: "checkbox",
+    id: "balloonEchoCheckbox",
+    persisted: false,
+    read: (s) => s.balloonEcho,
+    apply: (s, checked) => setBalloonEcho(s, checked),
+    effect: (s, fx) => {
+      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.cancelBalloonSweep();
+    },
+  },
+  {
+    // The balloon echo's radius slider (fr-5wlv.2) — a plain 1:1 numeric
+    // mapping like pointSizeSlider, session-only like the checkbox above.
+    // Live effect (unlike numPointsSlider's deferred commit): re-inverting
+    // the shared point buffer through the shader is a uniform write, not a
+    // regenerate, so every drag tick can push it.
+    kind: "range",
+    id: "balloonRadiusSlider",
+    persisted: false,
+    label: {
+      id: "balloonRadiusLabel",
+      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
+    },
+    read: (s) => String(s.balloonRadius),
+    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
+    effect: (s, fx) => {
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.cancelBalloonSweep();
+    },
   },
   // ——— Export ———
   {

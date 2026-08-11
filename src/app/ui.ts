@@ -254,6 +254,10 @@ export interface UiHandlers {
   /** "▶ Watch it build" was clicked (in the About dialog or the panel):
    * replay how the chaos game accretes the current cloud, point by point. */
   onWatchBuild: () => void;
+  /** "Inflate" was clicked (fr-5wlv.2): sweep the balloon echo's radius
+   * from a crumpled ball out to its rest size, turning the echo on first
+   * if it wasn't already. */
+  onBalloonInflate: () => void;
   /** The gradient editor (fr-55k) changed the custom palette's stop list —
    * a recolor, an added stop, or a removed stop; `stops` is the editor's
    * whole new list, parsed and ready for `setCustomPaletteStops`. */
@@ -885,6 +889,14 @@ export class Ui {
   private readonly replayCaption: HTMLElement;
 
   private readonly glowBrightnessRow: HTMLElement;
+  // The balloon echo's rows (fr-5wlv.2) — the checkbox row hides while the
+  // system is non-flat (the echo is 3D-view-only, like Render Style above),
+  // and the radius row additionally waits for state.balloonEcho. The
+  // checkbox input itself is table-driven (see SCALAR_CONTROLS);
+  // balloonInflateButton's click is bespoke, like watchBuildBtn.
+  private readonly balloonEchoRow: HTMLElement;
+  private readonly balloonRadiusRow: HTMLElement;
+  private readonly balloonInflateButton: HTMLButtonElement;
   private readonly colorGammaRow: HTMLElement;
   private readonly rampPaletteRow: HTMLElement;
   private readonly positionColorsRow: HTMLElement;
@@ -1179,6 +1191,9 @@ export class Ui {
     this.watchBuildBtn = this.byId("watchBuildBtn");
     this.replayCaption = this.byId("replayCaption");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
+    this.balloonEchoRow = this.byId("balloonEchoRow");
+    this.balloonRadiusRow = this.byId("balloonRadiusRow");
+    this.balloonInflateButton = this.byId("balloonInflateButton");
     this.colorGammaRow = this.byId("colorGammaRow");
     this.rampPaletteRow = this.byId("rampPaletteRow");
     this.positionColorsRow = this.byId("positionColorsRow");
@@ -1498,6 +1513,11 @@ export class Ui {
     // and the Appearance panel's — both fire the one handler.
     this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
     this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
+    // The balloon echo's "Inflate" replay (fr-5wlv.2) — a bespoke button
+    // like watchBuildBtn above, not a table-driven scalar control.
+    this.balloonInflateButton.addEventListener("click", () =>
+      handlers.onBalloonInflate(),
+    );
     // Every table-driven scalar control (see control-spec.ts) shares one
     // listener shape: read the element's raw value/checked and hand it, with
     // its spec, to the app's single scalar pipeline. Sliders report "input"
@@ -1924,6 +1944,17 @@ export class Ui {
     this.glowBrightnessRow.classList.toggle(
       "hidden",
       nonFlat || state.renderStyle !== "glow",
+    );
+    // The balloon echo (fr-5wlv.2) is 3D-view-only for this cut — the 4D
+    // projection's position attribute holds pre-rotation coords the
+    // inversion can't meaningfully remap (scene.ts hides the echo object
+    // there too) — so the whole control hides while non-flat, like Render
+    // Style above. The radius slider + Inflate button additionally wait
+    // for the echo itself to be on.
+    this.balloonEchoRow.classList.toggle("hidden", nonFlat);
+    this.balloonRadiusRow.classList.toggle(
+      "hidden",
+      nonFlat || !state.balloonEcho,
     );
     // The ramp palette only means anything for the modes that ARE a 1-D ramp:
     // the flat view's height/radius color modes (fr-3b6; narrower than the

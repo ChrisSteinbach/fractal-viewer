@@ -90,6 +90,7 @@ function noopHandlers(): UiHandlers {
     onFourDTumbleToggle: vi.fn(),
     onFourDTumbleSpeedInput: vi.fn(),
     onWatchBuild: vi.fn(),
+    onBalloonInflate: vi.fn(),
     onCustomPaletteStops: vi.fn(),
     onPositionAxisColors: vi.fn(),
     onBackgroundCustom: vi.fn(),
@@ -461,6 +462,49 @@ describe("Ui glow brightness slider", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderStyle: "glow" });
     expect(glowBrightnessRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
+describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
+  function balloonRadiusRow(): HTMLElement {
+    return document.getElementById("balloonRadiusRow") as HTMLElement;
+  }
+
+  it("is hidden while the balloon echo is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), balloonEcho: false });
+    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("is shown while the balloon echo is on", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), balloonEcho: true });
+    expect(balloonRadiusRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides both balloon rows for a non-flat system (the echo is 3D-only)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      balloonEcho: true,
+    });
+    expect(
+      document.getElementById("balloonEchoRow")!.classList.contains("hidden"),
+    ).toBe(true);
+    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("fires onBalloonInflate when the Inflate button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    (
+      document.getElementById("balloonInflateButton") as HTMLButtonElement
+    ).click();
+
+    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -4795,6 +4839,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
   const DIRECT: ReadonlyArray<[string, ParamSpec]> = [
     ["pointSizeSlider", PARAM.pointSize],
     ["glowBrightnessSlider", PARAM.glowBrightness],
+    ["balloonRadiusSlider", PARAM.balloonRadius],
     ["flameExposureSlider", PARAM.flameExposure],
     ["flameGammaSlider", PARAM.flameGamma],
     ["flameVibrancySlider", PARAM.flameVibrancy],

@@ -658,6 +658,40 @@
             </label>
           </div>
 
+          <!-- The balloon echo (fr-5wlv.2): a second, sphere-inverted point
+               cloud behind the explorer's own. Session-only, like Adaptive
+               resolution below — never saved into the scene link. -->
+          <label
+            class="checkbox-label"
+            id="balloonEchoRow"
+            title="Show a sphere-inverted echo of the attractor enclosing the whole scene — the Balloon size slider inflates it from a crumpled ball into a cave"
+          >
+            <input type="checkbox" id="balloonEchoCheckbox" />
+            Balloon echo
+          </label>
+
+          <div id="balloonRadiusRow" class="hidden">
+            <label class="select-label">
+              Balloon size: <span id="balloonRadiusLabel">1.60×</span>
+              <input
+                type="range"
+                id="balloonRadiusSlider"
+                min="0.05"
+                max="2.5"
+                step="0.01"
+                value="1.6"
+              />
+            </label>
+            <button
+              class="btn btn-ghost"
+              id="balloonInflateButton"
+              type="button"
+              title="Inflate: animate the echo from a crumpled ball out to its full size"
+            >
+              Inflate
+            </button>
+          </div>
+
           <!-- The scene backdrop (fr-5ps1): shown by every renderer, not just
                the explorer, so unlike Depth Style it stays live in the 4D
                view too. Custom reveals the two-stop pickers below. -->

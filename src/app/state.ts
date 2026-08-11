@@ -388,6 +388,28 @@ export interface AppState {
    */
   adaptiveResolution: boolean;
   /**
+   * Whether the explorer's "Balloon echo" (fr-5wlv.2) is showing: a second
+   * point cloud sharing the main cloud's own geometry, sphere-inverted
+   * about its enclosing ball — see `scene.ts`'s `syncBalloonEchoUniforms`
+   * and `fractal/balloon-de.ts`'s module doc for the inversion math.
+   * Session-only, like {@link adaptiveResolution}: never persisted — it's
+   * an exploratory view toggle, not scene content, and defaults off so a
+   * shared link never surprises a viewer with an extra cloud.
+   */
+  balloonEcho: boolean;
+  /**
+   * The balloon echo's radius, as a NORMALIZED multiple of the cloud's own
+   * enclosing-ball radius (`rMult = 1` touches the attractor's extent —
+   * see `fractal/balloon-de.ts`'s `buildBalloon`, whose `rMult` carries the
+   * same meaning). Session-only, like {@link balloonEcho}: never
+   * persisted, and live per-frame-updatable — the "Inflate" replay
+   * (`main.ts`'s `onBalloonInflate`) sweeps it every tick. Range/default
+   * single-sourced through {@link PARAM.balloonRadius}; 1.6 sits past the
+   * attractor's own extent, the "rest" pose where the echo has fully
+   * turned into an enclosing cave.
+   */
+  balloonRadius: number;
+  /**
    * Save-PNG export resolution as a multiple of the screen's (fr-2urv) —
    * see {@link EXPORT_SCALES}. Session-only, like {@link adaptiveResolution}:
    * never persisted — it is a device/workflow preference, not the scene, and
@@ -769,6 +791,19 @@ export const MIN_W_ANGLE = -Math.PI;
 export const MAX_W_ANGLE = Math.PI;
 export const MIN_W_SHEAR = -2;
 export const MAX_W_SHEAR = 2;
+/**
+ * Balloon echo (fr-5wlv.2) radius range/default — see
+ * {@link AppState.balloonRadius}. Session-only, so no persisted-scene
+ * precedent constrains the numbers: {@link DEFAULT_BALLOON_RADIUS} (1.6)
+ * sits past the attractor's own extent (`rMult = 1` touches it) — the
+ * "rest" pose the Inflate replay (`main.ts`) sweeps toward. The floor
+ * (0.05) is a visibly crumpled near-center ball; the ceiling (2.5) keeps
+ * the echo's shell comfortably inside `BALLOON_FAR_CAP_RHO`'s march cap
+ * (`fractal/balloon-de.ts`) at every slider position.
+ */
+export const DEFAULT_BALLOON_RADIUS = 1.6;
+export const MIN_BALLOON_RADIUS = 0.05;
+export const MAX_BALLOON_RADIUS = 2.5;
 
 /**
  * The range knowledge for one tunable numeric parameter, single-sourced so the
@@ -977,6 +1012,11 @@ export const PARAM = defineParams({
     max: MAX_GLOW_BRIGHTNESS,
     default: DEFAULT_GLOW_BRIGHTNESS,
   },
+  balloonRadius: {
+    min: MIN_BALLOON_RADIUS,
+    max: MAX_BALLOON_RADIUS,
+    default: DEFAULT_BALLOON_RADIUS,
+  },
 });
 
 export function initialState(panelOpen: boolean): AppState {
@@ -995,6 +1035,8 @@ export function initialState(panelOpen: boolean): AppState {
     autoUpdate: true,
     morphDetail: "adaptive",
     adaptiveResolution: true,
+    balloonEcho: false,
+    balloonRadius: DEFAULT_BALLOON_RADIUS,
     exportScale: 1,
     panelOpen,
     flame: {
@@ -1232,6 +1274,27 @@ export function setAdaptiveResolution(
   adaptiveResolution: boolean,
 ): AppState {
   return { ...state, adaptiveResolution };
+}
+
+/** Toggle the balloon echo (fr-5wlv.2). Session-only, like
+ * {@link setAdaptiveResolution}. */
+export function setBalloonEcho(
+  state: AppState,
+  balloonEcho: boolean,
+): AppState {
+  return { ...state, balloonEcho };
+}
+
+/** Set the balloon echo's normalized radius, clamped to
+ * {@link PARAM}.balloonRadius's range. */
+export function setBalloonRadius(
+  state: AppState,
+  balloonRadius: number,
+): AppState {
+  return {
+    ...state,
+    balloonRadius: clampToSpec(PARAM.balloonRadius, balloonRadius),
+  };
 }
 
 export function setExportScale(

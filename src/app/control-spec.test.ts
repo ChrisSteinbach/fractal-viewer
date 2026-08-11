@@ -38,6 +38,8 @@ function mockEffects(shared = false): ControlEffects {
       setSolidParams: vi.fn(),
       setSurfaceParams: vi.fn(),
       setSurfaceColorLUT: vi.fn(),
+      setBalloonEchoEnabled: vi.fn(),
+      setBalloonEchoRadius: vi.fn(),
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
@@ -49,6 +51,7 @@ function mockEffects(shared = false): ControlEffects {
     restartFlameRender: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
+    cancelBalloonSweep: vi.fn(),
   };
 }
 
@@ -59,6 +62,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "1.75");
 
     expect(state.pointSize).toBe(1.75);
+  });
+
+  it("balloonRadiusSlider apply parses the raw string into a numeric balloonRadius", () => {
+    const spec = specById("balloonRadiusSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "0.9");
+
+    expect(state.balloonRadius).toBe(0.9);
   });
 
   it("numPointsSlider apply floors raw 0 to the MIN_NUM_POINTS endpoint", () => {
@@ -233,6 +244,33 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setGuidesVisible).toHaveBeenCalledWith(false);
+    });
+
+    it("balloonEchoCheckbox effect forwards the enabled flag and current radius, and cancels an in-flight sweep", () => {
+      const spec = specById("balloonEchoCheckbox");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
+        state.balloonRadius,
+      );
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("balloonRadiusSlider effect forwards the radius and cancels an in-flight sweep", () => {
+      const spec = specById("balloonRadiusSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.9");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
     it("rampPalette effect re-bakes both views' ramp colors (recolor + applyFourDColor)", () => {
@@ -893,7 +931,7 @@ describe("commit (fr-2c27)", () => {
 });
 
 describe("table policy", () => {
-  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, and exportScale are the only entries marked persisted: false", () => {
+  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, balloonEchoCheckbox, balloonRadiusSlider, and exportScale are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
@@ -902,6 +940,8 @@ describe("table policy", () => {
       "morphDetail",
       "autoUpdate",
       "adaptiveResolutionCheckbox",
+      "balloonEchoCheckbox",
+      "balloonRadiusSlider",
       "exportScale",
     ]);
   });
@@ -922,6 +962,15 @@ describe("table policy", () => {
     const state = applyScalarControl(initial, spec, false);
 
     expect(state.adaptiveResolution).toBe(false);
+  });
+
+  it("balloonEchoCheckbox apply flips state.balloonEcho", () => {
+    const spec = specById("balloonEchoCheckbox");
+    const initial = initialState(true);
+
+    const state = applyScalarControl(initial, spec, true);
+
+    expect(state.balloonEcho).toBe(true);
   });
 
   it("partitions entries into flat, nonFlat, and unguarded view groups exactly as declared", () => {
