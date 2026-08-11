@@ -3244,6 +3244,19 @@ function main(): void {
             spec.view4.sliceHalfW,
           ]
         : []),
+      // The balloon block (fr-5wlv.5): a parked camera with an R sweep
+      // must never re-present a stale frame — the 4D pose-triple
+      // precedent. The "balloon" literal is the on-flag; the block
+      // exists exactly when the session's kernels carry the wrapper.
+      ...(spec.balloon
+        ? [
+            "balloon",
+            spec.balloon.center.join(","),
+            spec.balloon.rho,
+            spec.balloon.R,
+            spec.balloon.far,
+          ]
+        : []),
     ].join("|");
   }
 
@@ -3491,19 +3504,23 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
-          // Balloon-on bypasses the compute preference (fr-5wlv.4): the
-          // kernels get the wrapper in fr-5wlv.5 — until then the GLSL
-          // fold/fold-lens variants are the production fallback arms,
-          // slower but still safe.
-          if (surfaceComputeEligible(de) && !state.balloonEcho) {
+          if (surfaceComputeEligible(de)) {
             // The WebGPU compute path (fr-tzdg): no GLSL system upload —
             // the fold variant must never compile here (its ~25s Mesa
             // link / fr-096u entry hazards are what this path removes) —
             // and no grid request: the kernel marches gridless by
             // decision (49µs/ray was measured without it; the fallback
             // re-enter requests one when it routes the WebGL branch).
-            computeTarget = { kind: "ifs", de };
-            scene.enterSurfaceComputeSession(de);
+            // Balloon sessions PREFER compute again since fr-5wlv.5 (the
+            // kernels carry the inverted-union wrapper; the GLSL arm
+            // remains the ?surfacegl/no-adapter fallback): the flag on
+            // the target compiles the wrapper, and the scene stores the
+            // same value at enterSurfaceComputeSession so every frame
+            // spec attaches the live balloon block — state.balloonEcho
+            // is the one source both reads come from, at the same
+            // moment.
+            computeTarget = { kind: "ifs", de, balloon: state.balloonEcho };
+            scene.enterSurfaceComputeSession(de, state.balloonEcho);
           } else {
             // fr-tmgf: this session runs the WebGL tracer — the progress
             // row says why compute passed, when it did (null for affine
@@ -3534,11 +3551,14 @@ function main(): void {
             }
           }
         }
-        // The surface balloon (fr-5wlv.4) is 3D-only this cut, and
-        // balloon-on sessions were routed off compute above, so this
-        // applies it exactly where it can render — and clears the 3D
-        // material's flag on every other route (4D entry, balloon
-        // toggled off), keeping 3D<->4D transitions clean.
+        // The surface balloon is 3D-only this cut (fr-5wlv.4; the 4D
+        // lift is a later child). This stores the live on/rMult pair —
+        // the compute frame specs and the WebGL uniforms both derive
+        // from it — and clears the 3D material's flag on every other
+        // route (4D entry, balloon toggled off), keeping 3D<->4D
+        // transitions clean; on the compute route the GLSL material
+        // stays untouched by the session, so the uniform write is inert
+        // until a fallback re-enter compiles it.
         scene.setSurfaceBalloon(
           !surfaceSessionIs4D && state.balloonEcho,
           state.balloonRadius,

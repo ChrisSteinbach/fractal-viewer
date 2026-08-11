@@ -76,6 +76,7 @@ import {
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -143,9 +144,18 @@ export class SurfaceComputeUnavailableError extends Error {}
  * packer and the maps buffer's layout; everything else — the bounded
  * march/shade host loop, the progressive presents, the failure ladder —
  * is shared.
+ *
+ * An `ifs` target's `balloon` flag (fr-5wlv.5) compiles the kernels with
+ * the balloon inverted-union wrapper over whichever core/lens the DE
+ * picks; the live balloon parameters then ride every frame's spec
+ * (`SurfaceComputeFrameSpec.balloon` — the R slider's live-per-frame
+ * door, view4's discipline). Escape targets never set it (the codegen
+ * throw is the backstop: the escape solid's echo swallows the camera —
+ * fr-5wlv.4's measured verdict) and the 4D lift is a later fr-5wlv
+ * child.
  */
 export type SurfaceComputeTarget =
-  | { kind: "ifs"; de: SurfaceDE }
+  | { kind: "ifs"; de: SurfaceDE; balloon?: boolean }
   | { kind: "escape"; de: EscapeDE }
   | { kind: "ifs4"; de: SurfaceDE4 };
 
@@ -199,6 +209,16 @@ export interface SurfaceComputeFrameSpec {
    * frame with no pose is a contract bug, not a default); ignored for
    * the 3D kinds. */
   view4?: SurfaceGpu4View;
+  /** The balloon session's LIVE inverted-union parameters (fr-5wlv.5):
+   * `buildBalloon`'s convention — center + MARGINED rho (the bound's
+   * divisor), R in world units — plus the march far cap
+   * (`BALLOON_FAR_CAP_RHO · raw ball radius`). Re-read from scene state
+   * at every spec assembly so the R slider is live per-frame, exactly
+   * view4's rotor/slice discipline across the WebGPU seam. REQUIRED when
+   * the session's target was created with `balloon: true` (runFrame
+   * throws without it — the balloon kernel's params struct is 304 bytes
+   * and has no meaningful default); ignored otherwise. */
+  balloon?: { center: Vec3; rho: number; R: number; far: number };
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -635,6 +655,11 @@ export class SurfaceComputeRenderer {
                   ? "fold"
                   : "affine",
           lens: target.kind !== "escape" && target.de.foldFinal !== null,
+          // fr-5wlv.5: a balloon ifs target compiles the inverted-union
+          // wrapper over whichever core+lens the DE picked; the other
+          // kinds never set the flag (escape's codegen throw is the
+          // backstop).
+          balloon: target.kind === "ifs" && target.balloon === true,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -765,7 +790,11 @@ export class SurfaceComputeRenderer {
               // lens block past the 4D tail.
               SURFACE_GPU_PARAMS4_LENS_BYTES
             : SURFACE_GPU_PARAMS4_BYTES
-          : SURFACE_GPU_PARAMS_BYTES,
+          : target.kind === "ifs" && target.balloon === true
+            ? // fr-5wlv.5: the balloon kernel's params struct appends the
+              // balloon block at the frozen offset 272.
+              SURFACE_GPU_PARAMS_BALLOON_BYTES
+            : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({
@@ -1218,7 +1247,16 @@ export class SurfaceComputeRenderer {
             1,
             (lensFan4 ?? (lensKind === 1 ? 27 : lensKind === 2 ? 3 : 81)) / 8,
           ));
-    let shadeHitEmaUs = SURFACE_COMPUTE_INITIAL_HIT_SHADE_US * lensCostScale;
+    // fr-5wlv.5: the balloon union pays the inverted shell eval on top of
+    // the fractal term — fr-5wlv.1 measured rest-state march steps
+    // x1.25-2.06 over plain (value queries x1.00-1.27) — so both
+    // first-sizing priors start doubled; erring toward smaller first
+    // slices is the safe direction, and the EMAs take over from the
+    // first measurement.
+    const balloonCostScale =
+      this.target.kind === "ifs" && this.target.balloon === true ? 2 : 1;
+    let shadeHitEmaUs =
+      SURFACE_COMPUTE_INITIAL_HIT_SHADE_US * lensCostScale * balloonCostScale;
     let passes = 0;
     let gpuMs = 0;
     let marchGpuMs = 0;
@@ -1246,7 +1284,25 @@ export class SurfaceComputeRenderer {
               return (run: SurfaceGpuRunParams) =>
                 packSurface4GpuParams(target.de, view4, run);
             })()
-          : (run) => packSurfaceGpuParams(target.de, run);
+          : (() => {
+              // fr-5wlv.5: a balloon session's spec must carry the live
+              // balloon block (the R slider's per-frame door — view4's
+              // required-throw discipline; the 304-byte kernel struct has
+              // no meaningful default). A no-balloon session ignores any
+              // stray spec.balloon — its buffer is 272 bytes.
+              if (target.balloon === true) {
+                const balloon = spec.balloon;
+                if (!balloon) {
+                  throw new Error(
+                    "Surface compute: a balloon frame spec must carry balloon",
+                  );
+                }
+                return (run: SurfaceGpuRunParams) =>
+                  packSurfaceGpuParams(target.de, run, balloon);
+              }
+              return (run: SurfaceGpuRunParams) =>
+                packSurfaceGpuParams(target.de, run);
+            })();
     // fr-d0nn: an ifs4 frame at the shipped sliceHalfW 0 rides the
     // slab-free kernel pair (measured 2.2-2.4x cheaper at every
     // kaleidoscope order — the fr-wa6o ext registers are occupancy tax
@@ -1346,7 +1402,10 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
-    let rayStepEmaUs = SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale;
+    // balloonCostScale: the fr-5wlv.1 march-step numbers (the prior
+    // comment above shadeHitEmaUs).
+    let rayStepEmaUs =
+      SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
     let finalStates: Float32Array | null = null;
     outer: while (
       active.length > 0 ||

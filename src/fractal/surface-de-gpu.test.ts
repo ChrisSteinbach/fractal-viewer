@@ -11,6 +11,7 @@ import {
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -21,6 +22,12 @@ import {
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
+import {
+  BALLOON_FAR_CAP_RHO,
+  BALLOON_RHO_MARGIN,
+  balloonBall,
+  buildBalloon,
+} from "./balloon-de";
 import type {
   SurfaceGpu4View,
   SurfaceGpuKernelOptions,
@@ -393,6 +400,62 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(() => packSurfaceGpuParams(violating, { itemCount: 1 })).toThrow(
       /exclusive/,
     );
+  });
+
+  it("balloon third-arg null (and omitted) returns today's 272-byte buffer byte for byte (fr-5wlv.5)", () => {
+    const de = buildSurfaceDE(foldSystemTransforms(), affineFinalTransform());
+    const omitted = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 3 }));
+    const explicit = new Uint8Array(
+      packSurfaceGpuParams(de, { itemCount: 3 }, null),
+    );
+    expect(omitted.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+    expect(explicit).toEqual(omitted);
+  });
+
+  it("packs the balloon block at the frozen 272..303 offsets from buildBalloon's numbers, growing the buffer to 304 without touching 0..271 (fr-5wlv.5)", () => {
+    expect(SURFACE_GPU_PARAMS_BALLOON_BYTES).toBe(304);
+    const de = buildSurfaceDE(foldSystemTransforms());
+    // The oracle link: the packed block is buildBalloon's convention —
+    // MARGINED rho as the divisor, R in world units, the far cap in raw
+    // ball radii — so the kernel and estimateBalloonDistance certify
+    // against the same ball.
+    const ball = balloonBall(de);
+    const b = buildBalloon(de, 1.6);
+    const balloon = {
+      center: b.center,
+      rho: b.rho,
+      R: b.R,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    };
+    const plain = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 7 }));
+    const buf = packSurfaceGpuParams(de, { itemCount: 7 }, balloon);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BALLOON_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
+    const view = new DataView(buf);
+    expect(view.getFloat32(272, true)).toBe(Math.fround(b.center[0]));
+    expect(view.getFloat32(276, true)).toBe(Math.fround(b.center[1]));
+    expect(view.getFloat32(280, true)).toBe(Math.fround(b.center[2]));
+    expect(view.getFloat32(284, true)).toBe(
+      Math.fround(ball.radius * BALLOON_RHO_MARGIN),
+    );
+    expect(view.getFloat32(288, true)).toBe(Math.fround(1.6 * ball.radius));
+    expect(view.getFloat32(292, true)).toBe(
+      Math.fround(BALLOON_FAR_CAP_RHO * ball.radius),
+    );
+    expect(view.getFloat32(296, true)).toBe(0);
+    expect(view.getFloat32(300, true)).toBe(0);
+  });
+
+  it("throws when a footprint is combined with the balloon (the fr-5wlv.5 cut boundary)", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const b = buildBalloon(de, 0.9);
+    const balloon = { center: b.center, rho: b.rho, R: b.R, far: 10 };
+    expect(() =>
+      packSurfaceGpuParams(de, { itemCount: 1, footprint: 0.01 }, balloon),
+    ).toThrow(/footprint/);
+    expect(() =>
+      packSurfaceGpuParams(de, { itemCount: 1, footprint: 0 }, balloon),
+    ).not.toThrow();
   });
 });
 
@@ -1186,6 +1249,170 @@ describe("surfaceDeKernelWgsl fold-lens wrapper (lens, fr-55s1 stage B)", () => 
     expect(wgsl).toContain("struct ShadeParams");
     expect(wgsl).toContain("let d = surfaceDE(ro + rd * t, eps, li);");
     expect(wgsl).toContain("fn surfaceDECore(");
+  });
+});
+
+describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
+  it("omitted and explicit balloon:false produce identical source across every 3D mode/variant — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", core: "affine", width: 4 },
+      { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
+      { mode: "march", width: 12 },
+      { mode: "march", rays: "unproject", width: 12 },
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", lens: true, width: 12, shadeDeWidth: 1 },
+      { mode: "eval", core: "escape", width: 4 },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, balloon: false }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("balloonInvert");
+      expect(omitted).not.toContain("balloonCenter");
+      expect(omitted).not.toContain("colorPos");
+    }
+  });
+
+  it("balloon:true renames the public DE one level out and emits the union wrapper as the one public surfaceDE — fold, affine and lens variants", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", core: "affine", width: 4 },
+      { mode: "march", width: 12 },
+      { mode: "shade", lens: true, width: 12 },
+    ];
+    for (const overrides of cases) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, balloon: true }),
+      );
+      // Exactly one renamed public, exactly one union wrapper owning the
+      // public name, emitted after it — the lens idiom one level out.
+      expect(wgsl.split("fn surfaceDEFractal(").length).toBe(2);
+      expect(wgsl.split("fn surfaceDE(").length).toBe(2);
+      expect(wgsl.indexOf("fn surfaceDEFractal(")).toBeLessThan(
+        wgsl.indexOf("fn surfaceDE("),
+      );
+      expect(wgsl.split("fn balloonInvert(").length).toBe(2);
+      // The union: min of the fractal term and the scaled shell term,
+      // with the fr-55r5 inner cutoff scaled by the value factor.
+      expect(wgsl).toContain("return min(dS, dF);");
+      expect(wgsl).toContain("select(0.0, cutoff / inv.w, cutoff > 0.0)");
+      // The balloon params struct fields exist only under balloon.
+      expect(wgsl).toContain("balloonCenter: vec3f");
+      expect(wgsl).toContain("balloonFar: f32");
+    }
+    // Under a lens the balloon wraps the LENS wrapper, not the core: the
+    // core keeps its Core name and the lens sweep is the renamed public.
+    const lensed = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", lens: true, width: 12, balloon: true }),
+    );
+    expect(lensed.split("fn surfaceDECore(").length).toBe(2);
+    expect(lensed).toContain("surfaceDECore(q, innerCutoff, li)");
+  });
+
+  it("balloon keeps the mode entries' call sites untouched — surfaceDE resolves to the union wrapper", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode, width: 12, balloon: true }),
+      );
+      const entryCall =
+        mode === "eval"
+          ? "surfaceDE(queries[i].xyz, params.cutoff, li)"
+          : "surfaceDE(ro + rd * t, eps, li)";
+      expect(wgsl).toContain(entryCall);
+    }
+  });
+
+  it("balloon march drops the visible-sphere gate for the oracle's far cap, dither surviving at the t = 0 start", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        rays: "unproject",
+        width: 12,
+        balloon: true,
+      }),
+    );
+    expect(wgsl).toContain(
+      "let tFar = length(ro - params.balloonCenter) + params.balloonFar;",
+    );
+    expect(wgsl).not.toContain("let tFar = -bq + sq;");
+    expect(wgsl).toContain("t = 0.0;");
+    expect(wgsl).toContain("(shade.flags & 1u) != 0u");
+    const plain = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject", width: 12 }),
+    );
+    expect(plain).toContain("let tFar = -bq + sq;");
+  });
+
+  it("balloon shade adds colorPos to SurfaceHitInfo and argmin-routes the hit-info to the winning term's own query point", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
+    );
+    expect(wgsl).toContain("colorPos: vec3f");
+    expect(wgsl.split("fn surfaceDEHitInfoFractal(").length).toBe(2);
+    expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+    // The core's full-member constructor gained the zeroed colorPos —
+    // WGSL value constructors are all-or-none.
+    expect(wgsl).toContain("SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0))");
+    // Ties go to the fractal term (strict <, the oracle's attribution
+    // convention), and colorPos carries the winner's query point.
+    expect(wgsl).toContain("if (dS < dF) {");
+    expect(wgsl).toContain("hi.colorPos = inv.xyz;");
+    // Height/radius color sources read the winner's SOURCE point.
+    expect(wgsl).toContain("hi.colorPos.y / visR");
+    expect(wgsl).toContain("length(hi.colorPos) / visR");
+    // The argmin's value form is the probe under a fold probe config,
+    // the full descent otherwise (GLSL parity).
+    expect(wgsl).toContain("let dF = surfaceDEProbeFractal(p, 0.0, li);");
+    const noProbe = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", width: 4, balloon: true }),
+    );
+    expect(noProbe).toContain("let dF = surfaceDEFractal(p, 0.0, li);");
+    expect(noProbe).not.toContain("surfaceDEProbe");
+  });
+
+  it("balloon shade emits the probe union exactly when the probe is, and routes the shadow tap fractal-only (receives, never casts)", () => {
+    const probed = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
+    );
+    expect(probed.split("fn surfaceDEProbeFractal(").length).toBe(2);
+    expect(probed.split("fn surfaceDEProbe(").length).toBe(2);
+    // The shadow ray tests the FRACTAL alone; normal + AO stay on the
+    // public union names.
+    expect(probed).toContain("let d = surfaceDEProbeFractal(sp, 0.0, li);");
+    expect(probed).toContain("surfaceDEProbe(pos + e.xyy * h, 0.0, li)");
+    expect(probed).toContain("(hh - surfaceDEProbe(pos + n * hh, 0.0, li))");
+    const noProbe = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", width: 4, balloon: true }),
+    );
+    expect(noProbe).toContain("let d = surfaceDEFractal(sp, 0.0, li);");
+    expect(noProbe).toContain("surfaceDE(pos + e.xyy * h, 0.0, li)");
+  });
+
+  it("balloon shade drops the defensive no-intersection miss and clamps the fog origin to t (the pow-negative-base guard)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, balloon: true }),
+    );
+    expect(wgsl).toContain(
+      "let tEnter = min(select(0.0, max(-bq - sq, 0.0), disc >= 0.0), t);",
+    );
+    expect(wgsl).not.toContain("Defensive — a HIT ray always intersected");
+    const plain = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
+    expect(plain).toContain("Defensive — a HIT ray always intersected");
+  });
+
+  it("throws on the escape core and the 4D cores — the fr-5wlv.4 exclusion and the deferred 4D lift", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape", balloon: true })),
+    ).toThrow(/escape/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", balloon: true })),
+    ).toThrow(/3D-only/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ core: "fold4", width: 12, balloon: true }),
+      ),
+    ).toThrow(/3D-only/);
   });
 });
 

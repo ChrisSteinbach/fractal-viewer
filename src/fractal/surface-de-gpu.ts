@@ -196,6 +196,35 @@ import type { Vec3 } from "./types";
  *   `Params` struct only under the lens, so every no-lens 4D kernel's
  *   text stays byte-identical.
  *
+ * THE BALLOON WRAPPER (`balloon`, fr-5wlv.5) composes
+ * `balloon-de.ts`'s `estimateBalloonDistance` — the inverted-union scene
+ * `min(DE(p), (|p−c|/rho)·DE(I(p)))`, the SURFACE_BALLOON GLSL arm's
+ * WGSL twin — over the compiled variant's PUBLIC names: the lens
+ * mechanism one level further out. After the (optional) lens composition
+ * produces the block owning `surfaceDE`/`surfaceDEProbe`/
+ * `surfaceDEHitInfo`, those publics rename `…Fractal` and an appended
+ * wrapper owns the public names, so the mode entries' call sites stay
+ * textually untouched and ANY 3D descent variant (fold/affine, lens or
+ * not) composes. The shell term's inner cutoff scales by the inverse of
+ * its value factor (`cutoff / scale`), preserving the fr-55r5 contract
+ * verbatim (the oracle's module doc carries the argument). Tap routing
+ * is the GLSL arm's: march/normal/AO ride the union, the SHADOW tap
+ * calls `…Fractal` directly (the balloon receives shadows, never casts
+ * them), and the hit-info wrapper argmin-routes to the winning term's
+ * own query point (ties → fractal), reporting it as `colorPos` for the
+ * height/radius color sources. Balloon mode also swaps the march
+ * entry's visible-sphere gate for the oracle's far cap and the shade
+ * entry's defensive no-intersection miss for a clamped fog origin
+ * (march-entry semantics decided on the oracle, fr-5wlv.3). Balloon
+ * params ride the appended {@link SURFACE_GPU_PARAMS_BALLOON_BYTES}
+ * block — {@link packSurfaceGpuParams}'s third argument. `core:
+ * "escape"` THROWS (the escape solid's interior reaches the ball
+ * center, so its echo swallows the camera — fr-5wlv.4's measured
+ * verdict; escape sessions render plain), the 4D cores throw (the 4D
+ * lift is a later fr-5wlv child), and balloon + nonzero footprint
+ * throws at pack. Absent or false generates byte-identical source to
+ * the pre-balloon generator for every config.
+ *
  * TWO FRONTIER VARIANTS, selected at source-generation time so the bench
  * can A/B them with everything else held equal:
  *
@@ -340,6 +369,20 @@ import type { Vec3 } from "./types";
  *              256 vec4f escParams — (foldKind as f32, w, derivGrowth,
  *                  0), the GLSL `uEscParams` order plus the packed-zero
  *                  spare.
+ *          · `balloon: true` (fr-5wlv.5) — the 3D block GROWS: {@link
+ *              SURFACE_GPU_PARAMS_BALLOON_BYTES} = 304 bytes total. The
+ *              struct declares the lens variant block UNCONDITIONALLY
+ *              (zero-filled by the packer when no lens — the buffer was
+ *              always 272 bytes; only the struct declaration ended
+ *              early), so these land at the FROZEN offset 272:
+ *              272 vec3f balloonCenter
+ *              284 f32  balloonRho — MARGINED (`buildBalloon`'s divisor)
+ *              288 f32  balloonR — world units
+ *              292 f32  balloonFar — BALLOON_FAR_CAP_RHO · raw ball
+ *                  radius (the march far cap past the center)
+ *              296 f32  padB0        300 f32 padB1   (packed zero)
+ *              Never combined with the escape or 4D variants (codegen
+ *              throws).
  *          · `core: "affine4"` (fr-dlxh's 4D cut) — the variant block
  *              GROWS: {@link SURFACE_GPU_PARAMS4_BYTES} = 464 bytes
  *              total. Every matrix is four row-vec4s holding the
@@ -462,6 +505,16 @@ import type { Vec3 } from "./types";
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
 export const SURFACE_GPU_PARAMS_BYTES = 272;
+/** Params size under `balloon: true` (fr-5wlv.5): the 272-byte 3D block
+ * — variant members declared unconditionally, zero-filled when no lens —
+ * plus the appended balloon block at the frozen offset 272 (layout
+ * contract in the module doc). {@link packSurfaceGpuParams} returns THIS
+ * size exactly when its `balloon` argument is non-null, and the 272-byte
+ * buffer byte for byte when it is null — a no-balloon kernel's struct
+ * ends at 208/272 and never reads past it, but a BALLOON kernel's struct
+ * is 304 bytes, so its hosts must bind a buffer packed with the balloon
+ * argument. */
+export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 304;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/272; binding the larger buffer to them would
@@ -560,6 +613,27 @@ export interface SurfaceGpuKernelOptions {
    * (THE FOLD-LENS WRAPPER in the module doc) — and the lens rides the
    * appended {@link SURFACE_GPU_PARAMS4_LENS_BYTES} params block. */
   lens?: boolean;
+  /** Wrap the compiled variant in the BALLOON inverted-union (fr-5wlv.5
+   * — `balloon-de.ts`'s `estimateBalloonDistance`, the SURFACE_BALLOON
+   * GLSL arm's WGSL twin): after the (optional) lens composition
+   * produces the block owning the public names — core, or lens wrapper
+   * over core — those publics rename one level out to
+   * `surfaceDE*Fractal` and an appended wrapper owns the public
+   * `surfaceDE`/`surfaceDEProbe`/`surfaceDEHitInfo`, evaluating
+   * `min(DE(p), (|p−c|/rho)·DE(I(p)))` over them — the lens's
+   * token-rename mechanism one level further out, composing over ANY 3D
+   * descent variant (fold/affine, lens or not), so the mode entries'
+   * call sites stay textually untouched (THE BALLOON WRAPPER in the
+   * module doc). Balloon params ride the appended {@link
+   * SURFACE_GPU_PARAMS_BALLOON_BYTES} params block ({@link
+   * packSurfaceGpuParams}'s third argument — a balloon kernel must be
+   * fed a balloon-packed buffer). Absent or false reproduces the
+   * no-balloon source byte for byte. `core: "escape"` THROWS — the
+   * escape solid's interior reaches the ball center, so its echo
+   * swallows the camera (fr-5wlv.4's measured verdict); escape sessions
+   * render plain — and the 4D cores throw (the 4D lift is a later
+   * fr-5wlv child). */
+  balloon?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -738,10 +812,23 @@ function writeVec3(view: DataView, offset: number, v: Vec3): void {
  * footprint per branch (`footprint / factor`), which would need a core
  * signature change — out of the fr-55s1 cut, and the app path always
  * passes footprint 0 (GLSL parity).
+ *
+ * `balloon` (fr-5wlv.5): null — the default — returns today's 272-byte
+ * buffer byte for byte; non-null returns {@link
+ * SURFACE_GPU_PARAMS_BALLOON_BYTES} bytes with the balloon block packed
+ * at the frozen offset 272 (module-doc contract) — `center`/`rho`/`R`
+ * in `buildBalloon`'s convention (`rho` MARGINED, the bound's divisor;
+ * `R` world units) and `far` the march cap past the center
+ * (`BALLOON_FAR_CAP_RHO · raw ball radius`, the GLSL `uBalloonFar`).
+ * Balloon + nonzero footprint throws: the wrapper cannot scale the
+ * cores' uniform footprint read per term (the oracle's conformal
+ * scaling would need a core signature change), and the app path always
+ * passes 0.
  */
 export function packSurfaceGpuParams(
   de: SurfaceDE,
   run: SurfaceGpuRunParams,
+  balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
 ): ArrayBuffer {
   if (de.foldFinal && de.final) {
     // buildSurfaceDE's invariant (surface-de.ts, `final` doc): the two
@@ -757,7 +844,16 @@ export function packSurfaceGpuParams(
         "change; the app path always passes 0)",
     );
   }
-  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_BYTES);
+  if (balloon && (run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: footprint under the balloon wrapper is out of the " +
+        "fr-5wlv.5 cut (the wrapper cannot scale the cores' uniform " +
+        "footprint read per term; the app path always passes 0)",
+    );
+  }
+  const buf = new ArrayBuffer(
+    balloon ? SURFACE_GPU_PARAMS_BALLOON_BYTES : SURFACE_GPU_PARAMS_BYTES,
+  );
   const view = new DataView(buf);
   writeVec3(view, 0, de.boundCenter);
   view.setFloat32(12, de.boundingRadius, true);
@@ -819,6 +915,16 @@ export function packSurfaceGpuParams(
     view.setFloat32(260, lens.invW, true);
     view.setFloat32(264, lens.absW, true);
     view.setFloat32(268, lens.sigmaMin, true);
+  }
+  // fr-5wlv.5: the balloon block at the frozen offset 272 (module-doc
+  // contract) — the GLSL uBalloon* quantities in buildBalloon's
+  // convention. The variant block above stays zero-filled when no lens,
+  // exactly what the balloon kernel's unconditional struct members read.
+  if (balloon) {
+    writeVec3(view, 272, balloon.center);
+    view.setFloat32(284, balloon.rho, true);
+    view.setFloat32(288, balloon.R, true);
+    view.setFloat32(292, balloon.far, true);
   }
   return buf;
 }
@@ -1234,6 +1340,24 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // shared header/entry interpolations below key on this, so a fifth
   // core cannot forget one of them.
   const core4 = core === "affine4" || core === "fold4";
+  // fr-5wlv.5: the balloon inverted-union wrapper (THE BALLOON WRAPPER,
+  // module doc). Absent means no balloon, so every no-balloon config
+  // generates byte-identical source.
+  const balloon = opts.balloon ?? false;
+  if (balloon && core === "escape") {
+    throw new Error(
+      "surface-de-gpu: balloon+escape: excluded — the escape solid's " +
+        "interior reaches the ball center, so its echo swallows the " +
+        "camera (fr-5wlv.4's measured verdict); escape sessions render " +
+        "plain",
+    );
+  }
+  if (balloon && core4) {
+    throw new Error(
+      "surface-de-gpu: balloon is 3D-only (the 4D lift is a later " +
+        "fr-5wlv child)",
+    );
+  }
   // fr-d0nn: the fr-wa6o slab register-pressure probe (option doc).
   // Meaningful only under the 4D cores — every other core reads `true`
   // unconditionally, so `opts.slabExt` is never even consulted for them
@@ -3035,7 +3159,7 @@ ${
           : core === "fold4"
             ? fold4HitInfoText(slabExt, lens)
             : foldHitInfoText;
-  const hitInfoText = lens
+  const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
         "fn surfaceDEHitInfoCore(",
@@ -3045,6 +3169,62 @@ ${
 // core hit-info, like the value pair below.
 ${core4 ? lens4HitWrapText : lensHitWrapText}`
     : coreHitInfoText;
+
+  // fr-5wlv.5 (THE BALLOON WRAPPER, module doc): rename exactly one
+  // PUBLIC definition one level out — under a lens the public names are
+  // the lens wrappers, and the `(` anchor keeps the …Core/…Fractal
+  // names untouched — throwing on structural surprises rather than
+  // emitting a half-wrapped kernel.
+  const balloonRename = (src: string, from: string, to: string): string => {
+    const at = src.indexOf(from);
+    if (at < 0 || src.includes(from, at + from.length)) {
+      throw new Error(
+        `surface-de-gpu: balloon rename expected exactly one "${from}"`,
+      );
+    }
+    return src.replace(from, to);
+  };
+  // The balloon hit-info wrapper (the GLSL arm's surfaceDEBalloonHitInfo
+  // term for term): argmin over the two terms' VALUE form picks which
+  // query point's hit-info descent runs — ties to the fractal term
+  // (`dS < dF` strict, the oracle's attribution convention) — and
+  // colorPos carries the winner's own query point to the height/radius
+  // color sources. The value form is the probe under fold shade configs
+  // (GLSL parity: its balloon hit-info rides the no-cutoff value form,
+  // which folds route to the probe — fr-p8bc's 23.8x shading verdict).
+  const balloonValueDe =
+    probeWidth === null ? "surfaceDEFractal" : "surfaceDEProbeFractal";
+  const balloonHitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let dF = ${balloonValueDe}(p, 0.0, li);
+  let inv = balloonInvert(p);
+  let dS = inv.w * ${balloonValueDe}(inv.xyz, 0.0, li);
+  if (dS < dF) {
+    var hi = surfaceDEHitInfoFractal(inv.xyz, li);
+    hi.colorPos = inv.xyz;
+    return hi;
+  }
+  var hi = surfaceDEHitInfoFractal(p, li);
+  hi.colorPos = p;
+  return hi;
+}`;
+  const hitInfoText = balloon
+    ? `${balloonRename(
+        // WGSL value constructors are all-or-none, so the balloon-only
+        // colorPos member (struct below) must join the core's full-member
+        // constructor too — zeroed there; only the wrapper writes it.
+        balloonRename(
+          lensedHitInfoText,
+          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0)",
+          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0))",
+        ),
+        "fn surfaceDEHitInfo(",
+        "fn surfaceDEHitInfoFractal(",
+      )}
+
+// The balloon hit-info argmin wrapper (fr-5wlv.5) — around the renamed
+// public, the lens sweep's mechanism one level further out.
+${balloonHitWrapText}`
+    : lensedHitInfoText;
 
   // The two LUT color sources whose NORMALIZER is dimension-specific
   // (fr-dlxh's 4D cut; every other shade term reconciles under the
@@ -3063,9 +3243,17 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   // segment, and stays 0 wherever no slab is descended (h = 0, the
   // noslab kernels, every 3D core), which keeps hitW equal to w0 there
   // bit for bit.
+  //
+  // Under BALLOON (fr-5wlv.5, 3D only) both read the winning term's
+  // SOURCE point `hi.colorPos` instead of `pos` — a shell hit reads its
+  // pre-inversion geometry, so the ramps sweep the same range as the
+  // fractal's own instead of clamping at the far wall (the GLSL arm's
+  // cpos routing).
   const shadeHeightU = core4
     ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
-    : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
+    : balloon
+      ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
+      : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU = core4
     ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
       let q4c = rotorInvApply4(vec4f(pos, hitW));
@@ -3073,7 +3261,92 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
-    : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+    : balloon
+      ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
+      : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+
+  // The march entry's gate (fr-5wlv.5): balloon mode drops the
+  // visible-sphere gate (every ray can hit the enclosing shell) and caps
+  // at the oracle's far horizon `|ro − c| + far`; capped rays keep the
+  // same MISS path (background). The dither applies at t = 0, where its
+  // max(t, 1.0) scale is exactly the GLSL arm's. The non-balloon arm is
+  // the shipped text, byte for byte.
+  const marchGate = balloon
+    ? `  // fr-5wlv.5: no visible-sphere gate in balloon mode — the enclosing
+  // shell can be hit from anywhere, so every ray marches from the
+  // camera, capped at the oracle's far horizon.
+  let tFar = length(ro - params.balloonCenter) + params.balloonFar;
+  var t = st.x;
+  if (t < 0.0) {
+    t = 0.0;${marchDither}
+  }`
+    : `  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
+  // exact arithmetic; recomputed per pass — cheaper than persisting).
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    return;
+  }
+  let sq = sqrt(disc);
+  let tFar = -bq + sq;
+  if (tFar <= 0.0) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    states[ray] = st;
+    return;
+  }
+  var t = st.x;
+  if (t < 0.0) {
+    t = max(-bq - sq, 0.0);${marchDither}
+  }`;
+  // The shade entry's fog-origin gate (fr-5wlv.5): balloon mode keeps
+  // the sphere-entry recompute but drops the defensive no-intersection
+  // miss — a shell hit can sit entirely outside the visible sphere, and
+  // that early-out would paint a real hit as background — and clamps
+  // tEnter to t so the fog pow never sees a negative base (the GLSL
+  // arm's guard); shell hits nearer than the entry read fog-free. The
+  // non-balloon arm is the shipped text, byte for byte.
+  const shadeGate = balloon
+    ? `  // Sphere-gate recompute, only for tEnter (the fog origin) —
+  // fr-5wlv.5: no defensive no-intersection miss (a shell hit can sit
+  // entirely outside the visible sphere).
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  let sq = sqrt(max(disc, 0.0));
+  let t = st.x;
+  // --- shade: surface-material.ts main()'s hit path, term for term ---
+  let pos = ro + rd * t;
+  // The sphere entry when one exists, clamped to t: a shell hit can
+  // land NEARER than the entry, and the fog pow below must never see a
+  // negative base (the GLSL arm's guard) — such hits read fog-free.
+  let tEnter = min(select(0.0, max(-bq - sq, 0.0), disc >= 0.0), t);`
+    : `  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
+  // than persisting it in the march state.
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    // Defensive — a HIT ray always intersected the gate sphere.
+    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    return;
+  }
+  let sq = sqrt(disc);
+  let t = st.x;
+  // --- shade: surface-material.ts main()'s hit path, term for term ---
+  let pos = ro + rd * t;
+  // The PRE-dither sphere entry — exactly main()'s tEnter fog origin.
+  let tEnter = max(-bq - sq, 0.0);`;
+  // The shadow tap (fr-5wlv.5): the balloon receives shadows, never
+  // casts them — shadow rays test the FRACTAL alone, so the enclosing
+  // shell cannot black out the scene it wraps. Normal + AO stay on the
+  // public union names.
+  const shadowDe = balloon ? `${probeDe}Fractal` : probeDe;
 
   const entry =
     mode === "eval"
@@ -3108,28 +3381,7 @@ fn marchRays(
   let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
 ${marchRd}
-  // Sphere gate, origin-centered like the GLSL marcher (the emulator's
-  // exact arithmetic; recomputed per pass — cheaper than persisting).
-  let radius = params.visibleRadius * 1.02;
-  let bq = dot(ro, rd);
-  let cq = dot(ro, ro) - radius * radius;
-  let disc = bq * bq - cq;
-  if (disc < 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
-    return;
-  }
-  let sq = sqrt(disc);
-  let tFar = -bq + sq;
-  if (tFar <= 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
-    states[ray] = st;
-    return;
-  }
-  var t = st.x;
-  if (t < 0.0) {
-    t = max(-bq - sq, 0.0);${marchDither}
-  }
+${marchGate}
   var steps = u32(st.z);
   for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
     if (t > tFar) {
@@ -3165,7 +3417,16 @@ struct SurfaceHitInfo {
   // slabExt bodies — every other core (and the noslab variant) leaves
   // the constructor's 0, which pins the radius color to the slice plane
   // exactly as before.
-  sStar: f32,
+  sStar: f32,${
+    balloon
+      ? `
+  // fr-5wlv.5 (balloon only): the winning union term's SOURCE query
+  // point — the pre-inversion geometry the height/radius color sources
+  // read (the GLSL arm's cpos). Cores zero it; only the balloon
+  // hit-info wrapper writes it.
+  colorPos: vec3f,`
+      : ""
+  }
 }
 
 ${hitInfoText}
@@ -3208,23 +3469,7 @@ fn shadeRays(
   let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
   let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
   let ro = params.ro;
-  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
-  // than persisting it in the march state.
-  let radius = params.visibleRadius * 1.02;
-  let bq = dot(ro, rd);
-  let cq = dot(ro, ro) - radius * radius;
-  let disc = bq * bq - cq;
-  if (disc < 0.0) {
-    // Defensive — a HIT ray always intersected the gate sphere.
-    colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
-    return;
-  }
-  let sq = sqrt(disc);
-  let t = st.x;
-  // --- shade: surface-material.ts main()'s hit path, term for term ---
-  let pos = ro + rd * t;
-  // The PRE-dither sphere entry — exactly main()'s tEnter fog origin.
-  let tEnter = max(-bq - sq, 0.0);
+${shadeGate}
   let R = params.boundingRadius;
   let visR = params.visibleRadius;
   let hi = surfaceDEHitInfo(pos, li);
@@ -3263,7 +3508,7 @@ fn shadeRays(
   var ts = h * 2.0;
   for (var i = 0u; i < shade.shadowSteps; i++) {
     let sp = pos + n * h * 2.0 + shade.lightDir * ts;
-    let d = ${probeDe}(sp, 0.0, li);
+    let d = ${shadowDe}(sp, 0.0, li);
     shadow = min(shadow, 8.0 * d / ts);
     ts += clamp(d, R * 2.0e-4, visR * 0.1);
     if (shadow < 0.02 || length(sp) > visR * 1.05) {
@@ -3420,6 +3665,10 @@ struct Params {
     // 4D kernel needs both the tail AND its own appended lens4 block, so
     // core4 owns the variant block and the 3D lens fields stay the 3D
     // cores' alone. Every no-lens branch below is textually what it was.
+    // The balloon members (fr-5wlv.5) live in the NON-core4 arm only
+    // (balloon+core4 throws above) and land at the FROZEN offset 272 by
+    // declaring the lens variant block UNCONDITIONALLY under balloon —
+    // zero-filled by the packer when no lens, the module-doc contract.
     core4
       ? /* wgsl */ `
   rotorInvR0: vec4f,
@@ -3459,7 +3708,7 @@ struct Params {
   lens4Params: vec4f,`
       : ""
   }`
-      : lens
+      : lens || balloon
         ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
@@ -3467,7 +3716,17 @@ struct Params {
   lensT1: f32,
   lensM2: vec3f,
   lensT2: f32,
-  lensParams: vec4f,`
+  lensParams: vec4f,${
+    balloon
+      ? /* wgsl */ `
+  balloonCenter: vec3f,
+  balloonRho: f32,
+  balloonR: f32,
+  balloonFar: f32,
+  padB0: f32,
+  padB1: f32,`
+      : ""
+  }`
         : core === "escape"
           ? /* wgsl */ `
   escM0: vec3f,
@@ -6048,7 +6307,7 @@ ${
       lens4CoreCall,
       lens4CoreCall.replace("surfaceDECore(", "surfaceDEProbeCore("),
     );
-  const bodyBlock = lens
+  const lensedBodyBlock = lens
     ? `${descentBlock
         .replace("fn surfaceDE(", "fn surfaceDECore(")
         .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCore(")}
@@ -6067,6 +6326,70 @@ ${core4 ? lens4WrapText : lensWrapText}${
 ${core4 ? probeLens4WrapText : probeLensWrapText}`
       }`
     : descentBlock;
+
+  // THE BALLOON WRAPPER (fr-5wlv.5, module doc): the union DE over the
+  // composed variant's public value descent, derived by .replace from
+  // one template string so the probe twin cannot drift (the
+  // probeLensWrapText discipline).
+  const balloonDeWrapText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let dF = surfaceDEFractal(pIn, cutoff, li);
+  let inv = balloonInvert(pIn);
+  let innerCutoff = select(0.0, cutoff / inv.w, cutoff > 0.0);
+  let dS = inv.w * surfaceDEFractal(inv.xyz, innerCutoff, li);
+  return min(dS, dF);
+}`;
+  const balloonProbeWrapText = balloonDeWrapText
+    .replace("fn surfaceDE(", "fn surfaceDEProbe(")
+    .replaceAll("surfaceDEFractal(", "surfaceDEProbeFractal(");
+  const bodyBlock = balloon
+    ? `${
+        probeWidth === null
+          ? balloonRename(
+              lensedBodyBlock,
+              "fn surfaceDE(",
+              "fn surfaceDEFractal(",
+            )
+          : balloonRename(
+              balloonRename(
+                lensedBodyBlock,
+                "fn surfaceDE(",
+                "fn surfaceDEFractal(",
+              ),
+              "fn surfaceDEProbe(",
+              "fn surfaceDEProbeFractal(",
+            )
+      }
+
+// fr-5wlv.5: the balloon inverted-union (fractal/balloon-de.ts's
+// estimateBalloonDistance, the GLSL SURFACE_BALLOON block's WGSL twin):
+// min(DE(p), (|p-c|/rho)*DE(I(p))) over the compiled variant's public DE,
+// conservative at every R; the shell cutoff scales by the inverse of its
+// value factor so the fr-55r5 contract survives verbatim. No far-field
+// clamp here, unlike the GLSL arm's balloonInnerDE: the escape core is
+// refused at codegen (its solid swallows the camera — fr-5wlv.4), and
+// the IFS descents' far field is the value-exact sphere floor, already
+// a true bound.
+fn balloonInvert(p: vec3f) -> vec4f {
+  let d = p - params.balloonCenter;
+  // f32 floor: 1e-6 * rho (the GLSL arm's choice; the CPU oracle's 1e-12
+  // would drown in f32 rounding near c).
+  let fl = 1e-6 * params.balloonRho;
+  let r2 = max(dot(d, d), fl * fl);
+  let r = max(length(d), fl);
+  return vec4f(
+    params.balloonCenter + (params.balloonR * params.balloonR / r2) * d,
+    r / params.balloonRho,
+  );
+}
+${balloonDeWrapText}${
+        probeWidth === null
+          ? ""
+          : `
+
+// The probe taps' own balloon union (fr-5wlv.5) — same text, renamed.
+${balloonProbeWrapText}`
+      }`
+    : lensedBodyBlock;
 
   return /* wgsl */ `${headerText}
 

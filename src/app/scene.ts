@@ -838,6 +838,17 @@ export class FractalScene {
    * params tail (per-frame, the fragment tracer's live-uniform
    * discipline across the WebGPU seam). */
   private surfaceCompute4 = false;
+  /** Whether that compute session's kernels carry the balloon
+   * inverted-union wrapper (fr-5wlv.5) — the SESSION's record, frozen at
+   * {@link enterSurfaceComputeSession} beside the create-target's flag,
+   * deliberately distinct from the live {@link surfaceBalloonOn} toggle:
+   * a balloon kernel's 304-byte params struct needs the spec's balloon
+   * block on EVERY frame of the session, however the toggle moves before
+   * the restart lands (a toggle flip re-enters the session with fresh
+   * kernels). While true every frame spec carries the live
+   * center/rho/R/far block re-derived from the stored ball + rMult —
+   * the R slider's per-frame door, view4's discipline. */
+  private surfaceComputeBalloon = false;
   /** Last compute frame, uploaded as a plain RGBA8 texture and stretched
    * over the canvas by the shared surface blit — the same presentation
    * seam as the preview/settle targets, so capture and the recorder keep
@@ -2618,6 +2629,10 @@ export class FractalScene {
    * uniforms only — packSurfaceBalloon guarantees a no-shader-touch when
    * the flag doesn't flip, so every drag tick may call this. Equality
    * guard keeps render-on-demand honest, like {@link setBalloonEchoRadius}.
+   * The compute path (fr-5wlv.5) needs nothing more than the field update
+   * + renderNeeded: frame specs re-derive the balloon block from the
+   * stored rMult at every assembly, exactly {@link setSurface4View}'s
+   * live-pose discipline.
    */
   setSurfaceBalloonRadius(rMult: number): void {
     if (this.surfaceBalloonRMult === rMult) return;
@@ -2627,23 +2642,37 @@ export class FractalScene {
     this.applySurfaceBalloon();
   }
 
-  /** Re-derive the balloon uniform spec from the stored on/rMult and the
-   * installed system's ball (null clears): rho takes the certification
-   * margin, R is the normalized radius in world units, and the far cap is
-   * the oracle's shared horizon — one definition, fractal/balloon-de.ts's
-   * buildBalloon convention with the march cap alongside. */
-  private applySurfaceBalloon(): void {
+  /** The live balloon parameter block derived from the stored ball +
+   * rMult — ONE definition (fractal/balloon-de.ts's buildBalloon
+   * convention with the march far cap alongside) for both the GLSL
+   * uniforms and the compute frame spec (fr-5wlv.5): rho takes the
+   * certification margin, R is the normalized radius in world units, and
+   * the far cap is the oracle's shared horizon. Null without an
+   * installed ball. */
+  private surfaceBalloonSpec(): {
+    center: Vec3;
+    rho: number;
+    R: number;
+    far: number;
+  } | null {
     const ball = this.surfaceBalloonBall;
-    if (this.surfaceBalloonOn && ball) {
-      packSurfaceBalloon(this.surfaceMaterial, {
-        center: ball.center,
-        rho: ball.radius * BALLOON_RHO_MARGIN,
-        R: this.surfaceBalloonRMult * ball.radius,
-        far: BALLOON_FAR_CAP_RHO * ball.radius,
-      });
-    } else {
-      packSurfaceBalloon(this.surfaceMaterial, null);
-    }
+    if (!ball) return null;
+    return {
+      center: ball.center,
+      rho: ball.radius * BALLOON_RHO_MARGIN,
+      R: this.surfaceBalloonRMult * ball.radius,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    };
+  }
+
+  /** Re-derive the balloon uniform spec from the stored on/rMult and the
+   * installed system's ball (null clears) and pack it into the 3D
+   * material. */
+  private applySurfaceBalloon(): void {
+    packSurfaceBalloon(
+      this.surfaceMaterial,
+      this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null,
+    );
   }
 
   /**
@@ -2834,11 +2863,20 @@ export class FractalScene {
    * own full depth for the preview clamp — without touching the GLSL
    * material, whose fold variant must never compile on this path (the
    * ~25s Mesa link / fr-096u entry hazards are the point of the mode).
+   *
+   * `balloon` (fr-5wlv.5) records whether this session's kernels carry
+   * the inverted-union wrapper — pass exactly the create-target's flag —
+   * and re-derives the ball from the DE (the WebGL install path's
+   * {@link setSurfaceSystem} move, which never runs here), so every
+   * frame spec can attach the live center/rho/R/far block the 304-byte
+   * params struct expects.
    */
-  enterSurfaceComputeSession(de: SurfaceDE): void {
+  enterSurfaceComputeSession(de: SurfaceDE, balloon: boolean): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
+    this.surfaceBalloonBall = balloonBall(de);
+    this.surfaceComputeBalloon = balloon;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
@@ -2859,6 +2897,11 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
+    // Escape sessions never balloon (fr-5wlv.4's measured degeneracy —
+    // setEscapeSystem's comment) — null the ball exactly like the WebGL
+    // install path, and the session flag with it.
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
@@ -2879,6 +2922,8 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = true;
+    // The 4D lift is a later fr-5wlv child — no 4D session balloons.
+    this.surfaceComputeBalloon = false;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
@@ -2891,6 +2936,7 @@ export class FractalScene {
   exitSurfaceComputeSession(): void {
     this.surfaceComputeActive = false;
     this.surfaceCompute4 = false;
+    this.surfaceComputeBalloon = false;
     this.surfaceComputeTexture?.dispose();
     this.surfaceComputeTexture = null;
   }
@@ -2994,6 +3040,16 @@ export class FractalScene {
             },
           }
         : {}),
+      // The balloon session's live block (fr-5wlv.5): keyed on the
+      // SESSION flag — the kernels were compiled with the wrapper and
+      // their 304-byte params struct — with values re-derived from the
+      // stored ball + rMult at every assembly, so the R slider is live
+      // per frame exactly like the rotor/slice above.
+      ...(() => {
+        if (!this.surfaceComputeBalloon) return {};
+        const balloon = this.surfaceBalloonSpec();
+        return balloon ? { balloon } : {};
+      })(),
     };
   }
 
