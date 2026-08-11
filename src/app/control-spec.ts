@@ -218,6 +218,15 @@ export interface ControlEffects {
    * desync the tween's `from` endpoint.
    */
   applyBackground(): void;
+  /**
+   * Re-derive the `"auto"` backdrop after an edit that may have moved the
+   * palette it tracks (fr-mz2u) — the palette selects call this beside
+   * their own forwards. A guarded no-op for every other background mode,
+   * and value-guarded in main.ts, so calling it for an INACTIVE render's
+   * palette costs nothing; same one-owner routing as
+   * {@link applyBackground}.
+   */
+  trackAutoBackground(): void;
 }
 
 /**
@@ -475,6 +484,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => {
       fx.recolor();
       fx.applyFourDColor();
+      fx.trackAutoBackground();
     },
   },
   {
@@ -724,11 +734,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "flamePalette",
     read: (s) => s.flame.paletteId,
     apply: (s, raw) => setFlamePaletteId(s, raw as PaletteSelection),
-    effect: (s, fx) =>
+    effect: (s, fx) => {
       fx.postFlame({
         type: "setPalette",
         palette: resolvePalette(s.flame.paletteId, s.customPalette),
-      }),
+      });
+      fx.trackAutoBackground();
+    },
   },
   // Adaptive density-estimation blur (fr-17t) sliders — live-reactive like
   // gamma/vibrancy: the worker re-runs just the finished-frame adaptive
@@ -830,11 +842,13 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "solidPalette",
     read: (s) => s.solid.paletteId,
     apply: (s, raw) => setSolidPaletteId(s, raw as PaletteSelection),
-    effect: (s, fx) =>
+    effect: (s, fx) => {
       fx.postVoxel({
         type: "setPalette",
         palette: resolvePalette(s.solid.paletteId, s.customPalette),
-      }),
+      });
+      fx.trackAutoBackground();
+    },
   },
   {
     kind: "range",
@@ -957,6 +971,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.scene.setSurfaceParams(s.surface);
       const lut = surfaceColorLUT(s);
       if (lut) fx.scene.setSurfaceColorLUT(lut);
+      fx.trackAutoBackground();
     },
   },
 ];

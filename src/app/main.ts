@@ -114,6 +114,7 @@ import {
   DEFAULT_SYMMETRY_TWIST,
   initialState,
   removeTransform,
+  resolveSceneBackground,
   selectTransform,
   setCustomPaletteStops,
   setFinalTransform,
@@ -876,10 +877,30 @@ function main(): void {
     scene.setBackground(stops);
   }
   /** Snap the scene to the CURRENT document's backdrop, discarding any
-   * in-flight crossfade — control edits and non-morph loads land instantly. */
+   * in-flight crossfade — control edits and non-morph loads land instantly.
+   * Resolves through resolveSceneBackground so `"auto"` derives from the
+   * active render's palette (fr-mz2u). */
   function applyBackgroundNow(): void {
     backgroundTween.cancel();
-    pushBackground(resolveBackground(state.background));
+    pushBackground(resolveSceneBackground(state));
+  }
+  /**
+   * The `"auto"` backdrop's live tracking (fr-mz2u): re-derive and push when
+   * the palette it follows may have moved — palette select edits, gradient
+   * editor drags, render-mode switches. A no-op for the static modes, and
+   * value-guarded so an edit to an INACTIVE render's palette (or one that
+   * resolves to the same stops) touches nothing. While a replace-load
+   * crossfade is in flight the tween owns the display — its final sample
+   * re-enters here (tickLogic), so a render-mode switch landing mid-fade
+   * still settles on the right derivation.
+   */
+  function trackAutoBackground(): void {
+    if (state.background.mode !== "auto") return;
+    if (backgroundTween.active()) return;
+    const target = resolveSceneBackground(state);
+    if (!backgroundGradientsEqual(liveBackground, target)) {
+      pushBackground(target);
+    }
   }
   // The camera-fit flag the suppressed replace-load regenerate would have
   // carried, remembered for the morph's terminal sample (whose request is the
@@ -2627,6 +2648,10 @@ function main(): void {
     },
     activate: () => {
       state = setRenderMode(state, "flame");
+      // The "auto" backdrop follows the active render's palette (fr-mz2u),
+      // so every render-mode landing re-derives it — here and in the other
+      // sessions' activate/deactivate.
+      trackAutoBackground();
       refreshUi();
     },
     deactivate: () => {
@@ -2637,6 +2662,7 @@ function main(): void {
       // showing can't yank the app out of it via a blind write.
       if (state.renderMode === "flame") {
         state = setRenderMode(state, "points");
+        trackAutoBackground(); // the explorer's palette owns the backdrop again (fr-mz2u)
         // Force the explorer to repaint over the frozen flame image (fr-w9wl):
         // flame and points share the one canvas, and returning to points is a
         // visible change that goes through no scene mutator — so with
@@ -2786,6 +2812,7 @@ function main(): void {
       // so a raycast drag should orbit the camera, not grab a hidden box.
       state = selectTransform(state, null);
       state = setRenderMode(state, "solid");
+      trackAutoBackground(); // see the flame session's activate (fr-mz2u)
       refreshGuides();
       refreshUi();
     },
@@ -2794,6 +2821,7 @@ function main(): void {
       // deactivate for why this is not a blind write.
       if (state.renderMode === "solid") {
         state = setRenderMode(state, "points");
+        trackAutoBackground(); // see the flame session's deactivate (fr-mz2u)
         // Repaint the explorer over the last raymarched frame (fr-w9wl) — see
         // the flame session's deactivate; the solid volume shares the same one
         // canvas and the same render-on-demand gate.
@@ -3600,6 +3628,7 @@ function main(): void {
       surfaceSettled = false;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
+      trackAutoBackground(); // see the flame session's activate (fr-mz2u)
       refreshUi();
       // The render-complete signal — the budget-met event a holding
       // collection show or timeline render keyframe departs on — fires
@@ -3634,6 +3663,7 @@ function main(): void {
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {
         state = setRenderMode(state, "points");
+        trackAutoBackground(); // see the flame session's deactivate (fr-mz2u)
         // Repaint the explorer over the last traced frame (fr-w9wl): the
         // tracer shares the one canvas and the same render-on-demand gate.
         scene.invalidate();
@@ -3989,8 +4019,13 @@ function main(): void {
       // to the restored document's over the same duration as the system
       // morph — a timeline/drift leg or gallery load moves the background
       // like everything else. Reduced motion snaps, exactly as
-      // regenerateReplaced itself does for the system.
-      const target = resolveBackground(state.background);
+      // regenerateReplaced itself does for the system. An `"auto"` target
+      // resolves from the restored document's palette (fr-mz2u) — the morph
+      // adopts the target's palette instantly, so the crossfade IS the
+      // smooth re-derivation between the two scenes' derived backdrops; a
+      // leg that also switches render mode re-derives when that mode lands
+      // (trackAutoBackground via the session's activate).
+      const target = resolveSceneBackground(state);
       if (
         prefersReducedMotion() ||
         backgroundGradientsEqual(liveBackground, target)
@@ -4557,6 +4592,7 @@ function main(): void {
     restartSolidRender: () => solidSession.enter(),
     restartFlameRender: () => flameSession.enter(),
     applyBackground: applyBackgroundNow,
+    trackAutoBackground,
   };
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -4724,6 +4760,10 @@ function main(): void {
         if (colorModeUsesRampPalette(state.colorMode)) recolor();
         if (state.fourDColor === "radius") applyFourDColor();
       }
+      // The `"auto"` backdrop tracks a custom-gradient drag live (fr-mz2u)
+      // whenever the active render's palette selects the edited gradient —
+      // trackAutoBackground's own guards make this free otherwise.
+      trackAutoBackground();
     },
     // The axis-color pickers (fr-8k7) are a bespoke widget like the gradient
     // editor: undo checkpoint + debounced save, reducer, label sync, then a
@@ -5662,7 +5702,14 @@ function main(): void {
     // virtual steps drive it deterministically). The terminal sample lands
     // exactly on the target document's backdrop.
     const backgroundSample = backgroundTween.sample(now);
-    if (backgroundSample) pushBackground(backgroundSample.gradient);
+    if (backgroundSample) {
+      pushBackground(backgroundSample.gradient);
+      // An `"auto"` derivation can move while the crossfade flies — a
+      // render-mode switch landing mid-fade re-points the palette it tracks
+      // (fr-mz2u). trackAutoBackground skips while the tween is active, so
+      // the landing sample re-checks here and settles any drift.
+      if (backgroundSample.final) trackAutoBackground();
+    }
     // The ambient drift show: when a departure comes due, launch the next
     // leg — a Surprise-Me roll or the next saved scene (driftPolicy.advance).
     // Polled AFTER the morph sample above on purpose: on a backgrounded

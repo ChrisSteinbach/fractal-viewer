@@ -48,6 +48,7 @@ function mockEffects(shared = false): ControlEffects {
     restartSolidRender: vi.fn(),
     restartFlameRender: vi.fn(),
     applyBackground: vi.fn(),
+    trackAutoBackground: vi.fn(),
   };
 }
 
@@ -249,6 +250,17 @@ describe("effects", () => {
       expect(fx.applyFourDColor).toHaveBeenCalled();
     });
 
+    it("rampPalette effect also tracks the auto background (fr-mz2u)", () => {
+      const spec = specById("rampPalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "ember");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+    });
+
     it("background effect invokes applyBackground exactly once and touches no scene method", () => {
       const spec = specById("background");
       const previous = initialState(true);
@@ -411,6 +423,23 @@ describe("effects", () => {
       });
     });
 
+    it("flamePalette effect also tracks the auto background, alongside still posting setPalette (fr-mz2u)", () => {
+      const spec = specById("flamePalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "spectrum");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      // Proves the fr-mz2u addition extended the effect rather than replacing
+      // it: the pre-existing worker forward still fires alongside the new call.
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+      expect(fx.postFlame).toHaveBeenCalledWith({
+        type: "setPalette",
+        palette: "spectrum",
+      });
+    });
+
     it("flameEstimatorRadiusSlider effect posts setEstimatorRadius", () => {
       const spec = specById("flameEstimatorRadiusSlider");
       const previous = initialState(true);
@@ -511,6 +540,17 @@ describe("effects", () => {
         type: "setPalette",
         palette: "spectrum",
       });
+    });
+
+    it("solidPalette effect also tracks the auto background (fr-mz2u)", () => {
+      const spec = specById("solidPalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "spectrum");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
     });
 
     it("solidIterationsSlider effect posts setIterationsBudget to the voxel worker", () => {
@@ -709,6 +749,17 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceColorLUT).toHaveBeenCalledWith(
         surfaceColorLUT(state),
       );
+    });
+
+    it("surfacePalette effect also tracks the auto background (fr-mz2u)", () => {
+      const spec = specById("surfacePalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "aurora");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -6,12 +6,14 @@ import {
   CUSTOM_PALETTE_ID,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
+  resolvePalette,
   seedCustomStops,
 } from "../fractal/palette";
 import type {
   CustomPalette,
   FlamePaletteId,
   PaletteSelection,
+  PaletteSpec,
   RgbStop,
 } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
@@ -1748,6 +1750,41 @@ export function setSymmetryTwist(state: AppState, twist: number): AppState {
 }
 
 /**
+ * The palette the `"auto"` backdrop tracks (fr-mz2u): the ACTIVE render's
+ * own palette select — the flame/solid/surface `paletteId` while that
+ * render is showing, else the explorer's {@link AppState.rampPaletteId}.
+ * Deliberately COARSE: it reads only {@link AppState.renderMode}, never the
+ * color mode / color source that decides whether the palette is visible in
+ * the current frame, so the backdrop has one stable answer per render mode
+ * instead of re-deriving on every color-mode flip. (The explorer's default
+ * ramp is `"legacy"` — no gradient — so a fresh scene's auto backdrop is
+ * the dark ground until a palette actually enters the picture.)
+ */
+export function activeScenePalette(state: AppState): PaletteSpec {
+  const id =
+    state.renderMode === "flame"
+      ? state.flame.paletteId
+      : state.renderMode === "solid"
+        ? state.solid.paletteId
+        : state.renderMode === "surface"
+          ? state.surface.paletteId
+          : state.rampPaletteId;
+  return resolvePalette(id, state.customPalette);
+}
+
+/**
+ * The one state-aware backdrop resolution (fr-mz2u): `resolveBackground`
+ * with the {@link activeScenePalette} supplied, so `"auto"` derives from
+ * what the scene is actually showing. Every consumer that holds an
+ * {@link AppState} resolves through THIS (main.ts's pushes, the
+ * custom-slot seeding below); the palette-less `resolveBackground` overload
+ * stays only for callers with no state in hand.
+ */
+export function resolveSceneBackground(state: AppState): BackgroundGradient {
+  return resolveBackground(state.background, activeScenePalette(state));
+}
+
+/**
  * Set which backdrop the scene renders (fr-5ps1) — see
  * {@link AppState.background}. Not clamped — it is an enum (see
  * `background.ts`'s `BACKGROUND_MODES`), and the UI only offers valid values
@@ -1756,7 +1793,8 @@ export function setSymmetryTwist(state: AppState, twist: number): AppState {
  *
  * A fresh switch TO `"custom"` — no authored gradient yet — seeds the custom
  * slot from the backdrop being REPLACED (the resolved stops of the previous
- * mode), so Custom starts as a tweakable copy of the current look: the exact
+ * mode, an `"auto"` predecessor's derived stops included — fr-mz2u), so
+ * Custom starts as a tweakable copy of the current look: the exact
  * {@link setFlamePaletteId}/`seedCustomStops` discipline, applied to the
  * backdrop. Picking a built-in mode, or re-picking Custom when a payload
  * already exists, leaves the authored slot untouched — selecting a backdrop
@@ -1768,7 +1806,7 @@ export function setBackgroundMode(
 ): AppState {
   const seed =
     mode === "custom" && state.background.custom === undefined
-      ? { custom: resolveBackground(state.background) }
+      ? { custom: resolveSceneBackground(state) }
       : {};
   return { ...state, background: { ...state.background, mode, ...seed } };
 }

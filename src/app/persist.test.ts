@@ -3419,6 +3419,31 @@ describe("decodeScene background (fr-5ps1)", () => {
     });
   });
 
+  it("round-trips the auto mode with no baked colors in the wire form", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "auto" },
+    };
+    const payload = decodePayload(encodeScene(s));
+    expect(payload.background).toEqual({ mode: "auto" });
+    expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "auto" });
+  });
+
+  it("keeps the authored custom payload even while auto is selected", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "auto",
+        custom: { top: [1, 0, 0], bottom: [0, 0, 1] },
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.background).toEqual({
+      mode: "auto",
+      custom: { top: [1, 0, 0], bottom: [0, 0, 1] },
+    });
+  });
+
   it("omits the background key from the encoded payload for the pristine default", () => {
     const payload = decodePayload(encodeScene(baseSnapshot()));
     expect("background" in payload).toBe(false);
@@ -3452,7 +3477,7 @@ describe("decodeScene background (fr-5ps1)", () => {
   });
 
   it("falls back to dark for an unrecognized mode under a non-aerial style", () => {
-    const raw = { ...baseSnapshot(), background: { mode: "auto" } };
+    const raw = { ...baseSnapshot(), background: { mode: "nebula" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.background).toEqual({ mode: "dark" });
   });
@@ -3461,10 +3486,16 @@ describe("decodeScene background (fr-5ps1)", () => {
     const raw = {
       ...baseSnapshot(),
       renderStyle: "aerial",
-      background: { mode: "auto" },
+      background: { mode: "nebula" },
     };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it('decodes a wire-form "auto" mode with no payload as auto, not the legacy fallback', () => {
+    const raw = { ...baseSnapshot(), background: { mode: "auto" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "auto" });
   });
 
   it("falls back to the legacy resolution for custom mode with no surviving payload", () => {

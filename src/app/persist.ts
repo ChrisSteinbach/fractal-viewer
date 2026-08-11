@@ -688,8 +688,11 @@ function decodePositionAxisColors(
  * malformed block is keyed on `legacyAerial` (the already-validated render
  * style), and a pre-fr-5ps1 aerial link keeps rendering the haze it always
  * rendered. The same fallback covers an unrecognized mode, so a link from a
- * future build (fr-mz2u's `"auto"`, fr-4vi7's curated presets) degrades to
- * the legacy resolution rather than costing the scene.
+ * future build (fr-4vi7's curated presets) degrades to the legacy
+ * resolution rather than costing the scene — exactly how pre-fr-mz2u
+ * builds degrade the now-valid `"auto"`. `"auto"` itself round-trips as
+ * the bare mode (fr-mz2u): the derived colors are never written, so the
+ * backdrop keeps tracking palette edits after a link round-trip.
  *
  * The custom gradient (`top`/`bottom` hex strings, {@link hexToRgb}-strict
  * like {@link decodePositionAxisColors}) decodes independently of the mode

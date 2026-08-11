@@ -1,4 +1,5 @@
 import {
+  activeScenePalette,
   addTransform,
   clampToSpec,
   DEFAULT_COLOR_GAMMA,
@@ -70,6 +71,7 @@ import {
   nearestFlameIterationDetentIndex,
   PARAM,
   removeTransform,
+  resolveSceneBackground,
   selectTransform,
   setAdaptiveResolution,
   setBackgroundCustom,
@@ -117,7 +119,7 @@ import {
   systemIsNonFlat,
   updateTransform,
 } from "./state";
-import { resolveBackground } from "./background";
+import { autoBackground, resolveBackground } from "./background";
 import {
   defaultFinalTransform,
   mengerSponge,
@@ -1456,6 +1458,19 @@ describe("setBackgroundMode", () => {
     expect(next.background.custom).toEqual(resolveBackground({ mode: "haze" }));
   });
 
+  // fr-mz2u: an "auto" predecessor's seed is the DERIVED stops (the palette
+  // the scene was actually showing), not a flat built-in gradient — "sunset",
+  // not a default palette, so a wrong (e.g. always-spectrum) derivation would
+  // fail this rather than accidentally matching.
+  it("seeds the custom slot from the auto-derived stops on first switch to custom", () => {
+    const state = setBackgroundMode(
+      setFlamePaletteId(setRenderMode(initialState(true), "flame"), "sunset"),
+      "auto",
+    );
+    const next = setBackgroundMode(state, "custom");
+    expect(next.background.custom).toEqual(autoBackground("sunset"));
+  });
+
   it("keeps the existing custom stops instead of re-seeding when selecting custom again", () => {
     const seeded = setBackgroundMode(initialState(true), "custom");
     const authored = {
@@ -1490,5 +1505,67 @@ describe("setBackgroundCustom", () => {
     const next = setBackgroundCustom(state, authored);
     expect(next.background).toEqual({ mode: "custom", custom: authored });
     expect(state.background.custom).not.toEqual(authored);
+  });
+});
+
+describe("activeScenePalette", () => {
+  it("returns the ramp palette id in points mode", () => {
+    expect(activeScenePalette(initialState(true))).toBe("legacy");
+  });
+
+  it("returns the flame palette id in flame mode", () => {
+    const state = setRenderMode(
+      setFlamePaletteId(initialState(true), "aurora"),
+      "flame",
+    );
+    expect(activeScenePalette(state)).toBe("aurora");
+  });
+
+  it("returns the solid palette id in solid mode", () => {
+    const state = setRenderMode(
+      setSolidPaletteId(initialState(true), "ember"),
+      "solid",
+    );
+    expect(activeScenePalette(state)).toBe("ember");
+  });
+
+  it("returns the surface palette id in surface mode", () => {
+    const state = setRenderMode(
+      setSurfacePaletteId(initialState(true), "moss"),
+      "surface",
+    );
+    expect(activeScenePalette(state)).toBe("moss");
+  });
+
+  it("resolves a custom selection to the customPalette payload object", () => {
+    const flameMode = setRenderMode(initialState(true), "flame");
+    const state = setFlamePaletteId(flameMode, "custom");
+    expect(activeScenePalette(state)).toBe(state.customPalette);
+  });
+});
+
+describe("resolveSceneBackground", () => {
+  it("resolves the dark stops for the initial state", () => {
+    expect(resolveSceneBackground(initialState(true))).toEqual(
+      resolveBackground({ mode: "dark" }),
+    );
+  });
+
+  it("derives from the active render's palette when the background mode is auto", () => {
+    const state = setBackgroundMode(
+      setFlamePaletteId(setRenderMode(initialState(true), "flame"), "sunset"),
+      "auto",
+    );
+    expect(resolveSceneBackground(state)).toEqual(autoBackground("sunset"));
+  });
+
+  // The fresh-scene case: points mode's rampPaletteId defaults to "legacy",
+  // which has no gradient to derive from, so auto mode falls back to dark —
+  // a brand-new scene never opens on a backdrop that hasn't rendered yet.
+  it("falls back to the dark stops for a fresh scene's auto mode (legacy ramp palette)", () => {
+    const state = setBackgroundMode(initialState(true), "auto");
+    expect(resolveSceneBackground(state)).toEqual(
+      resolveBackground({ mode: "dark" }),
+    );
   });
 });
