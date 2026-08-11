@@ -3072,7 +3072,23 @@ function main(): void {
             frame.width,
             frame.height,
           );
-          scene.sampleSurfaceComputeCost(performance.now() - t0);
+          const dropped = scene.sampleSurfaceComputeCost(
+            performance.now() - t0,
+            frame.truncated,
+          );
+          // A truncated preview that just dropped the rung must be RE-RUN
+          // (fr-khxy round 3): a parked entry has no further invalidations
+          // coming, so without this re-kick the panic verdict would fire
+          // after the session's last preview and the pane would hold the
+          // truncated frame's backdrop until the full settle lands
+          // (measured 45s of black on Firefox's ~10-20x slower WebGPU
+          // where Chrome's preview completes in 0.4s). At the dropped rung
+          // the re-run completes within the same wall budget and paints
+          // real content, which the settle's prefill then carries. At the
+          // floor the governor reports no change, so this cannot loop.
+          if (frame.truncated && dropped !== null) {
+            surfaceComputePreviewPending = true;
+          }
           console.debug(
             `Surface compute preview ${String(frame.width)}x${String(frame.height)}: ` +
               `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes` +
