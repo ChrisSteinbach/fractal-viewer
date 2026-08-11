@@ -3444,6 +3444,11 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
+          // Escape sessions never take the balloon (fr-5wlv.4, measured:
+          // the escape solid's interior reaches the ball center, so its
+          // echo swallows the camera — scene.setEscapeSystem nulls the
+          // ball and renders plain), so their compute preference stands
+          // regardless of the shared toggle.
           if (surfaceComputeAvailable()) {
             computeTarget = { kind: "escape", de };
             scene.enterSurfaceComputeEscapeSession();
@@ -3486,7 +3491,11 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
-          if (surfaceComputeEligible(de)) {
+          // Balloon-on bypasses the compute preference (fr-5wlv.4): the
+          // kernels get the wrapper in fr-5wlv.5 — until then the GLSL
+          // fold/fold-lens variants are the production fallback arms,
+          // slower but still safe.
+          if (surfaceComputeEligible(de) && !state.balloonEcho) {
             // The WebGPU compute path (fr-tzdg): no GLSL system upload —
             // the fold variant must never compile here (its ~25s Mesa
             // link / fr-096u entry hazards are what this path removes) —
@@ -3511,10 +3520,29 @@ function main(): void {
             );
             // Kick the empty-space grid build (fr-55r5 part 2). Async and
             // optional: the session renders gridless until it lands, and a
-            // superseding session boundary drops it by id.
-            surfaceGrid.request(de);
+            // superseding session boundary drops it by id. NEVER in
+            // balloon mode (fr-5wlv.3's decision): the grid's floors
+            // bound the FRACTAL alone, not the union — the shell can be
+            // nearer than any floor admits — so balloon marches gridless;
+            // the cancel keeps the session-boundary invariant (re-stamp
+            // or cancel the outstanding id) so an earlier enter's
+            // in-flight build can't land mid-balloon-session.
+            if (state.balloonEcho) {
+              surfaceGrid.cancel();
+            } else {
+              surfaceGrid.request(de);
+            }
           }
         }
+        // The surface balloon (fr-5wlv.4) is 3D-only this cut, and
+        // balloon-on sessions were routed off compute above, so this
+        // applies it exactly where it can render — and clears the 3D
+        // material's flag on every other route (4D entry, balloon
+        // toggled off), keeping 3D<->4D transitions clean.
+        scene.setSurfaceBalloon(
+          !surfaceSessionIs4D && state.balloonEcho,
+          state.balloonRadius,
+        );
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
         // persisted SurfaceParams; the control-spec effects keep them live
@@ -4603,6 +4631,9 @@ function main(): void {
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
     restartFlameRender: () => flameSession.enter(),
+    restartSurfaceRender: () => {
+      if (state.renderMode === "surface") surfaceSession.enter();
+    },
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
     cancelBalloonSweep: () => {

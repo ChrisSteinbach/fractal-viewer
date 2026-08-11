@@ -4,7 +4,11 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
-import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
+import {
+  BALLOON_FAR_CAP_RHO,
+  BALLOON_RHO_MARGIN,
+  balloonBall,
+} from "../fractal/balloon-de";
 import {
   transformColors,
   W_RAMP_BRIGHTNESS_FLOOR,
@@ -41,6 +45,7 @@ import {
   createSurfaceMaterial,
   setSurfaceGrid as packSurfaceGrid,
   setEscapeSystem as packEscapeSystem,
+  setSurfaceBalloon as packSurfaceBalloon,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -679,6 +684,21 @@ export class FractalScene {
    * in {@link setSurfaceGrid}, disposed on every system change and on the
    * next upload); the material only holds uniforms into it. */
   private surfaceGridTexture: THREE.Data3DTexture | null = null;
+  /** The surface balloon (fr-5wlv.4): the DE ball of the INSTALLED 3D
+   * surface system — balloonBall(de) for IFS systems, the origin-centered
+   * bailout ball for escape systems — recorded by
+   * {@link setSurfaceSystem}/{@link setEscapeSystem} so
+   * {@link setSurfaceBalloon} can derive the uniform spec from whatever
+   * system is actually live (and a new install re-derives under a stored
+   * on flag). Null until the first 3D surface install; the 4D install
+   * path neither stores nor applies (the variant only exists in the 3D
+   * material — fr-5wlv's 4D lift is a later child). */
+  private surfaceBalloonBall: { center: Vec3; radius: number } | null = null;
+  private surfaceBalloonOn = false;
+  /** Normalized balloon radius (multiples of the raw ball radius —
+   * buildBalloon's rMult). 1.6 mirrors {@link balloonEchoRadius}'s inert
+   * default; main.ts overwrites it before it can matter. */
+  private surfaceBalloonRMult = 1.6;
   /** Lazily allocated 256x1 ramp for the surface tracer's palette/height/
    * radius color sources — dimensions never change, so one texture is
    * mutated in place (see {@link setSurfaceColorLUT}). */
@@ -2506,6 +2526,12 @@ export class FractalScene {
     // itself is ours to free (fr-55r5 part 2).
     this.dropSurfaceGridTexture();
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
+    // The balloon (fr-5wlv.4) certifies against the DE's OWN ball, so a
+    // new system re-derives it and re-applies the stored on/rMult — a
+    // session entered with the balloon already on wraps the new system's
+    // ball, not the previous one's.
+    this.surfaceBalloonBall = balloonBall(de);
+    this.applySurfaceBalloon();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
@@ -2541,6 +2567,19 @@ export class FractalScene {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
     packEscapeSystem(this.surfaceMaterial, de, color);
+    // NO balloon ball for escape sessions (fr-5wlv.4, measured): the
+    // escape set is a FILLED solid whose interior reaches the ball
+    // center (never-escaping orbits return DE ~ 0 throughout), and the
+    // sphere-inverted echo of a solid containing its own center is a
+    // solid containing INFINITY — the camera sits inside the echo, the
+    // union DE is legitimately ~0 everywhere, and every ray "hits" at
+    // t ~ 0 with degenerate normals (observed: a black frame at every
+    // R). The balloon narrative needs a thin set whose center sits in a
+    // void — exactly the IFS attractors the spike certified. Nulling the
+    // ball keeps applySurfaceBalloon packing the variant OFF however the
+    // shared toggle is set, so escape sessions render plain.
+    this.surfaceBalloonBall = null;
+    this.applySurfaceBalloon();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
@@ -2553,6 +2592,58 @@ export class FractalScene {
     this.surfaceStripEvidencedWorstMsPerPx = null;
     this.surfaceStripPartialWorstMsPerPx = 0;
     this.flushStripBacklog();
+  }
+
+  /**
+   * Turn the surface balloon (fr-5wlv.4) on or off at a normalized radius
+   * `rMult` (multiples of the raw DE-ball radius — buildBalloon's rMult,
+   * the same continuous parameter as the explorer echo's slider). Applies
+   * immediately when a 3D surface system is installed; the stored pair
+   * also re-applies whenever a NEW system lands (see
+   * {@link setSurfaceSystem}/{@link setEscapeSystem}). Equality-guarded
+   * with a dirty mark on change, the {@link setSurface4View} discipline.
+   */
+  setSurfaceBalloon(on: boolean, rMult: number): void {
+    if (this.surfaceBalloonOn === on && this.surfaceBalloonRMult === rMult) {
+      return;
+    }
+    this.surfaceBalloonOn = on;
+    this.surfaceBalloonRMult = rMult;
+    this.renderNeeded = true;
+    this.applySurfaceBalloon();
+  }
+
+  /**
+   * The radius slider's cheap path (fr-5wlv.4): recompute R and rewrite
+   * uniforms only — packSurfaceBalloon guarantees a no-shader-touch when
+   * the flag doesn't flip, so every drag tick may call this. Equality
+   * guard keeps render-on-demand honest, like {@link setBalloonEchoRadius}.
+   */
+  setSurfaceBalloonRadius(rMult: number): void {
+    if (this.surfaceBalloonRMult === rMult) return;
+    this.surfaceBalloonRMult = rMult;
+    if (!this.surfaceBalloonOn) return;
+    this.renderNeeded = true;
+    this.applySurfaceBalloon();
+  }
+
+  /** Re-derive the balloon uniform spec from the stored on/rMult and the
+   * installed system's ball (null clears): rho takes the certification
+   * margin, R is the normalized radius in world units, and the far cap is
+   * the oracle's shared horizon — one definition, fractal/balloon-de.ts's
+   * buildBalloon convention with the march cap alongside. */
+  private applySurfaceBalloon(): void {
+    const ball = this.surfaceBalloonBall;
+    if (this.surfaceBalloonOn && ball) {
+      packSurfaceBalloon(this.surfaceMaterial, {
+        center: ball.center,
+        rho: ball.radius * BALLOON_RHO_MARGIN,
+        R: this.surfaceBalloonRMult * ball.radius,
+        far: BALLOON_FAR_CAP_RHO * ball.radius,
+      });
+    } else {
+      packSurfaceBalloon(this.surfaceMaterial, null);
+    }
   }
 
   /**

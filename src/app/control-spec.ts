@@ -178,6 +178,13 @@ export interface ControlSceneEffects {
    * (`main.ts`'s `onBalloonInflate`), so it must stay cheap when the value
    * hasn't actually changed (the scene method's own equality guard). */
   setBalloonEchoRadius(rMult: number): void;
+  /** Set the SURFACE balloon's normalized radius (fr-5wlv.4) — see
+   * `scene.ts`'s `setSurfaceBalloonRadius`, whose uniform-only cheap path
+   * makes it safe per drag tick. The on/off TOGGLE has no scene effect
+   * here on purpose: it is applied by the surface session re-enter
+   * (`restartSurfaceRender`), which re-derives routing + grid + variant +
+   * uniforms from state in one sweep. */
+  setSurfaceBalloonRadius(rMult: number): void;
 }
 
 /**
@@ -219,6 +226,12 @@ export interface ControlEffects {
    * since the histogram/shared-frame dimensions are fixed at `start`; the
    * flame twin of {@link restartSolidRender}. */
   restartFlameRender(): void;
+  /** Re-enter the surface session so a variant-level change — the balloon
+   * toggle (fr-5wlv.4) — recompiles and reroutes cleanly (compute vs
+   * WebGL, grid vs gridless, SURFACE_BALLOON on the material); a no-op
+   * outside surface mode. The surface sibling of
+   * {@link restartFlameRender}. */
+  restartSurfaceRender(): void;
   /**
    * Push the CURRENT `state.background`'s resolved gradient to every
    * renderer (fr-5ps1). An app-level callback rather than a
@@ -1003,6 +1016,44 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.surface.colorSpeed),
     apply: (s, raw) => setSurfaceColorSpeed(s, Number(raw)),
     effect: surfaceParamsEffect,
+  },
+  {
+    // The surface balloon checkbox (fr-5wlv.4): binds the SAME session-only
+    // state pair as the explorer's balloonEchoCheckbox — one balloon across
+    // renderers (the epic's one-continuous-parameter framing: the explorer
+    // echo and the surface balloon are the same object through different
+    // renderers). Unlike every other surface control this is a
+    // VARIANT-level change (SURFACE_BALLOON recompile + compute/WebGL
+    // rerouting + grid on/off), so the effect re-enters the session,
+    // which re-derives all of it from state in one sweep.
+    kind: "checkbox",
+    id: "surfaceBalloonCheckbox",
+    persisted: false,
+    read: (s) => s.balloonEcho,
+    apply: (s, checked) => setBalloonEcho(s, checked),
+    effect: (s, fx) => {
+      fx.cancelBalloonSweep();
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    // The surface balloon's radius (fr-5wlv.4) — same state field as
+    // balloonRadiusSlider (one balloon, two renderers). Live effect: the
+    // scene's cheap path rewrites uniforms only (never the shader), so
+    // every drag tick can push it.
+    kind: "range",
+    id: "surfaceBalloonRadiusSlider",
+    persisted: false,
+    label: {
+      id: "surfaceBalloonRadiusLabel",
+      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
+    },
+    read: (s) => String(s.balloonRadius),
+    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
+    effect: (s, fx) => {
+      fx.cancelBalloonSweep();
+      fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
+    },
   },
   {
     // Re-points the tracer's base-color dispatch. Unlike the flame/solid

@@ -40,6 +40,7 @@ function mockEffects(shared = false): ControlEffects {
       setSurfaceColorLUT: vi.fn(),
       setBalloonEchoEnabled: vi.fn(),
       setBalloonEchoRadius: vi.fn(),
+      setSurfaceBalloonRadius: vi.fn(),
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
@@ -49,6 +50,7 @@ function mockEffects(shared = false): ControlEffects {
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
     restartFlameRender: vi.fn(),
+    restartSurfaceRender: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
     cancelBalloonSweep: vi.fn(),
@@ -270,6 +272,34 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep (fr-5wlv.4)", () => {
+      const spec = specById("surfaceBalloonCheckbox");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      // A variant-level change: the session re-enter re-derives routing,
+      // grid, SURFACE_BALLOON define and uniforms from state in one sweep
+      // — no direct scene call here.
+      expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaceBalloonRadiusSlider effect forwards the radius through the scene's cheap path and cancels an in-flight sweep (fr-5wlv.4)", () => {
+      const spec = specById("surfaceBalloonRadiusSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.9");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceBalloonRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
@@ -931,7 +961,7 @@ describe("commit (fr-2c27)", () => {
 });
 
 describe("table policy", () => {
-  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, balloonEchoCheckbox, balloonRadiusSlider, and exportScale are the only entries marked persisted: false", () => {
+  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, the two balloon pairs, and exportScale are the only entries marked persisted: false", () => {
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
@@ -943,6 +973,8 @@ describe("table policy", () => {
       "balloonEchoCheckbox",
       "balloonRadiusSlider",
       "exportScale",
+      "surfaceBalloonCheckbox",
+      "surfaceBalloonRadiusSlider",
     ]);
   });
 

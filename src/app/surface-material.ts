@@ -859,6 +859,21 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * region floors carry the ghost-killing, base and refined measure
    * indistinguishable). See descendFold's doc for the measured numbers.
    */
+#if SURFACE_BALLOON
+// fr-5wlv.4: the balloon inverted-union scene (epic fr-5wlv). The wrapper
+// at the bottom of this file composes fractal/balloon-de.ts's
+// estimateBalloonDistance over the compiled variant's public DE — this
+// rename points every variant's public definitions at surfaceDEFractal so
+// the wrapper can own the public names, the SURFACE_FOLD_LENS idiom one
+// level further out. uBalloon* are packed by setSurfaceBalloon from
+// buildBalloon's convention: center + MARGINED rho (the bound's divisor),
+// R in world units, uBalloonFar = BALLOON_FAR_CAP_RHO * raw ball radius.
+uniform vec3 uBalloonCenter;
+uniform float uBalloonR;
+uniform float uBalloonRho;
+uniform float uBalloonFar;
+#define surfaceDE surfaceDEFractal
+#endif
 #if SURFACE_ESCAPE
   /**
    * Escape-time fold DE (fr-kltj), mirroring escape-de.ts's
@@ -960,6 +975,11 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // calls these once per lens branch (fr-g58b; the oracle's descendLens).
   // With the define off this block vanishes and the bodies keep their
   // shipped names, untouched.
+#if SURFACE_BALLOON
+  // Under balloon+lens the surfaceDEFractal rename above is still active;
+  // a bare re-#define of the same token would be a redefinition error.
+  #undef surfaceDE
+#endif
   #define surfaceDE surfaceDECore
 #endif
 
@@ -1802,6 +1822,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
 
 #if SURFACE_FOLD_LENS
   #undef surfaceDE
+#if SURFACE_BALLOON
+  // The lens wrapper owns the variant's PUBLIC names — which under the
+  // balloon are surfaceDEFractal (the balloon wrapper past main()'s
+  // prologue owns surfaceDE itself), so re-establish the rename.
+  #define surfaceDE surfaceDEFractal
+#endif
   /**
    * Pure-fold FINAL lens (fr-g58b), mirroring the oracle's descendLens
    * line for line: the visible set is F(A) with F = w*V(M p + t), so each
@@ -2055,6 +2081,101 @@ ${foldValueFormGlsl(shadeDeWidth)}
 // through the lens wrapper exists only when the escape variant is off.
 #endif
 
+#if SURFACE_BALLOON
+#undef surfaceDE
+  // The balloon union (fr-5wlv.4): fractal/balloon-de.ts's
+  // estimateBalloonDistance mirrored term for term over the variant's
+  // public DE. min(DE(p), (|p-c|/rho)*DE(I(p))) is conservative at every
+  // R; the shell cutoff scales by the inverse of its value factor so the
+  // fr-55r5 early-exit contract survives verbatim (the oracle's module
+  // doc carries the argument).
+  vec3 balloonInvert(vec3 p, out float scale) {
+    vec3 d = p - uBalloonCenter;
+    // f32 floor: 1e-6 * rho (the explorer echo's precedent, scene.ts) —
+    // the CPU oracle's 1e-12 would drown in dot(d,d)'s f32 rounding
+    // near c.
+    float fl = 1.0e-6 * uBalloonRho;
+    float r2 = max(dot(d, d), fl * fl);
+    float r = max(length(d), fl);
+    scale = r / uBalloonRho;
+    return uBalloonCenter + (uBalloonR * uBalloonR / r2) * d;
+  }
+  // The union requires its inner estimator to be far-field SOUND — a true
+  // lower bound on distance for queries outside the ball. The certified
+  // IFS descents are (far queries exit through the value-exact sphere
+  // floor), but the escape DE's zero-iteration far value is |q|/dr = |q|
+  // — not a distance to anything — and the plain march never evaluates it
+  // (the visible-sphere gate starts rays at the ball). The balloon march
+  // DOES: unclamped, the very first step from the camera blew through the
+  // whole scene and every ray missed (measured — a black frame). The
+  // clamp below is exactly the certified far-field the IFS cores already
+  // have: the set lives inside the bailout ball, so |q| - R_ball is a
+  // true conservative bound out there; inside the ball the escape
+  // heuristic applies unchanged (the epic's claim-class note). NOTE the
+  // app never routes an escape session here anymore — the escape solid's
+  // interior reaches the ball center, so its echo swallows the camera
+  // (scene.setEscapeSystem's measured-degeneracy comment) — but the
+  // combination stays source-valid and the clamp records the far-field
+  // requirement for any future composition.
+  float balloonInnerDE(vec3 p, float cutoff) {
+#if SURFACE_ESCAPE
+    float rrEsc = length(p);
+    if (rrEsc > uBoundingRadius) return rrEsc - uBoundingRadius;
+#endif
+    return surfaceDEFractal(p, cutoff);
+  }
+  float balloonInnerDE(vec3 p) {
+#if SURFACE_ESCAPE
+    float rrEsc = length(p);
+    if (rrEsc > uBoundingRadius) return rrEsc - uBoundingRadius;
+#endif
+    return surfaceDEFractal(p);
+  }
+  float surfaceDE(vec3 p, float cutoff) {
+    float dF = balloonInnerDE(p, cutoff);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS =
+      scale * balloonInnerDE(q, cutoff > 0.0 ? cutoff / scale : 0.0);
+    return min(dS, dF);
+  }
+  // Composes over the variant's own NO-CUTOFF form, never the cutoff form
+  // above: fold systems route that form to the width-1 probe (fr-p8bc),
+  // and building on the cutoff form would silently upgrade every
+  // normal/AO tap back to the full-width descent — the 23.8x shading
+  // regression.
+  float surfaceDE(vec3 p) {
+    float dF = balloonInnerDE(p);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS = scale * balloonInnerDE(q);
+    return min(dS, dF);
+  }
+  // Hit-info with argmin routing (the oracle's attribution convention:
+  // ties -> fractal). The descent runs at the winning term's own query
+  // point; colorPos reports that point so the height/radius color sources
+  // read the shell's SOURCE geometry instead of clamping at the far wall.
+  float surfaceDEBalloonHitInfo(
+    vec3 p,
+    out vec3 colorPos,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    float dF = balloonInnerDE(p);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS = scale * balloonInnerDE(q);
+    if (dS < dF) {
+      colorPos = q;
+      return scale * surfaceDEFractal(q, firstChoice, trap, rings, sheets);
+    }
+    colorPos = p;
+    return surfaceDEFractal(p, firstChoice, trap, rings, sheets);
+  }
+
+#endif
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
@@ -2066,6 +2187,23 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
     vec3 ro = uCamPos;
 
+#if SURFACE_BALLOON
+    // Balloon mode drops the visible-sphere skip (fr-5wlv.4, the oracle
+    // module's march-entry semantics): every ray can hit the enclosing
+    // shell, so every ray marches from the camera, capped at uBalloonFar
+    // past the balloon center — capped rays fall through to the existing
+    // background below (the balloon is a HIT, not a background). The
+    // sphere entry still seeds the fog origin when it exists, so the
+    // FRACTAL's own depth fog is unchanged; shell hits nearer than the
+    // sphere clamp fog at zero (the min just before the fog term).
+    float radius = uVisibleRadius * 1.02;
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float disc = b * b - c;
+    float tFar = length(uCamPos - uBalloonCenter) + uBalloonFar;
+    float t = 0.0;
+    float tEnter = disc >= 0.0 ? max(-b - sqrt(disc), 0.0) : 0.0;
+#else
     // Entry/exit against the origin-centered sphere bounding the VISIBLE
     // set (small margin so silhouettes right at the bound aren't clipped):
     // solve |ro + t rd|^2 = radius^2. No intersection, or an exit behind
@@ -2087,6 +2225,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float t = max(-b - sq, 0.0);
     // Where the ray enters the bounding sphere — the depth-fog origin.
     float tEnter = t;
+#endif
 
     // Tiny dithered start: just breaks banding on grazing rays.
     t += hash(gl_FragCoord.xy) * uPixelEps * max(t, 1.0);
@@ -2170,7 +2309,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float trap;
     float rings;
     float sheets;
+#if SURFACE_BALLOON
+    // Argmin routing (fr-5wlv.4): a shell hit's extras come from the
+    // descent at its INVERTED query point, and cpos carries that point to
+    // the height/radius color sources below.
+    vec3 cpos;
+    surfaceDEBalloonHitInfo(pos, cpos, firstChoice, trap, rings, sheets);
+#else
     surfaceDE(pos, firstChoice, trap, rings, sheets);
+#endif
 
     // --- shade --------------------------------------------------------------
     // Normal from the DE gradient (tetrahedron offsets: four samples instead
@@ -2197,10 +2344,20 @@ ${foldValueFormGlsl(shadeDeWidth)}
       float u;
       if (uColorSource == 1) {
         u = trap;
+#if SURFACE_BALLOON
+      // The winning term's SOURCE point (fr-5wlv.4): a shell hit reads
+      // its pre-inversion geometry, so the ramps sweep the same range as
+      // the fractal's own instead of clamping at the far wall.
+      } else if (uColorSource == 2) {
+        u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
+      } else if (uColorSource == 3) {
+        u = clamp(length(cpos) / uVisibleRadius, 0.0, 1.0);
+#else
       } else if (uColorSource == 2) {
         u = clamp(pos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
       } else if (uColorSource == 3) {
         u = clamp(length(pos) / uVisibleRadius, 0.0, 1.0);
+#endif
       } else if (uColorSource == 4) {
         u = rings;
       } else {
@@ -2217,7 +2374,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float ts = h * 2.0;
     for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
+#if SURFACE_BALLOON
+      // The balloon receives shadows, never casts them (fr-5wlv.4):
+      // shadow rays test the FRACTAL alone, so the enclosing shell cannot
+      // black out the scene it wraps. Tetra normal and AO stay on the
+      // public union forms. balloonInnerDE, not surfaceDEFractal: a
+      // shell hit launches this ray from far OUTSIDE the ball, where the
+      // escape core's raw far value is unsound (its doc above) — the
+      // clamped form both keeps it sound and walks the ray to the ball
+      // in a few steps, so the fractal's occlusion is actually tested.
+      float d = balloonInnerDE(sp);
+#else
       float d = surfaceDE(sp);
+#endif
       shadow = min(shadow, 8.0 * d / ts);
       ts += clamp(d, uBoundingRadius * 2.0e-4, uVisibleRadius * 0.1);
       if (shadow < 0.02 || length(sp) > uVisibleRadius * 1.05) {
@@ -2255,6 +2424,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
 
+#if SURFACE_BALLOON
+    // A shell hit can land NEARER than the sphere entry seeding the fog
+    // origin; clamp so the fog term's pow never sees a negative base
+    // (undefined in GLSL) and such hits read fog-free — the march-entry
+    // semantics above. tEnter is dead past the fog term.
+    tEnter = min(tEnter, t);
+#endif
     // Depth fog toward the backdrop: squared-exponential in the distance
     // traveled inside the bounding sphere — ~0.38 haze at the far side (a
     // full 2R chord), a depth cue matching the explorer's fog feel
@@ -2489,6 +2665,14 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uEscM: { value: new THREE.Matrix3() },
       uEscT: { value: new THREE.Vector3() },
       uEscParams: { value: new THREE.Vector4(0, 1, 1, 0) },
+      // Balloon inverted-union (fr-5wlv.4): inert defaults; alive only
+      // under the SURFACE_BALLOON define (rho 1 so a stray enabled read
+      // could never divide by zero). Three.js ignores entries the
+      // compiled program does not use, so these stay unconditional.
+      uBalloonCenter: { value: new THREE.Vector3() },
+      uBalloonR: { value: 0 },
+      uBalloonRho: { value: 1 },
+      uBalloonFar: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -2515,9 +2699,18 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     // bodies to surfaceDECore and compiles the fold-lens wrapper as the
     // public surfaceDE (fr-g58b). SURFACE_ESCAPE 1 replaces the descent
     // bodies wholesale with the escape-time loop (fr-kltj).
+    // SURFACE_BALLOON 1 wraps whichever variant compiled in the balloon
+    // inverted-union (fr-5wlv.4, setSurfaceBalloon) — like the lens and
+    // escape names it is resolved JS-side, so the entry here is change
+    // detection (and a program-cache key), never driver-parsed text.
     // setSurfaceSystem/setEscapeSystem flip these when the system's shape
     // changes — rare, session-enter-scale recompiles.
-    defines: { SURFACE_FOLDS: 0, SURFACE_FOLD_LENS: 0, SURFACE_ESCAPE: 0 },
+    defines: {
+      SURFACE_FOLDS: 0,
+      SURFACE_FOLD_LENS: 0,
+      SURFACE_ESCAPE: 0,
+      SURFACE_BALLOON: 0,
+    },
     vertexShader: SURFACE_VERTEX,
     // The lens/escape arms are resolved JS-side (resolveVariantArms) so
     // the driver never parses another variant's text — the fold
@@ -2586,6 +2779,9 @@ export function setSurfaceSystem(
   // when fold-ness actually flips).
   const wantFolds = hasFolds ? 1 : 0;
   const wantLens = de.foldFinal ? 1 : 0;
+  // The balloon flag (fr-5wlv.4) is orthogonal session state owned by
+  // setSurfaceBalloon — a system swap preserves whatever it last set.
+  const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
     material.defines.SURFACE_FOLD_LENS !== wantLens ||
@@ -2595,7 +2791,7 @@ export function setSurfaceSystem(
     material.defines.SURFACE_FOLD_LENS = wantLens;
     // A previous escape-time session must hand the descent bodies back.
     material.defines.SURFACE_ESCAPE = 0;
-    material.fragmentShader = surfaceFragmentFor(0, wantLens);
+    material.fragmentShader = surfaceFragmentFor(0, wantLens, balloon);
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -2723,17 +2919,22 @@ function resolveVariantArms(
 }
 
 /** Compose the fragment source for a variant selection — the driver only
- * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `source`
- * defaults to the module's assembled fragment; tests pass their own
- * width-parameterized builds (fr-zqu8). */
+ * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `balloon`
+ * (fr-5wlv.4) resolves the SURFACE_BALLOON wrapper arms the same JS-side
+ * way — with it 0 the resolved source is byte-identical to the
+ * pre-balloon build, so the lens variant's ~79KB never grows toward the
+ * measured Mesa cliff. `source` defaults to the module's assembled
+ * fragment; tests pass their own width-parameterized builds (fr-zqu8). */
 export function surfaceFragmentFor(
   escape: number,
   lens: number,
+  balloon = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   return resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
     SURFACE_FOLD_LENS: lens,
+    SURFACE_BALLOON: balloon,
   });
 }
 
@@ -2790,6 +2991,9 @@ export function setEscapeSystem(
   (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
   (u.uLensInvM.value as THREE.Matrix3).identity();
   (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  // Preserve the balloon flag exactly like setSurfaceSystem (fr-5wlv.4):
+  // balloon-over-escape is a supported wrap.
+  const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_FOLDS !== 0 ||
@@ -2798,7 +3002,66 @@ export function setEscapeSystem(
     material.defines.SURFACE_ESCAPE = 1;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
-    material.fragmentShader = surfaceFragmentFor(1, 0);
+    material.fragmentShader = surfaceFragmentFor(1, 0, balloon);
+    material.needsUpdate = true;
+  }
+}
+
+/** The balloon inverted-union's uniform payload (fr-5wlv.4), built by
+ * scene.ts from fractal/balloon-de.ts's conventions — see
+ * {@link setSurfaceBalloon}. */
+export interface SurfaceBalloonSpec {
+  /** The DE ball's center (balloon-de.ts's balloonBall convention). */
+  center: Vec3;
+  /** MARGINED radius — buildBalloon's divisor
+   * (`ball.radius * BALLOON_RHO_MARGIN`). */
+  rho: number;
+  /** Balloon radius R, in world units (`rMult * ball.radius`). */
+  R: number;
+  /** March far cap: `BALLOON_FAR_CAP_RHO * raw ball radius`. */
+  far: number;
+}
+
+/**
+ * Enable (`spec`) or disable (`null`) the balloon inverted-union wrapper
+ * (fr-5wlv.4): the scene becomes `min(DE(p), (|p-c|/rho) * DE(I(p)))`
+ * over whichever variant is compiled — affine, folds, fold lens or
+ * escape — mirroring fractal/balloon-de.ts's `estimateBalloonDistance`.
+ * Flipping the flag reassembles the fragment source through
+ * {@link surfaceFragmentFor} with the material's CURRENT escape/lens
+ * flags (a session-set-scale program rebuild, like the other variant
+ * defines); a call that changes only the uniforms — the radius slider's
+ * per-drag-tick path — never touches the shader.
+ */
+export function setSurfaceBalloon(
+  material: THREE.ShaderMaterial,
+  spec: SurfaceBalloonSpec | null,
+): void {
+  const u = material.uniforms;
+  const center = u.uBalloonCenter.value as THREE.Vector3;
+  if (spec) {
+    center.set(...spec.center);
+    u.uBalloonR.value = spec.R;
+    u.uBalloonRho.value = spec.rho;
+    u.uBalloonFar.value = spec.far;
+  } else {
+    // Zeros are fine while the define is off (the compiled program has no
+    // balloon code to read them) — except rho, whose 1 keeps even a stray
+    // enabled read divide-by-zero-free, matching createSurfaceMaterial's
+    // inert defaults.
+    center.set(0, 0, 0);
+    u.uBalloonR.value = 0;
+    u.uBalloonRho.value = 1;
+    u.uBalloonFar.value = 0;
+  }
+  const want = spec ? 1 : 0;
+  if (material.defines.SURFACE_BALLOON !== want) {
+    material.defines.SURFACE_BALLOON = want;
+    material.fragmentShader = surfaceFragmentFor(
+      material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
+      material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
+      want,
+    );
     material.needsUpdate = true;
   }
 }

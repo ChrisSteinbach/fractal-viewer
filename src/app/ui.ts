@@ -960,6 +960,12 @@ export class Ui {
   private readonly surfaceControls: HTMLElement;
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
+  // The surface balloon rows (fr-5wlv.4): 3D-surface-only this cut — the
+  // variant exists only in the 3D material, so both hide under a live 4D
+  // surface session (fourDSurfaceLive); the radius row additionally waits
+  // for the balloon itself, mirroring the explorer pair (fr-5wlv.2).
+  private readonly surfaceBalloonRow: HTMLElement;
+  private readonly surfaceBalloonRadiusRow: HTMLElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
@@ -1235,6 +1241,8 @@ export class Ui {
     this.surfaceControls = this.byId("surfaceControls");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
+    this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
+    this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
@@ -1891,6 +1899,16 @@ export class Ui {
     this.surfaceColorSpeedRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette",
+    );
+    // The surface balloon (fr-5wlv.4) is 3D-only this cut — the variant
+    // exists only in the 3D material — so both rows hide under a live 4D
+    // surface session; the radius row additionally waits for the balloon
+    // itself to be on, mirroring the explorer pair (fr-5wlv.2). The
+    // surface section as a whole already gates on renderMode above.
+    this.surfaceBalloonRow.classList.toggle("hidden", this.fourDSurfaceLive);
+    this.surfaceBalloonRadiusRow.classList.toggle(
+      "hidden",
+      this.fourDSurfaceLive || !state.balloonEcho,
     );
     // …including each mode's non-section block above the accordion (fr-374p):
     // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
