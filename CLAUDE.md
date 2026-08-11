@@ -388,6 +388,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     order. Spotlight tours base maps one at a time. main.ts overlays a
     temporary showcase (By Transform color, guides visible, auto-orbit).
     Pure, tested, injected clock.
+  - `background.ts` — the scene backdrop (fr-5ps1): `BACKGROUND_MODES`
+    vocabulary (dark/haze/custom, extensible for fr-mz2u's palette-linked
+    `"auto"` and fr-4vi7's curated presets); `resolveBackground` is the ONE
+    mode→(top, bottom) definition every renderer/capture/compute-spec path
+    shares. `lerpBackground` + `BackgroundTween` are the replace-load
+    crossfade, a fourth motion beside the system morph/camera/4D rotor
+    glides. Persists via `persist.ts`, whose decoder doubles as the legacy
+    migration (absent field + aerial style → haze). Pure, tested.
   - `exposure.ts` — `glowExposure`: density-adaptive brightness for the
     `"glow"` render style (not the flame tone-map). Pure, tested.
   - `resolution-governor.ts` — adaptive resolution: frame-time ladder (EMA +

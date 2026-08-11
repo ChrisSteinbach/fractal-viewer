@@ -16,6 +16,7 @@ import {
 } from "./state";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
+import { resolveBackground } from "./background";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -46,6 +47,7 @@ function mockEffects(shared = false): ControlEffects {
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
     restartFlameRender: vi.fn(),
+    applyBackground: vi.fn(),
   };
 }
 
@@ -112,6 +114,25 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "ember");
 
     expect(state.rampPaletteId).toBe("ember");
+  });
+
+  it("background select apply sets background.mode from the option value", () => {
+    const spec = specById("background");
+
+    const state = applyScalarControl(initialState(true), spec, "haze");
+
+    expect(state.background.mode).toBe("haze");
+  });
+
+  it('background select apply landing on "custom" seeds background.custom from the replaced backdrop', () => {
+    const spec = specById("background");
+    const previous = initialState(true); // dark, no custom slot authored yet
+
+    const state = applyScalarControl(previous, spec, "custom");
+
+    expect(state.background.custom).toEqual(
+      resolveBackground(previous.background),
+    );
   });
 
   it("showGuides checkbox apply sets showGuides from the checked flag", () => {
@@ -226,6 +247,24 @@ describe("effects", () => {
       // unconditionally re-bakes exactly the displayed cloud (fr-6ue).
       expect(fx.recolor).toHaveBeenCalled();
       expect(fx.applyFourDColor).toHaveBeenCalled();
+    });
+
+    it("background effect invokes applyBackground exactly once and touches no scene method", () => {
+      const spec = specById("background");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "haze");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.applyBackground).toHaveBeenCalledTimes(1);
+      // main.ts owns the live backdrop value (the crossfade tween's `from`
+      // endpoint), so this control must route through applyBackground alone
+      // — a direct scene.* call here would desync the tween (see
+      // ControlEffects.applyBackground's doc in control-spec.ts).
+      for (const sceneMethod of Object.values(fx.scene)) {
+        expect(sceneMethod).not.toHaveBeenCalled();
+      }
     });
   });
 

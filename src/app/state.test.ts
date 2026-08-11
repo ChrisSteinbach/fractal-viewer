@@ -72,6 +72,8 @@ import {
   removeTransform,
   selectTransform,
   setAdaptiveResolution,
+  setBackgroundCustom,
+  setBackgroundMode,
   setColorGamma,
   setCustomPaletteStops,
   setExportScale,
@@ -115,6 +117,7 @@ import {
   systemIsNonFlat,
   updateTransform,
 } from "./state";
+import { resolveBackground } from "./background";
 import {
   defaultFinalTransform,
   mengerSponge,
@@ -1423,5 +1426,69 @@ describe("setRampPaletteId", () => {
     const next = setRampPaletteId(seeded, "aurora");
     expect(next.rampPaletteId).toBe("aurora");
     expect(next.customPalette).toBe(seeded.customPalette);
+  });
+});
+
+describe("initialState background (fr-5ps1)", () => {
+  it("boots with the dark background and no authored custom slot", () => {
+    expect(initialState(true).background).toEqual({ mode: "dark" });
+  });
+});
+
+describe("setBackgroundMode", () => {
+  it("switches the mode immutably", () => {
+    const state = initialState(true);
+    const next = setBackgroundMode(state, "haze");
+    expect(next.background.mode).toBe("haze");
+    expect(state.background.mode).toBe("dark");
+  });
+
+  it("seeds the custom slot from the dark backdrop's resolved stops on first switch to custom", () => {
+    const state = initialState(true);
+    const next = setBackgroundMode(state, "custom");
+    expect(next.background.mode).toBe("custom");
+    expect(next.background.custom).toEqual(resolveBackground({ mode: "dark" }));
+  });
+
+  it("seeds the custom slot from the haze backdrop's resolved stops on first switch to custom", () => {
+    const state = setBackgroundMode(initialState(true), "haze");
+    const next = setBackgroundMode(state, "custom");
+    expect(next.background.custom).toEqual(resolveBackground({ mode: "haze" }));
+  });
+
+  it("keeps the existing custom stops instead of re-seeding when selecting custom again", () => {
+    const seeded = setBackgroundMode(initialState(true), "custom");
+    const authored = {
+      top: [0.1, 0.2, 0.3],
+      bottom: [0.9, 0.8, 0.7],
+    } as const;
+    const withCustom = setBackgroundCustom(seeded, authored);
+    const next = setBackgroundMode(withCustom, "custom");
+    expect(next.background.custom).toEqual(authored);
+  });
+
+  it("keeps the authored custom payload when switching away to haze", () => {
+    const seeded = setBackgroundMode(initialState(true), "custom");
+    const authored = {
+      top: [0.1, 0.2, 0.3],
+      bottom: [0.9, 0.8, 0.7],
+    } as const;
+    const withCustom = setBackgroundCustom(seeded, authored);
+    const next = setBackgroundMode(withCustom, "haze");
+    expect(next.background.mode).toBe("haze");
+    expect(next.background.custom).toEqual(authored);
+  });
+});
+
+describe("setBackgroundCustom", () => {
+  it("replaces the custom payload while preserving mode, immutably", () => {
+    const state = setBackgroundMode(initialState(true), "custom");
+    const authored = {
+      top: [0.9, 0.8, 0.7],
+      bottom: [0.1, 0.2, 0.3],
+    } as const;
+    const next = setBackgroundCustom(state, authored);
+    expect(next.background).toEqual({ mode: "custom", custom: authored });
+    expect(state.background.custom).not.toEqual(authored);
   });
 });

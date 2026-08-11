@@ -118,6 +118,7 @@ import {
   setCustomPaletteStops,
   setFinalTransform,
   setPanelOpen,
+  setBackgroundCustom,
   setPositionAxisColors,
   setRenderMode,
   setSymmetryPlane,
@@ -154,6 +155,12 @@ import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
+import {
+  BackgroundTween,
+  backgroundGradientsEqual,
+  resolveBackground,
+} from "./background";
+import type { BackgroundGradient } from "./background";
 import {
   DriftShow,
   DRIFT_DWELL_MS,
@@ -853,6 +860,27 @@ function main(): void {
   // generation requests is interpolated, sampled once per frame by animate()
   // (morph-tween.ts holds the timing/chaining; morph.ts the interpolation).
   const morphTween = new MorphTween();
+  // The backdrop's own replace-load crossfade (fr-5ps1) — the fourth motion
+  // beside the system morph, camera glide and 4D rotor glide, armed by
+  // applyDecodedSnapshot's morph path and polled in tickLogic. Display-only,
+  // like the morph above: the document becomes the target immediately; only
+  // the scene's live backdrop interpolates.
+  const backgroundTween = new BackgroundTween();
+  // The backdrop currently ON SCREEN — the crossfade's `from` endpoint, so
+  // every push must go through pushBackground (the one owner) or the next
+  // leg's fade would start from a stale pair. Starts at the scene's own
+  // construction default (dark); boot syncs it to the restored document.
+  let liveBackground: BackgroundGradient = resolveBackground({ mode: "dark" });
+  function pushBackground(stops: BackgroundGradient): void {
+    liveBackground = stops;
+    scene.setBackground(stops);
+  }
+  /** Snap the scene to the CURRENT document's backdrop, discarding any
+   * in-flight crossfade — control edits and non-morph loads land instantly. */
+  function applyBackgroundNow(): void {
+    backgroundTween.cancel();
+    pushBackground(resolveBackground(state.background));
+  }
   // The camera-fit flag the suppressed replace-load regenerate would have
   // carried, remembered for the morph's terminal sample (whose request is the
   // real replaced one). Overwritten — not OR-merged — by a chained restart:
@@ -3162,6 +3190,10 @@ function main(): void {
       spec.colorSource,
       spec.colorSpeed,
       spec.lightDir.join(","),
+      // The backdrop stops (fr-5ps1): a background change/crossfade must
+      // re-trace the memoized force frame — miss pixels carry the gradient.
+      spec.bgTop.join(","),
+      spec.bgBottom.join(","),
       // The 4D pose (fr-dlxh 4D cut): a timeline leg glides rotor/slice
       // with the camera parked, so a key without them would re-present a
       // stale pose across every dwell frame of the glide.
@@ -3953,9 +3985,31 @@ function main(): void {
     }
     if (morph) {
       regenerateReplaced(morphFrom, refit, morphMs, morphSeed);
+      // The backdrop crossfade (fr-5ps1): fade from the on-screen backdrop
+      // to the restored document's over the same duration as the system
+      // morph — a timeline/drift leg or gallery load moves the background
+      // like everything else. Reduced motion snaps, exactly as
+      // regenerateReplaced itself does for the system.
+      const target = resolveBackground(state.background);
+      if (
+        prefersReducedMotion() ||
+        backgroundGradientsEqual(liveBackground, target)
+      ) {
+        applyBackgroundNow();
+      } else {
+        backgroundTween.start(
+          liveBackground,
+          target,
+          morphMs ?? MORPH_TWEEN_MS,
+          nowMs(),
+        );
+      }
     } else {
       morphTween.finish();
       regenerate(true, refit);
+      // Time travel snaps the backdrop with everything else (mechanical,
+      // like the system snap just above).
+      applyBackgroundNow();
     }
     scene.setFourDScaffold(null);
     scene.setRenderStyle(state.renderStyle);
@@ -4502,6 +4556,7 @@ function main(): void {
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
     restartFlameRender: () => flameSession.enter(),
+    applyBackground: applyBackgroundNow,
   };
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -4683,6 +4738,17 @@ function main(): void {
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
       if (state.colorMode === "position") recolor();
+    },
+    // Custom backdrop pickers (fr-5ps1): the same shape as the axis colors
+    // above — one undo checkpoint per drag burst (beginEdit coalesces),
+    // then an instant push to every renderer. No worker forward: the
+    // backdrop is composited scene-side in every mode.
+    onBackgroundCustom: (custom) => {
+      stopShows({ notify: true });
+      editSession.beginEdit();
+      state = setBackgroundCustom(state, custom);
+      ui.updateLabels(state);
+      applyBackgroundNow();
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own
@@ -5358,6 +5424,10 @@ function main(): void {
   // this, a scene restored with non-default solid params would render with
   // voxel-material.ts's hardcoded defaults until a solid slider first moved.
   scene.setSolidParams(state.solid);
+  // Same push for the restored backdrop (fr-5ps1): the scene constructs on
+  // the dark default, so a document restored with haze/custom would render
+  // dark until the Background select first moved.
+  applyBackgroundNow();
   // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
   // regeneration goes through the worker (fr-5kx): the first paint should
   // include the cloud, not an empty backdrop for a worker round-trip — and
@@ -5587,6 +5657,12 @@ function main(): void {
     // flame/solid render, so it is always idle there.
     const morphSample = morphTween.sample(now);
     if (morphSample) requestMorphSample(morphSample);
+    // The backdrop crossfade (fr-5ps1): same once-per-frame poll as the
+    // morph sample above, same clock (nowMs — so the offline export's
+    // virtual steps drive it deterministically). The terminal sample lands
+    // exactly on the target document's backdrop.
+    const backgroundSample = backgroundTween.sample(now);
+    if (backgroundSample) pushBackground(backgroundSample.gradient);
     // The ambient drift show: when a departure comes due, launch the next
     // leg — a Surprise-Me roll or the next saved scene (driftPolicy.advance).
     // Polled AFTER the morph sample above on purpose: on a backgrounded

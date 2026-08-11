@@ -5820,6 +5820,11 @@ async function runSurfaceComputeFrameLeg(
       hitFloor: SURFACE_GPU_HIT_FLOOR,
       lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
       ambient: 0.25,
+      // Harness convention: black backdrop, like the eval legs' own
+      // packSurfaceGpuShade calls — the compute-frame legs compare HIT
+      // RATES against the CPU sanity march, never miss-pixel colors.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
       colorSource: 0,
       colorSpeed: 0.5,
       lut: null,
@@ -5923,6 +5928,11 @@ async function runSurfaceComputeFrameEscapeLeg(
       hitFloor: SURFACE_GPU_HIT_FLOOR,
       lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
       ambient: 0.25,
+      // Harness convention: black backdrop, like the eval legs' own
+      // packSurfaceGpuShade calls — the compute-frame legs compare HIT
+      // RATES against the CPU sanity march, never miss-pixel colors.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
       colorSource: 0,
       colorSpeed: 0.5,
       lut: null,
@@ -6131,6 +6141,11 @@ async function runSurfaceComputeFrame4Leg(
       hitFloor: SURFACE_GPU_HIT_FLOOR,
       lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
       ambient: 0.25,
+      // Harness convention: black backdrop, like the eval legs' own
+      // packSurfaceGpuShade calls — the compute-frame legs compare HIT
+      // RATES against the CPU sanity march, never miss-pixel colors.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
       colorSource: 3,
       colorSpeed: 0.5,
       lut: null,
@@ -6494,6 +6509,11 @@ async function runSurfaceShadeAbLeg(
       hitFloor: SURFACE_GPU_HIT_FLOOR,
       lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
       ambient: 0.25,
+      // Harness convention: black backdrop, like the eval legs' own
+      // packSurfaceGpuShade calls — the compute-frame legs compare HIT
+      // RATES against the CPU sanity march, never miss-pixel colors.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
       colorSource: 0,
       colorSpeed: 0.5,
       lut: null,

@@ -68,6 +68,12 @@ import type {
   SurfaceParams,
 } from "./state";
 import { clampPhi, clampRadius, type CameraPose } from "./orbit";
+import { BACKGROUND_MODES } from "./background";
+import type {
+  BackgroundGradient,
+  BackgroundMode,
+  BackgroundParams,
+} from "./background";
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
 import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
@@ -138,6 +144,18 @@ export interface SceneSnapshot {
    * session-only.
    */
   glowBrightness: number;
+  /**
+   * The scene backdrop (fr-5ps1, see {@link AppState.background}). Always
+   * present in the snapshot like `symmetry`, but the WIRE form omits the
+   * pristine default (`{ mode: "dark" }`, nothing authored) so never-touched
+   * scenes keep their short URLs — except under the aerial render style,
+   * where it is always written: an ABSENT field is what a pre-fr-5ps1
+   * document looks like, and the decoder reads that as the LEGACY coupling
+   * (aerial forced the haze backdrop), so an aerial scene that genuinely
+   * means "dark" must say so explicitly to round-trip. See
+   * {@link decodeBackground}.
+   */
+  background: BackgroundParams;
   /**
    * The one user-authored gradient slot (fr-55k, see
    * {@link AppState.customPalette}). Optional like `finalTransform` — absent
@@ -223,6 +241,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     surface: state.surface,
     symmetry: state.symmetry,
     glowBrightness: state.glowBrightness,
+    background: state.background,
     customPalette: state.customPalette,
     positionAxisColors: state.positionAxisColors,
   };
@@ -306,6 +325,15 @@ const LEGACY_AXIS_PLANE: Readonly<Record<string, SymmetryPlane>> = {
 
 /** Exact set of valid SurfaceColorSource values (fr-7jlk). */
 const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
+
+/**
+ * Exact set of valid BackgroundMode values (fr-5ps1). Unlike
+ * {@link VALID_PALETTE_IDS}, `"custom"` IS a member — the "only alongside a
+ * payload" condition is checked separately in {@link decodeBackground},
+ * where the payload lives inside the same block rather than in a sibling
+ * field.
+ */
+const VALID_BACKGROUND_MODES = new Set<string>(BACKGROUND_MODES);
 
 /**
  * Cap on variations per transform when decoding untrusted input: one lane per
@@ -646,6 +674,53 @@ function decodePositionAxisColors(
   const z = hexToRgb(p.z);
   if (x === null || y === null || z === null) return undefined;
   return { x, y, z };
+}
+
+/**
+ * Validate the untrusted `background` scene field (fr-5ps1): which backdrop
+ * the scene renders (see `background.ts`). QUIET fallback semantics
+ * throughout, like {@link decodeSymmetry} — a backdrop is cosmetic, never
+ * worth losing an otherwise-valid shared link over — and this function is
+ * also the LEGACY MIGRATION: every document written before the field existed
+ * carries no `background` at all, and those documents rendered the haze
+ * backdrop exactly when their render style was `"aerial"` (the style used to
+ * force it — see scene.ts pre-fr-5ps1). So the fallback for an absent or
+ * malformed block is keyed on `legacyAerial` (the already-validated render
+ * style), and a pre-fr-5ps1 aerial link keeps rendering the haze it always
+ * rendered. The same fallback covers an unrecognized mode, so a link from a
+ * future build (fr-mz2u's `"auto"`, fr-4vi7's curated presets) degrades to
+ * the legacy resolution rather than costing the scene.
+ *
+ * The custom gradient (`top`/`bottom` hex strings, {@link hexToRgb}-strict
+ * like {@link decodePositionAxisColors}) decodes independently of the mode
+ * and survives alongside a built-in selection — the authored slot outlives
+ * being unselected, exactly like `customPalette`. Both stops must parse or
+ * the payload drops whole. A `"custom"` mode with no surviving payload
+ * can't be honored and takes the legacy fallback, mirroring the `"custom"`
+ * paletteId rule in {@link decodeFlameParams}.
+ */
+function decodeBackground(
+  raw: unknown,
+  legacyAerial: boolean,
+): BackgroundParams {
+  const fallback: BackgroundMode = legacyAerial ? "haze" : "dark";
+  if (typeof raw !== "object" || raw === null) return { mode: fallback };
+  const b = raw as Record<string, unknown>;
+
+  let custom: BackgroundGradient | undefined;
+  if (typeof b.top === "string" && typeof b.bottom === "string") {
+    const top = hexToRgb(b.top);
+    const bottom = hexToRgb(b.bottom);
+    if (top !== null && bottom !== null) custom = { top, bottom };
+  }
+
+  let mode: BackgroundMode =
+    typeof b.mode === "string" && VALID_BACKGROUND_MODES.has(b.mode)
+      ? (b.mode as BackgroundMode)
+      : fallback;
+  if (mode === "custom" && custom === undefined) mode = fallback;
+
+  return custom === undefined ? { mode } : { mode, custom };
 }
 
 /**
@@ -1226,6 +1301,7 @@ export function encodeScene(s: SceneSnapshot): string {
     surface: SurfaceParams;
     symmetry: SymmetryParams;
     glowBrightness: number;
+    background?: { mode: BackgroundMode; top?: string; bottom?: string };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
     camera?: {
@@ -1304,6 +1380,30 @@ export function encodeScene(s: SceneSnapshot): string {
     // per-transform optional feature like finalTransform/weight/shear.
     glowBrightness: round4(s.glowBrightness),
   };
+  // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
+  // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
+  // encoded bytes stay identical — EXCEPT under the aerial render style,
+  // where even the pristine default is written out: an absent field is what
+  // a legacy document looks like, and the decoder reads legacy-aerial as
+  // haze (the backdrop the style used to force), so an aerial scene that
+  // means "dark" must say so. The custom gradient is written whenever
+  // authored, selected or not — the slot survives like customPalette — as
+  // hex strings for URL compactness (see rgbToHex).
+  if (
+    s.background.mode !== "dark" ||
+    s.background.custom !== undefined ||
+    s.renderStyle === "aerial"
+  ) {
+    payload.background = {
+      mode: s.background.mode,
+      ...(s.background.custom
+        ? {
+            top: rgbToHex(s.background.custom.top),
+            bottom: rgbToHex(s.background.custom.bottom),
+          }
+        : {}),
+    };
+  }
   // Written only when present, so lens-free systems keep their short URLs.
   if (s.finalTransform)
     payload.finalTransform = encodeTransform(s.finalTransform);
@@ -1555,6 +1655,13 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? (o.rampPaletteId as PaletteSelection)
         : DEFAULT_RAMP_PALETTE;
 
+    // background (fr-5ps1): never rejects — absent, malformed, or unknown
+    // falls back to the LEGACY resolution (haze under the aerial style, dark
+    // otherwise), which is also the pre-fr-5ps1 migration. Safe to key on
+    // renderStyle here: it was strictly validated above. See
+    // decodeBackground.
+    const background = decodeBackground(o.background, renderStyle === "aerial");
+
     // camera (fr-1k4): the optional orbit-camera pose. Never rejects the
     // scene — a malformed or absent value quietly decodes to undefined,
     // exactly like customPalette above. See decodeCameraPose.
@@ -1583,6 +1690,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       surface,
       symmetry,
       glowBrightness,
+      background,
       customPalette,
       positionAxisColors,
       camera,

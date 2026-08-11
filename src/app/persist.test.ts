@@ -144,6 +144,7 @@ function baseSnapshot(): SceneSnapshot {
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
+    background: { mode: "dark" },
   };
 }
 
@@ -3368,5 +3369,165 @@ describe("fromSnapshot fourD", () => {
     };
     const result = fromSnapshot(snapshot, initialState(true));
     expect("fourD" in result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Background (fr-5ps1) — the scene backdrop. Omitted from the wire payload
+// while pristine (dark, nothing authored) EXCEPT under the aerial render
+// style, where an absent field is what a pre-fr-5ps1 document looks like and
+// decodes through the legacy migration (aerial forced haze). See
+// background.ts / decodeBackground's own doc comments.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene background (fr-5ps1)", () => {
+  it("round-trips the haze mode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze" },
+    };
+    expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "haze" });
+  });
+
+  it("round-trips custom colors exactly, with no float rounding", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "custom",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.background).toEqual({
+      mode: "custom",
+      custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+    });
+  });
+
+  it("keeps the authored custom payload even while haze is selected", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "haze",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.background).toEqual({
+      mode: "haze",
+      custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+    });
+  });
+
+  it("omits the background key from the encoded payload for the pristine default", () => {
+    const payload = decodePayload(encodeScene(baseSnapshot()));
+    expect("background" in payload).toBe(false);
+  });
+
+  it("writes the pristine default explicitly under the aerial style, and round-trips it", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      renderStyle: "aerial",
+      background: { mode: "dark" },
+    };
+    const payload = decodePayload(encodeScene(s));
+    expect(payload.background).toEqual({ mode: "dark" });
+    expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "dark" });
+  });
+
+  // ——— fr-5ps1: the pre-existing-document legacy migration ———
+
+  it("decodes a document with no background key as dark under a non-aerial style", () => {
+    const raw = { ...baseSnapshot() };
+    delete (raw as Record<string, unknown>).background;
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "dark" });
+  });
+
+  it("decodes a document with no background key as haze under the aerial style", () => {
+    const raw = { ...baseSnapshot(), renderStyle: "aerial" };
+    delete (raw as Record<string, unknown>).background;
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("falls back to dark for an unrecognized mode under a non-aerial style", () => {
+    const raw = { ...baseSnapshot(), background: { mode: "auto" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "dark" });
+  });
+
+  it("falls back to haze for an unrecognized mode under the aerial style", () => {
+    const raw = {
+      ...baseSnapshot(),
+      renderStyle: "aerial",
+      background: { mode: "auto" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("falls back to the legacy resolution for custom mode with no surviving payload", () => {
+    const raw = { ...baseSnapshot(), background: { mode: "custom" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "dark" });
+  });
+
+  it("drops a malformed hex custom payload without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      background: { mode: "haze", top: "#12", bottom: "#336699" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("drops a non-string hex value the same way", () => {
+    const raw = {
+      ...baseSnapshot(),
+      background: { mode: "haze", top: 123, bottom: "#336699" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("falls back entirely for custom mode with a malformed hex payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      background: { mode: "custom", top: "#12", bottom: "#336699" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "dark" });
+  });
+
+  it("falls back without rejecting the scene when background is entirely the wrong type", () => {
+    const raw = { ...baseSnapshot(), background: 42 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.background).toEqual({ mode: "dark" });
+    expect(result!.transforms).toHaveLength(1);
+  });
+
+  it("re-encodes to the identical string for a haze document", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze" },
+    };
+    const once = encodeScene(s);
+    expect(encodeScene(decodeScene(once)!)).toBe(once);
+  });
+
+  it("re-encodes to the identical string for a custom document", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "custom",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+      },
+    };
+    const once = encodeScene(s);
+    expect(encodeScene(decodeScene(once)!)).toBe(once);
   });
 });

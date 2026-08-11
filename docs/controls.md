@@ -588,7 +588,9 @@ morphs into place instead of snapping (see **Presets** below).
   log-scale gamma on the normalized coordinate. Left (<1) spreads detail in
   the dense low end, right (>1) in the high end, center = linear.
 - **Depth Style** — how the cloud conveys depth: Depth Fade (default), Aerial
-  Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting.
+  Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
+  itself is a separate choice — see **Background**, below; Aerial Haze only
+  picks the fog treatment now.
 - **Glow Brightness** (fr-8b1) — appears only while **Depth Style** is **Glow +
   Bloom**: a 0.1×–3× manual multiplier on top of that style's automatic
   exposure, which already dims dense clouds and lifts sparse ones so additive
@@ -596,6 +598,17 @@ morphs into place instead of snapping (see **Presets** below).
   too hot or too dim for a particular scene — 1.00× (the default) leaves the
   automatic exposure alone. Applies live, with no regenerate, and persists in
   the link and scene file.
+- **Background** (fr-5ps1) — the two-stop gradient every render shows behind
+  the attractor: **Dark** (the original ground, and the default), **Haze**
+  (the cooler, lighter atmosphere Aerial Haze used to force before this
+  control existed), or **Custom**, which reveals **Top**/**Bottom** color
+  pickers for an authored gradient. One backdrop for the whole app — Points,
+  Flame, Solid, and Surface all show it, and Save PNG / video captures render
+  exactly what's on screen. Depth Fade and Aerial Haze's fog also tints toward
+  it, so switching the backdrop re-tints the fog to match. Persists in the
+  link and scene file; a link saved before this control existed still renders
+  exactly as it always did — Haze if its Depth Style was Aerial, Dark
+  otherwise.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
 - **Capture size** — in the **Capture** section, the resolution **Save PNG**
   renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×

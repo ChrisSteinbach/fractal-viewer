@@ -6,9 +6,12 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <!-- Mirrors the WebGL backdrop's top stop (DARK_BACKDROP.top in
+    <!-- Mirrors the DEFAULT (dark) backdrop's top stop (DARK_BACKDROP.top in
          src/app/constants.ts) so the mobile/PWA chrome tint meets the page
-         top seamlessly. Keep in sync with vite.config.ts's manifest. -->
+         top seamlessly. The per-scene Background control (fr-5ps1) can
+         repaint the canvas itself, but this static meta tag can't follow a
+         per-scene choice, so it always mirrors the dark default. Keep in
+         sync with vite.config.ts's manifest. -->
     <meta name="theme-color" content="#0d0d18" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <title>4D Fractal Explorer — interactive IFS attractors</title>
@@ -653,6 +656,35 @@
                 value="1"
               />
             </label>
+          </div>
+
+          <!-- The scene backdrop (fr-5ps1): shown by every renderer, not just
+               the explorer, so unlike Depth Style it stays live in the 4D
+               view too. Custom reveals the two-stop pickers below. -->
+          <div id="backgroundRow">
+            <label class="select-label">
+              Background
+              <select id="background">
+                <option value="dark">Dark</option>
+                <option value="haze">Haze</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- Custom backdrop stops (fr-5ps1); reuses the position-axis
+               picker-row styling — same titled-row-of-swatches shape. -->
+          <div id="backgroundCustomRow" class="position-axis-row hidden">
+            <span class="position-axis-title">Backdrop Colors</span>
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                >Top <input type="color" id="backgroundTop" value="#0d0d18"
+              /></label>
+              <label class="position-axis-label"
+                >Bottom
+                <input type="color" id="backgroundBottom" value="#1f2039"
+              /></label>
+            </div>
           </div>
 
           <label class="checkbox-label">

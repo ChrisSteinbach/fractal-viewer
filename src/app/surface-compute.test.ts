@@ -21,7 +21,12 @@ describe("buildSurfaceComputeBackground", () => {
     // 2x4: row 0 is the BOTTOM (the kernel's py=0 is ndcY=-1), sampled at
     // v=(py+0.5)/h — the GLSL main()'s mix(uBgBottom, uBgTop, vUv.y) with
     // pack4x8unorm's round-half-up quantization.
-    const rows = buildSurfaceComputeBackground(2, 4);
+    const rows = buildSurfaceComputeBackground(
+      2,
+      4,
+      hexToRgb01(DARK_BACKDROP.top),
+      hexToRgb01(DARK_BACKDROP.bottom),
+    );
     expect(rows.length).toBe(2 * 4 * 4);
     const bottom = hexToRgb01(DARK_BACKDROP.bottom);
     const top = hexToRgb01(DARK_BACKDROP.top);
@@ -38,6 +43,32 @@ describe("buildSurfaceComputeBackground", () => {
     }
     // The gradient really runs bottom -> top (backdrop darkens upward).
     expect(rows[2]).toBeGreaterThan(rows[3 * 2 * 4 + 2]);
+  });
+
+  it("tracks custom top/bottom stops rather than any built-in constant", () => {
+    // Red top / blue bottom, hand-computed against the documented formula —
+    // NOT re-derived by calling the function under test — so this proves
+    // the prefill actually reads the passed stops (fr-5ps1's Background
+    // control) instead of silently always reproducing DARK_BACKDROP.
+    const rows = buildSurfaceComputeBackground(2, 4, [1, 0, 0], [0, 0, 1]);
+
+    expect(rows.length).toBe(2 * 4 * 4);
+    // v = (py + 0.5) / 4; r = round(v * 255), g = 0, b = round((1 - v) * 255).
+    const expected = [
+      { r: 32, b: 223 }, // py=0, v=0.125
+      { r: 96, b: 159 }, // py=1, v=0.375
+      { r: 159, b: 96 }, // py=2, v=0.625
+      { r: 223, b: 32 }, // py=3, v=0.875
+    ];
+    for (let py = 0; py < 4; py++) {
+      for (let px = 0; px < 2; px++) {
+        const o = (py * 2 + px) * 4;
+        expect(rows[o]).toBe(expected[py].r);
+        expect(rows[o + 1]).toBe(0);
+        expect(rows[o + 2]).toBe(expected[py].b);
+        expect(rows[o + 3]).toBe(255);
+      }
+    }
   });
 });
 
