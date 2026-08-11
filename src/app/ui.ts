@@ -2773,35 +2773,14 @@ export class Ui {
       this.showLegendSwatchStrip(state.transforms);
       return;
     }
-    if (nonFlat) {
-      const mode = state.fourDColor;
-      if (mode === "transform") {
-        this.showLegendSwatchStrip(state.transforms);
-        return;
-      }
-      if (mode === "radius") {
-        // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
-        // cloud's 4D center. Gamma-neutral: the 4D shader never applies
-        // colorGamma, so the legend must not pretend it does. Since fr-6ue
-        // the ramp follows rampPaletteId exactly like the 3D radius mode's —
-        // the same rampPalette-aware LUT the explorer bake (buildColors4)
-        // and the render workers' own 4D radius LUT sample.
-        this.showLegendBar(
-          legendGradient(
-            "radius",
-            1,
-            resolvePalette(state.rampPaletteId, state.customPalette),
-          ),
-          "center",
-          "",
-          "edge",
-        );
-        return;
-      }
-      this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");
-      return;
-    }
-
+    // The legend narrates the ACTIVE RENDER, so the render-mode branches
+    // come BEFORE the document-4D-ness one (fr-skhv round 2): the surface/
+    // flame/solid sessions color by their OWN sources whatever the
+    // document's dimension, and the fourDColor legend below describes the
+    // POINTS view alone. The old order short-circuited every 4D document
+    // into the explorer's −w/+w ramp — a 4D surface session rendered
+    // by-transform colors under a w-depth legend that described nothing on
+    // screen.
     if (state.renderMode === "surface") {
       const source = state.surface.colorSource;
       if (source === "transform") {
@@ -2867,6 +2846,35 @@ export class Ui {
         this.legend.classList.add("hidden");
         return;
       }
+    }
+
+    if (nonFlat) {
+      const mode = state.fourDColor;
+      if (mode === "transform") {
+        this.showLegendSwatchStrip(state.transforms);
+        return;
+      }
+      if (mode === "radius") {
+        // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
+        // cloud's 4D center. Gamma-neutral: the 4D shader never applies
+        // colorGamma, so the legend must not pretend it does. Since fr-6ue
+        // the ramp follows rampPaletteId exactly like the 3D radius mode's —
+        // the same rampPalette-aware LUT the explorer bake (buildColors4)
+        // and the render workers' own 4D radius LUT sample.
+        this.showLegendBar(
+          legendGradient(
+            "radius",
+            1,
+            resolvePalette(state.rampPaletteId, state.customPalette),
+          ),
+          "center",
+          "",
+          "edge",
+        );
+        return;
+      }
+      this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");
+      return;
     }
 
     const mode = state.colorMode;
