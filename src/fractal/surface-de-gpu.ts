@@ -435,7 +435,11 @@ import type { Vec3 } from "./types";
  * ESCAPE core never declares binding 1 (maps) in any mode — its one
  * forward map rides the params variant block — so escape hosts skip
  * that buffer; the AFFINE4 core declares binding 1 as
- * `array<GpuMap4>` (pack with {@link packSurfaceGpuMaps4}); every
+ * `array<GpuMap4>` (pack with {@link packSurfaceGpuMaps4}), and under
+ * `mapsUniform: true` (fr-b72d probe, option doc) that binding becomes
+ * a fixed-size UNIFORM array — `array<GpuMap4, `{@link
+ * SURFACE_GPU_UNIFORM_MAP_SLOTS}`>` — with the matching host-side
+ * usage/layout/size obligations; every
  * other binding is identical. Mode "shade" binds:
  *   @binding(4) var<uniform> shade: ShadeParams
  *   @binding(5) var<storage, read> shadeMaps: array<vec4f>
@@ -481,6 +485,18 @@ export const SURFACE_GPU_MAP4_VEC4 = 8;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). */
 export const SURFACE_GPU_SHADE_BYTES = 128;
+/** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
+ * uniform-address-space arrays need a creation-fixed footprint, so the
+ * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
+ * at least `SURFACE_GPU_UNIFORM_MAP_SLOTS * SURFACE_GPU_MAP4_VEC4 * 16`
+ * = 3072 bytes (WebGPU validates the full type size at bind-group
+ * creation; slots past `params.mapCount` are never read, and WebGPU
+ * zero-fills fresh buffers, so a short `packSurfaceGpuMaps4` write into a
+ * full-size buffer is complete). 24 matches the app's 4D eligibility cap
+ * (`SURFACE4_MAX_MAPS`, surface-material-4d.ts — enforced for every 4D
+ * surface entry in main.ts, compute-only fold shapes included), so no
+ * eligible system can overflow the fixed array. */
+export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
 
 /** Ray-state status codes (the `y` component of a march state vec4). */
 export const SURFACE_GPU_RAY_ACTIVE = 0;
@@ -613,6 +629,38 @@ export interface SurfaceGpuKernelOptions {
    * silently render the h=0 slice; the packer cannot see kernel
    * options, so keeping the two in sync is the caller's obligation. */
   slabExt?: boolean;
+  /** fr-b72d's maps-load probe: move the per-map data from the
+   * runtime-sized STORAGE buffer to a fixed-size UNIFORM array —
+   * `var<uniform> maps: array<GpuMap4, `{@link
+   * SURFACE_GPU_UNIFORM_MAP_SLOTS}`>` — leaving every body byte-identical
+   * (`maps[j]` is address-space-agnostic in WGSL). The fragment-GLSL 4D
+   * tracer this kernel lost to at kaleidoscope order 6 reads its maps
+   * from a std140 uniform BLOCK (fr-dqlq), which Mesa serves from the
+   * constant cache / push space; the WGSL storage loads sit in the
+   * innermost sector-sweep loop AND inside every `refinedCert` re-sweep,
+   * behind Tint's runtime-sized-array robustness clamp — the suspected
+   * per-iteration tax this option A/Bs. MEASURED VERDICT (real Iris Xe,
+   * 2026-08-11, the extended `--surface-aff4-sweep=1` leg): REFUTED —
+   * uniform-vs-storage moved nothing at any kaleidoscope order (fold4
+   * 0.99x flat, affine4 0.79-1.02x with the regressions at the extremes),
+   * values bit-identical throughout, so ANV already serves the
+   * dynamically-uniform-index storage loads well and PRODUCTION NEVER
+   * SETS THIS. The order-6 superlinearity the probe chased turned out
+   * ALGORITHMIC, not realization-specific — the CPU oracle reproduces the
+   * kernel's own curve on the same mixes (x13.5 affine4 / x58.9 fold4 at
+   * order 6 vs the 6x naive work ratio;
+   * `scripts/aff4-order-cpu.harness.ts`). The option stays as the
+   * refutation's executable record, pinned by the sweep leg's
+   * uniform-vs-storage agreement gates and the codegen tests' one-line-
+   * swap equivalence. Meaningful ONLY under the 4D cores
+   * (`"affine4"`/`"fold4"`) — structurally inert everywhere else, exactly
+   * like `slabExt`. Absent or `false` reproduces the storage binding byte
+   * for byte. HOST CONTRACT: a `mapsUniform: true` pipeline needs its
+   * maps buffer created with UNIFORM (not STORAGE) usage and sized to the
+   * full 24-slot footprint ({@link SURFACE_GPU_UNIFORM_MAP_SLOTS}'s doc),
+   * and a bind-group layout whose binding 1 is
+   * `{ buffer: { type: "uniform" } }`. */
+  mapsUniform?: boolean;
 }
 
 /** Workgroup shared-memory bytes the generated kernel declares — what the
@@ -1191,6 +1239,9 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // unconditionally, so `opts.slabExt` is never even consulted for them
   // and the inertness is structural, not just documented.
   const slabExt = core4 ? (opts.slabExt ?? true) : true;
+  // fr-b72d: the maps-load probe (option doc). Same structural inertness
+  // as slabExt — only the 4D cores ever consult it.
+  const mapsUniform = core4 ? (opts.mapsUniform ?? false) : false;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -3461,11 +3512,17 @@ struct GpuMap {
     // block and never touches per-map storage; a declared-but-unused
     // binding would drop out of the auto layout anyway (module doc), so
     // it is not declared and hosts skip buffer 1. Both 4D cores' maps
-    // are the 4D layout (GpuMap4) — one binding text for the pair.
+    // are the 4D layout (GpuMap4) — one binding text for the pair, in
+    // the address space `mapsUniform` picks (fr-b72d probe, option doc):
+    // the bodies index `maps[j]` identically either way, so the variant
+    // is exactly this one line.
     core === "escape"
       ? ""
       : core4
-        ? `
+        ? mapsUniform
+          ? `
+@group(0) @binding(1) var<uniform> maps: array<GpuMap4, ${SURFACE_GPU_UNIFORM_MAP_SLOTS}>;`
+          : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;`
         : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap>;`

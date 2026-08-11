@@ -96,12 +96,14 @@ import {
 import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 import {
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -1996,9 +1998,11 @@ interface SurfaceSectionConfig {
    * runs before the section's `results` object exists. */
   shadeWidthNotes: string[];
   /** fr-b72d opt-in leg (`--surface-aff4-sweep=1`): per-kaleidoscope-order
-   * affine4 eval-kernel timing (slab vs no-slab, fr-d0nn's register-
-   * pressure probe). Default false — the leg is silent and never runs in
-   * CI; see `runSurfaceAff4SweepLeg`'s doc. */
+   * affine4/fold4 eval-kernel timing across five arms (slab vs no-slab,
+   * fr-d0nn's register-pressure probe; uniform vs storage maps, fr-b72d's
+   * maps-load probe; affine4 vs fold4, the fold-4D-at-high-order curve).
+   * Default false — the leg is silent and never runs in CI; see
+   * `runSurfaceAff4SweepLeg`'s doc. */
   aff4Sweep: boolean;
 }
 
@@ -2332,16 +2336,28 @@ interface SurfaceShadeAbRow {
 }
 
 /**
- * fr-b72d opt-in sweep leg — one (order, variant) timing row. `usPerQuery`
- * is derived from `minMs` (the least-noise-contaminated estimate of the
- * kernel's own cost), not `meanMs`. `reps` is normally
+ * fr-b72d opt-in sweep leg — one (order, core, variant, maps) timing row.
+ * `usPerQuery` is derived from `minMs` (the least-noise-contaminated
+ * estimate of the kernel's own cost), not `meanMs`. `reps` is normally
  * {@link SURFACE_AFF4_SWEEP_REPS}, but reads lower when a timed dispatch
  * blew past {@link SURFACE_AFF4_SWEEP_REP_CAP_MS} and the loop stopped
- * early — `minMs`/`meanMs` still cover exactly the reps that ran.
+ * early — `minMs`/`meanMs` still cover exactly the reps that ran. `core`
+ * and `maps` are the two probe axes this row can vary over independently
+ * of `variant`: `core` picks which descent body (`affine4`'s fixed-width
+ * refined ladder or `fold4`'s fold frontier) generated it, and `maps`
+ * picks which address space its per-map data was bound from
+ * (`surface-de-gpu.ts`'s `mapsUniform` option doc) — `variant` stays
+ * `"slab"` only for `core: "affine4"` (fold4 runs noslab-only in this
+ * leg; see `runSurfaceAff4SweepLeg`'s doc). `n` is this row's OWN adaptive
+ * batch size (the leg's doc's pilot → batch derivation), not a fixed
+ * constant — it varies by (order, core) but is identical across every arm
+ * of the same (order, core) pair, keeping A/B comparisons apples-to-apples.
  */
 interface SurfaceAff4SweepRow {
   order: number;
+  core: "affine4" | "fold4";
   variant: "slab" | "noslab";
+  maps: "storage" | "uniform";
   n: number;
   reps: number;
   minMs: number;
@@ -2350,13 +2366,22 @@ interface SurfaceAff4SweepRow {
 }
 
 /**
- * fr-b72d opt-in sweep leg — one order's slab-vs-noslab exact-equality
- * check (see {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc for why the two
- * variants are expected to agree). `withinTolerance` false means the leg
- * fails the section — see `runSurfaceAff4SweepLeg`'s doc.
+ * fr-b72d opt-in sweep leg — one order's exact-equality check between two
+ * kernel variants that are expected to agree bit for bit (see {@link
+ * SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc for why). `pair` names which two
+ * arms are being compared: `"slab-vs-noslab"` is the original affine4
+ * register-pressure A/B; `"affine4-uniform-vs-storage"` and
+ * `"fold4-uniform-vs-storage"` are fr-b72d's maps-load probe, one per
+ * core, each comparing that core's noslab-uniform arm against its own
+ * noslab-storage arm. `withinTolerance` false means the leg fails the
+ * section — see `runSurfaceAff4SweepLeg`'s doc.
  */
 interface SurfaceAff4SweepAgreement {
   order: number;
+  pair:
+    | "slab-vs-noslab"
+    | "affine4-uniform-vs-storage"
+    | "fold4-uniform-vs-storage";
   n: number;
   mismatches: number;
   maxAbs: number;
@@ -2374,10 +2399,12 @@ interface SurfaceAff4SweepAgreement {
 interface SurfaceAff4SweepResult {
   rows: SurfaceAff4SweepRow[];
   agreement: SurfaceAff4SweepAgreement[];
-  /** The leg's two pipelines compile once each and serve every order (the
+  /** The leg's five pipelines each compile once and serve every order (the
    * kernel text is order-independent — symmetry order is a params value,
-   * not a codegen option). */
-  compileMs: { slab: number; noslab: number };
+   * not a codegen option), keyed
+   * `"affine4-slab" | "affine4-noslab" | "affine4-noslab-uniform" |
+   * "fold4-noslab" | "fold4-noslab-uniform"`. */
+  compileMs: Record<string, number>;
 }
 
 interface SurfaceDeResults {
@@ -2607,34 +2634,64 @@ const SURFACE_FOLD4_SLABEXT_TOL_FACTOR = 1e-5;
  * endpoints (compute 1.7x faster than fragment GLSL at order 1, ~35x
  * SLOWER at order 6, real Iris Xe); 2/3/4 fill in the unmeasured middle. */
 const SURFACE_AFF4_SWEEP_ORDERS = [1, 2, 3, 4, 6];
-/** fr-b72d sweep leg: the occupancy-saturating query batch on a real
- * adapter — tiled up from {@link affine4Queries}' 700-query mix (see the
- * leg's doc for why tiling, not resampling). */
+/** fr-b72d sweep leg: the CEILING an adaptively-sized batch is clamped to
+ * on a real adapter — tiled up from {@link affine4Queries}' 700-query mix
+ * (see the leg's doc for why tiling, not resampling). Every (order, core)
+ * pair sizes its OWN batch toward {@link SURFACE_AFF4_SWEEP_TARGET_MS} from
+ * a measured pilot (the leg's doc's pilot → batch derivation); this cap
+ * only bounds how large that adaptive size may grow, so a cheap
+ * configuration (low order, affine4) reaches it while an expensive one
+ * (order 6, fold4) sizes far below it. */
 const SURFACE_AFF4_SWEEP_BATCH = 65536;
-/** fr-b72d sweep leg: the batch size under `acquired.software` (SwiftShader
- * CI/dev boxes) — 5 orders × 2 variants × (1 warmup + 5 timed) dispatches at
- * the full 65536-query batch would be unbearably slow on a software
- * rasterizer, and the leg's software-adapter job is only to prove it
- * dispatches and agrees, never to produce a meaningful timing curve.
- * Real-driver runs (`surfaceForce` irrelevant — a real adapter always uses
- * the full batch) always use {@link SURFACE_AFF4_SWEEP_BATCH}. */
+/** fr-b72d sweep leg: the adaptive batch's ceiling under
+ * `acquired.software` (SwiftShader CI/dev boxes) instead of {@link
+ * SURFACE_AFF4_SWEEP_BATCH} — 5 orders × 2 cores × up to 5 arms × (1 pilot
+ * + 1 warmup + 5 timed) dispatches at the real-adapter ceiling would be
+ * unbearably slow on a software rasterizer, and the leg's software-adapter
+ * job is only to prove it dispatches and agrees, never to produce a
+ * meaningful timing curve. */
 const SURFACE_AFF4_SWEEP_BATCH_SW = 8192;
-/** fr-b72d sweep leg: timed dispatches per (order, variant), after one
- * untimed warmup dispatch (which also supplies the agreement-gate value —
- * see the leg's doc). */
+/** fr-b72d sweep leg's adaptive batch sizing: the pilot dispatch's size, in
+ * whole tiles of {@link affine4Queries}' 700-query mix (2 tiles = 1400
+ * queries) — see the leg's doc for why a fixed 65536-query batch is unsafe
+ * at order 6 under `core: "fold4"` (multi-ten-second single submission,
+ * i915-watchdog territory) and how the pilot's measured cost derives a
+ * per-(order, core) batch instead. Also this leg's floor on every derived
+ * batch — see {@link SURFACE_AFF4_SWEEP_TARGET_MS}'s doc — so a
+ * pathologically slow pilot still leaves a comparable-sized batch to time
+ * rather than degenerating toward zero. */
+const SURFACE_AFF4_SWEEP_PILOT_TILES = 2;
+/** fr-b72d sweep leg's adaptive batch sizing: the wall-clock budget each
+ * (order, core)'s derived batch targets per TIMED dispatch, extrapolated
+ * from the pilot's measured µs/query and rounded to a whole number of
+ * 700-query tiles, then clamped to
+ * [{@link SURFACE_AFF4_SWEEP_PILOT_TILES}' 1400 queries, the adapter's
+ * batch ceiling]. Comfortably under {@link SURFACE_AFF4_SWEEP_REP_CAP_MS}
+ * so a correctly-sized batch's timed reps essentially never trip the
+ * hang-risk cutoff — that cutoff stays purely as a safety net against the
+ * pilot's estimate being wrong (e.g. an arm genuinely costlier than the
+ * noslab-storage pipeline the pilot measures). */
+const SURFACE_AFF4_SWEEP_TARGET_MS = 1500;
+/** fr-b72d sweep leg: timed dispatches per arm, after one untimed warmup
+ * dispatch (which also supplies the agreement-gate value — see the leg's
+ * doc). */
 const SURFACE_AFF4_SWEEP_REPS = 5;
 /** fr-b72d sweep leg: a single timed dispatch beyond this is a hang risk,
  * not a measurement worth waiting out — the rep loop stops after it and
  * reports however many reps actually completed. */
 const SURFACE_AFF4_SWEEP_REP_CAP_MS = 10_000;
-/** fr-b72d sweep leg's slab/no-slab agreement gate: at `sliceHalfW: 0` the
- * two kernel variants are mathematically bit-identical
- * (`segmentRadius4(q, 0)` is `length(q)` bit for bit — surface-de-gpu.ts's
- * `slabExt` doc), so any elementwise mismatch is either FMA/contraction
- * noise (small, informational) or a real divergence between the two code
- * paths (gating). This is the noise/real boundary, scaled by the system's
- * own `boundingRadius` like every other surface eval tolerance in this
- * file. */
+/** fr-b72d sweep leg's exact-equality agreement gates (slab-vs-noslab, and
+ * since the maps-load probe, uniform-vs-storage per core): every pair this
+ * leg compares is mathematically bit-identical by construction — slab vs
+ * noslab because at `sliceHalfW: 0`, `segmentRadius4(q, 0)` is `length(q)`
+ * bit for bit (surface-de-gpu.ts's `slabExt` doc), and uniform vs storage
+ * because `maps[j]` is address-space-agnostic in WGSL, so the SAME
+ * generated body reads identical values from either binding
+ * (surface-de-gpu.ts's `mapsUniform` doc) — so any elementwise mismatch is
+ * either FMA/contraction noise (small, informational) or a real divergence
+ * between the two code paths (gating). This is the noise/real boundary,
+ * scaled by the system's own `boundingRadius` like every other surface
+ * eval tolerance in this file. */
 const SURFACE_AFF4_SWEEP_TOL_FACTOR = 1e-5;
 
 /** `surface-de.ts`'s `NO_SYMMETRY`, duplicated (it isn't exported) like
@@ -4116,14 +4173,25 @@ async function acquireSurfaceDevice(
 /**
  * Shader module + compute pipeline for one kernel config, under the
  * out-of-memory + validation error-scope pair (flame-gpu-backend.ts's
- * resource-creation discipline) and an explicit pipeline layout (never
- * "auto"). WGSL diagnostics surface as `line:col: message` VERBATIM (plus
- * the offending source line) — the lead needs them untouched to fix the
- * kernel. `compileMs` spans module + pipeline creation.
+ * resource-creation discipline). WGSL diagnostics surface as
+ * `line:col: message` VERBATIM (plus the offending source line) — the lead
+ * needs them untouched to fix the kernel. `compileMs` spans module +
+ * pipeline creation.
+ *
+ * `layout` is normally an explicit `GPUPipelineLayout` — every pipeline
+ * bound against this section's one shared `bindGroupLayout` uses the same
+ * object, so their bind groups interchange freely. Pass `"auto"` only when
+ * a pipeline's binding TYPES diverge from that shared layout (fr-b72d's
+ * `mapsUniform: true` arms need binding 1 typed `uniform` where the shared
+ * layout declares `read-only-storage`, and WebGPU has no "same layout,
+ * different binding type" escape hatch) — callers doing so MUST derive
+ * that pipeline's bind group from its own `getBindGroupLayout(0)`, never
+ * the shared `bindGroupLayout`, which would throw at bind-group creation
+ * (binding-type mismatch).
  */
 async function buildSurfacePipeline(
   device: GPUDevice,
-  layout: GPUPipelineLayout,
+  layout: GPUPipelineLayout | "auto",
   code: string,
   entryPoint: "evalQueries" | "marchRays",
   label: string,
@@ -6639,61 +6707,153 @@ function buildAff4SweepSystem(order: number): {
   return { de, view4 };
 }
 
+/** fr-b72d opt-in sweep leg: builds one kaleidoscope order's FOLD4 system +
+ * frozen view, mirroring {@link buildAff4SweepSystem} one core over — same
+ * eligibility-throw idiom (fixed fixture family; an ineligible order is a
+ * bench bug), same identity-rotor / `w0 = 0.2 · boundingRadius` /
+ * zero-thickness view recipe, same order-parametrized `plane: "xz",
+ * twist: 1` kaleidoscope — but over `surfaceFold4Boxfold()`'s base pair
+ * (M4's own `fold4Boxfold` fixture, `surface-de-4d.test.ts`'s
+ * `pureBoxfoldPair4` verbatim) instead of the affine ladder's base maps.
+ * Boxfold's 4D branch fan is 81 branches per map — the heaviest COMMON
+ * fold family (isometric-only, `sigma_c = 1` on all 81 — M4's own doc) —
+ * so this curve is the fold-4D-at-high-order datum fr-b72d's routing
+ * question needs; mandelbox (243 branches per map) scales roughly 3x on
+ * top of it, which this leg doesn't need to chase separately to answer
+ * that question. */
+function buildFold4SweepSystem(order: number): {
+  de: SurfaceDE4;
+  view4: SurfaceGpu4View;
+} {
+  const transforms = surfaceFold4Boxfold();
+  const symmetry: SymmetryParams = { order, plane: "xz", twist: 1 };
+  const eligibility = analyzeSurfaceSystem4(transforms, null);
+  if (eligibility.status === "ineligible") {
+    throw new Error(
+      `fold4 sweep fixture order ${String(order)} is ineligible: ` +
+        eligibility.reasons.join("; "),
+    );
+  }
+  const de = buildSurfaceDE4(transforms, null, symmetry);
+  const view4: SurfaceGpu4View = {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0.2 * de.boundingRadius,
+    sliceHalfW: 0,
+  };
+  return { de, view4 };
+}
+
 /**
- * fr-b72d: the opt-in per-kaleidoscope-order affine4 eval-kernel timing
- * sweep (`config.aff4Sweep`, `--surface-aff4-sweep=1`) — answers two
- * questions bug fr-b72d left open. The affine4 COMPUTE kernel measured
- * ~1.7x FASTER than the fragment-GLSL tracer at kaleidoscope order 1 but
- * ~35x SLOWER at order 6 (real Iris Xe); orders 2-5 were never measured,
- * and it was unknown whether that slowdown is the eval kernel's own
- * superlinear cost in symmetry order or an artifact of the app's host
- * march loop layered on top of it. (1) This leg times the BARE eval
- * kernel — no march, no host loop, no shading — at every order in {@link
- * SURFACE_AFF4_SWEEP_ORDERS} on one large batch, isolating the kernel's
- * own per-query cost curve from everything `surface-compute.ts` adds on
- * top. (2) It repeats the identical sweep with `slabExt: false` —
- * fr-d0nn's register-pressure hypothesis, that the fr-wa6o slab's extra
- * live `ext` vec4f registers are what makes order 6 pathological — to see
- * whether dropping them changes the curve's SHAPE, not just its offset.
+ * fr-b72d: the opt-in per-kaleidoscope-order affine4/fold4 eval-kernel
+ * timing sweep (`config.aff4Sweep`, `--surface-aff4-sweep=1`). Originally a
+ * two-arm affine4 slab/no-slab A/B answering fr-b72d's own question (the
+ * affine4 COMPUTE kernel measured ~1.7x FASTER than the fragment-GLSL
+ * tracer at kaleidoscope order 1 but ~35x SLOWER at order 6, real Iris Xe;
+ * orders 2-5 were never measured, and it was unknown whether the slowdown
+ * is the eval kernel's own superlinear cost in symmetry order or an
+ * artifact of the app's host march loop on top of it) — this leg still
+ * times the BARE eval kernel — no march, no host loop, no shading — at
+ * every order in {@link SURFACE_AFF4_SWEEP_ORDERS}, but now across FIVE
+ * arms spanning TWO cores: `core: "affine4"` runs `slab` (today's shipped
+ * kernel), `noslab` (`slabExt: false`, fr-d0nn's original register-pressure
+ * probe), and `noslab` with `mapsUniform: true`; `core: "fold4"` runs only
+ * `noslab` and `noslab`+`mapsUniform: true` (no slab arm — the fr-wa6o slab
+ * question is already covered on the affine4 ladder above, and separately
+ * by M4's own dedicated slabExt A/B on `fold4Boxfold`, so this leg's fold4
+ * arms stay narrowly scoped to the axis below they actually add). The two
+ * NEW axes:
  *
- * ONE pipeline pair serves every order (surface-de-gpu.ts's `slabExt`
- * doc: "the kernel text does not depend on symmetry order; symOrder is a
- * params value"), compiled once before the order loop. Per order the
- * system is rebuilt fresh ({@link buildAff4SweepSystem}) — `boundingRadius`
- * (and therefore `w0`, the query cloud's scale, and the packed params)
- * legitimately shifts with order, since the bounding probe runs the
- * kaleidoscope-swept chaos game. `affine4Queries`' standard 700-query mix
- * is TILED — repeated wholesale, not resampled — up to an occupancy-
- * saturating batch ({@link SURFACE_AFF4_SWEEP_BATCH}, or the software-
- * adapter-only {@link SURFACE_AFF4_SWEEP_BATCH_SW}): repetition preserves
- * the mix's jittered/near-boundary/exact divergence pattern WITHIN every
- * 700-query tile, which is what one SIMD group actually threads through —
- * a fresh random draw per slot would iron out exactly the branch
- * divergence a `usPerQuery` measurement is supposed to capture.
+ * (1) UNIFORM vs STORAGE maps isolates the per-iteration maps-load tax.
+ * The fragment-GLSL 4D tracer this kernel lost to at order 6 reads its
+ * maps from a std140 uniform BLOCK (fr-dqlq), which Mesa serves from the
+ * constant cache / push space; the WGSL storage loads this kernel emits
+ * instead sit in the innermost sector-sweep loop AND inside every
+ * `refinedCert` re-sweep, behind Tint's runtime-sized-array robustness
+ * clamp (surface-de-gpu.ts's `mapsUniform` option doc). Each core's
+ * `noslab` arm against its own `noslab`+`mapsUniform` arm A/Bs this
+ * directly — affine4 and fold4 both carry the comparison, so the leg can
+ * tell whether any tax it finds is core-specific or a property of the maps
+ * binding alone.
  *
- * Both variants dispatch against IDENTICAL buffers (params/maps/input are
- * variant-independent — only the pipeline differs), so the slab and
- * no-slab runs are as close to an A/B as WebGPU allows. Each variant's
- * warmup dispatch (untimed) doubles as its agreement-gate value — the
- * kernel is a pure function of its buffers, so a second untimed readback
- * would only re-measure numbers the warmup already produced ({@link
- * runSurfaceEvalDispatch}, reused rather than reinventing dispatch
- * plumbing). The {@link SURFACE_AFF4_SWEEP_REPS} TIMED dispatches that
- * follow carry no readback in their own submission — the march timing
- * config's idiom (`runSurfaceMarchConfig`): `performance.now()` spans
- * submit → `onSubmittedWorkDone` of the compute pass ALONE, so a
- * copy-to-staging cost never contaminates a fast order's measurement.
+ * (2) The FOLD4 curve is the fold-4D-at-high-order datum this leg was
+ * missing — {@link buildFold4SweepSystem}'s boxfold fixture, the heaviest
+ * COMMON fold family. Comparing the fold4 curve's SHAPE against affine4's
+ * also attributes affine4's own superlinearity: fold4 has NO `refinedCert`
+ * by construction (surface-de-4d.ts's `descendFold4`), so if fold4 scales
+ * roughly linearly in order while affine4 does not, the residual is
+ * `refinedCert`'s divergence amplification, not the maps path — a question
+ * neither the original two-arm sweep nor the maps-load probe alone could
+ * separate out. `fold4`'s frontier `width` is {@link
+ * SURFACE_FOLD_BEAM_WIDTH} — the CPU oracle's own fixed frontier width and
+ * the M4 agreement leg's GATING row, mirrored exactly (M4's width-4 row is
+ * informational-only there and has no counterpart here).
  *
- * GATING: {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc — at `sliceHalfW: 0`
- * the two variants are mathematically bit-identical, so any mismatch past
- * FMA/contraction noise is a real divergence between the slab and
- * no-slab code paths, and fails the section exactly like the M3 leg's own
- * agreement gate. Skips (silent when `!config.aff4Sweep`, noted on a
- * software adapter without `surfaceForce=1`) never fail anything — the
- * section stays exactly as gate-worthy as it was before this leg existed.
- * Progressive: `onUpdate` fires once per completed order, so a mid-sweep
- * error (caught by the caller) still leaves every prior order's rows
- * visible in `results.aff4Sweep` rather than losing them.
+ * (3) ADAPTIVE batch sizing (replacing the original fixed {@link
+ * SURFACE_AFF4_SWEEP_BATCH} target) is watchdog safety, not a measurement
+ * refinement: an order-6 fold4 eval at a fixed 65536-query batch would be
+ * one multi-ten-second GPU submission — exactly the i915-watchdog risk the
+ * app bounds every production submission against (strip-planner.ts's
+ * module doc). Each (order, core) pair times a small pilot dispatch first
+ * ({@link SURFACE_AFF4_SWEEP_PILOT_TILES} tiles of {@link affine4Queries}'
+ * 700-query mix, on that core's `noslab`+storage pipeline — the same
+ * pipeline its own `noslab` arm times for real) and derives a batch sized
+ * toward {@link SURFACE_AFF4_SWEEP_TARGET_MS} of wall time per timed
+ * dispatch, clamped to [the pilot's own size, the adapter's batch ceiling]
+ * and rounded to a whole number of 700-query tiles so the derived batch's
+ * `queries.length` always equals the `itemCount` packed into params. Every
+ * arm of the SAME (order, core) pair shares that one derived size, keeping
+ * the pair's A/B comparable; sizes legitimately differ ACROSS (order, core)
+ * pairs — a cheap low-order affine4 pair reaches the ceiling, an expensive
+ * order-6 fold4 pair sizes far below it.
+ *
+ * Every arm's pipeline compiles ONCE, before the order loop (surface-de-
+ * gpu.ts's `slabExt`/`mapsUniform` docs: "the kernel text does not depend
+ * on symmetry order"). The two `mapsUniform: true` pipelines compile
+ * against `layout: "auto"` rather than this section's shared
+ * `pipelineLayout`, because their binding 1 is typed `uniform` where the
+ * shared `bindGroupLayout` declares `read-only-storage` — WebGPU has no
+ * "same layout, different binding type" option (`buildSurfacePipeline`'s
+ * doc); their bind groups are built from their OWN pipeline's
+ * `getBindGroupLayout(0)` instead. Every arm's warmup dispatch (untimed)
+ * doubles as its agreement-gate value — the kernel is a pure function of
+ * its buffers, so a second untimed readback would only re-measure numbers
+ * the warmup already produced ({@link runSurfaceEvalDispatch}, reused
+ * rather than reinventing dispatch plumbing). The {@link
+ * SURFACE_AFF4_SWEEP_REPS} TIMED dispatches that follow carry no readback
+ * in their own submission — the march timing config's idiom
+ * (`runSurfaceMarchConfig`): `performance.now()` spans submit →
+ * `onSubmittedWorkDone` of the compute pass ALONE, so a copy-to-staging
+ * cost never contaminates a fast configuration's measurement.
+ *
+ * GATING: {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc — every pair this leg
+ * compares (affine4 slab-vs-noslab, and each core's own uniform-vs-storage)
+ * is mathematically bit-identical by construction, so any mismatch past
+ * FMA/contraction noise is a real divergence between the two code paths,
+ * and fails the section exactly like the M3 leg's own agreement gate.
+ * Skips (silent when `!config.aff4Sweep`, noted on a software adapter
+ * without `surfaceForce=1`) never fail anything — the section stays
+ * exactly as gate-worthy as it was before this leg existed. Progressive:
+ * `onUpdate` fires once per completed order, so a mid-sweep error (caught
+ * by the caller) still leaves every prior order's rows visible in
+ * `results.aff4Sweep` rather than losing them.
+ *
+ * MEASURED VERDICT (real Iris Xe, 2026-08-11 — the fr-b72d closure run):
+ * axis (1) REFUTED — uniform maps moved nothing (fold4 0.99x flat at
+ * every order, affine4 0.79-1.02x), values bit-identical, so the arms
+ * stay as the refutation's standing gate and production never sets
+ * `mapsUniform`. Axis (2) landed the real answer: BOTH curves are
+ * superlinear (affine4 x14.4, fold4 x76.4 at order 6 vs the 6x naive
+ * work ratio) and fold4's — with no `refinedCert` at all — is the worse,
+ * refuting the divergence-amplified-refinement suspect too; the CPU
+ * oracle then reproduced both shapes on these exact mixes (x13.5/x58.9 —
+ * `scripts/aff4-order-cpu.harness.ts`), so the superlinearity is the
+ * ALGORITHM's own depth growth (more sectors → better-surviving beam
+ * candidates → deeper descents, each level itself O(order)), which both
+ * the compute kernel and the fragment GLSL pay alike. SwiftShader
+ * reproduced the same shapes (x21.8/x75). The kernel is exonerated for
+ * the app-level order-6 compute-vs-fragment gap — that residual is the
+ * compute arm's march-loop scheduling under an expensive-DE regime, and
+ * lives on its own bead.
  */
 async function runSurfaceAff4SweepLeg(
   config: SurfaceSectionConfig,
@@ -6719,9 +6879,10 @@ async function runSurfaceAff4SweepLeg(
   }
 
   const wg = surfaceWgFor(config, "private");
-  const width = SURFACE_AFFINE_LADDER_WIDTH;
+  const affineWidth = SURFACE_AFFINE_LADDER_WIDTH;
+  const fold4Width = SURFACE_FOLD_BEAM_WIDTH;
 
-  activity.setState("gpu", "Surface affine4 sweep (fr-b72d)");
+  activity.setState("gpu", "Surface affine4/fold4 sweep (fr-b72d)");
   status("aff4 sweep: compiling kernels…");
   const { pipeline: slabPipeline, compileMs: slabCompileMs } =
     await buildSurfacePipeline(
@@ -6730,14 +6891,14 @@ async function runSurfaceAff4SweepLeg(
       surfaceDeKernelWgsl({
         mode: "eval",
         core: "affine4",
-        width,
+        width: affineWidth,
         workgroupSize: wg,
         sharedFrontier: false,
         bnbStage2: false,
         // slabExt absent = true — today's shipped kernel.
       }),
       "evalQueries",
-      "surface-de aff4-sweep slab",
+      "surface-de aff4-sweep affine4-slab",
     );
   const { pipeline: noslabPipeline, compileMs: noslabCompileMs } =
     await buildSurfacePipeline(
@@ -6746,26 +6907,88 @@ async function runSurfaceAff4SweepLeg(
       surfaceDeKernelWgsl({
         mode: "eval",
         core: "affine4",
-        width,
+        width: affineWidth,
         workgroupSize: wg,
         sharedFrontier: false,
         bnbStage2: false,
         slabExt: false,
       }),
       "evalQueries",
-      "surface-de aff4-sweep noslab",
+      "surface-de aff4-sweep affine4-noslab",
     );
-  const compileMs = { slab: slabCompileMs, noslab: noslabCompileMs };
+  const { pipeline: noslabUniformPipeline, compileMs: noslabUniformCompileMs } =
+    await buildSurfacePipeline(
+      device,
+      "auto",
+      surfaceDeKernelWgsl({
+        mode: "eval",
+        core: "affine4",
+        width: affineWidth,
+        workgroupSize: wg,
+        sharedFrontier: false,
+        bnbStage2: false,
+        slabExt: false,
+        mapsUniform: true,
+      }),
+      "evalQueries",
+      "surface-de aff4-sweep affine4-noslab-uniform",
+    );
+  const { pipeline: fold4Pipeline, compileMs: fold4CompileMs } =
+    await buildSurfacePipeline(
+      device,
+      pipelineLayout,
+      surfaceDeKernelWgsl({
+        mode: "eval",
+        core: "fold4",
+        width: fold4Width,
+        workgroupSize: wg,
+        sharedFrontier: false,
+        bnbStage2: false,
+        slabExt: false,
+      }),
+      "evalQueries",
+      "surface-de aff4-sweep fold4-noslab",
+    );
+  const { pipeline: fold4UniformPipeline, compileMs: fold4UniformCompileMs } =
+    await buildSurfacePipeline(
+      device,
+      "auto",
+      surfaceDeKernelWgsl({
+        mode: "eval",
+        core: "fold4",
+        width: fold4Width,
+        workgroupSize: wg,
+        sharedFrontier: false,
+        bnbStage2: false,
+        slabExt: false,
+        mapsUniform: true,
+      }),
+      "evalQueries",
+      "surface-de aff4-sweep fold4-noslab-uniform",
+    );
+
+  const compileMs: Record<string, number> = {
+    "affine4-slab": slabCompileMs,
+    "affine4-noslab": noslabCompileMs,
+    "affine4-noslab-uniform": noslabUniformCompileMs,
+    "fold4-noslab": fold4CompileMs,
+    "fold4-noslab-uniform": fold4UniformCompileMs,
+  };
   notes.push(
-    `aff4 sweep: compiled slab=${slabCompileMs.toFixed(0)}ms noslab=${noslabCompileMs.toFixed(0)}ms`,
+    "aff4 sweep: compiled " +
+      `affine4-slab=${slabCompileMs.toFixed(0)}ms ` +
+      `affine4-noslab=${noslabCompileMs.toFixed(0)}ms ` +
+      `affine4-noslab-uniform=${noslabUniformCompileMs.toFixed(0)}ms ` +
+      `fold4-noslab=${fold4CompileMs.toFixed(0)}ms ` +
+      `fold4-noslab-uniform=${fold4UniformCompileMs.toFixed(0)}ms`,
   );
 
-  const batchTarget = software
+  const batchCap = software
     ? SURFACE_AFF4_SWEEP_BATCH_SW
     : SURFACE_AFF4_SWEEP_BATCH;
   if (software) {
     notes.push(
-      `aff4 sweep: software adapter — batch reduced to >= ${String(SURFACE_AFF4_SWEEP_BATCH_SW)} queries (real-driver runs use ${String(SURFACE_AFF4_SWEEP_BATCH)})`,
+      `aff4 sweep: software adapter — batch ceiling reduced to ${String(SURFACE_AFF4_SWEEP_BATCH_SW)} queries (real-driver runs cap at ${String(SURFACE_AFF4_SWEEP_BATCH)})`,
     );
   }
 
@@ -6778,19 +7001,38 @@ async function runSurfaceAff4SweepLeg(
     compileMs,
   });
 
-  for (const order of SURFACE_AFF4_SWEEP_ORDERS) {
-    status(`aff4 sweep: order ${String(order)} — building system…`);
-    const { de, view4 } = buildAff4SweepSystem(order);
+  // fr-b72d maps-load probe: a fixed 24-slot footprint regardless of how
+  // many maps the system actually has (surface-de-gpu.ts's
+  // SURFACE_GPU_UNIFORM_MAP_SLOTS doc) — WebGPU validates the FULL bound
+  // type size at bind-group creation, and a fresh buffer is zero-filled,
+  // so writing the (much shorter) real maps data into it is complete.
+  const uniformMapsBytes =
+    SURFACE_GPU_UNIFORM_MAP_SLOTS * SURFACE_GPU_MAP4_VEC4 * 16;
 
-    // Tile affine4Queries' 700-query mix up to the batch target — see this
-    // function's doc for why tiling (not resampling) is what an
-    // occupancy/divergence measurement wants.
-    const base = affine4Queries(de, view4, 900 + order);
-    const tileFactor = Math.max(1, Math.ceil(batchTarget / base.length));
-    const queries: Vec3[] = [];
-    for (let t = 0; t < tileFactor; t++) queries.push(...base);
+  // One params/maps(storage+uniform)/input/output/staging set, sized for
+  // `queries.length` — shared shape for both the untimed pilot dispatch and
+  // the real timed batch (two allocate/try/finally-destroy phases per
+  // (order, core), this function's own pattern run twice). The uniform maps
+  // buffer is allocated even for a pilot (which only ever dispatches on a
+  // storage pipeline) so there is exactly one packing code path — the
+  // wasted ~3KB alloc costs nothing a pilot needs to be fast about.
+  const allocateBuffers = async (
+    order: number,
+    core: "affine4" | "fold4",
+    phase: "pilot" | "batch",
+    de: SurfaceDE4,
+    view4: SurfaceGpu4View,
+    queries: Vec3[],
+  ): Promise<{
+    params: GPUBuffer;
+    mapsStorage: GPUBuffer;
+    mapsUniform: GPUBuffer;
+    input: GPUBuffer;
+    output: GPUBuffer;
+    staging: GPUBuffer;
+  }> => {
     const n = queries.length;
-
+    const tag = `${core} order${String(order)} ${phase}`;
     const paramsData = packSurface4GpuParams(de, view4, {
       itemCount: n,
       cutoff: 0,
@@ -6805,140 +7047,430 @@ async function runSurfaceAff4SweepLeg(
     });
     const params = await createSurfaceBuffer(
       device,
-      `aff4-sweep params order${String(order)}`,
+      `aff4-sweep params ${tag}`,
       paramsData.byteLength,
       GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     );
     device.queue.writeBuffer(params, 0, paramsData);
-    const maps = await createSurfaceBuffer(
+    const mapsStorage = await createSurfaceBuffer(
       device,
-      `aff4-sweep maps order${String(order)}`,
+      `aff4-sweep maps-storage ${tag}`,
       mapsData.byteLength,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     );
-    device.queue.writeBuffer(maps, 0, mapsData);
+    device.queue.writeBuffer(mapsStorage, 0, mapsData);
+    // fr-b72d probe's uniform-usage twin — same content, full 24-slot
+    // footprint (this function's doc above).
+    const mapsUniformBuf = await createSurfaceBuffer(
+      device,
+      `aff4-sweep maps-uniform ${tag}`,
+      uniformMapsBytes,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    );
+    device.queue.writeBuffer(mapsUniformBuf, 0, mapsData);
     const input = await createSurfaceBuffer(
       device,
-      `aff4-sweep queries order${String(order)}`,
+      `aff4-sweep queries ${tag}`,
       inputData.byteLength,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     );
     device.queue.writeBuffer(input, 0, inputData);
     const output = await createSurfaceBuffer(
       device,
-      `aff4-sweep results order${String(order)}`,
+      `aff4-sweep results ${tag}`,
       n * 4,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     );
     const staging = await createSurfaceBuffer(
       device,
-      `aff4-sweep staging order${String(order)}`,
+      `aff4-sweep staging ${tag}`,
       n * 4,
       GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     );
-    const bindGroup = device.createBindGroup({
-      label: `aff4-sweep bind group order${String(order)}`,
-      layout: bindGroupLayout,
+    return {
+      params,
+      mapsStorage,
+      mapsUniform: mapsUniformBuf,
+      input,
+      output,
+      staging,
+    };
+  };
+  const destroyBuffers = (bufs: {
+    params: GPUBuffer;
+    mapsStorage: GPUBuffer;
+    mapsUniform: GPUBuffer;
+    input: GPUBuffer;
+    output: GPUBuffer;
+    staging: GPUBuffer;
+  }): void => {
+    bufs.params.destroy();
+    bufs.mapsStorage.destroy();
+    bufs.mapsUniform.destroy();
+    bufs.input.destroy();
+    bufs.output.destroy();
+    bufs.staging.destroy();
+  };
+  const buildBindGroup = (
+    layout: GPUBindGroupLayout,
+    label: string,
+    bufs: {
+      params: GPUBuffer;
+      maps: GPUBuffer;
+      input: GPUBuffer;
+      output: GPUBuffer;
+    },
+  ): GPUBindGroup =>
+    device.createBindGroup({
+      label,
+      layout,
       entries: [
-        { binding: 0, resource: { buffer: params } },
-        { binding: 1, resource: { buffer: maps } },
-        { binding: 2, resource: { buffer: input } },
-        { binding: 3, resource: { buffer: output } },
+        { binding: 0, resource: { buffer: bufs.params } },
+        { binding: 1, resource: { buffer: bufs.maps } },
+        { binding: 2, resource: { buffer: bufs.input } },
+        { binding: 3, resource: { buffer: bufs.output } },
       ],
     });
 
+  // Adaptive batch sizing (this function's doc, point (3)): a small pilot
+  // dispatch on `storagePipeline` measures this (order, core)'s own
+  // µs/query, then derives a batch sized toward SURFACE_AFF4_SWEEP_TARGET_MS
+  // of wall time, clamped to [the pilot's own size, `batchCap`] and rounded
+  // to a whole number of 700-query tiles — the caller tiles `base` by the
+  // returned `tiles` directly, so `queries.length` is always exactly what
+  // gets packed as `itemCount`, never a value the clamp could desync from
+  // the tile grid (batchCap, 65536/8192, isn't itself a multiple of 700, so
+  // the clamp runs in TILE units, not raw query count).
+  const sizeAff4SweepBatch = async (
+    order: number,
+    core: "affine4" | "fold4",
+    de: SurfaceDE4,
+    view4: SurfaceGpu4View,
+    seed: number,
+    storagePipeline: GPUComputePipeline,
+  ): Promise<{ base: Vec3[]; tiles: number }> => {
+    // affine4's ladder carries a refinedCert the query mix's boundary
+    // bisection should track; fold4 has none (descendFold4 refine=false —
+    // M4's own affine4Queries call), so its mix uses the SAME plain
+    // estimator its kernel actually marches.
+    const base = affine4Queries(de, view4, seed, core === "affine4");
+    const pilotQueries: Vec3[] = [];
+    for (let t = 0; t < SURFACE_AFF4_SWEEP_PILOT_TILES; t++) {
+      pilotQueries.push(...base);
+    }
+    const bufs = await allocateBuffers(
+      order,
+      core,
+      "pilot",
+      de,
+      view4,
+      pilotQueries,
+    );
     try {
-      const runVariant = async (
-        variant: "slab" | "noslab",
-        pipeline: GPUComputePipeline,
-      ): Promise<Float32Array> => {
-        status(`aff4 sweep: order ${String(order)} (${variant}) — warmup…`);
-        activity.setState(
-          "gpu",
-          `Surface affine4 sweep — order ${String(order)} (${variant})`,
-        );
-        // Untimed warmup — its return value is ALSO this variant's
-        // agreement-gate value; see this function's doc for why a second
-        // readback would be redundant.
-        const gpu = await runSurfaceEvalDispatch(
-          device,
-          pipeline,
-          { queries, buffers: { output, staging, bindGroup } },
-          wg,
-        );
-        const timedMs: number[] = [];
-        for (let rep = 0; rep < SURFACE_AFF4_SWEEP_REPS; rep++) {
-          status(
-            `aff4 sweep: order ${String(order)} (${variant}) — timed ${String(rep + 1)}/${String(SURFACE_AFF4_SWEEP_REPS)}…`,
-          );
-          const t0 = performance.now();
-          const encoder = device.createCommandEncoder();
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(pipeline);
-          pass.setBindGroup(0, bindGroup);
-          pass.dispatchWorkgroups(Math.ceil(n / wg));
-          pass.end();
-          device.queue.submit([encoder.finish()]);
-          await device.queue.onSubmittedWorkDone();
-          const ms = performance.now() - t0;
-          timedMs.push(ms);
-          if (ms > SURFACE_AFF4_SWEEP_REP_CAP_MS) break;
-        }
-        const minMs = Math.min(...timedMs);
-        const meanMs = timedMs.reduce((a, b) => a + b, 0) / timedMs.length;
-        const usPerQuery = (minMs * 1000) / n;
-        rows.push({
-          order,
-          variant,
-          n,
-          reps: timedMs.length,
-          minMs,
-          meanMs,
-          usPerQuery,
-        });
+      const bindGroup = buildBindGroup(
+        bindGroupLayout,
+        `aff4-sweep pilot bind group ${core} order${String(order)}`,
+        {
+          params: bufs.params,
+          maps: bufs.mapsStorage,
+          input: bufs.input,
+          output: bufs.output,
+        },
+      );
+      status(`aff4 sweep: order ${String(order)} ${core} — pilot…`);
+      activity.setState(
+        "gpu",
+        `Surface affine4/fold4 sweep — order ${String(order)} (${core} pilot)`,
+      );
+      const pilotN = pilotQueries.length;
+      const t0 = performance.now();
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(storagePipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(Math.ceil(pilotN / wg));
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      const ms = performance.now() - t0;
+      const usPerQuery = (ms * 1000) / pilotN;
+      const targetQueries = (SURFACE_AFF4_SWEEP_TARGET_MS * 1000) / usPerQuery;
+      const rawTiles = Math.round(targetQueries / base.length);
+      const maxTiles = Math.floor(batchCap / base.length);
+      const tiles = clamp(rawTiles, SURFACE_AFF4_SWEEP_PILOT_TILES, maxTiles);
+      notes.push(
+        `aff4 sweep order ${String(order)} ${core} pilot: n=${String(pilotN)} ms=${ms.toFixed(3)} → batch ${String(tiles * base.length)}`,
+      );
+      return { base, tiles };
+    } finally {
+      destroyBuffers(bufs);
+    }
+  };
+
+  // Runs one arm (untimed warmup + SURFACE_AFF4_SWEEP_REPS timed reps),
+  // pushing its row/note — the original single-variant sweep's `runVariant`
+  // closure, parametrized over core/maps too so every arm shares one body.
+  const runArm = async (
+    order: number,
+    core: "affine4" | "fold4",
+    variant: "slab" | "noslab",
+    maps: "storage" | "uniform",
+    pipeline: GPUComputePipeline,
+    queries: Vec3[],
+    buffers: {
+      output: GPUBuffer;
+      staging: GPUBuffer;
+      bindGroup: GPUBindGroup;
+    },
+  ): Promise<Float32Array> => {
+    const n = queries.length;
+    const label = `${core} ${variant} maps=${maps}`;
+    status(`aff4 sweep: order ${String(order)} (${label}) — warmup…`);
+    activity.setState(
+      "gpu",
+      `Surface affine4/fold4 sweep — order ${String(order)} (${label})`,
+    );
+    // Untimed warmup — its return value is ALSO this arm's agreement-gate
+    // value; see this function's doc for why a second readback would be
+    // redundant.
+    const gpu = await runSurfaceEvalDispatch(
+      device,
+      pipeline,
+      { queries, buffers },
+      wg,
+    );
+    const timedMs: number[] = [];
+    for (let rep = 0; rep < SURFACE_AFF4_SWEEP_REPS; rep++) {
+      status(
+        `aff4 sweep: order ${String(order)} (${label}) — timed ${String(rep + 1)}/${String(SURFACE_AFF4_SWEEP_REPS)}…`,
+      );
+      const t0 = performance.now();
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, buffers.bindGroup);
+      pass.dispatchWorkgroups(Math.ceil(n / wg));
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      const ms = performance.now() - t0;
+      timedMs.push(ms);
+      if (ms > SURFACE_AFF4_SWEEP_REP_CAP_MS) break;
+    }
+    const minMs = Math.min(...timedMs);
+    const meanMs = timedMs.reduce((a, b) => a + b, 0) / timedMs.length;
+    const usPerQuery = (minMs * 1000) / n;
+    rows.push({
+      order,
+      core,
+      variant,
+      maps,
+      n,
+      reps: timedMs.length,
+      minMs,
+      meanMs,
+      usPerQuery,
+    });
+    notes.push(
+      `aff4 sweep order ${String(order)} ${core} ${variant} maps=${maps}: n=${String(n)} reps=${String(timedMs.length)} ` +
+        `min=${minMs.toFixed(3)}ms mean=${meanMs.toFixed(3)}ms us/query=${usPerQuery.toFixed(3)}`,
+    );
+    return gpu;
+  };
+
+  // Elementwise exact-equality check between two already-run arms —
+  // SURFACE_AFF4_SWEEP_TOL_FACTOR's doc for why every pair this leg forms
+  // is expected to agree bit for bit.
+  const pushAgreement = (
+    order: number,
+    pair: SurfaceAff4SweepAgreement["pair"],
+    gpuA: Float32Array,
+    gpuB: Float32Array,
+    boundingRadius: number,
+  ): void => {
+    let mismatches = 0;
+    let maxAbs = 0;
+    for (let i = 0; i < gpuA.length; i++) {
+      if (gpuA[i] !== gpuB[i]) {
+        mismatches++;
+        maxAbs = Math.max(maxAbs, Math.abs(gpuA[i] - gpuB[i]));
+      }
+    }
+    const tol = SURFACE_AFF4_SWEEP_TOL_FACTOR * boundingRadius;
+    const withinTolerance = maxAbs <= tol;
+    agreement.push({
+      order,
+      pair,
+      n: gpuA.length,
+      mismatches,
+      maxAbs,
+      withinTolerance,
+    });
+    if (mismatches > 0) {
+      if (withinTolerance) {
         notes.push(
-          `aff4 sweep order ${String(order)} ${variant}: n=${String(n)} reps=${String(timedMs.length)} ` +
-            `min=${minMs.toFixed(3)}ms mean=${meanMs.toFixed(3)}ms us/query=${usPerQuery.toFixed(3)}`,
+          `aff4 sweep order ${String(order)} ${pair}: ${String(mismatches)} sub-tolerance mismatches ` +
+            `(maxAbs ${maxAbs.toExponential(2)}) — fma/contraction noise`,
         );
-        return gpu;
+      } else {
+        failed = true;
+        notes.push(
+          `aff4 sweep order ${String(order)} ${pair}: ${String(mismatches)} mismatches, ` +
+            `maxAbs ${maxAbs.toExponential(2)} exceeds tolerance ${tol.toExponential(2)} — ` +
+            "DISAGREE, failing the leg",
+        );
+      }
+    }
+  };
+
+  // One core's full arm set for one order: pilot-size the batch, allocate
+  // real buffers at that size, run every arm this core is entitled to
+  // (affine4: slab / noslab-storage / noslab-uniform; fold4: noslab-storage
+  // / noslab-uniform only — this function's doc for why fold4 skips slab),
+  // and gate the uniform-vs-storage pair (plus, for affine4, slab-vs-noslab).
+  const runAff4SweepCore = async (
+    order: number,
+    core: "affine4" | "fold4",
+    de: SurfaceDE4,
+    view4: SurfaceGpu4View,
+    seed: number,
+    storagePipeline: GPUComputePipeline,
+    uniformPipeline: GPUComputePipeline,
+    slabPipelineForArm: GPUComputePipeline | null,
+  ): Promise<void> => {
+    const { base, tiles } = await sizeAff4SweepBatch(
+      order,
+      core,
+      de,
+      view4,
+      seed,
+      storagePipeline,
+    );
+    const queries: Vec3[] = [];
+    for (let t = 0; t < tiles; t++) queries.push(...base);
+
+    const bufs = await allocateBuffers(
+      order,
+      core,
+      "batch",
+      de,
+      view4,
+      queries,
+    );
+    try {
+      const storageBindGroup = buildBindGroup(
+        bindGroupLayout,
+        `aff4-sweep ${core} storage bind group order${String(order)}`,
+        {
+          params: bufs.params,
+          maps: bufs.mapsStorage,
+          input: bufs.input,
+          output: bufs.output,
+        },
+      );
+      const uniformBindGroup = buildBindGroup(
+        uniformPipeline.getBindGroupLayout(0),
+        `aff4-sweep ${core} uniform bind group order${String(order)}`,
+        {
+          params: bufs.params,
+          maps: bufs.mapsUniform,
+          input: bufs.input,
+          output: bufs.output,
+        },
+      );
+      const storageBuffers = {
+        output: bufs.output,
+        staging: bufs.staging,
+        bindGroup: storageBindGroup,
+      };
+      const uniformBuffers = {
+        output: bufs.output,
+        staging: bufs.staging,
+        bindGroup: uniformBindGroup,
       };
 
-      const gpuSlab = await runVariant("slab", slabPipeline);
-      const gpuNoslab = await runVariant("noslab", noslabPipeline);
+      let gpuSlab: Float32Array | null = null;
+      if (slabPipelineForArm) {
+        gpuSlab = await runArm(
+          order,
+          core,
+          "slab",
+          "storage",
+          slabPipelineForArm,
+          queries,
+          storageBuffers,
+        );
+      }
+      const gpuNoslabStorage = await runArm(
+        order,
+        core,
+        "noslab",
+        "storage",
+        storagePipeline,
+        queries,
+        storageBuffers,
+      );
+      const gpuNoslabUniform = await runArm(
+        order,
+        core,
+        "noslab",
+        "uniform",
+        uniformPipeline,
+        queries,
+        uniformBuffers,
+      );
 
-      let mismatches = 0;
-      let maxAbs = 0;
-      for (let i = 0; i < n; i++) {
-        if (gpuSlab[i] !== gpuNoslab[i]) {
-          mismatches++;
-          maxAbs = Math.max(maxAbs, Math.abs(gpuSlab[i] - gpuNoslab[i]));
-        }
+      if (gpuSlab) {
+        pushAgreement(
+          order,
+          "slab-vs-noslab",
+          gpuSlab,
+          gpuNoslabStorage,
+          de.boundingRadius,
+        );
       }
-      const tol = SURFACE_AFF4_SWEEP_TOL_FACTOR * de.boundingRadius;
-      const withinTolerance = maxAbs <= tol;
-      agreement.push({ order, n, mismatches, maxAbs, withinTolerance });
-      if (mismatches > 0) {
-        if (withinTolerance) {
-          notes.push(
-            `aff4 sweep order ${String(order)}: ${String(mismatches)} sub-tolerance mismatches ` +
-              `(maxAbs ${maxAbs.toExponential(2)}) — fma/contraction noise`,
-          );
-        } else {
-          failed = true;
-          notes.push(
-            `aff4 sweep order ${String(order)}: ${String(mismatches)} mismatches, ` +
-              `maxAbs ${maxAbs.toExponential(2)} exceeds tolerance ${tol.toExponential(2)} — ` +
-              "slab/no-slab DISAGREE, failing the leg",
-          );
-        }
-      }
+      const pair =
+        core === "affine4"
+          ? "affine4-uniform-vs-storage"
+          : "fold4-uniform-vs-storage";
+      pushAgreement(
+        order,
+        pair,
+        gpuNoslabUniform,
+        gpuNoslabStorage,
+        de.boundingRadius,
+      );
     } finally {
-      params.destroy();
-      maps.destroy();
-      input.destroy();
-      output.destroy();
-      staging.destroy();
+      destroyBuffers(bufs);
     }
+  };
+
+  for (const order of SURFACE_AFF4_SWEEP_ORDERS) {
+    status(`aff4 sweep: order ${String(order)} — building systems…`);
+    const aff4 = buildAff4SweepSystem(order);
+    const fold4 = buildFold4SweepSystem(order);
+
+    await runAff4SweepCore(
+      order,
+      "affine4",
+      aff4.de,
+      aff4.view4,
+      900 + order,
+      noslabPipeline,
+      noslabUniformPipeline,
+      slabPipeline,
+    );
+    await runAff4SweepCore(
+      order,
+      "fold4",
+      fold4.de,
+      fold4.view4,
+      1900 + order,
+      fold4Pipeline,
+      fold4UniformPipeline,
+      null,
+    );
+
     onUpdate(snapshot());
   }
 
@@ -9244,17 +9776,18 @@ async function runSurfaceDeSection(
       render();
     }
 
-    // ----- fr-b72d: opt-in per-kaleidoscope-order affine4 timing sweep --
-    // Off by default (`config.aff4Sweep`, `surfaceAff4Sweep=1`) — never
-    // runs in CI, and silent (no notes at all) when not requested, like
-    // the shade A/B leg's own `surfaceShadeWidths` gate. GATING when it
-    // does run: a slab/no-slab disagreement beyond the leg's tolerance
-    // fails the section (see `runSurfaceAff4SweepLeg`'s doc) — unlike the
-    // shade A/B leg below, which stays purely informational. Every row
-    // and the pipelines' compileMs also land in `notes` (the computeFrame4
-    // leg's dual-reporting convention), so a headless run's stdout
-    // discloses them via the existing `note:` printer without a bespoke
-    // stdout formatter in gpu-flame-bench.mjs.
+    // ----- fr-b72d: opt-in per-kaleidoscope-order affine4/fold4 timing ----
+    // sweep. Off by default (`config.aff4Sweep`, `surfaceAff4Sweep=1`) —
+    // never runs in CI, and silent (no notes at all) when not requested,
+    // like the shade A/B leg's own `surfaceShadeWidths` gate. GATING when
+    // it does run: a slab/no-slab OR uniform/storage-maps disagreement
+    // beyond the leg's tolerance fails the section (see
+    // `runSurfaceAff4SweepLeg`'s doc) — unlike the shade A/B leg below,
+    // which stays purely informational. Every row and the pipelines'
+    // compileMs also land in `notes` (the computeFrame4 leg's
+    // dual-reporting convention), so a headless run's stdout discloses
+    // them via the existing `note:` printer without a bespoke stdout
+    // formatter in gpu-flame-bench.mjs.
     let aff4SweepFailed = false;
     try {
       const sweep = await runSurfaceAff4SweepLeg(
@@ -9356,7 +9889,7 @@ async function runSurfaceDeSection(
                           ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
                           : lens4PackGuardFailed
                             ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
-                            : "aff4 sweep leg: slab/no-slab kernels disagree beyond tolerance — see notes";
+                            : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
