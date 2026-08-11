@@ -1,16 +1,98 @@
 import {
+  AUTO_BACKGROUND_TUNING,
+  autoBackground,
   BACKGROUND_MODES,
   backgroundGradientsEqual,
   BackgroundTween,
   lerpBackground,
+  luma709,
   resolveBackground,
 } from "./background";
 import type { BackgroundGradient } from "./background";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
+import { FLAME_PALETTE_IDS } from "../fractal/palette";
 
 describe("BACKGROUND_MODES", () => {
-  it("lists the three modes in UI order", () => {
-    expect(BACKGROUND_MODES).toEqual(["dark", "haze", "custom"]);
+  it("lists the four modes in UI order", () => {
+    expect(BACKGROUND_MODES).toEqual(["dark", "haze", "auto", "custom"]);
+  });
+});
+
+describe("autoBackground", () => {
+  it("returns the dark gradient for the legacy (non-gradient) palette", () => {
+    expect(autoBackground("legacy")).toEqual(
+      resolveBackground({ mode: "dark" }),
+    );
+  });
+
+  it("keeps every built-in gradient palette's stops within the tuned luminance bands", () => {
+    for (const id of FLAME_PALETTE_IDS.filter((id) => id !== "legacy")) {
+      const { top, bottom } = autoBackground(id);
+      const topLuma = luma709(top);
+      const bottomLuma = luma709(bottom);
+      expect(topLuma).toBeGreaterThanOrEqual(
+        AUTO_BACKGROUND_TUNING.top.min - 1e-6,
+      );
+      expect(topLuma).toBeLessThanOrEqual(
+        AUTO_BACKGROUND_TUNING.top.max + 1e-6,
+      );
+      expect(bottomLuma).toBeGreaterThanOrEqual(
+        AUTO_BACKGROUND_TUNING.bottom.min - 1e-6,
+      );
+      expect(bottomLuma).toBeLessThanOrEqual(
+        AUTO_BACKGROUND_TUNING.bottom.max + 1e-6,
+      );
+      expect(topLuma).toBeLessThan(bottomLuma);
+      for (const channel of [...top, ...bottom]) {
+        expect(channel).toBeGreaterThanOrEqual(0);
+        expect(channel).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  // sunset's LUT stop 0 is a warm orange (see FLAME_PALETTES), so its derived
+  // top stop should stay red-over-blue even after the darken/desaturate curve.
+  it("keeps a warm palette's hue after darkening: sunset's top is redder than it is blue", () => {
+    const { top } = autoBackground("sunset");
+    expect(top[0]).toBeGreaterThan(top[2]);
+  });
+
+  it("derives from a custom palette's own stops: a blue first stop yields a blue-dominant top", () => {
+    const { top } = autoBackground({
+      stops: [
+        [0, 0, 1],
+        [0, 1, 0],
+      ],
+    });
+    expect(top[2]).toBeGreaterThan(top[0]);
+  });
+
+  it("lands an all-black custom palette exactly on neutral gray at each band's floor", () => {
+    const gradient = autoBackground({
+      stops: [
+        [0, 0, 0],
+        [0, 0, 0],
+      ],
+    });
+    const { min: topMin } = AUTO_BACKGROUND_TUNING.top;
+    const { min: bottomMin } = AUTO_BACKGROUND_TUNING.bottom;
+    expect(gradient.top).toEqual([topMin, topMin, topMin]);
+    expect(gradient.bottom).toEqual([bottomMin, bottomMin, bottomMin]);
+  });
+
+  it("clamps an all-white custom palette to neutral gray at each band's ceiling", () => {
+    const gradient = autoBackground({
+      stops: [
+        [1, 1, 1],
+        [1, 1, 1],
+      ],
+    });
+    const { max: topMax } = AUTO_BACKGROUND_TUNING.top;
+    const { max: bottomMax } = AUTO_BACKGROUND_TUNING.bottom;
+    for (const channel of gradient.top) expect(channel).toBeCloseTo(topMax, 10);
+    for (const channel of gradient.bottom) {
+      expect(channel).toBeCloseTo(bottomMax, 10);
+    }
   });
 });
 
@@ -42,6 +124,29 @@ describe("resolveBackground", () => {
       top: hexToRgb01(DARK_BACKDROP.top),
       bottom: hexToRgb01(DARK_BACKDROP.bottom),
     });
+  });
+
+  it("resolves auto mode to the palette-derived gradient when given a palette", () => {
+    expect(resolveBackground({ mode: "auto" }, "sunset")).toEqual(
+      autoBackground("sunset"),
+    );
+  });
+
+  it("falls back to the dark stops for auto mode with no palette argument", () => {
+    expect(resolveBackground({ mode: "auto" })).toEqual({
+      top: hexToRgb01(DARK_BACKDROP.top),
+      bottom: hexToRgb01(DARK_BACKDROP.bottom),
+    });
+  });
+
+  it("derives from the palette rather than the authored slot for auto mode with a custom payload present", () => {
+    const custom: BackgroundGradient = {
+      top: [0.1, 0.2, 0.3],
+      bottom: [0.4, 0.5, 0.6],
+    };
+    expect(resolveBackground({ mode: "auto", custom }, "sunset")).toEqual(
+      autoBackground("sunset"),
+    );
   });
 });
 

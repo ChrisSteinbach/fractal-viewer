@@ -389,10 +389,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     temporary showcase (By Transform color, guides visible, auto-orbit).
     Pure, tested, injected clock.
   - `background.ts` — the scene backdrop (fr-5ps1): `BACKGROUND_MODES`
-    vocabulary (dark/haze/custom, extensible for fr-mz2u's palette-linked
-    `"auto"` and fr-4vi7's curated presets); `resolveBackground` is the ONE
-    mode→(top, bottom) definition every renderer/capture/compute-spec path
-    shares. `lerpBackground` + `BackgroundTween` are the replace-load
+    vocabulary (dark/haze/auto/custom, extensible for fr-4vi7's curated
+    presets); `resolveBackground` is the ONE mode→(top, bottom) definition
+    every renderer/capture/compute-spec path shares. `"auto"` (fr-mz2u) is
+    the palette-linked backdrop: `autoBackground` darkens two
+    `buildPaletteLUT` samples into disjoint luminance bands
+    (`AUTO_BACKGROUND_TUNING` pins the curve; legacy/no-gradient palettes
+    keep dark), `state.ts`'s `activeScenePalette`/`resolveSceneBackground`
+    pick the tracked palette per render mode (coarse on purpose), and
+    main.ts's `trackAutoBackground` re-derives on palette edits and
+    render-mode landings — persisted as the MODE alone, never baked colors.
+    `lerpBackground` + `BackgroundTween` are the replace-load
     crossfade, a fourth motion beside the system morph/camera/4D rotor
     glides. Persists via `persist.ts`, whose decoder doubles as the legacy
     migration (absent field + aerial style → haze). Pure, tested.

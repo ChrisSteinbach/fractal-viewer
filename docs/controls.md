@@ -601,14 +601,23 @@ morphs into place instead of snapping (see **Presets** below).
 - **Background** (fr-5ps1) — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this
-  control existed), or **Custom**, which reveals **Top**/**Bottom** color
-  pickers for an authored gradient. One backdrop for the whole app — Points,
-  Flame, Solid, and Surface all show it, and Save PNG / video captures render
-  exactly what's on screen. Depth Fade and Aerial Haze's fog also tints toward
-  it, so switching the backdrop re-tints the fog to match. Persists in the
-  link and scene file; a link saved before this control existed still renders
-  exactly as it always did — Haze if its Depth Style was Aerial, Dark
-  otherwise.
+  control existed), **Auto** (fr-mz2u), which derives a darkened gradient
+  from the active render's own palette — the flame/solid/surface palette
+  while that render is showing, the color-ramp palette in the Points
+  explorer — so the backdrop always harmonizes with the fractal and follows
+  palette edits, gradient-editor drags, and render-mode switches live
+  (palettes with no gradient, like Classic, keep the Dark ground; the
+  derived stops are clamped dark enough that the attractor keeps contrast),
+  or **Custom**, which reveals **Top**/**Bottom** color pickers for an
+  authored gradient (landing on Custom from Auto seeds the pickers with the
+  derived stops you were just looking at). One backdrop for the whole app —
+  Points, Flame, Solid, and Surface all show it, and Save PNG / video
+  captures render exactly what's on screen. Depth Fade and Aerial Haze's fog
+  also tints toward it, so switching the backdrop re-tints the fog to match.
+  Persists in the link and scene file — Auto persists as the choice, not as
+  baked colors, so a shared link keeps tracking its scene's palette; a link
+  saved before this control existed still renders exactly as it always did —
+  Haze if its Depth Style was Aerial, Dark otherwise.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
 - **Capture size** — in the **Capture** section, the resolution **Save PNG**
   renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×

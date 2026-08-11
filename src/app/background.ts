@@ -10,28 +10,32 @@
  * push, captures, the compute frame spec, and the morph-leg crossfade —
  * resolves through it, so no two renderers can disagree about the backdrop.
  *
- * The vocabulary is deliberately an extensible id list: fr-mz2u adds a
- * palette-linked `"auto"` mode and fr-4vi7 curated presets, all riding this
- * same `(top, bottom)` plumbing. `persist.ts` decodes an unknown id to the
- * legacy default rather than rejecting, so links written by those future
- * builds degrade gracefully in this one.
+ * The vocabulary is deliberately an extensible id list: fr-mz2u added the
+ * palette-linked `"auto"` mode ({@link autoBackground}) and fr-4vi7 adds
+ * curated presets, all riding this same `(top, bottom)` plumbing.
+ * `persist.ts` decodes an unknown id to the legacy default rather than
+ * rejecting, so links written by future builds degrade gracefully in this
+ * one.
  *
  * Pure: no Three.js, no DOM. Colors are `RgbStop` tuples (0..1 channels,
  * `palette.ts`'s convention, matching `positionAxisColors`).
  */
-import type { RgbStop } from "../fractal/palette";
+import type { PaletteSpec, RgbStop } from "../fractal/palette";
+import { buildPaletteLUT } from "../fractal/palette";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
  * The Background select's positions (fr-5ps1): the two built-in backdrops the
  * app has always had — `"dark"` (every render style's original ground) and
  * `"haze"` (the cooler, lighter atmosphere the aerial style used to force) —
- * plus `"custom"`, the user-authored two-stop gradient (a single flat color =
- * top equals bottom). Single source of truth for the {@link BackgroundMode}
- * type, the UI select's options (pinned by ui.test.ts) and the persistence
- * validator (`persist.ts`) — the `RENDER_STYLES` discipline.
+ * plus `"auto"`, the palette-derived backdrop (fr-mz2u, see
+ * {@link autoBackground}), and `"custom"`, the user-authored two-stop
+ * gradient (a single flat color = top equals bottom). Single source of truth
+ * for the {@link BackgroundMode} type, the UI select's options (pinned by
+ * ui.test.ts) and the persistence validator (`persist.ts`) — the
+ * `RENDER_STYLES` discipline.
  */
-export const BACKGROUND_MODES = ["dark", "haze", "custom"] as const;
+export const BACKGROUND_MODES = ["dark", "haze", "auto", "custom"] as const;
 
 export type BackgroundMode = (typeof BACKGROUND_MODES)[number];
 
@@ -46,7 +50,9 @@ export interface BackgroundGradient {
  * `state.ts`). `custom` is the authored gradient slot: absent until the
  * select first lands on Custom (which seeds it from the backdrop being
  * replaced — the `customPalette` discipline), then kept while unselected so
- * switching away and back never loses authored colors.
+ * switching away and back never loses authored colors. `"auto"` persists as
+ * the MODE alone (fr-mz2u): the derived colors are never baked into the
+ * document, so palette edits keep tracking after a link round-trip.
  */
 export interface BackgroundParams {
   mode: BackgroundMode;
@@ -68,16 +74,121 @@ const HAZE_GRADIENT: BackgroundGradient = {
 };
 
 /**
+ * The `"auto"` derivation's tuning (fr-mz2u), exported so the tests pin the
+ * CONTRACT (luminance bands, sample positions) rather than magic numbers —
+ * re-tuning the look is a one-object edit that can't silently drift from
+ * what the tests assert.
+ *
+ * The curve: sample the palette's LUT at `topT`/`bottomT` (t = 0 is the
+ * palette's own first stop; a quarter of the way in stays hue-adjacent for
+ * the cosine presets' full-cycle sweeps, and lands exactly on stop 1 of a
+ * five-stop custom gradient), then darken each sample to `darken ×` its
+ * luma, clamped into that stop's luminance band. The two bands are DISJOINT
+ * (top's max below bottom's min) and bracket the built-in dark backdrop's
+ * own luma pair, so a derived backdrop always keeps the house
+ * darker-top-lighter-bottom shape and never gets bright enough to wash out
+ * the attractor — the issue's floor/ceiling contrast clamp. `desaturate`
+ * then eases the scaled color toward neutral gray so a saturated palette
+ * yields a backdrop, not a glow. A sample below `blackFloor` luma carries no
+ * usable hue (scaling near-noise up would invent one), so it lands on
+ * neutral gray at the band's floor — an all-black custom palette derives a
+ * quiet neutral ground rather than garbage.
+ */
+export const AUTO_BACKGROUND_TUNING = {
+  topT: 0,
+  bottomT: 0.25,
+  darken: 0.35,
+  top: { min: 0.03, max: 0.06 },
+  bottom: { min: 0.075, max: 0.14 },
+  desaturate: 0.25,
+  blackFloor: 0.02,
+} as const;
+
+/**
+ * Rec. 709 luma: the perceptual-weight sum over the sRGB components AS
+ * STORED — deliberately gamma-naive, like every other color computation in
+ * this app (color management is disabled; authored sRGB renders verbatim).
+ * A brightness heuristic for the auto backdrop's clamps, not colorimetry.
+ */
+export function luma709(stop: RgbStop): number {
+  return 0.2126 * stop[0] + 0.7152 * stop[1] + 0.0722 * stop[2];
+}
+
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/** One derived stop — see {@link AUTO_BACKGROUND_TUNING} for the curve. */
+function deriveAutoStop(
+  lut: Float32Array,
+  t: number,
+  band: { min: number; max: number },
+): RgbStop {
+  const o = Math.round(t * 255) * 3;
+  const sample: RgbStop = [lut[o], lut[o + 1], lut[o + 2]];
+  const luma = luma709(sample);
+  if (luma < AUTO_BACKGROUND_TUNING.blackFloor) {
+    return [band.min, band.min, band.min];
+  }
+  const target = Math.min(
+    band.max,
+    Math.max(band.min, luma * AUTO_BACKGROUND_TUNING.darken),
+  );
+  const scale = target / luma;
+  const d = AUTO_BACKGROUND_TUNING.desaturate;
+  const channel = (v: number): number => {
+    // Two-product lerp toward the target-luma gray (buildCustomPaletteLUT's
+    // exactness argument): desaturation never drifts the endpoint values.
+    return clamp01(v * scale) * (1 - d) + target * d;
+  };
+  return [channel(sample[0]), channel(sample[1]), channel(sample[2])];
+}
+
+/**
+ * The palette-linked backdrop (fr-mz2u): derive `(top, bottom)` stops from
+ * the active palette's own LUT — the same `buildPaletteLUT` output the
+ * renderers sample, so the backdrop is guaranteed to echo exactly the
+ * gradient on screen, custom stops included. See
+ * {@link AUTO_BACKGROUND_TUNING} for the darkening curve. `"legacy"` has no
+ * gradient to echo (`buildPaletteLUT` returns `null`), so it keeps the dark
+ * backdrop — the app's original ground under its original coloring.
+ */
+export function autoBackground(palette: PaletteSpec): BackgroundGradient {
+  const lut = buildPaletteLUT(palette);
+  if (lut === null) return DARK_GRADIENT;
+  return {
+    top: deriveAutoStop(
+      lut,
+      AUTO_BACKGROUND_TUNING.topT,
+      AUTO_BACKGROUND_TUNING.top,
+    ),
+    bottom: deriveAutoStop(
+      lut,
+      AUTO_BACKGROUND_TUNING.bottomT,
+      AUTO_BACKGROUND_TUNING.bottom,
+    ),
+  };
+}
+
+/**
  * Resolve a background choice to its concrete gradient stops. `"custom"`
  * returns the authored slot; a custom mode with no payload (unreachable
  * through the reducer/decoder, which both guarantee a payload before the
  * mode) falls back to the dark backdrop rather than throwing — the same
- * defensive stance as `persist.ts`'s quiet fallbacks.
+ * defensive stance as `persist.ts`'s quiet fallbacks. `"auto"` (fr-mz2u)
+ * derives from the caller's active palette ({@link autoBackground}); callers
+ * with no palette in hand (boot placeholders, the hidden custom-picker sync)
+ * get the same dark fallback — `state.ts`'s `resolveSceneBackground` is the
+ * form that always supplies one.
  */
 export function resolveBackground(
   params: BackgroundParams,
+  palette?: PaletteSpec,
 ): BackgroundGradient {
   if (params.mode === "custom") return params.custom ?? DARK_GRADIENT;
+  if (params.mode === "auto") {
+    return palette === undefined ? DARK_GRADIENT : autoBackground(palette);
+  }
   return params.mode === "haze" ? HAZE_GRADIENT : DARK_GRADIENT;
 }
 

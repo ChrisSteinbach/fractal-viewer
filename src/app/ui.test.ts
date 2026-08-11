@@ -5726,6 +5726,12 @@ describe("Ui background backdrop row (fr-5ps1)", () => {
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
   });
 
+  it('stays hidden once the background mode is "auto" (fr-mz2u)', () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setBackgroundMode(initialState(true), "auto"));
+    expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+  });
+
   it('is shown once the background mode is "custom"', () => {
     const ui = new Ui(document);
     ui.updateLabels(setBackgroundMode(initialState(true), "custom"));
