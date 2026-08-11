@@ -616,6 +616,28 @@ export class FractalScene {
    * the job's own measured strip time across frames — the governor sample
    * on completion. */
   private surfacePreviewJob: SurfaceStripJob | null = null;
+  /** In-flight fences a superseded/abandoned strip job left behind
+   * (fr-7to5), awaiting adoption by the next job to arm. Deleting them
+   * (the old behavior) forgot that the submitted GPU work still executes
+   * FIFO ahead of everything a successor submits: the successor's refill
+   * ceiling under-counted the queue (each re-arm in a drag burst stacked
+   * another mispriced probe behind the grinding backlog) and its FIRST
+   * fence attributed the whole backlog's GPU time to its own strip's
+   * pixels (measured ~90x on the fr-b8o5 kaleido4 leg), poisoning the
+   * preview px-cost field and the settle's evidence caps. Pooled entries
+   * keep submission order — everything rides the ONE GL queue — and
+   * `busyMark` keeps the oldest job's busy continuity so the successor's
+   * first batch attributes over backlog + own pixels. Adopted at
+   * {@link armSurfacePreview}/{@link beginSurfaceSettle} arm time; a
+   * system upload or a capture drain FLUSHES instead (cross-system
+   * observations must not seed a fresh evidence chain, and capture's
+   * synchronous joins drain the queue regardless — fr-id9r's raise-only
+   * capture discipline stays intact). */
+  private surfaceStripBacklog: {
+    entries: { sync: WebGLSync; px: number }[];
+    px: number;
+    busyMark: number;
+  } | null = null;
   /** Scene holding a throwaway mesh that shares the active surface
    * material, for {@link compileSurfaceMaterial}'s async program compile
    * (fr-du81). Lazily built once. */
@@ -2188,6 +2210,11 @@ export class FractalScene {
     this.surfaceDeFoldClass = costWeight > 1;
     this.surfaceStripEvidencedWorstMsPerPx = null;
     this.surfaceStripPartialWorstMsPerPx = 0;
+    // A new DE is a new cost class: a predecessor system's pooled fences
+    // must not seed this evidence chain (fr-7to5 declines cross-system
+    // inheritance — the backlog still drains FIFO, unpriced, as before
+    // the pool existed).
+    this.flushStripBacklog();
   }
 
   /**
@@ -2214,6 +2241,7 @@ export class FractalScene {
     this.surfaceDeFoldClass = false;
     this.surfaceStripEvidencedWorstMsPerPx = null;
     this.surfaceStripPartialWorstMsPerPx = 0;
+    this.flushStripBacklog();
   }
 
   /**
@@ -2280,6 +2308,7 @@ export class FractalScene {
     this.surfaceDeFoldClass = false;
     this.surfaceStripEvidencedWorstMsPerPx = null;
     this.surfaceStripPartialWorstMsPerPx = 0;
+    this.flushStripBacklog();
   }
 
   /**
@@ -2411,6 +2440,10 @@ export class FractalScene {
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
+    // A previous strip session's pooled fences must not linger into (or
+    // past) a compute session — the strip machinery never arms here, so
+    // nothing would ever adopt them (fr-7to5).
+    this.flushStripBacklog();
   }
 
   /**
@@ -2427,6 +2460,7 @@ export class FractalScene {
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
   }
 
   /**
@@ -2446,6 +2480,7 @@ export class FractalScene {
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
   }
 
   /** Leave the compute presentation (session exit or fallback re-enter):
@@ -2717,8 +2752,13 @@ export class FractalScene {
     }
     // A stale async job must not interleave with this frame's strips —
     // nor a stale preview job resume after it with full-tier uniforms.
+    // Their pooled fences flush unadopted (fr-7to5): the drain below
+    // joins synchronously behind whatever is queued anyway, and its
+    // observations must stay raise-only capture evidence, never a
+    // backlog attribution.
     this.abandonSurfaceSettle();
     this.abandonSurfacePreview();
+    this.flushStripBacklog();
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
     this.setSurfaceFrameUniforms("full", size.y, size.y);
     // The job stays LOCAL: {@link surfaceStripJob} is the ASYNC settle's
@@ -2919,6 +2959,7 @@ export class FractalScene {
       spentMs: 0,
       inFlight: [],
       inFlightPx: 0,
+      inheritedPx: 0,
       busyMark: null,
       presentDue: 0,
       presentIntervalMs,
@@ -2950,9 +2991,14 @@ export class FractalScene {
       this.retireStripJob(job, "superseded");
       // Pixels still riding in-flight fences were planned but never
       // accounted — extrapolate from the MEASURED pixels only, or the
-      // estimate would read low by the whole queued cost.
-      const tracedPx = job.planner.plannedPx - job.inFlightPx;
-      this.releaseStripJob(job);
+      // estimate would read low by the whole queued cost. Own pixels
+      // only (fr-7to5): fences this job itself inherited were never in
+      // its planner's plannedPx, so counting them would deflate (or
+      // negate) the traced share. Computed BEFORE the harvest below
+      // zeroes the counters.
+      const tracedPx =
+        job.planner.plannedPx - (job.inFlightPx - job.inheritedPx);
+      this.poolStripBacklog(job);
       if (tracedPx > 0 && job.spentMs > 0) {
         this.surfacePreviewGovernor.sample(
           (job.spentMs * job.planner.totalPx) / tracedPx,
@@ -3026,6 +3072,12 @@ export class FractalScene {
       previewPrior,
       SURFACE_PREVIEW_PRESENT_MS,
     );
+    // Inherit whatever the superseded job (or an abandoned settle — one
+    // GL queue, whichever target owned it) still has executing (fr-7to5):
+    // the refill ceiling then sees the real queue instead of stacking
+    // another probe behind the backlog, and the first fence batch
+    // attributes over backlog + own pixels.
+    this.adoptStripBacklog(this.surfacePreviewJob);
   }
 
   /**
@@ -3081,9 +3133,11 @@ export class FractalScene {
 
   /** Discard the in-flight preview job (a full-tier trace or a session
    * exit supersedes it). No governor sample: the discard is not evidence
-   * about trace cost. */
+   * about trace cost. Its in-flight fences pool for the next job to arm
+   * (fr-7to5) — the entry points that must not inherit flush the pool
+   * themselves. */
   abandonSurfacePreview(): void {
-    this.releaseStripJob(this.surfacePreviewJob);
+    this.poolStripBacklog(this.surfacePreviewJob);
     this.surfacePreviewJob = null;
   }
 
@@ -3107,12 +3161,16 @@ export class FractalScene {
     phase: "preview" | "settle";
     fraction: number;
   } | null {
+    // Own in-flight pixels only (fr-7to5): an adopted backlog's fences
+    // are a superseded frame's work, never part of this planner's
+    // plannedPx — subtracting them too would report negative coverage.
     const preview = this.surfacePreviewJob;
     if (preview) {
       return {
         phase: "preview",
         fraction:
-          (preview.planner.plannedPx - preview.inFlightPx) /
+          (preview.planner.plannedPx -
+            (preview.inFlightPx - preview.inheritedPx)) /
           Math.max(1, preview.planner.totalPx),
       };
     }
@@ -3121,7 +3179,8 @@ export class FractalScene {
       return {
         phase: "settle",
         fraction:
-          (settle.planner.plannedPx - settle.inFlightPx) /
+          (settle.planner.plannedPx -
+            (settle.inFlightPx - settle.inheritedPx)) /
           Math.max(1, settle.planner.totalPx),
       };
     }
@@ -3273,6 +3332,12 @@ export class FractalScene {
     const gl = this.renderer.getContext();
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
     this.renderer.setRenderTarget(null);
+    // The barrier above just drained any pooled backlog with the queue —
+    // its fences carry nothing the settle needs (fr-7to5: the normal
+    // choreography completes the preview before this runs, so a pool
+    // here is the rare defensive-abandon case). Flush so the settle's
+    // clean-probe invariant holds exactly as before inheritance existed.
+    this.flushStripBacklog();
     // Probe SIZED from the completed preview's measured per-pixel cost —
     // or the pessimistic fold prior when none exists (fr-096u). The
     // rows-fraction probe this replaces was the settle's one unmeasured
@@ -3322,7 +3387,10 @@ export class FractalScene {
    * capture predictor can never price a pose the measurement didn't
    * see. */
   abandonSurfaceSettle(): void {
-    this.releaseStripJob(this.surfaceStripJob);
+    // Settle fences pool for the NEXT preview to adopt (fr-7to5): the
+    // abandon crosses render targets, but the GL queue is one — the
+    // re-armed preview's strips execute behind these exact submissions.
+    this.poolStripBacklog(this.surfaceStripJob);
     this.surfaceStripJob = null;
     this.surfaceFullPxCostMs = null;
   }
@@ -3498,7 +3566,13 @@ export class FractalScene {
       job.stat.t0 = performance.now();
     }
     job.stat.calls += 1;
-    if (job.msPerPxEstimate === null) {
+    // Sync collapse only with an EMPTY queue: a no-prior job that
+    // adopted a backlog (fr-7to5) must poll the inherited fences out
+    // first — a forced-completion join here would block the main thread
+    // behind the whole backlog and attribute it to one strip. The first
+    // completed batch below seeds the estimate, and the job continues
+    // pipelined.
+    if (job.msPerPxEstimate === null && job.inFlight.length === 0) {
       const escaped = this.collapseStripsSync(job, target);
       if (!escaped) return { done: true, present: true };
     }
@@ -3507,6 +3581,7 @@ export class FractalScene {
     // fence ends the batch).
     let now = performance.now();
     let completedPx = 0;
+    let completedOwnPx = 0;
     let completedCount = 0;
     while (job.inFlight.length > 0) {
       const head = job.inFlight[0];
@@ -3517,12 +3592,23 @@ export class FractalScene {
       gl.deleteSync(head.sync);
       job.inFlight.shift();
       job.inFlightPx -= head.px;
+      if (head.inherited) {
+        job.inheritedPx -= head.px;
+      } else {
+        completedOwnPx += head.px;
+      }
       completedPx += head.px;
       completedCount += 1;
     }
     if (completedCount > 0) {
       const busyMs = now - (job.busyMark ?? now);
-      job.spentMs += busyMs;
+      // spentMs is THIS frame's cost (the governor sample, the px-cost
+      // fields): inherited pixels belong to a superseded pose's frame,
+      // so only the own share lands here (fr-7to5). The estimate and
+      // the planner's ratchet below take the WHOLE batch — that wall
+      // time really did trace that many pixels of this system, and the
+      // ratchet is a max, so a cheap inherited batch cannot lower it.
+      job.spentMs += busyMs * (completedOwnPx / completedPx);
       // MARGINAL px rate: subtract the fixed sync tax the batch's fence
       // observation cost, floored at 5% of the raw figure so a cheap
       // stack cannot drive the estimate to zero.
@@ -3576,13 +3662,20 @@ export class FractalScene {
         const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
         if (!sync) return false;
         job.busyMark ??= performance.now();
-        job.inFlight.push({ sync, px: groupPx });
+        job.inFlight.push({ sync, px: groupPx, inherited: false });
         job.inFlightPx += groupPx;
         groupPx = 0;
         groupStrips = 0;
         return true;
       };
       while (
+        // No refill while an adopted backlog rides unmeasured (fr-7to5):
+        // est() would read 0 and admit unbounded strips behind a queue
+        // whose cost nothing has priced yet. The first completed batch
+        // seeds the estimate and refill resumes. Every other path into
+        // this loop carries a non-null estimate (prior-seeded, batch-
+        // attributed, or the sync-collapse escape's own measurement).
+        job.msPerPxEstimate !== null &&
         now < job.presentDue &&
         submits < SURFACE_STRIP_MAX_SUBMITS_PER_PUMP &&
         (job.inFlightPx + groupPx) * est() < queueBudgetMs &&
@@ -3770,16 +3863,66 @@ export class FractalScene {
     this.renderer.setRenderTarget(null);
   }
 
-  /** Drop a job's in-flight fences, if any, so an abandoned job cannot
-   * leak sync objects. (The queued GPU work itself cannot be recalled —
-   * it drains behind whatever renders next; the planner keeps every strip
-   * small and the queue budget keeps the tail short.) */
-  private releaseStripJob(job: SurfaceStripJob | null): void {
-    if (!job) return;
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    for (const f of job.inFlight) gl.deleteSync(f.sync);
+  /** Move a superseded/abandoned job's in-flight fences into
+   * {@link surfaceStripBacklog} (fr-7to5) instead of deleting them — the
+   * queued GPU work cannot be recalled, so the next job to arm must see
+   * it (queue admission) and attribute its completion honestly (busy
+   * continuity). Entries append in submission order; the pool's busyMark
+   * keeps the OLDEST busy origin so no busy time is dropped between
+   * jobs. A job with an empty queue pools nothing. */
+  private poolStripBacklog(job: SurfaceStripJob | null): void {
+    if (!job || job.inFlight.length === 0) return;
+    const busyMark = job.busyMark ?? performance.now();
+    const pool = (this.surfaceStripBacklog ??= {
+      entries: [],
+      px: 0,
+      busyMark,
+    });
+    pool.busyMark = Math.min(pool.busyMark, busyMark);
+    for (const f of job.inFlight) {
+      pool.entries.push({ sync: f.sync, px: f.px });
+      pool.px += f.px;
+    }
     job.inFlight = [];
     job.inFlightPx = 0;
+    job.inheritedPx = 0;
+  }
+
+  /** Adopt the pooled backlog into a freshly armed `job`: its refill
+   * ceiling starts against the REAL GL queue, and its first fence batch
+   * attributes the busy wall over backlog + own pixels instead of
+   * charging the whole backlog to its own strips (fr-7to5's 90x
+   * contamination). `spentMs` stays clean — the pump excludes the
+   * inherited share (those pixels belong to a superseded pose's frame,
+   * not this one's cost). */
+  private adoptStripBacklog(job: SurfaceStripJob): void {
+    const pool = this.surfaceStripBacklog;
+    if (!pool) return;
+    this.surfaceStripBacklog = null;
+    job.inFlight = pool.entries.map((e) => ({ ...e, inherited: true }));
+    job.inFlightPx = pool.px;
+    job.inheritedPx = pool.px;
+    job.busyMark = pool.busyMark;
+    if (SURFPERF) {
+      console.log(
+        `[surfperf] adopted backlog px=${pool.px}` +
+          ` groups=${pool.entries.length}`,
+      );
+    }
+  }
+
+  /** Delete the pooled backlog's fences without adoption — for the entry
+   * points that must NOT price or attribute a predecessor's queue: a
+   * system upload (fresh evidence chain, cross-system observations would
+   * seed it wrong) and the synchronous drains, whose first join absorbs
+   * whatever is queued regardless (capture measurements raise-only into
+   * evidence by design). The GPU work itself still drains FIFO. */
+  private flushStripBacklog(): void {
+    const pool = this.surfaceStripBacklog;
+    if (!pool) return;
+    this.surfaceStripBacklog = null;
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    for (const f of pool.entries) gl.deleteSync(f.sync);
   }
 
   /** Stretch `src` over `target` (null = the canvas) via the shared blit
@@ -4012,11 +4155,19 @@ interface SurfaceStripJob {
    * and the px-cost numerator. */
   spentMs: number;
   /** Fenced strips submitted but not yet observed complete, in
-   * submission order. */
-  inFlight: { sync: WebGLSync; px: number }[];
-  /** Sum of `inFlight` pixels (the refill ceiling's denominator, and the
-   * superseded-job extrapolation's unmeasured share). */
+   * submission order. `inherited` entries are a superseded predecessor's
+   * fences adopted at arm (fr-7to5) — same GL queue, so they complete
+   * ahead of everything this job submits; the pump prices the queue over
+   * them but excludes their busy share from `spentMs` (they traced
+   * another pose's pixels). */
+  inFlight: { sync: WebGLSync; px: number; inherited: boolean }[];
+  /** Sum of `inFlight` pixels — inherited backlog included, because the
+   * refill ceiling must see the REAL GL queue (fr-7to5). */
   inFlightPx: number;
+  /** The inherited subset of `inFlightPx`. Own in-flight pixels — the
+   * progress readout's and the superseded-job extrapolation's share —
+   * are `inFlightPx - inheritedPx`. */
+  inheritedPx: number;
   /** Timestamp the in-flight queue last went (or was observed) busy —
    * the base of the next poll's busy-time attribution. Null while the
    * queue is empty. */
