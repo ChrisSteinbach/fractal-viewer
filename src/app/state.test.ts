@@ -2,6 +2,7 @@ import {
   activeScenePalette,
   addTransform,
   clampToSpec,
+  DEFAULT_BALLOON_RADIUS,
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -28,6 +29,7 @@ import {
   DEFAULT_SYMMETRY_ORDER,
   FLAME_ITERATION_DETENTS,
   initialState,
+  MAX_BALLOON_RADIUS,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
@@ -47,6 +49,7 @@ import {
   MAX_SOLID_THRESHOLD,
   MAX_SURFACE_COLOR_SPEED,
   MAX_SYMMETRY_ORDER,
+  MIN_BALLOON_RADIUS,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
@@ -76,6 +79,8 @@ import {
   setAdaptiveResolution,
   setBackgroundCustom,
   setBackgroundMode,
+  setBalloonEcho,
+  setBalloonRadius,
   setColorGamma,
   setCustomPaletteStops,
   setExportScale,
@@ -146,6 +151,16 @@ describe("initialState", () => {
   // or solid render — see the headline "explorer-first" decision.
   it("boots into the points render mode", () => {
     expect(initialState(true).renderMode).toBe("points");
+  });
+
+  // The balloon echo (fr-5wlv.2) starts off, like every other session-only
+  // view toggle, so a shared link never surprises a viewer with an extra
+  // cloud; its radius still carries a sane rest-pose default for the moment
+  // it's first turned on.
+  it("boots with the balloon echo off at its default radius", () => {
+    const state = initialState(true);
+    expect(state.balloonEcho).toBe(false);
+    expect(state.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
   });
 
   it("boots with the flame render at its default settings", () => {
@@ -339,6 +354,36 @@ describe("setAdaptiveResolution", () => {
     const next = setAdaptiveResolution(state, false);
     expect(next.adaptiveResolution).toBe(false);
     expect(state.adaptiveResolution).toBe(true);
+  });
+});
+
+describe("setBalloonEcho (fr-5wlv.2)", () => {
+  it("toggles the balloon echo immutably, defaulting to off", () => {
+    const state = initialState(true);
+    const next = setBalloonEcho(state, true);
+    expect(next.balloonEcho).toBe(true);
+    expect(state.balloonEcho).toBe(false);
+  });
+});
+
+describe("setBalloonRadius (fr-5wlv.2)", () => {
+  it("sets the balloon echo's radius immutably", () => {
+    const state = initialState(true);
+    const next = setBalloonRadius(state, 0.9);
+    expect(next.balloonRadius).toBe(0.9);
+    expect(state.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setBalloonRadius(initialState(true), 999).balloonRadius).toBe(
+      MAX_BALLOON_RADIUS,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setBalloonRadius(initialState(true), -5).balloonRadius).toBe(
+      MIN_BALLOON_RADIUS,
+    );
   });
 });
 

@@ -4,6 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
+import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
 import {
   transformColors,
   W_RAMP_BRIGHTNESS_FLOOR,
@@ -110,6 +111,12 @@ const BASE_POINT_SIZE = 0.02; // depthFade + aerial
 const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
+// The balloon echo (fr-5wlv.2, see setBalloonEchoEnabled): its own fixed
+// point size and color-dim multiplier — deliberately NOT wired into
+// setPointSize's per-style scaling, so the echo reads as a distinct, dimmer
+// backdrop cloud regardless of the main cloud's point-size slider.
+const BALLOON_ECHO_POINT_SIZE = 0.016;
+const BALLOON_ECHO_DIM = 0.5;
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 // The "Watch it build" replay cursor (fr-1zb): the bright spark pinned to the
 // newest revealed point. Sized well above every per-style point size so the
@@ -386,6 +393,81 @@ const FOUR_D_FRAGMENT = /* glsl */ `
   }
 `;
 
+// The balloon echo (fr-5wlv.2 — epic fr-5wlv, the sphere-inverted "cave"
+// twin of the explorer cloud): each vertex inverts the SAME shared position
+// buffer about the cloud's enclosing ball, `I(p) = c + R²(p−c)/|p−c|²` (see
+// fractal/balloon-de.ts's module doc for the distance-bound math the render
+// mirrors nothing of — this is a plain per-vertex position remap, not a
+// distance estimator). Point-size attenuation is DOF_VERTEX's formula
+// verbatim; blending is the additive, non-depth-writing recipe fourDMaterial
+// uses below (see its own construction), so overlapping echo points glow
+// together instead of z-fighting — appropriate for a cloud that is, by
+// construction, always "behind" (renderOrder -1) the main one.
+const BALLOON_ECHO_VERTEX = /* glsl */ `
+  uniform vec3 uEchoCenter;
+  uniform float uEchoR;
+  uniform float uEchoFloor2;
+  uniform float uEchoFadeStart;
+  uniform float uEchoFadeEnd;
+  uniform float uEchoDim;
+  uniform float uSize;
+  uniform float uHalfHeight;
+  attribute vec3 color;
+  varying vec3 vColor;
+  varying float vFade;
+  void main() {
+    vec3 d = position - uEchoCenter;
+    float r2 = max(dot(d, d), uEchoFloor2);
+    vec3 inv = uEchoCenter + (uEchoR * uEchoR / r2) * d;
+
+    // Radial fade to nothing well before uEchoFadeEnd (the same
+    // BALLOON_FAR_CAP_RHO horizon the DE march caps rays at, see
+    // syncBalloonEchoUniforms): an unbounded inversion would otherwise
+    // scatter near-center points arbitrarily far away as R sweeps through
+    // them. vFade carries the fade into the fragment alpha; multiplying it
+    // into vColor too means a fully-faded point is cheap even before the
+    // fragment's own discard — additive blending contributes exactly zero.
+    float rr = length(inv - uEchoCenter);
+    float fade = 1.0 - smoothstep(uEchoFadeStart, uEchoFadeEnd, rr);
+
+    // The inversion's own local conformal magnification at the image,
+    // rr²/R²: the cave wall's copy of an arm is that arm magnified, so its
+    // points must scale with it or the resting shell (image area grows as
+    // the magnification squared) dissolves into unreadable dust. Clamped:
+    // shrunken images (early inflation's crumpled ball) keep a visible
+    // floor, and images racing toward the fade horizon can't become
+    // screen-filling monsters. Brightness divides by the same factor
+    // (floored at 1 — never brightened): a magnified copy spreads its
+    // light, and without the dilution the additive wall blows out to
+    // white where its enlarged points overlap.
+    float mag = clamp(rr * rr / (uEchoR * uEchoR), 0.35, 8.0);
+    vColor = color * (uEchoDim / max(mag, 1.0)) * fade;
+    vFade = fade;
+
+    // DOF_VERTEX's size-attenuation formula, minus its circle-of-confusion
+    // term — the echo has no focal plane of its own — times the conformal
+    // magnification above.
+    vec4 mv = modelViewMatrix * vec4(inv, 1.0);
+    float dist = -mv.z;
+    gl_PointSize = uSize * mag * (uHalfHeight / dist);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+// DOF_FRAGMENT's circular-sprite alpha shaping (a soft dot, not a hard
+// square point), with the vertex shader's radial fade multiplied in on top
+// of it.
+const BALLOON_ECHO_FRAGMENT = /* glsl */ `
+  varying vec3 vColor;
+  varying float vFade;
+  void main() {
+    float r = length(2.0 * gl_PointCoord - 1.0);
+    float a = smoothstep(1.0, 0.25, r) * vFade;
+    if (a < 0.01) discard;
+    gl_FragColor = vec4(vColor, a);
+  }
+`;
+
 // Eye-dome lighting: a screen-space pass that darkens each pixel in proportion
 // to how much its neighbours sit *in front* of it, carving silhouettes and
 // creases so the cloud reads as solid without any lights. (Potree's technique.)
@@ -477,6 +559,24 @@ export class FractalScene {
   // newest revealed point (see setReplayCursor). Hidden whenever no replay is
   // running.
   private readonly replayCursor: THREE.Points;
+  // The balloon echo (fr-5wlv.2): a second Points object SHARING
+  // pointGeometry by reference (see BALLOON_ECHO_VERTEX's header) — setPoints
+  // replacing its attributes updates both clouds for free. Created once,
+  // toggled with `.visible` (see syncBalloonEchoVisibility), exactly like
+  // replayCursor above. `balloonEchoEnabled`/`balloonEchoRadius` are the raw
+  // checkbox/slider state the two public setters record; the derived
+  // uEcho* uniforms live on balloonEchoMaterial and are re-derived by
+  // syncBalloonEchoUniforms whenever either one — or the cloud's own
+  // enclosing ball — changes.
+  private readonly balloonEchoPoints: THREE.Points;
+  private balloonEchoEnabled = false;
+  // Normalized multiple of the cloud's enclosing-ball radius (see
+  // fractal/balloon-de.ts's buildBalloon). Mirrors state.ts's
+  // DEFAULT_BALLOON_RADIUS as a plain literal rather than an import — the
+  // balloon echo is off by default (this value is inert until
+  // setBalloonEchoEnabled(true)), and control-spec.ts's checkbox effect
+  // pushes the real slider value the moment it turns on.
+  private balloonEchoRadius = 1.6;
   private guideCubes: THREE.Object3D[] = [];
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
@@ -494,6 +594,7 @@ export class FractalScene {
   private readonly glowMaterial: THREE.PointsMaterial; // glow
   private readonly dofMaterial: THREE.ShaderMaterial; // dof
   private readonly fourDMaterial: THREE.ShaderMaterial; // 4D projection (fr-cbg)
+  private readonly balloonEchoMaterial: THREE.ShaderMaterial; // balloon echo (fr-5wlv.2)
   // True while the 4D projection owns the point cloud, so setRenderStyle records
   // the requested style without clobbering fourDMaterial (see setFourDActive).
   private fourDActive = false;
@@ -921,10 +1022,51 @@ export class FractalScene {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
+    // The balloon echo (fr-5wlv.2): uEchoCenter/uEchoR/uEchoFloor2/
+    // uEchoFadeStart/uEchoFadeEnd are all derived from the live cloud's
+    // enclosing ball — placeholder zeros until the first setPoints call
+    // (syncBalloonEchoUniforms) fills them in. Same additive, non-depth-
+    // writing recipe as fourDMaterial above, for the same reason: overlapping
+    // echo points should glow together, not depth-fight.
+    this.balloonEchoMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uEchoCenter: { value: new THREE.Vector3() },
+        uEchoR: { value: 0 },
+        uEchoFloor2: { value: 1e-8 },
+        uEchoFadeStart: { value: 0 },
+        uEchoFadeEnd: { value: 0 },
+        uEchoDim: { value: BALLOON_ECHO_DIM },
+        uSize: { value: BALLOON_ECHO_POINT_SIZE },
+        uHalfHeight: { value: buffer.y * 0.5 },
+      },
+      vertexShader: BALLOON_ECHO_VERTEX,
+      fragmentShader: BALLOON_ECHO_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
 
     this.pointGeometry = new THREE.BufferGeometry();
     this.pointCloud = new THREE.Points(this.pointGeometry, this.baseMaterial);
     this.scene.add(this.pointCloud);
+
+    // The balloon echo (fr-5wlv.2): SHARES pointGeometry by reference (its
+    // header comment) rather than cloning it, so a fresh setPoints upload —
+    // regen, morph tick, draw-range change — updates both clouds for free.
+    // frustumCulled off: inverted points can land far outside the shared
+    // geometry's own bounding sphere. renderOrder -1 draws it before (i.e.
+    // behind) the main cloud, which never writes depth for the styles that
+    // are themselves depthWrite:false, but DOES for the opaque ones
+    // (baseMaterial/discMaterial) — either way the echo, which never writes
+    // depth itself, can't occlude what draws after it.
+    this.balloonEchoPoints = new THREE.Points(
+      this.pointGeometry,
+      this.balloonEchoMaterial,
+    );
+    this.balloonEchoPoints.visible = false;
+    this.balloonEchoPoints.frustumCulled = false;
+    this.balloonEchoPoints.renderOrder = -1;
+    this.scene.add(this.balloonEchoPoints);
 
     // One vertex at the object's origin; setReplayCursor moves the OBJECT to
     // the highlighted point. No depth test (a landing inside a dense region
@@ -1106,6 +1248,11 @@ export class FractalScene {
     this.setDrawCount(null);
     this.setReplayCursor(null);
     this.pointGeometry.computeBoundingSphere();
+    // The balloon echo's uEcho* uniforms are all derived from the cloud's
+    // own enclosing ball, which just moved — re-derive them regardless of
+    // whether the echo is currently enabled (fr-5wlv.2), so it never shows
+    // stale geometry for one frame after a delayed enable.
+    this.syncBalloonEchoUniforms();
   }
 
   /**
@@ -1559,6 +1706,93 @@ export class FractalScene {
       // material (and its fog/background) instead of being guarded out.
       this.setRenderStyle(this.renderStyle);
     }
+    // The balloon echo is out of scope for 4D (fr-5wlv.2): the shared
+    // position attribute holds pre-rotation 4D coords in that mode, and
+    // inverting them would be meaningless. Entering/leaving 4D hides/
+    // restores it without touching the user's enabled flag.
+    this.syncBalloonEchoVisibility();
+  }
+
+  /**
+   * Toggle the balloon echo (fr-5wlv.2): a second point cloud sharing the
+   * explorer's own geometry, sphere-inverted about its enclosing ball — see
+   * {@link syncBalloonEchoUniforms} and fractal/balloon-de.ts's module doc.
+   * Visible exactly when `on` and the view isn't 4D (see
+   * {@link syncBalloonEchoVisibility}).
+   */
+  setBalloonEchoEnabled(on: boolean): void {
+    if (this.balloonEchoEnabled === on) return;
+    this.balloonEchoEnabled = on;
+    this.renderNeeded = true;
+    this.syncBalloonEchoUniforms();
+    this.syncBalloonEchoVisibility();
+  }
+
+  /**
+   * Set the balloon echo's radius as a NORMALIZED multiple of the cloud's
+   * own enclosing-ball radius (`rMult = 1` touches the attractor's extent —
+   * see fractal/balloon-de.ts's `buildBalloon`, whose `rMult` carries the
+   * same meaning). Live per-frame-updatable: the "Inflate" replay
+   * (main.ts's `onBalloonInflate`) pushes it every tick of its sweep, and
+   * this equality guard is what keeps that render-on-demand-correct.
+   */
+  setBalloonEchoRadius(rMult: number): void {
+    if (this.balloonEchoRadius === rMult) return;
+    this.balloonEchoRadius = rMult;
+    this.renderNeeded = true;
+    this.syncBalloonEchoUniforms();
+    this.syncBalloonEchoVisibility();
+  }
+
+  /**
+   * Re-derive every uEcho* uniform from {@link balloonEchoRadius} and the
+   * cloud's current enclosing ball (`pointGeometry.boundingSphere` — exact,
+   * computed by {@link setPoints}). A no-op before the first cloud ever
+   * lands (`boundingSphere` is null until then, mirroring
+   * {@link updateFog}'s own guard). Called from `setPoints` (the ball
+   * moved) and both balloon-echo setters (the radius or enabled flag moved)
+   * — cheap enough to re-run unconditionally rather than tracking which
+   * particular input changed.
+   */
+  private syncBalloonEchoUniforms(): void {
+    const sphere = this.pointGeometry.boundingSphere;
+    if (!sphere) return;
+    const u = this.balloonEchoMaterial.uniforms;
+    (u.uEchoCenter.value as THREE.Vector3).copy(sphere.center);
+    u.uEchoR.value = this.balloonEchoRadius * sphere.radius;
+    // The vertex shader runs in float32, unlike the CPU DE oracle's float64
+    // (fractal/balloon-de.ts's BALLOON_CENTER_FLOOR, 1e-12): a point landing
+    // near the true center accumulates float32 rounding noise in `dot(d, d)`
+    // well above `(1e-12 * rho)²`, which would swamp that floor and let a
+    // near-center point invert to an enormous (or NaN-adjacent) position.
+    // 1e-6 — its square is `1e-12 * rho²` — sits safely above that noise at
+    // typical scene scales while staying visually indistinguishable from
+    // the true center.
+    const floor = 1e-6 * sphere.radius;
+    u.uEchoFloor2.value = floor * floor;
+    // BALLOON_FAR_CAP_RHO (10, fractal/balloon-de.ts): the balloon epic's
+    // shared far-cap vocabulary — the DE march caps rays at this same
+    // multiple of rho before falling through to the background, so the
+    // echo cloud's own radial fade dissolves it against the SAME horizon
+    // rather than an unrelated number.
+    const fadeEnd = BALLOON_FAR_CAP_RHO * sphere.radius;
+    u.uEchoFadeEnd.value = fadeEnd;
+    u.uEchoFadeStart.value = 0.45 * fadeEnd;
+  }
+
+  /**
+   * Recompute {@link balloonEchoPoints}'s visibility from
+   * {@link balloonEchoEnabled} and {@link fourDActive} (the echo is out of
+   * scope for 4D — see {@link setFourDActive}), equality-guarded like every
+   * other per-frame setter (fr-py7z). Called from both balloon-echo setters
+   * and from setFourDActive, so all three inputs stay in sync however they
+   * change.
+   */
+  private syncBalloonEchoVisibility(): void {
+    const visible = this.balloonEchoEnabled && !this.fourDActive;
+    if (this.balloonEchoPoints.visible === visible) return;
+    this.balloonEchoPoints.visible = visible;
+    this.renderNeeded = true;
   }
 
   /**
@@ -1846,9 +2080,9 @@ export class FractalScene {
 
   /**
    * Re-derive everything sized from the PHYSICAL drawing buffer — the EDL
-   * target/resolution and the two shader-point half-height uniforms — after
-   * anything that changes that buffer: a viewport resize or an adaptive
-   * pixel-ratio change ({@link setResolutionScale}).
+   * target/resolution and the three shader-point half-height uniforms —
+   * after anything that changes that buffer: a viewport resize or an
+   * adaptive pixel-ratio change ({@link setResolutionScale}).
    */
   private syncBufferDependents(): void {
     const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -1856,6 +2090,7 @@ export class FractalScene {
     this.edlResolution.set(buffer.x, buffer.y);
     this.dofMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
     this.fourDMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
+    this.balloonEchoMaterial.uniforms.uHalfHeight.value = buffer.y * 0.5;
   }
 
   /**

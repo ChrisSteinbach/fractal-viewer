@@ -109,13 +109,17 @@ import { createResolutionGovernor } from "./resolution-governor";
 import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
+  DEFAULT_BALLOON_RADIUS,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   DEFAULT_SYMMETRY_TWIST,
   initialState,
+  MIN_BALLOON_RADIUS,
   removeTransform,
   resolveSceneBackground,
   selectTransform,
+  setBalloonEcho,
+  setBalloonRadius,
   setCustomPaletteStops,
   setFinalTransform,
   setPanelOpen,
@@ -150,7 +154,7 @@ import {
   MAX_IMPORT_FILE_BYTES,
 } from "./scene-file";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
-import { MOBILE_BREAKPOINT } from "./constants";
+import { BALLOON_SWEEP_MS, MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
@@ -687,6 +691,14 @@ function main(): void {
   // Session-only like the orbit itself; the tumble's twin lives inside
   // FourDView (setTumbleUserChoice).
   let autoOrbitUserChoice: boolean | null = null;
+
+  // The balloon echo's "Inflate" replay (fr-5wlv.2): non-null while the
+  // radius sweep is animating, holding the ms timestamp it started at
+  // (nowMs() — see onBalloonInflate and the push in tickRender). Cleared on
+  // completion (t >= 1) or by a genuine user edit to the checkbox/slider
+  // (control-spec.ts's cancelBalloonSweep effect) — never by the sweep's
+  // own per-frame reducer calls, which bypass that effect entirely.
+  let balloonSweepStartMs: number | null = null;
 
   // Restore the COMBINED auto-motion preference (fr-0ya): a viewer who turned
   // auto-orbit or 4D-tumble off keeps it off across RELOADS, not merely within
@@ -4593,6 +4605,9 @@ function main(): void {
     restartFlameRender: () => flameSession.enter(),
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
+    cancelBalloonSweep: () => {
+      balloonSweepStartMs = null;
+    },
   };
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -4868,6 +4883,30 @@ function main(): void {
         ui.setReplayShowcaseLegend(true);
         ui.updateLabels(state);
       }
+    },
+    // "Inflate" (fr-5wlv.2): animate the balloon echo's radius from a
+    // crumpled near-center ball out to its rest size — tickRender's
+    // points-mode block pushes the sweep every frame while
+    // balloonSweepStartMs is set. Turns the echo on first if it wasn't
+    // already, mirroring the checkbox effect's own enabled+radius push
+    // (control-spec.ts), so a click from off plays the whole sweep instead
+    // of silently jumping straight to rest. Session-only view motion, like
+    // auto-orbit: no undo checkpoint, no stopShows.
+    onBalloonInflate: () => {
+      if (!state.balloonEcho) {
+        state = setBalloonEcho(state, true);
+        scene.setBalloonEchoEnabled(true);
+        scene.setBalloonEchoRadius(state.balloonRadius);
+        ui.updateLabels(state);
+      }
+      if (prefersReducedMotion()) {
+        balloonSweepStartMs = null;
+        state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
+        scene.setBalloonEchoRadius(state.balloonRadius);
+        ui.updateLabels(state);
+        return;
+      }
+      balloonSweepStartMs = nowMs();
     },
     onRecordVideoToggle: () => {
       recorder.toggle();
@@ -6028,6 +6067,31 @@ function main(): void {
     }
     scene.applyCamera(orbit);
     scene.updateFog();
+    // The balloon echo's "Inflate" replay (fr-5wlv.2): while a sweep is
+    // running, ease its radius from MIN_BALLOON_RADIUS up to the rest
+    // target over BALLOON_SWEEP_MS. Direct reducer + scene calls, not the
+    // onScalarControl pipeline (this is session-only replay motion, not a
+    // user edit — no undo checkpoint, no save, and critically it can never
+    // reach the two control-spec.ts effects that call cancelBalloonSweep,
+    // or the sweep would cancel itself every tick). The scene setter's own
+    // equality guard keeps this render-on-demand-correct with no further
+    // needsRender plumbing.
+    if (balloonSweepStartMs !== null) {
+      const t = (now - balloonSweepStartMs) / BALLOON_SWEEP_MS;
+      if (t >= 1) {
+        balloonSweepStartMs = null;
+        state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
+      } else {
+        const u = t * t * (3 - 2 * t); // smoothstep easing
+        state = setBalloonRadius(
+          state,
+          MIN_BALLOON_RADIUS +
+            (DEFAULT_BALLOON_RADIUS - MIN_BALLOON_RADIUS) * u,
+        );
+      }
+      scene.setBalloonEchoRadius(state.balloonRadius);
+      ui.updateLabels(state);
+    }
     if (viewIs4D) {
       // Advance the pose and push the rotor every 4D frame, paused or not —
       // 16 floats/frame is nothing and it keeps one code path.

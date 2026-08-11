@@ -19,6 +19,13 @@ export const MOBILE_BREAKPOINT = 640;
  */
 export const MORPH_MAX_POINTS = 400_000;
 
+/**
+ * Duration of the balloon echo's "Inflate" replay (fr-5wlv.2, main.ts's
+ * onBalloonInflate): how long the radius sweep takes to ease from a
+ * crumpled near-center ball out to its rest size.
+ */
+export const BALLOON_SWEEP_MS = 9000;
+
 /** Minimum guide-box scale when dragging or scaling via the panel editor. */
 export const MIN_GUIDE_SCALE = 0.05;
 
