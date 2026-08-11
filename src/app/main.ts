@@ -378,6 +378,21 @@ const AUTO_ORBIT_RATE = 0.12;
  */
 const BOOT_SYNC_MAX_POINTS = 30_000;
 
+/**
+ * Seed for the BOOT generation (fr-chj9). Every later request rolls a fresh
+ * random seed (rollSeed) — sampling variety where the user is editing — but
+ * the boot generation is what a pose-less document auto-frames FROM
+ * (fitCameraToAttractor over the boot cloud's frameBounds), and a random
+ * boot seed made that framing drift ~0.3% per load: the same shared link
+ * opened twice showed measurably different cameras, and run-to-run visual
+ * diffs of pose-less scenes carried no signal (fr-opgk's harness measured
+ * 1-9% of pixels lighting up on identical documents). One pinned seed makes
+ * boot a pure function of the document — same link, same cloud, same
+ * framing — at no cost anywhere else: a seed only picks WHICH points sample
+ * the attractor, and every edit/preset/surprise-me still rolls fresh.
+ */
+const BOOT_SEED = 0x5eedb007;
+
 function main(): void {
   const container = document.getElementById("container");
   if (!container) {
@@ -5309,8 +5324,10 @@ function main(): void {
   // which need it current, not defaulted to `false`.
   // Capped (fr-t3gl): the sync path exists for first paint, not for the
   // full density — see BOOT_SYNC_MAX_POINTS. bootParams is built ONCE so the
-  // async upgrade below reuses the same rolled seed.
-  const bootParams = cloudParams(false, false);
+  // async upgrade below reuses the same seed — the PINNED boot seed
+  // (fr-chj9), so a pose-less document's auto-frame lands on the same
+  // camera every load.
+  const bootParams = { ...cloudParams(false, false), seed: BOOT_SEED };
   const bootCount = Math.min(bootParams.numPoints, BOOT_SYNC_MAX_POINTS);
   cloudGenerator.generateSync({ ...bootParams, numPoints: bootCount });
   // Restore the framing the restored scene was last seen with (fr-1k4): a
