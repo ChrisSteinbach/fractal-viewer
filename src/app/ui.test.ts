@@ -8,6 +8,7 @@ import {
   MAX_COLOR_GAMMA,
   MORPH_DETAILS,
   PARAM,
+  setBackgroundMode,
   setFlamePaletteId,
   setSolidPaletteId,
   setSurfaceColorSource,
@@ -16,6 +17,7 @@ import {
   SURFACE_COLOR_SOURCES,
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
+import { BACKGROUND_MODES } from "./background";
 import { applyScalarControl, surfaceColorLUT } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
@@ -90,6 +92,7 @@ function noopHandlers(): UiHandlers {
     onWatchBuild: vi.fn(),
     onCustomPaletteStops: vi.fn(),
     onPositionAxisColors: vi.fn(),
+    onBackgroundCustom: vi.fn(),
   };
 }
 
@@ -5692,5 +5695,78 @@ describe("Ui replay caption", () => {
     ui.setReplayCaption("Point 1 of 500");
     ui.setReplayCaption(null);
     expect(replayCaption().classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("background select menu", () => {
+  // Guards against the <option> list and BACKGROUND_MODES drifting apart —
+  // the same discipline as the surface color source menu above.
+  // background.ts documents this array as the single source of truth for
+  // the select's options, built-ins before the authored Custom slot, so the
+  // pin is order-sensitive rather than a sorted set-equality check.
+  it("offers exactly the registered background modes, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#background option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...BACKGROUND_MODES]);
+  });
+});
+
+describe("Ui background backdrop row (fr-5ps1)", () => {
+  function backgroundCustomRow(): HTMLElement {
+    return document.getElementById("backgroundCustomRow") as HTMLElement;
+  }
+  function el(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+  }
+
+  it("is hidden for a default (dark) background", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+    expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it('is shown once the background mode is "custom"', () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setBackgroundMode(initialState(true), "custom"));
+    expect(backgroundCustomRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("reflects a custom background's stops into the pickers", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      background: {
+        mode: "custom",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [1, 0.5, 0] },
+      },
+    });
+
+    expect(el("backgroundTop").value).toBe("#336699");
+    expect(el("backgroundBottom").value).toBe("#ff8000");
+  });
+
+  it("reports a picker edit as the full parsed top/bottom pair", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels({
+      ...initialState(true),
+      background: {
+        mode: "custom",
+        custom: { top: [0, 0, 0], bottom: [1, 1, 1] },
+      },
+    });
+
+    const top = el("backgroundTop");
+    top.value = "#336699";
+    // The listener is delegated on the row, so the event must bubble — the
+    // positionColorsRow discipline (fr-8k7), one row over.
+    top.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onBackgroundCustom).toHaveBeenCalledWith({
+      top: [0x33 / 255, 0x66 / 255, 0x99 / 255],
+      bottom: [1, 1, 1],
+    });
   });
 });

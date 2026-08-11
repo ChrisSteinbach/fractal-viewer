@@ -45,6 +45,8 @@ import type { Preset } from "../fractal/presets";
 import type { SavedScene } from "./collection";
 import type { TimelineStep } from "./timeline";
 import type { AppState, RenderMode } from "./state";
+import { resolveBackground } from "./background";
+import type { BackgroundGradient } from "./background";
 import {
   RENDER_MODES,
   MAX_W_ANGLE,
@@ -260,6 +262,11 @@ export interface UiHandlers {
    * the full x/y/z triple as parsed from the three inputs; the Reset button
    * sends the exact legacy identity (the reducer normalizes it to absent). */
   onPositionAxisColors: (colors: PositionAxisColors) => void;
+  /** The custom backdrop's top/bottom pickers changed (fr-5ps1) — `custom`
+   * is the full stop pair as parsed from the two inputs, ready for
+   * `setBackgroundCustom`. Only reachable while the Background select sits
+   * on Custom (the row is hidden otherwise). */
+  onBackgroundCustom: (custom: BackgroundGradient) => void;
 }
 
 /**
@@ -887,6 +894,11 @@ export class Ui {
     z: HTMLInputElement;
   };
   private readonly positionColorsResetBtn: HTMLElement;
+  private readonly backgroundCustomRow: HTMLElement;
+  private readonly backgroundInputs: {
+    top: HTMLInputElement;
+    bottom: HTMLInputElement;
+  };
   private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
@@ -1176,6 +1188,11 @@ export class Ui {
       z: this.byId("positionAxisZ"),
     };
     this.positionColorsResetBtn = this.byId("positionColorsReset");
+    this.backgroundCustomRow = this.byId("backgroundCustomRow");
+    this.backgroundInputs = {
+      top: this.byId("backgroundTop"),
+      bottom: this.byId("backgroundBottom"),
+    };
     this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
@@ -1375,6 +1392,16 @@ export class Ui {
     const z = hexToRgb(this.positionAxisInputs.z.value);
     if (!x || !y || !z) return null;
     return { x, y, z };
+  }
+
+  /** Read the two backdrop pickers as a BackgroundGradient, or null if
+   * either fails to parse — the readPositionAxisColors contract, one row
+   * over (fr-5ps1). */
+  private readBackgroundCustom(): BackgroundGradient | null {
+    const top = hexToRgb(this.backgroundInputs.top.value);
+    const bottom = hexToRgb(this.backgroundInputs.bottom.value);
+    if (!top || !bottom) return null;
+    return { top, bottom };
   }
 
   bind(handlers: UiHandlers): void {
@@ -1598,6 +1625,13 @@ export class Ui {
     this.positionColorsResetBtn.addEventListener("click", () =>
       handlers.onPositionAxisColors(LEGACY_POSITION_AXIS_COLORS),
     );
+    // Custom backdrop stops (fr-5ps1): two pickers report as one pair — the
+    // app state is the pair, so a drag in either re-reads both, exactly like
+    // the position axis row just above.
+    this.backgroundCustomRow.addEventListener("input", () => {
+      const custom = this.readBackgroundCustom();
+      if (custom) handlers.onBackgroundCustom(custom);
+    });
   }
 
   /** Reflect a 4D slice state in the panel controls (fr-pnek) — how a
@@ -1928,6 +1962,19 @@ export class Ui {
     for (const axis of ["x", "y", "z"] as const) {
       const hex = rgbToHex(axes[axis]);
       const input = this.positionAxisInputs[axis];
+      if (input.value !== hex) input.value = hex;
+    }
+    // The custom backdrop pickers (fr-5ps1): shown only while the Background
+    // select sits on Custom; synced to the resolved stops with the same
+    // only-write-on-change guard as the axis pickers above.
+    this.backgroundCustomRow.classList.toggle(
+      "hidden",
+      state.background.mode !== "custom",
+    );
+    const backdrop = resolveBackground(state.background);
+    for (const stop of ["top", "bottom"] as const) {
+      const hex = rgbToHex(backdrop[stop]);
+      const input = this.backgroundInputs[stop];
       if (input.value !== hex) input.value = hex;
     }
     // Accordion restore (fr-99o): entering a render mode re-opens the section

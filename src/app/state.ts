@@ -15,6 +15,12 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
+import { resolveBackground } from "./background";
+import type {
+  BackgroundGradient,
+  BackgroundMode,
+  BackgroundParams,
+} from "./background";
 import type {
   ColorMode,
   FourDColorMode,
@@ -444,6 +450,18 @@ export interface AppState {
    * present.
    */
   positionAxisColors?: PositionAxisColors;
+  /**
+   * The scene backdrop (fr-5ps1, see `background.ts`): which two-stop
+   * gradient every renderer draws behind the attractor — the built-in dark
+   * or haze pair, or the user-authored custom gradient. Persists like
+   * `colorMode` / `renderStyle`; `persist.ts` omits the pristine default so
+   * never-touched scenes keep their short URLs, and decodes an absent field
+   * per the LEGACY coupling (haze for an aerial-style document, dark
+   * otherwise) so pre-fr-5ps1 links render exactly as they always did. The
+   * `custom` slot survives while unselected, exactly like
+   * {@link customPalette}.
+   */
+  background: BackgroundParams;
 }
 
 /** An IFS needs at least one map. */
@@ -1008,6 +1026,7 @@ export function initialState(panelOpen: boolean): AppState {
     renderMode: "points",
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
+    background: { mode: "dark" },
   };
 }
 
@@ -1726,6 +1745,49 @@ export function setSymmetryTwist(state: AppState, twist: number): AppState {
     ...state,
     symmetry: clamped === 0 ? rest : { ...rest, twist: clamped },
   };
+}
+
+/**
+ * Set which backdrop the scene renders (fr-5ps1) — see
+ * {@link AppState.background}. Not clamped — it is an enum (see
+ * `background.ts`'s `BACKGROUND_MODES`), and the UI only offers valid values
+ * (persistence validates untrusted input in `decodeScene`), like
+ * {@link setRenderStyle}.
+ *
+ * A fresh switch TO `"custom"` — no authored gradient yet — seeds the custom
+ * slot from the backdrop being REPLACED (the resolved stops of the previous
+ * mode), so Custom starts as a tweakable copy of the current look: the exact
+ * {@link setFlamePaletteId}/`seedCustomStops` discipline, applied to the
+ * backdrop. Picking a built-in mode, or re-picking Custom when a payload
+ * already exists, leaves the authored slot untouched — selecting a backdrop
+ * must never clear authored colors.
+ */
+export function setBackgroundMode(
+  state: AppState,
+  mode: BackgroundMode,
+): AppState {
+  const seed =
+    mode === "custom" && state.background.custom === undefined
+      ? { custom: resolveBackground(state.background) }
+      : {};
+  return { ...state, background: { ...state.background, mode, ...seed } };
+}
+
+/**
+ * Replace the custom backdrop's authored gradient (fr-5ps1) — both color
+ * pickers funnel through this one reducer with the whole new stop pair.
+ * Never clamped: the UI's `<input type="color">` → `hexToRgb` path can only
+ * produce valid 0..1 channels (the {@link setPositionAxisColors} contract),
+ * and persistence re-validates untrusted input in `decodeScene`. Leaves
+ * `mode` untouched — the pickers are only reachable while Custom is
+ * selected, and an edit to the slot while it isn't selected is inert but
+ * stored, like any other render-settings edit.
+ */
+export function setBackgroundCustom(
+  state: AppState,
+  custom: BackgroundGradient,
+): AppState {
+  return { ...state, background: { ...state.background, custom } };
 }
 
 /**

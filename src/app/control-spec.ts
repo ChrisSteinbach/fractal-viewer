@@ -17,6 +17,7 @@ import {
   nearestFlameIterationDetentIndex,
   setAdaptiveResolution,
   setAutoUpdate,
+  setBackgroundMode,
   setColorGamma,
   setColorMode,
   setExportScale,
@@ -64,6 +65,7 @@ import type {
   SurfaceColorSource,
   SurfaceParams,
 } from "./state";
+import type { BackgroundMode } from "./background";
 
 /**
  * Declarative specs for the panel's SIMPLE SCALAR controls (fr-dig): every
@@ -207,6 +209,15 @@ export interface ControlEffects {
    * since the histogram/shared-frame dimensions are fixed at `start`; the
    * flame twin of {@link restartSolidRender}. */
   restartFlameRender(): void;
+  /**
+   * Push the CURRENT `state.background`'s resolved gradient to every
+   * renderer (fr-5ps1). An app-level callback rather than a
+   * {@link ControlSceneEffects} method on purpose: main.ts owns the live
+   * backdrop value (the crossfade tween interpolates from it), so every
+   * push must route through its one owner — a direct scene call here would
+   * desync the tween's `from` endpoint.
+   */
+  applyBackground(): void;
 }
 
 /**
@@ -491,6 +502,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       // Reset glow exposure so no stale factor sticks when switching away.
       if (s.renderStyle !== "glow") fx.scene.setGlowExposure(1);
     },
+  },
+  {
+    // The Background select (fr-5ps1): which backdrop gradient every
+    // renderer shows — see background.ts. No `view` guard: the backdrop
+    // applies to the 4D projection exactly like the 3D explorer. Landing on
+    // Custom seeds the authored slot from the backdrop being replaced (see
+    // setBackgroundMode); the custom color pickers themselves are a bespoke
+    // ui.ts row (onBackgroundCustom), like the position axis colors.
+    kind: "select",
+    id: "background",
+    read: (s) => s.background.mode,
+    apply: (s, raw) => setBackgroundMode(s, raw as BackgroundMode),
+    effect: (s, fx) => fx.applyBackground(),
   },
   {
     kind: "checkbox",

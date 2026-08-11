@@ -93,7 +93,6 @@ import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
-import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { webgpuAdapterStatus } from "./render-backend";
 
 /** Threads per workgroup — fr-q1f8's measured winner (private frontier,
@@ -127,9 +126,6 @@ export const SURFACE_COMPUTE_MAX_STEPS_PER_PASS = 32;
 
 /** Default interval between progressive presents of a long frame. */
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
-
-const BG_TOP = hexToRgb01(DARK_BACKDROP.top);
-const BG_BOTTOM = hexToRgb01(DARK_BACKDROP.bottom);
 
 /** A context with no usable WebGPU at all (`navigator.gpu` missing, or no
  * compatible adapter) — the session's signal to route to the WebGL tracer
@@ -179,6 +175,12 @@ export interface SurfaceComputeFrameSpec {
   hitFloor: number;
   lightDir: Vec3;
   ambient: number;
+  /** The scene backdrop's two gradient stops (fr-5ps1) — the pair the GLSL
+   * tracers carry as uBgTop/uBgBottom, fed to the shade kernel's miss/fog
+   * gradient AND the host prefill, re-read per spec assembly like the
+   * lighting. */
+  bgTop: Vec3;
+  bgBottom: Vec3;
   /** Index into SURFACE_COLOR_SOURCES — the shader's dispatch integer. */
   colorSource: number;
   colorSpeed: number;
@@ -252,18 +254,20 @@ export interface SurfaceComputeFrame {
 export function buildSurfaceComputeBackground(
   width: number,
   height: number,
+  bgTop: Vec3,
+  bgBottom: Vec3,
 ): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(width * height * 4);
   for (let py = 0; py < height; py++) {
     const v = clamp((py + 0.5) / height, 0, 1);
     const r = Math.round(
-      clamp(BG_BOTTOM[0] + (BG_TOP[0] - BG_BOTTOM[0]) * v, 0, 1) * 255,
+      clamp(bgBottom[0] + (bgTop[0] - bgBottom[0]) * v, 0, 1) * 255,
     );
     const g = Math.round(
-      clamp(BG_BOTTOM[1] + (BG_TOP[1] - BG_BOTTOM[1]) * v, 0, 1) * 255,
+      clamp(bgBottom[1] + (bgTop[1] - bgBottom[1]) * v, 0, 1) * 255,
     );
     const b = Math.round(
-      clamp(BG_BOTTOM[2] + (BG_TOP[2] - BG_BOTTOM[2]) * v, 0, 1) * 255,
+      clamp(bgBottom[2] + (bgTop[2] - bgBottom[2]) * v, 0, 1) * 255,
     );
     for (let px = 0; px < width; px++) {
       const o = (py * width + px) * 4;
@@ -871,6 +875,10 @@ export class SurfaceComputeRenderer {
   private background: {
     width: number;
     height: number;
+    /** The stops the rows were built from (fr-5ps1) — a live background
+     * change/crossfade must invalidate the cache, not just a resize. */
+    bgTop: Vec3;
+    bgBottom: Vec3;
     rows: Uint8Array<ArrayBuffer>;
   } | null = null;
 
@@ -1028,13 +1036,27 @@ export class SurfaceComputeRenderer {
   private backgroundRows(
     width: number,
     height: number,
+    bgTop: Vec3,
+    bgBottom: Vec3,
   ): Uint8Array<ArrayBuffer> {
     const cached = this.background;
-    if (cached && cached.width === width && cached.height === height) {
+    if (
+      cached &&
+      cached.width === width &&
+      cached.height === height &&
+      cached.bgTop.every((c, i) => c === bgTop[i]) &&
+      cached.bgBottom.every((c, i) => c === bgBottom[i])
+    ) {
       return cached.rows;
     }
-    const rows = buildSurfaceComputeBackground(width, height);
-    this.background = { width, height, rows };
+    const rows = buildSurfaceComputeBackground(width, height, bgTop, bgBottom);
+    this.background = {
+      width,
+      height,
+      bgTop: [...bgTop],
+      bgBottom: [...bgBottom],
+      rows,
+    };
     return rows;
   }
 
@@ -1084,8 +1106,8 @@ export class SurfaceComputeRenderer {
         invProjView: spec.invProjView,
         lightDir: spec.lightDir,
         ambient: spec.ambient,
-        bgTop: BG_TOP,
-        bgBottom: BG_BOTTOM,
+        bgTop: spec.bgTop,
+        bgBottom: spec.bgBottom,
         colorSpeed: spec.colorSpeed,
         tracePixelEps: spec.tracePixelEps,
         colorSource: spec.colorSource,
@@ -1106,7 +1128,7 @@ export class SurfaceComputeRenderer {
       buffers.color,
       0,
       last === null
-        ? this.backgroundRows(width, height)
+        ? this.backgroundRows(width, height, spec.bgTop, spec.bgBottom)
         : last.width === width && last.height === height
           ? last.pixels
           : resampleSurfacePixels(

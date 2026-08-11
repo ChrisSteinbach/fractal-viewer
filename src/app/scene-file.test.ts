@@ -89,6 +89,7 @@ function baseSnapshot(): SceneSnapshot {
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
+    background: { mode: "dark" },
   };
 }
 

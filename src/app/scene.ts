@@ -17,12 +17,14 @@ import type { Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
+import { contextAntialias } from "./constants";
 import {
-  contextAntialias,
-  DARK_BACKDROP,
-  HAZE_BACKDROP,
-  hexToRgb01,
-} from "./constants";
+  backgroundGradientsEqual,
+  DEFAULT_BACKGROUND,
+  resolveBackground,
+} from "./background";
+import type { BackgroundGradient } from "./background";
+import { rgbToHex } from "../fractal/palette";
 import type { RenderStyle, SolidParams } from "./state";
 import {
   configureVoxelTexture,
@@ -85,18 +87,20 @@ THREE.ColorManagement.enabled = false;
 /** Midpoint of a backdrop's two stops — the single color that best stands in
  * for a vertical gradient across the whole frame. Numeric Color constructor
  * on purpose: it never applies color-space conversion. */
-function backdropMidpoint(stops: { top: string; bottom: string }): THREE.Color {
-  const [tr, tg, tb] = hexToRgb01(stops.top);
-  const [br, bg, bb] = hexToRgb01(stops.bottom);
-  return new THREE.Color((tr + br) / 2, (tg + bg) / 2, (tb + bb) / 2);
+function backdropMidpoint(stops: BackgroundGradient): THREE.Color {
+  const { top, bottom } = stops;
+  return new THREE.Color(
+    (top[0] + bottom[0]) / 2,
+    (top[1] + bottom[1]) / 2,
+    (top[2] + bottom[2]) / 2,
+  );
 }
 
-// Fog colors are derived from the backdrop gradients rather than authored
-// separately, so fogged points always veil toward what's actually behind them
-// and can't drift when a backdrop is retuned (fr-1lj). The haze pair is the
-// cooler, lighter "atmosphere" distant points fade into for the aerial style.
-const DARK_FOG = backdropMidpoint(DARK_BACKDROP);
-const HAZE_FOG = backdropMidpoint(HAZE_BACKDROP);
+// The fog color is derived from the ACTIVE backdrop gradient rather than
+// authored separately, so fogged points always veil toward what's actually
+// behind them and can't drift when the backdrop changes (fr-1lj) — since
+// fr-5ps1 that includes the live Background control: setBackground recomputes
+// the midpoint on every backdrop change.
 const FOG_MARGIN = 1.2;
 
 // Authored base point size per render style. The UI scales all of them by a
@@ -176,25 +180,24 @@ function sprite(
 }
 
 /**
- * A camera-independent vertical gradient used as the scene backdrop, so the
- * cloud floats in a sense of depth instead of a flat fill. Authored in sRGB and
- * left unconverted to match the rest of the pipeline (ColorManagement is off).
+ * Paint a top→bottom two-stop gradient across a whole canvas — the one
+ * gradient-drawing routine the backdrop texture, the flame capture underlay
+ * and the thumbnail underlay share (fr-5ps1), so no capture path can render
+ * a different ramp than the live scene. Authored in sRGB and left
+ * unconverted to match the rest of the pipeline (ColorManagement is off);
+ * canvas gradients interpolate in the same space.
  */
-function gradientBackground(top: string, bottom: string): THREE.Texture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 4;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    g.addColorStop(0, top);
-    g.addColorStop(1, bottom);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
+function paintBackdropGradient(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  stops: BackgroundGradient,
+): void {
+  const g = ctx.createLinearGradient(0, 0, 0, height);
+  g.addColorStop(0, rgbToHex(stops.top));
+  g.addColorStop(1, rgbToHex(stops.bottom));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, width, height);
 }
 
 // Out-of-focus points are spread wider and faded; in-focus points stay crisp.
@@ -508,8 +511,18 @@ export class FractalScene {
   private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
 
   private readonly fog: THREE.Fog;
-  private readonly darkBackground: THREE.Texture;
-  private readonly hazeBackground: THREE.Texture;
+  // The scene backdrop (fr-5ps1): ONE mutable canvas-backed gradient texture,
+  // repainted in place by setBackground — every render style shows it, and
+  // the flame composite / capture underlays / compute frame spec all read the
+  // same `backdrop` stops, so no path can disagree about what's behind the
+  // attractor.
+  private backdrop: BackgroundGradient = resolveBackground(DEFAULT_BACKGROUND);
+  private readonly backdropCanvas: HTMLCanvasElement;
+  private readonly backdropCtx: CanvasRenderingContext2D | null;
+  private readonly backdropTexture: THREE.CanvasTexture;
+  // The flame mode's underlay quad — renderFlame draws it first, then the
+  // screen-blended flame quad on top (see renderFlame's doc).
+  private readonly backdropQuad: FullScreenQuad;
 
   // Glow uses bloom post-processing; EDL renders to a depth target then shades.
   private readonly composer: EffectComposer;
@@ -768,16 +781,26 @@ export class FractalScene {
     this.viewportHeight = height;
 
     this.scene = new THREE.Scene();
-    this.darkBackground = gradientBackground(
-      DARK_BACKDROP.top,
-      DARK_BACKDROP.bottom,
+    // A camera-independent vertical gradient as the scene backdrop, so the
+    // cloud floats in a sense of depth instead of a flat fill. One texture,
+    // repainted in place when the Background control moves (fr-5ps1).
+    this.backdropCanvas = document.createElement("canvas");
+    this.backdropCanvas.width = 4;
+    this.backdropCanvas.height = 256;
+    this.backdropCtx = this.backdropCanvas.getContext("2d");
+    if (this.backdropCtx) {
+      paintBackdropGradient(this.backdropCtx, 4, 256, this.backdrop);
+    }
+    this.backdropTexture = new THREE.CanvasTexture(this.backdropCanvas);
+    this.scene.background = this.backdropTexture;
+    this.backdropQuad = new FullScreenQuad(
+      new THREE.MeshBasicMaterial({
+        map: this.backdropTexture,
+        depthTest: false,
+        depthWrite: false,
+      }),
     );
-    this.hazeBackground = gradientBackground(
-      HAZE_BACKDROP.top,
-      HAZE_BACKDROP.bottom,
-    );
-    this.scene.background = this.darkBackground;
-    this.fog = new THREE.Fog(DARK_FOG, 1, 10);
+    this.fog = new THREE.Fog(backdropMidpoint(this.backdrop), 1, 10);
     this.scene.fog = this.fog;
 
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
@@ -986,6 +1009,21 @@ export class FractalScene {
       map: this.flameTexture,
       depthTest: false,
       depthWrite: false,
+      // SCREEN-composite the flame over the backdrop quad renderFlame draws
+      // first (fr-5ps1): out = flame + bg·(1 − flame), per channel. Over a
+      // black backdrop this reduces to the flame bytes exactly (the
+      // pre-fr-5ps1 look), zero-hit pixels show pure backdrop, and near-zero
+      // densities fade smoothly into it — no coverage/alpha needed, which
+      // matters because tonemapFlame writes binary alpha (255 wherever any
+      // density landed). The same composite is exactly expressible in the
+      // 2D-canvas capture paths (globalCompositeOperation "screen" — see
+      // captureFlameFrame/thumbnailFrom), so captures match the live view
+      // byte for byte.
+      transparent: true,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcColorFactor,
     });
     this.flameQuad = new FullScreenQuad(this.flameMaterial);
 
@@ -1444,34 +1482,64 @@ export class FractalScene {
     // also guards its onRenderStyle handler, but the scene must not be
     // corruptible from here either.
     if (this.fourDActive) return;
+    // The backdrop itself no longer varies by style (fr-5ps1): every style
+    // shows the one Background-control gradient (`this.backdropTexture`,
+    // already installed as scene.background), and the fog color tracks its
+    // midpoint via setBackground. A style only picks its material and
+    // whether fog applies — "aerial" used to force the haze backdrop, and
+    // pre-fr-5ps1 documents still get it, via persist.ts's decode migration
+    // rather than anything here.
     switch (style) {
       case "depthFade":
         this.pointCloud.material = this.baseMaterial;
-        this.fog.color.copy(DARK_FOG);
         this.scene.fog = this.fog;
-        this.scene.background = this.darkBackground;
         break;
       case "aerial":
         this.pointCloud.material = this.baseMaterial;
-        this.fog.color.copy(HAZE_FOG);
         this.scene.fog = this.fog;
-        this.scene.background = this.hazeBackground;
         break;
       case "glow":
         this.pointCloud.material = this.glowMaterial;
         this.scene.fog = null;
-        this.scene.background = this.darkBackground;
         break;
       case "dof":
         this.pointCloud.material = this.dofMaterial;
         this.scene.fog = null;
-        this.scene.background = this.darkBackground;
         break;
       case "edl":
         this.pointCloud.material = this.discMaterial;
         this.scene.fog = null;
-        this.scene.background = this.darkBackground;
         break;
+    }
+  }
+
+  /**
+   * Set the scene backdrop (fr-5ps1): repaint the gradient texture in place,
+   * re-derive the fog color from the new midpoint (fr-1lj — surfaces must
+   * haze into what's actually behind them), and push the miss-gradient
+   * uniforms to the three GLSL tracers. The flame composite, the capture/
+   * thumbnail underlays and the WebGPU compute frame spec all read
+   * `this.backdrop`, so one call moves every renderer at once. Cheap and
+   * live-reactive (a uniform write + a 4×256 canvas repaint) — safe to call
+   * per frame during a background crossfade.
+   */
+  setBackground(stops: BackgroundGradient): void {
+    if (backgroundGradientsEqual(this.backdrop, stops)) return;
+    this.backdrop = stops;
+    this.renderNeeded = true;
+    if (this.backdropCtx) {
+      paintBackdropGradient(this.backdropCtx, 4, 256, stops);
+      this.backdropTexture.needsUpdate = true;
+    }
+    this.fog.color.copy(backdropMidpoint(stops));
+    for (const material of [
+      this.surfaceMaterial,
+      this.surfaceMaterial4,
+      this.voxelMaterial,
+    ]) {
+      const u = material.uniforms;
+      (u.uBgTop.value as THREE.Vector3).set(...stops.top);
+      (u.uBgBottom.value as THREE.Vector3).set(...stops.bottom);
     }
   }
 
@@ -1961,7 +2029,7 @@ export class FractalScene {
       // (main.ts prefers the explorer capture during the first-frame gap,
       // so this is belt-and-braces.)
       return this.flameCanvas.width > 0
-        ? thumbnailFrom(this.flameCanvas, maxDim)
+        ? thumbnailFrom(this.flameCanvas, maxDim, this.backdrop, "screen")
         : "";
     }
     return this.withCenteredProjection(() => {
@@ -1987,7 +2055,7 @@ export class FractalScene {
           }
         } else if (!this.representSurfaceComputeFrame()) this.render();
       } else this.render();
-      return thumbnailFrom(this.renderer.domElement, maxDim);
+      return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
     });
   }
 
@@ -2061,25 +2129,33 @@ export class FractalScene {
   }
 
   /**
-   * Render only the flame quad, filling the canvas with the last image
-   * uploaded via {@link setFlameImage} — used in place of {@link render}
-   * while a flame render is active, so the (frozen) 3D scene never draws.
+   * Render the backdrop quad, then the flame quad screen-blended over it
+   * (fr-5ps1; see the flame material's blending doc in the constructor) —
+   * used in place of {@link render} while a flame render is active, so the
+   * (frozen) 3D scene never draws. autoClear is suspended for the second
+   * draw: the flame quad renders through its own pass, which would
+   * otherwise clear the backdrop it is meant to composite over.
    */
   renderFlame(): void {
     this.renderNeeded = false;
     this.renderer.setRenderTarget(null);
+    this.backdropQuad.render(this.renderer);
+    const autoClear = this.renderer.autoClear;
+    this.renderer.autoClear = false;
     this.flameQuad.render(this.renderer);
+    this.renderer.autoClear = autoClear;
   }
 
   /**
-   * Save-PNG source while a flame render is active. Composites the flame
-   * canvas (which has transparent pixels where the histogram was never hit)
-   * over opaque black so the exported PNG matches the on-screen appearance:
-   * the flame quad's material is opaque (alpha ignored), and `tonemapFlame`
-   * leaves zero-hit pixels black, so on screen the backdrop is pure black.
-   * No `exportScale` parameter on purpose (fr-2urv): a flame session
-   * ACCUMULATES at the export size (see {@link flameRenderSize}), so its
-   * canvas already is the export — re-scaling here would only interpolate.
+   * Save-PNG source while a flame render is active. Screen-composites the
+   * flame canvas over the scene backdrop gradient — the same
+   * `flame + bg·(1 − flame)` blend {@link renderFlame} draws (see the flame
+   * material's constructor doc), via canvas 2D's own "screen" operation, so
+   * the exported PNG matches the on-screen appearance for any Background
+   * choice (fr-5ps1). No `exportScale` parameter on purpose (fr-2urv): a
+   * flame session ACCUMULATES at the export size (see
+   * {@link flameRenderSize}), so its canvas already is the export —
+   * re-scaling here would only interpolate.
    */
   captureFlameFrame(): Promise<ExportImage | null> {
     const { width, height } = this.flameCanvas;
@@ -2088,8 +2164,8 @@ export class FractalScene {
     out.height = height;
     const ctx = out.getContext("2d");
     if (!ctx) return Promise.resolve(null);
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, width, height);
+    paintBackdropGradient(ctx, width, height, this.backdrop);
+    ctx.globalCompositeOperation = "screen";
     ctx.drawImage(this.flameCanvas, 0, 0);
     return exportImageFrom(out);
   }
@@ -2562,6 +2638,16 @@ export class FractalScene {
       hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
+      // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
+      // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
+      // compute frames track a background change/crossfade exactly like a
+      // lighting change.
+      bgTop: [this.backdrop.top[0], this.backdrop.top[1], this.backdrop.top[2]],
+      bgBottom: [
+        this.backdrop.bottom[0],
+        this.backdrop.bottom[1],
+        this.backdrop.bottom[2],
+      ],
       colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
       colorSpeed: params.colorSpeed,
       lut:
@@ -4265,13 +4351,20 @@ function shearMatrix4(shear: Vec3): THREE.Matrix4 {
 
 /**
  * Downscale a source canvas to at most `maxDim` px on the long side and
- * JPEG-encode it over an opaque black underlay — the shared tail of every
- * `captureThumbnail` mode (fr-75sq). The black fill is what makes the flame
- * canvas's transparent zero-hit pixels match their on-screen appearance
- * (see `captureFlameFrame`); for the already-opaque WebGL canvas it changes
- * nothing. Returns `""` when a 2D context is unavailable.
+ * JPEG-encode it over the scene backdrop gradient — the shared tail of every
+ * `captureThumbnail` mode (fr-75sq). The underlay + `composite` op are what
+ * make the flame canvas match its on-screen appearance (`"screen"`, the same
+ * blend `renderFlame` draws — see `captureFlameFrame`); for the
+ * already-opaque WebGL canvas the underlay is fully covered and the default
+ * `"source-over"` changes nothing. Returns `""` when a 2D context is
+ * unavailable.
  */
-function thumbnailFrom(src: HTMLCanvasElement, maxDim: number): string {
+function thumbnailFrom(
+  src: HTMLCanvasElement,
+  maxDim: number,
+  backdrop: BackgroundGradient,
+  composite: GlobalCompositeOperation = "source-over",
+): string {
   const longSide = Math.max(src.width, src.height);
   const scale = longSide > maxDim ? maxDim / longSide : 1;
   const w = Math.max(1, Math.round(src.width * scale));
@@ -4281,8 +4374,8 @@ function thumbnailFrom(src: HTMLCanvasElement, maxDim: number): string {
   out.height = h;
   const ctx = out.getContext("2d");
   if (!ctx) return "";
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, w, h);
+  paintBackdropGradient(ctx, w, h, backdrop);
+  ctx.globalCompositeOperation = composite;
   ctx.drawImage(src, 0, 0, w, h);
   return out.toDataURL("image/jpeg", 0.72);
 }
