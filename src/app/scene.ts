@@ -621,12 +621,16 @@ export class FractalScene {
    * (fr-du81). Lazily built once. */
   private surfaceCompileScene: THREE.Scene | null = null;
   private surfaceCompileMesh: THREE.Mesh | null = null;
-  /** Measured per-pixel cost (ms) of the last COMPLETED preview trace for
-   * the current system, or null before one completes. SIZES the next
+  /** Measured per-pixel cost (ms) of the FRESHEST preview evidence for
+   * the current system — the last completed preview trace, or a
+   * superseded job's partial attribution when a re-arm interrupted one
+   * that had measured (fr-b8o5: fresher pose wins; see
+   * {@link armSurfacePreview}) — or null before any. SIZES the next
    * job's probe strip (fr-096u: the planner turns a prior into a
    * pixel-bounded probe), so a heavy DE's first submission is target-sized
-   * from its very first strip. Reset with the governor on every system
-   * upload — a new DE is a new cost profile. */
+   * from its very first strip, and prices the pipelined queue's est-side
+   * admission. Reset with the governor on every system upload — a new DE
+   * is a new cost profile. */
   private surfacePreviewPxCostMs: number | null = null;
   /** Measured per-pixel cost (ms) of the last COMPLETED full-tier frame —
    * a finished settle job or a finished capture drain — for the CURRENT
@@ -2936,11 +2940,10 @@ export class FractalScene {
    */
   private armSurfacePreview(size: THREE.Vector2): void {
     const job = this.surfacePreviewJob;
-    // Per-pixel cost prediction for the NEW job's probe pacing: a
-    // completed preview's measurement when one exists, else whatever the
-    // superseded partial measured. Rung-invariant only approximately
-    // (finer rungs trace deeper), but it only picks a pacing regime —
-    // both regimes are correct.
+    // Per-pixel cost prediction for the NEW job's probe pacing and queue
+    // pricing. Rung-invariant only approximately (finer rungs trace
+    // deeper), but it only picks a pacing regime — both regimes are
+    // correct.
     let pxCostMs = this.surfacePreviewPxCostMs;
     if (job) {
       this.surfacePreviewJob = null;
@@ -2954,7 +2957,22 @@ export class FractalScene {
         this.surfacePreviewGovernor.sample(
           (job.spentMs * job.planner.totalPx) / tracedPx,
         );
-        pxCostMs ??= job.spentMs / tracedPx;
+        // FRESHER WINS (fr-b8o5): the superseded job measured the pose
+        // the view is at (or just left), while surfacePreviewPxCostMs can
+        // predate the whole gesture. 4D slice moves shift per-pixel cost
+        // 20-40x pose to pose, and re-arming at the stale-cheap completed
+        // prior priced the pipelined queue's est-side admission ~150x
+        // under reality — each of a drag's coalesced re-arms then
+        // orphaned seconds of already-submitted strips in the GL queue
+        // ahead of the final preview (measured: 30.8s post-drag wall
+        // where a fresh session at the same pose paid 4.3s). Written back
+        // to the field so the NEXT re-arm prices from this pose evidence
+        // even if its own job dies before a fence lands. Partial batch
+        // attributions quantize toward rAF boundaries, which only reads
+        // HIGH — smaller probes and queues, the safe direction — and the
+        // next completed preview overwrites with its whole-frame number.
+        pxCostMs = job.spentMs / tracedPx;
+        this.surfacePreviewPxCostMs = pxCostMs;
       }
     }
     // uPixelEps derives from the TARGET's height (shading probes match
