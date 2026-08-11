@@ -5,6 +5,7 @@ import {
   estimateDistance4,
   estimateDistance4Refined,
   foldBranchCount4,
+  radiusBandInvRange,
   setFoldFrontierTap4,
   singularValues4,
   slabExact4,
@@ -604,6 +605,64 @@ describe("buildSurfaceDE4 on pentatope", () => {
     expect(back[1]).toBeCloseTo(p[1], 10);
     expect(back[2]).toBeCloseTo(p[2], 10);
     expect(back[3]).toBeCloseTo(p[3], 10);
+  });
+});
+
+describe("SurfaceDE4.radiusBand (fr-skhv)", () => {
+  it("carries a sane band on pentatope: 0 <= minD < maxD, a finite center, and maxD within a loose sanity ceiling", () => {
+    const de = buildSurfaceDE4(pentatope());
+    const { center, minD, maxD } = de.radiusBand;
+    expect(minD).toBeGreaterThanOrEqual(0);
+    expect(minD).toBeLessThan(maxD);
+    for (const c of center) expect(Number.isFinite(c)).toBe(true);
+    // Loose sanity ceiling: no probe point can sit more than a diameter past
+    // the (padded) bounding sphere from any center inside it.
+    expect(maxD).toBeLessThanOrEqual(de.boundingRadius * 2 + 1);
+  });
+
+  it("is deterministic: two builds of the same system return byte-identical bands (the probe is seeded)", () => {
+    const transforms = pentatope();
+    const de1 = buildSurfaceDE4(transforms);
+    const de2 = buildSurfaceDE4(transforms);
+    expect(de2.radiusBand.center).toEqual(de1.radiusBand.center);
+    expect(de2.radiusBand.minD).toBe(de1.radiusBand.minD);
+    expect(de2.radiusBand.maxD).toBe(de1.radiusBand.maxD);
+  });
+
+  it("moves the band to the visible set: a large pure-translation final transform shifts the center by roughly the translation", () => {
+    const transforms = pentatope();
+    const noFinal = buildSurfaceDE4(transforms);
+    // Identity rotation/scale, translation alone — large relative to
+    // pentatope's ~1-radius attractor, so the shift is unmistakable.
+    const finalTransform = map4({ position: [5, 0, 0], scale: [1, 1, 1] });
+    const withFinal = buildSurfaceDE4(transforms, finalTransform);
+    // The no-final center sits near the raw attractor's own origin-region
+    // extent (pentatope's bounding radius is ~1), anchoring the shift below
+    // as meaningful rather than vacuous.
+    expect(Math.abs(noFinal.radiusBand.center[0])).toBeLessThan(1);
+    expect(
+      withFinal.radiusBand.center[0] - noFinal.radiusBand.center[0],
+    ).toBeCloseTo(5, 0);
+  });
+});
+
+describe("radiusBandInvRange", () => {
+  it("returns 1/(maxD - minD) for a normal band", () => {
+    const band: SurfaceDE4["radiusBand"] = {
+      center: [0, 0, 0, 0],
+      minD: 0.5,
+      maxD: 2.5,
+    };
+    expect(radiusBandInvRange(band)).toBe(0.5);
+  });
+
+  it("returns 1 for a degenerate band (minD === maxD)", () => {
+    const band: SurfaceDE4["radiusBand"] = {
+      center: [0, 0, 0, 0],
+      minD: 1,
+      maxD: 1,
+    };
+    expect(radiusBandInvRange(band)).toBe(1);
   });
 });
 
