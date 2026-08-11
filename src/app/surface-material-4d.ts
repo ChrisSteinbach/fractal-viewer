@@ -296,6 +296,17 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return length(q + s * e);
   }
 
+  /** The segment parameter s in [-1, 1] at that same closest approach —
+   * segmentRadius's argmin, shared guard and all (fr-9c9e). Every affine
+   * inverse map preserves the parameterization — T^-1(q + s e) is
+   * T^-1(q) + s * (M e) — so a chain tuple's s lives on the ORIGINAL
+   * query segment at any depth.
+   * 0 at e = 0: the point query has no segment to place a hit on. */
+  float segmentS(vec4 q, vec4 e) {
+    float ee = dot(e, e);
+    return ee > 0.0 ? clamp(-dot(q, e) / ee, -1.0, 1.0) : 0.0;
+  }
+
   /** One sector step of the kaleidoscope sweep (the oracle's stepSector4):
    * turn a chain point BACKWARD by one sector — the transpose of the
    * rotation copy k applies AFTER its base map, so descending through the
@@ -852,9 +863,17 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * cutting across the structure. (An escape-depth extra was tried in
    * this slot first and swapped out pre-release: on uniform-contraction
    * systems the escape level is pinned by the hit epsilon, not local
-   * structure, and it rendered one flat hue.) It follows the per-level
-   * best candidate and stops when every chain has escaped. Called ONCE
-   * per hit; the march itself uses the plain overload.
+   * structure, and it rendered one flat hue.) sStar is the slab hit's own
+   * place along the query segment (fr-9c9e): the level winner's
+   * closest-approach parameter, overwritten per level so the DEEPEST
+   * resolved level — the contracted neighborhood the accepted hit
+   * actually sits in — reports; inverse maps preserve the segment
+   * parameterization (see segmentS), so it reads directly on the original
+   * |w - uW0| <= uSliceHalfW span, and main()'s radius color lifts
+   * through w0 + sStar * uSliceHalfW. Always 0 at uSliceHalfW = 0. It
+   * follows the per-level best candidate and stops when every chain has
+   * escaped. Called ONCE per hit; the march itself uses the plain
+   * overload.
    *
    * The fr-wa6o slab query rides here identically — same extent prologue,
    * same vec4 per chain, candidate and eviction slot, same segmentRadius
@@ -872,7 +891,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     out int firstChoice,
     out float trap,
     out float rings,
-    out float sheets
+    out float sheets,
+    out float sStar
   ) {
     vec4 q = uInvRotor * vec4(p, uW0);
     // The slab query's half-extent (fr-wa6o), exactly as the plain
@@ -915,6 +935,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     trap = 0.0;
     rings = 1.0;
     sheets = 1.0;
+    sStar = 0.0;
     float trapAcc = 0.0;
     float trapNorm = 0.0;
     float trapW = 1.0;
@@ -1132,6 +1153,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       // a shading extra, not part of the distance contract, and a coordinate
       // is what the plane trap wants.
       sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
+      // Overwritten, not min-tracked: the deepest level's winner is the
+      // honest place along the slab segment (fr-9c9e, see the doc above).
+      sStar = segmentS(c1Q, c1Ext);
       aLive = false;
       bLive = false;
       v1Live = false;
@@ -1301,7 +1325,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float trap;
     float rings;
     float sheets;
-    surfaceDE(pos, firstChoice, trap, rings, sheets);
+    float sStar;
+    surfaceDE(pos, firstChoice, trap, rings, sheets, sStar);
 
     // --- shade --------------------------------------------------------------
     // Normal from the DE gradient (tetrahedron offsets: four samples instead
@@ -1338,16 +1363,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         // under BOTH rotor spins and slice moves — unlike a plain 3D
         // length(pos), which would swim under either.
         //
-        // With a slab (uSliceHalfW > 0, fr-wa6o) this lifts through the
-        // slab's CENTRE plane, not the hit's own w — which the descent
-        // knows (its segment parameter at closest approach) but does not
-        // report back. So the ramp reads one shell across the slab's
-        // depth. Same class as the sheets trap above: a shading extra, not
-        // part of the distance contract, and exact at uSliceHalfW = 0.
-        // Tracked as its own follow-up rather than fixed here, since
-        // threading a w out of the descent needs a decision about WHICH
-        // level's is the honest one.
-        vec4 q4 = uInvRotor * vec4(pos, uW0);
+        // Under a slab (uSliceHalfW > 0, fr-wa6o) the hit can sit anywhere
+        // in |w - uW0| <= uSliceHalfW; the descent's sStar — the deepest
+        // level winner's segment parameter — places it, so the ramp reads
+        // the hit's OWN w rather than flattening to the slab's centre
+        // plane (fr-9c9e). At uSliceHalfW = 0, sStar is 0 and this is the
+        // slice plane exactly, bit for bit.
+        vec4 q4 = uInvRotor * vec4(pos, uW0 + sStar * uSliceHalfW);
         u = clamp(length(q4) / uVisibleRadius, 0.0, 1.0);
       } else if (uColorSource == 4) {
         u = rings;

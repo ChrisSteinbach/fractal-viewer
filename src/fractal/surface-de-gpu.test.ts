@@ -1642,9 +1642,15 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
     // The dimension-specific color normalizers (module doc): height over
     // the FULL 4D visible radius, radius as the rotor-lifted TRUE 4D
     // radius — the slice-invariant 4D GLSL forms, not the 3D entries'
-    // straight visibleRadius reads.
+    // straight visibleRadius reads. Radius lifts through the slab hit's
+    // OWN w (fr-9c9e): hit-info's sStar places it along the fr-wa6o
+    // segment, and stays 0 at h = 0 (w0 exactly).
     expect(wgsl).toContain("params.visRadius4");
-    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, params.w0))");
+    expect(wgsl).toContain(
+      "let hitW = params.w0 + hi.sStar * params.sliceHalfW;",
+    );
+    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, hitW))");
+    expect(wgsl).toContain("info.sStar = segmentS4(c1Q, c1Ext);");
     expect(wgsl).toContain(
       "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
     );
@@ -1797,6 +1803,23 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
     }
   });
 
+  it("threads the slab hit's own w into the radius color (fr-9c9e): slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
+    const withExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4" }),
+    );
+    expect(withExt).toContain("info.sStar = segmentS4(c1Q, c1Ext);");
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4", slabExt: false }),
+    );
+    // The helper declaration survives (Tint DCEs it); no call site
+    // remains, so sStar keeps the constructor's 0 and the shade entry's
+    // hitW collapses to w0 — the slice plane, today's value exactly.
+    expect([...withoutExt.matchAll(/segmentS4\(/g)].length).toBe(1);
+    expect(withoutExt).toContain(
+      "let hitW = params.w0 + hi.sStar * params.sliceHalfW;",
+    );
+  });
+
   it("is inert outside core 'affine4' — fold/affine/escape generate byte-identical source with slabExt false or absent", () => {
     for (const core of ["fold", "affine", "escape"] as const) {
       const base = surfaceDeKernelWgsl(kernelOpts({ core }));
@@ -1918,9 +1941,15 @@ describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
     expect(wgsl).toContain("trapAcc += trapW * shadeMaps[lbMap].w;");
     expect(wgsl).toContain("branchCount = 243u;");
     expect(wgsl).toContain("rotorInvApply4");
-    // Slice-invariant height/radius normalizers, like the affine4 core.
+    // Slice-invariant height/radius normalizers, like the affine4 core —
+    // radius through the slab hit's own w (fr-9c9e), the greedy chain's
+    // level winner placing it.
     expect(wgsl).toContain("params.visRadius4");
-    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, params.w0))");
+    expect(wgsl).toContain(
+      "let hitW = params.w0 + hi.sStar * params.sliceHalfW;",
+    );
+    expect(wgsl).toContain("rotorInvApply4(vec4f(pos, hitW))");
+    expect(wgsl).toContain("info.sStar = segmentS4(lbQ, lbExt);");
     expect(wgsl).toContain(
       "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
     );
@@ -2115,6 +2144,23 @@ describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)
     const opens = [...withoutExt.matchAll(/\{/g)].length;
     const closes = [...withoutExt.matchAll(/\}/g)].length;
     expect(closes).toBe(opens);
+  });
+
+  it("threads the slab hit's own w into the radius color (fr-9c9e): slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
+    const withExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", width: 12 }),
+    );
+    expect(withExt).toContain("info.sStar = segmentS4(lbQ, lbExt);");
+    const withoutExt = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", width: 12, slabExt: false }),
+    );
+    // The helper declaration survives (Tint DCEs it); no call site
+    // remains, so sStar keeps the constructor's 0 and the shade entry's
+    // hitW collapses to w0 — the slice plane, today's value exactly.
+    expect([...withoutExt.matchAll(/segmentS4\(/g)].length).toBe(1);
+    expect(withoutExt).toContain(
+      "let hitW = params.w0 + hi.sStar * params.sliceHalfW;",
+    );
   });
 });
 

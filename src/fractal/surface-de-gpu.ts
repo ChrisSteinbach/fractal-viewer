@@ -596,7 +596,9 @@ export interface SurfaceGpuKernelOptions {
    * either way (a struct/function never reads past its own use; Tint
    * DCEs the unused ones). HOST CONTRACT: a `slabExt: false` pipeline
    * must never be fed a packed `sliceHalfW > 0` — the params struct
-   * still declares the field, merely unread, so the body would
+   * still declares the field, unread by the descent (the shade entry's
+   * radius color multiplies it by a hit-info `sStar` this variant pins
+   * at 0, fr-9c9e — identically no slab influence), so the body would
    * silently render the h=0 slice; the packer cannot see kernel
    * options, so keeping the two in sync is the caller's obligation. */
   slabExt?: boolean;
@@ -1342,7 +1344,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -1554,7 +1556,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -1830,7 +1832,7 @@ ${
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -2122,7 +2124,14 @@ ${
     : ``
 }    info.rings = min(info.rings, c1R / R);
     info.sheets = min(info.sheets, abs(c1Q.y) / R);
-    aLive = false;
+${
+  slabExt
+    ? `    // Overwritten, not min-tracked: the deepest level's winner is the
+    // honest place along the slab segment (fr-9c9e; the GLSL twin's rule).
+    info.sStar = segmentS4(c1Q, c1Ext);
+`
+    : ``
+}    aLive = false;
     bLive = false;
     v1Live = false;
     v2Live = false;
@@ -2211,7 +2220,7 @@ ${
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -2499,7 +2508,14 @@ ${
     : ``
 }    info.rings = min(info.rings, lbR / R);
     info.sheets = min(info.sheets, lbAbsY / R);
-    if (lbR > params.escapeRadius) {
+${
+  slabExt
+    ? `    // Overwritten, not min-tracked: the deepest level's winner is the
+    // honest place along the slab segment (fr-9c9e; the GLSL twin's rule).
+    info.sStar = segmentS4(lbQ, lbExt);
+`
+    : ``
+}    if (lbR > params.escapeRadius) {
       live = false;
     } else {
       chQ = lbQ;
@@ -2528,7 +2544,7 @@ ${
   // GLSL overload also returns the DE, so its dr accumulator is the one
   // value-side term trimmed here.
   const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
   var v = p;
   var r = length(v);
   let kind = u32(params.escParams.x);
@@ -2964,14 +2980,17 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   // these two colorings SWIM as w0 slides — so the 4D arm mirrors
   // surface-material-4d.ts instead: HEIGHT normalizes by the FULL 4D
   // visible radius (params.visRadius4), and RADIUS lifts the hit
-  // through the rotor for the TRUE 4D radius, rotor/slice-invariant
-  // (fr-9c9e tracks reading the slab hit's own w rather than the slice
-  // plane's).
+  // through the rotor for the TRUE 4D radius, rotor/slice-invariant —
+  // at the slab hit's OWN w since fr-9c9e: hit-info's sStar places the
+  // hit along the fr-wa6o segment, and stays 0 wherever no slab is
+  // descended (h = 0, the noslab kernels, every 3D core), which keeps
+  // hitW equal to w0 there bit for bit.
   const shadeHeightU = core4
     ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
     : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU = core4
-    ? `let q4c = rotorInvApply4(vec4f(pos, params.w0));
+    ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
+      let q4c = rotorInvApply4(vec4f(pos, hitW));
       u = clamp(length(q4c) / params.visRadius4, 0.0, 1.0);`
     : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
@@ -3060,6 +3079,12 @@ struct SurfaceHitInfo {
   trap: f32,
   rings: f32,
   sheets: f32,
+  // The slab hit's own place along the fr-wa6o query segment (fr-9c9e),
+  // in [-1, 1] of |w - w0| <= sliceHalfW. Written only by the 4D cores'
+  // slabExt bodies — every other core (and the noslab variant) leaves
+  // the constructor's 0, which pins the radius color to the slice plane
+  // exactly as before.
+  sStar: f32,
 }
 
 ${hitInfoText}
@@ -3498,6 +3523,20 @@ fn segmentRadius4(q: vec4f, e: vec4f) -> f32 {
     s = clamp(-dot(q, e) / ee, -1.0, 1.0);
   }
   return length(q + s * e);
+}
+
+// The segment parameter s in [-1, 1] at that same closest approach — the
+// argmin of the helper above, shared guard and all (fr-9c9e). Inverse
+// maps preserve the segment parameterization, so a chain tuple's s lives
+// on the ORIGINAL query segment at any depth; the shade entry lifts the
+// radius color through w0 + sStar * sliceHalfW. 0 at e = 0.
+fn segmentS4(q: vec4f, e: vec4f) -> f32 {
+  let ee = dot(e, e);
+  var s = 0.0;
+  if (ee > 0.0) {
+    s = clamp(-dot(q, e) / ee, -1.0, 1.0);
+  }
+  return s;
 }`
         : /* wgsl */ `
 fn mapApply(m: GpuMap, x: vec3f) -> vec3f {
