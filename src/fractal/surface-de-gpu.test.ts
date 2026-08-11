@@ -17,6 +17,7 @@ import {
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_UNIFORM_MAP_SLOTS,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
@@ -1827,6 +1828,74 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
         kernelOpts({ core, slabExt: false }),
       );
       expect(withFalse).toBe(base);
+    }
+  });
+});
+
+describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, fr-b72d probe)", () => {
+  const STORAGE_LINE =
+    "@group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;";
+  const UNIFORM_LINE = `@group(0) @binding(1) var<uniform> maps: array<GpuMap4, ${SURFACE_GPU_UNIFORM_MAP_SLOTS}>;`;
+
+  it("defaults to false: explicit and omitted produce identical source for both 4D cores", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts({ core }));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ core, mapsUniform: false }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).toContain(STORAGE_LINE);
+      expect(omitted).not.toContain(UNIFORM_LINE);
+    }
+  });
+
+  it("true swaps EXACTLY the binding declaration — substituting the storage line back reproduces the default text byte for byte, in every 4D (core, mode) pair", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const storage = surfaceDeKernelWgsl(kernelOpts({ core, mode }));
+        const uniform = surfaceDeKernelWgsl(
+          kernelOpts({ core, mode, mapsUniform: true }),
+        );
+        expect(uniform).toContain(UNIFORM_LINE);
+        expect(uniform).not.toContain(STORAGE_LINE);
+        expect(uniform.replace(UNIFORM_LINE, STORAGE_LINE)).toBe(storage);
+      }
+    }
+  });
+
+  it("declares SURFACE_GPU_UNIFORM_MAP_SLOTS slots — the app's 4D eligibility cap, so no eligible system overflows the fixed array", () => {
+    expect(SURFACE_GPU_UNIFORM_MAP_SLOTS).toBe(24);
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", mapsUniform: true }),
+    );
+    expect(wgsl).toContain("array<GpuMap4, 24>");
+  });
+
+  it("composes with slabExt:false and with the lens wrapper as the same one-line swap", () => {
+    const cases = [
+      { core: "affine4", slabExt: false },
+      { core: "affine4", lens: true },
+      { core: "fold4", slabExt: false, lens: true },
+    ] as const;
+    for (const overrides of cases) {
+      const storage = surfaceDeKernelWgsl(kernelOpts({ ...overrides }));
+      const uniform = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, mapsUniform: true }),
+      );
+      expect(uniform.replace(UNIFORM_LINE, STORAGE_LINE)).toBe(storage);
+      const opens = [...uniform.matchAll(/\{/g)].length;
+      const closes = [...uniform.matchAll(/\}/g)].length;
+      expect(closes).toBe(opens);
+    }
+  });
+
+  it("is inert outside the 4D cores — fold/affine/escape generate byte-identical source with mapsUniform true or absent", () => {
+    for (const core of ["fold", "affine", "escape"] as const) {
+      const base = surfaceDeKernelWgsl(kernelOpts({ core }));
+      const withTrue = surfaceDeKernelWgsl(
+        kernelOpts({ core, mapsUniform: true }),
+      );
+      expect(withTrue).toBe(base);
     }
   });
 });
