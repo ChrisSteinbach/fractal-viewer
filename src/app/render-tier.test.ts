@@ -87,6 +87,27 @@ describe("createPreviewGovernor", () => {
     expect(governor.scale).toBe(0.3);
   });
 
+  it("panics straight to the floor on a TRUNCATED first trace — budget exhaustion is not compile overhead (fr-khxy round 3)", () => {
+    const governor = createPreviewGovernor();
+    // A truncated trace means the renderer's wall budget elapsed with rays
+    // still unresolved — no warm cache would have absorbed that. Swallowing
+    // it as warm-up left a parked entry's second (and last) preview
+    // re-running the exact rung the first just proved unholdable, and the
+    // pane black until the full settle (measured 45s on Firefox's slower
+    // WebGPU where Chrome previews in 0.4s).
+    const dropped = governor.sample(2000, { truncated: true });
+    expect(dropped).toBe(0.07);
+    expect(governor.scale).toBe(0.07);
+  });
+
+  it("reports no change for a truncated trace already at the floor, so the caller's re-kick cannot loop", () => {
+    const governor = createPreviewGovernor();
+    governor.sample(2000, { truncated: true });
+    expect(governor.scale).toBe(0.07);
+    expect(governor.sample(2000, { truncated: true })).toBeNull();
+    expect(governor.scale).toBe(0.07);
+  });
+
   it("does not step on a single slow trace after warm-up", () => {
     const governor = createPreviewGovernor();
     governor.sample(50);

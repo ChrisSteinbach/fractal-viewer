@@ -277,8 +277,22 @@ export interface PreviewGovernor {
    * forced to completion, not a frame interval. Returns the new scale when
    * this sample tips a rung (already reflected in {@link scale}), else
    * null.
+   *
+   * `truncated` marks a trace the renderer CUT OFF at its wall budget with
+   * work unresolved (the compute path's preview budget, fr-khxy round 3):
+   * such a sample bypasses the warm-up's decide-nothing rule and panics
+   * immediately. Warm-up exists because a session's FIRST trace carries
+   * compile/allocation overhead a capable GPU then never pays again — but
+   * overhead cannot manufacture a truncation verdict: truncated means the
+   * budget elapsed with rays still unresolved, which no warm cache would
+   * have absorbed. Swallowing it cost the one shape the ladder exists for:
+   * a parked session entry runs exactly two previews, so seed-only sample
+   * one + re-run-the-same-rung sample two left the panic verdict firing
+   * after the last preview of the session (measured on Firefox's ~10-20x
+   * slower WebGPU: two identical 2s truncated previews with hit 0, then a
+   * 45s settle over a black pane).
    */
-  sample(traceMs: number): number | null;
+  sample(traceMs: number, opts?: { truncated?: boolean }): number | null;
   /**
    * Forget all timing state and return to the entry rung for a system
    * whose descent costs `costWeight` times the shipped anchor per pixel
@@ -389,16 +403,22 @@ export function createPreviewGovernor(): PreviewGovernor {
       return PREVIEW_SCALE_RUNGS[rungIndex];
     },
 
-    sample(traceMs: number): number | null {
+    sample(traceMs: number, opts?: { truncated?: boolean }): number | null {
       // Invalid measurement: ignore completely, as if it never happened.
       if (!Number.isFinite(traceMs) || traceMs < 0) return null;
 
-      // Warm-up (see the factory doc): seed the EMA, decide nothing.
+      // Warm-up (see the factory doc): seed the EMA, decide nothing —
+      // UNLESS the renderer itself says the trace was truncated at its
+      // wall budget with work unresolved (see the interface doc): compile
+      // and allocation overhead cannot manufacture that verdict, and a
+      // parked entry's second (and last) preview would otherwise re-run
+      // the very rung the first just proved unholdable.
       if (ema === null) {
         ema = traceMs;
-        return null;
+        if (!opts?.truncated) return null;
+      } else {
+        ema += PREVIEW_EMA_ALPHA * (traceMs - ema);
       }
-      ema += PREVIEW_EMA_ALPHA * (traceMs - ema);
 
       // Panic outranks the hold-off and the EMA both: this frame alone is
       // the evidence, and one more like it is the one that wedges.

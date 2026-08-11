@@ -2627,8 +2627,14 @@ export class FractalScene {
 
   /** Feed the preview governor a measured compute preview cost — the
    * compute path's analogue of the strip jobs' completed-trace samples. */
-  sampleSurfaceComputeCost(traceMs: number): void {
-    this.surfacePreviewGovernor.sample(traceMs);
+  /** Feed a compute preview's measured wall cost to the preview governor.
+   * `truncated` marks a budget-cut frame (unresolved rays remained): the
+   * governor then panics through its warm-up (fr-khxy round 3 — see
+   * PreviewGovernor.sample). Returns the new scale when the sample tipped
+   * a rung, else null — the caller re-kicks a truncated preview exactly
+   * when a drop happened. */
+  sampleSurfaceComputeCost(traceMs: number, truncated = false): number | null {
+    return this.surfacePreviewGovernor.sample(traceMs, { truncated });
   }
 
   /** Consume the dirty flag when the compute path kicks a frame for it —
