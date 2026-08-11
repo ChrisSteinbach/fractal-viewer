@@ -33,7 +33,7 @@ import {
 } from "./escape-de";
 import { buildSurfaceDE, SURFACE_FOLD_BOXFOLD } from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
-import { buildSurfaceDE4 } from "./surface-de-4d";
+import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Transform } from "./types";
 
@@ -2493,8 +2493,8 @@ function view4(overrides: Partial<SurfaceGpu4View> = {}): SurfaceGpu4View {
 }
 
 describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS4_BYTES — the frozen 0..207 block plus the 4D variant tail (432 bytes, per the module doc)", () => {
-    expect(SURFACE_GPU_PARAMS4_BYTES).toBe(432);
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS4_BYTES — the frozen 0..207 block plus the 4D variant tail (464 bytes, per the module doc)", () => {
+    expect(SURFACE_GPU_PARAMS4_BYTES).toBe(464);
     const de = buildSurfaceDE4(fourDSystemTransforms());
     const buf = packSurface4GpuParams(de, view4(), { itemCount: 5 });
     expect(buf).toBeInstanceOf(ArrayBuffer);
@@ -2804,8 +2804,8 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
 });
 
 describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () => {
-  it("keeps the 432-byte buffer without a foldFinal and grows to SURFACE_GPU_PARAMS4_LENS_BYTES with one", () => {
-    expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(528);
+  it("keeps the 464-byte buffer without a foldFinal and grows to SURFACE_GPU_PARAMS4_LENS_BYTES with one", () => {
+    expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(560);
     const plain = buildSurfaceDE4(fourDSystemTransforms());
     expect(plain.foldFinal).toBeNull();
     expect(
@@ -2822,9 +2822,9 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
     ).toBe(SURFACE_GPU_PARAMS4_LENS_BYTES);
   });
 
-  it("leaves the frozen 0..431 block byte-identical to the no-lens packing of the same base system", () => {
+  it("leaves the frozen 0..463 block byte-identical to the no-lens packing of the same base system", () => {
     // The lens block is APPENDED: a 4D kernel without the lens declares a
-    // struct that ends at 432 and never reads past it, so nothing before
+    // struct that ends at 464 and never reads past it, so nothing before
     // that offset may move.
     const base = fourDSystemTransforms();
     const plain = packSurface4GpuParams(buildSurfaceDE4(base), view4(), {
@@ -2838,14 +2838,15 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
     const a = new DataView(plain);
     const b = new DataView(lensed);
     for (let off = 0; off < SURFACE_GPU_PARAMS4_BYTES; off += 4) {
-      // Only the two radii legitimately differ (a fold final expands the
-      // VISIBLE set), so compare the layout everywhere else.
-      if (off === 24 || off === 428) continue;
+      // Only the two radii and the radius-ramp band (432..455)
+      // legitimately differ (a fold final changes the VISIBLE set), so
+      // compare the layout everywhere else.
+      if (off === 24 || off === 428 || (off >= 432 && off < 456)) continue;
       expect(b.getUint32(off, true)).toBe(a.getUint32(off, true));
     }
   });
 
-  it("round-trips the built lens's invM rows / invT / lens4Params at the documented 432..527 offsets", () => {
+  it("round-trips the built lens's invM rows / invT / lens4Params at the documented 464..559 offsets", () => {
     const de = buildSurfaceDE4(
       fourDSystemTransforms(),
       fourDBoxfoldFinalTransform(),
@@ -2858,22 +2859,44 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
     // Row-major bytes of the matrix the body applies (dot(rowN, v)) —
     // the file's standing 4D convention, same as final4M/stepBack4.
     for (let i = 0; i < 16; i++) {
-      expect(view.getFloat32(432 + i * 4, true)).toBe(
+      expect(view.getFloat32(464 + i * 4, true)).toBe(
         Math.fround(lens.invM[i]),
       );
     }
-    expect(view.getFloat32(496, true)).toBe(Math.fround(lens.invT[0]));
-    expect(view.getFloat32(500, true)).toBe(Math.fround(lens.invT[1]));
-    expect(view.getFloat32(504, true)).toBe(Math.fround(lens.invT[2]));
-    expect(view.getFloat32(508, true)).toBe(Math.fround(lens.invT[3]));
+    expect(view.getFloat32(528, true)).toBe(Math.fround(lens.invT[0]));
+    expect(view.getFloat32(532, true)).toBe(Math.fround(lens.invT[1]));
+    expect(view.getFloat32(536, true)).toBe(Math.fround(lens.invT[2]));
+    expect(view.getFloat32(540, true)).toBe(Math.fround(lens.invT[3]));
     // lens4Params — (foldKind, invW, absW, sigmaMin), the GLSL
     // uLensParams order the wrapper reads.
-    expect(view.getFloat32(512, true)).toBe(SURFACE_FOLD_BOXFOLD);
-    expect(view.getFloat32(516, true)).toBe(Math.fround(lens.invW));
-    expect(view.getFloat32(520, true)).toBe(Math.fround(lens.absW));
-    expect(view.getFloat32(524, true)).toBe(Math.fround(lens.sigmaMin));
+    expect(view.getFloat32(544, true)).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(view.getFloat32(548, true)).toBe(Math.fround(lens.invW));
+    expect(view.getFloat32(552, true)).toBe(Math.fround(lens.absW));
+    expect(view.getFloat32(556, true)).toBe(Math.fround(lens.sigmaMin));
     // A real lens, not a degenerate one: weight 0.55 gives invW ~1.82.
     expect(lens.absW).toBeCloseTo(0.55, 12);
+  });
+
+  it("round-trips SurfaceDE4.radiusBand at 432..455 — center, minD, the shared radiusBandInvRange, zero spares (fr-skhv)", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    const band = de.radiusBand;
+    expect(view.getFloat32(432, true)).toBe(Math.fround(band.center[0]));
+    expect(view.getFloat32(436, true)).toBe(Math.fround(band.center[1]));
+    expect(view.getFloat32(440, true)).toBe(Math.fround(band.center[2]));
+    expect(view.getFloat32(444, true)).toBe(Math.fround(band.center[3]));
+    expect(view.getFloat32(448, true)).toBe(Math.fround(band.minD));
+    expect(view.getFloat32(452, true)).toBe(
+      Math.fround(radiusBandInvRange(band)),
+    );
+    expect(view.getFloat32(456, true)).toBe(0);
+    expect(view.getFloat32(460, true)).toBe(0);
+    // A real band, not a degenerate one: the probe spans a genuine
+    // radial range around a finite center.
+    expect(band.minD).toBeGreaterThanOrEqual(0);
+    expect(band.maxD).toBeGreaterThan(band.minD);
   });
 
   it("packs the cores' OWN final rows as identity/zero/1 under a foldFinal — the wrapper alone applies the lens", () => {

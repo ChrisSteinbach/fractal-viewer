@@ -9,7 +9,11 @@ import {
   SYM_PLANE_CODE,
   type SurfaceDE,
 } from "./surface-de";
-import { slabExact4, type SurfaceDE4 } from "./surface-de-4d";
+import {
+  radiusBandInvRange,
+  slabExact4,
+  type SurfaceDE4,
+} from "./surface-de-4d";
 import type { Vec3 } from "./types";
 
 /**
@@ -337,7 +341,7 @@ import type { Vec3 } from "./types";
  *                  0), the GLSL `uEscParams` order plus the packed-zero
  *                  spare.
  *          · `core: "affine4"` (fr-dlxh's 4D cut) — the variant block
- *              GROWS: {@link SURFACE_GPU_PARAMS4_BYTES} = 432 bytes
+ *              GROWS: {@link SURFACE_GPU_PARAMS4_BYTES} = 464 bytes
  *              total. Every matrix is four row-vec4s holding the
  *              ROW-MAJOR bytes of the matrix the body APPLIES
  *              (`dot(rowN, v)` — no column-major reasoning anywhere;
@@ -350,25 +354,32 @@ import type { Vec3 } from "./types";
  *              400 vec4f final4T
  *              416 f32 w0             420 f32 sliceHalfW
  *              424 f32 final4SigmaMin 428 f32 visRadius4
+ *              432 vec4f radiusCenter4 (fr-skhv)
+ *              448 f32 radiusMinD     452 f32 radiusInvRange
+ *              456 f32 pad4a          460 f32 pad4b   (packed zero)
  *              In this core the frozen block's `visibleRadius` carries
  *              the SLICE-ADJUSTED sliceVisR (the slab's widest 3D
  *              shadow, surface-material-4d.ts's march gate — what the
  *              sphere gate, shadow clamp and fog want), `visRadius4`
- *              keeps the FULL 4D visible radius (the height/radius
- *              color sources' slice-INVARIANT normalizer — the 4D GLSL
- *              deliberately divides by the full radius so coloring
- *              doesn't swim as w0 slides, and `descendLens4`'s visible
- *              ball is that same full radius), and `boundCenter` packs
+ *              keeps the FULL 4D visible radius (the HEIGHT color
+ *              source's slice-INVARIANT normalizer, and
+ *              `descendLens4`'s visible ball), the radiusCenter4/
+ *              radiusMinD/radiusInvRange trio is `SurfaceDE4.radiusBand`
+ *              on the wire (fr-skhv: the RADIUS color source normalizes
+ *              the hit's center-relative 4D distance over the visible
+ *              set's own [minD, maxD] band, `buildColors4`'s radius
+ *              convention — still slice/rotor-invariant, the band is an
+ *              attractor-frame constant), and `boundCenter` packs
  *              the origin (the 4D oracle is origin-anchored by
  *              construction).
  *          · a 4D core under `lens: true` (fr-rsp6 phase 2B) — the tail
- *              GROWS again, APPENDED past 432: {@link
- *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 528 bytes total, and
+ *              GROWS again, APPENDED past 464: {@link
+ *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 560 bytes total, and
  *              {@link packSurface4GpuParams} returns exactly this size
  *              when (and only when) the DE carries a `foldFinal`:
- *              432 vec4f lens4M row0..row3   (..495)
- *              496 vec4f lens4T
- *              512 vec4f lens4Params — (foldKind as f32, invW, absW,
+ *              464 vec4f lens4M row0..row3   (..527)
+ *              528 vec4f lens4T
+ *              544 vec4f lens4Params — (foldKind as f32, invW, absW,
  *                  sigmaMin), the GLSL `uLensParams` order again.
  *              The cores' own final4M/final4T rows still pack
  *              IDENTITY/0 here (`final` is null whenever `foldFinal` is
@@ -451,14 +462,14 @@ export const SURFACE_GPU_PARAMS_BYTES = 272;
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/272; binding the larger buffer to them would
  * be valid, but hosts size per core. */
-export const SURFACE_GPU_PARAMS4_BYTES = 432;
+export const SURFACE_GPU_PARAMS4_BYTES = 464;
 /** Params size for a 4D core under `lens: true` (fr-rsp6 phase 2B): the
- * 432-byte tail above plus the appended lens4 block (layout contract in
+ * 464-byte tail above plus the appended lens4 block (layout contract in
  * the module doc). {@link packSurface4GpuParams} returns THIS size exactly
- * when the DE carries a `foldFinal`, and the 432-byte buffer byte for byte
- * when it does not — a no-lens kernel's struct ends at 432 and never reads
+ * when the DE carries a `foldFinal`, and the 464-byte buffer byte for byte
+ * when it does not — a no-lens kernel's struct ends at 464 and never reads
  * past it. */
-export const SURFACE_GPU_PARAMS4_LENS_BYTES = 528;
+export const SURFACE_GPU_PARAMS4_LENS_BYTES = 560;
 export const SURFACE_GPU_MAP_VEC4 = 6;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
@@ -977,28 +988,40 @@ export function packSurface4GpuParams(
   view.setFloat32(416, view4.w0, true);
   view.setFloat32(420, view4.sliceHalfW, true);
   view.setFloat32(424, f ? f.sigmaMin : 1, true);
-  // The FULL 4D visible radius — the height/radius color sources'
+  // The FULL 4D visible radius — the height color source's
   // slice-invariant normalizer (the frozen visibleRadius slot carries
-  // the slice-ADJUSTED march gate above).
+  // the slice-ADJUSTED march gate above), and descendLens4's visible
+  // ball.
   view.setFloat32(428, de.visibleBoundingRadius, true);
+  // Radius-ramp band (fr-skhv): center + minD + the core's ONE
+  // inverse-range definition (shared with the GLSL packer), so the
+  // radius color source maps the visible set's own [minD, maxD] onto
+  // the whole ramp the way buildColors4's radius mode does.
+  const band = de.radiusBand;
+  view.setFloat32(432, band.center[0], true);
+  view.setFloat32(436, band.center[1], true);
+  view.setFloat32(440, band.center[2], true);
+  view.setFloat32(444, band.center[3], true);
+  view.setFloat32(448, band.minD, true);
+  view.setFloat32(452, radiusBandInvRange(band), true);
   // fr-rsp6 phase 2B: the appended lens4 block, present exactly when the
-  // DE carries a fold FINAL (a no-lens 4D kernel's struct ends at 432 and
+  // DE carries a fold FINAL (a no-lens 4D kernel's struct ends at 464 and
   // never reads past it, so its buffer simply stops here). Same row-major
   // convention as every other 4D matrix on this wire, and the tail vec4f
   // is the GLSL uLensParams order (kind, invW, absW, sigmaMin), so the
   // wrapper reads like descendLens4 line for line.
   if (lens4) {
     for (let i = 0; i < 16; i++) {
-      view.setFloat32(432 + i * 4, lens4.invM[i], true);
+      view.setFloat32(464 + i * 4, lens4.invM[i], true);
     }
-    view.setFloat32(496, lens4.invT[0], true);
-    view.setFloat32(500, lens4.invT[1], true);
-    view.setFloat32(504, lens4.invT[2], true);
-    view.setFloat32(508, lens4.invT[3], true);
-    view.setFloat32(512, lens4.foldKind, true);
-    view.setFloat32(516, lens4.invW, true);
-    view.setFloat32(520, lens4.absW, true);
-    view.setFloat32(524, lens4.sigmaMin, true);
+    view.setFloat32(528, lens4.invT[0], true);
+    view.setFloat32(532, lens4.invT[1], true);
+    view.setFloat32(536, lens4.invT[2], true);
+    view.setFloat32(540, lens4.invT[3], true);
+    view.setFloat32(544, lens4.foldKind, true);
+    view.setFloat32(548, lens4.invW, true);
+    view.setFloat32(552, lens4.absW, true);
+    view.setFloat32(556, lens4.sigmaMin, true);
   }
   return buf;
 }
@@ -2980,18 +3003,25 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   // these two colorings SWIM as w0 slides — so the 4D arm mirrors
   // surface-material-4d.ts instead: HEIGHT normalizes by the FULL 4D
   // visible radius (params.visRadius4), and RADIUS lifts the hit
-  // through the rotor for the TRUE 4D radius, rotor/slice-invariant —
-  // at the slab hit's OWN w since fr-9c9e: hit-info's sStar places the
-  // hit along the fr-wa6o segment, and stays 0 wherever no slab is
-  // descended (h = 0, the noslab kernels, every 3D core), which keeps
-  // hitW equal to w0 there bit for bit.
+  // through the rotor for the TRUE 4D radius, then normalizes its
+  // center-relative distance over the visible set's own [minD, maxD]
+  // band (params.radiusCenter4/radiusMinD/radiusInvRange — fr-skhv,
+  // buildColors4's radius convention; still rotor/slice-invariant, the
+  // band is an attractor-frame constant) — at the slab hit's OWN w
+  // since fr-9c9e: hit-info's sStar places the hit along the fr-wa6o
+  // segment, and stays 0 wherever no slab is descended (h = 0, the
+  // noslab kernels, every 3D core), which keeps hitW equal to w0 there
+  // bit for bit.
   const shadeHeightU = core4
     ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
     : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU = core4
     ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
       let q4c = rotorInvApply4(vec4f(pos, hitW));
-      u = clamp(length(q4c) / params.visRadius4, 0.0, 1.0);`
+      u = clamp(
+        (length(q4c - params.radiusCenter4) - params.radiusMinD) *
+          params.radiusInvRange,
+        0.0, 1.0);`
     : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
   const entry =
@@ -3357,7 +3387,12 @@ struct Params {
   w0: f32,
   sliceHalfW: f32,
   final4SigmaMin: f32,
-  visRadius4: f32,${
+  visRadius4: f32,
+  radiusCenter4: vec4f,
+  radiusMinD: f32,
+  radiusInvRange: f32,
+  pad4a: f32,
+  pad4b: f32,${
     // fr-rsp6 phase 2B: the lens4 block, APPENDED past the 4D tail
     // (432..527) and declared only under the lens. A smaller struct
     // reading a larger buffer is valid WebGPU, so keeping it

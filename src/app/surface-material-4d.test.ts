@@ -49,6 +49,7 @@ function de4(
     symmetry,
     boundingRadius: 1,
     visibleBoundingRadius: 1,
+    radiusBand: { center: [0, 0, 0, 0], minD: 0, maxD: 1 },
     escapeRadius: 2,
     maxDepth: 8,
     beamWidth: 4,
