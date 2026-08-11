@@ -221,3 +221,21 @@ describe("setSurfaceSystem4 kaleidoscope sweep uniforms (fr-u91x)", () => {
     expect(Array.from(m.elements)).toEqual(IDENTITY4);
   });
 });
+
+describe("slab-hit radius color (fr-9c9e)", () => {
+  // The tracer itself is verified by running the app; what is pinned here
+  // is the MIRRORING contract with surface-de-gpu.ts's affine4 core: both
+  // shading descents report sStar — the deepest level winner's segment
+  // parameter — and both radius colors lift through w0 + sStar * halfW,
+  // so neither side can drift to the slab's centre plane alone. At
+  // uSliceHalfW = 0 segmentS's guard pins sStar to 0 and the lift is the
+  // slice plane bit for bit.
+  it("lifts the radius color through the descent's sStar — the slab hit's own w", () => {
+    const glsl = createSurfaceMaterial4().fragmentShader;
+    expect(glsl).toContain("float segmentS(vec4 q, vec4 e)");
+    expect(glsl).toContain("sStar = segmentS(c1Q, c1Ext);");
+    expect(glsl).toContain(
+      "vec4 q4 = uInvRotor * vec4(pos, uW0 + sStar * uSliceHalfW);",
+    );
+  });
+});
