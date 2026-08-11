@@ -1,10 +1,31 @@
+import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { VitePWA } from "vite-plugin-pwa";
 
 const APP_NAME = "Fractal Explorer";
 
+/** Build identity baked into the bundle (fr-khxy): commit + build date,
+ * logged once at boot. The service worker deliberately keeps serving a
+ * deploy's precache for as long as any tab stays open (fr-o13's
+ * wait-for-consent update), so two browsers can honestly run builds days
+ * apart — a field report of "works in Chrome, not in Firefox" is
+ * undiagnosable without each page saying which build it actually is. */
+const buildId = (() => {
+  try {
+    const sha = execSync("git rev-parse --short HEAD", {
+      encoding: "utf8",
+    }).trim();
+    return `${sha} (${new Date().toISOString().slice(0, 10)})`;
+  } catch {
+    return "unknown";
+  }
+})();
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   root: "src/app",
   // Relative base so the build works at any path (project Pages site,
   // custom domain, or local file preview) without rebuilding.

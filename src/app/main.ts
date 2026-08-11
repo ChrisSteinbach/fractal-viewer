@@ -394,6 +394,13 @@ const BOOT_SYNC_MAX_POINTS = 30_000;
 const BOOT_SEED = 0x5eedb007;
 
 function main(): void {
+  // Field-diagnosability breadcrumb (fr-khxy): the ONE line that says which
+  // build this page actually runs. The service worker keeps serving a
+  // deploy's precache for as long as any tab stays open (fr-o13's
+  // wait-for-consent update), so two browsers can honestly run builds days
+  // apart — every "works in browser A, not in browser B" report starts by
+  // comparing these two stamps.
+  console.info(`Fractal Explorer build ${__BUILD_ID__}`);
   const container = document.getElementById("container");
   if (!container) {
     showError("Missing #container element.");
