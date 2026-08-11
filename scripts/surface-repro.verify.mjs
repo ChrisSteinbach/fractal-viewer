@@ -77,6 +77,26 @@
  * camera moved, the renderer did not. That is the bead's 2.9%/170 in kind
  * and in magnitude.
  *
+ * FR-XSO5 ADDENDUM (measured 2026-08-11): the CONTROL paragraph above never
+ * actually exercised fr-chj9's boot-time seed pin — pentatope4's
+ * `--pose=free` re-selects the preset through `#presetSelect`, a mid-session
+ * regenerate that deliberately still rolls fresh `Math.random()` seeds, so
+ * its ~1% drift is that path's own noise, not a boot measurement (no
+ * scenario booted a pose-less FOUR-D deep link at all — fr-chj9 was verified
+ * only by inference). `pentatope4direct` boots a pose-less HASH deep link
+ * directly instead (no menu interaction), the same way boxfold3/lens3 always
+ * did — and so DOES exercise the boot-time auto-frame + 4D tumble-reset path.
+ * Measured (Iris Xe real driver, `--pose=free`, 3 fresh loads): DETERMINISTIC
+ * — identical compute settle census every run (hit 5620 / miss 915980 /
+ * exhausted 0), 0 differing pixels across all 3 pairs, max channel delta 0;
+ * settles 10.9/6.3/5.1s. The minted `--pose=pinned` hash's own 4D pose (p/q
+ * rotor) came out BIT-IDENTICAL to pentatope4's separately-minted one —
+ * direct confirmation that fr-chj9's pinned boot seed makes the tumble-reset
+ * deterministic independent of how the document arrived (deep link vs preset
+ * menu). Only the 3D camera auto-frame differs between the two mints (a
+ * target/radius drift of a few tenths of a percent), `frameBounds`'s own
+ * point-cloud sampling noise, unrelated to fr-chj9.
+ *
  * WHAT IT REPORTS, per scenario+arm: the settle wall time of each run, then
  * every pairwise diff — %-pixels-differing, max channel delta, and the count
  * differing by more than 8/255 (rounding vs structure) — plus a red-marked
@@ -103,7 +123,26 @@
  *                             scene — plain 4D, so it prefers the compute
  *                             affine4 core since fr-dlxh's 4D cut). A w=0
  *                             SLICE of a 4D gasket is likewise sparse
- *                             (~5.7k hit pixels).
+ *                             (~5.7k hit pixels). Its base is a PRESET
+ *                             (`#presetSelect`), so --pose=free re-selects
+ *                             it through the mid-session regenerate path —
+ *                             see pentatope4direct below for why that is NOT
+ *                             a boot-path measurement.
+ *               pentatope4direct = fr-xso5: the SAME Pentatope Gasket
+ *                             transforms as pentatope4, but `base` is a
+ *                             pose-less HASH deep link (like boxfold3/lens3)
+ *                             instead of a preset name. `--pose=free` on
+ *                             pentatope4 re-selects the preset through
+ *                             `#presetSelect`, the mid-session regenerate
+ *                             path that deliberately still rolls
+ *                             `Math.random()` seeds (main.ts) — it measures
+ *                             THAT path's ~1% frame-to-frame drift, never
+ *                             fr-chj9's boot-time seed pin. Booting a
+ *                             pose-less hash directly (bootScene, no menu
+ *                             interaction) is the only way to exercise the
+ *                             4D boot auto-frame + tumble-reset path this
+ *                             harness has, so this scenario exists
+ *                             specifically for `--pose=free`.
  *               lens3       = fr-g58b's fold-FINAL lens archetype: the
  *                             `lens:true` compute wrapper / the WebGL
  *                             SURFACE_FOLD_LENS variant, and the one
@@ -176,6 +215,24 @@ const BOXFOLD_BASE_HASH =
 const LENS_BASE_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMzUsMC4zNSwwLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMzUsLTAuMzUsMC4zNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX0seyJwb3NpdGlvbiI6WzAuMzUsLTAuMzUsLTAuMzVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV19LHsicG9zaXRpb24iOlstMC4zNSwwLjM1LC0wLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJheGlzIjoieSJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiZmluYWxUcmFuc2Zvcm0iOnsicG9zaXRpb24iOlswLjE1LC0wLjEsMC4wNV0sInJvdGF0aW9uIjpbMC4yLDAuMywwLjFdLCJzY2FsZSI6WzAuOSwwLjksMC45XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjAuNTV9XX19";
 
+/** fr-xso5: the Pentatope Gasket preset's transforms (`pentatope()` in
+ * `src/fractal/presets.ts`), encoded pose-less — no `camera`, no `fourD`
+ * block — via the app's own `toSnapshot`/`encodeScene` (src/app/persist.ts)
+ * over `{ ...initialState(false), transforms: pentatope() }`, which is
+ * exactly the document `onPreset`'s `setTransforms(state,
+ * presetTransforms("pentatope"))` produces from a fresh boot (it replaces
+ * only `transforms`, see state.ts's `setTransforms`) — so this is
+ * byte-for-byte the same transform list the `pentatope4` scenario's own
+ * pinned hash carries, just without the pose. Minted offline (not through
+ * this script's own `--mint`, which
+ * only ever captures a POSE-CARRYING document): an esbuild-bundled throwaway
+ * script importing state.ts/persist.ts/presets.ts directly, decoded back
+ * with `decodeScene` to confirm `camera`/`fourD` are both `undefined`. The
+ * --mint input for `pentatope4direct` below — pose-less, like
+ * BOXFOLD_BASE_HASH/LENS_BASE_HASH. */
+const PENTATOPE4_BASE_HASH =
+  "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMjc5NSwwLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMC4yNzk1LC0wLjI3OTUsLTAuMjc5NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuMTI1fX0seyJwb3NpdGlvbiI6Wy0wLjI3OTUsMC4yNzk1LC0wLjI3OTVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOi0wLjEyNX19LHsicG9zaXRpb24iOlstMC4yNzk1LC0wLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMCwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNX19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjp0cnVlLCJmbGFtZSI6eyJleHBvc3VyZSI6MSwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsImdhbW1hIjoyLjQsInZpYnJhbmN5IjoxLCJzdXBlcnNhbXBsZSI6MiwiZXN0aW1hdG9yUmFkaXVzIjo2LCJlc3RpbWF0b3JNaW5pbXVtUmFkaXVzIjowLCJlc3RpbWF0b3JDdXJ2ZSI6MC40LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzb2xpZCI6eyJyZXNvbHV0aW9uIjoxOTIsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJ0aHJlc2hvbGQiOjAuMywibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic3VyZmFjZSI6eyJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJjb2xvclNvdXJjZSI6InRyYW5zZm9ybSIsInBhbGV0dGVJZCI6InNwZWN0cnVtIiwiY29sb3JTcGVlZCI6MC41fSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjF9";
+
 const SCENARIOS = [
   {
     name: "boxfold3",
@@ -192,6 +249,21 @@ const SCENARIOS = [
     // and slice 0 — a fixed pose, not the identity; two mints produced it
     // bit-identical, unlike the camera).
     hash: "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMjc5NSwwLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMC4yNzk1LC0wLjI3OTUsLTAuMjc5NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuMTI1fX0seyJwb3NpdGlvbiI6Wy0wLjI3OTUsMC4yNzk1LC0wLjI3OTVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOi0wLjEyNX19LHsicG9zaXRpb24iOlstMC4yNzk1LC0wLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMCwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNX19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjp0cnVlLCJmbGFtZSI6eyJleHBvc3VyZSI6MSwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsImdhbW1hIjoyLjQsInZpYnJhbmN5IjoxLCJzdXBlcnNhbXBsZSI6MiwiZXN0aW1hdG9yUmFkaXVzIjo2LCJlc3RpbWF0b3JNaW5pbXVtUmFkaXVzIjowLCJlc3RpbWF0b3JDdXJ2ZSI6MC40LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzb2xpZCI6eyJyZXNvbHV0aW9uIjoxOTIsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJ0aHJlc2hvbGQiOjAuMywibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic3VyZmFjZSI6eyJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJjb2xvclNvdXJjZSI6InRyYW5zZm9ybSIsInBhbGV0dGVJZCI6InNwZWN0cnVtIiwiY29sb3JTcGVlZCI6MC41fSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImNhbWVyYSI6eyJ0YXJnZXQiOlswLDAsMF0sInJhZGl1cyI6Mi4zMDM4LCJ0aGV0YSI6MC43ODU0LCJwaGkiOjEuMDU2fSwiZm91ckQiOnsicCI6WzAuOTg4OCwwLDAsLTAuMTQ5NF0sInEiOlswLjczMTcsMCwwLDAuNjgxNl0sInNsaWNlT24iOmZhbHNlLCJzbGljZUNlbnRlciI6MCwic2xpY2VUaGlja25lc3MiOjAsInNsaWNlUmVsQ29sb3IiOmZhbHNlfX0",
+  },
+  {
+    name: "pentatope4direct",
+    base: { hash: PENTATOPE4_BASE_HASH },
+    // --mint output, 2026-08-11: PENTATOPE4_BASE_HASH after its boot
+    // auto-frame (fr-xso5). The fourD block — p:[0.9888,0,0,-0.1494],
+    // q:[0.7317,0,0,0.6816] — is BIT-IDENTICAL to pentatope4's own mint
+    // above: fr-chj9's pinned boot seed makes the 4D tumble-reset
+    // deterministic across both the preset-select path (pentatope4) and this
+    // direct-hash boot, exactly as the bead expects. Only the 3D camera
+    // auto-frame differs (target [0.0003,0.0002,0.0001]/radius 2.3178 vs
+    // pentatope4's [0,0,0]/2.3038) — the ordinary few-tenths-of-a-percent
+    // spread `frameBounds`'s own point-cloud sampling carries, not a
+    // regression.
+    hash: "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMjc5NSwwLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMC4yNzk1LC0wLjI3OTUsLTAuMjc5NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuMTI1fX0seyJwb3NpdGlvbiI6Wy0wLjI3OTUsMC4yNzk1LC0wLjI3OTVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOi0wLjEyNX19LHsicG9zaXRpb24iOlstMC4yNzk1LC0wLjI3OTUsMC4yNzk1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjotMC4xMjV9fSx7InBvc2l0aW9uIjpbMCwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNX19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjp0cnVlLCJmbGFtZSI6eyJleHBvc3VyZSI6MSwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsImdhbW1hIjoyLjQsInZpYnJhbmN5IjoxLCJzdXBlcnNhbXBsZSI6MiwiZXN0aW1hdG9yUmFkaXVzIjo2LCJlc3RpbWF0b3JNaW5pbXVtUmFkaXVzIjowLCJlc3RpbWF0b3JDdXJ2ZSI6MC40LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzb2xpZCI6eyJyZXNvbHV0aW9uIjoxOTIsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJ0aHJlc2hvbGQiOjAuMywibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic3VyZmFjZSI6eyJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJjb2xvclNvdXJjZSI6InRyYW5zZm9ybSIsInBhbGV0dGVJZCI6InNwZWN0cnVtIiwiY29sb3JTcGVlZCI6MC41fSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImNhbWVyYSI6eyJ0YXJnZXQiOlswLjAwMDMsMC4wMDAyLDAuMDAwMV0sInJhZGl1cyI6Mi4zMTc4LCJ0aGV0YSI6MC43ODU0LCJwaGkiOjEuMDU2fSwiZm91ckQiOnsicCI6WzAuOTg4OCwwLDAsLTAuMTQ5NF0sInEiOlswLjczMTcsMCwwLDAuNjgxNl0sInNsaWNlT24iOmZhbHNlLCJzbGljZUNlbnRlciI6MCwic2xpY2VUaGlja25lc3MiOjAsInNsaWNlUmVsQ29sb3IiOmZhbHNlfX0",
   },
   {
     name: "lens3",
