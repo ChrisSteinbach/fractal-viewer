@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
 import {
@@ -198,6 +199,14 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** 4D radius bounding the VISIBLE set F(attractor) — feeds the slice
    * ray/sphere gate in main() below. */
   uniform float uVisibleRadius;
+  /** Radial color band of the visible set (fr-skhv, SurfaceDE4.radiusBand):
+   * the probe's 4D bounds-center plus the [minD, maxD] distance range from
+   * it, delivered as minD and 1/range so the radius source below maps the
+   * band onto the whole ramp exactly the way buildColors4's radius mode
+   * does. Attractor-frame constants — no swim under rotor or slice moves. */
+  uniform vec4 uRadiusCenter4;
+  uniform float uRadiusMinD;
+  uniform float uRadiusInvRange;
   /** Pre-inverted final-transform lens; identity / zero / 1 when absent. */
   uniform mat4 uFinalInvM;
   uniform vec4 uFinalInvT;
@@ -1358,10 +1367,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         u = clamp(pos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
       } else if (uColorSource == 3) {
         // The TRUE 4D radius, matching the cloud's 4D radius color mode:
-        // lift the hit back into the attractor frame and measure it there.
-        // length() is rotation-invariant, so this reading is invariant
-        // under BOTH rotor spins and slice moves — unlike a plain 3D
-        // length(pos), which would swim under either.
+        // lift the hit back into the attractor frame and measure its
+        // distance from the probe's 4D center, normalized over the
+        // content band [minD, maxD] the way buildColors4's radius branch
+        // normalizes (fr-skhv) — dividing by the full visible radius
+        // instead used only the narrow sub-band [minD, maxD]/visR4 of
+        // the ramp, which in 4D rendered whole frames in one hue.
+        // length() of a center-relative offset is rotation-invariant and
+        // the band is an attractor-frame constant, so this reading is
+        // invariant under BOTH rotor spins and slice moves — unlike a
+        // plain 3D length(pos), which would swim under either.
         //
         // Under a slab (uSliceHalfW > 0, fr-wa6o) the hit can sit anywhere
         // in |w - uW0| <= uSliceHalfW; the descent's sStar — the deepest
@@ -1370,7 +1385,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         // plane (fr-9c9e). At uSliceHalfW = 0, sStar is 0 and this is the
         // slice plane exactly, bit for bit.
         vec4 q4 = uInvRotor * vec4(pos, uW0 + sStar * uSliceHalfW);
-        u = clamp(length(q4) / uVisibleRadius, 0.0, 1.0);
+        u = clamp(
+          (length(q4 - uRadiusCenter4) - uRadiusMinD) * uRadiusInvRange,
+          0.0,
+          1.0
+        );
       } else if (uColorSource == 4) {
         u = rings;
       } else {
@@ -1518,6 +1537,9 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uMaxDepth: { value: 0 },
       uStepScale: { value: 1 },
       uVisibleRadius: { value: 1 },
+      uRadiusCenter4: { value: new THREE.Vector4() },
+      uRadiusMinD: { value: 0 },
+      uRadiusInvRange: { value: 1 },
       uFinalInvM: { value: new THREE.Matrix4() },
       uFinalInvT: { value: new THREE.Vector4() },
       uFinalSigmaMin: { value: 1 },
@@ -1637,6 +1659,18 @@ export function setSurfaceSystem4(
   u.uMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
+  // Radius-ramp band (fr-skhv): minD + 1/range via the core's ONE
+  // inverse-range definition, shared with the WGSL packer so the two
+  // tracers map the band identically.
+  const band = de.radiusBand;
+  (u.uRadiusCenter4.value as THREE.Vector4).set(
+    band.center[0],
+    band.center[1],
+    band.center[2],
+    band.center[3],
+  );
+  u.uRadiusMinD.value = band.minD;
+  u.uRadiusInvRange.value = radiusBandInvRange(band);
   // The final lens must be RESET when absent — the previous system may have
   // had one, and identity / zero / 1 is the shader's "no lens" encoding.
   const finalM = u.uFinalInvM.value as THREE.Matrix4;

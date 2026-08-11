@@ -859,6 +859,20 @@ export interface SurfaceDE4 {
   /** Radius bounding the VISIBLE set `F(attractor)` — equals
    * `boundingRadius` when there is no final transform. */
   visibleBoundingRadius: number;
+  /** Radial color band of the VISIBLE set (fr-skhv): the seeded probe's 4D
+   * bounds-center — final transform applied, so this is the PLOTTED set —
+   * and the [minD, maxD] range of the probe points' distances from it: the
+   * exact quantities `buildColors4`'s `"radius"` mode normalizes with. The
+   * surface radius ramp maps this band onto [0, 1] so the full palette is
+   * in play the way the cloud's is; the old `|q| / visibleBoundingRadius`
+   * normalizer compressed every hit into the narrow sub-band
+   * `[minD, maxD] / visR4` of the ramp — in 4D a slice's content spans a
+   * thin radial shell of the whole ball, so entire frames rendered in one
+   * near-uniform hue and read as "the palette is incorrect". Probe-seeded
+   * attractor-frame constants: deterministic per system, invariant under
+   * rotor spins and slice moves, so coloring still never swims as the pose
+   * changes (the property the old denominator was chosen for). */
+  radiusBand: { center: Vec4; minD: number; maxD: number };
   /** `ESCAPE_FACTOR * boundingRadius` — descent past this cannot help. */
   escapeRadius: number;
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
@@ -1148,11 +1162,47 @@ export function buildSurfaceDE4(
     }
   }
 
+  // Radial color band of the VISIBLE set (fr-skhv): re-probe WITH the
+  // final transform when one exists — runChaosGame4's own final
+  // application (composed affine + variations) is the plotted set's
+  // ground truth, better than re-deriving F here — else reuse the raw
+  // probe (they are the same seeded orbit). `center` is the result's 4D
+  // bounds-center and the [minD, maxD] loop mirrors buildColors4's
+  // radius branch, so the surface ramp and the cloud ramp normalize the
+  // same way.
+  const probeVis = finalTransform
+    ? runChaosGame4(
+        lifted,
+        PROBE_POINTS,
+        mulberry32(PROBE_SEED),
+        toTransform4(finalTransform),
+        symmetry,
+      )
+    : probe;
+  const bandCenter = probeVis.center;
+  let minD = Infinity;
+  let maxD = 0;
+  for (let i = 0; i < probeVis.count; i++) {
+    const dx = probeVis.positions[i * 3] - bandCenter[0];
+    const dy = probeVis.positions[i * 3 + 1] - bandCenter[1];
+    const dz = probeVis.positions[i * 3 + 2] - bandCenter[2];
+    const dw = probeVis.w[i] - bandCenter[3];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+    if (d < minD) minD = d;
+    if (d > maxD) maxD = d;
+  }
+  if (minD > maxD) minD = 0; // empty probe — the maxR loop's same degenerate
+
   return {
     maps,
     symmetry: { order, stepBack },
     boundingRadius,
     visibleBoundingRadius,
+    radiusBand: {
+      center: [bandCenter[0], bandCenter[1], bandCenter[2], bandCenter[3]],
+      minD,
+      maxD,
+    },
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
     beamWidth: 4,
@@ -1160,6 +1210,17 @@ export function buildSurfaceDE4(
     final,
     foldFinal,
   };
+}
+
+/**
+ * `1 / (maxD - minD)` with `buildColors4`'s degenerate-range `|| 1` guard —
+ * the ONE inverse-range definition the GLSL and WGSL packers share, so the
+ * two tracers cannot drift on how {@link SurfaceDE4.radiusBand} maps onto
+ * the ramp: `u = clamp((|q - center| - minD) * invRange, 0, 1)`.
+ */
+export function radiusBandInvRange(band: SurfaceDE4["radiusBand"]): number {
+  const range = band.maxD - band.minD;
+  return range > 0 ? 1 / range : 1;
 }
 
 /**
