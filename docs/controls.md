@@ -288,7 +288,47 @@ morphs into place instead of snapping (see **Presets** below).
   gradient otherwise — that one is document data rather than a live shader
   input, so author it in the explorer and then enter the mode. A map's
   per-transform **Speed** does nothing here, and is not the **Color speed**
-  slider above, which fades descent levels rather than picks. **Save PNG**
+  slider above, which fades descent levels rather than picks.
+  Two persisted scene toggles round out the section. **Balloon** (fr-5wlv)
+  — with its **Balloon size** slider and **Inflate** button — is the same
+  balloon as **Appearance**'s **Balloon echo** below (one setting, shared
+  across renderers), here traced as real geometry rather than echoed
+  points: the scene becomes the union of the attractor and its
+  sphere-inverted copy, so the fractal sits at the center of an enclosing
+  cave whose wall is itself, turned inside out — with its own shadows
+  falling onto that wall. The wall receives shadows but never casts them:
+  an enclosing shell that cast shadows would occlude the light and black
+  out the whole scene. Rays that clear both surfaces still show the
+  ordinary **Background**. Ticking the box re-enters the render session
+  (a recompile-class change, not the look sliders' instant response), but
+  the size slider stays live per frame exactly like the 4D rotor —
+  dragging it, or pressing **Inflate**, renders as the interaction tier's
+  previews and settles once parked. The full-size poses settle within the
+  render's ordinary budgets; a slider parked mid-inflation (well below
+  1×) on a heavy lens system may settle with its deepest creases soft — a
+  disclosed budget trade, never a hang. The rows hide in a live 4D
+  surface session (the balloon is 3D-only for now) and for an escape-time
+  session, where the balloon isn't just unavailable but permanently
+  inert: the escape solid is filled all the way to the ball's center, so
+  its inverted echo would swallow the camera, and that render stays
+  plain. **Floor** (fr-rhn5) puts an infinite neutral-gray floor just
+  below the shape to catch its shadow — the classic ray-marched-fractal
+  grounding, and the scale reference fold monsters otherwise lack. The
+  floor is matte-lit by the same **Light Angle** / **Light Height** /
+  **Ambient** as the surface, takes a soft penumbra shadow plus contact
+  occlusion where the shape nears it, is fogged by distance like any hit
+  (see **Fog** below), and fades radially into the backdrop so no disc
+  edge ever shows; it is one-sided, so a camera below it looks straight
+  through. Unlike the balloon it survives the escape-time session —
+  the Mandelbox solid casts its shadow on it happily — hiding only in a
+  live 4D surface session; it is likewise a recompile-class toggle, and
+  the two compose one way only: while both are ticked the **Balloon**
+  wins (there is no horizon to stand a floor on inside a closed shell),
+  and the floor returns when the balloon goes off. Expect the floor to
+  cost something on heavy fold systems — every pixel of floor used to be
+  a cheap background miss and now pays a shadow march against the fractal
+  — absorbed by the same bounded-progress machinery as every other
+  expensive surface frame. **Save PNG**
   captures it at the chosen **Capture size** exactly like the solid render — a fresh,
   higher-resolution trace, not an upscale — and ★ Save to collection /
   📍 Add keyframe tag the saved
@@ -598,6 +638,31 @@ morphs into place instead of snapping (see **Presets** below).
   too hot or too dim for a particular scene — 1.00× (the default) leaves the
   automatic exposure alone. Applies live, with no regenerate, and persists in
   the link and scene file.
+- **Balloon echo** (fr-5wlv) — a second copy of the point cloud,
+  sphere-inverted through a balloon centered on the attractor, enclosing the
+  whole scene: the fractal you're orbiting sits inside a cave whose wall is
+  itself, turned inside out. The **Balloon size** slider and **Inflate**
+  button appear once the echo is on. **Balloon size** is the balloon's
+  radius in multiples of the attractor's own extent — at 1.00× it just
+  touches the shape, the default 1.60× rests past it (the enclosing-cave
+  pose), and small values crumple the echo into a dense ball at the center;
+  sweeping the slider plays the whole inversion continuously, the copies
+  exchanging sides as it passes through the shape. **Inflate** replays that
+  as an animation — from a crumpled 0.05× ball out to the 1.60× rest pose
+  over about nine seconds (turning the echo on first if it was off; under
+  reduced motion it lands on the rest pose immediately), and grabbing the
+  slider mid-sweep stops the animation where it is. The sweep itself
+  is session-only view motion — never an undo step — but the toggle and the
+  size are scene content: they persist in the link and scene file, and the
+  ◈ Surface render traces the very same balloon as real geometry with the
+  fractal's shadows on the cave wall (see **◈ Surface** above — one
+  balloon, two renderers). Echo points fade out as the inversion throws
+  them far away — the same horizon the surface march caps at, so the two
+  renderers agree on where the balloon ends — and the whole thing is a
+  re-projection of the cloud already on screen, applied live with no
+  regenerate. The row hides while the system is non-flat: the 4D
+  projection's stored coordinates predate its rotation, so there is no
+  meaningful place to invert them from.
 - **Background** (fr-5ps1) — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this
@@ -613,11 +678,45 @@ morphs into place instead of snapping (see **Presets** below).
   derived stops you were just looking at). One backdrop for the whole app —
   Points, Flame, Solid, and Surface all show it, and Save PNG / video
   captures render exactly what's on screen. Depth Fade and Aerial Haze's fog
-  also tints toward it, so switching the backdrop re-tints the fog to match.
+  also tints toward it, so switching the backdrop re-tints the fog to match
+  (the **Fog** and **Tint** controls below set how thick that atmosphere is
+  and shift what it fades toward).
   Persists in the link and scene file — Auto persists as the choice, not as
   baked colors, so a shared link keeps tracking its scene's palette; a link
   saved before this control existed still renders exactly as it always did —
   Haze if its Depth Style was Aerial, Dark otherwise.
+- **Fog** (fr-5h5d) — the depth fog's density, 0×–2.50×: how much atmosphere
+  sits between you and the shape. 1.00× (the default) is exactly the fixed
+  fog the app always had — links and scene files saved before the control
+  existed render unchanged — and the slider scales the fog's distance unit
+  around that: higher packs the fog tighter around the camera into a thicker
+  haze, lower stretches it thin, and 0 turns depth fog off outright. One
+  slider reaches every render with depth to convey — the explorer's
+  fog-bearing depth styles (Depth Fade and Aerial Haze), the ◆ Solid render
+  (which grew true depth fog with this control, so solids read a touch
+  hazier than they once did), every ◈ Surface tracer (the 4D slice
+  included), and the balloon echo's fade horizon above. The ✺ Flame render
+  is a 2D exposure with no depth to fog, and the 4D projection's **Depth
+  fade** option is a brightness fade rather than a fog, so those two stay
+  untouched. There is deliberately no separate falloff slider: the point
+  cloud's fog is a linear near/far band while the solid and surface fogs
+  are exponential in the shape's own scale, so no single falloff number
+  could mean the same thing across them — density alone covers the useful
+  thin-to-thick range. Applies live everywhere (never a restart), and
+  persists in the link and scene file.
+- **Tint** (fr-5h5d) — the color half of the atmosphere pair: what the fog
+  fades things toward. Fog normally fades toward a color derived from the
+  **Background**, which is what keeps fogged geometry looking
+  veiled by what's actually behind it; the tint pulls that derived target
+  toward your chosen color by the strength percentage — 0% (the default)
+  leaves the derivation alone, 100% fades fully to the tint, so a red tint
+  at depth reads as warm murk no matter the backdrop. Because the tint
+  applies _after_ the backdrop derivation, editing **Background** keeps a
+  tinted atmosphere meaningful rather than silently overriding it. It
+  reaches the same renders as **Fog** above, minus the two brightness fades
+  that have no color to shift (the balloon echo's horizon and the 4D
+  projection's Depth fade dim points rather than blend them). Live and
+  persisted, like the density.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
 - **Capture size** — in the **Capture** section, the resolution **Save PNG**
   renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×
@@ -788,7 +887,8 @@ morphs into place instead of snapping (see **Presets** below).
 ## Sharing & persistence
 
 The scene — transforms, the optional final transform, point count and size, color
-mode, depth style, and guide visibility — is encoded into the page URL (`#v1=…`)
+mode, depth style, backdrop and atmosphere (fog, balloon, and floor included),
+and guide visibility — is encoded into the page URL (`#v1=…`)
 as you edit, and mirrored to `localStorage`. So:
 
 - **Copy the address bar to share a fractal.** Opening that link recreates the
