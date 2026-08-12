@@ -296,6 +296,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     absorbs the same chaotic-orbit flips without duplicating that
     machinery for a second DE type (measured on real Iris: 256x144 in
     ~100ms wall, 27 passes, GPU hit rate 0.239 vs CPU 0.240).
+    Ground plane (fr-rhn5) is an orthogonal `groundPlane` option, not a
+    sixth core — it composes with every descent/escape core and the lens
+    wrapper. It adds a fifth ray status, `SURFACE_GPU_RAY_PLANE` (4), that
+    march classifies a sphere-gate/sphere-exit MISS into when a downward
+    ray crosses the floor inside its fade band (EXHAUSTED never planes);
+    the shade entry lights the crossing with the hit path's penumbra/AO
+    probe-width discipline under two analytic ball certificates. Params
+    append a 320-byte block (`SURFACE_GPU_PARAMS_PLANE_BYTES`) at the
+    frozen offset 272, SHARED with the balloon block — the two throw at
+    codegen/pack together (no horizon inside the balloon's shell), and so
+    do the 4D cores (3D scope). `surface-compute.ts` prices PLANE
+    terminals in the hit-priced queue, not the miss path.
     Modes:
     `eval` (per-query distances) and `march` (bounded-dispatch ray march,
     host-compacted active list) are the fr-q1f8 bench baselines,
@@ -671,7 +683,20 @@ and UI**, so the interesting math is unit-tested without a browser:
     gate refuses but `analyzeEscapeSystem` admits — the FALLBACK since
     fr-dlxh, `surface-compute.ts`'s WebGPU renderer preferred whenever an
     adapter exists) — same marcher, tiers, strips, capture; no grid (its
-    validity chain is IFS-specific).
+    validity chain is IFS-specific). The `SURFACE_GROUND_PLANE` variant
+    (fr-rhn5) is `resolveVariantArms`' fourth JS-resolved key: an infinite
+    one-sided floor below the session ball, lit by a `shadeGroundPlane`
+    entry mirroring the WGSL arm term for term (penumbra shadow + AO under
+    two analytic ball certificates, matte lighting, the shared fog
+    formula), called from all three miss exits. It composes with every
+    other variant except `SURFACE_BALLOON` (throws — no horizon inside the
+    shell); off resolves byte-identical to the pre-plane build. On, it
+    would have pushed the shared fold/affine source (~76.5KB shipped) past
+    the measured ~80KB Mesa crash cliff (82.2KB observed), so plane
+    programs resolve through `stripGlslSource` instead — a whole-source
+    comment/indentation strip (the fr-zqu8 probe instance's mechanism,
+    extended) emitting the identical token stream at ~30KB raw, the ~79KB
+    lens variant included (29.6KB with the floor).
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the
@@ -795,8 +820,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     idioms + flame-backend error taxonomy) and the frame loop: march
     slices sized from a measured per-ray·step EMA + shade batches sized
     in HIT units (fr-p8bc: terminal rays queue by status — misses are
-    one background write, hits pay the probe evals and arrive
-    scanline-CLUSTERED; batches are predicted from a per-hit cost EMA
+    one background write, hits — and, since fr-rhn5, ground-plane PLANE
+    terminals — pay the probe evals and arrive scanline-CLUSTERED;
+    batches are predicted from a per-hit cost EMA
     under a pessimistic prior, spike-lifts instantly, decays slowly,
     capped by the slow-trust double/quarter policy — the original
     ray-unit doubling let miss runs inflate capacity a hit band then
