@@ -82,6 +82,7 @@ import {
   type ExportImage,
   FOUR_D_SLICE_WIDTH,
   FractalScene,
+  SURFACE_CAPTURE_PREDICT_CEILING_MS,
   SurfaceCaptureCostError,
 } from "./scene";
 import { attachInteractions } from "./interactions";
@@ -91,6 +92,12 @@ import {
   saveIsolationHandoff,
 } from "./isolation-handoff";
 import { Ui } from "./ui";
+import {
+  EXPORT_MODAL_SLOW_PREDICTION_MS,
+  createExportProgress,
+  formatRenderPercent,
+} from "./export-progress";
+import type { ExportRun } from "./export-progress";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import type { ViewPose } from "./history";
 import { RenderSession } from "./render-session";
@@ -446,6 +453,19 @@ function main(): void {
     : initialState(panelOpen);
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+  // The still-export disclosure driver (fr-7mfx). A Save-PNG on a surface
+  // render can be minutes of GPU work; it used to be indistinguishable
+  // from a mis-click until the download toast landed. One grace-deferred
+  // modal now covers every engine — the grace period is what keeps the
+  // instant cases (explorer, flame) from flashing one.
+  const exportProgress = createExportProgress({
+    now: () => performance.now(),
+    setTimer: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimer: (id) => {
+      window.clearTimeout(id);
+    },
+    view: ui,
+  });
 
   // fr-tmgf: the device-level software-rasterizer disclosure. Read ONCE at
   // boot — the renderer string is stable for the context's life — and shown
@@ -2962,6 +2982,14 @@ function main(): void {
   // joined the compute-homed set with fr-dlxh).
   // Session-scoped: set by start()'s routing, cleared with the session.
   let surfaceWebglDetailToken: string | null = null;
+  // A Save-PNG capture owns the surface tracer (fr-7mfx). Both engines
+  // yield mid-capture now, so the rAF loop runs DURING an export — and
+  // every path below would fight it: the compute arms all open with
+  // renderer.cancel(), and the strip arms would re-size the target being
+  // drained and overwrite the frozen full-tier uniforms. Everything that
+  // touches the tracer stands aside on this flag, which is what lets a
+  // multi-minute export survive its own responsiveness.
+  let surfaceCaptureFlight = false;
 
   // Preview frames carry a wall budget so a rung too heavy for this
   // device still completes (truncated — untraced rays show backdrop),
@@ -2969,6 +2997,19 @@ function main(): void {
   // Without it, continuous motion could cancel every over-heavy preview
   // before a single measurement existed and the ladder would never learn.
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
+
+  // Progress cadence for an EXPORT-scale compute frame (fr-7mfx): twice
+  // the renderer's live default, because each tick pays a full-frame
+  // readback and an export is 1-16x the live frame's pixels. The modal
+  // discloses coverage, not the instantaneous rate — a second between
+  // updates reads the same.
+  const SURFACE_COMPUTE_EXPORT_PROGRESS_MS = 1000;
+
+  // How long nextPaint() waits on rAF before starting the work anyway
+  // (fr-7mfx). Long enough for a real compositor frame at 60Hz, short
+  // enough that a hidden tab's paused rAF costs the export nothing worth
+  // noticing.
+  const NEXT_PAINT_FALLBACK_MS = 120;
 
   // Compute is on the table at all — no block latched, an API present.
   // The escape branch consults this alone (fr-dlxh: a single pure-fold
@@ -3142,7 +3183,11 @@ function main(): void {
     }
     surfaceComputePreviewFlight = true;
     try {
-      while (surfaceComputePreviewPending) {
+      // A loop already in flight when a capture starts would resume from
+      // its await and cancel the export (fr-7mfx); leave `pending` latched
+      // and let the invalidation the capture's own ratio restore raises
+      // re-kick it afterwards.
+      while (surfaceComputePreviewPending && !surfaceCaptureFlight) {
         surfaceComputePreviewPending = false;
         if (surfaceComputeRenderer !== renderer) return;
         // Supersede whatever is in flight — a stale settle or an older
@@ -3198,7 +3243,7 @@ function main(): void {
 
   async function runSurfaceComputeSettle(): Promise<void> {
     const renderer = surfaceComputeRenderer;
-    if (!renderer || surfaceComputeSettleFlight) return;
+    if (!renderer || surfaceComputeSettleFlight || surfaceCaptureFlight) return;
     surfaceComputeSettleFlight = true;
     try {
       renderer.cancel();
@@ -3322,17 +3367,252 @@ function main(): void {
 
   // Save-PNG while a compute surface session is live: trace at export
   // size off-canvas, then present + read in one synchronous span
-  // (scene.captureSurfaceComputeFrame). The GLSL path keeps its sync
-  // strip capture.
-  function captureSurfacePng(
+  // (scene.captureSurfaceComputeFrame).
+  function captureSurfaceComputePng(
+    renderer: SurfaceComputeRenderer,
     scale: number,
-  ): ReturnType<FractalScene["captureSurfaceFrame"]> {
-    const renderer = surfaceComputeRenderer;
-    if (!renderer) return scene.captureSurfaceFrame(scale);
+    run: ExportRun,
+  ): Promise<ExportImage | null> {
     return scene.captureSurfaceComputeFrame(scale, async (spec) => {
       renderer.cancel();
-      const frame = await renderer.renderFrame(spec);
+      const frame = await renderer.renderFrame(spec, {
+        // The fr-tmgf disclosure hook the live settle already uses,
+        // pointed at the export modal instead of the progress row. The
+        // partial pixels are deliberately ignored: the capture presents
+        // exactly once, at export pixel ratio, inside
+        // captureSurfaceComputeFrame's own present-and-read span, and a
+        // progressive present would fight that.
+        onProgress: (_pixels, done, total) => {
+          run.report(total > 0 ? done / total : null);
+        },
+        // Every tick costs a width*height*4 readback and an export traces
+        // 1-16x the live frame's rays, so halve the live cadence: the
+        // modal reads coverage, it doesn't need the live rate.
+        progressIntervalMs: SURFACE_COMPUTE_EXPORT_PROGRESS_MS,
+      });
       return frame ? frame.pixels : null;
+    });
+  }
+
+  /** What a Save-PNG is about to do, resolved once so the modal and the
+   * capture cannot disagree about which engine is tracing (fr-7mfx). */
+  interface PngExportPlan {
+    /** The modal's subtitle: what actually saves, and on which engine. */
+    detail: string;
+    /** Measured evidence, feeding ONE decision — whether to skip the
+     * modal's grace period. Never displayed: the surface predictor
+     * over-predicts ~4x off preview evidence, and a wrong "~90s" is the
+     * patience-guessing fr-zx34 reverted. Null = let the grace period
+     * decide, which is right whenever the capture yields. */
+    predictedMs: number | null;
+    /** False states honestly that the work cannot be interrupted, and
+     * hides Cancel rather than offering a dead button. */
+    cancellable: boolean;
+    /** True while this capture owns the surface tracer, so the surface
+     * tick and the compute loops stand aside for it. */
+    holdsSurfaceTracer: boolean;
+    /** Stops the work early. The WebGL drain polls `run.cancelled`
+     * instead, so its plan leaves this out. */
+    onCancel?: () => void;
+    capture: (run: ExportRun) => Promise<ExportImage | null>;
+  }
+
+  /**
+   * Pick the capture arm for the current mode. Mirrors the sessions'
+   * first-frame gate: during a render's first-frame gap the screen still
+   * shows the explorer, so the export honestly captures that instead —
+   * the same fr-75sq discipline as onSaveToCollection's thumbnail.
+   */
+  function planPngExport(
+    scale: number,
+    liftCostCeilings: boolean,
+  ): PngExportPlan {
+    if (state.renderMode === "surface" && surfaceSession.hasFirstFrame) {
+      const size = scene.exportSize(scale);
+      const dims = `${String(size.width)} × ${String(size.height)}`;
+      const renderer = surfaceComputeRenderer;
+      if (renderer) {
+        return {
+          detail: `${dims} · WebGPU`,
+          // Bounded compute passes yield by construction, so the grace
+          // period alone decides: a cheap frame never flashes a modal and
+          // an expensive one shows without having to be predicted.
+          predictedMs: null,
+          cancellable: true,
+          holdsSurfaceTracer: true,
+          onCancel: () => {
+            renderer.cancel();
+          },
+          capture: (run) => captureSurfaceComputePng(renderer, scale, run),
+        };
+      }
+      const predictedMs = scene.predictSurfaceCaptureMs(scale);
+      // A prediction past the export ceiling is about to be REFUSED
+      // outright (fr-id9r) — an instant rejection, not a long trace. Hand
+      // the modal null instead, so the grace period swallows the run and
+      // the refusal toast arrives on its own rather than behind a modal
+      // that flashed for a single frame.
+      const refusedUpFront =
+        !liftCostCeilings &&
+        predictedMs !== null &&
+        predictedMs > SURFACE_CAPTURE_PREDICT_CEILING_MS;
+      return {
+        detail: `${dims} · WebGL`,
+        predictedMs: refusedUpFront ? null : predictedMs,
+        cancellable: true,
+        holdsSurfaceTracer: true,
+        capture: (run) =>
+          scene.captureSurfaceFrame(scale, {
+            liftCostCeilings,
+            onProgress: (fraction) => {
+              run.report(fraction);
+            },
+            cancelled: () => run.cancelled,
+          }),
+      };
+    }
+    if (state.renderMode === "solid" && solidSession.hasFirstFrame) {
+      const size = scene.exportSize(scale);
+      return {
+        detail: `${String(size.width)} × ${String(size.height)}`,
+        // One synchronous raymarch at export scale: it can report no
+        // coverage mid-draw and it cannot be interrupted, so the honest
+        // disclosure is a busy modal with no Cancel at all. Export scale
+        // is the only knob that makes it slow, so it is the only thing
+        // worth predicting from — there is no per-pixel evidence to
+        // measure the way the surface tracer has.
+        predictedMs: scale > 1 ? EXPORT_MODAL_SLOW_PREDICTION_MS + 1 : null,
+        cancellable: false,
+        holdsSurfaceTracer: false,
+        capture: () => scene.captureSolidFrame(scale),
+      };
+    }
+    if (state.renderMode === "flame" && flameSession.hasFirstFrame) {
+      // The flame canvas already holds the export-size accumulation, so a
+      // capture is a 2D composite plus the PNG encode — always inside the
+      // grace period, so this detail line never actually reaches a screen.
+      const size = scene.flameRenderSize(state.exportScale);
+      return {
+        detail: `${String(size.width)} × ${String(size.height)}`,
+        predictedMs: null,
+        cancellable: false,
+        holdsSurfaceTracer: false,
+        capture: () => scene.captureFlameFrame(),
+      };
+    }
+    const size = scene.exportSize(scale);
+    return {
+      detail: `${String(size.width)} × ${String(size.height)}`,
+      predictedMs: null,
+      cancellable: false,
+      holdsSurfaceTracer: false,
+      capture: () => scene.captureFrame(scale),
+    };
+  }
+
+  /** Hand a captured still to the browser as a timestamped download. */
+  function deliverPng(image: ExportImage | null): void {
+    if (!image) {
+      ui.flashToast("Couldn't encode the PNG");
+      return;
+    }
+    triggerDownload(image.blob, `fractal-${Date.now()}.png`);
+    // The device ceilings may have clamped the export below the chosen
+    // multiple (scene.exportPixelRatio / the flame memory clamp), so
+    // report the size that actually saved.
+    ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
+  }
+
+  /**
+   * Capture a still behind the export modal (fr-7mfx). `liftCostCeilings`
+   * is save-PNG's consented retry (fr-24to) — it re-enters through this
+   * same function, so the escalation the user agreed to is disclosed the
+   * way the first attempt was, which is exactly when disclosure matters
+   * most.
+   */
+  async function savePng(
+    scale: number,
+    liftCostCeilings: boolean,
+  ): Promise<void> {
+    const plan = planPngExport(scale, liftCostCeilings);
+    const run = exportProgress.begin({
+      title: "Saving PNG",
+      detail: plan.detail,
+      predictedMs: plan.predictedMs,
+      cancellable: plan.cancellable,
+      onCancel: plan.onCancel ?? ((): void => undefined),
+    });
+    ui.setSavePngBusy(true);
+    surfaceCaptureFlight = plan.holdsSurfaceTracer;
+    try {
+      // Let the modal reach the screen before anything blocking starts.
+      // The surface drains yield on their own, but the solid raymarch is
+      // one synchronous submission — without this its modal would only
+      // paint after the render it exists to disclose.
+      await nextPaint();
+      const image = await plan.capture(run);
+      // A cancelled capture resolves null on every arm, which is also how
+      // a refused encode resolves — the caller is the only one who knows
+      // which happened.
+      if (run.cancelled) {
+        ui.flashToast("Export cancelled");
+        return;
+      }
+      deliverPng(image);
+    } catch (err: unknown) {
+      if (run.cancelled) {
+        ui.flashToast("Export cancelled");
+        return;
+      }
+      // The surface cost ceiling refusing a monster-pose trace (fr-id9r)
+      // carries its own user-presentable message; anything else is the
+      // generic encode failure.
+      if (!(err instanceof SurfaceCaptureCostError)) {
+        ui.flashToast("Couldn't encode the PNG");
+        return;
+      }
+      // The capture escalation verdict (fr-24to): the predict refusal is
+      // user-overridable (measured ~4x overprediction), the raised spend
+      // ceiling is not — so a retry that trips it offers no further
+      // action, a single escalation level.
+      ui.flashToast(
+        err.message,
+        liftCostCeilings
+          ? undefined
+          : {
+              label: "Render anyway",
+              onAction: () => {
+                void savePng(scale, true);
+              },
+            },
+      );
+    } finally {
+      surfaceCaptureFlight = false;
+      // Re-enable BEFORE the modal closes: hideExportProgress restores
+      // focus to whatever held it when the modal opened — usually this
+      // very button — and focusing a disabled button silently drops focus
+      // to <body>, stranding a keyboard user after every export.
+      ui.setSavePngBusy(false);
+      run.end();
+    }
+  }
+
+  /** Resolve once the browser has had a chance to PAINT. rAF alone fires
+   * before the frame is composited, so the trailing macrotask is what
+   * makes "the modal is on screen now" true rather than merely scheduled.
+   * Raced against a timeout because rAF is PAUSED in a hidden tab: an
+   * export started just before a tab switch must still begin, rather than
+   * waiting for the user to come back to it. */
+  function nextPaint(): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      requestAnimationFrame(() => setTimeout(done, 0));
+      setTimeout(done, NEXT_PAINT_FALLBACK_MS);
     });
   }
 
@@ -5474,70 +5754,17 @@ function main(): void {
       void importSceneFile(file);
     },
     onSavePng: () => {
-      // Capture the bare WebGL canvas (fractal + backdrop, no UI chrome) — or,
-      // while a flame render is active, its own 2D canvas (true alpha; see
-      // captureFlameFrame) — or, while a solid render is active, a fresh
-      // raymarch of the live camera (captureSolidFrame) — at the Export-size
-      // multiple (fr-2urv), and hand it to the browser as a timestamped
-      // download. During a render's first-frame gap the screen still shows
-      // the explorer (the sessions' first-frame gate), so the export
-      // honestly captures that instead — the same fr-75sq discipline as
-      // onSaveToCollection's thumbnail. Recording pins 1×: a hi-res capture
-      // resizes the shared canvas mid-stream, which MediaRecorder capture
-      // doesn't survive (the flame branch never resizes, so it's exempt).
-      const scale = recorderActive ? 1 : state.exportScale;
-      // Shared by the ordinary capture below and its opt-in retry
-      // (fr-24to), so the success handling — download + sized toast —
-      // exists exactly once.
-      function deliverPng(image: ExportImage | null): void {
-        if (!image) {
-          ui.flashToast("Couldn't encode the PNG");
-          return;
-        }
-        triggerDownload(image.blob, `fractal-${Date.now()}.png`);
-        // The device ceilings may have clamped the export below the chosen
-        // multiple (scene.exportPixelRatio / the flame memory clamp), so
-        // report the size that actually saved.
-        ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
-      }
-      const capture =
-        state.renderMode === "solid" && solidSession.hasFirstFrame
-          ? scene.captureSolidFrame(scale)
-          : state.renderMode === "surface" && surfaceSession.hasFirstFrame
-            ? captureSurfacePng(scale)
-            : state.renderMode === "flame" && flameSession.hasFirstFrame
-              ? scene.captureFlameFrame()
-              : scene.captureFrame(scale);
-      void capture.then(deliverPng).catch((err: unknown) => {
-        // The surface cost ceiling refusing a monster-pose trace (fr-id9r)
-        // carries its own user-presentable message; anything else is the
-        // generic encode failure.
-        if (!(err instanceof SurfaceCaptureCostError)) {
-          ui.flashToast("Couldn't encode the PNG");
-          return;
-        }
-        // The capture escalation verdict (fr-24to): the predict refusal is
-        // user-overridable (measured ~4x overprediction), the raised spend
-        // ceiling is not — so the retry's own catch offers no further
-        // action, a single escalation level. Re-runs the SURFACE capture
-        // directly (not the mode ternary above: a cost error can only
-        // come from that path) with the same scale.
-        ui.flashToast(err.message, {
-          label: "Render anyway",
-          onAction: () => {
-            void scene
-              .captureSurfaceFrame(scale, { liftCostCeilings: true })
-              .then(deliverPng)
-              .catch((retryErr: unknown) => {
-                ui.flashToast(
-                  retryErr instanceof SurfaceCaptureCostError
-                    ? retryErr.message
-                    : "Couldn't encode the PNG",
-                );
-              });
-          },
-        });
-      });
+      // One capture at a time (fr-7mfx): the modal's scrim blocks the
+      // button once it is up, but the grace period leaves a window where a
+      // second press would start a second export over the first.
+      if (exportProgress.active) return;
+      // Recording pins 1x: a hi-res capture resizes the shared canvas
+      // mid-stream, which MediaRecorder capture doesn't survive (the flame
+      // branch never resizes, so it's exempt).
+      void savePng(recorderActive ? 1 : state.exportScale, false);
+    },
+    onExportCancel: () => {
+      exportProgress.requestCancel();
     },
     onSelect: (index) => {
       state = selectTransform(state, index);
@@ -6198,9 +6425,7 @@ function main(): void {
         ui.setSurfaceProgress(null);
         return;
       }
-      const pctRaw = surfaceComputeSettleProgress * 100;
-      const pct =
-        pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
+      const pct = formatRenderPercent(surfaceComputeSettleProgress);
       // "(software)" rides the engine token (fr-tmgf): a SwiftShader-class
       // adapter must not read as the real GPU; the warning note carries
       // the full story.
@@ -6217,13 +6442,7 @@ function main(): void {
       ui.setSurfaceProgress(null);
       return;
     }
-    // floor, not round — the fr-99z convention: never read "100%" while
-    // strips are still landing. Below 10% keep one decimal: a monster
-    // settle advances ~1%/min, and an integer row parked at "0%" for a
-    // minute reads as stuck — the exact ambiguity the row exists to
-    // remove.
-    const pctRaw = progress.fraction * 100;
-    const pct = pctRaw < 10 ? Math.floor(pctRaw * 10) / 10 : Math.floor(pctRaw);
+    const pct = formatRenderPercent(progress.fraction);
     // The trailing detail token (fr-tmgf) says why compute passed on a
     // fold system — "compute unavailable" / "compute failed" — and stays
     // absent when WebGL is the natural engine. Trailing, so the engine
@@ -6313,7 +6532,18 @@ function main(): void {
         // an identical frame) and repaints the preview otherwise; a
         // recorded drag captures the preview frames the user actually
         // saw.
-        if (surfaceComputeRenderer) {
+        if (surfaceCaptureFlight) {
+          // A Save-PNG capture owns the tracer (fr-7mfx). It yields so its
+          // modal can paint and its Cancel can be clicked, which means
+          // this tick runs DURING the export — and every arm below would
+          // fight it (the compute arms open with renderer.cancel(); the
+          // strip arms re-size the target being drained and overwrite the
+          // frozen full-tier uniforms). The progress sync still runs so
+          // the in-panel row clears: while the modal is up, IT owns the
+          // disclosure, and a stale "Full detail 43%" behind the scrim
+          // would outlive the job it described.
+          syncSurfaceProgress();
+        } else if (surfaceComputeRenderer) {
           // The WebGPU compute path (fr-tzdg): async bounded-pass frames
           // instead of scissor strips — same tier clock, same
           // preview/settle choreography, presented through the shared

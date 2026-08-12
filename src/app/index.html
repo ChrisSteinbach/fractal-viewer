@@ -1550,6 +1550,51 @@
       </div>
     </div>
 
+    <!-- Export progress (fr-7mfx): a BLOCKING modal shown for the duration of
+         a Save PNG capture — surface renders can take minutes with zero
+         feedback otherwise. Reuses the gallery modal's chrome (backdrop,
+         dialog, header) verbatim; only `export-dialog` is new. Two
+         deliberate deviations from the About/Gallery/Mutation modals above:
+           - No backdrop click-to-close and no ✕: this modal is blocking on
+             purpose, so the scrim is not a dismissal target — an accidental
+             click must not silently abandon a multi-minute export.
+           - Cancel is an app concern, not a pure view concern: unlike the
+             gallery's ✕/backdrop/Escape trio (which Ui owns directly),
+             Cancel must abort real GPU work, so it routes through a
+             UiHandlers callback (onExportCancel) instead of a bare
+             hideExportProgress(). -->
+    <div
+      id="exportModal"
+      class="gallery-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="exportTitle"
+      aria-busy="true"
+    >
+      <div class="gallery-backdrop"></div>
+      <div class="gallery-dialog export-dialog">
+        <div class="gallery-header">
+          <h2 class="gallery-title" id="exportTitle">Saving PNG</h2>
+        </div>
+        <p id="exportDetail" class="export-detail"></p>
+        <div
+          id="exportProgress"
+          class="flame-progress"
+          role="status"
+          aria-live="polite"
+        >
+          0%
+        </div>
+        <button
+          id="exportCancelBtn"
+          class="btn btn-ghost export-cancel"
+          type="button"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
     <div

@@ -67,6 +67,7 @@ function noopHandlers(): UiHandlers {
     onTimelineAddKeyframe: vi.fn(),
     onTimelinePlayToggle: vi.fn(),
     onTimelineExport: vi.fn(),
+    onExportCancel: vi.fn(),
     onExportTimeline: vi.fn(),
     onTimelineRemoveStep: vi.fn(),
     onTimelineMoveStep: vi.fn(),
@@ -5985,6 +5986,277 @@ describe("Ui about dialog", () => {
     watchBuildBtn().click();
 
     expect(handlers.onWatchBuild).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Ui export progress modal (fr-7mfx)", () => {
+  function exportModal(): HTMLElement {
+    return document.getElementById("exportModal") as HTMLElement;
+  }
+  function exportTitle(): HTMLElement {
+    return document.getElementById("exportTitle") as HTMLElement;
+  }
+  function exportDetail(): HTMLElement {
+    return document.getElementById("exportDetail") as HTMLElement;
+  }
+  function exportProgress(): HTMLElement {
+    return document.getElementById("exportProgress") as HTMLElement;
+  }
+  function exportCancelBtn(): HTMLButtonElement {
+    return document.getElementById("exportCancelBtn") as HTMLButtonElement;
+  }
+  function exportBackdrop(): HTMLElement {
+    const backdrop = exportModal().querySelector(".gallery-backdrop");
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error("No backdrop under #exportModal");
+    }
+    return backdrop;
+  }
+  function savePngBtn(): HTMLButtonElement {
+    return document.getElementById("savePngBtn") as HTMLButtonElement;
+  }
+  function pressEscape(): void {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  }
+
+  it("is hidden in the shipped markup", () => {
+    new Ui(document);
+    expect(exportModal().classList.contains("hidden")).toBe(true);
+  });
+
+  it("showExportProgress un-hides it and writes title + detail", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "1920×1080 · 4×",
+      cancellable: true,
+    });
+
+    expect(exportModal().classList.contains("hidden")).toBe(false);
+    expect(exportTitle().textContent).toBe("Saving PNG");
+    expect(exportDetail().textContent).toBe("1920×1080 · 4×");
+  });
+
+  it("shows the Cancel button when cancellable, hides it when not", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    expect(exportCancelBtn().classList.contains("hidden")).toBe(false);
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+    });
+    expect(exportCancelBtn().classList.contains("hidden")).toBe(true);
+  });
+
+  it('setExportProgress writes "43% · 12s" and sets --progress to 43%', () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.setExportProgress({ pct: 43, note: "12s" });
+
+    expect(exportProgress().textContent).toBe("43% · 12s");
+    expect(exportProgress().style.getPropertyValue("--progress")).toBe("43%");
+  });
+
+  it("pct: null shows the note alone, sets --progress to 0%, and adds the busy pulse", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.setExportProgress({ pct: null, note: "estimating…" });
+
+    expect(exportProgress().textContent).toBe("estimating…");
+    expect(exportProgress().style.getPropertyValue("--progress")).toBe("0%");
+    expect(
+      exportProgress().classList.contains("flame-progress-estimating"),
+    ).toBe(true);
+  });
+
+  it("a non-null pct after a null one removes the busy pulse", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.setExportProgress({ pct: null, note: "estimating…" });
+
+    ui.setExportProgress({ pct: 10, note: "3s" });
+
+    expect(
+      exportProgress().classList.contains("flame-progress-estimating"),
+    ).toBe(false);
+  });
+
+  it("Cancel click fires onExportCancel exactly once", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    exportCancelBtn().click();
+
+    expect(handlers.onExportCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onExportCancel on Escape while open", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    pressEscape();
+
+    expect(handlers.onExportCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire onExportCancel on Escape when the run is not cancellable", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+    });
+
+    pressEscape();
+
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+  });
+
+  it("clicking the backdrop does not close the modal", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    exportBackdrop().click();
+
+    expect(exportModal().classList.contains("hidden")).toBe(false);
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+  });
+
+  it("hideExportProgress hides it, clears textContent, and resets --progress to 0%", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.setExportProgress({ pct: 77, note: "1s" });
+
+    ui.hideExportProgress();
+
+    expect(exportModal().classList.contains("hidden")).toBe(true);
+    expect(exportProgress().textContent).toBe("");
+    expect(exportProgress().style.getPropertyValue("--progress")).toBe("0%");
+  });
+
+  it("does not fire onExportCancel on Escape after hide, and does not throw before the modal was ever opened", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    expect(() => pressEscape()).not.toThrow();
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.hideExportProgress();
+    pressEscape();
+
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+  });
+
+  it("rebinds Escape on a reopen after a close", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.hideExportProgress();
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    pressEscape();
+
+    expect(handlers.onExportCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("showExportProgress resets a stale readout from a previous run to 0%", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.setExportProgress({ pct: 91, note: "almost done" });
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    expect(exportProgress().textContent).toBe("0%");
+    expect(exportProgress().style.getPropertyValue("--progress")).toBe("0%");
+  });
+
+  it("setSavePngBusy(true) disables Save PNG with a title; false restores it", () => {
+    const ui = new Ui(document);
+    const originalTitle = savePngBtn().title;
+
+    ui.setSavePngBusy(true);
+    expect(savePngBtn().disabled).toBe(true);
+    expect(savePngBtn().title).not.toBe(originalTitle);
+    expect(savePngBtn().title.length).toBeGreaterThan(0);
+
+    ui.setSavePngBusy(false);
+    expect(savePngBtn().disabled).toBe(false);
+    expect(savePngBtn().title).toBe(originalTitle);
   });
 });
 
