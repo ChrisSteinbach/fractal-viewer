@@ -12,17 +12,25 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 
 ## Features
 
-- **Real-time chaos game** rendering of an IFS attractor (up to 500k points).
+- **Real-time chaos game** rendering of an IFS attractor (up to 5M points).
 - **Built-in explainer** — an in-app "What is this?" dialog covers the IFS /
   chaos-game basics, and **▶ Watch it build** replays the cloud's own
   generation point by point, from the first random hops to the full attractor.
 - **Editable transforms** — add/remove maps and drag, rotate, and scale them in
   the 3D view with mouse or touch.
-- **Presets** — a menu of seven systems, from the Sierpinski tetrahedron and
-  Menger sponge to 12- and 20-map icosahedron and dodecahedron flakes.
-- **Six color modes** — by transform, height, radius, position, iteration age, or
-  a uniform cyan.
-- **Orbit camera** with rotate / pan / zoom, and depth fog that tracks the cloud.
+- **Four render modes** — the live point cloud, plus **✺ Flame** (a classic
+  fractal-flame exposure), **◆ Solid** (a lit, shadowed voxel surface), and
+  **◈ Surface** — the attractor sphere-traced as a true implicit surface,
+  with an optional shadow-catching **Floor** underneath and a **Balloon**
+  mode that encloses the scene in its own sphere-inverted echo, the
+  fractal's shadows falling on the cave wall around it.
+- **Presets** — two dozen systems, from the Sierpinski tetrahedron and Menger
+  sponge to icosahedron and dodecahedron flakes, fractal-flame classics, the
+  Mandelbox, and a 4D group of tumbling polytope fractals.
+- **Five color modes** — by transform, height, radius, position, or a uniform
+  cyan — plus gradient palettes and a custom-gradient editor.
+- **Orbit camera** with rotate / pan / zoom, and an adjustable atmosphere:
+  depth fog with its own density and tint, tracking the cloud and backdrop.
 - **PWA** — installable and works offline once loaded.
 
 ## Getting started
