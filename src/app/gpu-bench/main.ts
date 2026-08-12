@@ -2012,6 +2012,13 @@ interface SurfaceSectionConfig {
    * Default false — the leg is silent and never runs in CI; see
    * `runSurfaceAff4SweepLeg`'s doc. */
   aff4Sweep: boolean;
+  /** fr-76pp opt-in (`--surface-canary-trip=N`, `surfaceCanaryTrip=N`):
+   * synthetically corrupt the Nth device-sanity canary check (1-based) so
+   * the whole "device-unreliable" path — trip, verdict, node printer, exit
+   * code — can be exercised end-to-end without a real device upset. The
+   * trip detail is prefixed `SYNTHETIC` so a rehearsal can never be
+   * mistaken for a real one. 0 (the default) = off. */
+  canaryTrip: number;
 }
 
 interface SurfaceKernelConfig {
@@ -2415,8 +2422,31 @@ interface SurfaceAff4SweepResult {
   compileMs: Record<string, number>;
 }
 
+/** fr-76pp: the device-sanity tripwire's result — see
+ * {@link createSurfaceCanary}'s doc for the mechanism and the incident it
+ * exists for. Present whenever the canary armed (absent = canary disabled,
+ * with the reason in `notes`). */
+interface SurfaceDeviceSanityResult {
+  /** Clean boundary checks completed (one per leg banner below, plus the
+   * final one right before the verdict rollup). */
+  checks: number;
+  /** Canary query count — the number of f32 values bit-compared per check. */
+  n: number;
+  /** Set when the tripwire fired: the boundary label of the leg the device
+   * upset was detected AFTER (rows from that leg and later are suspect;
+   * earlier legs re-verified the canary clean). */
+  trippedAt?: string;
+  /** Human-readable trip detail (drift counts, device.lost reason, …) —
+   * duplicated into `notes` so headless stdout discloses it. */
+  detail?: string;
+}
+
 interface SurfaceDeResults {
-  verdict: "pass" | "fail" | "skipped";
+  /** `"device-unreliable"` (fr-76pp) means the device-sanity canary tripped
+   * mid-run: numeric rows in this result are NOT evidence of a kernel
+   * defect — rerun on a quiet machine. The node driver refuses to exit
+   * green on it (exit 2, the "refusing to report success" convention). */
+  verdict: "pass" | "fail" | "skipped" | "device-unreliable";
   reason?: string;
   adapter: BenchAdapterInfo | null;
   limits: Record<string, number>;
@@ -2500,6 +2530,9 @@ interface SurfaceDeResults {
    * beyond {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}, or on an unhandled
    * error mid-sweep (also noted either way). */
   aff4Sweep?: SurfaceAff4SweepResult;
+  /** fr-76pp device-sanity tripwire state — absent only when the canary
+   * could not arm (setup failure, disclosed in notes). */
+  deviceSanity?: SurfaceDeviceSanityResult;
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -3251,7 +3284,8 @@ function parseSurfaceShadeWidths(raw: string | null): {
  * a software adapter), `surfaceShadeWidth` (fr-p8bc shade A/B leg probe
  * widths, e.g. "1,4"; default empty — leg skipped), `surfaceAff4Sweep`
  * (fr-b72d opt-in per-order affine4 timing sweep, "1" = on; default off —
- * see `runSurfaceAff4SweepLeg`'s doc). */
+ * see `runSurfaceAff4SweepLeg`'s doc), `surfaceCanaryTrip` (fr-76pp opt-in
+ * synthetic device-sanity trip at the Nth check; default 0 = off). */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -3263,6 +3297,10 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const sizeMatch = /^(\d+)x(\d+)$/.exec(params.get("surfaceSize") ?? "");
   const capParsed = Number.parseInt(params.get("surfaceCapMs") ?? "", 10);
   const shadeWidths = parseSurfaceShadeWidths(params.get("surfaceShadeWidth"));
+  const canaryTripParsed = Number.parseInt(
+    params.get("surfaceCanaryTrip") ?? "",
+    10,
+  );
   return {
     agreementWidths: parseSurfaceIntList(params.get("surfaceWidths"), [12, 4]),
     timingWidths: parseSurfaceIntList(
@@ -3281,6 +3319,10 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     surfaceShadeWidths: shadeWidths.widths,
     shadeWidthNotes: shadeWidths.notes,
     aff4Sweep: params.get("surfaceAff4Sweep") === "1",
+    canaryTrip:
+      Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
+        ? canaryTripParsed
+        : 0,
   };
 }
 
@@ -4812,6 +4854,236 @@ async function runSurfaceEvalDispatch(
  * uses the IDENTICAL bound rather than a second copy that could drift. */
 function surfaceEvalTol(cpu: number, R: number): number {
   return Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
+}
+
+/** fr-76pp: thrown by the device-sanity canary ({@link createSurfaceCanary})
+ * when the shared device stops reproducing its own baseline mid-run. The
+ * section's outer catch turns it into the `"device-unreliable"` verdict
+ * instead of a plausible-looking numeric "fail". */
+class SurfaceDeviceUnreliableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SurfaceDeviceUnreliableError";
+  }
+}
+
+/** Canary query count — big enough to exercise the whole refined-ladder
+ * descent across the attractor and its surroundings, small enough that a
+ * check (dispatch + readback sync) is noise against any leg. */
+const SURFACE_CANARY_QUERY_COUNT = 128;
+/** Canary workgroup size — the private-variant default. */
+const SURFACE_CANARY_WG = 64;
+/** Canary query seed (arbitrary, frozen so every run replays the identical
+ * dispatch). */
+const SURFACE_CANARY_SEED = 0x76b9;
+
+interface SurfaceCanary {
+  sanity: SurfaceDeviceSanityResult;
+  /** Re-dispatch the canary and bit-compare against the t0 baseline.
+   * Resolves clean or throws {@link SurfaceDeviceUnreliableError};
+   * `boundary` names the leg that just finished (it lands in
+   * `sanity.trippedAt`, the verdict reason, and a note). */
+  check(boundary: string): Promise<void>;
+  destroy(): void;
+}
+
+/**
+ * fr-76pp: the device-sanity tripwire. Observed incident: `bench:surface`
+ * on SwiftShader, run concurrently with the full vitest suite + a dev
+ * server + a driven browser, reported plausible gating failures
+ * (lens4MandelboxOverAffine fail=676/700 maxAbs=0.96, persisting into the
+ * next leg) that vanished on a quiet machine — a mid-run software-Vulkan
+ * device upset under CPU starvation, not a kernel defect, and ~40 min of
+ * baseline-vs-feature bisection to prove that. The failure class is
+ * detectable in-run because this section's arithmetic is DETERMINISTIC:
+ * the cross-check legs already gate exact f32 equality across pipeline
+ * variants, so a re-dispatch of one frozen pipeline over frozen buffers
+ * must reproduce its own earlier readback bit for bit. Any drift proves
+ * the device's answers changed mid-run — at which point every numeric row
+ * is suspect and "rerun on a quiet machine" is the only honest verdict.
+ *
+ * Mechanism: a self-contained affine-core eval (its own tetra DE, its own
+ * 128 frozen queries, its own buffers — no lifecycle overlap with the leg
+ * systems, whose buffers legs re-ensure and the finally destroys). The
+ * baseline is captured by dispatching TWICE at t0 — nondeterminism before
+ * any leg has run is itself an upset — then `check()` re-dispatches at
+ * every leg banner and bit-compares (Uint32Array views: NaN-safe, no
+ * tolerance questions). A `device.lost` latch (ignoring the routine
+ * `"destroyed"` reason) and an `onuncapturederror`→notes hook ride along.
+ *
+ * Scope, honestly: leg-granular and device-wide. An upset that corrupts
+ * exactly one leg's own readback and heals before the boundary check still
+ * lands as that leg's numeric fail; the observed class (state that
+ * persists — the only kind reruns can't immediately absolve) is caught,
+ * and clean checks bracket the upset window from both sides. Setup
+ * failures (DE build, pipeline, buffers) DISABLE the canary with a note
+ * rather than blocking the bench — the legs themselves will surface real
+ * device trouble; but a baseline DISPATCH failure or t0 nondeterminism
+ * throws {@link SurfaceDeviceUnreliableError} outright, because a device
+ * that cannot reproduce a trivial dispatch twice cannot certify anything.
+ *
+ * `syntheticTripAt` (`surfaceCanaryTrip=N`) corrupts the Nth check's
+ * readback in-place so the whole trip → verdict → exit-code path can be
+ * rehearsed end-to-end; the detail string says SYNTHETIC so the rehearsal
+ * can never read as a real upset.
+ */
+async function createSurfaceCanary(
+  device: GPUDevice,
+  pipelineLayout: GPUPipelineLayout,
+  bindGroupLayout: GPUBindGroupLayout,
+  syntheticTripAt: number,
+  onNote: (note: string) => void,
+): Promise<SurfaceCanary | { disabled: string }> {
+  // Wired before setup so a run whose canary fails to arm still discloses
+  // device loss / uncaptured errors through notes.
+  let lostReason: string | undefined;
+  void device.lost.then((info) => {
+    if (info.reason === "destroyed") return;
+    lostReason = `${info.reason}: ${info.message}`;
+    onNote(`device.lost fired mid-run — ${lostReason}`);
+  });
+  device.onuncapturederror = (event): void => {
+    onNote(`uncaptured device error: ${event.error.message}`);
+  };
+
+  const setup = await (async (): Promise<
+    | { sys: SurfaceSystemState; pipeline: GPUComputePipeline }
+    | { disabled: string }
+  > => {
+    try {
+      const transforms = surfaceAffineTetra();
+      const de = buildSurfaceDE(transforms, null, SURFACE_NO_SYMMETRY);
+      const rng = mulberry32(SURFACE_CANARY_SEED);
+      const ext = 1.2 * de.boundingRadius;
+      const queries: Vec3[] = [];
+      for (let i = 0; i < SURFACE_CANARY_QUERY_COUNT; i += 1) {
+        queries.push([
+          Math.fround(ext * (2 * rng() - 1)),
+          Math.fround(ext * (2 * rng() - 1)),
+          Math.fround(ext * (2 * rng() - 1)),
+        ]);
+      }
+      // cpu stays empty: the canary never compares against an oracle — its
+      // whole contract is bit-exact agreement with its own t0 readback.
+      const sys: SurfaceSystemState = {
+        name: "canary",
+        core: "affine",
+        de,
+        transforms,
+        queries,
+        cpu: [],
+      };
+      const code = surfaceDeKernelWgsl({
+        mode: "eval",
+        core: "affine",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_CANARY_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+      });
+      const { pipeline } = await buildSurfacePipeline(
+        device,
+        pipelineLayout,
+        code,
+        "evalQueries",
+        "surface-de canary",
+      );
+      await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
+      return { sys, pipeline };
+    } catch (e) {
+      return { disabled: describeError(e) };
+    }
+  })();
+  if ("disabled" in setup) return setup;
+  const { sys, pipeline } = setup;
+
+  const dispatch = async (context: string): Promise<Float32Array> => {
+    try {
+      return await runSurfaceEvalDispatch(
+        device,
+        pipeline,
+        sys,
+        SURFACE_CANARY_WG,
+      );
+    } catch (e) {
+      throw new SurfaceDeviceUnreliableError(
+        `canary dispatch failed ${context}: ${describeError(e)}`,
+      );
+    }
+  };
+  const first = await dispatch("capturing the baseline");
+  const second = await dispatch("re-checking the baseline");
+  const baseline = first;
+  const baselineBits = new Uint32Array(baseline.buffer);
+  const drift = (
+    out: Float32Array,
+  ): { mismatches: number; maxAbsDrift: number } => {
+    const bits = new Uint32Array(out.buffer);
+    let mismatches = 0;
+    let maxAbsDrift = 0;
+    for (let i = 0; i < baselineBits.length; i += 1) {
+      if (bits[i] === baselineBits[i]) continue;
+      mismatches += 1;
+      const abs = Math.abs(out[i] - baseline[i]);
+      if (Number.isFinite(abs) && abs > maxAbsDrift) maxAbsDrift = abs;
+    }
+    return { mismatches, maxAbsDrift };
+  };
+  {
+    const t0 = drift(second);
+    if (t0.mismatches > 0) {
+      throw new SurfaceDeviceUnreliableError(
+        `canary baseline nondeterministic before any leg ran — ` +
+          `${t0.mismatches}/${SURFACE_CANARY_QUERY_COUNT} values changed between ` +
+          `two identical dispatches (maxAbs ${t0.maxAbsDrift.toExponential(2)})`,
+      );
+    }
+  }
+
+  const sanity: SurfaceDeviceSanityResult = {
+    checks: 0,
+    n: SURFACE_CANARY_QUERY_COUNT,
+  };
+  const trip = (boundary: string, detail: string): never => {
+    sanity.trippedAt = boundary;
+    sanity.detail = detail;
+    onNote(`device-sanity canary TRIPPED after ${boundary}: ${detail}`);
+    throw new SurfaceDeviceUnreliableError(
+      `device-sanity canary tripped after ${boundary} — ${detail}`,
+    );
+  };
+  return {
+    sanity,
+    async check(boundary: string): Promise<void> {
+      if (lostReason !== undefined) {
+        trip(boundary, `device.lost fired mid-run (${lostReason})`);
+      }
+      const out = await dispatch(`at "${boundary}"`).catch((e: unknown) =>
+        trip(boundary, describeError(e)),
+      );
+      const synthetic =
+        syntheticTripAt > 0 && sanity.checks + 1 === syntheticTripAt;
+      if (synthetic) {
+        // Flip one exponent bit of the first value — an unmistakable,
+        // finite drift for the rehearsal to detect and report.
+        new Uint32Array(out.buffer)[0] ^= 0x40000000;
+      }
+      const d = drift(out);
+      if (d.mismatches > 0) {
+        trip(
+          boundary,
+          `${synthetic ? `SYNTHETIC (surfaceCanaryTrip=${syntheticTripAt}) — ` : ""}` +
+            `${d.mismatches}/${sanity.n} canary values changed vs the t0 baseline ` +
+            `(maxAbs drift ${d.maxAbsDrift.toExponential(2)}) — the identical ` +
+            `dispatch previously reproduced bit for bit`,
+        );
+      }
+      sanity.checks += 1;
+    },
+    destroy(): void {
+      destroySurfaceEvalBuffers(sys);
+    },
+  };
 }
 
 function compareSurfaceAgreement(
@@ -7653,7 +7925,11 @@ function buildSurfaceSectionDom(container: HTMLElement): SurfaceSectionDom {
  * and the march timing protocol (mandelboxKifs only; auto-skipped on
  * software adapters unless forced). Never throws: unavailable WebGPU is a
  * "skipped" verdict, anything after device acquisition that breaks is a
- * "fail" with the error in `reason`/`notes`.
+ * "fail" with the error in `reason`/`notes` — except a device-sanity
+ * canary trip (fr-76pp), which is the "device-unreliable" verdict: the
+ * shared device stopped reproducing its own baseline mid-run, so numeric
+ * rows are not evidence either way and the only honest instruction is
+ * "rerun on a quiet machine" (see {@link createSurfaceCanary}).
  */
 async function runSurfaceDeSection(
   config: SurfaceSectionConfig,
@@ -8456,12 +8732,46 @@ async function runSurfaceDeSection(
         })
       : 0;
 
+  // fr-76pp: the device-sanity canary, destroyed in the finally — declared
+  // out here so the finally can reach it.
+  let canary: SurfaceCanary | undefined;
   try {
     const bindGroupLayout = surfaceBindGroupLayout(device);
     const pipelineLayout = device.createPipelineLayout({
       label: "surface-de pipeline layout",
       bindGroupLayouts: [bindGroupLayout],
     });
+
+    // ----- Device-sanity canary (fr-76pp) — armed before any leg -----
+    // Its t0 baseline brackets every dispatch below; each leg banner
+    // re-checks it, so a mid-run device upset (the contended-SwiftShader
+    // class) becomes a "device-unreliable" verdict at the boundary where
+    // it is first visible instead of plausible numeric fails downstream.
+    // See createSurfaceCanary's doc.
+    status("arming device-sanity canary…");
+    const canaryCreated = await createSurfaceCanary(
+      device,
+      pipelineLayout,
+      bindGroupLayout,
+      config.canaryTrip,
+      (note) => {
+        results.notes.push(note);
+        render();
+      },
+    );
+    if ("disabled" in canaryCreated) {
+      results.notes.push(
+        `device-sanity canary disabled — ${canaryCreated.disabled} ` +
+          `(tripwire off this run; a mid-run device upset would land as numeric fails)`,
+      );
+      render();
+    } else {
+      canary = canaryCreated;
+      results.deviceSanity = canaryCreated.sanity;
+    }
+    const canaryCheck = async (boundary: string): Promise<void> => {
+      await canary?.check(boundary);
+    };
 
     // ----- Agreement protocol (the correctness pin — always runs) -----
     const gpuByKey = new Map<string, Float32Array>();
@@ -8513,6 +8823,8 @@ async function runSurfaceDeSection(
         await new Promise<void>((resolve) => setTimeout(resolve));
       }
     }
+
+    await canaryCheck("the fold agreement leg");
 
     // ----- M0 (fr-55s1): the AFFINE core's agreement leg — GATING -----
     // Fold-free systems compile the width-4 refined ladder and pin against
@@ -8567,6 +8879,8 @@ async function runSurfaceDeSection(
       render();
     }
 
+    await canaryCheck("the M0 affine agreement leg");
+
     // ----- M1 (fr-55s1 stage B): the fold-lens agreement leg — GATING -----
     // One pipeline PER SYSTEM: `lens` wraps that system's own core
     // (lensOverFold marches the width-12 fold frontier inside the sweep,
@@ -8618,6 +8932,8 @@ async function runSurfaceDeSection(
       render();
       await new Promise<void>((resolve) => setTimeout(resolve));
     }
+
+    await canaryCheck("the M1 fold-lens agreement leg");
 
     // ----- balloonEval (fr-5wlv.5): the inverted-union eval leg — GATING -----
     // Three systems — the affine default, one fold system, the fr-g58b
@@ -8744,6 +9060,8 @@ async function runSurfaceDeSection(
       }
     }
 
+    await canaryCheck("the balloonEval leg");
+
     // ----- M2 (fr-dlxh): the ESCAPE core's agreement leg — GATING -----
     // Forward escape-time systems never enter `systems` above — `buildSurfaceDE`
     // refuses their shape by design — so `escapeSystems` (built right after
@@ -8839,6 +9157,8 @@ async function runSurfaceDeSection(
       render();
     }
 
+    await canaryCheck("the M2 escape agreement leg");
+
     // ----- M3 (fr-dlxh): the AFFINE4 core's agreement leg — GATING -----
     // The 4D refined ladder behind the view lift — `estimateDistance4Refined`
     // (surface-de-4d.ts) as `surface-material-4d.ts` marches it — pinned
@@ -8916,6 +9236,8 @@ async function runSurfaceDeSection(
       }
       render();
     }
+
+    await canaryCheck("the M3 affine4 agreement leg");
 
     // ----- M4 (fr-rsp6 phase 2A): the FOLD4 core's agreement leg -----
     // The fold frontier one dimension up, behind the SAME view lift as M3
@@ -9099,6 +9421,8 @@ async function runSurfaceDeSection(
         render();
       }
     }
+
+    await canaryCheck("the M4 fold4 agreement leg");
 
     // ----- M5 (fr-rsp6 phase 2B): the 4D LENS agreement leg -----
     // The fold-FINAL lens (`descendLens4`) wrapped around EITHER 4D core,
@@ -9308,6 +9632,8 @@ async function runSurfaceDeSection(
       }
     }
 
+    await canaryCheck("the M5 lens4 agreement leg");
+
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
     if (
       config.variants.includes("shared") &&
@@ -9368,6 +9694,8 @@ async function runSurfaceDeSection(
       });
     }
     render();
+
+    await canaryCheck("the cross-check leg");
 
     // ----- Leg A (fr-tzdg): march-unproject agreement — GATING -----
     // The app path's ray derivation against the CPU emulator, at the exact
@@ -9493,6 +9821,8 @@ async function runSurfaceDeSection(
         render();
       }
     }
+
+    await canaryCheck("the march-unproject legs");
 
     // ----- Timing protocol (march — the §3.7 measurement) -----
     if (!config.timing) {
@@ -9713,6 +10043,8 @@ async function runSurfaceDeSection(
         }
       }
     }
+
+    await canaryCheck("the timing protocol");
 
     // ----- Leg B (fr-tzdg): end-to-end frame via SurfaceComputeRenderer --
     // The production app loop on its own device; informational except the
@@ -10091,6 +10423,8 @@ async function runSurfaceDeSection(
       render();
     }
 
+    await canaryCheck("the compute-frame legs");
+
     // ----- fr-b72d: opt-in per-kaleidoscope-order affine4/fold4 timing ----
     // sweep. Off by default (`config.aff4Sweep`, `surfaceAff4Sweep=1`) —
     // never runs in CI, and silent (no notes at all) when not requested,
@@ -10127,6 +10461,8 @@ async function runSurfaceDeSection(
     }
     render();
 
+    await canaryCheck("the aff4 sweep leg");
+
     // ----- Shade A/B leg (fr-p8bc): cheap shading-probe-width vs the -----
     // shipped full-width baseline. Runs AFTER leg B, purely informational —
     // never gates the verdict below (see runSurfaceShadeAbLeg's doc) — so
@@ -10151,6 +10487,8 @@ async function runSurfaceDeSection(
       results.notes.push(`shade-ab: ${describeError(e)}`);
     }
     render();
+
+    await canaryCheck("the shade A/B leg");
 
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is
@@ -10215,9 +10553,23 @@ async function runSurfaceDeSection(
       results.verdict = "pass";
     }
   } catch (e) {
-    results.verdict = "fail";
-    results.reason = `section error: ${describeError(e)}`;
+    if (e instanceof SurfaceDeviceUnreliableError) {
+      // fr-76pp: not a kernel verdict at all — the device stopped
+      // reproducing its own baseline, so every numeric row this run
+      // produced (including any gating failures already recorded above)
+      // is evidence of nothing. Remaining legs were skipped on purpose:
+      // dispatching more work at a device that returns garbage only
+      // burns the wall clock.
+      results.verdict = "device-unreliable";
+      results.reason =
+        `${e.message}; numeric rows from this run are NOT evidence of a ` +
+        `kernel defect — rerun on a quiet machine (idle CPU)`;
+    } else {
+      results.verdict = "fail";
+      results.reason = `section error: ${describeError(e)}`;
+    }
   } finally {
+    canary?.destroy();
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
     for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
