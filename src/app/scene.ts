@@ -780,10 +780,15 @@ export class FractalScene {
    * close-up can no longer wedge the GPU process — the failure that used
    * to require a browser restart. The async settle job spreads the strips
    * across animation frames; {@link renderSurface}'s full tier runs them
-   * to completion synchronously (capture/offline export). */
+   * to completion synchronously (offline export, thumbnails), and
+   * {@link captureSurfaceFrame} drains them while yielding (fr-7mfx). */
   private readonly surfaceSettleTarget: THREE.WebGLRenderTarget;
   /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
   private surfaceStripJob: SurfaceStripJob | null = null;
+  /** True while {@link captureSurfaceFrame}'s yielding drain owns
+   * {@link surfaceSettleTarget} and the full-tier uniforms — see
+   * {@link surfaceCaptureBusy} for who has to respect it. */
+  private surfaceCaptureFlight = false;
   /** In-flight strip job over {@link surfacePreviewTarget} (fr-du81), or
    * null. Preview traces used to be ONE unbounded GPU submission — the one
    * path fr-sjff left unarmored, and on fold-frontier systems (fr-5rvk,
@@ -3446,6 +3451,12 @@ export class FractalScene {
     tier: RenderTier = "full",
     opts?: { liftCostCeilings?: boolean },
   ): void {
+    // A yielding capture owns the target and the frozen full-tier uniforms
+    // (fr-7mfx). main.ts's tick already stands aside on
+    // {@link surfaceCaptureBusy}; leaving renderNeeded set means the
+    // invalidation this call carried is honoured once the capture lets go,
+    // rather than being swallowed here.
+    if (this.surfaceCaptureFlight) return;
     this.renderNeeded = false;
     if (this.surfaceComputeActive) {
       // A compute session never compiled the fold GLSL — a stray call
@@ -3485,8 +3496,43 @@ export class FractalScene {
     // raises the spend ceiling — consent replaces prediction, the
     // backstop stays.
     const totalPx = size.x * size.y;
+    const job = this.beginSurfaceFullFrame(size.x, size.y, opts);
+    const completed = this.drainStripsSync(
+      job,
+      this.surfaceSettleTarget,
+      surfaceCaptureSpendCeilingMs(opts),
+    );
+    this.finishSurfaceFullFrame(job, totalPx, completed);
+    this.blitSurface(this.surfaceSettleTarget.texture, null);
+  }
+
+  /**
+   * Arm a full-tier strip job over a `width` x `height` buffer: refuse up
+   * front when measured evidence prices the frame past the export ceiling,
+   * clear the live jobs out of the way, size the settle target and freeze
+   * this frame's uniforms into it. Split out of {@link renderSurface} so
+   * the synchronous drain and the yielding capture drain (fr-7mfx) arm
+   * IDENTICALLY — the refusal, the abandon trio and the uniform freeze are
+   * the parts that must not drift between them.
+   *
+   * The size is passed rather than read from the drawing buffer because
+   * the async capture no longer holds the export pixel ratio across its
+   * drain (see {@link captureSurfaceFrame}); the CALLER establishes the
+   * centered projection around this call, since
+   * {@link setSurfaceFrameUniforms} snapshots the camera into uniforms and
+   * nothing after it reads the camera again.
+   *
+   * Throws {@link SurfaceCaptureCostError} on the predict ceiling —
+   * deliberately BEFORE any live job is disturbed, so a refused export
+   * leaves the pane exactly as it was.
+   */
+  private beginSurfaceFullFrame(
+    width: number,
+    height: number,
+    opts?: { liftCostCeilings?: boolean },
+  ): SurfaceStripJob {
     if (!opts?.liftCostCeilings) {
-      const predictedMs = this.predictSurfaceFullCostMs(totalPx);
+      const predictedMs = this.predictSurfaceFullCostMs(width * height);
       if (
         predictedMs !== null &&
         predictedMs > SURFACE_CAPTURE_PREDICT_CEILING_MS
@@ -3506,26 +3552,35 @@ export class FractalScene {
     this.abandonSurfaceSettle();
     this.abandonSurfacePreview();
     this.flushStripBacklog();
-    sizeTarget(this.surfaceSettleTarget, size.x, size.y);
-    this.setSurfaceFrameUniforms("full", size.y, size.y);
+    sizeTarget(this.surfaceSettleTarget, width, height);
+    this.setSurfaceFrameUniforms("full", height, height);
     // The job stays LOCAL: {@link surfaceStripJob} is the ASYNC settle's
-    // slot, and a synchronous drain that parked its job there would only
-    // invite an abandon path to half-release it mid-call.
-    const job = this.newStripJob(
-      createStripPlanner(size.y, size.x, {
+    // slot, and a drain that parked its job there would only invite an
+    // abandon path to half-release it mid-call.
+    return this.newStripJob(
+      createStripPlanner(height, width, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
       }),
       this.surfaceStripPriorMsPerPx(),
       SURFACE_SETTLE_PRESENT_MS,
     );
-    const completed = this.drainStripsSync(
-      job,
-      this.surfaceSettleTarget,
-      opts?.liftCostCeilings
-        ? SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS
-        : SURFACE_CAPTURE_SPEND_CEILING_MS,
-    );
+  }
+
+  /**
+   * Retire a full-tier job and record what it taught. Throws
+   * {@link SurfaceCaptureCostError} when the drain gave up on the spend
+   * ceiling — the caller surfaces the refusal. The shared tail of
+   * {@link renderSurface} and {@link captureSurfaceFrame}; note that a
+   * CANCELLED capture must not come through here at all (it retires its
+   * job but teaches nothing, since a partial frame's per-pixel cost would
+   * understate the whole).
+   */
+  private finishSurfaceFullFrame(
+    job: SurfaceStripJob,
+    totalPx: number,
+    completed: boolean,
+  ): void {
     // Capture-mode retirement: an export-scale drain's observation (its
     // per-strip join tax included) may TIGHTEN the live evidence but
     // never own it — the pose did not move, so the completed live
@@ -3539,7 +3594,6 @@ export class FractalScene {
       );
     }
     this.surfaceFullPxCostMs = job.spentMs / Math.max(1, totalPx);
-    this.blitSurface(this.surfaceSettleTarget.texture, null);
   }
 
   /**
@@ -4553,37 +4607,107 @@ export class FractalScene {
     spendCeilingMs: number = SURFACE_CAPTURE_SPEND_CEILING_MS,
   ): boolean {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    let lastMs: number | null =
-      job.measured && job.msPerPxEstimate !== null && job.lastSubmittedPx > 0
-        ? job.msPerPxEstimate * job.lastSubmittedPx
-        : null;
-    let strip = job.planner.next(lastMs);
-    while (strip) {
-      this.renderStripRects(target, strip.rects);
-      const t0 = performance.now();
-      this.readStripCorner(gl, strip);
-      lastMs = performance.now() - t0;
-      job.spentMs += lastMs;
-      job.lastSubmittedPx = strip.px;
-      job.msPerPxEstimate = lastMs / Math.max(1, strip.px);
-      // Measurement-time report (fr-id9r): the final strip's measurement
-      // never reaches next() — and on capture frames the final strips
-      // are the frame's bottom rows, fold monsters' favorite home.
-      job.planner.observe(lastMs, strip.px);
-      job.measured = true;
-      if (SURFPERF && lastMs > SURFPERF_HEAVY_STRIP_MS) {
-        console.log(
-          `[surfperf] heavy strip px=${strip.px} ms=${lastMs.toFixed(0)}`,
-        );
-      }
+    let lastMs = seedStripMeasurement(job);
+    for (;;) {
+      lastMs = this.stepCaptureStrip(job, target, gl, lastMs);
+      if (lastMs === null) break;
       if (job.spentMs > spendCeilingMs) {
         this.resetScissor(target);
         return false;
       }
-      strip = job.planner.next(lastMs);
     }
     this.resetScissor(target);
     return true;
+  }
+
+  /**
+   * {@link drainStripsSync}, yielding (fr-7mfx). Same serial strips, same
+   * forced-completion joins, same spend backstop — but every
+   * {@link SURFACE_CAPTURE_YIELD_MS} of wall it hands the main thread back,
+   * so the export modal can paint its coverage and its Cancel button can
+   * actually be clicked. Without this the modal would open on an already
+   * frozen tab and read as a hang: worse than no modal at all.
+   *
+   * The yield is safe precisely here. The drain fences nothing (its joins
+   * are readbacks, so no `WebGLSync` is ever outstanding), the strip's
+   * measurement is already folded into the job and the planner, and the
+   * scissor state is unwound before each hand-back and re-established by
+   * the next {@link renderStripRects}. What it does NOT survive is another
+   * writer: the caller must fence the live tier off for the duration
+   * ({@link surfaceCaptureBusy}), or a preview tick would clobber the
+   * frozen full-tier uniforms and a settle would re-size the target being
+   * drained.
+   *
+   * Responsiveness is bounded BELOW by one strip — the planner caps a
+   * strip at `STRIP_WORST_CASE_CAP_MS` of predicted cost, and on a monster
+   * fold pose single crease pixels have measured 1.7-3.1s — so a yield
+   * budget under one strip's cost simply yields after every strip, which
+   * is the honest floor rather than a knob worth tuning.
+   */
+  private async drainStripsAsync(
+    job: SurfaceStripJob,
+    target: THREE.WebGLRenderTarget,
+    spendCeilingMs: number,
+    hooks: {
+      onProgress?: (fraction: number) => void;
+      cancelled?: () => boolean;
+    },
+  ): Promise<SurfaceDrainOutcome> {
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    let lastMs = seedStripMeasurement(job);
+    let sliceStart = performance.now();
+    for (;;) {
+      lastMs = this.stepCaptureStrip(job, target, gl, lastMs);
+      if (lastMs === null) break;
+      if (job.spentMs > spendCeilingMs) {
+        this.resetScissor(target);
+        return "ceiling";
+      }
+      if (performance.now() - sliceStart < SURFACE_CAPTURE_YIELD_MS) continue;
+      this.resetScissor(target);
+      hooks.onProgress?.(
+        job.planner.plannedPx / Math.max(1, job.planner.totalPx),
+      );
+      await yieldToEventLoop();
+      if (hooks.cancelled?.() === true) return "cancelled";
+      sliceStart = performance.now();
+    }
+    this.resetScissor(target);
+    return "done";
+  }
+
+  /**
+   * One capture-drain strip: render its rects, join them with a
+   * forced-completion readback, and fold the measured wall into the job
+   * and the planner. Returns that wall, or null once the planner is out of
+   * strips. The ONE body {@link drainStripsSync} and
+   * {@link drainStripsAsync} share, so the sync and yielding drains cannot
+   * drift in what they measure or what they teach.
+   */
+  private stepCaptureStrip(
+    job: SurfaceStripJob,
+    target: THREE.WebGLRenderTarget,
+    gl: WebGL2RenderingContext,
+    lastMs: number | null,
+  ): number | null {
+    const strip = job.planner.next(lastMs);
+    if (!strip) return null;
+    this.renderStripRects(target, strip.rects);
+    const t0 = performance.now();
+    this.readStripCorner(gl, strip);
+    const ms = performance.now() - t0;
+    job.spentMs += ms;
+    job.lastSubmittedPx = strip.px;
+    job.msPerPxEstimate = ms / Math.max(1, strip.px);
+    // Measurement-time report (fr-id9r): the final strip's measurement
+    // never reaches next() — and on capture frames the final strips
+    // are the frame's bottom rows, fold monsters' favorite home.
+    job.planner.observe(ms, strip.px);
+    job.measured = true;
+    if (SURFPERF && ms > SURFPERF_HEAVY_STRIP_MS) {
+      console.log(`[surfperf] heavy strip px=${strip.px} ms=${ms.toFixed(0)}`);
+    }
+    return ms;
   }
 
   /** Render one strip's 1-3 scissor rects (fr-096u: sub-row strips are
@@ -4695,29 +4819,129 @@ export class FractalScene {
   }
 
   /**
-   * Save-PNG source while the surface render is active: render synchronously
-   * right before the read so the drawing buffer is intact, exactly like
-   * {@link captureSolidFrame} — one bigger frame is just more rays (and
-   * {@link renderSurface}'s per-call pixel epsilon means the export traces
-   * at export resolution, not the screen's). Rejects with
+   * Save-PNG source while the surface render is active: trace the frame at
+   * export resolution into the settle target, then present and read it back
+   * in ONE synchronous span at the export pixel ratio — the same two-phase
+   * shape as {@link captureSurfaceComputeFrame}, and for the same reason:
+   * the paint and the `toBlob` snapshot must share a task (the renderer
+   * runs without `preserveDrawingBuffer`), but the TRACE must not, because
+   * it can run for minutes.
+   *
+   * That split is fr-7mfx's prerequisite. The drain used to run inside the
+   * ratio/projection wrappers with no yield, freezing the tab for its whole
+   * duration; now it hands the main thread back every
+   * {@link SURFACE_CAPTURE_YIELD_MS} so the export modal can disclose
+   * coverage and offer a working Cancel. Two consequences follow. The
+   * export pixel ratio is NOT held across the trace — the size is derived
+   * arithmetically instead (three.js floors a buffer out of a ratio the
+   * same way), so the live canvas keeps its own buffer and nothing giant
+   * ever reaches the screen mid-drain. And the centered projection
+   * (fr-936q) wraps only the arming call, because
+   * {@link setSurfaceFrameUniforms} snapshots the camera into uniforms and
+   * the drain never reads it again.
+   *
+   * `opts.onProgress` reports traced coverage in [0, 1]; `opts.cancelled`
+   * is polled at every yield and resolves the capture `null` — the caller
+   * knows it asked, so it owns the difference between "cancelled" and "the
+   * browser refused the encode". Rejects with
    * {@link SurfaceCaptureCostError} when the frame's cost ceilings refuse
-   * the trace (fr-id9r) — `async` so the refusal is a rejection, not a
-   * sync throw, and the ratio/projection wrappers' finally blocks have
-   * already restored the live state by the time the caller hears it.
-   * `opts.liftCostCeilings` is save-PNG's consented retry (fr-24to):
-   * only the interactive save path passes it — offline export and
-   * thumbnails keep the default ceilings.
+   * the trace (fr-id9r); `opts.liftCostCeilings` is save-PNG's consented
+   * retry (fr-24to), passed only by the interactive save path — offline
+   * export and thumbnails keep the default ceilings and the sync drain.
    */
   async captureSurfaceFrame(
     exportScale = 1,
-    opts?: { liftCostCeilings?: boolean },
+    opts?: {
+      liftCostCeilings?: boolean;
+      onProgress?: (fraction: number) => void;
+      cancelled?: () => boolean;
+    },
   ): Promise<ExportImage | null> {
-    return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
-      this.withCenteredProjection(() => {
-        this.renderSurface("full", opts);
-        return exportImageFrom(this.renderer.domElement);
-      }),
+    // A compute session never compiled the fold GLSL (fr-tzdg). main.ts
+    // routes captures to captureSurfaceComputeFrame before this can
+    // matter; refusing keeps an accidental caller from paying the ~25s
+    // Mesa link the mode exists to avoid.
+    if (this.surfaceComputeActive) return null;
+    const ratio = this.exportPixelRatio(exportScale);
+    const width = Math.floor(this.viewportWidth * ratio);
+    const height = Math.floor(this.viewportHeight * ratio);
+    const job = this.withCenteredProjection(() =>
+      this.beginSurfaceFullFrame(width, height, opts),
     );
+    this.surfaceCaptureFlight = true;
+    let outcome: SurfaceDrainOutcome;
+    try {
+      outcome = await this.drainStripsAsync(
+        job,
+        this.surfaceSettleTarget,
+        surfaceCaptureSpendCeilingMs(opts),
+        opts ?? {},
+      );
+    } finally {
+      this.surfaceCaptureFlight = false;
+    }
+    if (outcome === "cancelled") {
+      // Retire but teach nothing: a partial frame's per-pixel cost
+      // understates the whole, and retireStripJob's partial-job path only
+      // ever RAISES the strip price floor, which stays honest.
+      this.retireStripJob(job, "capture");
+      return null;
+    }
+    this.finishSurfaceFullFrame(job, width * height, outcome === "done");
+    // A viewport resize during the drain leaves the traced target and the
+    // canvas the blit lands on at different sizes — the export would be a
+    // scaled, half-stale frame. Rare (the modal's scrim covers the app,
+    // but not the window chrome), so refuse rather than ship a torn image.
+    if (
+      Math.floor(this.viewportWidth * ratio) !== width ||
+      Math.floor(this.viewportHeight * ratio) !== height
+    ) {
+      return null;
+    }
+    return this.withPixelRatio(ratio, () => {
+      this.blitSurface(this.surfaceSettleTarget.texture, null);
+      return exportImageFrom(this.renderer.domElement);
+    });
+  }
+
+  /**
+   * The pixel dimensions a still export at `exportScale` will produce —
+   * what the export progress modal names so the user can see what they
+   * asked for (fr-7mfx). Matches the arithmetic three.js applies when it
+   * derives a drawing buffer from a pixel ratio.
+   */
+  exportSize(exportScale = 1): { width: number; height: number } {
+    const ratio = this.exportPixelRatio(exportScale);
+    return {
+      width: Math.floor(this.viewportWidth * ratio),
+      height: Math.floor(this.viewportHeight * ratio),
+    };
+  }
+
+  /**
+   * Measured evidence for what a surface capture at `exportScale` would
+   * cost, or null when nothing survives to predict from (fr-7mfx). The
+   * export modal uses it for ONE decision — whether to skip the grace
+   * period and show at once — and deliberately never displays it: the same
+   * number over-predicts by ~4x off preview evidence (see
+   * {@link predictSurfaceFullCostMs}), which is exactly the patience-
+   * guessing fr-zx34 reverted. Coverage and elapsed are measured; a
+   * predicted total would not be.
+   */
+  predictSurfaceCaptureMs(exportScale = 1): number | null {
+    const { width, height } = this.exportSize(exportScale);
+    return this.predictSurfaceFullCostMs(width * height);
+  }
+
+  /**
+   * Whether an async capture drain (fr-7mfx) currently owns the surface
+   * tracer. It yields to the event loop, so the rAF loop runs DURING a
+   * capture — main.ts's surface tick stands aside on this, which is what
+   * keeps a preview from clobbering the frozen full-tier uniforms and a
+   * settle from re-sizing the target being drained.
+   */
+  get surfaceCaptureBusy(): boolean {
+    return this.surfaceCaptureFlight;
   }
 
   /** Park the depth-of-field focal plane on the centre of the cloud. */
@@ -4844,7 +5068,7 @@ const SURFACE_STRIP_QUEUE_WORST_MS = STRIP_WORST_CASE_CAP_MS;
  * floor-rung preview overpredicting the real grind 4x), so this only
  * catches the minutes-to-HOURS class that the spend ceiling below
  * would otherwise burn a real minute of frozen tab discovering. */
-const SURFACE_CAPTURE_PREDICT_CEILING_MS = 120_000;
+export const SURFACE_CAPTURE_PREDICT_CEILING_MS = 120_000;
 /** Measured-spend ceiling (ms) at which an in-progress full-tier sync
  * drain gives up (fr-id9r) — the backstop for poses with no (or
  * pose-stale) evidence: an offline export's fresh keyframe pose runs
@@ -4862,6 +5086,54 @@ const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
  * escalation level: the opt-in retry that trips THIS ceiling refuses
  * for good. */
 const SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS = 300_000;
+
+/** How much wall the yielding capture drain (fr-7mfx) may spend before
+ * handing the main thread back. Sized as a frame rather than tuned: the
+ * export modal gets a paint opportunity every rung, and on cheap frames
+ * (where strips are sub-millisecond) the ~40 hand-backs per second cost
+ * nothing measurable. On expensive frames a single strip already outruns
+ * it, so the drain degrades to yielding after every strip — one strip is
+ * the real floor on responsiveness, and no smaller budget can beat it. */
+const SURFACE_CAPTURE_YIELD_MS = 24;
+
+/** How a capture drain ended (fr-7mfx). "ceiling" is fr-id9r's spend
+ * backstop — a refusal the caller reports; "cancelled" is the user's own
+ * choice, which is not an error at all. */
+type SurfaceDrainOutcome = "done" | "ceiling" | "cancelled";
+
+/** The drain's spend backstop for this frame: save-PNG's consented retry
+ * (fr-24to) raises it, everything else keeps the default. */
+function surfaceCaptureSpendCeilingMs(opts?: {
+  liftCostCeilings?: boolean;
+}): number {
+  return opts?.liftCostCeilings
+    ? SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS
+    : SURFACE_CAPTURE_SPEND_CEILING_MS;
+}
+
+/** The `prevMs` a drain's FIRST {@link StripPlanner.next} gets: a job that
+ * already carries a measurement (an adopted/re-armed one) sizes its first
+ * strip from it instead of paying the probe again. */
+function seedStripMeasurement(job: SurfaceStripJob): number | null {
+  return job.measured && job.msPerPxEstimate !== null && job.lastSubmittedPx > 0
+    ? job.msPerPxEstimate * job.lastSubmittedPx
+    : null;
+}
+
+/** Hand the main thread back for one macrotask. A `MessageChannel` rather
+ * than `setTimeout(0)`: no 4ms clamp, no background-tab throttling, and
+ * the browser gets a genuine rendering opportunity between turns — the
+ * same primitive main.ts's offline-export driver yields with. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (): void => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
 
 /** Thrown by {@link FractalScene.renderSurface}'s full tier when a
  * frame's predicted or measured cost crosses the export ceilings
