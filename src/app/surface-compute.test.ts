@@ -12,6 +12,7 @@ import {
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+  SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeProgressDone,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
@@ -140,8 +141,22 @@ describe("nextShadeBatchSize", () => {
     expect(
       nextShadeBatchSize(256, SURFACE_COMPUTE_PASS_TARGET_MS * 2 + 1),
     ).toBe(64);
-    expect(nextShadeBatchSize(2, 10_000)).toBe(1);
-    expect(nextShadeBatchSize(1, 10_000)).toBe(1);
+  });
+
+  it("quarters down to the one-workgroup floor, never below (fr-d6g5)", () => {
+    // Quartering from just above the floor lands exactly on it...
+    expect(nextShadeBatchSize(256, 10_000)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
+    // ...and quartering FROM the floor holds there rather than dropping
+    // below it: a sub-workgroup batch buys no submission-wall safety (GPU
+    // cost inside one workgroup is depth-, not width-dominated), so
+    // shrinking further would only multiply worst-ray-cost submissions —
+    // the fr-d6g5 park was exactly this floor missing, quartering all the
+    // way to 1-ray batches.
+    expect(nextShadeBatchSize(SURFACE_COMPUTE_WORKGROUP_SIZE, 10_000)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
   });
 
   it("caps at the batch ceiling", () => {
@@ -153,8 +168,9 @@ describe("nextShadeBatchSize", () => {
 
 describe("shadeHitBatchSize", () => {
   it("sizes the first batch from the pessimistic prior, clamped by the starting capacity", () => {
-    // Prior 20ms/hit predicts 12 hits fit the 250ms target; the slow-trust
-    // cap of 8 wins until measurements earn more.
+    // Prior 20ms/hit predicts 12 hits fit the 250ms target; the
+    // one-workgroup starting capacity (fr-d6g5) wins until measurements
+    // earn more.
     expect(
       shadeHitBatchSize(
         SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
@@ -163,12 +179,31 @@ describe("shadeHitBatchSize", () => {
     ).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
   });
 
-  it("shrinks to a single hit when the measured cost approaches the pass target — the near-surface grind regime", () => {
-    // ~108ms/hit (full-width probes at the fr-p8bc near pose on Iris):
-    // two hits fit the 250ms target, never a watchdog-scale batch.
-    expect(shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(2);
-    // At or past the target per hit, one hit is the irreducible unit.
-    expect(shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(1);
+  it("shrinks toward the one-workgroup floor as measured cost approaches the pass target — the near-surface grind regime", () => {
+    // ~108ms/hit (full-width probes at the fr-p8bc near pose on Iris)
+    // predicts 2 hits by cost alone, but the workgroup floor wins: a
+    // sub-workgroup batch can't shrink submission wall any further (GPU
+    // cost inside one workgroup is depth-, not width-dominated).
+    expect(shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
+  });
+
+  it("never collapses below one workgroup when the linear model breaks down (fr-d6g5)", () => {
+    // At/past the pass-target cost per hit, the old code floored at a
+    // single hit — but a 1-ray batch measures the FULL per-submission
+    // wall as its per-hit cost, so the spike-lift EMA latches onto that
+    // inflated reading and pins byCost at 0 forever (the fr-d6g5 park:
+    // ~4.4 hits/s on the real driver). The floor is one workgroup instead.
+    expect(shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
+  });
+
+  it("the workgroup floor wins over a sub-workgroup cap", () => {
+    // A cap below one workgroup can't reduce submission wall either, so
+    // the floor overrides it.
+    expect(shadeHitBatchSize(400_000, 8)).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 
   it("lets cheap measured costs fill the earned capacity, no further", () => {
