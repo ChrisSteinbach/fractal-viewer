@@ -461,7 +461,7 @@ import type { Vec3 } from "./types";
  * `_HIT` / `_MISS` / `_EXHAUSTED`.
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
- * SURFACE_GPU_SHADE_BYTES} = 128 bytes, WGSL `struct ShadeParams`:
+ * SURFACE_GPU_SHADE_BYTES} = 144 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -469,6 +469,10 @@ import type { Vec3 } from "./types";
  *          96  vec3f bgBottom         108  f32 tracePixelEps
  *         112  u32  colorSource       116  u32 shadowSteps
  *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
+ *         128  vec3f fogTint          140  f32 fogTintStrength
+ * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
+ * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
+ * identity (fog blends toward bg alone), and misses never read it.
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -540,7 +544,7 @@ export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 export const SURFACE_GPU_MAP4_VEC4 = 8;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). */
-export const SURFACE_GPU_SHADE_BYTES = 128;
+export const SURFACE_GPU_SHADE_BYTES = 144;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
@@ -1287,6 +1291,16 @@ export interface SurfaceGpuShadeParams {
   shadowSteps: number; // uShadowSteps (per tier)
   aoTaps: number; // uAoTaps (per tier)
   dither: boolean; // march-start hash dither (off for bench agreement)
+  /** Fog tint color (fr-5h5d), packed at offset 128 (module doc): what
+   * the shade entry's fog blends toward is mix(bg, fogTint,
+   * fogTintStrength). Default [1, 1, 1] when omitted, matching the GLSL
+   * tracers' uFogTint default; inert while fogTintStrength is 0. */
+  fogTint?: Vec3;
+  /** Fog tint strength (fr-5h5d), packed at offset 140 (module doc).
+   * Default 0 — the identity, fog toward the pixel's own backdrop color
+   * alone — when omitted, matching the GLSL tracers' uFogTintStrength
+   * default; misses never read it. */
+  fogTintStrength?: number;
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -1307,6 +1321,8 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setUint32(116, shade.shadowSteps, true);
   view.setUint32(120, shade.aoTaps, true);
   view.setUint32(124, shade.dither ? 1 : 0, true);
+  writeVec3(view, 128, shade.fogTint ?? [1, 1, 1]);
+  view.setFloat32(140, shade.fogTintStrength ?? 0, true);
   return buf;
 }
 
@@ -1487,6 +1503,8 @@ struct ShadeParams {
   shadowSteps: u32,
   aoTaps: u32,
   flags: u32,
+  fogTint: vec3f,
+  fogTintStrength: f32,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -3562,9 +3580,10 @@ ${shadeGate}
   // Depth fog toward the backdrop: squared-exponential in the distance
   // traveled inside the bounding sphere. params.fogDensity (fr-5h5d)
   // scales the traveled distance, mirroring the GLSL tracers' uFogDensity
-  // line for line.
+  // line for line. shade.fogTint/fogTintStrength (fr-5h5d) retarget the
+  // blend to mix(bg, fogTint, strength) — strength 0 is the identity.
   let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
-  col = mix(col, bg, clamp(fog, 0.0, 1.0));
+  col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
 }`;
 

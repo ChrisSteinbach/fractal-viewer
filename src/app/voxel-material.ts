@@ -58,6 +58,13 @@ const VOXEL_FRAGMENT = /* glsl */ `
    * mirroring the surface tracers' uFogDensity — 1 is the neutral default,
    * 0 disables depth fog. */
   uniform float uFogDensity;
+  /** Fog tint (fr-5h5d): what the depth fog blends toward is
+   * mix(background, uFogTint, uFogTintStrength), mirroring the surface
+   * tracers' uFogTint — strength 0 (the default) is a bit-exact
+   * identity, the pre-tint fog toward the pixel's own backdrop color.
+   * scene.setFogTint keeps both current. */
+  uniform vec3 uFogTint;
+  uniform float uFogTintStrength;
 
   in vec2 vUv;
   out vec4 outColor;
@@ -214,7 +221,7 @@ const VOXEL_FRAGMENT = /* glsl */ `
     float fogR = 0.5 * length(uBoundsSize);
     float fog = 1.0 -
       exp(-0.12 * pow((hi - max(tRange.x, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
-    col = mix(col, background, clamp(fog, 0.0, 1.0));
+    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
     outColor = vec4(col, 1.0);
   }
@@ -294,6 +301,8 @@ export function createVoxelMaterial(
       // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
       uMarchSteps: { value: 220 },
       uFogDensity: { value: 1 }, // fr-5h5d; scene.setFogDensity keeps it current.
+      uFogTint: { value: new THREE.Vector3(1, 1, 1) },
+      uFogTintStrength: { value: 0 }, // fr-5h5d; scene.setFogTint keeps both current.
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,

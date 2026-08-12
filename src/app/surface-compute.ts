@@ -225,6 +225,17 @@ export interface SurfaceComputeFrameSpec {
    * interface. Defaults to 1 (the pre-fr-5h5d fixed fog) when omitted,
    * matching {@link SurfaceGpuRunParams.fogDensity}'s own default. */
   fogDensity?: number;
+  /** Fog tint color (fr-5h5d) — the ShadeParams tail (module doc in
+   * `fractal/surface-de-gpu.ts`): the shade kernel's fog blends toward
+   * mix(bg, fogTint, fogTintStrength); re-read from scene state at every
+   * spec assembly like fogDensity. Defaults to [1, 1, 1] when omitted,
+   * matching {@link packSurfaceGpuShade}'s own default. */
+  fogTint?: Vec3;
+  /** Fog tint strength (fr-5h5d), 0..1 — 0 (the default when omitted,
+   * matching {@link packSurfaceGpuShade}) is the identity: fog toward
+   * the pixel's own backdrop color alone; misses keep the pure untinted
+   * backdrop either way. */
+  fogTintStrength?: number;
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -1149,6 +1160,8 @@ export class SurfaceComputeRenderer {
         shadowSteps: spec.shadowSteps,
         aoTaps: spec.aoTaps,
         dither: spec.dither,
+        fogTint: spec.fogTint,
+        fogTintStrength: spec.fogTintStrength,
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still

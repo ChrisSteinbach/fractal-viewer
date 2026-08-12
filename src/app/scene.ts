@@ -591,6 +591,13 @@ export class FractalScene {
   // every snapshot load regardless, so this default only matters for the
   // instant before that first push.
   private fogDensity = 1;
+  // Fog tint (fr-5h5d): rgb01 color + 0..1 strength shifting what depth
+  // fog blends toward, applied AFTER the fr-1lj midpoint derivation
+  // (applyFogColor) and pushed to the three fog-bearing materials — see
+  // setFogTint. Mirrors state.ts's defaults as plain literals exactly
+  // like fogDensity above; strength 0 is the untinted identity.
+  private fogTint: [number, number, number] = [1, 1, 1];
+  private fogTintStrength = 0;
   private guideCubes: THREE.Object3D[] = [];
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
@@ -1718,7 +1725,7 @@ export class FractalScene {
       paintBackdropGradient(this.backdropCtx, 4, 256, stops);
       this.backdropTexture.needsUpdate = true;
     }
-    this.fog.color.copy(backdropMidpoint(stops));
+    this.applyFogColor();
     for (const material of [
       this.surfaceMaterial,
       this.surfaceMaterial4,
@@ -2055,6 +2062,59 @@ export class FractalScene {
     }
     this.updateFog();
     this.syncBalloonEchoUniforms();
+  }
+
+  /**
+   * Set the fog tint (fr-5h5d) — `tint` an rgb01 tuple, `strength` its
+   * 0..1 blend weight; see state.ts's `AppState` fields for what they
+   * mean. Pushes `uFogTint`/`uFogTintStrength` to both surface tracers
+   * and the solid render's voxel raymarcher (the {@link setSurfaceParams}
+   * push-to-both pattern, exactly like {@link setFogDensity}), then
+   * re-derives the points explorer's fog color ({@link applyFogColor}) —
+   * the tint applies AFTER the fr-1lj midpoint derivation, so changing
+   * background keeps the atmosphere setting meaningful. Strength 0 (the
+   * default) is the bit-exact identity in every renderer; the WebGPU
+   * compute path reads the stored pair at spec assembly instead.
+   */
+  setFogTint(tint: [number, number, number], strength: number): void {
+    if (
+      this.fogTintStrength === strength &&
+      this.fogTint[0] === tint[0] &&
+      this.fogTint[1] === tint[1] &&
+      this.fogTint[2] === tint[2]
+    ) {
+      return;
+    }
+    this.fogTint = [tint[0], tint[1], tint[2]];
+    this.fogTintStrength = strength;
+    this.renderNeeded = true;
+    for (const material of [
+      this.surfaceMaterial,
+      this.surfaceMaterial4,
+      this.voxelMaterial,
+    ]) {
+      const u = material.uniforms;
+      (u.uFogTint.value as THREE.Vector3).set(...tint);
+      u.uFogTintStrength.value = strength;
+    }
+    this.applyFogColor();
+  }
+
+  /**
+   * Re-derive the points explorer's fog color: the backdrop midpoint
+   * (fr-1lj — fogged points veil toward what's actually behind them),
+   * then the fog tint lerped on top (fr-5h5d) — the tint applies AFTER
+   * the midpoint derivation, so changing background keeps the atmosphere
+   * setting meaningful. Strength 0 leaves the midpoint untouched.
+   */
+  private applyFogColor(): void {
+    this.fog.color.copy(backdropMidpoint(this.backdrop));
+    if (this.fogTintStrength > 0) {
+      this.fog.color.lerp(
+        FOG_TINT_COLOR.setRGB(...this.fogTint),
+        this.fogTintStrength,
+      );
+    }
   }
 
   /**
@@ -3078,6 +3138,11 @@ export class FractalScene {
       // Fog slider drag tracks the compute path the same frame the GLSL
       // uniform does.
       fogDensity: this.fogDensity,
+      // The live fog tint (fr-5h5d) — re-read at every spec assembly
+      // exactly like fogDensity above; strength 0 keeps the shade
+      // kernel's fog toward the pixel's own backdrop alone.
+      fogTint: [this.fogTint[0], this.fogTint[1], this.fogTint[2]],
+      fogTintStrength: this.fogTintStrength,
       // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a
@@ -4530,6 +4595,8 @@ export class FractalScene {
 
 const ZERO = new THREE.Vector3();
 const NO_SHEAR: Vec3 = [0, 0, 0];
+/** Scratch for `applyFogColor`'s tint lerp (fr-5h5d). */
+const FOG_TINT_COLOR = new THREE.Color();
 /** Scratch for `renderSurface`'s per-call drawing-buffer query. */
 const DRAW_SIZE = new THREE.Vector2();
 /** Predicted in-flight GPU work (ms) the pipelined strip pump keeps
