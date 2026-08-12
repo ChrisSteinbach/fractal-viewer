@@ -181,6 +181,12 @@ export interface UiHandlers {
   /** "⏺ Export clip" was clicked: play the timeline while recording the
    * canvas to a downloadable video clip (fr-8v41). */
   onTimelineExport: () => void;
+  /** The export progress modal's Cancel button was clicked, or Escape was
+   * pressed while it was open and cancellable (fr-7mfx): abort the
+   * in-flight capture. Both routes land here rather than a bare
+   * hideExportProgress() — the modal has no ✕ or backdrop close, since an
+   * accidental dismissal must not silently abandon a multi-minute export. */
+  onExportCancel: () => void;
   /** "⬇ Back up timeline" was clicked (fr-h9rk): download the authored
    * timeline — keyframe steps + the playback determinism seed — as a JSON
    * backup file, the timeline counterpart of {@link onExportCollection}. */
@@ -813,6 +819,10 @@ export class Ui {
   private readonly driftTitle: string;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
+  /** "⤓ Save PNG"'s authored title, restored once a capture finishes — the
+   * disabled-while-busy state swaps in a why-explaining one (fr-7mfx), the
+   * same self-explaining pattern as {@link exportCollectionTitle}. */
+  private readonly savePngTitle: string;
   private readonly recordVideoBtn: HTMLButtonElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
   private readonly saveFlameFileBtn: HTMLButtonElement;
@@ -907,6 +917,24 @@ export class Ui {
   private readonly aboutWatchBtn: HTMLButtonElement;
   private readonly watchBuildBtn: HTMLButtonElement;
   private readonly replayCaption: HTMLElement;
+
+  // Export progress modal (fr-7mfx): a BLOCKING modal shown for the
+  // duration of a Save PNG capture, reusing the gallery modal's chrome.
+  // Unlike the three modals above, closing it is not a pure view concern —
+  // Cancel has to abort real GPU work — so it has no bare close*() method;
+  // see showExportProgress/setExportProgress/hideExportProgress below.
+  private readonly exportModal: HTMLElement;
+  private readonly exportTitle: HTMLElement;
+  private readonly exportDetail: HTMLElement;
+  private readonly exportProgress: HTMLElement;
+  private readonly exportCancelBtn: HTMLButtonElement;
+  /** Whether the in-flight capture can be cancelled — mirrored from the last
+   * {@link showExportProgress} call, since {@link onExportKeydown} and
+   * {@link hideExportProgress}'s focus restore both need it after the fact. */
+  private exportCancellable = false;
+  /** The element focused just before {@link showExportProgress} opened the
+   * modal, restored by {@link hideExportProgress}. */
+  private exportPreviousFocus: HTMLElement | null = null;
 
   private readonly glowBrightnessRow: HTMLElement;
   // The balloon echo's rows (fr-5wlv.2) — the checkbox row hides while the
@@ -1180,6 +1208,24 @@ export class Ui {
     if (e.key === "Escape") this.closeMutations();
   };
 
+  /** Escape-and-Tab handling for the export modal (fr-7mfx), attached only
+   * while it is open — same discipline as {@link onGalleryKeydown}. Escape
+   * routes to the app's cancel (real GPU work must stop), and Tab is pinned
+   * to the Cancel button: a one-button blocking dialog must not let focus
+   * wander into the page it is blocking. Both are inert when the run is not
+   * cancellable. */
+  private readonly onExportKeydown = (e: KeyboardEvent): void => {
+    if (!this.exportCancellable) return;
+    if (e.key === "Escape") {
+      this.handlers?.onExportCancel();
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      this.exportCancelBtn.focus();
+    }
+  };
+
   constructor(doc: Document = document) {
     this.doc = doc;
     this.helpTitle = this.byId("helpTitle");
@@ -1208,6 +1254,7 @@ export class Ui {
     this.driftTitle = this.driftBtn.title;
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
+    this.savePngTitle = this.savePngBtn.title;
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
     this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
@@ -1258,6 +1305,11 @@ export class Ui {
     this.aboutWatchBtn = this.byId("aboutWatchBtn");
     this.watchBuildBtn = this.byId("watchBuildBtn");
     this.replayCaption = this.byId("replayCaption");
+    this.exportModal = this.byId("exportModal");
+    this.exportTitle = this.byId("exportTitle");
+    this.exportDetail = this.byId("exportDetail");
+    this.exportProgress = this.byId("exportProgress");
+    this.exportCancelBtn = this.byId("exportCancelBtn");
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.balloonEchoRow = this.byId("balloonEchoRow");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
@@ -1588,6 +1640,16 @@ export class Ui {
     // and the Appearance panel's — both fire the one handler.
     this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
     this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
+    // The export progress modal (fr-7mfx) deliberately does NOT mirror the
+    // ✕/backdrop/Escape trio above: index.html wires no ✕ and leaves the
+    // backdrop unbound (an accidental dismissal must not silently abandon a
+    // multi-minute export), and Cancel is not a pure view concern like
+    // closeGallery/closeAbout/closeMutations — it has to abort real GPU
+    // work, so the click (and onExportKeydown's Escape) route through the
+    // app via onExportCancel instead of a bare hideExportProgress() call.
+    this.exportCancelBtn.addEventListener("click", () =>
+      handlers.onExportCancel(),
+    );
     // The balloon echo's "Inflate" replay (fr-5wlv.2) — a bespoke button
     // like watchBuildBtn above, not a table-driven scalar control. The
     // surface balloon's own Inflate button (fr-5wlv.6) fires the exact
@@ -2451,6 +2513,79 @@ export class Ui {
    * builder checks this each step so closing the modal ends the build. */
   mutationsOpen(): boolean {
     return !this.mutationModal.classList.contains("hidden");
+  }
+
+  /** Show the blocking export modal (fr-7mfx): a Save PNG capture is
+   * starting and may run for minutes on a surface render with no other
+   * feedback otherwise on screen. `cancellable: false` states honestly that
+   * the work cannot be interrupted — a single GPU submission cannot be
+   * stopped mid-draw — and HIDES the Cancel button rather than offering a
+   * dead one. Arms Escape/Tab handling, remembers the currently focused
+   * element to restore on {@link hideExportProgress}, and resets the
+   * readout to 0% so a new run never opens showing the previous run's
+   * number. */
+  showExportProgress(init: {
+    title: string;
+    detail: string;
+    cancellable: boolean;
+  }): void {
+    this.exportTitle.textContent = init.title;
+    this.exportDetail.textContent = init.detail;
+    this.exportCancellable = init.cancellable;
+    this.exportCancelBtn.classList.toggle("hidden", !init.cancellable);
+    this.exportProgress.classList.remove("flame-progress-estimating");
+    this.exportProgress.textContent = "0%";
+    this.exportProgress.style.setProperty("--progress", "0%");
+    this.exportModal.classList.remove("hidden");
+    this.doc.addEventListener("keydown", this.onExportKeydown);
+    this.exportPreviousFocus =
+      this.doc.activeElement instanceof HTMLElement
+        ? this.doc.activeElement
+        : null;
+    if (init.cancellable) this.exportCancelBtn.focus();
+  }
+
+  /** Update the readout. `pct: null` is the honest indeterminate state: the
+   * bar drops to 0 and the row takes the `.flame-progress-estimating` pulse
+   * (the codebase's one busy affordance), showing `note` alone. */
+  setExportProgress(status: { pct: number | null; note: string }): void {
+    if (status.pct === null) {
+      this.exportProgress.classList.add("flame-progress-estimating");
+      this.exportProgress.style.setProperty("--progress", "0%");
+      this.exportProgress.textContent = status.note;
+      return;
+    }
+    this.exportProgress.classList.remove("flame-progress-estimating");
+    this.exportProgress.style.setProperty(
+      "--progress",
+      `${String(status.pct)}%`,
+    );
+    this.exportProgress.textContent = `${String(status.pct)}% · ${status.note}`;
+  }
+
+  /** Hide the modal, drop the Escape/Tab listener, restore focus. Idempotent. */
+  hideExportProgress(): void {
+    if (this.exportModal.classList.contains("hidden")) return;
+    this.exportModal.classList.add("hidden");
+    this.doc.removeEventListener("keydown", this.onExportKeydown);
+    // Clear text too, not just hide: a stale percent left in textContent
+    // reads as a live render to settle-scraping harnesses (fr-d6g5).
+    this.exportProgress.textContent = "";
+    this.exportProgress.style.setProperty("--progress", "0%");
+    this.exportProgress.classList.remove("flame-progress-estimating");
+    const restoreFocus = this.exportPreviousFocus;
+    this.exportPreviousFocus = null;
+    if (restoreFocus?.isConnected) restoreFocus.focus();
+  }
+
+  /** Reflect a capture in flight on the Save PNG button (fr-7mfx): the
+   * modal's scrim blocks it once shown, but the grace period leaves a
+   * window where a second press would start a second capture. */
+  setSavePngBusy(busy: boolean): void {
+    this.savePngBtn.disabled = busy;
+    this.savePngBtn.title = busy
+      ? "Already exporting — wait for it to finish"
+      : this.savePngTitle;
   }
 
   /**
