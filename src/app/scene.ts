@@ -3496,13 +3496,13 @@ export class FractalScene {
     // raises the spend ceiling — consent replaces prediction, the
     // backstop stays.
     const totalPx = size.x * size.y;
-    const job = this.beginSurfaceFullFrame(size.x, size.y, opts);
+    const arm = this.beginSurfaceFullFrame(size.x, size.y, opts);
     const completed = this.drainStripsSync(
-      job,
+      arm.job,
       this.surfaceSettleTarget,
       surfaceCaptureSpendCeilingMs(opts),
     );
-    this.finishSurfaceFullFrame(job, totalPx, completed);
+    this.finishSurfaceFullFrame(arm, totalPx, completed ? "done" : "ceiling");
     this.blitSurface(this.surfaceSettleTarget.texture, null);
   }
 
@@ -3530,7 +3530,7 @@ export class FractalScene {
     width: number,
     height: number,
     opts?: { liftCostCeilings?: boolean },
-  ): SurfaceStripJob {
+  ): SurfaceFullFrameArm {
     if (!opts?.liftCostCeilings) {
       const predictedMs = this.predictSurfaceFullCostMs(width * height);
       if (
@@ -3549,6 +3549,7 @@ export class FractalScene {
     // joins synchronously behind whatever is queued anyway, and its
     // observations must stay raise-only capture evidence, never a
     // backlog attribution.
+    const priorPxCostMs = this.surfaceFullPxCostMs;
     this.abandonSurfaceSettle();
     this.abandonSurfacePreview();
     this.flushStripBacklog();
@@ -3557,7 +3558,7 @@ export class FractalScene {
     // The job stays LOCAL: {@link surfaceStripJob} is the ASYNC settle's
     // slot, and a drain that parked its job there would only invite an
     // abandon path to half-release it mid-call.
-    return this.newStripJob(
+    const job = this.newStripJob(
       createStripPlanner(height, width, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
@@ -3565,35 +3566,47 @@ export class FractalScene {
       this.surfaceStripPriorMsPerPx(),
       SURFACE_SETTLE_PRESENT_MS,
     );
+    return { job, priorPxCostMs };
   }
 
   /**
-   * Retire a full-tier job and record what it taught. Throws
-   * {@link SurfaceCaptureCostError} when the drain gave up on the spend
-   * ceiling — the caller surfaces the refusal. The shared tail of
-   * {@link renderSurface} and {@link captureSurfaceFrame}; note that a
-   * CANCELLED capture must not come through here at all (it retires its
-   * job but teaches nothing, since a partial frame's per-pixel cost would
-   * understate the whole).
+   * Retire a full-tier job and record what it taught. The shared tail of
+   * {@link renderSurface} and {@link captureSurfaceFrame}; throws
+   * {@link SurfaceCaptureCostError} on the spend ceiling, and the caller
+   * surfaces the refusal.
+   *
+   * A frame that did not finish teaches nothing about its own cost — a
+   * partial's per-pixel figure understates a frame whose expensive rows
+   * it never reached, and strip cost is bimodal enough (fr-id9r measured
+   * a 100-1000x band) that under-predicting is the direction that freezes
+   * a tab. But the evidence the ARMING threw away is still good: the pose
+   * has not moved, so what priced this view a moment ago prices it now.
+   * Restoring it keeps a cancelled export from sending the next one to
+   * the preview fallback's ~5x over-prediction, where the predict ceiling
+   * can refuse work the user just watched running (fr-7mfx).
    */
   private finishSurfaceFullFrame(
-    job: SurfaceStripJob,
+    arm: SurfaceFullFrameArm,
     totalPx: number,
-    completed: boolean,
+    outcome: SurfaceDrainOutcome,
   ): void {
     // Capture-mode retirement: an export-scale drain's observation (its
     // per-strip join tax included) may TIGHTEN the live evidence but
     // never own it — the pose did not move, so the completed live
     // settle/preview evidence is still the truth the next live job
     // should price from.
-    this.retireStripJob(job, "capture");
-    if (!completed) {
-      throw new SurfaceCaptureCostError(
-        `Surface frame passed ${Math.round(job.spentMs / 1000)}s of GPU ` +
-          `time — export aborted`,
-      );
+    this.retireStripJob(arm.job, "capture");
+    if (outcome !== "done") {
+      this.surfaceFullPxCostMs = arm.priorPxCostMs;
+      if (outcome === "ceiling") {
+        throw new SurfaceCaptureCostError(
+          `Surface frame passed ${Math.round(arm.job.spentMs / 1000)}s of ` +
+            `GPU time — export aborted`,
+        );
+      }
+      return;
     }
-    this.surfaceFullPxCostMs = job.spentMs / Math.max(1, totalPx);
+    this.surfaceFullPxCostMs = arm.job.spentMs / Math.max(1, totalPx);
   }
 
   /**
@@ -4865,14 +4878,14 @@ export class FractalScene {
     const ratio = this.exportPixelRatio(exportScale);
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
-    const job = this.withCenteredProjection(() =>
+    const arm = this.withCenteredProjection(() =>
       this.beginSurfaceFullFrame(width, height, opts),
     );
     this.surfaceCaptureFlight = true;
     let outcome: SurfaceDrainOutcome;
     try {
       outcome = await this.drainStripsAsync(
-        job,
+        arm.job,
         this.surfaceSettleTarget,
         surfaceCaptureSpendCeilingMs(opts),
         opts ?? {},
@@ -4880,14 +4893,11 @@ export class FractalScene {
     } finally {
       this.surfaceCaptureFlight = false;
     }
-    if (outcome === "cancelled") {
-      // Retire but teach nothing: a partial frame's per-pixel cost
-      // understates the whole, and retireStripJob's partial-job path only
-      // ever RAISES the strip price floor, which stays honest.
-      this.retireStripJob(job, "capture");
-      return null;
-    }
-    this.finishSurfaceFullFrame(job, width * height, outcome === "done");
+    // Throws on "ceiling"; "cancelled" returns having restored the
+    // evidence the arming discarded, so the next export prices this pose
+    // from what already measured it rather than being refused outright.
+    this.finishSurfaceFullFrame(arm, width * height, outcome);
+    if (outcome === "cancelled") return null;
     // A viewport resize during the drain leaves the traced target and the
     // canvas the blit lands on at different sizes — the export would be a
     // scaled, half-stale frame. Rare (the modal's scrim covers the app,
@@ -5100,6 +5110,16 @@ const SURFACE_CAPTURE_YIELD_MS = 24;
  * backstop — a refusal the caller reports; "cancelled" is the user's own
  * choice, which is not an error at all. */
 type SurfaceDrainOutcome = "done" | "ceiling" | "cancelled";
+
+/** A full-tier frame's arming state: the strip job, plus the measured
+ * evidence the arming itself discarded (fr-7mfx). */
+interface SurfaceFullFrameArm {
+  job: SurfaceStripJob;
+  /** {@link FractalScene.surfaceFullPxCostMs} as it stood before
+   * `abandonSurfaceSettle` cleared it. Restored when the frame does not
+   * complete — see {@link FractalScene.finishSurfaceFullFrame}. */
+  priorPxCostMs: number | null;
+}
 
 /** The drain's spend backstop for this frame: save-PNG's consented retry
  * (fr-24to) raises it, everything else keeps the default. */
