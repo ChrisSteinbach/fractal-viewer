@@ -13,10 +13,12 @@ import {
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   surfaceDeKernelWgsl,
@@ -30,6 +32,7 @@ import {
 } from "./balloon-de";
 import type {
   SurfaceGpu4View,
+  SurfaceGpuGroundPlane,
   SurfaceGpuKernelOptions,
   SurfaceGpuPose,
   SurfaceGpuShadeParams,
@@ -1454,6 +1457,196 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
         kernelOpts({ core: "fold4", width: 12, balloon: true }),
       ),
     ).toThrow(/3D-only/);
+  });
+});
+
+describe("groundPlane wrapper (fr-rhn5)", () => {
+  it("pins SURFACE_GPU_RAY_PLANE to 4, sitting beside the ACTIVE/HIT/MISS/EXHAUSTED march-state contract", () => {
+    expect(SURFACE_GPU_RAY_PLANE).toBe(4);
+  });
+
+  it("omitted and explicit groundPlane:false produce identical source across every composing mode/core — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "march", core: "fold", rays: "unproject" },
+      { mode: "shade", core: "fold", width: 12, shadeDeWidth: 1 },
+      { mode: "eval", core: "fold" },
+      { mode: "march", core: "affine" },
+      { mode: "shade", core: "escape" },
+      { mode: "shade", core: "fold", lens: true },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, groundPlane: false }),
+      );
+      expect(explicit).toBe(omitted);
+      // Never assert on the bare token "ground" — "background" contains it.
+      expect(omitted).not.toContain("groundPlaneStatus");
+      expect(omitted).not.toContain("shadeGroundPlane");
+      expect(omitted).not.toContain("groundY");
+    }
+  });
+
+  it("march classifies every sphere-gate/sphere-exit MISS through groundPlaneStatus, with the unconditionally-declared lens block ahead of the plane fields for a non-lens descent core", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        core: "fold",
+        rays: "unproject",
+        groundPlane: true,
+      }),
+    );
+    expect(wgsl).toContain("fn groundPlaneStatus");
+    // Both sphere-gate early-outs plus the step loop's sphere exit: three
+    // MISS terminations, all reclassified against the floor.
+    expect(wgsl.split("st.y = groundPlaneStatus(ro, rd);").length).toBe(4);
+    // The lens block (fr-5wlv.5's frozen-offset move) is what puts the
+    // plane block at the frozen offset 272 here.
+    expect(wgsl).toContain("lensM0: vec3f,");
+    expect(wgsl).toContain("groundY: f32,");
+    expect(wgsl).toContain("groundAlbedo: vec3f,");
+  });
+
+  it("shade lights the PLANE status (4.0) through shadeGroundPlane, whose taps ride the fr-p8bc width-1 probe exactly like the fractal's own shading taps", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 12,
+        shadeDeWidth: 1,
+        groundPlane: true,
+      }),
+    );
+    expect(wgsl).toContain("fn shadeGroundPlane");
+    expect(wgsl).toContain("if (st.y == 4.0) {");
+    expect(wgsl).toContain("surfaceDEProbe(");
+  });
+
+  it("escape shade composes with the ground plane — the classic Mandelbox floor — appending the plane block after the escape variant block, taps riding the plain surfaceDE (escape has no probe)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape", groundPlane: true }),
+    );
+    expect(wgsl).toContain("fn shadeGroundPlane");
+    expect(wgsl).toContain("escParams: vec4f,");
+    expect(wgsl).toContain("groundY: f32,");
+    expect(wgsl).toContain("surfaceDE(");
+  });
+
+  it("is inert in eval mode — no rays ever terminate PLANE, so only the struct fields appear", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "fold", groundPlane: true }),
+    );
+    expect(wgsl).not.toContain("groundPlaneStatus");
+    expect(wgsl).not.toContain("shadeGroundPlane");
+    expect(wgsl).toContain("groundY: f32,");
+  });
+
+  it("throws groundPlane+balloon (no horizon inside the shell) and groundPlane on either 4D core (fr-rhn5's 3D scope)", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ groundPlane: true, balloon: true })),
+    ).toThrow(/groundPlane\+balloon/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", groundPlane: true })),
+    ).toThrow(/3D-only/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ core: "fold4", width: 12, groundPlane: true }),
+      ),
+    ).toThrow(/3D-only/);
+  });
+
+  it("packs the ground-plane block at the frozen 272..319 offsets, growing the buffer to SURFACE_GPU_PARAMS_PLANE_BYTES (320) without touching 0..271", () => {
+    expect(SURFACE_GPU_PARAMS_PLANE_BYTES).toBe(320);
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0.125,
+      fadeStart: 1.5,
+      fadeEnd: 4.5,
+      ballCenter: [0.25, -0.5, 0.75],
+      ballRadius: 1.25,
+      albedo: [0.375, 0.625, 0.875],
+    };
+    const plain = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 4 }));
+    const buf = packSurfaceGpuParams(de, { itemCount: 4 }, null, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
+    const view = new DataView(buf);
+    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(276, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(280, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.albedo[2]));
+  });
+
+  it("omits the ground-plane 4th arg back to today's 272-byte packSurfaceGpuParams buffer, byte for byte", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const omitted = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 3 }));
+    const explicit = new Uint8Array(
+      packSurfaceGpuParams(de, { itemCount: 3 }, null),
+    );
+    expect(omitted.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+    expect(explicit).toEqual(omitted);
+  });
+
+  it("throws when both a balloon and a ground plane are passed to packSurfaceGpuParams — the two blocks share the frozen offset 272", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const b = buildBalloon(de, 0.9);
+    const balloon = { center: b.center, rho: b.rho, R: b.R, far: 10 };
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0,
+      fadeStart: 1,
+      fadeEnd: 2,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [1, 1, 1],
+    };
+    expect(() =>
+      packSurfaceGpuParams(de, { itemCount: 1 }, balloon, gp),
+    ).toThrow(/groundPlane\+balloon/);
+  });
+
+  it("packs the same ground-plane block onto packEscapeGpuParams, leaving the escape variant block (foldKind/w at 256/260) untouched", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0.125,
+      fadeStart: 1.5,
+      fadeEnd: 4.5,
+      ballCenter: [0.25, -0.5, 0.75],
+      ballRadius: 1.25,
+      albedo: [0.375, 0.625, 0.875],
+    };
+    const plain = new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }));
+    const buf = packEscapeGpuParams(de, { itemCount: 2 }, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
+    const view = new DataView(buf);
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.foldKind));
+    expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
+    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(276, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(280, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.albedo[2]));
+  });
+
+  it("omits gp on packEscapeGpuParams back to today's 272-byte buffer, byte for byte", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const omitted = new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }));
+    const explicit = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, null),
+    );
+    expect(omitted.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+    expect(explicit).toEqual(omitted);
   });
 });
 

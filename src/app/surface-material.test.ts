@@ -3,12 +3,16 @@ import {
   buildSurfaceFragment,
   createSurfaceMaterial,
   setSurfaceBalloon,
+  setSurfaceGroundPlane,
   setSurfaceSystem,
   surfaceFragmentFor,
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
-import type { SurfaceBalloonSpec } from "./surface-material";
+import type {
+  SurfaceBalloonSpec,
+  SurfaceGroundPlaneSpec,
+} from "./surface-material";
 import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
@@ -481,5 +485,145 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
     setSurfaceBalloon(material, null);
     expect(material.defines.SURFACE_BALLOON).toBe(0);
     expect(material.fragmentShader).not.toContain("uBalloon");
+  });
+});
+
+describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
+  it("strips every ground-plane token from every variant while the flag is off — the byte-identity mechanism", () => {
+    for (const [escape, lens, balloon] of [
+      [0, 0, 0],
+      [0, 1, 0],
+      [1, 0, 0],
+      [0, 0, 1],
+      [0, 1, 1],
+      [1, 0, 1],
+    ] as const) {
+      const withPlaneOff = surfaceFragmentFor(escape, lens, balloon, 0);
+      expect(withPlaneOff).not.toContain("uGround");
+      expect(withPlaneOff).not.toContain("shadeGroundPlane");
+      expect(withPlaneOff).not.toContain("SURFACE_GROUND_PLANE");
+      // The plane arg omitted must resolve to the same explicit-0 source.
+      expect(surfaceFragmentFor(escape, lens, balloon)).toBe(withPlaneOff);
+    }
+  });
+
+  it("compiles the floor arm with the flag on — comment-stripped whole-source, and far under the fold source's Mesa-cliff budget", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 1);
+    expect(resolved).toContain("vec3 shadeGroundPlane(");
+    expect(resolved).toContain("uniform float uGroundY;");
+    // The driver-side SURFACE_FOLDS conditional survives the strip.
+    expect(resolved).toContain("#if SURFACE_FOLDS");
+    // Plane programs are comment-stripped whole-source — raw size is what
+    // Mesa prices — so no comment marker of either style survives.
+    expect(resolved).not.toContain("//");
+    expect(resolved).not.toContain("/*");
+    expect(resolved.length).toBeLessThan(40 * 1024);
+  });
+
+  it("composes under the lens and escape variants, both staying far under the Mesa-cliff budget", () => {
+    const lensed = surfaceFragmentFor(0, 1, 0, 1);
+    expect(lensed).toContain("surfaceDECore");
+    expect(lensed).toContain("shadeGroundPlane");
+    expect(lensed.length).toBeLessThan(40 * 1024);
+
+    const escaped = surfaceFragmentFor(1, 0, 0, 1);
+    expect(escaped).toContain("shadeGroundPlane");
+  });
+
+  it("refuses to compile into the balloon variant — no horizon inside the shell", () => {
+    expect(() => surfaceFragmentFor(0, 0, 1, 1)).toThrow(RangeError);
+  });
+
+  it("setSurfaceGroundPlane packs the spec into uniforms and flips the define; null resets both to the inert byte-identical off state", () => {
+    const material = createSurfaceMaterial();
+    const spec: SurfaceGroundPlaneSpec = {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    };
+    setSurfaceGroundPlane(material, spec);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+    const u = material.uniforms;
+    expect(u.uGroundY.value).toBe(-1.2);
+    expect(u.uGroundFadeStart.value).toBe(4);
+    expect(u.uGroundFadeEnd.value).toBe(10);
+    expect(u.uGroundBallR.value).toBe(1);
+    const ballC = u.uGroundBallC.value as THREE.Vector3;
+    expect([ballC.x, ballC.y, ballC.z]).toEqual([0, 0, 0]);
+    const albedo = u.uGroundAlbedo.value as THREE.Vector3;
+    expect([albedo.x, albedo.y, albedo.z]).toEqual([0.62, 0.62, 0.62]);
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+
+    setSurfaceGroundPlane(material, null);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(0);
+    expect(u.uGroundY.value).toBe(0);
+    expect(u.uGroundFadeStart.value).toBe(0);
+    expect(u.uGroundFadeEnd.value).toBe(0);
+    expect(u.uGroundBallR.value).toBe(1);
+    expect([ballC.x, ballC.y, ballC.z]).toEqual([0, 0, 0]);
+    expect([albedo.x, albedo.y, albedo.z]).toEqual([1, 1, 1]);
+    expect(material.fragmentShader).not.toContain("uGround");
+  });
+
+  it("survives a system swap into the lens variant: the define-comparison block preserves the current ground-plane flag", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceGroundPlane(material, {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    });
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+
+    const withLens = de3([map3()]);
+    withLens.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 1,
+      foldKind: 1,
+      invW: 1,
+      absW: 1,
+    };
+    setSurfaceSystem(material, withLens, [black]);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceDECore");
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+  });
+
+  it("yields seniority to the balloon: enabling the balloon drops the ground plane, and re-enabling the plane over the balloon throws", () => {
+    const material = createSurfaceMaterial();
+    const spec: SurfaceGroundPlaneSpec = {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    };
+    setSurfaceGroundPlane(material, spec);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+
+    // The spec-building convention IS the SURFACE_BALLOON describe's
+    // specFor helper, inlined: buildBalloon's margined rho, world-unit R.
+    const de = de3([map3()]);
+    const ball = balloonBall(de);
+    const balloonSpec: SurfaceBalloonSpec = {
+      center: ball.center,
+      rho: ball.radius * BALLOON_RHO_MARGIN,
+      R: 1.6 * ball.radius,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    };
+    setSurfaceBalloon(material, balloonSpec);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(0);
+    expect(material.fragmentShader).toContain("uBalloon");
+    expect(material.fragmentShader).not.toContain("shadeGroundPlane");
+
+    // The balloon is senior: the plane cannot compile back in over it.
+    expect(() => setSurfaceGroundPlane(material, spec)).toThrow(RangeError);
   });
 });
