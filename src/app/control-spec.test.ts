@@ -216,6 +216,13 @@ describe("read: state -> element value", () => {
 
     expect(spec.read(state)).toBe("ember");
   });
+
+  it("surfaceGroundPlaneCheckbox read reflects state.groundPlane (fr-rhn5)", () => {
+    const spec = specById("surfaceGroundPlaneCheckbox");
+    const state = { ...initialState(true), groundPlane: true };
+
+    expect(spec.read(state)).toBe(true);
+  });
 });
 
 describe("effects", () => {
@@ -342,6 +349,23 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceBalloonRadius).toHaveBeenCalledWith(0.9);
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaceGroundPlaneCheckbox apply sets state.groundPlane and its effect re-enters the surface session (fr-rhn5)", () => {
+      const spec = specById("surfaceGroundPlaneCheckbox");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      expect(state.groundPlane).toBe(true);
+
+      spec.effect?.(state, fx, previous);
+
+      // A variant-level change: the session re-enter re-derives the floor
+      // uniforms/kernel choice from state in one sweep — no direct scene
+      // call here, and no sweep to cancel (the floor has no Inflate
+      // replay, unlike the balloon checkbox above).
+      expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
     });
 
     it("rampPalette effect re-bakes both views' ramp colors (recolor + applyFourDColor)", () => {

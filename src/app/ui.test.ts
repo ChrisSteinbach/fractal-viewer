@@ -609,6 +609,52 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
   });
 });
 
+describe("Ui surface ground plane row (fr-rhn5)", () => {
+  function surfaceGroundPlaneRow(): HTMLElement {
+    return document.getElementById("surfaceGroundPlaneRow") as HTMLElement;
+  }
+
+  it("shows the row for an ifs surface session", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+    });
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("shows the row for an escape surface session too — unlike the balloon row, which hides there (fr-5wlv.6)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+    });
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the row in a live 4D surface session", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      transforms: nonFlatTransforms(),
+    });
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the row stable OUTSIDE surface mode (only the live 4D session hides it)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+    });
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("Ui surface palette row (fr-7jlk)", () => {
   function surfacePaletteRow(): HTMLElement {
     return document.getElementById("surfacePaletteRow") as HTMLElement;

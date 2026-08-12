@@ -107,6 +107,7 @@ import {
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
+  setGroundPlane,
   setMorphDetail,
   setNumPoints,
   setPointSize,
@@ -158,6 +159,7 @@ describe("initialState", () => {
     expect(state.fogDensity).toBe(DEFAULT_FOG_DENSITY);
     expect(state.fogTint).toBe(DEFAULT_FOG_TINT);
     expect(state.fogTintStrength).toBe(DEFAULT_FOG_TINT_STRENGTH);
+    expect(state.groundPlane).toBe(false);
   });
 
   // The app always boots into the live explorer, never straight into a flame
@@ -397,6 +399,15 @@ describe("setBalloonRadius (fr-5wlv.2)", () => {
     expect(setBalloonRadius(initialState(true), -5).balloonRadius).toBe(
       MIN_BALLOON_RADIUS,
     );
+  });
+});
+
+describe("setGroundPlane (fr-rhn5)", () => {
+  it("toggles the ground plane immutably, defaulting to off", () => {
+    const state = initialState(true);
+    const next = setGroundPlane(state, true);
+    expect(next.groundPlane).toBe(true);
+    expect(state.groundPlane).toBe(false);
   });
 });
 
