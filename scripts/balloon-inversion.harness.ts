@@ -76,7 +76,10 @@
  *    disclosed width-bound tail at a query the house cube never sampled,
  *    reproduced on the UNMODIFIED surface-beam harness and filed as
  *    fr-tikz. Production fold paths march base; base columns are 0
- *    everywhere at both densities.
+ *    everywhere at both densities. fr-tikz has since re-gated the house
+ *    harness onto the production row per class (this file's own shape)
+ *    and re-sized its mandelboxKifs override for the base row (3e-3 ->
+ *    1.2e-2, covering both recorded regimes).
  *  - EROSION TRANSPORTS, NEVER AMPLIFIES: exactShell de-amplified ==
  *    exactOuter (the same outer-decile attractor points, uninverted) on
  *    every row — spherefold pair 1.3e-3 both (0.077%R, the plain
@@ -186,7 +189,10 @@ const VOID_HIT_FACTOR = 0.01;
  * EXACT_EROSION_BUDGET_R block for the full argument and the
  * mandelboxKifs disclosure). Report-only here — the spike's hard gate is
  * the off-set classes — but printed against these so the tables read
- * pass/fail at a glance. */
+ * pass/fail at a glance. The house mandelboxKifs override has since been
+ * re-sized (fr-tikz: 1.2e-2, gating the base row over both recorded
+ * regimes); this file keeps the fr-2v0y-era 3e-3 its recorded readings
+ * (1.1-1.8e-3) were measured against. */
 const EXACT_EROSION_BUDGET_R = 1e-4;
 const EXACT_EROSION_BUDGET_R_OVERRIDES: Record<string, number> = {
   "mandelboxKifs preset": 3e-3,
@@ -806,8 +812,10 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
             // which is exactly what the one measured instance was:
             // mandelboxKifs refined j1@7.7e-4 at CLOUD=60k, reproduced on
             // the UNMODIFIED surface-beam harness and filed as fr-tikz
-            // (the tail is not exact-class-only as recorded; production
-            // fold paths march base, whose columns stay 0).
+            // (the tail is not exact-class-only — fr-tikz corrected the
+            // record and re-gated the house harness onto the production
+            // row; production fold paths march base, whose columns stay
+            // 0).
             for (let i = 0; i < qs.length; i++) {
               const q = qs[i];
               if (!HARD_CLASSES.includes(q.cls)) continue;

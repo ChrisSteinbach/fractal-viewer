@@ -327,8 +327,11 @@ committing.
 ## 5. Things not to do
 
 - Do not weaken the lower-bound guarantee to buy speed. The existing disclosed
-  residuals (the `mandelboxKifs` 0.22%R erosion tail, `repro2+sym4y`'s ~9.8%R)
-  are documented and bounded; new unbounded ones are not acceptable.
+  residuals (the `mandelboxKifs` probe-set-shaped width-bound tail — refined
+  0.22%R exact at CLOUD=300k / j1@0.039%R off-attractor at 60k, disclosed not
+  gated since fr-tikz; production fold paths march base, gated at 1.2%R
+  budget — and `repro2+sym4y`'s ~9.8%R) are documented and bounded; new
+  unbounded ones are not acceptable.
 - Do not scale hit **acceptance** with tier or buffer resolution — fr-7xgi
   already established that this renders the fold DE's plateau band as phantom box
   faces. A preview may coarsen sampling, never acceptance.
