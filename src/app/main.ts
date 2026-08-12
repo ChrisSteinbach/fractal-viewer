@@ -124,6 +124,7 @@ import {
   setFinalTransform,
   setPanelOpen,
   setBackgroundCustom,
+  setFogTint,
   setPositionAxisColors,
   setRenderMode,
   setSymmetryPlane,
@@ -154,7 +155,7 @@ import {
   MAX_IMPORT_FILE_BYTES,
 } from "./scene-file";
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
-import { BALLOON_SWEEP_MS, MOBILE_BREAKPOINT } from "./constants";
+import { BALLOON_SWEEP_MS, hexToRgb01, MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
 import type { Bounds, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
@@ -4163,6 +4164,9 @@ function main(): void {
     // would otherwise render at the scene's default until a Fog edit
     // first moved it.
     scene.setFogDensity(state.fogDensity);
+    // Same push for the restored fog tint pair (fr-5h5d), right beside the
+    // density it rides with.
+    scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
     if (
       state.renderMode === "surface" &&
       state.balloonEcho !== previousBalloonEcho
@@ -4912,6 +4916,18 @@ function main(): void {
       ui.updateLabels(state);
       applyBackgroundNow();
     },
+    // Fog tint color (fr-5h5d): the color half of the atmosphere pair, the
+    // same shape as the backdrop pickers above — one undo checkpoint per
+    // drag burst, then an instant push to every renderer fog reaches. The
+    // strength half rides the table-driven onScalarControl pipeline
+    // instead (control-spec.ts's fogTintStrength entry).
+    onFogTint: (hex) => {
+      stopShows({ notify: true });
+      editSession.beginEdit();
+      state = setFogTint(state, hex);
+      ui.updateLabels(state);
+      scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
+    },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own
     // generation order — no regeneration, no RNG roll, so the shape the user
@@ -5643,6 +5659,9 @@ function main(): void {
   // at density 1, so a document restored with a non-default value would
   // render at the wrong density until a Fog edit first moved it.
   scene.setFogDensity(state.fogDensity);
+  // Same push for the restored fog tint pair (fr-5h5d), right beside the
+  // density it rides with.
+  scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
   // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
   // regeneration goes through the worker (fr-5kx): the first paint should
   // include the cloud, not an empty backdrop for a worker round-trip — and

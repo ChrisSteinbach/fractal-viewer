@@ -738,6 +738,30 @@
             />
           </label>
 
+          <!-- Fog tint (fr-5h5d): color + strength shifting what the depth
+               fog blends toward, applied after the backdrop-midpoint
+               derivation — ungated like the Fog row above. -->
+          <div id="fogTintRow" class="position-axis-row">
+            <span class="position-axis-title"
+              >Tint <span id="fogTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input type="color" id="fogTintColor" value="#ffffff"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="fogTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+            </div>
+          </div>
+
           <label class="checkbox-label">
             <input type="checkbox" id="showGuides" checked />
             Show guides

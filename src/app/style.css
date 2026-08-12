@@ -1069,6 +1069,15 @@ summary.editor-group-title {
   cursor: pointer;
 }
 
+/* Fog tint row (fr-5h5d): the strength slider shares this row with the
+   fixed-width swatch above, so it needs to grow into the remaining space
+   instead of fighting the swatch under the global input[type="range"]
+   100%-width rule. */
+#fogTintRow input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;
