@@ -271,6 +271,13 @@ export interface UiHandlers {
    * `setBackgroundCustom`. Only reachable while the Background select sits
    * on Custom (the row is hidden otherwise). */
   onBackgroundCustom: (custom: BackgroundGradient) => void;
+  /** The fog tint color picker changed (fr-5h5d) — `hex` is the input's raw
+   * `#rrggbb` value, ready for `setFogTint` (the reducer, not this
+   * callback, is the validation boundary). The strength half of the pair
+   * is table-driven (see control-spec.ts's `fogTintStrength` entry); this
+   * callback only carries the bespoke color picker, like
+   * `onBackgroundCustom` above. */
+  onFogTint: (hex: string) => void;
 }
 
 /**
@@ -911,6 +918,11 @@ export class Ui {
     top: HTMLInputElement;
     bottom: HTMLInputElement;
   };
+  /** The fog tint's bespoke color picker (fr-5h5d) — the strength slider
+   * beside it is table-driven (see SCALAR_CONTROLS's `fogTintStrength`
+   * entry), so only the color input needs its own reference here, unlike
+   * `backgroundInputs`' pair. */
+  private readonly fogTintColorInput: HTMLInputElement;
   private readonly symmetryNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
@@ -1234,6 +1246,7 @@ export class Ui {
       top: this.byId("backgroundTop"),
       bottom: this.byId("backgroundBottom"),
     };
+    this.fogTintColorInput = this.byId("fogTintColor");
     this.symmetryNote = this.byId("symmetryNote");
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
@@ -1686,6 +1699,13 @@ export class Ui {
       const custom = this.readBackgroundCustom();
       if (custom) handlers.onBackgroundCustom(custom);
     });
+    // Fog tint color (fr-5h5d): bound to the single picker itself, not the
+    // row — unlike the pair above, there is no sibling input to jointly
+    // re-read, and the row also hosts the table-driven strength slider,
+    // whose own "input" events must not re-trigger this handler.
+    this.fogTintColorInput.addEventListener("input", () => {
+      handlers.onFogTint(this.fogTintColorInput.value);
+    });
   }
 
   /** Reflect a 4D slice state in the panel controls (fr-pnek) — how a
@@ -2069,6 +2089,13 @@ export class Ui {
       const hex = rgbToHex(backdrop[stop]);
       const input = this.backgroundInputs[stop];
       if (input.value !== hex) input.value = hex;
+    }
+    // The fog tint picker (fr-5h5d): synced the same only-write-on-change
+    // way as the backdrop pickers just above — state already holds the hex
+    // string directly (no rgbToHex conversion needed), so a gallery load or
+    // undo moves the swatch instead of leaving it stale.
+    if (this.fogTintColorInput.value !== state.fogTint) {
+      this.fogTintColorInput.value = state.fogTint;
     }
     // Accordion restore (fr-99o): entering a render mode re-opens the section
     // the user last had open there (defaults: Presets / Tone / Surface /

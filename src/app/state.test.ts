@@ -14,6 +14,8 @@ import {
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_FOG_DENSITY,
+  DEFAULT_FOG_TINT,
+  DEFAULT_FOG_TINT_STRENGTH,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_POINT_SIZE,
@@ -41,6 +43,7 @@ import {
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
   MAX_FOG_DENSITY,
+  MAX_FOG_TINT_STRENGTH,
   MAX_GLOW_BRIGHTNESS,
   MAX_POINT_SIZE,
   MAX_SOLID_AMBIENT,
@@ -62,6 +65,7 @@ import {
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
   MIN_FOG_DENSITY,
+  MIN_FOG_TINT_STRENGTH,
   MIN_GLOW_BRIGHTNESS,
   MIN_NUM_POINTS,
   MIN_POINT_SIZE,
@@ -98,6 +102,8 @@ import {
   setFlameSupersample,
   setFlameVibrancy,
   setFogDensity,
+  setFogTint,
+  setFogTintStrength,
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
@@ -150,6 +156,8 @@ describe("initialState", () => {
     expect(state.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
     expect(state.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
     expect(state.fogDensity).toBe(DEFAULT_FOG_DENSITY);
+    expect(state.fogTint).toBe(DEFAULT_FOG_TINT);
+    expect(state.fogTintStrength).toBe(DEFAULT_FOG_TINT_STRENGTH);
   });
 
   // The app always boots into the live explorer, never straight into a flame
@@ -1411,6 +1419,56 @@ describe("setFogDensity (fr-5h5d)", () => {
   it("clamps below the minimum (0 disables fog, never negative)", () => {
     expect(setFogDensity(initialState(true), -5).fogDensity).toBe(
       MIN_FOG_DENSITY,
+    );
+  });
+});
+
+describe("setFogTint (fr-5h5d)", () => {
+  it("sets the fog tint color immutably", () => {
+    const state = initialState(true);
+    const next = setFogTint(state, "#336699");
+    expect(next.fogTint).toBe("#336699");
+    expect(state.fogTint).toBe(DEFAULT_FOG_TINT);
+  });
+
+  it("normalizes an uppercase hex string to lowercase", () => {
+    expect(setFogTint(initialState(true), "#AABBCC").fogTint).toBe("#aabbcc");
+  });
+
+  it("rejects a string with too few hex digits, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setFogTint(state, "#abc").fogTint).toBe(DEFAULT_FOG_TINT);
+    expect(setFogTint(state, "#abc")).toBe(state);
+  });
+
+  it("rejects a string with non-hex characters, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setFogTint(state, "#zzzzzz")).toBe(state);
+  });
+
+  it("rejects a string missing the leading #, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setFogTint(state, "336699")).toBe(state);
+  });
+});
+
+describe("setFogTintStrength (fr-5h5d)", () => {
+  it("sets the fog tint strength immutably", () => {
+    const state = initialState(true);
+    const next = setFogTintStrength(state, 0.5);
+    expect(next.fogTintStrength).toBe(0.5);
+    expect(state.fogTintStrength).toBe(DEFAULT_FOG_TINT_STRENGTH);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFogTintStrength(initialState(true), 999).fogTintStrength).toBe(
+      MAX_FOG_TINT_STRENGTH,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setFogTintStrength(initialState(true), -5).fogTintStrength).toBe(
+      MIN_FOG_TINT_STRENGTH,
     );
   });
 });

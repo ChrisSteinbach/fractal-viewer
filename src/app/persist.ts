@@ -44,6 +44,8 @@ import {
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FOG_DENSITY,
+  DEFAULT_FOG_TINT,
+  DEFAULT_FOG_TINT_STRENGTH,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -250,6 +252,28 @@ export interface SceneSnapshot {
    * exactly.
    */
   fogDensity?: number;
+  /**
+   * Fog tint color (fr-5h5d, see `state.ts`'s {@link AppState.fogTint}) —
+   * persisted alongside `fogDensity` the identical way: optional here even
+   * though `toSnapshot`/`encodeScene` always WRITE a defined value once
+   * `AppState` carries one. Decoded values must match the `#rrggbb` hex
+   * pattern (reusing {@link hexToRgb} as the validator, like `background`'s
+   * custom stops); absent or malformed decodes to `undefined`, and
+   * `fromSnapshot` supplies {@link DEFAULT_FOG_TINT} for whichever comes
+   * back that way — so a pre-fr-5h5d link decodes with the field absent and
+   * still boots at the untinted white default.
+   */
+  fogTint?: string;
+  /**
+   * Fog tint blend strength (fr-5h5d, see `state.ts`'s
+   * {@link AppState.fogTintStrength}) — persisted alongside `fogTint`,
+   * clamping through {@link PARAM}.fogTintStrength exactly like
+   * `fogDensity` clamps through `PARAM.fogDensity`. Absent or malformed
+   * decodes to `undefined`; `fromSnapshot` supplies
+   * {@link DEFAULT_FOG_TINT_STRENGTH} — `0`, the untinted identity — so a
+   * pre-fr-5h5d link's absent pair reproduces today's fog exactly.
+   */
+  fogTintStrength?: number;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -303,6 +327,11 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // above: AppState.fogDensity is always defined, and there is no legacy
     // document whose meaning depends on this field's absence.
     fogDensity: state.fogDensity,
+    // Always written (fr-5h5d), the identical fogDensity shape just above:
+    // AppState.fogTint/fogTintStrength are always defined, and there is no
+    // legacy document whose meaning depends on either field's absence.
+    fogTint: state.fogTint,
+    fogTintStrength: state.fogTintStrength,
   };
 }
 
@@ -326,7 +355,9 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * (`false`/`DEFAULT_BALLOON_RADIUS`) to fall back to rather than merely
  * clearing to `undefined`, so a `??` supplies it whenever the decoded (or
  * hand-built) snapshot came back without one. `fogDensity` (fr-5h5d) follows
- * the identical shape, falling back to {@link DEFAULT_FOG_DENSITY}.
+ * the identical shape, falling back to {@link DEFAULT_FOG_DENSITY} — as do
+ * `fogTint`/`fogTintStrength`, falling back to {@link DEFAULT_FOG_TINT} /
+ * {@link DEFAULT_FOG_TINT_STRENGTH}.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -340,6 +371,8 @@ export function fromSnapshot(
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     fogDensity: snapshot.fogDensity ?? DEFAULT_FOG_DENSITY,
+    fogTint: snapshot.fogTint ?? DEFAULT_FOG_TINT,
+    fogTintStrength: snapshot.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH,
   };
 }
 
@@ -1377,6 +1410,8 @@ export function encodeScene(s: SceneSnapshot): string {
     balloonEcho: boolean;
     balloonRadius: number;
     fogDensity: number;
+    fogTint: string;
+    fogTintStrength: number;
     background?: { mode: BackgroundMode; top?: string; bottom?: string };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
@@ -1469,6 +1504,12 @@ export function encodeScene(s: SceneSnapshot): string {
     // fallback only matters for a hand-built SceneSnapshot that skipped
     // toSnapshot (which always supplies it).
     fogDensity: round4(s.fogDensity ?? DEFAULT_FOG_DENSITY),
+    // Always written (fr-5h5d), the identical fogDensity shape just above —
+    // the `??` fallbacks only matter for a hand-built SceneSnapshot that
+    // skipped toSnapshot. fogTint is a hex string already (no rounding);
+    // fogTintStrength rounds like every other float in this payload.
+    fogTint: s.fogTint ?? DEFAULT_FOG_TINT,
+    fogTintStrength: round4(s.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH),
   };
   // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
   // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
@@ -1638,6 +1679,15 @@ export function encodeScene(s: SceneSnapshot): string {
  * DEFAULT_FOG_DENSITY}, so a pre-fr-5h5d link decodes here with the field
  * absent and still boots at density 1, reproducing today's fixed fog
  * exactly.
+ *
+ * fogTint/fogTintStrength (fr-5h5d) are `fogDensity`'s atmosphere-pair
+ * siblings, same never-rejects contract: `fogTintStrength` coerces/clamps
+ * into {@link PARAM}.fogTintStrength's range exactly like `fogDensity`;
+ * `fogTint` must be a string matching the `#rrggbb` hex pattern ({@link
+ * hexToRgb} is the validator, reused from `background`'s custom stops) or
+ * it decodes to `undefined`. `fromSnapshot` supplies {@link DEFAULT_FOG_TINT}
+ * / {@link DEFAULT_FOG_TINT_STRENGTH}, so a pre-fr-5h5d link decodes with
+ * the pair absent and still boots untinted, reproducing today's fog exactly.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1811,6 +1861,28 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.fogDensity, rawFogDensity)
       : undefined;
 
+    // fogTint (fr-5h5d): a #rrggbb string. Validated with hexToRgb, the
+    // same strict validator background's custom stops use — but only its
+    // "did this parse" verdict matters here: unlike background/
+    // customPalette/positionAxisColors, AppState stores the hex STRING
+    // itself (not an RgbStop), so the parsed triple is discarded and the
+    // original string survives. Absent or malformed decodes to undefined,
+    // never rejecting the scene; fromSnapshot supplies DEFAULT_FOG_TINT.
+    const fogTint: string | undefined =
+      typeof o.fogTint === "string" && hexToRgb(o.fogTint) !== null
+        ? o.fogTint
+        : undefined;
+
+    // fogTintStrength (fr-5h5d): same coerce/clamp/never-reject contract as
+    // fogDensity just above. fromSnapshot supplies
+    // DEFAULT_FOG_TINT_STRENGTH when this comes back undefined.
+    const rawFogTintStrength = Number(o.fogTintStrength);
+    const fogTintStrength: number | undefined = Number.isFinite(
+      rawFogTintStrength,
+    )
+      ? clampToSpec(PARAM.fogTintStrength, rawFogTintStrength)
+      : undefined;
+
     return {
       transforms,
       finalTransform,
@@ -1836,6 +1908,8 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       balloonEcho,
       balloonRadius,
       fogDensity,
+      fogTint,
+      fogTintStrength,
     };
   } catch {
     return null;

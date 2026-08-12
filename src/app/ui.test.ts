@@ -94,6 +94,7 @@ function noopHandlers(): UiHandlers {
     onCustomPaletteStops: vi.fn(),
     onPositionAxisColors: vi.fn(),
     onBackgroundCustom: vi.fn(),
+    onFogTint: vi.fn(),
   };
 }
 
@@ -4942,6 +4943,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["balloonRadiusSlider", PARAM.balloonRadius],
     ["surfaceBalloonRadiusSlider", PARAM.balloonRadius],
     ["fogSlider", PARAM.fogDensity],
+    ["fogTintStrength", PARAM.fogTintStrength],
     ["flameExposureSlider", PARAM.flameExposure],
     ["flameGammaSlider", PARAM.flameGamma],
     ["flameVibrancySlider", PARAM.flameVibrancy],
@@ -5921,5 +5923,44 @@ describe("Ui background backdrop row (fr-5ps1)", () => {
       top: [0x33 / 255, 0x66 / 255, 0x99 / 255],
       bottom: [1, 1, 1],
     });
+  });
+});
+
+describe("Ui fog tint row (fr-5h5d)", () => {
+  function el(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+  }
+
+  it("defaults the color picker to white", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+    expect(el("fogTintColor").value).toBe("#ffffff");
+  });
+
+  it("reflects a non-default fogTint into the picker (gallery loads/undo move the swatch)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), fogTint: "#336699" });
+    expect(el("fogTintColor").value).toBe("#336699");
+  });
+
+  it("reports a picker edit as the raw hex value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const input = el("fogTintColor");
+    input.value = "#336699";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onFogTint).toHaveBeenCalledWith("#336699");
+  });
+
+  it("never hides the row (unlike the gated backdrop custom row)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(initialState(true));
+    expect(
+      document.getElementById("fogTintRow")?.classList.contains("hidden"),
+    ).toBe(false);
   });
 });

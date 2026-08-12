@@ -28,6 +28,8 @@ import {
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
   DEFAULT_FOG_DENSITY,
+  DEFAULT_FOG_TINT,
+  DEFAULT_FOG_TINT_STRENGTH,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_RAMP_PALETTE,
@@ -50,6 +52,7 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FOG_DENSITY,
+  MAX_FOG_TINT_STRENGTH,
   MAX_GLOW_BRIGHTNESS,
   MAX_SOLID_LIGHT_AZIMUTH,
   MAX_SOLID_LIGHT_ELEVATION,
@@ -68,6 +71,7 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
   MIN_FOG_DENSITY,
+  MIN_FOG_TINT_STRENGTH,
   MIN_GLOW_BRIGHTNESS,
   MIN_NUM_POINTS,
   MIN_SOLID_AMBIENT,
@@ -3785,5 +3789,133 @@ describe("toSnapshot / fromSnapshot fog (fr-5h5d)", () => {
     const snapshot: SceneSnapshot = { ...baseSnapshot(), fogDensity: 0.5 };
     const result = fromSnapshot(snapshot, initialState(true));
     expect(result.fogDensity).toBe(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fog tint (fr-5h5d) — persisted alongside fogDensity the identical way:
+// optional on SceneSnapshot, always written by toSnapshot/encodeScene,
+// quiet-drop/clamp on decode, with fromSnapshot supplying the real defaults.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene fog tint", () => {
+  it("round-trips fogTint and rounds fogTintStrength to 4 decimal places", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      fogTint: "#336699",
+      fogTintStrength: 0.123456,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.fogTint).toBe("#336699");
+    expect(result!.fogTintStrength).toBeCloseTo(0.1235, 4);
+  });
+
+  it("keeps decoding a scene with no fog tint fields at all as a valid, non-null scene", () => {
+    // A hand-built payload with no fogTint/fogTintStrength keys — what
+    // every pre-fr-5h5d link looks like.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogTint).toBeUndefined();
+    expect(result!.fogTintStrength).toBeUndefined();
+  });
+
+  it("drops fogTint when it is not a string", () => {
+    const raw = { ...baseSnapshot(), fogTint: 12345 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogTint).toBeUndefined();
+  });
+
+  it("drops fogTint when it does not match the #rrggbb hex pattern", () => {
+    const raw = { ...baseSnapshot(), fogTint: "not-a-color" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogTint).toBeUndefined();
+  });
+
+  it("accepts an uppercase hex fogTint verbatim (decode does not normalize case)", () => {
+    const raw = { ...baseSnapshot(), fogTint: "#AABBCC" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fogTint).toBe("#AABBCC");
+  });
+
+  it("drops fogTintStrength when it is non-finite", () => {
+    const raw = { ...baseSnapshot(), fogTintStrength: "not a number" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogTintStrength).toBeUndefined();
+  });
+
+  it("clamps fogTintStrength below the minimum up to MIN_FOG_TINT_STRENGTH", () => {
+    const raw = { ...baseSnapshot(), fogTintStrength: -5 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fogTintStrength).toBe(MIN_FOG_TINT_STRENGTH);
+  });
+
+  it("clamps fogTintStrength above the maximum down to MAX_FOG_TINT_STRENGTH", () => {
+    const raw = { ...baseSnapshot(), fogTintStrength: 50 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fogTintStrength).toBe(MAX_FOG_TINT_STRENGTH);
+  });
+
+  it("does not reject the whole scene over a malformed fog tint pair", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fogTint: "nope",
+      fogTintStrength: "nope",
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms).toHaveLength(1);
+    expect(result!.fogTint).toBeUndefined();
+    expect(result!.fogTintStrength).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot fog tint (fr-5h5d)", () => {
+  it("toSnapshot carries fogTint and fogTintStrength", () => {
+    const state: AppState = {
+      ...initialState(true),
+      fogTint: "#336699",
+      fogTintStrength: 0.5,
+    };
+    expect(toSnapshot(state).fogTint).toBe("#336699");
+    expect(toSnapshot(state).fogTintStrength).toBe(0.5);
+  });
+
+  it("fromSnapshot defaults the fog tint pair when the snapshot lacks it", () => {
+    // baseSnapshot() carries no fogTint/fogTintStrength keys at all — what
+    // a pre-fr-5h5d snapshot (or a decode of one) looks like.
+    const base: AppState = {
+      ...initialState(true),
+      fogTint: "#336699",
+      fogTintStrength: 0.5,
+    };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.fogTint).toBe(DEFAULT_FOG_TINT);
+    expect(result.fogTintStrength).toBe(DEFAULT_FOG_TINT_STRENGTH);
+  });
+
+  it("fromSnapshot lands the fog tint pair on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      fogTint: "#336699",
+      fogTintStrength: 0.5,
+    };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect(result.fogTint).toBe("#336699");
+    expect(result.fogTintStrength).toBe(0.5);
   });
 });

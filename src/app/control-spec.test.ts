@@ -42,6 +42,7 @@ function mockEffects(shared = false): ControlEffects {
       setBalloonEchoRadius: vi.fn(),
       setSurfaceBalloonRadius: vi.fn(),
       setFogDensity: vi.fn(),
+      setFogTint: vi.fn(),
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
@@ -81,6 +82,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "0.5");
 
     expect(state.fogDensity).toBe(0.5);
+  });
+
+  it("fogTintStrength apply parses the raw string into a numeric fogTintStrength", () => {
+    const spec = specById("fogTintStrength");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.fogTintStrength).toBe(0.5);
   });
 
   it("numPointsSlider apply floors raw 0 to the MIN_NUM_POINTS endpoint", () => {
@@ -293,6 +302,18 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.scene.setFogDensity).toHaveBeenCalledWith(0.5);
+    });
+
+    it("fogTintStrength effect forwards the tint (as rgb01) and strength to the scene", () => {
+      const spec = specById("fogTintStrength");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      // initialState's fogTint defaults to "#ffffff" — white.
+      expect(fx.scene.setFogTint).toHaveBeenCalledWith([1, 1, 1], 0.5);
     });
 
     it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep (fr-5wlv.4)", () => {

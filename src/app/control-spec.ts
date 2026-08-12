@@ -8,6 +8,7 @@ import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import type { PaletteSelection } from "../fractal/palette";
 import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
+import { hexToRgb01 } from "./constants";
 import {
   DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
@@ -33,6 +34,7 @@ import {
   setFlameSupersample,
   setFlameVibrancy,
   setFogDensity,
+  setFogTintStrength,
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
@@ -191,6 +193,12 @@ export interface ControlSceneEffects {
    * and re-derives the points explorer's fog band and the balloon echo's
    * radial fade, all from the one stored value. */
   setFogDensity(v: number): void;
+  /** Set the fog tint (fr-5h5d) — `tint` an rgb01 tuple, `strength` its
+   * 0..1 blend weight; see `scene.ts`'s `setFogTint`. Pushes
+   * `uFogTint`/`uFogTintStrength` to both surface tracers and the solid
+   * render's voxel raymarcher, then re-derives the points explorer's fog
+   * color — the same push-to-both pattern as {@link setFogDensity}. */
+  setFogTint(tint: [number, number, number], strength: number): void;
 }
 
 /**
@@ -578,6 +586,24 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.fogDensity),
     apply: (s, raw) => setFogDensity(s, Number(raw)),
     effect: (s, fx) => fx.scene.setFogDensity(s.fogDensity),
+  },
+  {
+    // The fog TINT strength (fr-5h5d): the blend-weight half of the
+    // atmosphere pair, spanning the same renderers as fogSlider above and
+    // likewise never gated. The color half is a bespoke picker (ui.ts's
+    // onFogTint), like the fr-5ps1 backdrop stops — this entry only carries
+    // the 0..1 strength slider, converting the paired hex color to rgb01 at
+    // the point of use rather than storing it twice.
+    kind: "range",
+    id: "fogTintStrength",
+    label: {
+      id: "fogTintLabel",
+      text: (s) => `${Math.round(s.fogTintStrength * 100)}%`,
+    },
+    read: (s) => String(s.fogTintStrength),
+    apply: (s, raw) => setFogTintStrength(s, Number(raw)),
+    effect: (s, fx) =>
+      fx.scene.setFogTint(hexToRgb01(s.fogTint), s.fogTintStrength),
   },
   {
     kind: "checkbox",

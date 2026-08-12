@@ -515,6 +515,37 @@ export interface AppState {
    * `glowBrightness` — not session-only.
    */
   fogDensity: number;
+  /**
+   * Depth-fog tint (fr-5h5d): a `#rrggbb` color, paired with
+   * {@link fogTintStrength}, that shifts what the depth fog blends toward.
+   * Every fog-bearing renderer {@link fogDensity} reaches computes
+   * `mix(derivedTarget, fogTint, fogTintStrength)` — see `scene.ts`'s
+   * `setFogTint` (the points explorer's `applyFogColor`) and the GLSL/WGSL
+   * `uFogTint`/`uFogTintStrength` pair in `surface-material.ts`/
+   * `surface-material-4d.ts`/`voxel-material.ts`. `derivedTarget` is applied
+   * FIRST and stays each renderer's own — the backdrop-midpoint fog color
+   * (fr-1lj) for the points explorer, the sampled per-pixel backdrop
+   * gradient for the surface/solid shaders — so the tint applies AFTER that
+   * derivation rather than replacing it, and editing the background stays
+   * meaningful instead of fighting a baked-in tint target. `#ffffff` is the
+   * default — see {@link fogTintStrength} for why the PAIR (not this field
+   * alone) is what reproduces pre-fr-5h5d rendering exactly. Top-level
+   * rather than nested under {@link AppState.surface}, the same multi-mode
+   * reason as {@link fogDensity}. Persists like `fogDensity` — not
+   * session-only.
+   */
+  fogTint: string;
+  /**
+   * Depth-fog tint blend weight, `[0, 1]` (fr-5h5d) — see {@link fogTint}
+   * for the color it blends toward. `0` is the untinted identity: every
+   * fog-bearing renderer's `mix(derivedTarget, fogTint, fogTintStrength)`
+   * collapses to `derivedTarget` unchanged, bit-exact with pre-fr-5h5d
+   * rendering — so an absent/pre-fr-5h5d document decodes to this default
+   * regardless of what `fogTint` decodes to. Range/default single-sourced
+   * through {@link PARAM}.fogTintStrength. Persists like `fogDensity` — not
+   * session-only.
+   */
+  fogTintStrength: number;
 }
 
 /** An IFS needs at least one map. */
@@ -851,6 +882,24 @@ export const MAX_BALLOON_RADIUS = 2.5;
 export const DEFAULT_FOG_DENSITY = 1;
 export const MIN_FOG_DENSITY = 0;
 export const MAX_FOG_DENSITY = 2.5;
+/**
+ * Fog tint (fr-5h5d) default — see {@link AppState.fogTint}. White is the
+ * identity color: paired with {@link DEFAULT_FOG_TINT_STRENGTH} (0), the
+ * `mix` every fog-bearing renderer applies collapses to its own derived
+ * target regardless of `fogTint`'s exact value, so this is what an
+ * absent/pre-fr-5h5d document decodes to.
+ */
+export const DEFAULT_FOG_TINT = "#ffffff";
+/**
+ * Fog tint strength (fr-5h5d) range/default — see
+ * {@link AppState.fogTintStrength}. `0` is the untinted identity: every
+ * fog-bearing renderer's blend collapses to its own derived target
+ * unchanged, matching pre-fr-5h5d rendering bit-exactly. `1` fully replaces
+ * the derived target with {@link AppState.fogTint}.
+ */
+export const DEFAULT_FOG_TINT_STRENGTH = 0;
+export const MIN_FOG_TINT_STRENGTH = 0;
+export const MAX_FOG_TINT_STRENGTH = 1;
 
 /**
  * The range knowledge for one tunable numeric parameter, single-sourced so the
@@ -1069,6 +1118,11 @@ export const PARAM = defineParams({
     max: MAX_FOG_DENSITY,
     default: DEFAULT_FOG_DENSITY,
   },
+  fogTintStrength: {
+    min: MIN_FOG_TINT_STRENGTH,
+    max: MAX_FOG_TINT_STRENGTH,
+    default: DEFAULT_FOG_TINT_STRENGTH,
+  },
 });
 
 export function initialState(panelOpen: boolean): AppState {
@@ -1124,6 +1178,8 @@ export function initialState(panelOpen: boolean): AppState {
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
     background: { mode: "dark" },
     fogDensity: DEFAULT_FOG_DENSITY,
+    fogTint: DEFAULT_FOG_TINT,
+    fogTintStrength: DEFAULT_FOG_TINT_STRENGTH,
   };
 }
 
@@ -1970,5 +2026,35 @@ export function setFogDensity(state: AppState, fogDensity: number): AppState {
   return {
     ...state,
     fogDensity: clampToSpec(PARAM.fogDensity, fogDensity),
+  };
+}
+
+/**
+ * Set the fog tint color (fr-5h5d) — see {@link AppState.fogTint}. Strict,
+ * unlike `setPositionAxisColors`/`setBackgroundCustom` (which trust an
+ * already-parsed `<input type="color">` → `hexToRgb` value): this reducer's
+ * own input IS the raw string, so it is the validation boundary rather than
+ * a caller upstream of it. Normalizes to lowercase; a string that doesn't
+ * match `#rrggbb` (case-insensitive) leaves state unchanged, mirroring
+ * `decodeScene`'s own quiet-reject contract for a malformed value one layer
+ * out.
+ */
+export function setFogTint(state: AppState, fogTint: string): AppState {
+  if (!/^#[0-9a-f]{6}$/i.test(fogTint)) return state;
+  return { ...state, fogTint: fogTint.toLowerCase() };
+}
+
+/**
+ * Set the fog tint's blend strength (fr-5h5d), clamped to
+ * {@link PARAM}.fogTintStrength's range — see {@link AppState.fogTintStrength}
+ * for what `0`/`1` mean.
+ */
+export function setFogTintStrength(
+  state: AppState,
+  fogTintStrength: number,
+): AppState {
+  return {
+    ...state,
+    fogTintStrength: clampToSpec(PARAM.fogTintStrength, fogTintStrength),
   };
 }
