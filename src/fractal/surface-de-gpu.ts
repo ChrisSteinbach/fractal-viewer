@@ -458,7 +458,12 @@ import type { Vec3 } from "./types";
  * March state — one vec4f per ray: (t, status, steps, lastD), host-
  * initialized to `(-1, 0, 0, 0)`; `t < 0` means the sphere gate has not
  * run yet. Status vocabulary: {@link SURFACE_GPU_RAY_ACTIVE} /
- * `_HIT` / `_MISS` / `_EXHAUSTED`.
+ * `_HIT` / `_MISS` / `_EXHAUSTED`, plus `_PLANE` in `groundPlane: true`
+ * kernels (fr-rhn5) — a MISS the march classified as crossing the
+ * ground plane inside its fade band, shaded by the shade entry's plane
+ * arm and priced host-side WITH the hits (it pays a hit's shadow/AO
+ * probe evals). Ground-plane params ride the {@link
+ * SURFACE_GPU_PARAMS_PLANE_BYTES} block (layout on the constant's doc).
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
  * SURFACE_GPU_SHADE_BYTES} = 144 bytes, WGSL `struct ShadeParams`:
@@ -522,6 +527,18 @@ export const SURFACE_GPU_PARAMS_BYTES = 272;
  * is 304 bytes, so its hosts must bind a buffer packed with the balloon
  * argument. */
 export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 304;
+/** Params size under `groundPlane: true` (fr-rhn5): the 272-byte 3D
+ * block — variant members declared unconditionally, zero-filled when no
+ * lens (or carrying the escape core's forward map) — plus the appended
+ * plane block at the frozen offset 272, which the plane and balloon
+ * blocks SHARE (the escape/lens 208..271 precedent: the two features are
+ * mutually exclusive by construction — both the codegen and the packers
+ * throw on the pair). Layout: y 272, fadeStart 276, fadeEnd 280,
+ * ballRadius 284, ballCenter vec3f 288, albedo vec3f 304.
+ * {@link packSurfaceGpuParams}/{@link packEscapeGpuParams} return THIS
+ * size exactly when their `groundPlane` argument is non-null, and their
+ * usual buffer byte for byte when it is null. */
+export const SURFACE_GPU_PARAMS_PLANE_BYTES = 320;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/272; binding the larger buffer to them would
@@ -558,11 +575,16 @@ export const SURFACE_GPU_SHADE_BYTES = 144;
  * eligible system can overflow the fixed array. */
 export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
 
-/** Ray-state status codes (the `y` component of a march state vec4). */
+/** Ray-state status codes (the `y` component of a march state vec4).
+ * PLANE (fr-rhn5) exists only in `groundPlane: true` kernels: a MISS
+ * whose ray crosses the ground plane inside the fade band — the host
+ * prices these WITH the hits (they pay the shadow/AO probe evals a hit
+ * pays), where plain misses stay one background write. */
 export const SURFACE_GPU_RAY_ACTIVE = 0;
 export const SURFACE_GPU_RAY_HIT = 1;
 export const SURFACE_GPU_RAY_MISS = 2;
 export const SURFACE_GPU_RAY_EXHAUSTED = 3;
+export const SURFACE_GPU_RAY_PLANE = 4;
 
 /** How many f32 words of frontier state one descent keeps per thread:
  * the oracle's 14 scratch arrays (6 current-frontier + 8 next-level). */
@@ -641,6 +663,26 @@ export interface SurfaceGpuKernelOptions {
    * render plain — and the 4D cores throw (the 4D lift is a later
    * fr-5wlv child). */
   balloon?: boolean;
+  /** Ground plane (fr-rhn5): an infinite one-sided floor below the
+   * session ball that MISS rays classify against in the march — a ray
+   * crossing the floor inside the fade band terminates {@link
+   * SURFACE_GPU_RAY_PLANE} instead of MISS (both sphere-gate early-outs
+   * and the step loop's sphere exit; EXHAUSTED never planes) — and the
+   * shade entry lights at the analytic crossing with the hit path's
+   * penumbra-shadow/AO loops (probe-width discipline included), fog and
+   * a radial fade into the pixel's own backdrop, mirroring the
+   * SURFACE_GROUND_PLANE GLSL arm term for term. Plane quantities ride
+   * the appended {@link SURFACE_GPU_PARAMS_PLANE_BYTES} params block
+   * ({@link packSurfaceGpuParams}/{@link packEscapeGpuParams}'s
+   * `groundPlane` argument — a plane kernel must be fed a plane-packed
+   * buffer). Absent or false reproduces the no-plane source byte for
+   * byte. `balloon` THROWS (the enclosing shell has no horizon for a
+   * floor to sit on — the GLSL arm refuses the same pair) and the 4D
+   * cores throw (fr-rhn5 is 3D-scoped); the escape core is supported —
+   * the classic Mandelbox floor — and `lens` composes exactly as the
+   * GLSL side's stripped lens+plane program does. Inert in eval mode
+   * (no rays terminate). */
+  groundPlane?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -841,7 +883,15 @@ export function packSurfaceGpuParams(
   de: SurfaceDE,
   run: SurfaceGpuRunParams,
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  if (balloon && groundPlane) {
+    throw new Error(
+      "surface-de-gpu: groundPlane+balloon: excluded (fr-rhn5) — the two " +
+        "blocks share the frozen offset 272 and the kernels refuse the " +
+        "pair",
+    );
+  }
   if (de.foldFinal && de.final) {
     // buildSurfaceDE's invariant (surface-de.ts, `final` doc): the two
     // lens shapes are mutually exclusive, and the identity-final packing
@@ -864,7 +914,11 @@ export function packSurfaceGpuParams(
     );
   }
   const buf = new ArrayBuffer(
-    balloon ? SURFACE_GPU_PARAMS_BALLOON_BYTES : SURFACE_GPU_PARAMS_BYTES,
+    balloon
+      ? SURFACE_GPU_PARAMS_BALLOON_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS_PLANE_BYTES
+        : SURFACE_GPU_PARAMS_BYTES,
   );
   const view = new DataView(buf);
   writeVec3(view, 0, de.boundCenter);
@@ -940,7 +994,39 @@ export function packSurfaceGpuParams(
     view.setFloat32(288, balloon.R, true);
     view.setFloat32(292, balloon.far, true);
   }
+  // fr-rhn5: the ground-plane block at the frozen offset 272 it SHARES
+  // with the balloon block (mutually exclusive — the throw above) — the
+  // GLSL uGround* quantities in scene.ts's surfaceGroundPlaneSpec
+  // convention.
+  if (groundPlane) {
+    writeGroundPlane(view, groundPlane);
+  }
   return buf;
+}
+
+/** The ground plane's wire block (fr-rhn5) — scene.ts's
+ * surfaceGroundPlaneSpec convention, all world units: floor height,
+ * radial fade band from the session ball's xz center, the ball the
+ * shadow/AO gates certify against, and the sRGB floor albedo. */
+export interface SurfaceGpuGroundPlane {
+  y: number;
+  fadeStart: number;
+  fadeEnd: number;
+  ballCenter: Vec3;
+  ballRadius: number;
+  albedo: Vec3;
+}
+
+/** Write the plane block at its frozen offset (module-doc layout: y 272,
+ * fadeStart 276, fadeEnd 280, ballRadius 284, ballCenter 288, albedo
+ * 304) — one definition for both 3D packers. */
+function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
+  view.setFloat32(272, gp.y, true);
+  view.setFloat32(276, gp.fadeStart, true);
+  view.setFloat32(280, gp.fadeEnd, true);
+  view.setFloat32(284, gp.ballRadius, true);
+  writeVec3(view, 288, gp.ballCenter);
+  writeVec3(view, 304, gp.albedo);
 }
 
 /**
@@ -962,8 +1048,11 @@ export function packSurfaceGpuParams(
 export function packEscapeGpuParams(
   de: EscapeDE,
   run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
-  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_BYTES);
+  const buf = new ArrayBuffer(
+    groundPlane ? SURFACE_GPU_PARAMS_PLANE_BYTES : SURFACE_GPU_PARAMS_BYTES,
+  );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
   view.setFloat32(16, de.boundingRadius * 2, true);
@@ -1011,6 +1100,12 @@ export function packEscapeGpuParams(
   view.setFloat32(256, de.foldKind, true);
   view.setFloat32(260, de.w, true);
   view.setFloat32(264, de.derivGrowth, true);
+  // fr-rhn5: the ground-plane block appends past the escape variant
+  // block at the same frozen 272 as the descent cores' — the classic
+  // Mandelbox floor is exactly this mode's look.
+  if (groundPlane) {
+    writeGroundPlane(view, groundPlane);
+  }
   return buf;
 }
 
@@ -1390,6 +1485,25 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     throw new Error(
       "surface-de-gpu: balloon is 3D-only (the 4D lift is a later " +
         "fr-5wlv child)",
+    );
+  }
+  // fr-rhn5: the ground plane — an analytic floor MISS rays classify
+  // against in the march (status PLANE inside the fade band) and the
+  // shade entry lights with the hit path's penumbra/AO machinery.
+  // Absent means no plane, so every pre-fr-rhn5 config generates
+  // byte-identical source.
+  const groundPlane = opts.groundPlane ?? false;
+  if (groundPlane && balloon) {
+    throw new Error(
+      "surface-de-gpu: groundPlane+balloon: excluded — the enclosing " +
+        "shell has no horizon for a floor to sit on (fr-rhn5; the GLSL " +
+        "arm refuses the same pair)",
+    );
+  }
+  if (groundPlane && core4) {
+    throw new Error(
+      "surface-de-gpu: groundPlane is 3D-only (fr-rhn5's scope — the 4D " +
+        "lift would need the slab/rotor treatment)",
     );
   }
   // fr-d0nn: the fr-wa6o slab register-pressure probe (option doc).
@@ -3307,6 +3421,17 @@ ${balloonHitWrapText}`
   // same MISS path (background). The dither applies at t = 0, where its
   // max(t, 1.0) scale is exactly the GLSL arm's. The non-balloon arm is
   // the shipped text, byte for byte.
+  // fr-rhn5: what a sphere-gate/sphere-exit MISS terminates as. With the
+  // ground plane compiled in, the march classifies the miss against the
+  // floor (PLANE inside the fade band, MISS past it — beyond fadeEnd the
+  // shade would return pure background anyway, so those rays keep the
+  // one-write miss path); without it, the literal MISS status — the
+  // shipped text, byte for byte. Balloon never composes (throw above),
+  // so the step loop's shared sphere-exit write — the balloon gate
+  // itself has no early-outs — keeps the literal there too.
+  const marchMissStatus = groundPlane
+    ? "groundPlaneStatus(ro, rd)"
+    : `${SURFACE_GPU_RAY_MISS}.0`;
   const marchGate = balloon
     ? `  // fr-5wlv.5: no visible-sphere gate in balloon mode — the enclosing
   // shell can be hit from anywhere, so every ray marches from the
@@ -3323,14 +3448,14 @@ ${balloonHitWrapText}`
   let cq = dot(ro, ro) - radius * radius;
   let disc = bq * bq - cq;
   if (disc < 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    st.y = ${marchMissStatus};
     states[ray] = st;
     return;
   }
   let sq = sqrt(disc);
   let tFar = -bq + sq;
   if (tFar <= 0.0) {
-    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+    st.y = ${marchMissStatus};
     states[ray] = st;
     return;
   }
@@ -3405,7 +3530,27 @@ fn evalQueries(
 }`
       : mode === "march"
         ? `
-@compute @workgroup_size(${workgroupSize})
+${
+  groundPlane
+    ? `fn groundPlaneStatus(ro: vec3f, rd: vec3f) -> f32 {
+  // fr-rhn5: classify a sphere MISS against the floor — PLANE only for
+  // downward rays crossing y = groundY inside the fade band (past the
+  // band the fade is 1 and the pixel is pure background, so it keeps
+  // the one-write MISS path). One-sided: below the floor, background.
+  if (ro.y <= params.groundY || rd.y >= -1.0e-6) {
+    return ${SURFACE_GPU_RAY_MISS}.0;
+  }
+  let tp = (params.groundY - ro.y) / rd.y;
+  let rel = (ro + rd * tp).xz - params.groundBallC.xz;
+  if (dot(rel, rel) >= params.groundFadeEnd * params.groundFadeEnd) {
+    return ${SURFACE_GPU_RAY_MISS}.0;
+  }
+  return ${SURFACE_GPU_RAY_PLANE}.0;
+}
+
+`
+    : ""
+}@compute @workgroup_size(${workgroupSize})
 fn marchRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
@@ -3426,7 +3571,7 @@ ${marchGate}
   var steps = u32(st.z);
   for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
     if (t > tFar) {
-      st.y = ${SURFACE_GPU_RAY_MISS}.0;
+      st.y = ${marchMissStatus};
       break;
     }
     if (steps >= params.marchSteps) {
@@ -3471,7 +3616,94 @@ struct SurfaceHitInfo {
 }
 
 ${hitInfoText}
-
+${
+  groundPlane
+    ? `
+fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
+  // Ground plane (fr-rhn5) — the SURFACE_GROUND_PLANE GLSL arm's
+  // shadeGroundPlane, term for term. The march only queues PLANE rays,
+  // but the geometry re-derives from scratch so the guards keep this
+  // total on any input.
+  if (ro.y <= params.groundY || rd.y >= -1.0e-6) {
+    return bg;
+  }
+  let tp = (params.groundY - ro.y) / rd.y;
+  let hp = ro + rd * tp;
+  let rel = hp.xz - params.groundBallC.xz;
+  // Scene-anchored radial fade to the pixel's own backdrop color.
+  let fade =
+    1.0 - smoothstep(params.groundFadeStart, params.groundFadeEnd, length(rel));
+  if (fade <= 0.0) {
+    return bg;
+  }
+  let gR = params.groundBallR;
+  let visR = params.visibleRadius;
+  // Penumbra shadow toward the light: the hit path's DE loop, adapted
+  // for a start OUTSIDE the certified ball. Two analytic gates make the
+  // infinite floor affordable — cost proportional to the shadow
+  // CORRIDOR, not the floor area (certificates in the GLSL arm's doc):
+  // ball-behind (along <= 0, exact once the floor sits >= 1.02 R below
+  // the center) and a closest approach clearing 1.05 R + 0.3 * along.
+  // Inside the corridor the loop's exit is outside-AND-receding — the
+  // hit path's |sp| > 1.05 R alone would fire immediately down here.
+  var shadow = 1.0;
+  let toC = params.groundBallC - hp;
+  let along = dot(toC, shade.lightDir);
+  let perp2 = dot(toC, toC) - along * along;
+  let corridor = gR * 1.05 + 0.3 * along;
+  if (along > 0.0 && perp2 < corridor * corridor) {
+    var ts = gR * 4.0e-4;
+    for (var i = 0u; i < shade.shadowSteps; i++) {
+      let sp = hp + shade.lightDir * ts;
+      let d = ${probeDe}(sp, 0.0, li);
+      shadow = min(shadow, 8.0 * d / ts);
+      ts += clamp(d, gR * 2.0e-4, visR * 0.1);
+      if (shadow < 0.02 ||
+          (dot(sp - params.groundBallC, shade.lightDir) > 0.0 &&
+            length(sp - params.groundBallC) > gR * 1.05)) {
+        break;
+      }
+    }
+    shadow = clamp(shadow, 0.0, 1.0);
+  }
+  // Contact occlusion: the hit path's AO taps straight up from the
+  // floor, skipped once the floor point is provably beyond every tap's
+  // reach of the ball (each tap needs DE < tap height, and DE is at
+  // least |hp - C| - hh - R — so |hp - C| >= R + 2 hh_max certifies
+  // occlusion 0; 0.02 R of margin on top).
+  var ao = 1.0;
+  let reach = gR * (1.02 + 0.04 * f32(shade.aoTaps));
+  let relC = hp - params.groundBallC;
+  if (dot(relC, relC) < reach * reach) {
+    var occ = 0.0;
+    var wgt = 1.0;
+    var norm = 0.0;
+    for (var i = 1u; i <= shade.aoTaps; i++) {
+      let hh = gR * 0.02 * f32(i);
+      occ += wgt *
+        clamp((hh - ${probeDe}(hp + vec3f(0.0, hh, 0.0), 0.0, li)) / hh, 0.0, 1.0);
+      norm += wgt;
+      wgt *= 0.6;
+    }
+    ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+  }
+  // The hit path's lighting minus specular (a matte floor), in the same
+  // linear space (fr-8id): n is +y, so diffuse is just lightDir.y.
+  let diffuse = max(shade.lightDir.y, 0.0);
+  let lit = shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow;
+  var col = pow(pow(params.groundAlbedo, vec3f(2.2)) * lit, vec3f(1.0 / 2.2));
+  // Depth fog, the hit path's formula at the plane distance; the fog
+  // origin is the ray's closest approach to the ball center (clamped to
+  // the segment), so the floor under the fractal stays as crisp as the
+  // fractal and the fade band fogs like the far wall it is.
+  let dist = tp - clamp(dot(params.groundBallC - ro, rd), 0.0, tp);
+  let fog = 1.0 - exp(-0.12 * pow(dist * params.fogDensity / max(visR, 1.0e-6), 2.0));
+  col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
+  return mix(bg, col, fade);
+}
+`
+    : ""
+}
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
@@ -3497,7 +3729,24 @@ fn shadeRays(
     shade.bgTop,
     clamp((f32(py) + 0.5) / f32(params.rasterHeight), 0.0, 1.0),
   );
-  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+${
+  groundPlane
+    ? `  if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {
+    // Ground plane (fr-rhn5): the march classified this miss as
+    // crossing the floor inside the fade band — unproject the ray (the
+    // hit path's exact lines below) and light the analytic crossing.
+    let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
+    let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+    let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
+    let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
+    let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
+    colorOut[ray] =
+      pack4x8unorm(vec4f(shadeGroundPlane(params.ro, rd, bg, li), 1.0));
+    return;
+  }
+`
+    : ""
+}  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
     return;
   }
@@ -3667,6 +3916,21 @@ ${shadeGate}
               }`
       : "";
 
+  // fr-rhn5: the ground-plane params block at the frozen offset 272 —
+  // SHARED with the balloon block (they are mutually exclusive by the
+  // throw above, the escape/lens 208..271 precedent). Appended after
+  // the escape variant block for the escape core, and after the
+  // unconditionally-declared lens block (the balloon's frozen-offset
+  // move) for the descent cores.
+  const planeStructFields = /* wgsl */ `
+  groundY: f32,
+  groundFadeStart: f32,
+  groundFadeEnd: f32,
+  groundBallR: f32,
+  groundBallC: vec3f,
+  padG0: f32,
+  groundAlbedo: vec3f,
+  padG1: f32,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -3758,8 +4022,17 @@ struct Params {
   lens4Params: vec4f,`
       : ""
   }`
-      : lens || balloon
+      : core === "escape"
         ? /* wgsl */ `
+  escM0: vec3f,
+  escT0: f32,
+  escM1: vec3f,
+  escT1: f32,
+  escM2: vec3f,
+  escT2: f32,
+  escParams: vec4f,${groundPlane ? planeStructFields : ""}`
+        : lens || balloon || groundPlane
+          ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
   lensM1: vec3f,
@@ -3776,16 +4049,7 @@ struct Params {
   padB0: f32,
   padB1: f32,`
       : ""
-  }`
-        : core === "escape"
-          ? /* wgsl */ `
-  escM0: vec3f,
-  escT0: f32,
-  escM1: vec3f,
-  escT1: f32,
-  escM2: vec3f,
-  escT2: f32,
-  escParams: vec4f,`
+  }${groundPlane ? planeStructFields : ""}`
           : ""
   }
 }${
