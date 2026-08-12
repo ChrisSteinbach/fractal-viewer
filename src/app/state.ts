@@ -496,6 +496,24 @@ export interface AppState {
    * {@link customPalette}.
    */
   background: BackgroundParams;
+  /**
+   * Depth-fog density multiplier (fr-5h5d): scales the fog DISTANCE UNIT for
+   * both the point explorer's depthFade/aerial styles (`scene.ts`'s
+   * `updateFog`, a plain `THREE.Fog`) and every surface tracer (GLSL
+   * `uFogDensity` in `surface-material.ts`/`surface-material-4d.ts`, WGSL
+   * `params.fogDensity` in `fractal/surface-de-gpu.ts`) — plus the balloon
+   * echo's own radial fade, which shares the same distance-unit intuition
+   * (see `scene.ts`'s `syncBalloonEchoUniforms`). Solid and flame carry no
+   * fog term and are unaffected. `1` reproduces the pre-fr-5h5d rendering
+   * exactly — the fixed band every renderer shipped with before this
+   * control existed; `0` disables depth fog for the fog-bearing styles (the
+   * balloon's far cap then shows as a hard horizon instead of fading to
+   * background — deliberate). Top-level rather than nested under
+   * {@link AppState.surface} because it spans multiple render modes, the
+   * same shape as {@link glowBrightness}. Persists like `glowBrightness` —
+   * not session-only.
+   */
+  fogDensity: number;
 }
 
 /** An IFS needs at least one map. */
@@ -817,6 +835,21 @@ export const MAX_W_SHEAR = 2;
 export const DEFAULT_BALLOON_RADIUS = 1.6;
 export const MIN_BALLOON_RADIUS = 0.05;
 export const MAX_BALLOON_RADIUS = 2.5;
+/**
+ * Depth-fog density (fr-5h5d) range/default — see
+ * {@link AppState.fogDensity}. `1` is the neutral default: it reproduces the
+ * fixed fog band every renderer used before this control existed — the
+ * points explorer's `updateFog` arithmetic is unchanged at `d = 1`, and the
+ * GLSL/WGSL fog terms multiply the traveled distance by density INSIDE the
+ * term, so `1` is an identity multiply there too. `0` disables depth fog
+ * outright (see `scene.ts`'s `updateFog` for how the fog-bearing styles
+ * honor that without touching `setRenderStyle`'s own fog on/off switching).
+ * `2.5` thickens the atmosphere to a still-legible haze rather than a total
+ * whiteout.
+ */
+export const DEFAULT_FOG_DENSITY = 1;
+export const MIN_FOG_DENSITY = 0;
+export const MAX_FOG_DENSITY = 2.5;
 
 /**
  * The range knowledge for one tunable numeric parameter, single-sourced so the
@@ -1030,6 +1063,11 @@ export const PARAM = defineParams({
     max: MAX_BALLOON_RADIUS,
     default: DEFAULT_BALLOON_RADIUS,
   },
+  fogDensity: {
+    min: MIN_FOG_DENSITY,
+    max: MAX_FOG_DENSITY,
+    default: DEFAULT_FOG_DENSITY,
+  },
 });
 
 export function initialState(panelOpen: boolean): AppState {
@@ -1084,6 +1122,7 @@ export function initialState(panelOpen: boolean): AppState {
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
     background: { mode: "dark" },
+    fogDensity: DEFAULT_FOG_DENSITY,
   };
 }
 
@@ -1918,5 +1957,17 @@ export function setGlowBrightness(
   return {
     ...state,
     glowBrightness: clampToSpec(PARAM.glowBrightness, glowBrightness),
+  };
+}
+
+/**
+ * Set the depth-fog density multiplier (fr-5h5d), clamped to
+ * {@link PARAM}.fogDensity's range — see {@link AppState.fogDensity} for
+ * what `0`/`1` mean.
+ */
+export function setFogDensity(state: AppState, fogDensity: number): AppState {
+  return {
+    ...state,
+    fogDensity: clampToSpec(PARAM.fogDensity, fogDensity),
   };
 }

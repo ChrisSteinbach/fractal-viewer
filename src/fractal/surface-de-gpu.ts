@@ -349,7 +349,10 @@ import type { Vec3 } from "./types";
  *         144  vec3f ro                  156  f32 finalSigmaMin
  *         160  vec3f right               172  f32 tanHalf
  *         176  vec3f up                  188  f32 aspect
- *         192  vec3f fwd                 204  f32 (pad)
+ *         192  vec3f fwd                 204  f32 fogDensity (fr-5h5d;
+ *              former pad1 — the depth-fog density multiplier every core's
+ *              shade entry reads, {@link SurfaceGpuRunParams.fogDensity}
+ *              defaulting to 1 when the caller omits it)
  *         208..271 — the VARIANT block, keyed on the kernel config
  *              (mutually exclusive by construction; zeros when neither
  *              variant is active, and the plain kernels' Params struct
@@ -793,6 +796,11 @@ export interface SurfaceGpuRunParams {
    * The app passes the preview tier's coarser floor. */
   hitFloor?: number;
   pose?: SurfaceGpuPose;
+  /** Depth-fog density multiplier (fr-5h5d), packed at the frozen offset
+   * 204 (module doc) by every params packer. Default 1 — the pre-fr-5h5d
+   * fixed fog — when omitted, matching the GLSL tracers' own uFogDensity
+   * default; 0 disables depth fog in the shade entry's fog term. */
+  fogDensity?: number;
 }
 
 function writeVec3(view: DataView, offset: number, v: Vec3): void {
@@ -897,7 +905,9 @@ export function packSurfaceGpuParams(
   writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
   view.setFloat32(188, pose?.aspect ?? 1, true);
   writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
-  view.setFloat32(204, 0, true);
+  // fr-5h5d: the former pad1 slot, now the fog density multiplier the
+  // shared shade entry reads — default 1 (the pre-fr-5h5d fixed fog).
+  view.setFloat32(204, run.fogDensity ?? 1, true);
   // fr-55s1 stage B: the fold-lens block (zeros when no foldFinal — the
   // no-lens kernel's struct ends at 208 and never reads past it). Same
   // vec3f+f32 interleave as the finalM rows above; the tail vec4f is the
@@ -984,6 +994,10 @@ export function packEscapeGpuParams(
   writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
   view.setFloat32(188, pose?.aspect ?? 1, true);
   writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  // fr-5h5d: the former pad1 slot — see packSurfaceGpuParams's identical
+  // line. The escape shade path reads it through the same shared
+  // shadeRays fn as every other core.
+  view.setFloat32(204, run.fogDensity ?? 1, true);
   writeVec3(view, 208, [de.m[0], de.m[1], de.m[2]]);
   view.setFloat32(220, de.t[0], true);
   writeVec3(view, 224, [de.m[3], de.m[4], de.m[5]]);
@@ -1113,6 +1127,10 @@ export function packSurface4GpuParams(
   writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
   view.setFloat32(188, pose?.aspect ?? 1, true);
   writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  // fr-5h5d: the former pad1 slot — see packSurfaceGpuParams's identical
+  // line. The 4D cores' shade path reads it through the same shared
+  // shadeRays fn as the 3D cores.
+  view.setFloat32(204, run.fogDensity ?? 1, true);
   // The 4D variant tail. rotorInv rows are the TRANSPOSE of the
   // row-major pose rotor — row i of Mᵀ is column i of M — the one real
   // transpose in the pipeline; stepBack4 and final4M are applied
@@ -3542,8 +3560,10 @@ ${shadeGate}
   let linBase = pow(base, vec3f(2.2));
   var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));
   // Depth fog toward the backdrop: squared-exponential in the distance
-  // traveled inside the bounding sphere.
-  let fog = 1.0 - exp(-0.12 * pow((t - tEnter) / max(visR, 1.0e-6), 2.0));
+  // traveled inside the bounding sphere. params.fogDensity (fr-5h5d)
+  // scales the traveled distance, mirroring the GLSL tracers' uFogDensity
+  // line for line.
+  let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
   col = mix(col, bg, clamp(fog, 0.0, 1.0));
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
 }`;
@@ -3665,7 +3685,13 @@ struct Params {
   up: vec3f,
   aspect: f32,
   fwd: vec3f,
-  pad1: f32,${
+  // fr-5h5d: the frozen block's former pad1 slot, claimed for the fog
+  // density multiplier — packed by every params packer
+  // (packSurfaceGpuParams / packEscapeGpuParams / packSurface4GpuParams)
+  // from run.fogDensity ?? 1, module doc's offset-204 row. Read only by
+  // the shading pass's fog term below (the pure-eval/march bodies never
+  // touch it, keeping their generated source textually unchanged).
+  fogDensity: f32,${
     // The 4D tail comes FIRST in this chain (fr-rsp6 phase 2B): a lensed
     // 4D kernel needs both the tail AND its own appended lens4 block, so
     // core4 owns the variant block and the 3D lens fields stay the 3D

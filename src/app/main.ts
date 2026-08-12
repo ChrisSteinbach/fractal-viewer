@@ -4158,6 +4158,11 @@ function main(): void {
     scene.setBalloonEchoEnabled(state.balloonEcho);
     scene.setBalloonEchoRadius(state.balloonRadius);
     scene.setSurfaceBalloonRadius(state.balloonRadius);
+    // The fog density (fr-5h5d): pushed unconditionally, like the balloon
+    // pair just above — a restored document with a non-default density
+    // would otherwise render at the scene's default until a Fog edit
+    // first moved it.
+    scene.setFogDensity(state.fogDensity);
     if (
       state.renderMode === "surface" &&
       state.balloonEcho !== previousBalloonEcho
@@ -5634,6 +5639,10 @@ function main(): void {
   scene.setBalloonEchoEnabled(state.balloonEcho);
   scene.setBalloonEchoRadius(state.balloonRadius);
   scene.setSurfaceBalloonRadius(state.balloonRadius);
+  // Same push for the restored fog density (fr-5h5d): the scene constructs
+  // at density 1, so a document restored with a non-default value would
+  // render at the wrong density until a Fog edit first moved it.
+  scene.setFogDensity(state.fogDensity);
   // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
   // regeneration goes through the worker (fr-5kx): the first paint should
   // include the cloud, not an empty backdrop for a worker round-trip — and

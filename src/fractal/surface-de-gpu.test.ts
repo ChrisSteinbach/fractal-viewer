@@ -545,6 +545,22 @@ describe("packSurfaceGpuParams run overrides", () => {
       Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR),
     );
   });
+
+  // fr-5h5d: offset 204 is the former pad1 slot, claimed for the fog
+  // density multiplier every core's shared shade entry reads.
+  it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(204, true)).toBe(1);
+  });
+
+  it("round-trips a non-default run.fogDensity at offset 204", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const view = new DataView(
+      packSurfaceGpuParams(de, { itemCount: 1, fogDensity: 0.35 }),
+    );
+    expect(view.getFloat32(204, true)).toBe(Math.fround(0.35));
+  });
 });
 
 describe("packSurfaceGpuMaps", () => {
@@ -1505,6 +1521,23 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(view.getUint32(60, true)).toBe(9);
     expect(view.getFloat32(64, true)).toBe(Math.fround(0.04));
     expect(view.getUint32(72, true)).toBe(96);
+  });
+
+  // fr-5h5d: the escape core shares the frozen block's offset-204
+  // fogDensity slot (former pad1) — packEscapeGpuParams never wrote it
+  // before this, leaving it at the ArrayBuffer's zero default.
+  it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(204, true)).toBe(1);
+  });
+
+  it("round-trips a non-default run.fogDensity at offset 204", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const view = new DataView(
+      packEscapeGpuParams(de, { itemCount: 1, fogDensity: 0.35 }),
+    );
+    expect(view.getFloat32(204, true)).toBe(Math.fround(0.35));
   });
 
   it("packs footprint at offset 68 as 0 even when run.footprint is passed — a forward loop has no cone-footprint depth cap", () => {
@@ -2875,6 +2908,25 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
     expect(view.getFloat32(64, true)).toBe(Math.fround(0.04));
     expect(view.getUint32(72, true)).toBe(96);
     expect(view.getFloat32(68, true)).toBe(0);
+  });
+
+  // fr-5h5d: the 4D cores share the frozen block's offset-204 fogDensity
+  // slot (former pad1) — packSurface4GpuParams never wrote it before
+  // this, leaving it at the ArrayBuffer's zero default.
+  it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(204, true)).toBe(1);
+  });
+
+  it("round-trips a non-default run.fogDensity at offset 204", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1, fogDensity: 0.35 }),
+    );
+    expect(view.getFloat32(204, true)).toBe(Math.fround(0.35));
   });
 
   it("packs hitFloorEps at offset 80 as fround(boundingRadius * SURFACE_GPU_HIT_FLOOR) by default, and fround(boundingRadius * run.hitFloor) when given", () => {

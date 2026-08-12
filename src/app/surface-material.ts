@@ -660,6 +660,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
+  /** Depth-fog density multiplier (fr-5h5d): scales the traveled-distance
+   * term of the fog blend below (main()'s float fog computation) — 1 is
+   * the pre-fr-5h5d fixed fog, 0 (scene-set floor) fades it away entirely.
+   * Scene-set, independent of the installed system — see scene.ts's
+   * setFogDensity. */
+  uniform float uFogDensity;
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered. NOT the hit test's epsilon — see
@@ -2443,7 +2449,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // full 2R chord), a depth cue matching the explorer's fog feel
     // (constants tuned by eye).
     float fog =
-      1.0 - exp(-0.12 * pow((t - tEnter) / max(uVisibleRadius, 1.0e-6), 2.0));
+      1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
     col = mix(col, background, clamp(fog, 0.0, 1.0));
 
     outColor = vec4(col, 1.0);
@@ -2689,6 +2695,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
+      uFogDensity: { value: 1 },
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },

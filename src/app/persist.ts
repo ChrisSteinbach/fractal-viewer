@@ -43,6 +43,7 @@ import type {
 import {
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_FLAME_PALETTE,
+  DEFAULT_FOG_DENSITY,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -232,6 +233,23 @@ export interface SceneSnapshot {
    * `DEFAULT_BALLOON_RADIUS` for whichever comes back that way.
    */
   balloonRadius?: number;
+  /**
+   * Depth-fog density multiplier (fr-5h5d, see `state.ts`'s
+   * {@link AppState.fogDensity}) — persisted alongside `balloonRadius`
+   * exactly the same way: optional here (so a hand-built/pre-fr-5h5d
+   * `SceneSnapshot` need not supply it) even though `toSnapshot`/
+   * `encodeScene` always WRITE a defined value once `AppState` carries one —
+   * there is no legacy meaning tied to this field's absence, so the
+   * `balloonRadius` "always written, `??` only for hand-built input" shape
+   * applies rather than `background`'s omit-while-pristine dance. Decoded
+   * values clamp through {@link PARAM}.fogDensity, like every other
+   * PARAM-backed numeric field; absent or malformed decodes to `undefined`,
+   * and `fromSnapshot` supplies {@link DEFAULT_FOG_DENSITY} for whichever
+   * comes back that way — so a pre-fr-5h5d link decodes with the field
+   * absent and still boots at density 1, reproducing today's fixed fog
+   * exactly.
+   */
+  fogDensity?: number;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -281,6 +299,10 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // applies instead of `background`'s omit-while-pristine dance.
     balloonEcho: state.balloonEcho,
     balloonRadius: state.balloonRadius,
+    // Always written (fr-5h5d), the identical balloonRadius shape just
+    // above: AppState.fogDensity is always defined, and there is no legacy
+    // document whose meaning depends on this field's absence.
+    fogDensity: state.fogDensity,
   };
 }
 
@@ -303,7 +325,8 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * `positionAxisColors`: both HAVE a real `AppState` default
  * (`false`/`DEFAULT_BALLOON_RADIUS`) to fall back to rather than merely
  * clearing to `undefined`, so a `??` supplies it whenever the decoded (or
- * hand-built) snapshot came back without one.
+ * hand-built) snapshot came back without one. `fogDensity` (fr-5h5d) follows
+ * the identical shape, falling back to {@link DEFAULT_FOG_DENSITY}.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -316,6 +339,7 @@ export function fromSnapshot(
     positionAxisColors: snapshot.positionAxisColors,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
+    fogDensity: snapshot.fogDensity ?? DEFAULT_FOG_DENSITY,
   };
 }
 
@@ -1352,6 +1376,7 @@ export function encodeScene(s: SceneSnapshot): string {
     glowBrightness: number;
     balloonEcho: boolean;
     balloonRadius: number;
+    fogDensity: number;
     background?: { mode: BackgroundMode; top?: string; bottom?: string };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
@@ -1440,6 +1465,10 @@ export function encodeScene(s: SceneSnapshot): string {
     // toSnapshot (which always supplies both) — see toSnapshot's own note.
     balloonEcho: s.balloonEcho ?? false,
     balloonRadius: round4(s.balloonRadius ?? DEFAULT_BALLOON_RADIUS),
+    // Always written (fr-5h5d), like balloonRadius just above — the `??`
+    // fallback only matters for a hand-built SceneSnapshot that skipped
+    // toSnapshot (which always supplies it).
+    fogDensity: round4(s.fogDensity ?? DEFAULT_FOG_DENSITY),
   };
   // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
   // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
@@ -1601,6 +1630,14 @@ export function encodeScene(s: SceneSnapshot): string {
  * `false` / {@link DEFAULT_BALLOON_RADIUS} — for whichever comes back
  * `undefined`, so a pre-fr-5wlv.6 link decodes here with both fields
  * absent and still boots with the balloon off, exactly as it always did.
+ *
+ * fogDensity (fr-5h5d) follows the identical quiet-drop/clamp contract as
+ * balloonRadius just above: coerce, reject non-finite to `undefined`, clamp
+ * a finite value into {@link PARAM}.fogDensity's range, never rejecting the
+ * scene. `fromSnapshot` supplies the true default, {@link
+ * DEFAULT_FOG_DENSITY}, so a pre-fr-5h5d link decodes here with the field
+ * absent and still boots at density 1, reproducing today's fixed fog
+ * exactly.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1766,6 +1803,14 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.balloonRadius, rawBalloonRadius)
       : undefined;
 
+    // fogDensity (fr-5h5d): same coerce/clamp/never-reject contract as
+    // balloonRadius just above. fromSnapshot supplies DEFAULT_FOG_DENSITY
+    // when this comes back undefined.
+    const rawFogDensity = Number(o.fogDensity);
+    const fogDensity: number | undefined = Number.isFinite(rawFogDensity)
+      ? clampToSpec(PARAM.fogDensity, rawFogDensity)
+      : undefined;
+
     return {
       transforms,
       finalTransform,
@@ -1790,6 +1835,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       fourD,
       balloonEcho,
       balloonRadius,
+      fogDensity,
     };
   } catch {
     return null;
