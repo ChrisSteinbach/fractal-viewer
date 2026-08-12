@@ -826,7 +826,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     under a pessimistic prior, spike-lifts instantly, decays slowly,
     capped by the slow-trust double/quarter policy — the original
     ray-unit doubling let miss runs inflate capacity a hit band then
-    paid, five kernel-confirmed i915 GPU hangs) so NO submission
+    paid, five kernel-confirmed i915 GPU hangs — and FLOORED at one
+    WORKGROUP, never one hit: within a workgroup cost is
+    depth-dominated, so sub-workgroup batches buy no submission-wall
+    safety, and the old 1-hit floor was a one-way trapdoor — one hit
+    band past the pass target and every 1-ray batch re-measures the
+    full per-submission wall as its per-hit cost, spike-lift latches
+    it, ~4 hits/s serialization that reads as a settle parked forever
+    at a pose-dependent percent, fr-d6g5's Mesa-25.2.8 "park"; the
+    `?surfacetrace` flag + `scripts/fold-settle-park.repro.mjs` are
+    that diagnosis' instruments, kept) so NO submission
     outruns the i915 watchdog; shading probes ride the width-1 greedy
     descent (`SURFACE_COMPUTE_SHADE_DE_WIDTH`, the fr-p8bc measured
     verdict: 23.8x cheaper shading, eyeball-identical frames);

@@ -99,6 +99,17 @@ import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { webgpuAdapterStatus } from "./render-backend";
 
+type SurfaceComputeTraceSink = (line: string) => void;
+
+let surfaceComputeTrace: SurfaceComputeTraceSink | null = null;
+
+/** Opt-in frame-loop tracing (fr-d6g5): captured once per frame at start. */
+export function setSurfaceComputeTrace(
+  sink: SurfaceComputeTraceSink | null,
+): void {
+  surfaceComputeTrace = sink;
+}
+
 /** Threads per workgroup — fr-q1f8's measured winner (private frontier,
  * stage-1 prune only; wg size itself measured a non-factor, 64 matches the
  * bench's private-variant default). */
@@ -363,11 +374,18 @@ export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
  * allows it. */
 export const SURFACE_COMPUTE_MAX_SHADE_BATCH = 4096;
 
-/** First hit-batch CAPACITY of a frame — deliberately small: even at the
+/** First hit-batch CAPACITY of a frame — deliberately minimal: even at the
  * worst per-hit cost measured on Iris (~250 ms full-width probes at a
- * near-surface silhouette), 8 hits stay well under the ~7.5 s i915
- * watchdog while the frame's first measurements come in. */
-export const SURFACE_COMPUTE_SHADE_HIT_CAP_START = 8;
+ * near-surface silhouette), one workgroup's worth of hits stays well under
+ * the ~7.5 s i915 watchdog while the frame's first measurements come in
+ * (the wall doesn't scale with batch size inside a workgroup — see
+ * {@link shadeHitBatchSize}). Floored at
+ * {@link SURFACE_COMPUTE_WORKGROUP_SIZE} rather than lower (fr-d6g5):
+ * starting below one workgroup couldn't reduce per-submission wall either,
+ * and it only kept the first hit batches measuring in the degenerate
+ * regime that fed the old floor's trapdoor. */
+export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
+  SURFACE_COMPUTE_WORKGROUP_SIZE;
 
 /** Pessimistic prior for per-HIT shade cost (µs) before a frame's first
  * measured hit batch — deliberately far above the cheap-probe common case
@@ -384,7 +402,10 @@ export const SURFACE_COMPUTE_INITIAL_HIT_SHADE_US = 20_000;
  * region whose per-hit cost the EMA has not seen yet can only be met at
  * a capacity earned through measured-cheap batches, so the first
  * encounter's overshoot stays a bounded multiple of the pass target
- * instead of a watchdog kill. Pure so the safety bias is unit-tested.
+ * instead of a watchdog kill. The trust ladder's floor is one workgroup,
+ * never lower (fr-d6g5) — see {@link shadeHitBatchSize} for why a
+ * sub-workgroup capacity buys no submission-wall safety. Pure so the
+ * safety bias is unit-tested.
  */
 export function nextShadeBatchSize(
   current: number,
@@ -397,7 +418,7 @@ export function nextShadeBatchSize(
     return Math.min(current * 2, SURFACE_COMPUTE_MAX_SHADE_BATCH);
   }
   if (lastBatchMs > SURFACE_COMPUTE_PASS_TARGET_MS * 2) {
-    return Math.max(1, Math.floor(current / 4));
+    return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
   }
   return current;
 }
@@ -405,15 +426,27 @@ export function nextShadeBatchSize(
 /**
  * Predictive hit-batch sizing (fr-p8bc): as many hits as the measured
  * per-hit cost EMA predicts fit the pass target, clamped by the
- * slow-trust capacity cap and floored at one hit (progress guarantee —
- * a single hit is the irreducible bounded unit). Pure so the prediction
- * is unit-tested.
+ * slow-trust capacity cap and floored at one WORKGROUP rather than one
+ * hit (fr-d6g5). Sub-workgroup batches buy zero watchdog safety: GPU
+ * cost inside a single workgroup ({@link SURFACE_COMPUTE_WORKGROUP_SIZE}
+ * threads) is depth-dominated, not width-dominated — a dispatch of 64
+ * independent rays costs about as much wall time as a dispatch of 1,
+ * since lanes run in parallel across EUs — so shrinking below one
+ * workgroup only multiplies the number of worst-ray-cost submissions
+ * without shrinking any single one of them. The old one-hit floor was a
+ * one-way trapdoor: a 1-ray batch measures the FULL per-submission wall
+ * as its per-hit cost, the spike-lift EMA ({@link nextShadeHitEmaUs} —
+ * jumps up instantly, decays slowly) latches onto that inflated reading,
+ * `byCost` collapses to 0, and every batch thereafter re-floors at 1 —
+ * measured on the real driver (Iris Xe, Mesa 25.2.8) at 170-455 ms/ray,
+ * ~4.4 hits/s, the fr-d6g5 settle-park pose. Pure so the prediction is
+ * unit-tested.
  */
 export function shadeHitBatchSize(emaUsPerHit: number, cap: number): number {
   const byCost = Math.floor(
     (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / Math.max(1, emaUsPerHit),
   );
-  return Math.max(1, Math.min(cap, byCost));
+  return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.min(cap, byCost));
 }
 
 /**
@@ -1155,6 +1188,11 @@ export class SurfaceComputeRenderer {
     spec: SurfaceComputeFrameSpec,
     opts: SurfaceComputeFrameOptions,
   ): Promise<SurfaceComputeFrame | null> {
+    const trace = surfaceComputeTrace;
+    const traceT0 = performance.now();
+    const tr = (line: string): void => {
+      trace?.(`[${(performance.now() - traceT0).toFixed(0)}ms] ${line}`);
+    };
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
     const wallStart = performance.now();
     const budgetMs = opts.budgetMs ?? Infinity;
@@ -1443,9 +1481,11 @@ export class SurfaceComputeRenderer {
     const maybePresent = async (): Promise<boolean> => {
       if (!opts.onProgress) return true;
       if (performance.now() - lastProgress < progressMs) return true;
+      tr("present readback BEGIN");
       const partial = new Uint8Array(
         await this.readback(buffers.color, buffers.stagingColor, rays * 4),
       );
+      tr("present readback END");
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return false;
       }
@@ -1474,6 +1514,9 @@ export class SurfaceComputeRenderer {
     let rayStepEmaUs =
       SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
     let finalStates: Float32Array | null = null;
+    tr(
+      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeHitEmaUs0=${shadeHitEmaUs} rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${shadeHitCap}`,
+    );
     outer: while (
       active.length > 0 ||
       shadeHitQueue.length > 0 ||
@@ -1481,6 +1524,7 @@ export class SurfaceComputeRenderer {
     ) {
       if (performance.now() - wallStart > budgetMs) {
         truncated = true;
+        tr("budget truncated (outer)");
         break;
       }
       if (active.length > 0) {
@@ -1491,20 +1535,28 @@ export class SurfaceComputeRenderer {
         for (let offset = 0; offset < active.length;) {
           if (performance.now() - wallStart > budgetMs) {
             truncated = true;
+            tr("budget truncated (march)");
             break outer;
           }
           const chunk = Math.min(
             marchChunkFor(rayStepEmaUs, stepsThisPass),
             active.length - offset,
           );
+          if (!Number.isFinite(chunk) || chunk <= 0) {
+            tr(`ANOMALY march chunk=${chunk} emaUs=${rayStepEmaUs}`);
+          }
           const slice = active.subarray(offset, offset + chunk);
           writeParams(slice.length, stepsThisPass);
           device.queue.writeBuffer(buffers.active, 0, slice);
+          tr(
+            `march BEGIN offset=${offset} chunk=${chunk} len=${slice.length} steps=${stepsThisPass} emaUs=${rayStepEmaUs.toFixed(3)} active=${active.length}`,
+          );
           const marchMs = await dispatchTimed(
             marchPipeline,
             buffers.marchBindGroup,
             slice.length,
           );
+          tr(`march END ms=${marchMs === null ? "null" : marchMs.toFixed(1)}`);
           if (marchMs === null) return null;
           gpuMs += marchMs;
           marchGpuMs += marchMs;
@@ -1516,9 +1568,11 @@ export class SurfaceComputeRenderer {
           sweepSliced = offset;
           if (!(await maybePresent())) return null;
         }
+        tr(`states readback BEGIN rays=${rays}`);
         const stateCopy = new Float32Array(
           await this.readback(buffers.states, buffers.stagingStates, rays * 16),
         );
+        tr("states readback END");
         if (token !== this.frameToken || this.isLost || this.destroyed) {
           return null;
         }
@@ -1557,12 +1611,16 @@ export class SurfaceComputeRenderer {
         sweepSliced = 0;
         active = Uint32Array.from(next);
         if (sweptWhole) stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
+        tr(
+          `sweep done active=${active.length} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} sweepSteps=${sweepSteps} stepsThisPass=${stepsThisPass}`,
+        );
       }
       while (shadeHitQueue.length > 0 || shadeFreeQueue.length > 0) {
         if (performance.now() - wallStart > budgetMs) {
           // Marched-but-unshaded rays keep their seed pixels — the
           // documented truncation contract.
           truncated = true;
+          tr("budget truncated (shade)");
           break outer;
         }
         // Free rays (miss/exhausted) first: one background write each,
@@ -1580,6 +1638,14 @@ export class SurfaceComputeRenderer {
         } else {
           shadeHitQueue = shadeHitQueue.slice(batch.length);
         }
+        if (!Number.isFinite(batchSize) || batch.length === 0) {
+          tr(
+            `ANOMALY shade batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs} cap=${shadeHitCap}`,
+          );
+        }
+        tr(
+          `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs.toFixed(1)} cap=${shadeHitCap}`,
+        );
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
         const shadeMs = await dispatchTimed(
@@ -1587,6 +1653,7 @@ export class SurfaceComputeRenderer {
           buffers.shadeBindGroup,
           batch.length,
         );
+        tr(`shade END ms=${shadeMs === null ? "null" : shadeMs.toFixed(1)}`);
         if (shadeMs === null) return null;
         gpuMs += shadeMs;
         shadeGpuMs += shadeMs;
@@ -1599,11 +1666,13 @@ export class SurfaceComputeRenderer {
             (shadeMs * 1000) / batch.length,
           );
           shadeHitCap = nextShadeBatchSize(shadeHitCap, shadeMs);
+          tr(`shade ema→${shadeHitEmaUs.toFixed(1)} cap→${shadeHitCap}`);
         }
         if (!(await maybePresent())) return null;
       }
     }
 
+    tr("final readback BEGIN");
     const pixels = new Uint8Array(
       await this.readback(buffers.color, buffers.stagingColor, rays * 4),
     );
@@ -1621,6 +1690,9 @@ export class SurfaceComputeRenderer {
     } else {
       counts.active = rays;
     }
+    tr(
+      `frame done passes=${passes} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
+    );
     this.lastFrame = { pixels, width, height };
     return {
       pixels,

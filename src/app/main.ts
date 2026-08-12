@@ -19,6 +19,7 @@ import {
   type SurfaceDE,
 } from "../fractal/surface-de";
 import {
+  setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
   type SurfaceComputeFrameSpec,
@@ -365,6 +366,10 @@ interface SurfaceStateProbe {
 declare global {
   interface Window {
     __surfaceState?: () => SurfaceStateProbe;
+    /** fr-d6g5: `?surfacetrace`'s ring buffer of frame-loop trace lines —
+     * see setSurfaceComputeTrace. Diagnostics only, absent unless the URL
+     * asks. */
+    __surfaceTraceLog?: string[];
   }
 }
 
@@ -6462,6 +6467,21 @@ function main(): void {
           ? surfaceComputeSettleFlight
           : scene.surfaceSettleActive,
     });
+  }
+
+  // fr-d6g5: `?surfacetrace` opts the compute renderer's frame loop into
+  // per-frame tracing (setSurfaceComputeTrace) — a capped ring buffer plus
+  // a live console.debug feed, so a wedged frame's stuck await shows up
+  // without shipping the instrumentation to every render. Diagnostics
+  // only, off unless the URL asks, same convention as ?surfacestate above.
+  if (new URLSearchParams(window.location.search).has("surfacetrace")) {
+    const traceLog: string[] = [];
+    setSurfaceComputeTrace((line) => {
+      traceLog.push(line);
+      if (traceLog.length > 6000) traceLog.splice(0, traceLog.length - 6000);
+      console.debug(`[surfacetrace] ${line}`);
+    });
+    window.__surfaceTraceLog = traceLog;
   }
 
   animate();
