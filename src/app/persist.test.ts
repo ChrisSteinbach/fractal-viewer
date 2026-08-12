@@ -662,6 +662,43 @@ describe("decodeScene transform variations", () => {
     expect(weight).toBeLessThanOrEqual(100);
   });
 
+  it("keeps a negative variation weight through encode/decode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "mandelbox", weight: -1.5 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "mandelbox", weight: -1.5 },
+    ]);
+  });
+
+  it("clamps a wildly negative variation weight to the band's negative edge", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherical", weight: -100000 }],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    const weight = result!.transforms[0].variations![0].weight;
+    expect(weight).toBe(-100);
+  });
+
   it("accepts a blend as wide as the variation vocabulary — one entry per type", () => {
     const raw = {
       ...baseSnapshot(),
