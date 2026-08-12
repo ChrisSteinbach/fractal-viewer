@@ -208,6 +208,86 @@ describe("mutateSystem clamps", () => {
       }
     }
   });
+
+  it("preserves a negative variation weight's sign, clamping its magnitude into [0.05, 2], across many seeds", () => {
+    const variedMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [
+        { type: "mandelbox", weight: -1.5 },
+        { type: "swirl", weight: -0.04 },
+        { type: "spherical", weight: -6 },
+      ],
+    };
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "boxfold", weight: -0.8 }],
+    };
+    const base = system({
+      transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
+      finalTransform,
+    });
+
+    for (let seed = 0; seed < 200; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      expect(mutant.transforms[0].variations).toHaveLength(3);
+      expect(mutant.finalTransform?.variations).toHaveLength(1);
+      const weights = [
+        ...mutant.transforms[0].variations!.map((v) => v.weight),
+        ...mutant.finalTransform!.variations!.map((v) => v.weight),
+      ];
+      for (const weight of weights) {
+        expect(weight).toBeLessThan(0);
+        expect(Math.abs(weight)).toBeGreaterThanOrEqual(0.05 - 1e-9);
+        expect(Math.abs(weight)).toBeLessThanOrEqual(2 + 1e-9);
+      }
+    }
+  });
+
+  it("keeps a positive variation weight positive with magnitude in [0.05, 2] across many seeds", () => {
+    const variedMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [
+        { type: "mandelbox", weight: 1.5 },
+        { type: "swirl", weight: 0.04 },
+        { type: "spherical", weight: 6 },
+      ],
+    };
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "boxfold", weight: 0.8 }],
+    };
+    const base = system({
+      transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
+      finalTransform,
+    });
+
+    for (let seed = 0; seed < 200; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      expect(mutant.transforms[0].variations).toHaveLength(3);
+      expect(mutant.finalTransform?.variations).toHaveLength(1);
+      const weights = [
+        ...mutant.transforms[0].variations!.map((v) => v.weight),
+        ...mutant.finalTransform!.variations!.map((v) => v.weight),
+      ];
+      for (const weight of weights) {
+        expect(weight).toBeGreaterThan(0);
+        expect(Math.abs(weight)).toBeGreaterThanOrEqual(0.05 - 1e-9);
+        expect(Math.abs(weight)).toBeLessThanOrEqual(2 + 1e-9);
+      }
+    }
+  });
 });
 
 describe("mutateSystem wildcard structural kick", () => {

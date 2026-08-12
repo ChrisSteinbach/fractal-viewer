@@ -107,10 +107,15 @@ const SHEAR_CLAMP = 2;
  * than the affine fields still reads as "the same blend, a bit stronger or
  * weaker" rather than a different look. */
 const VARIATION_WEIGHT_JITTER_HALF_RANGE = 0.2;
-/** Variation weight clamp, mirroring the editor's variation-weight slider
- * span (`ui.ts`'s `VARIATION_WEIGHT_MIN`/`MAX` is `[0, 2]`; floored at `0.05`
- * instead of `0` so a mutation never silently deletes a variation the base
- * system deliberately carried — that is a structural change, not a nudge). */
+/** Variation weight MAGNITUDE clamp, mirroring the editor's variation-weight
+ * slider span (`ui.ts`'s `VARIATION_WEIGHT_MIN`/`MAX` is `[-2, 2]`, fr-64k0).
+ * The clamp acts on `|weight|` with the sign restored afterwards: the `0.05`
+ * floor (not `0`) keeps a mutation from silently deleting a variation the
+ * base system deliberately carried, and restoring the sign keeps it from
+ * flipping one into a different object entirely (a negative-scale mandelbox
+ * is not a nudged positive one) — both would be structural changes, not
+ * nudges. The floor also stays far above the surface/escape DEs' `1e-4`
+ * near-zero-fold refusal band, on either sign. */
 const VARIATION_WEIGHT_CLAMP_MIN = 0.05;
 const VARIATION_WEIGHT_CLAMP_MAX = 2;
 
@@ -247,15 +252,22 @@ function jitterWScale(rng: Rng, value: number, spread: number): number {
   return value < 0 ? -magnitude : magnitude;
 }
 
-/** Jitter a variation's weight: `weight * U(1 ± halfRange)`, clamped to
- * `[{@link VARIATION_WEIGHT_CLAMP_MIN}, {@link VARIATION_WEIGHT_CLAMP_MAX}]`. */
+/** Jitter a variation's weight: multiply the MAGNITUDE by a `U(1 ± halfRange)`
+ * factor, clamp the magnitude to `[{@link VARIATION_WEIGHT_CLAMP_MIN},
+ * {@link VARIATION_WEIGHT_CLAMP_MAX}]`, then reapply the original sign —
+ * {@link jitterWScale}'s sign-preserving shape, one module up: a mutation
+ * nudges how strongly a variation acts, never which side of zero it acts
+ * from (fr-64k0). For `weight >= 0` this is bit-identical to the old
+ * plain-clamp behavior, so every positive-weight mutation stream is
+ * unchanged. Exactly one {@link uniform} draw per call, as before, so the
+ * fixed-seed golden-snapshot test's rng-draw count doesn't shift. */
 function jitterVariationWeight(
   rng: Rng,
   weight: number,
   spread: number,
 ): number {
-  return clamp(
-    weight *
+  const magnitude = clamp(
+    Math.abs(weight) *
       uniform(
         rng,
         1 - VARIATION_WEIGHT_JITTER_HALF_RANGE * spread,
@@ -264,6 +276,7 @@ function jitterVariationWeight(
     VARIATION_WEIGHT_CLAMP_MIN,
     VARIATION_WEIGHT_CLAMP_MAX,
   );
+  return weight < 0 ? -magnitude : magnitude;
 }
 
 /** Jitter a present `w.rotation`/`w.shear` sub-object: only the fields

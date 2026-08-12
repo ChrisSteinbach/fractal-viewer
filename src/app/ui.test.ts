@@ -2266,6 +2266,43 @@ describe("Ui variation editor", () => {
     ]);
   });
 
+  it("lets the variation weight slider reach -2 and reports a negative weight back", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "swirl", weight: 1 }] },
+      0,
+      1,
+    );
+
+    const slider = editorSlider("Variation swirl");
+    expect(slider.min).toBe("-2");
+    expect(slider.max).toBe("2");
+
+    slider.value = "-1.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "swirl", weight: -1.5 },
+    ]);
+  });
+
+  it("renders an out-of-band negative variation weight from the document instead of pinning at zero", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "swirl", weight: -1.5 }] },
+      0,
+      1,
+    );
+
+    const slider = editorSlider("Variation swirl");
+    expect(slider.value).toBe("-1.5");
+    expect(editorReadout("Variation swirl").textContent).toBe("-1.50");
+  });
+
   it("removes a variation, reporting an empty blend", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);

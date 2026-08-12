@@ -436,10 +436,13 @@ function sliderToWeight(slider: number): number {
 
 /**
  * Variation blend-weight slider bounds. Linear (not log like selection weight):
- * a variation's strength reads naturally as a `0…2` coefficient, with 0 meaning
- * "remove it" — which is exactly what the row's × button does.
+ * a variation's strength reads naturally as a `-2…2` coefficient. Negative
+ * weights are real objects, not degenerate ones — the classic Mandelbox is
+ * `s = -1.5`, and reflection blends need `w < 0` (fr-64k0) — so the slider
+ * reaches them directly instead of leaving them URL/`.flame`-import-only.
+ * `0` contributes nothing but keeps the row; removal is the row's × button.
  */
-const VARIATION_WEIGHT_MIN = 0;
+const VARIATION_WEIGHT_MIN = -2;
 const VARIATION_WEIGHT_MAX = 2;
 const DEFAULT_VARIATION_WEIGHT = 1;
 
