@@ -146,7 +146,7 @@ import {
   toSnapshot,
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
-import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
+import { loadViewerPrefs, updateViewerPrefs } from "./viewer-prefs";
 import { SceneCollection, type SavedSceneMode } from "./collection";
 import {
   decodeImportFile,
@@ -722,6 +722,20 @@ function main(): void {
     autoOrbitUserChoice = viewerPrefs.autoMotion;
     fourDView.seedTumbleUserChoice(viewerPrefs.autoMotion);
   }
+
+  // The surface preview tier under user control (fr-37c6): `false` means
+  // invalidations never trace the cheap preview — the pane freezes on its
+  // last frame while the view moves, and the full-detail render starts the
+  // moment it parks. The fr-24to/fr-zx34 principle (the mode never guesses
+  // willingness to wait) applied to the preview itself, which the governor's
+  // rung ladder still guessed at. A patience preference, so per-BROWSER
+  // (viewer-prefs.ts) like autoMotion above, never the share URL; absent =
+  // never chosen = previews on. Both engines honor it — the compute and
+  // strip paths share the same two-tier choreography.
+  let surfacePreviewsEnabled = viewerPrefs.surfacePreview !== false;
+  // Programmatic `checked` writes fire no change event, so this seed cannot
+  // re-enter the handler (which would re-save the pref at boot).
+  ui.setSurfacePreviewToggle(surfacePreviewsEnabled);
 
   // Shared frame clock for the explorer path's automatic motion (the 4D
   // tumble and the 3D auto-orbit). Advances every explorer frame — paused,
@@ -3088,7 +3102,12 @@ function main(): void {
         // camera motion. Kick directly now that the renderer exists;
         // the preview loop's latest-wins coalescing makes a redundant
         // kick free, and the tier clock's settle follows as usual.
-        kickSurfaceComputePreview();
+        // Previews off (fr-37c6): arm the settle directly instead — an
+        // entry IS a parked view, and the pending latch is exactly as
+        // un-losable as the kick (surfaceComputeTick consumes it, and a
+        // glide's invalidations supersede it through the same latch).
+        if (surfacePreviewsEnabled) kickSurfaceComputePreview();
+        else surfaceSettlePending = true;
       })
       .catch((error: unknown) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -3335,7 +3354,17 @@ function main(): void {
       surfaceSettled = false;
       surfaceSettlePending = false;
       surfaceComputeForceKey = null;
-      kickSurfaceComputePreview();
+      if (surfacePreviewsEnabled) {
+        kickSurfaceComputePreview();
+      } else {
+        // Previews off (fr-37c6): the pane freezes on its last presented
+        // frame while the view moves. Cancel the in-flight settle
+        // directly — the preview loop's supersede cancel() is the one
+        // that normally does this — so a stale-pose settle stops burning
+        // GPU and stops presenting over the frozen frame; the tier
+        // clock re-arms the full render once the view parks.
+        surfaceComputeRenderer?.cancel();
+      }
     } else if (tier === "full") {
       surfaceSettlePending = true;
     }
@@ -3350,6 +3379,43 @@ function main(): void {
     ) {
       scene.representSurfaceComputeFrame();
     }
+  }
+
+  /**
+   * Abandon the in-flight preview and start the full-detail render of the
+   * current view NOW (fr-37c6) — the one-shot escape from a grinding
+   * preview (the progress row's Skip button), and the immediate effect of
+   * flipping the Quick previews pref off mid-grind. One-shot by
+   * construction: nothing here touches the pref, so the next invalidation
+   * previews as usual. No-op outside a live surface session or when no
+   * preview is actually in flight (skipping a running settle would only
+   * restart it).
+   */
+  function skipSurfacePreviewNow(): void {
+    if (state.renderMode !== "surface" || !surfaceSession.hasFirstFrame) {
+      return;
+    }
+    if (surfaceComputeRenderer) {
+      if (!surfaceComputePreviewFlight && !surfaceComputePreviewPending) {
+        return;
+      }
+      // Latest-wins in reverse: drop the pending latch so the loop drains,
+      // cancel the frame it is awaiting, and arm the settle — which
+      // surfaceComputeTick fires the moment the flight clears. (Compute
+      // previews are wall-budgeted at 2s, so this saves seconds at most —
+      // the button never shows here; this arm serves the pref flip.)
+      surfaceComputePreviewPending = false;
+      surfaceComputeRenderer.cancel();
+      surfaceSettlePending = true;
+      return;
+    }
+    if (!scene.surfacePreviewActive) return;
+    // The strip path: the settle verdict is usually ALREADY latched behind
+    // the grinding preview (tickRender holds it off while the job runs) —
+    // abandoning the job is the whole skip; the latch below covers the
+    // sub-TIER_SETTLE_MS window where the clock hasn't fired yet.
+    scene.abandonSurfacePreview();
+    surfaceSettlePending = true;
   }
 
   const surfaceSession = new RenderSession<never>({
@@ -5598,8 +5664,8 @@ function main(): void {
       // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
       // the user flips — tumble or orbit — becomes the one shared choice both
       // seed from on the next reload. Separate viewer-prefs key, never the
-      // scene / share-URL document.
-      saveViewerPrefs({ autoMotion: checked });
+      // scene / share-URL document; merge-written so the other prefs survive.
+      updateViewerPrefs({ autoMotion: checked });
     },
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
@@ -5612,10 +5678,24 @@ function main(): void {
       autoOrbitUserChoice = checked;
       // Persist the COMBINED auto-motion pref (fr-0ya) — the orbit sibling of
       // onFourDTumbleToggle above; both write the one shared choice.
-      saveViewerPrefs({ autoMotion: checked });
+      updateViewerPrefs({ autoMotion: checked });
     },
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
+    },
+    // The surface preview tier under user control (fr-37c6). Off takes
+    // effect IMMEDIATELY: a preview already grinding is abandoned and the
+    // full render starts now — the flip is itself the skip, just sticky.
+    // On re-invalidates so a parked view previews (and then settles)
+    // fresh rather than waiting for the next camera nudge.
+    onSurfacePreviewToggle: (checked) => {
+      surfacePreviewsEnabled = checked;
+      updateViewerPrefs({ surfacePreview: checked });
+      if (!checked) skipSurfacePreviewNow();
+      else scene.invalidate();
+    },
+    onSurfaceSkipPreview: () => {
+      skipSurfacePreviewNow();
     },
   });
 
@@ -6147,7 +6227,10 @@ function main(): void {
     // The trailing detail token (fr-tmgf) says why compute passed on a
     // fold system — "compute unavailable" / "compute failed" — and stays
     // absent when WebGL is the natural engine. Trailing, so the engine
-    // token and percentage keep the prominent read.
+    // token and percentage keep the prominent read. A grinding preview is
+    // skippable (fr-37c6): the Skip button rides the row exactly while
+    // there is a full render to skip TO — never during settles, and the
+    // compute path's wall-budgeted previews never reach the row at all.
     ui.setSurfaceProgress({
       label:
         progress.phase === "preview"
@@ -6155,6 +6238,7 @@ function main(): void {
           : "Full detail · WebGL",
       pct,
       detail: surfaceWebglDetailToken ?? undefined,
+      skippable: progress.phase === "preview",
     });
   }
 
@@ -6251,7 +6335,15 @@ function main(): void {
             scene.abandonSurfaceSettle();
             surfaceSettled = false;
             surfaceSettlePending = false;
-            scene.renderSurface("preview");
+            if (surfacePreviewsEnabled) {
+              scene.renderSurface("preview");
+            } else {
+              // Previews off (fr-37c6): the pane freezes on its last
+              // frame while the view moves — consume the invalidation so
+              // the tier clock can quiet, and let the settle below
+              // develop the new pose over the held image once it fires.
+              scene.clearRenderNeeded();
+            }
           } else {
             // The settle verdict fires on the tier clock, but on systems
             // whose previews span frames (fr-du81's strip jobs) the
@@ -6262,16 +6354,30 @@ function main(): void {
             if (tier === "full") surfaceSettlePending = true;
             if (scene.surfacePreviewActive) scene.stepSurfacePreview();
           }
-          if (!scene.surfacePreviewActive && surfaceSettlePending) {
+          // The !surfaceSettleActive guard exists for the skip path
+          // (fr-37c6): a skip inside the TIER_SETTLE_MS window begins the
+          // settle at once, and the clock's own late "full" verdict must
+          // not restart the running job it was a duplicate of.
+          if (
+            !scene.surfacePreviewActive &&
+            surfaceSettlePending &&
+            !scene.surfaceSettleActive
+          ) {
             surfaceSettlePending = false;
-            scene.beginSurfaceSettle();
+            // With previews off there is no preview of this pose to seed
+            // from — hold the target's own last settled frame instead.
+            scene.beginSurfaceSettle(
+              surfacePreviewsEnabled ? "preview" : "hold",
+            );
           }
           syncSurfaceProgress();
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) surfaceSettled = true;
           } else if (recorderActive && !scene.surfacePreviewActive) {
+            // Previews off: no re-trace — captureStream freezes on the
+            // last painted frame, which is exactly what the pane shows.
             if (surfaceSettled) scene.presentSettledSurface();
-            else scene.renderSurface("preview");
+            else if (surfacePreviewsEnabled) scene.renderSurface("preview");
           }
         }
       } else {

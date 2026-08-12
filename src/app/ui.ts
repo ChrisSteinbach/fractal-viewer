@@ -229,6 +229,16 @@ export interface UiHandlers {
   /** The 3D auto-orbit (fr-1yn) was paused or resumed — the camera-side
    * sibling of {@link onFourDTumbleToggle}. */
   onAutoOrbitToggle: (checked: boolean) => void;
+  /** The surface mode's "Quick previews" checkbox was flipped (fr-37c6):
+   * `false` = invalidations never trace the preview tier — the pane holds
+   * its last frame while the view moves and the full render starts on park.
+   * A per-browser viewer pref (like the motion toggles' autoMotion), and
+   * flipping it off mid-grind takes effect immediately. */
+  onSurfacePreviewToggle: (checked: boolean) => void;
+  /** The progress row's "Skip preview" button was clicked (fr-37c6):
+   * abandon the in-flight preview and start the full-detail render of this
+   * view now. One-shot — the next move previews as usual. */
+  onSurfaceSkipPreview: () => void;
   /** The 3D orbit-speed slider moved: `value` is the rate multiplier (×). */
   onAutoOrbitSpeedInput: (value: number) => void;
   /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
@@ -965,6 +975,13 @@ export class Ui {
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
   private readonly surfaceProgress: HTMLElement;
+  // The preview tier under user control (fr-37c6): the quick-previews
+  // checkbox is a per-BROWSER viewer pref main.ts seeds at boot
+  // (setSurfacePreviewToggle), and the skip button is the one-shot escape
+  // from a grinding preview — shown exactly while setSurfaceProgress
+  // reports a skippable phase, hidden with the row.
+  private readonly surfacePreviewToggle: HTMLInputElement;
+  private readonly surfaceSkipPreviewBtn: HTMLButtonElement;
   // The surface render's own settings block (fr-7jlk v2): lighting sliders
   // plus the base-color source/palette selects, the same solidControls
   // pattern one render mode over. surfacePaletteRow additionally gates on
@@ -1277,6 +1294,8 @@ export class Ui {
     this.surfaceStatus = this.byId("surfaceStatus");
     this.surfaceNote = this.byId("surfaceNote");
     this.surfaceProgress = this.byId("surfaceProgress");
+    this.surfacePreviewToggle = this.byId("surfacePreviewToggle");
+    this.surfaceSkipPreviewBtn = this.byId("surfaceSkipPreviewBtn");
     this.flameControls = this.byId("flameControls");
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
@@ -1627,6 +1646,12 @@ export class Ui {
       // (orbit state is session-only and never enters AppState).
       this.autoOrbitRow.classList.toggle("hidden", !on);
       handlers.onAutoOrbitToggle(on);
+    });
+    this.surfacePreviewToggle.addEventListener("change", () => {
+      handlers.onSurfacePreviewToggle(this.surfacePreviewToggle.checked);
+    });
+    this.surfaceSkipPreviewBtn.addEventListener("click", () => {
+      handlers.onSurfaceSkipPreview();
     });
     this.autoOrbitSpeedSlider.addEventListener("input", () => {
       const value = Number(this.autoOrbitSpeedSlider.value);
@@ -3380,10 +3405,25 @@ export class Ui {
    * after the percentage, so the engine token and percentage stay the
    * prominent read — the fr-tmgf legibility lesson: the eye catches
    * leading tokens.
+   *
+   * `skippable` (fr-37c6) shows the one-shot "Skip preview" button under
+   * the row — main.ts passes it exactly while a preview strip job is
+   * grinding (the phase with a full render to skip TO); the button hides
+   * with the row, and settles never show it (there is nothing after a
+   * settle to skip to).
    */
   setSurfaceProgress(
-    progress: { label: string; pct: number; detail?: string } | null,
+    progress: {
+      label: string;
+      pct: number;
+      detail?: string;
+      skippable?: boolean;
+    } | null,
   ): void {
+    this.surfaceSkipPreviewBtn.classList.toggle(
+      "hidden",
+      progress?.skippable !== true,
+    );
     if (progress === null) {
       // Clear text too, not just hide: a stale "99%" left in textContent
       // reads as a live percent to settle-scraping harnesses (fr-d6g5).
@@ -3398,6 +3438,13 @@ export class Ui {
       `${String(progress.pct)}%`,
     );
     this.surfaceProgress.classList.remove("hidden");
+  }
+
+  /** Seed the "Quick previews" checkbox from the stored viewer pref at boot
+   * (fr-37c6) — the checkbox itself is the live source of truth afterward,
+   * so this is a one-time write, not a sync. */
+  setSurfacePreviewToggle(on: boolean): void {
+    this.surfacePreviewToggle.checked = on;
   }
 
   /**

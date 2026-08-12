@@ -249,7 +249,18 @@ morphs into place instead of snapping (see **Presets** below).
   take a long time; a progress row under the Surface hint (fr-zx34) shows
   how far along each one is ("Preview 43%", "Full detail 0.4%") so you can
   judge whether to wait it out or move the camera on — the render never
-  gives up on its own. **Save PNG** can likewise refuse a capture with an
+  gives up on its own. The preview tier itself is yours to control
+  (fr-37c6, and deliberately never a patience guess): a **Quick previews**
+  checkbox above the progress row turns it off wholesale — the view then
+  holds its last frame while you move and the full render starts the
+  moment you stop, developing progressively over the held image (worth
+  trying on machines whose previews come out coarse, like a slow WebGPU
+  stack; flipping it off mid-grind takes effect immediately). It is a
+  per-browser preference, remembered on this device and never carried by a
+  shared link. With previews on, a grinding preview shows a one-shot
+  **Skip preview — full detail now** button under the progress row that
+  abandons just that preview and starts the full render at once — the next
+  move previews as usual. **Save PNG** can likewise refuse a capture with an
   honest estimate of how long it would take rather than start one with no
   reasonable finish time, but its toast offers a **Render anyway** action
   that grinds ahead regardless for up to about five minutes before giving

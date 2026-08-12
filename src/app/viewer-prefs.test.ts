@@ -1,4 +1,8 @@
-import { loadViewerPrefs, saveViewerPrefs } from "./viewer-prefs";
+import {
+  loadViewerPrefs,
+  saveViewerPrefs,
+  updateViewerPrefs,
+} from "./viewer-prefs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,6 +68,13 @@ describe("loadViewerPrefs", () => {
     expect(loadViewerPrefs({ storage }).autoMotion).toBeUndefined();
   });
 
+  it("drops a non-boolean surfacePreview, leaving it undefined", () => {
+    const storage = fakeStorage({
+      "fractal-viewer:prefs": '{"surfacePreview":"off"}',
+    });
+    expect(loadViewerPrefs({ storage }).surfacePreview).toBeUndefined();
+  });
+
   it("returns {} when getItem throws instead of propagating", () => {
     const storage = {
       getItem: () => {
@@ -122,9 +133,55 @@ describe("saveViewerPrefs / loadViewerPrefs round-trip", () => {
     expect(loadViewerPrefs({ storage }).autoMotion).toBe(false);
   });
 
+  it("round-trips { surfacePreview: false }, preserving false rather than treating it as absent", () => {
+    const storage = fakeStorage();
+    saveViewerPrefs({ surfacePreview: false }, { storage });
+    expect(loadViewerPrefs({ storage }).surfacePreview).toBe(false);
+  });
+
   it("round-trips an empty prefs object", () => {
     const storage = fakeStorage();
     saveViewerPrefs({}, { storage });
     expect(loadViewerPrefs({ storage })).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateViewerPrefs — the merge write path
+// ---------------------------------------------------------------------------
+
+describe("updateViewerPrefs", () => {
+  it("writes one pref without erasing the others already stored", () => {
+    const storage = fakeStorage({
+      "fractal-viewer:prefs": '{"autoMotion":false}',
+    });
+
+    updateViewerPrefs({ surfacePreview: false }, { storage });
+
+    expect(loadViewerPrefs({ storage })).toEqual({
+      autoMotion: false,
+      surfacePreview: false,
+    });
+  });
+
+  it("overwrites the patched pref's previous value", () => {
+    const storage = fakeStorage({
+      "fractal-viewer:prefs": '{"surfacePreview":false,"autoMotion":true}',
+    });
+
+    updateViewerPrefs({ surfacePreview: true }, { storage });
+
+    expect(loadViewerPrefs({ storage })).toEqual({
+      autoMotion: true,
+      surfacePreview: true,
+    });
+  });
+
+  it("starts from {} when the stored document is malformed, still saving the patch", () => {
+    const storage = fakeStorage({ "fractal-viewer:prefs": "not json{" });
+
+    updateViewerPrefs({ autoMotion: true }, { storage });
+
+    expect(loadViewerPrefs({ storage })).toEqual({ autoMotion: true });
   });
 });
