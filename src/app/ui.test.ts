@@ -4857,6 +4857,13 @@ describe("Ui.setSurfaceProgress", () => {
     expect(progress()?.classList.contains("hidden")).toBe(true);
     expect(progress()?.style.getPropertyValue("--progress")).toBe("0%");
   });
+
+  it("clears textContent when passed null, not just hiding (fr-d6g5)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 99 });
+    ui.setSurfaceProgress(null);
+    expect(progress()?.textContent).toBe("");
+  });
 });
 
 describe("Ui symmetry controls", () => {

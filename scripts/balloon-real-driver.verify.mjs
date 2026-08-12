@@ -112,10 +112,15 @@ async function settleOrReport(page, tag, timeoutMs = SOFT_TIMEOUT_MS) {
     const err = await renderErrorText(page);
     if (err) throw new Error(`${tag}: render error banner: ${err}`);
     last = await progressText(page);
+    // The probe is the settle AUTHORITY (fr-d6g5): the progress row hides
+    // on completion without ever guaranteeing a 100% paint (its percent
+    // floors), so pct scraping alone can misjudge. Text pct>=99.9 stays as
+    // a harmless secondary condition below.
+    const probe = await page.evaluate(() => window.__surfaceState?.());
     const m = last.match(/Full detail[^0-9]*([\d.]+)%/);
     const pct = m ? parseFloat(m[1]) : 0;
     const elapsed = Date.now() - t0;
-    if (m && pct >= 99.9) {
+    if ((probe && probe.settled === true) || (m && pct >= 99.9)) {
       return { settled: true, ms: elapsed, pct: 100, engine: last };
     }
     if (elapsed - lastLogged >= 60000) {
@@ -142,7 +147,10 @@ async function setBalloon(page, on) {
 /** Baseline-first on/off protocol for one system. Returns true if the ON
  * leg settled (so follow-on legs can reuse this session). */
 async function onOffProtocol(page, name, hash) {
-  await page.goto(`${BASE}/${hash}`, { waitUntil: "load", timeout: 60000 });
+  await page.goto(`${BASE}/?surfacestate${hash}`, {
+    waitUntil: "load",
+    timeout: 60000,
+  });
   // Mutter only sends frame callbacks to VISIBLE surfaces, and the app's
   // settle machinery is present-gated — an occluded window parks it
   // (measured: deterministic stalls at 64%/99%). Keep the window on top.
@@ -264,7 +272,7 @@ async function run() {
     // ---- GLSL fallback arm on the light system -------------------------
     log("GLSL fallback: ?surfacegl boxfoldPair + balloon");
     await page.goto(
-      `${BASE}/?surfacegl${enc({ ...boxfoldPair, balloonEcho: true })}`,
+      `${BASE}/?surfacegl&surfacestate${enc({ ...boxfoldPair, balloonEcho: true })}`,
       {
         waitUntil: "load",
         timeout: 60000,

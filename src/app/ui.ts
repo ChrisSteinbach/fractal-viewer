@@ -3385,6 +3385,9 @@ export class Ui {
     progress: { label: string; pct: number; detail?: string } | null,
   ): void {
     if (progress === null) {
+      // Clear text too, not just hide: a stale "99%" left in textContent
+      // reads as a live percent to settle-scraping harnesses (fr-d6g5).
+      this.surfaceProgress.textContent = "";
       this.surfaceProgress.classList.add("hidden");
       this.surfaceProgress.style.setProperty("--progress", "0%");
       return;
