@@ -54,6 +54,28 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
     3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
     transforms, never stored).
+  - `balloon-de.ts` — the balloon inverted-union DE (fr-5wlv): the scene as
+    the UNION of the attractor and its sphere-inverted echo
+    `I(p) = c + R²(p−c)/|p−c|²`, bounded by
+    `min(DE(p), (|p−c|/rho)·DE(I(p)))` over the UNTOUCHED public estimators —
+    the `descendLens` idiom one wrapper further out, conservative at every R
+    (fr-5wlv.1's measured verdict; module doc carries the certification
+    argument against the DE's own fr-pjqw ball, margined by
+    `BALLOON_RHO_MARGIN`). The fr-55r5 cutoff contract survives through the
+    inverse-scaled inner cutoff; `BALLOON_FAR_CAP_RHO` is the march-entry far
+    cap every arm shares (capped rays fall to background; the grid stays off
+    in balloon mode). CPU oracle for the `SURFACE_BALLOON` GLSL variant
+    (`surface-material.ts`) and the `balloon: true` WGSL kernels
+    (`surface-de-gpu.ts`, bench-pinned by `balloonEval`/`balloonMarch` legs);
+    the explorer echo (`scene.ts`'s shared-geometry echo Points) reuses only
+    the inversion + the far-cap vocabulary. IFS systems only: escape-time
+    sessions render plain — the escape solid's interior reaches the ball
+    center, so its echo swallows the camera (fr-5wlv.4's measured verdict) —
+    and the estimator composed under the union must be far-field SOUND (a
+    true lower bound outside the ball; the escape heuristic's `|q|` is not).
+    Balloon on/`R` persist in the scene document; `R` is authored NORMALIZED
+    (multiples of the raw ball radius, `buildBalloon`'s `rMult`), one
+    continuous parameter across the explorer echo and the surface balloon.
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
