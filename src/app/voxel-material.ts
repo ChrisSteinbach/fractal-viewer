@@ -54,6 +54,10 @@ const VOXEL_FRAGMENT = /* glsl */ `
   /** Primary march step count, scaled with the bound grid so the stride
    * stays ~1.16 voxels (see marchStepsForGrid). */
   uniform int uMarchSteps;
+  /** Depth-fog density multiplier (fr-5h5d): scales the fog distance unit,
+   * mirroring the surface tracers' uFogDensity — 1 is the neutral default,
+   * 0 disables depth fog. */
+  uniform float uFogDensity;
 
   in vec2 vUv;
   out vec4 outColor;
@@ -201,6 +205,17 @@ const VOXEL_FRAGMENT = /* glsl */ `
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
 
+    // Depth fog toward the backdrop (fr-5h5d): squared-exponential in the
+    // distance traveled inside the volume box, mirroring the surface
+    // tracers' fog term (surface-material.ts) — same -0.12 constant, with
+    // the box's half-diagonal standing in for the bounding sphere's
+    // visible radius and the box entry for the sphere-entry fog origin —
+    // so one Fog slider value reads the same across solid and surface.
+    float fogR = 0.5 * length(uBoundsSize);
+    float fog = 1.0 -
+      exp(-0.12 * pow((hi - max(tRange.x, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
+    col = mix(col, background, clamp(fog, 0.0, 1.0));
+
     outColor = vec4(col, 1.0);
   }
 `;
@@ -278,6 +293,7 @@ export function createVoxelMaterial(
       // Matches the placeholder 1³ texture era; a real value arrives with
       // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
       uMarchSteps: { value: 220 },
+      uFogDensity: { value: 1 }, // fr-5h5d; scene.setFogDensity keeps it current.
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,

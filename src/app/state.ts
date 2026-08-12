@@ -499,19 +499,20 @@ export interface AppState {
   /**
    * Depth-fog density multiplier (fr-5h5d): scales the fog DISTANCE UNIT for
    * both the point explorer's depthFade/aerial styles (`scene.ts`'s
-   * `updateFog`, a plain `THREE.Fog`) and every surface tracer (GLSL
+   * `updateFog`, a plain `THREE.Fog`), every surface tracer (GLSL
    * `uFogDensity` in `surface-material.ts`/`surface-material-4d.ts`, WGSL
-   * `params.fogDensity` in `fractal/surface-de-gpu.ts`) — plus the balloon
-   * echo's own radial fade, which shares the same distance-unit intuition
-   * (see `scene.ts`'s `syncBalloonEchoUniforms`). Solid and flame carry no
-   * fog term and are unaffected. `1` reproduces the pre-fr-5h5d rendering
-   * exactly — the fixed band every renderer shipped with before this
-   * control existed; `0` disables depth fog for the fog-bearing styles (the
-   * balloon's far cap then shows as a hard horizon instead of fading to
-   * background — deliberate). Top-level rather than nested under
-   * {@link AppState.surface} because it spans multiple render modes, the
-   * same shape as {@link glowBrightness}. Persists like `glowBrightness` —
-   * not session-only.
+   * `params.fogDensity` in `fractal/surface-de-gpu.ts`), and the solid
+   * render's voxel raymarcher (`voxel-material.ts`'s own `uFogDensity`) —
+   * plus the balloon echo's own radial fade, which shares the same
+   * distance-unit intuition (see `scene.ts`'s `syncBalloonEchoUniforms`).
+   * Flame carries no fog term and is unaffected. `1` reproduces the
+   * pre-fr-5h5d rendering exactly — the fixed band every renderer shipped
+   * with before this control existed; `0` disables depth fog for the
+   * fog-bearing styles (the balloon's far cap then shows as a hard horizon
+   * instead of fading to background — deliberate). Top-level rather than
+   * nested under {@link AppState.surface} because it spans multiple render
+   * modes, the same shape as {@link glowBrightness}. Persists like
+   * `glowBrightness` — not session-only.
    */
   fogDensity: number;
 }

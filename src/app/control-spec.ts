@@ -568,10 +568,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The Fog slider (fr-5h5d): depth-fog density, spanning the points
-    // explorer's fog-bearing styles and every surface tracer — see
-    // state.ts's AppState.fogDensity. Always visible (no `view` guard, no
-    // gating row): atmosphere applies to every render mode this control
-    // reaches, unlike glowBrightnessSlider's glow-only row.
+    // explorer's fog-bearing styles, every surface tracer, and the solid
+    // render — see state.ts's AppState.fogDensity. Always visible (no
+    // `view` guard, no gating row): atmosphere applies to every render mode
+    // this control reaches, unlike glowBrightnessSlider's glow-only row.
     kind: "range",
     id: "fogSlider",
     label: { id: "fogLabel", text: (s) => `${s.fogDensity.toFixed(2)}×` },
