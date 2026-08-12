@@ -250,13 +250,19 @@ function countOccurrences(source: string, needle: string): number {
 describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
     const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
-    expect(surfaceFragmentFor(0, 0, 0, source)).not.toContain("surfaceDEProbe");
-    expect(surfaceFragmentFor(0, 1, 0, source)).not.toContain("surfaceDEProbe");
-    expect(surfaceFragmentFor(1, 0, 0, source)).not.toContain("surfaceDEProbe");
+    expect(surfaceFragmentFor(0, 0, 0, 0, source)).not.toContain(
+      "surfaceDEProbe",
+    );
+    expect(surfaceFragmentFor(0, 1, 0, 0, source)).not.toContain(
+      "surfaceDEProbe",
+    );
+    expect(surfaceFragmentFor(1, 0, 0, 0, source)).not.toContain(
+      "surfaceDEProbe",
+    );
   });
 
   it("compiles exactly one width-1 probe, routed as the shading taps' value form", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
     expect(
       countOccurrences(resolved, "float surfaceDEProbe(vec3 p, float cutoff)"),
     ).toBe(1);
@@ -264,15 +270,16 @@ describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   });
 
   it("strips the probe body's comments and indentation, unlike the public descent body", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
     expect(resolved).toContain("\nvec3 fcQ[1];");
     expect(resolved).toContain("vec3 fcQ[FOLD_W];");
   });
 
   it("never changes the escape variant's source across probe widths", () => {
-    const atWidth1 = surfaceFragmentFor(1, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(1, 0, 0, 0, buildSurfaceFragment(1));
     const atBeamWidth = surfaceFragmentFor(
       1,
+      0,
       0,
       0,
       buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH),
@@ -281,15 +288,16 @@ describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   });
 
   it("carries no probe under the fold lens, which keeps its surfaceDECore rename", () => {
-    const resolved = surfaceFragmentFor(0, 1, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 1, 0, 0, buildSurfaceFragment(1));
     expect(resolved).not.toContain("surfaceDEProbe");
     expect(resolved).toContain("surfaceDECore");
   });
 
   it("adds the probe as a new name rather than another surfaceDE overload", () => {
     const needle = "float surfaceDE(vec3 p, float cutoff) {";
-    const atWidth1 = surfaceFragmentFor(0, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
     const atBeamWidth = surfaceFragmentFor(
+      0,
       0,
       0,
       0,

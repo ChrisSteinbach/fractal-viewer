@@ -487,6 +487,23 @@ const stripGlslComments = (glsl: string): string =>
     .filter((line) => line.length > 0)
     .join("\n");
 
+/** Whole-source stripper for the ground-plane variants (fr-rhn5):
+ * block comments first (the uniform docs), then
+ * {@link stripGlslComments}'s line-comment/blank/indent pass. Applied
+ * ONLY when SURFACE_GROUND_PLANE resolves 1 — the plane arm's text would
+ * push the shared fold/affine source (~76.5KB shipped) past the measured
+ * ~80KB Mesa crash cliff, and raw SOURCE size is what that compiler
+ * prices, comments included (see resolveVariantArms). Stripping emits
+ * the identical token stream, and the plane variants are NEW programs
+ * with no shipped-bytes baseline to preserve — the probe instance's
+ * exact precedent, one level up. Every OFF variant keeps its shipped
+ * bytes: this function never runs for them. Driver-side `#` directives
+ * survive (they are not comments; leading whitespace before `#` was
+ * legal anyway and the trim leaves them at column 0). */
+function stripGlslSource(glsl: string): string {
+  return stripGlslComments(glsl.replace(/\/\*[\s\S]*?\*\//g, ""));
+}
+
 /** The probe instance (fr-zqu8), emitted only when the width differs from
  * the beam's and only into the NON-lens source: the lens variant's source
  * already sits at the Mesa cliff (~79KB where ~80KB crashed — see
@@ -2188,6 +2205,122 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 
 #endif
+#if SURFACE_GROUND_PLANE
+  /** Ground plane (fr-rhn5): an infinite one-sided floor at y = uGroundY,
+   * dropped below the session ball (uGroundBallC/uGroundBallR —
+   * balloonBall's convention for IFS, the origin bailout ball for escape;
+   * certified to contain the visible set), receiving the fractal's
+   * penumbra shadow. Only rays that MISS the fractal reach it: the ball
+   * sits strictly above the plane, so along any downward ray every
+   * possible surface hit precedes the plane crossing — the floor can
+   * never occlude geometry. Uniforms live in this arm rather than the
+   * shared block so the OFF variants' resolved source stays
+   * byte-identical (the uBalloonCenter precedent). */
+  uniform float uGroundY;
+  uniform float uGroundFadeStart;
+  uniform float uGroundFadeEnd;
+  uniform float uGroundBallR;
+  uniform vec3 uGroundBallC;
+  uniform vec3 uGroundAlbedo;
+
+  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background) {
+    // One-sided: visible from above only; parallel or climbing rays miss.
+    if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
+      return background;
+    }
+    float tp = (uGroundY - ro.y) / rd.y;
+    vec3 hp = ro + rd * tp;
+    vec2 rel = hp.xz - uGroundBallC.xz;
+    // Scene-anchored radial fade to the pixel's own backdrop color, so
+    // neither a disc edge nor a hard horizon ever shows; past the far
+    // band the floor IS the background and the shading below is skipped.
+    float fade =
+      1.0 - smoothstep(uGroundFadeStart, uGroundFadeEnd, length(rel));
+    if (fade <= 0.0) {
+      return background;
+    }
+
+    // Penumbra shadow toward the light: the hit path's DE loop, adapted
+    // for a start OUTSIDE the certified ball. Two analytic gates make the
+    // infinite floor affordable — cost proportional to the shadow
+    // CORRIDOR, not the floor area:
+    //  (a) ball behind: with the floor >= 1.02 R below the center, a
+    //      shadow ray whose closest approach to the ball center lies at
+    //      or behind its start keeps 8 d / ts >= 1 everywhere (d is at
+    //      least |p - C| - R along it, and min_s 8 (sqrt(s^2 + D^2) - R)
+    //      / s ~ 8 (0.992 D - R) >= 0 once D >= 1.008 R) — shadow is
+    //      exactly 1, zero DE evals.
+    //  (b) corridor: a closest approach clearing 1.05 R + 0.3 * along
+    //      keeps the penumbra ratio provably >= 1 against the 8 / ts
+    //      sharpening (numerically margined across the corridor's
+    //      geometries) — again shadow 1 for free. The margin errs toward
+    //      marching; the estimators' far field is their value-exact
+    //      sphere floor, so the gated and marched answers agree at the
+    //      boundary.
+    // Inside the corridor the loop's exit is outside-AND-receding — the
+    // hit path's |sp| > 1.05 R alone would fire immediately down here.
+    float shadow = 1.0;
+    vec3 toC = uGroundBallC - hp;
+    float along = dot(toC, uLightDir);
+    float perp2 = dot(toC, toC) - along * along;
+    float corridor = uGroundBallR * 1.05 + 0.3 * along;
+    if (along > 0.0 && perp2 < corridor * corridor) {
+      float ts = uGroundBallR * 4.0e-4;
+      for (int i = 0; i < uShadowSteps; i++) {
+        vec3 sp = hp + uLightDir * ts;
+        float d = surfaceDE(sp);
+        shadow = min(shadow, 8.0 * d / ts);
+        ts += clamp(d, uGroundBallR * 2.0e-4, uVisibleRadius * 0.1);
+        if (shadow < 0.02 ||
+            (dot(sp - uGroundBallC, uLightDir) > 0.0 &&
+              length(sp - uGroundBallC) > uGroundBallR * 1.05)) {
+          break;
+        }
+      }
+      shadow = clamp(shadow, 0.0, 1.0);
+    }
+
+    // Contact occlusion: the hit path's AO taps straight up from the
+    // floor, skipped once the floor point is provably beyond every tap's
+    // reach of the ball (each tap needs DE < tap height, and DE is at
+    // least |hp - C| - hh - R — so |hp - C| >= R + 2 hh_max certifies
+    // occlusion 0; 0.02 R of margin on top).
+    float ao = 1.0;
+    float reach = uGroundBallR * (1.02 + 0.04 * float(uAoTaps));
+    vec3 relC = hp - uGroundBallC;
+    if (dot(relC, relC) < reach * reach) {
+      float occ = 0.0;
+      float wgt = 1.0;
+      float norm = 0.0;
+      for (int i = 1; i <= uAoTaps; i++) {
+        float hh = uGroundBallR * 0.02 * float(i);
+        occ += wgt *
+          clamp((hh - surfaceDE(hp + vec3(0.0, hh, 0.0))) / hh, 0.0, 1.0);
+        norm += wgt;
+        wgt *= 0.6;
+      }
+      ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+    }
+
+    // The hit path's lighting minus specular (a matte floor), in the same
+    // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
+    float diffuse = max(uLightDir.y, 0.0);
+    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
+
+    // Depth fog, the hit path's formula at the plane distance: the fog
+    // origin is the ray's closest approach to the ball center (clamped to
+    // the segment), so the floor under the fractal stays as crisp as the
+    // fractal and the fade band fogs like the far wall it is.
+    float dist = tp - clamp(dot(uGroundBallC - ro, rd), 0.0, tp);
+    float fog =
+      1.0 - exp(-0.12 * pow(dist * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
+    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+
+    return mix(background, col, fade);
+  }
+
+#endif
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
@@ -2232,13 +2365,21 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float c = dot(ro, ro) - radius * radius;
     float disc = b * b - c;
     if (disc < 0.0) {
+#if SURFACE_GROUND_PLANE
+      outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+#else
       outColor = vec4(background, 1.0);
+#endif
       return;
     }
     float sq = sqrt(disc);
     float tFar = -b + sq;
     if (tFar <= 0.0) {
+#if SURFACE_GROUND_PLANE
+      outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+#else
       outColor = vec4(background, 1.0);
+#endif
       return;
     }
     float t = max(-b - sq, 0.0);
@@ -2315,6 +2456,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
       t += d * uStepScale;
     }
     if (!hit) {
+#if SURFACE_GROUND_PLANE
+      // Sphere-exit misses land on the floor; budget-exhausted rays stay
+      // background (their geometry is unresolved) — the WGSL march
+      // kernel's status split, mirrored.
+      if (t > tFar) {
+        outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+        return;
+      }
+#endif
       outColor = vec4(background, 1.0);
       return;
     }
@@ -2692,6 +2842,16 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBalloonR: { value: 0 },
       uBalloonRho: { value: 1 },
       uBalloonFar: { value: 0 },
+      // Ground plane (fr-rhn5): inert defaults; alive only under the
+      // SURFACE_GROUND_PLANE define (ball radius 1 so a stray enabled
+      // read could never divide by zero). Three.js ignores entries the
+      // compiled program does not use, so these stay unconditional.
+      uGroundY: { value: 0 },
+      uGroundFadeStart: { value: 0 },
+      uGroundFadeEnd: { value: 0 },
+      uGroundBallR: { value: 1 },
+      uGroundBallC: { value: new THREE.Vector3() },
+      uGroundAlbedo: { value: new THREE.Vector3(1, 1, 1) },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -2732,6 +2892,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       SURFACE_FOLD_LENS: 0,
       SURFACE_ESCAPE: 0,
       SURFACE_BALLOON: 0,
+      SURFACE_GROUND_PLANE: 0,
     },
     vertexShader: SURFACE_VERTEX,
     // The lens/escape arms are resolved JS-side (resolveVariantArms) so
@@ -2804,16 +2965,23 @@ export function setSurfaceSystem(
   // The balloon flag (fr-5wlv.4) is orthogonal session state owned by
   // setSurfaceBalloon — a system swap preserves whatever it last set.
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
+  // The ground plane (fr-rhn5) is likewise orthogonal session state
+  // owned by setSurfaceGroundPlane — a system swap preserves it (every
+  // variant carries the plane arm: its programs resolve through
+  // stripGlslSource, far under the Mesa cliff).
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
     material.defines.SURFACE_FOLD_LENS !== wantLens ||
-    material.defines.SURFACE_ESCAPE !== 0
+    material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_GROUND_PLANE !== plane
   ) {
     material.defines.SURFACE_FOLDS = wantFolds;
     material.defines.SURFACE_FOLD_LENS = wantLens;
     // A previous escape-time session must hand the descent bodies back.
     material.defines.SURFACE_ESCAPE = 0;
-    material.fragmentShader = surfaceFragmentFor(0, wantLens, balloon);
+    material.defines.SURFACE_GROUND_PLANE = plane;
+    material.fragmentShader = surfaceFragmentFor(0, wantLens, balloon, plane);
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -2945,19 +3113,36 @@ function resolveVariantArms(
  * (fr-5wlv.4) resolves the SURFACE_BALLOON wrapper arms the same JS-side
  * way — with it 0 the resolved source is byte-identical to the
  * pre-balloon build, so the lens variant's ~79KB never grows toward the
- * measured Mesa cliff. `source` defaults to the module's assembled
+ * measured Mesa cliff. `plane` (fr-rhn5) is the ground-plane arm under
+ * the same contract — 0 resolves byte-identical to the pre-plane build —
+ * except that 1 additionally strips comments/indentation from the WHOLE
+ * resolved source ({@link stripGlslSource}): same token stream, new
+ * program, and the raw size Mesa prices drops from the cliff's edge
+ * (~76.5KB shipped fold/affine against the ~80KB measured crash) to
+ * roughly half, which is what lets every variant carry the floor, the
+ * ~79KB lens included. Only `balloon` refuses the pair (the enclosing
+ * shell has no horizon for a floor to sit on; callers gate, so reaching
+ * the throw is a bug). `source` defaults to the module's assembled
  * fragment; tests pass their own width-parameterized builds (fr-zqu8). */
 export function surfaceFragmentFor(
   escape: number,
   lens: number,
   balloon = 0,
+  plane = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
-  return resolveVariantArms(source, {
+  if (plane !== 0 && balloon !== 0) {
+    throw new RangeError(
+      "SURFACE_GROUND_PLANE cannot compile into the balloon variant",
+    );
+  }
+  const resolved = resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
+    SURFACE_GROUND_PLANE: plane,
   });
+  return plane !== 0 ? stripGlslSource(resolved) : resolved;
 }
 
 /**
@@ -3014,8 +3199,11 @@ export function setEscapeSystem(
   (u.uLensInvM.value as THREE.Matrix3).identity();
   (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
   // Preserve the balloon flag exactly like setSurfaceSystem (fr-5wlv.4):
-  // balloon-over-escape is a supported wrap.
+  // balloon-over-escape is a supported wrap. The ground plane (fr-rhn5)
+  // is preserved the same way — the classic Mandelbox floor is exactly
+  // an escape session's look.
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_FOLDS !== 0 ||
@@ -3024,7 +3212,7 @@ export function setEscapeSystem(
     material.defines.SURFACE_ESCAPE = 1;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
-    material.fragmentShader = surfaceFragmentFor(1, 0, balloon);
+    material.fragmentShader = surfaceFragmentFor(1, 0, balloon, plane);
     material.needsUpdate = true;
   }
 }
@@ -3078,10 +3266,92 @@ export function setSurfaceBalloon(
   }
   const want = spec ? 1 : 0;
   if (material.defines.SURFACE_BALLOON !== want) {
+    // Balloon and ground plane (fr-rhn5) never compile together — the
+    // enclosing shell has no horizon for a floor to sit on — and the
+    // balloon is senior: turning it on drops the plane define here, and
+    // the scene re-asserts its stored floor intent (which its own
+    // balloon gate keeps off) after every toggle.
+    const plane =
+      want === 1 ? 0 : material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
     material.defines.SURFACE_BALLOON = want;
+    material.defines.SURFACE_GROUND_PLANE = plane;
     material.fragmentShader = surfaceFragmentFor(
       material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
       material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
+      want,
+      plane,
+    );
+    material.needsUpdate = true;
+  }
+}
+
+/** The ground plane's uniform payload (fr-rhn5), built by scene.ts from
+ * the session ball (fractal/balloon-de.ts's balloonBall convention for
+ * IFS systems, the origin bailout ball for escape) — see
+ * {@link setSurfaceGroundPlane}. All quantities in world units. */
+export interface SurfaceGroundPlaneSpec {
+  /** Floor height: ball bottom with a small drop (scene.ts owns the
+   * multipliers; the shadow gates' certificates assume >= 1.02 R below
+   * the ball CENTER, which any drop below the ball bottom satisfies). */
+  y: number;
+  /** Radial fade band (from the ball center's xz): fully shaded inside
+   * `fadeStart`, pure background past `fadeEnd`. */
+  fadeStart: number;
+  fadeEnd: number;
+  /** The session ball the floor drops under — the shadow corridor and AO
+   * reach gates certify against it. */
+  ballCenter: Vec3;
+  ballRadius: number;
+  /** sRGB floor albedo (lit in linear space like every hit). */
+  albedo: Vec3;
+}
+
+/**
+ * Enable (`spec`) or disable (`null`) the ground plane (fr-rhn5): an
+ * infinite one-sided floor below the session ball that rays MISSING the
+ * fractal intersect analytically and shade with the hit path's penumbra
+ * shadow + AO + fog, fading radially into the backdrop. Flipping the
+ * flag reassembles the fragment source through
+ * {@link surfaceFragmentFor} with the material's CURRENT escape/lens
+ * flags (a session-set-scale program rebuild, exactly
+ * {@link setSurfaceBalloon}'s contract; plane programs resolve through
+ * {@link stripGlslSource}, so even the lens variant stays far under the
+ * Mesa cliff). Throws if asked to enable over the balloon variant —
+ * callers gate eligibility first (scene.ts's applySurfaceGroundPlane),
+ * so reaching the refusal is a bug.
+ */
+export function setSurfaceGroundPlane(
+  material: THREE.ShaderMaterial,
+  spec: SurfaceGroundPlaneSpec | null,
+): void {
+  const u = material.uniforms;
+  if (spec) {
+    u.uGroundY.value = spec.y;
+    u.uGroundFadeStart.value = spec.fadeStart;
+    u.uGroundFadeEnd.value = spec.fadeEnd;
+    u.uGroundBallR.value = spec.ballRadius;
+    (u.uGroundBallC.value as THREE.Vector3).set(...spec.ballCenter);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(...spec.albedo);
+  } else {
+    // Zeros are fine while the define is off — except the ball radius,
+    // whose 1 keeps even a stray enabled read divide-by-zero-free,
+    // matching createSurfaceMaterial's inert defaults.
+    u.uGroundY.value = 0;
+    u.uGroundFadeStart.value = 0;
+    u.uGroundFadeEnd.value = 0;
+    u.uGroundBallR.value = 1;
+    (u.uGroundBallC.value as THREE.Vector3).set(0, 0, 0);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(1, 1, 1);
+  }
+  const want = spec ? 1 : 0;
+  if (material.defines.SURFACE_GROUND_PLANE !== want) {
+    material.defines.SURFACE_GROUND_PLANE = want;
+    // surfaceFragmentFor refuses plane-over-lens and plane-over-balloon;
+    // passing the current defines through makes those caller bugs loud.
+    material.fragmentShader = surfaceFragmentFor(
+      material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
+      material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
+      material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
       want,
     );
     material.needsUpdate = true;

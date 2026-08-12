@@ -46,6 +46,7 @@ import {
   setSurfaceGrid as packSurfaceGrid,
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
+  setSurfaceGroundPlane as packSurfaceGroundPlane,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -56,6 +57,7 @@ import {
   SURFACE_PREVIEW_MARCH_STEPS,
   SURFACE_PREVIEW_SHADOW_STEPS,
 } from "./surface-material";
+import type { SurfaceGroundPlaneSpec } from "./surface-material";
 import {
   createPreviewGovernor,
   previewMaxDepth,
@@ -122,6 +124,22 @@ const DOF_POINT_SIZE = 0.024; // dof
 // backdrop cloud regardless of the main cloud's point-size slider.
 const BALLOON_ECHO_POINT_SIZE = 0.016;
 const BALLOON_ECHO_DIM = 0.5;
+/** Ground plane (fr-rhn5) geometry, in multiples of the session ball's
+ * radius — the ONE place the floor's shape is decided; both the GLSL
+ * uniforms and the compute frame spec derive from these through
+ * {@link FractalScene.setSurfaceGroundPlane}'s spec. The drop keeps the
+ * floor >= 1.02 R below the ball CENTER, the bound the tracers' analytic
+ * shadow-skip certificates assume; the fade band ends the "infinite"
+ * floor in the pixel's own backdrop long before any disc edge could
+ * show, and bounds which missed rays the compute march classifies as
+ * plane work. */
+const GROUND_PLANE_DROP = 1.02;
+const GROUND_PLANE_FADE_START = 4;
+const GROUND_PLANE_FADE_END = 10;
+/** sRGB floor albedo: a neutral studio grey so the penumbra reads on any
+ * backdrop (a floor matching a dark backdrop would swallow the shadow
+ * that is this feature's point). */
+const GROUND_PLANE_ALBEDO: Vec3 = [0.62, 0.62, 0.62];
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
 // The "Watch it build" replay cursor (fr-1zb): the bright spark pinned to the
 // newest revealed point. Sized well above every per-style point size so the
@@ -711,6 +729,20 @@ export class FractalScene {
    * material — fr-5wlv's 4D lift is a later child). */
   private surfaceBalloonBall: { center: Vec3; radius: number } | null = null;
   private surfaceBalloonOn = false;
+  /** The ground plane's session ball (fr-rhn5): balloonBall(de) for IFS
+   * installs, the origin bailout ball for escape — a SEPARATE field from
+   * {@link surfaceBalloonBall} because escape sessions null that one
+   * (the balloon degenerates there) while the classic Mandelbox floor is
+   * exactly an escape session's look. Null until a 3D surface install;
+   * 4D installs null it (the floor's 4D lift is out of fr-rhn5's scope). */
+  private surfaceGroundBall: { center: Vec3; radius: number } | null = null;
+  /** The persisted Floor toggle's stored intent (fr-rhn5), pushed by
+   * {@link setSurfaceGroundPlane} and re-asserted against the installed
+   * system after every install/toggle — the {@link surfaceBalloonOn}
+   * discipline. The material define may sit BELOW this intent (the
+   * balloon variant refuses the plane arm); the intent survives so the
+   * floor returns when the balloon leaves. */
+  private surfaceGroundPlaneOn = false;
   /** Normalized balloon radius (multiples of the raw ball radius —
    * buildBalloon's rMult). 1.6 mirrors {@link balloonEchoRadius}'s inert
    * default; main.ts overwrites it before it can matter. */
@@ -865,6 +897,13 @@ export class FractalScene {
    * center/rho/R/far block re-derived from the stored ball + rMult —
    * the R slider's per-frame door, view4's discipline. */
   private surfaceComputeBalloon = false;
+  /** Whether the ACTIVE compute session's kernels carry the ground-plane
+   * arm (fr-rhn5) — the {@link surfaceComputeBalloon} discipline:
+   * created-with is what the 320-byte params struct needs on EVERY frame
+   * of the session, however the toggle moves before the restart lands.
+   * While true every frame spec carries the live floor block re-derived
+   * from the stored ball. */
+  private surfaceComputeGroundPlane = false;
   /** Last compute frame, uploaded as a plain RGBA8 texture and stretched
    * over the canvas by the shared surface blit — the same presentation
    * seam as the preview/settle targets, so capture and the recorder keep
@@ -2666,6 +2705,11 @@ export class FractalScene {
     // ball, not the previous one's.
     this.surfaceBalloonBall = balloonBall(de);
     this.applySurfaceBalloon();
+    // The ground plane (fr-rhn5) drops under the same ball, re-derived
+    // and re-asserted per install exactly like the balloon above — AFTER
+    // it, so the eligibility gate reads the final balloon define.
+    this.surfaceGroundBall = balloonBall(de);
+    this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
@@ -2714,6 +2758,11 @@ export class FractalScene {
     // shared toggle is set, so escape sessions render plain.
     this.surfaceBalloonBall = null;
     this.applySurfaceBalloon();
+    // The floor (fr-rhn5) survives where the balloon degenerates: the
+    // escape solid is bounded by its origin bailout ball, and a plane
+    // under a Mandelbox is the mode's classic look.
+    this.surfaceGroundBall = { center: [0, 0, 0], radius: de.boundingRadius };
+    this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
@@ -2745,6 +2794,11 @@ export class FractalScene {
     this.surfaceBalloonRMult = rMult;
     this.renderNeeded = true;
     this.applySurfaceBalloon();
+    // A balloon flip changes the floor's eligibility (the two never
+    // compile together; packSurfaceBalloon force-drops the plane define
+    // when the balloon lands) — re-assert the stored floor intent under
+    // the new define state (fr-rhn5).
+    this.applySurfaceGroundPlane();
   }
 
   /**
@@ -2795,6 +2849,58 @@ export class FractalScene {
     packSurfaceBalloon(
       this.surfaceMaterial,
       this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null,
+    );
+  }
+
+  /**
+   * Turn the ground plane (fr-rhn5) on or off — the persisted Floor
+   * toggle's scene entry, {@link setSurfaceBalloon}'s discipline: store
+   * the intent, then re-assert it against whatever system is installed.
+   * The WebGL material only compiles the plane arm where it is eligible
+   * (see {@link applySurfaceGroundPlane}); the compute path carries the
+   * floor through its own session flag instead
+   * ({@link enterSurfaceComputeSession}).
+   */
+  setSurfaceGroundPlane(on: boolean): void {
+    if (this.surfaceGroundPlaneOn === on) return;
+    this.surfaceGroundPlaneOn = on;
+    this.renderNeeded = true;
+    this.applySurfaceGroundPlane();
+  }
+
+  /** The live ground-plane parameter block derived from the stored
+   * session ball — ONE definition (the {@link surfaceBalloonSpec}
+   * discipline) for both the GLSL uniforms and the compute frame spec:
+   * floor height, fade band and albedo all in world units, the
+   * GROUND_PLANE_* constants applied to the ball. Null without an
+   * installed 3D ball. */
+  private surfaceGroundPlaneSpec(): SurfaceGroundPlaneSpec | null {
+    const ball = this.surfaceGroundBall;
+    if (!ball) return null;
+    return {
+      y: ball.center[1] - ball.radius * GROUND_PLANE_DROP,
+      fadeStart: ball.radius * GROUND_PLANE_FADE_START,
+      fadeEnd: ball.radius * GROUND_PLANE_FADE_END,
+      ballCenter: ball.center,
+      ballRadius: ball.radius,
+      albedo: GROUND_PLANE_ALBEDO,
+    };
+  }
+
+  /** Re-assert the stored floor intent (fr-rhn5) against the installed
+   * system: packs the plane arm into the 3D material exactly where it is
+   * eligible — a ball exists and the balloon variant is not compiled
+   * (no horizon inside the shell; every other variant carries the plane
+   * arm, its programs stripped far under the Mesa cliff by
+   * surfaceFragmentFor). Reading the define makes the gate
+   * ordering-proof against the install sequence. */
+  private applySurfaceGroundPlane(): void {
+    const eligible =
+      this.surfaceGroundPlaneOn &&
+      this.surfaceMaterial.defines.SURFACE_BALLOON !== 1;
+    packSurfaceGroundPlane(
+      this.surfaceMaterial,
+      eligible ? this.surfaceGroundPlaneSpec() : null,
     );
   }
 
@@ -2852,6 +2958,10 @@ export class FractalScene {
     // one every frame).
     this.dropSurfaceGridTexture();
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
+    // No 4D floor (fr-rhn5 is 3D-scoped) — and the stored intent must not
+    // leave a stale plane arm compiled into the 3D material underneath.
+    this.surfaceGroundBall = null;
+    this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
     this.surfaceFullMaxDepth = de.maxDepth;
@@ -2994,12 +3104,22 @@ export class FractalScene {
    * frame spec can attach the live center/rho/R/far block the 304-byte
    * params struct expects.
    */
-  enterSurfaceComputeSession(de: SurfaceDE, balloon: boolean): void {
+  enterSurfaceComputeSession(
+    de: SurfaceDE,
+    balloon: boolean,
+    groundPlane = false,
+  ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
     this.surfaceBalloonBall = balloonBall(de);
     this.surfaceComputeBalloon = balloon;
+    // The floor flag (fr-rhn5) records the create-target's choice exactly
+    // like `balloon` above; the ball it drops under is re-derived from
+    // the DE so every frame spec can attach the live floor block the
+    // 320-byte params struct expects.
+    this.surfaceGroundBall = balloonBall(de);
+    this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset(surfaceDescentCostWeight(de));
     this.surfacePreviewPxCostMs = null;
@@ -3016,7 +3136,7 @@ export class FractalScene {
    * (the escape loop is phone-cheap; no descent cost weight exists) —
    * without touching the GLSL material.
    */
-  enterSurfaceComputeEscapeSession(): void {
+  enterSurfaceComputeEscapeSession(groundPlane = false, ballRadius = 1): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
@@ -3025,6 +3145,13 @@ export class FractalScene {
     // install path, and the session flag with it.
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
+    // The floor (fr-rhn5) survives where the balloon degenerates —
+    // `ballRadius` is the escape DE's origin bailout ball, the WebGL
+    // path's setEscapeSystem move.
+    this.surfaceGroundBall = groundPlane
+      ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
@@ -3047,6 +3174,9 @@ export class FractalScene {
     this.surfaceCompute4 = true;
     // The 4D lift is a later fr-5wlv child — no 4D session balloons.
     this.surfaceComputeBalloon = false;
+    // Nor floors (fr-rhn5's scope is 3D; the pack layer refuses 4D cores).
+    this.surfaceGroundBall = null;
+    this.surfaceComputeGroundPlane = false;
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
@@ -3058,6 +3188,7 @@ export class FractalScene {
    * frame holds megabytes of GPU memory nothing will re-present. */
   exitSurfaceComputeSession(): void {
     this.surfaceComputeActive = false;
+    this.surfaceComputeGroundPlane = false;
     this.surfaceCompute4 = false;
     this.surfaceComputeBalloon = false;
     this.surfaceComputeTexture?.dispose();
@@ -3182,6 +3313,15 @@ export class FractalScene {
         if (!this.surfaceComputeBalloon) return {};
         const balloon = this.surfaceBalloonSpec();
         return balloon ? { balloon } : {};
+      })(),
+      // The floor session's live block (fr-rhn5): keyed on the SESSION
+      // flag — the kernels were compiled with the plane arm and their
+      // 320-byte params struct — with values re-derived from the stored
+      // ball at every assembly, the balloon block's discipline above.
+      ...(() => {
+        if (!this.surfaceComputeGroundPlane) return {};
+        const groundPlane = this.surfaceGroundPlaneSpec();
+        return groundPlane ? { groundPlane } : {};
       })(),
     };
   }
