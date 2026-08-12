@@ -301,7 +301,12 @@ import type {
  * edition of fr-jkpn's more-in-sphere-branches-than-slots drop, width-
  * bound (frontier 24 measures 0.06%R at 3x the applications) and far
  * inside the affine precedent (repro3's disclosed 1.2%R, jittered) —
- * with every off-attractor and void column at 0. Inverse applications:
+ * with every off-attractor and void column at 0 at that density; the
+ * 60k probe set reaches the refined tail OFF-attractor (j1@7.7e-4 =
+ * 0.039%R) and erodes it to 1.66%R (base 0.92%R), so the harness gates
+ * the production estimator per class — base for folds, whose
+ * off-attractor and void columns are 0 at both densities — and
+ * discloses the refined fold rows (fr-tikz). Inverse applications:
  * ~13/call on the boxfold pairs, ~175-232 on the spherefold/mandelbox
  * pairs, ~1400-2040 on the preset (map visits; each visit expands the
  * map's branches). The 0.05R-0.15R "shallow void" band reads high on the
@@ -2327,13 +2332,16 @@ export function setFoldFrontierTap(tap: FoldFrontierTap | null): void {
  * this width on the probe set.
  *
  * MIRROR NOTE: the GLSL fold tracer marches this body's refine=FALSE
- * path. Refinement is measurably a no-op on fold systems — the harness's
- * base and refined rows are indistinguishable (region floors, not
- * refinement, carry the ghost-killing; deep-void false hits are 0 in
- * both) — and {@link refinedCertValue}'s branch sweep inlined into the
- * frontier's innermost GLSL loop is part of what Mesa's compiler died
- * on (see surface-material.ts's fold notes). The refined path stays the
- * CPU production estimator for the grid worker and the tests.
+ * path — and refine=false IS the fold production estimator everywhere
+ * (the SURFACE_FOLDS GLSL variant, the WGSL fold core, the fr-aj4w grid
+ * floors priced "plain"; refined-on-folds is harness/test-only). Region
+ * floors, not refinement, carry the ghost-killing on fold systems
+ * (deep-void false hits are 0 for both estimators), and
+ * {@link refinedCertValue}'s branch sweep inlined into the frontier's
+ * innermost GLSL loop is part of what Mesa's compiler died on (see
+ * surface-material.ts's fold notes). Refinement is NOT a bit-level
+ * no-op here: it carries fr-tikz's disclosed width-bound tail, so the
+ * surface-beam harness gates the base row.
  */
 function descendFold(
   de: SurfaceDE,

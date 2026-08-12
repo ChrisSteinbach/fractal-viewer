@@ -84,9 +84,10 @@
  * WHICH ESTIMATOR. `estimateDistance` (refine = FALSE), not
  * `estimateDistanceRefined`. Two independent citations pin this down: (1)
  * `surface-de.ts`'s `descendFold` doc, "MIRROR NOTE: the GLSL fold tracer
- * marches this body's refine=FALSE path. Refinement is measurably a no-op
- * on fold systems ... The refined path stays the CPU production estimator
- * for the grid worker and the tests."; (2) `surface-material.ts`'s own
+ * marches this body's refine=FALSE path" — refine=false is the fold
+ * production estimator everywhere (the GLSL variant, the WGSL fold core,
+ * the fr-aj4w grid); refined-on-folds is harness/test-only and carries
+ * fr-tikz's disclosed width-bound tail; (2) `surface-material.ts`'s own
  * march-loop comment above the `SURFACE_FOLDS` main() body, "The march runs
  * the plain DE overload". `fold-phantom.harness.ts`'s `acceptMarch` (the
  * existing fold-specific march emulator) independently confirms this by

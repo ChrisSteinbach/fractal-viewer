@@ -777,9 +777,11 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // The fold variant defines NO refinedCert at all: its descent folds
   // PLAIN certificates (the oracle's descendFold refine=false path). Two
   // reasons, both measured. Correctness: on fold systems the region
-  // floors, not refinement, carry the ghost-killing — the harness's
-  // base and refined rows are indistinguishable (identical DE/D
-  // percentiles, deep-void false hits 0 in both). Compile survival:
+  // floors, not refinement, carry the ghost-killing — deep-void false
+  // hits are 0 for both estimators, and refinement adds only a
+  // width-bound tail the surface-beam harness discloses rather than
+  // gates (fr-tikz: refined-on-folds is harness-only; the gates pin the
+  // base row this variant marches). Compile survival:
   // refinement's inner (sector x map x branch) sweep inlines into the
   // frontier's innermost loop, and Mesa's compiler already dies on this
   // variant without it (Iris Xe: linkProgram stall, empty info log,
@@ -885,8 +887,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * data-dependent chains killed the compiler), and the variant marches
    * the oracle's refine=false path — PLAIN certificates, no refinedCert
    * at all (see the fold refinedCert note above: on fold systems the
-   * region floors carry the ghost-killing, base and refined measure
-   * indistinguishable). See descendFold's doc for the measured numbers.
+   * region floors carry the ghost-killing, and base is the production
+   * estimator the harness gates — fr-tikz). See descendFold's doc for
+   * the measured numbers.
    */
 #if SURFACE_BALLOON
 // fr-5wlv.4: the balloon inverted-union scene (epic fr-5wlv). The wrapper
