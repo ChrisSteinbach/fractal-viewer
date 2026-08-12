@@ -17,7 +17,16 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
   chaos-game basics, and **▶ Watch it build** replays the cloud's own
   generation point by point, from the first random hops to the full attractor.
 - **Editable transforms** — add/remove maps and drag, rotate, and scale them in
-  the 3D view with mouse or touch.
+  the 3D view with mouse or touch, with per-axis sliders (shear and
+  flame-style variations included) for everything the gestures can't reach,
+  plus an optional final-transform lens that warps the whole cloud at once.
+- **Goes 4D** — every map (and the lens) can extend into a fourth dimension;
+  a non-flat system renders as a slowly tumbling projection with its own
+  color modes, Shift-drag control of the hidden rotation planes, and a
+  sweepable **W slice** cross-section. All four render modes follow it.
+- **Kaleidoscope symmetry** — replicate the whole attractor up to 12-fold in
+  any coordinate plane, the 4D ones included (with an optional
+  double-rotation **Twist**); every render mode draws the same kaleidoscope.
 - **Four render modes** — the live point cloud, plus **✺ Flame** (a classic
   fractal-flame exposure), **◆ Solid** (a lit, shadowed voxel surface), and
   **◈ Surface** — the attractor sphere-traced as a true implicit surface,
@@ -27,10 +36,21 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 - **Presets** — two dozen systems, from the Sierpinski tetrahedron and Menger
   sponge to icosahedron and dodecahedron flakes, fractal-flame classics, the
   Mandelbox, and a 4D group of tumbling polytope fractals.
+- **Surprise Me, 🧬 Mutate, ▶ Drift** — quality-gated random systems, a 3×3
+  grid of small mutations around the current system to walk outward through,
+  and an ambient, ever-evolving show for leaving on a second screen.
 - **Five color modes** — by transform, height, radius, position, or a uniform
   cyan — plus gradient palettes and a custom-gradient editor.
 - **Orbit camera** with rotate / pan / zoom, and an adjustable atmosphere:
   depth fog with its own density and tint, tracking the cloud and backdrop.
+- **Collection & Timeline** — a persistent gallery of saved scenes, and an
+  authored keyframe timeline played back as a chain of morphs — exportable
+  as a frame-exact 30 fps MP4 clip (WebCodecs) or a live recording.
+- **Share everything** — scenes travel as copyable `#v1=` links, as small
+  JSON scene files, or as flam3/Apophysis `.flame` files (import and
+  export); collections and timelines back up to JSON and merge back in.
+- **Capture** — Save PNG at up to 4× screen resolution (a true re-render,
+  not an upscale) and record MP4/WebM video straight off the canvas.
 - **PWA** — installable and works offline once loaded.
 
 ## Getting started
@@ -70,19 +90,23 @@ src/
 ├── fractal/   # Pure IFS core — no Three.js, no DOM, fully unit-tested
 │   ├── affine.ts        # Euler-XYZ rotation + TRS matrix compose/apply
 │   ├── chaos-game.ts    # the IFS iterator (the "chaos game")
-│   ├── color.ts         # HSL→RGB and the six color modes
+│   ├── color.ts         # HSL→RGB and the five color modes
 │   ├── presets.ts       # default + named systems (Sierpinski, Menger, flakes…)
-│   └── rng.ts           # seedable PRNG for reproducible output
+│   ├── rng.ts           # seedable PRNG for reproducible output
+│   └── …                # flame/voxel/surface render math, 4D twins, morphs
 └── app/       # Three.js rendering + DOM glue
     ├── scene.ts         # Three.js scene wrapper (point cloud, guides, fog)
     ├── orbit.ts         # spherical orbit-camera math (pure, tested)
     ├── state.ts         # app state + reducers (pure, tested)
     ├── ui.ts            # control panel + transform list (createElement)
     ├── interactions.ts  # pointer / touch / wheel handling
-    └── main.ts          # entry point — wires everything together
+    ├── main.ts          # entry point — wires everything together
+    └── …                # render workers, persistence, collection/timeline
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the algorithm and data flow.
+The tree above is the load-bearing sample, not the full listing — see
+[docs/architecture.md](docs/architecture.md) for the algorithm and data flow,
+and [CLAUDE.md](CLAUDE.md) for the complete module map.
 
 ## Testing & quality
 
