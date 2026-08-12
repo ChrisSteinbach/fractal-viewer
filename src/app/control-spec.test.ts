@@ -41,6 +41,7 @@ function mockEffects(shared = false): ControlEffects {
       setBalloonEchoEnabled: vi.fn(),
       setBalloonEchoRadius: vi.fn(),
       setSurfaceBalloonRadius: vi.fn(),
+      setFogDensity: vi.fn(),
     },
     postFlame: vi.fn(),
     postVoxel: vi.fn(),
@@ -72,6 +73,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "0.9");
 
     expect(state.balloonRadius).toBe(0.9);
+  });
+
+  it("fogSlider apply parses the raw string into a numeric fogDensity", () => {
+    const spec = specById("fogSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.fogDensity).toBe(0.5);
   });
 
   it("numPointsSlider apply floors raw 0 to the MIN_NUM_POINTS endpoint", () => {
@@ -273,6 +282,17 @@ describe("effects", () => {
 
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("fogSlider effect forwards the density to the scene", () => {
+      const spec = specById("fogSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setFogDensity).toHaveBeenCalledWith(0.5);
     });
 
     it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep (fr-5wlv.4)", () => {

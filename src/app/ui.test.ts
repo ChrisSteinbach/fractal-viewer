@@ -4941,6 +4941,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["glowBrightnessSlider", PARAM.glowBrightness],
     ["balloonRadiusSlider", PARAM.balloonRadius],
     ["surfaceBalloonRadiusSlider", PARAM.balloonRadius],
+    ["fogSlider", PARAM.fogDensity],
     ["flameExposureSlider", PARAM.flameExposure],
     ["flameGammaSlider", PARAM.flameGamma],
     ["flameVibrancySlider", PARAM.flameVibrancy],

@@ -582,6 +582,15 @@ export class FractalScene {
   // setBalloonEchoEnabled(true)), and control-spec.ts's checkbox effect
   // pushes the real slider value the moment it turns on.
   private balloonEchoRadius = 1.6;
+  // Depth-fog density multiplier (fr-5h5d): scales the fog distance unit
+  // for this.fog (updateFog), the balloon echo's radial fade
+  // (syncBalloonEchoUniforms), and both surface tracers' uFogDensity — see
+  // setFogDensity. Mirrors state.ts's DEFAULT_FOG_DENSITY as a plain
+  // literal rather than an import, exactly like balloonEchoRadius above;
+  // main.ts pushes the real (possibly-restored) value at boot and on
+  // every snapshot load regardless, so this default only matters for the
+  // instant before that first push.
+  private fogDensity = 1;
   private guideCubes: THREE.Object3D[] = [];
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
@@ -1806,7 +1815,16 @@ export class FractalScene {
     // multiple of rho before falling through to the background, so the
     // echo cloud's own radial fade dissolves it against the SAME horizon
     // rather than an unrelated number.
-    const fadeEnd = BALLOON_FAR_CAP_RHO * sphere.radius;
+    //
+    // fr-5h5d: the Fog control stretches this same fade, so "thin fog"
+    // reads consistently between the explorer's depth fog and the
+    // balloon. Bounded at density 0.15 (~6.7x stretch) rather than
+    // following fogDensity all the way to 0: the fade also bounds the
+    // sphere inversion's run to infinity (see this module's balloon-echo
+    // vertex shader / fractal/balloon-de.ts's module doc), so it must
+    // never fully disable no matter how thin the fog reads.
+    const fadeEnd =
+      (BALLOON_FAR_CAP_RHO * sphere.radius) / Math.max(this.fogDensity, 0.15);
     u.uEchoFadeEnd.value = fadeEnd;
     u.uEchoFadeStart.value = 0.45 * fadeEnd;
   }
@@ -2015,8 +2033,42 @@ export class FractalScene {
   }
 
   /**
+   * Set the depth-fog density multiplier (fr-5h5d) — see state.ts's
+   * `AppState.fogDensity` for what `0`/`1` mean. Pushes `uFogDensity` to
+   * both surface tracers (the {@link setSurfaceParams} push-to-both
+   * pattern: whichever the next session activates is already current),
+   * then re-derives the two OTHER fog-bearing renderers this one control
+   * reaches from the new value — the points explorer's own fog band
+   * ({@link updateFog}) and the balloon echo's radial fade
+   * ({@link syncBalloonEchoUniforms}).
+   */
+  setFogDensity(v: number): void {
+    if (this.fogDensity === v) return;
+    this.fogDensity = v;
+    this.renderNeeded = true;
+    for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
+      material.uniforms.uFogDensity.value = v;
+    }
+    this.updateFog();
+    this.syncBalloonEchoUniforms();
+  }
+
+  /**
    * Tighten the fog band to bracket the point cloud at the current distance.
    * No-op unless a depth-fading style (depthFade/aerial) is active.
+   *
+   * `fogDensity` (fr-5h5d) scales the fog DISTANCE UNIT: a larger density
+   * packs both edges tighter around the camera (fog reaches full strength
+   * over a shorter span), a smaller one pushes `far` out, thinning the fog
+   * toward nothing. `near` deliberately does NOT keep retreating below its
+   * density-1 baseline as density falls under 1 (`Math.max(d, 1)` floors
+   * the divisor there) — only `far` needs to diverge to approximate "no
+   * fog"; a `near` that retreated too would just pull the fog-free zone
+   * further behind the camera for no visible benefit. `d <= 0` (the
+   * slider's own floor) pushes `far` out to a practically unreachable
+   * distance instead of dividing by zero — the `Fog` object stays
+   * installed, so `setRenderStyle`'s own fog on/off switching is
+   * untouched; the band just never visibly reaches anything.
    */
   updateFog(): void {
     const bounds = this.pointGeometry.boundingSphere;
@@ -2024,8 +2076,15 @@ export class FractalScene {
     if (!bounds || bounds.radius === 0 || !(fog instanceof THREE.Fog)) return;
 
     const camDist = this.camera.position.distanceTo(bounds.center);
-    let near = Math.max(0.1, camDist - bounds.radius * FOG_MARGIN);
-    let far = camDist + bounds.radius * FOG_MARGIN;
+    const d = this.fogDensity;
+    let near = Math.max(
+      0.1,
+      camDist - (bounds.radius * FOG_MARGIN) / Math.max(d, 1),
+    );
+    let far =
+      d > 0
+        ? camDist + (bounds.radius * FOG_MARGIN) / d
+        : camDist + bounds.radius * FOG_MARGIN * 1.0e6;
     if (far - near < 0.5) {
       near = camDist - 0.5;
       far = camDist + 0.5;
@@ -3010,6 +3069,11 @@ export class FractalScene {
       hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
+      // The live fog density (fr-5h5d) — re-read at every spec assembly
+      // exactly like the lighting/backdrop fields around it, so a live
+      // Fog slider drag tracks the compute path the same frame the GLSL
+      // uniform does.
+      fogDensity: this.fogDensity,
       // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a

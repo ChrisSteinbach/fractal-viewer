@@ -13,6 +13,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_FOG_DENSITY,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_POINT_SIZE,
@@ -39,6 +40,7 @@ import {
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
   MAX_FLAME_VIBRANCY,
+  MAX_FOG_DENSITY,
   MAX_GLOW_BRIGHTNESS,
   MAX_POINT_SIZE,
   MAX_SOLID_AMBIENT,
@@ -59,6 +61,7 @@ import {
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_SUPERSAMPLE,
   MIN_FLAME_VIBRANCY,
+  MIN_FOG_DENSITY,
   MIN_GLOW_BRIGHTNESS,
   MIN_NUM_POINTS,
   MIN_POINT_SIZE,
@@ -94,6 +97,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setFogDensity,
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
@@ -145,6 +149,7 @@ describe("initialState", () => {
     expect(state.panelOpen).toBe(true);
     expect(state.glowBrightness).toBe(DEFAULT_GLOW_BRIGHTNESS);
     expect(state.colorGamma).toBe(DEFAULT_COLOR_GAMMA);
+    expect(state.fogDensity).toBe(DEFAULT_FOG_DENSITY);
   });
 
   // The app always boots into the live explorer, never straight into a flame
@@ -1385,6 +1390,27 @@ describe("setGlowBrightness", () => {
   it("clamps below the minimum", () => {
     expect(setGlowBrightness(initialState(true), -5).glowBrightness).toBe(
       MIN_GLOW_BRIGHTNESS,
+    );
+  });
+});
+
+describe("setFogDensity (fr-5h5d)", () => {
+  it("sets the fog density multiplier immutably", () => {
+    const state = initialState(true);
+    const next = setFogDensity(state, 0.5);
+    expect(next.fogDensity).toBe(0.5);
+    expect(state.fogDensity).toBe(DEFAULT_FOG_DENSITY);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setFogDensity(initialState(true), 999).fogDensity).toBe(
+      MAX_FOG_DENSITY,
+    );
+  });
+
+  it("clamps below the minimum (0 disables fog, never negative)", () => {
+    expect(setFogDensity(initialState(true), -5).fogDensity).toBe(
+      MIN_FOG_DENSITY,
     );
   });
 });

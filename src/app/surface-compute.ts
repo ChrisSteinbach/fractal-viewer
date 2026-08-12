@@ -219,6 +219,12 @@ export interface SurfaceComputeFrameSpec {
    * throws without it — the balloon kernel's params struct is 304 bytes
    * and has no meaningful default); ignored otherwise. */
   balloon?: { center: Vec3; rho: number; R: number; far: number };
+  /** Depth-fog density multiplier (fr-5h5d) — the WGSL params struct's
+   * former pad1 slot (module doc in `fractal/surface-de-gpu.ts`), re-read
+   * from scene state at every spec assembly like the rest of this
+   * interface. Defaults to 1 (the pre-fr-5h5d fixed fog) when omitted,
+   * matching {@link SurfaceGpuRunParams.fogDensity}'s own default. */
+  fogDensity?: number;
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -1330,6 +1336,7 @@ export class SurfaceComputeRenderer {
         hitFloor: spec.hitFloor,
         cutoff: 0,
         footprint: 0,
+        fogDensity: spec.fogDensity,
         pose: {
           ro: spec.camPos,
           right: [1, 0, 0],

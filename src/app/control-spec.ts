@@ -32,6 +32,7 @@ import {
   setFlamePaletteId,
   setFlameSupersample,
   setFlameVibrancy,
+  setFogDensity,
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
@@ -185,6 +186,11 @@ export interface ControlSceneEffects {
    * (`restartSurfaceRender`), which re-derives routing + grid + variant +
    * uniforms from state in one sweep. */
   setSurfaceBalloonRadius(rMult: number): void;
+  /** Set the depth-fog density multiplier (fr-5h5d) — see `scene.ts`'s
+   * `setFogDensity`. Pushes the GLSL/WGSL uniform on both surface tracers
+   * and re-derives the points explorer's fog band and the balloon echo's
+   * radial fade, all from the one stored value. */
+  setFogDensity(v: number): void;
 }
 
 /**
@@ -559,6 +565,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.background.mode,
     apply: (s, raw) => setBackgroundMode(s, raw as BackgroundMode),
     effect: (s, fx) => fx.applyBackground(),
+  },
+  {
+    // The Fog slider (fr-5h5d): depth-fog density, spanning the points
+    // explorer's fog-bearing styles and every surface tracer — see
+    // state.ts's AppState.fogDensity. Always visible (no `view` guard, no
+    // gating row): atmosphere applies to every render mode this control
+    // reaches, unlike glowBrightnessSlider's glow-only row.
+    kind: "range",
+    id: "fogSlider",
+    label: { id: "fogLabel", text: (s) => `${s.fogDensity.toFixed(2)}×` },
+    read: (s) => String(s.fogDensity),
+    apply: (s, raw) => setFogDensity(s, Number(raw)),
+    effect: (s, fx) => fx.scene.setFogDensity(s.fogDensity),
   },
   {
     kind: "checkbox",

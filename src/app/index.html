@@ -722,6 +722,21 @@
             </div>
           </div>
 
+          <!-- Depth-fog density (fr-5h5d): spans the points explorer's
+               fog-bearing styles and every surface tracer, so — unlike
+               glowBrightnessSlider's glow-only row — it is never gated. -->
+          <label class="select-label">
+            Fog: <span id="fogLabel">1.00×</span>
+            <input
+              type="range"
+              id="fogSlider"
+              min="0"
+              max="2.5"
+              step="0.05"
+              value="1"
+            />
+          </label>
+
           <label class="checkbox-label">
             <input type="checkbox" id="showGuides" checked />
             Show guides

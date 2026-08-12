@@ -27,6 +27,7 @@ import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FLAME_SUPERSAMPLE,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_FOG_DENSITY,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_GLOW_BRIGHTNESS,
   DEFAULT_RAMP_PALETTE,
@@ -48,6 +49,7 @@ import {
   MAX_FLAME_GAMMA,
   MAX_FLAME_ITERATIONS,
   MAX_FLAME_SUPERSAMPLE,
+  MAX_FOG_DENSITY,
   MAX_GLOW_BRIGHTNESS,
   MAX_SOLID_LIGHT_AZIMUTH,
   MAX_SOLID_LIGHT_ELEVATION,
@@ -65,6 +67,7 @@ import {
   MIN_FLAME_EXPOSURE,
   MIN_FLAME_ITERATIONS,
   MIN_FLAME_VIBRANCY,
+  MIN_FOG_DENSITY,
   MIN_GLOW_BRIGHTNESS,
   MIN_NUM_POINTS,
   MIN_SOLID_AMBIENT,
@@ -3699,5 +3702,88 @@ describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
     const result = fromSnapshot(snapshot, initialState(true));
     expect(result.balloonEcho).toBe(true);
     expect(result.balloonRadius).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fog density (fr-5h5d) — persisted alongside the balloon pair the identical
+// way: optional on SceneSnapshot, always written by toSnapshot/encodeScene,
+// quiet-drop/clamp on decode, with fromSnapshot supplying the real default.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene fog", () => {
+  it("round-trips fogDensity, rounding to 4 decimal places", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), fogDensity: 1.23456 };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.fogDensity).toBeCloseTo(1.2346, 4);
+  });
+
+  it("keeps decoding a scene with no fogDensity field at all as a valid, non-null scene", () => {
+    // A hand-built payload with no fogDensity key — what every pre-fr-5h5d
+    // link looks like.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogDensity).toBeUndefined();
+  });
+
+  it("drops fogDensity when it is non-finite", () => {
+    const raw = { ...baseSnapshot(), fogDensity: "not a number" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.fogDensity).toBeUndefined();
+  });
+
+  it("clamps fogDensity below the minimum up to MIN_FOG_DENSITY", () => {
+    const raw = { ...baseSnapshot(), fogDensity: -5 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fogDensity).toBe(MIN_FOG_DENSITY);
+  });
+
+  it("clamps fogDensity above the maximum down to MAX_FOG_DENSITY", () => {
+    const raw = { ...baseSnapshot(), fogDensity: 50 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.fogDensity).toBe(MAX_FOG_DENSITY);
+  });
+
+  it("does not reject the whole scene over a malformed fogDensity", () => {
+    const raw = { ...baseSnapshot(), fogDensity: "nope" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms).toHaveLength(1);
+    expect(result!.fogDensity).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot fog (fr-5h5d)", () => {
+  it("toSnapshot carries fogDensity", () => {
+    const state: AppState = { ...initialState(true), fogDensity: 0.5 };
+    expect(toSnapshot(state).fogDensity).toBe(0.5);
+  });
+
+  it("fromSnapshot defaults fogDensity when the snapshot lacks it", () => {
+    // baseSnapshot() carries no fogDensity key at all — what a pre-fr-5h5d
+    // snapshot (or a decode of one) looks like — so this also pins that
+    // fromSnapshot supplies the real default rather than merely clearing.
+    const base: AppState = { ...initialState(true), fogDensity: 0.5 };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.fogDensity).toBe(DEFAULT_FOG_DENSITY);
+  });
+
+  it("fromSnapshot lands fogDensity on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = { ...baseSnapshot(), fogDensity: 0.5 };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect(result.fogDensity).toBe(0.5);
   });
 });
