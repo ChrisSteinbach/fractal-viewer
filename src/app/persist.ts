@@ -41,6 +41,7 @@ import type {
   WExtension,
 } from "../fractal/types";
 import {
+  DEFAULT_BALLOON_RADIUS,
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FOUR_D_COLOR,
   DEFAULT_RAMP_PALETTE,
@@ -205,6 +206,32 @@ export interface SceneSnapshot {
    * comment.
    */
   fourD?: FourDPose;
+  /**
+   * Whether the balloon echo/surface-balloon toggle is on (fr-5wlv.6, see
+   * `state.ts`'s `AppState.balloonEcho`): scene content since the epic's
+   * "mode persists" acceptance, unlike `camera`/`fourD` above (which have
+   * no `AppState` counterpart at all — this field DOES, and `fromSnapshot`
+   * merges it in with a real default rather than just excluding it).
+   * Optional for the same reason `camera` is optional rather than always
+   * present like `background`: `toSnapshot` always WRITES a defined
+   * boolean (there is no "pristine" value worth omitting — see
+   * `encodeScene`), but a document decoded from a pre-fr-5wlv.6 link, or
+   * from hand-crafted/malformed input, quietly comes back with this field
+   * absent (see `decodeScene`) — the CameraPose/FourDPose "malformed drops
+   * the field, never the scene" precedent, applied to a field with a real
+   * fallback instead of no counterpart at all.
+   */
+  balloonEcho?: boolean;
+  /**
+   * The balloon's normalized radius (fr-5wlv.6, see
+   * `state.ts`'s `AppState.balloonRadius`) — persisted alongside
+   * `balloonEcho` exactly the same way, right down to the optionality
+   * rationale. Decoded values are clamped through `PARAM.balloonRadius`,
+   * like every other PARAM-backed numeric field; absent or malformed
+   * quietly decodes to `undefined`, and `fromSnapshot` supplies
+   * `DEFAULT_BALLOON_RADIUS` for whichever comes back that way.
+   */
+  balloonRadius?: number;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -244,6 +271,16 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     background: state.background,
     customPalette: state.customPalette,
     positionAxisColors: state.positionAxisColors,
+    // Always written (fr-5wlv.6): AppState's own fields are always defined
+    // — false/DEFAULT_BALLOON_RADIUS is a perfectly ordinary pair to carry
+    // — matching how `background`'s own `state.background` copy above is
+    // unconditional here too. Unlike `background`, encodeScene below does
+    // NOT then omit a pristine default from the wire payload: there is no
+    // legacy document whose meaning depends on this field's absence, so
+    // the simpler "always written" rule (`colorGamma`/`glowBrightness`)
+    // applies instead of `background`'s omit-while-pristine dance.
+    balloonEcho: state.balloonEcho,
+    balloonRadius: state.balloonRadius,
   };
 }
 
@@ -260,6 +297,13 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * even when the incoming snapshot object never declares the key at all —
  * unlike `customPalette`, which only clears because `toSnapshot`/
  * `decodeScene` happen to always emit that key.
+ *
+ * `balloonEcho`/`balloonRadius` (fr-5wlv.6) are read explicitly off
+ * `snapshot` for the same reason, one step further than
+ * `positionAxisColors`: both HAVE a real `AppState` default
+ * (`false`/`DEFAULT_BALLOON_RADIUS`) to fall back to rather than merely
+ * clearing to `undefined`, so a `??` supplies it whenever the decoded (or
+ * hand-built) snapshot came back without one.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -270,6 +314,8 @@ export function fromSnapshot(
     ...base,
     ...rest,
     positionAxisColors: snapshot.positionAxisColors,
+    balloonEcho: snapshot.balloonEcho ?? false,
+    balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
   };
 }
 
@@ -1304,6 +1350,8 @@ export function encodeScene(s: SceneSnapshot): string {
     surface: SurfaceParams;
     symmetry: SymmetryParams;
     glowBrightness: number;
+    balloonEcho: boolean;
+    balloonRadius: number;
     background?: { mode: BackgroundMode; top?: string; bottom?: string };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
@@ -1382,6 +1430,16 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written, like symmetry — a small, always-present setting, not a
     // per-transform optional feature like finalTransform/weight/shear.
     glowBrightness: round4(s.glowBrightness),
+    // Always written (fr-5wlv.6), like glowBrightness just above — NOT
+    // conditionally omitted at the pristine default the way `background`
+    // is below: there is no pre-fr-5wlv.6 document whose meaning depends
+    // on this field's absence (unlike background's aerial-coupling
+    // legacy), so the simpler always-written rule applies and a
+    // false/DEFAULT_BALLOON_RADIUS pair costs nothing to carry. The `??`
+    // fallbacks only matter for a hand-built SceneSnapshot that skipped
+    // toSnapshot (which always supplies both) — see toSnapshot's own note.
+    balloonEcho: s.balloonEcho ?? false,
+    balloonRadius: round4(s.balloonRadius ?? DEFAULT_BALLOON_RADIUS),
   };
   // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
   // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
@@ -1531,6 +1589,18 @@ export function encodeScene(s: SceneSnapshot): string {
  * one tolerant field is `sliceThickness` (fr-wa6o), which defaults to 0
  * rather than dropping the pose — every document written before that
  * slider existed lacks the key entirely.
+ *
+ * balloonEcho / balloonRadius (fr-5wlv.6) follow camera/fourD's exact
+ * quiet-drop contract — a malformed value (balloonEcho not literally a
+ * boolean, balloonRadius not finite) decodes to `undefined` rather than
+ * rejecting the scene — with one difference: unlike camera/fourD, both
+ * fields DO have a real `AppState` counterpart, so `undefined` here is not
+ * the final answer. balloonRadius additionally clamps into
+ * {@link PARAM}.balloonRadius's range like any other PARAM-backed numeric
+ * field. `fromSnapshot` (not this function) supplies the true defaults —
+ * `false` / {@link DEFAULT_BALLOON_RADIUS} — for whichever comes back
+ * `undefined`, so a pre-fr-5wlv.6 link decodes here with both fields
+ * absent and still boots with the balloon off, exactly as it always did.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1676,6 +1746,26 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // decodeFourDPose.
     const fourD = decodeFourDPose(o.fourD);
 
+    // balloonEcho / balloonRadius (fr-5wlv.6): the balloon pair, persisted
+    // since the epic's "mode persists" acceptance. Same quiet-fallback
+    // policy as camera/fourD just above — malformed or absent drops ONLY
+    // the field to undefined, never the whole scene — but no sub-object to
+    // open, so no dedicated decodeX helper: balloonEcho requires a REAL
+    // boolean (camera/fourD's no-coercion stance, not showGuides-style
+    // Boolean(x) truthiness — a stray truthy value must not silently turn
+    // the balloon on), and balloonRadius coerces and clamps like every
+    // other PARAM-backed numeric field (numPoints/pointSize above), never
+    // rejecting the scene the way a transform field would. Neither
+    // supplies its own true default here — false / DEFAULT_BALLOON_RADIUS
+    // is fromSnapshot's job (see its own doc) — so both stay undefined
+    // when absent or malformed, exactly like camera/fourD.
+    const balloonEcho: boolean | undefined =
+      typeof o.balloonEcho === "boolean" ? o.balloonEcho : undefined;
+    const rawBalloonRadius = Number(o.balloonRadius);
+    const balloonRadius: number | undefined = Number.isFinite(rawBalloonRadius)
+      ? clampToSpec(PARAM.balloonRadius, rawBalloonRadius)
+      : undefined;
+
     return {
       transforms,
       finalTransform,
@@ -1698,6 +1788,8 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       positionAxisColors,
       camera,
       fourD,
+      balloonEcho,
+      balloonRadius,
     };
   } catch {
     return null;

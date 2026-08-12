@@ -1183,9 +1183,11 @@
           </label>
           <!-- The surface balloon (fr-5wlv.4): the explorer's balloon echo
                (fr-5wlv.2) rendered as real geometry by the tracer. Binds the
-               SAME session-only state pair, so one balloon carries across
-               renderers. 3D-only this cut (hidden in a live 4D surface
-               session); no Inflate here (fr-5wlv.6). -->
+               SAME persisted state pair (fr-5wlv.6), so one balloon carries
+               across renderers. 3D-only this cut (hidden in a live 4D
+               surface session, and while the active session is
+               escape-shaped — the balloon is permanently inert there,
+               fr-5wlv.4). -->
           <label
             class="checkbox-label"
             id="surfaceBalloonRow"
@@ -1206,6 +1208,14 @@
                 value="1.6"
               />
             </label>
+            <button
+              class="btn btn-ghost"
+              id="surfaceBalloonInflateButton"
+              type="button"
+              title="Inflate: animate the balloon from a crumpled ball out to its full size"
+            >
+              Inflate
+            </button>
           </div>
         </details>
       </div>

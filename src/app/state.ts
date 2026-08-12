@@ -392,21 +392,31 @@ export interface AppState {
    * point cloud sharing the main cloud's own geometry, sphere-inverted
    * about its enclosing ball — see `scene.ts`'s `syncBalloonEchoUniforms`
    * and `fractal/balloon-de.ts`'s module doc for the inversion math.
-   * Session-only, like {@link adaptiveResolution}: never persisted — it's
-   * an exploratory view toggle, not scene content, and defaults off so a
-   * shared link never surprises a viewer with an extra cloud.
+   * Persisted scene content since fr-5wlv.6 (epic fr-5wlv's "mode
+   * persists" acceptance) — the same treatment as {@link background}/
+   * {@link renderStyle}, NOT session-only like {@link adaptiveResolution}:
+   * the balloon is part of what a shared link shows. `persist.ts`'s
+   * decoder is tolerant, like `background`'s (an absent/malformed value
+   * quietly falls back to off), so a pre-fr-5wlv.6 link still opens with
+   * the balloon off, exactly as it always rendered.
    */
   balloonEcho: boolean;
   /**
    * The balloon echo's radius, as a NORMALIZED multiple of the cloud's own
    * enclosing-ball radius (`rMult = 1` touches the attractor's extent —
    * see `fractal/balloon-de.ts`'s `buildBalloon`, whose `rMult` carries the
-   * same meaning). Session-only, like {@link balloonEcho}: never
-   * persisted, and live per-frame-updatable — the "Inflate" replay
-   * (`main.ts`'s `onBalloonInflate`) sweeps it every tick. Range/default
-   * single-sourced through {@link PARAM.balloonRadius}; 1.6 sits past the
-   * attractor's own extent, the "rest" pose where the echo has fully
-   * turned into an enclosing cave.
+   * same meaning). Persisted alongside {@link balloonEcho} since fr-5wlv.6
+   * — a shared link carries the cave at the size it was authored — and
+   * still live per-frame-updatable exactly as before: the "Inflate" replay
+   * (`main.ts`'s `onBalloonInflate`) sweeps it every tick via direct
+   * reducer + scene calls that bypass the persisted control pipeline
+   * entirely (no undo checkpoint or debounced save per sweep frame —
+   * exactly like a camera drag: the motion itself is unrecorded, and only
+   * wherever the value is LEFT rides the next ordinary debounced save, the
+   * same "live per-frame, persisted at rest" shape the orbit camera's own
+   * saved pose already has). Range/default single-sourced through
+   * {@link PARAM.balloonRadius}; 1.6 sits past the attractor's own extent,
+   * the "rest" pose where the echo has fully turned into an enclosing cave.
    */
   balloonRadius: number;
   /**
@@ -793,13 +803,16 @@ export const MIN_W_SHEAR = -2;
 export const MAX_W_SHEAR = 2;
 /**
  * Balloon echo (fr-5wlv.2) radius range/default — see
- * {@link AppState.balloonRadius}. Session-only, so no persisted-scene
- * precedent constrains the numbers: {@link DEFAULT_BALLOON_RADIUS} (1.6)
- * sits past the attractor's own extent (`rMult = 1` touches it) — the
- * "rest" pose the Inflate replay (`main.ts`) sweeps toward. The floor
- * (0.05) is a visibly crumpled near-center ball; the ceiling (2.5) keeps
- * the echo's shell comfortably inside `BALLOON_FAR_CAP_RHO`'s march cap
- * (`fractal/balloon-de.ts`) at every slider position.
+ * {@link AppState.balloonRadius}. Persisted since fr-5wlv.6: `persist.ts`
+ * clamps a decoded value into this exact range via {@link PARAM}, the same
+ * clamp {@link setBalloonRadius} applies to a live edit. The numbers
+ * themselves predate persistence and need no revisiting:
+ * {@link DEFAULT_BALLOON_RADIUS} (1.6) sits past the attractor's own
+ * extent (`rMult = 1` touches it) — the "rest" pose the Inflate replay
+ * (`main.ts`) sweeps toward. The floor (0.05) is a visibly crumpled
+ * near-center ball; the ceiling (2.5) keeps the echo's shell comfortably
+ * inside `BALLOON_FAR_CAP_RHO`'s march cap (`fractal/balloon-de.ts`) at
+ * every slider position.
  */
 export const DEFAULT_BALLOON_RADIUS = 1.6;
 export const MIN_BALLOON_RADIUS = 0.05;
