@@ -961,7 +961,11 @@ describe("commit (fr-2c27)", () => {
 });
 
 describe("table policy", () => {
-  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, the two balloon pairs, and exportScale are the only entries marked persisted: false", () => {
+  it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, and exportScale are the only entries marked persisted: false", () => {
+    // The balloon pairs (balloonEchoCheckbox/balloonRadiusSlider,
+    // surfaceBalloonCheckbox/surfaceBalloonRadiusSlider) left this list in
+    // fr-5wlv.6: the balloon graduated from session-only view state to
+    // persisted scene content (epic fr-5wlv's "mode persists" acceptance).
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
@@ -970,11 +974,7 @@ describe("table policy", () => {
       "morphDetail",
       "autoUpdate",
       "adaptiveResolutionCheckbox",
-      "balloonEchoCheckbox",
-      "balloonRadiusSlider",
       "exportScale",
-      "surfaceBalloonCheckbox",
-      "surfaceBalloonRadiusSlider",
     ]);
   });
 

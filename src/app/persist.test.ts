@@ -16,6 +16,7 @@ import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import {
+  DEFAULT_BALLOON_RADIUS,
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -39,6 +40,7 @@ import {
   DEFAULT_SURFACE_COLOR_SPEED,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
+  MAX_BALLOON_RADIUS,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
@@ -57,6 +59,7 @@ import {
   MAX_W_POSITION,
   MAX_W_SCALE,
   MAX_W_SHEAR,
+  MIN_BALLOON_RADIUS,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
@@ -3560,5 +3563,141 @@ describe("decodeScene background (fr-5ps1)", () => {
     };
     const once = encodeScene(s);
     expect(encodeScene(decodeScene(once)!)).toBe(once);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balloon pair (fr-5wlv.6) — the balloon echo/surface-balloon on-flag and its
+// normalized radius, persisted since epic fr-5wlv's "mode persists"
+// acceptance. decodeScene follows camera/fourD's exact quiet-drop contract
+// (malformed or absent drops ONLY the field to undefined, never the whole
+// scene), but — unlike camera/fourD, which have no AppState counterpart at
+// all — both fields DO have one, so fromSnapshot supplies a real default
+// (false / DEFAULT_BALLOON_RADIUS) instead of merely clearing to undefined.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene balloon", () => {
+  it("round-trips the balloon pair, rounding the radius to 4 decimal places", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonEcho: true,
+      balloonRadius: 1.23456,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.balloonEcho).toBe(true);
+    expect(result!.balloonRadius).toBeCloseTo(1.2346, 4);
+  });
+
+  it("round-trips balloonEcho false alongside the default radius", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonEcho: false,
+      balloonRadius: DEFAULT_BALLOON_RADIUS,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.balloonEcho).toBe(false);
+    expect(result!.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
+  });
+
+  it("keeps decoding a scene with no balloon fields at all as a valid, non-null scene", () => {
+    // A hand-built payload with no balloonEcho/balloonRadius keys — what
+    // every pre-fr-5wlv.6 link looks like.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonEcho).toBeUndefined();
+    expect(result!.balloonRadius).toBeUndefined();
+  });
+
+  it("drops balloonEcho when it is not a real boolean", () => {
+    // Unlike showGuides/fourDDepthFade, balloonEcho does NOT coerce with
+    // Boolean(x) — a truthy non-boolean must not silently turn it on.
+    const raw = { ...baseSnapshot(), balloonEcho: "true" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonEcho).toBeUndefined();
+  });
+
+  it("drops balloonEcho when it is null", () => {
+    const raw = { ...baseSnapshot(), balloonEcho: null };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonEcho).toBeUndefined();
+  });
+
+  it("drops balloonRadius when it is non-finite", () => {
+    const raw = { ...baseSnapshot(), balloonRadius: "not a number" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonRadius).toBeUndefined();
+  });
+
+  it("clamps balloonRadius below the minimum up to MIN_BALLOON_RADIUS", () => {
+    const raw = { ...baseSnapshot(), balloonEcho: true, balloonRadius: -5 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonRadius).toBe(MIN_BALLOON_RADIUS);
+  });
+
+  it("clamps balloonRadius above the maximum down to MAX_BALLOON_RADIUS", () => {
+    const raw = { ...baseSnapshot(), balloonEcho: true, balloonRadius: 50 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonRadius).toBe(MAX_BALLOON_RADIUS);
+  });
+
+  it("does not reject the whole scene over a malformed balloon pair", () => {
+    const raw = { ...baseSnapshot(), balloonEcho: 42, balloonRadius: "nope" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms).toHaveLength(1);
+    expect(result!.balloonEcho).toBeUndefined();
+    expect(result!.balloonRadius).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
+  it("toSnapshot carries the balloon pair", () => {
+    const state: AppState = {
+      ...initialState(true),
+      balloonEcho: true,
+      balloonRadius: 2,
+    };
+    expect(toSnapshot(state).balloonEcho).toBe(true);
+    expect(toSnapshot(state).balloonRadius).toBe(2);
+  });
+
+  it("fromSnapshot defaults balloonEcho/balloonRadius when the snapshot lacks them", () => {
+    // baseSnapshot() carries neither key at all — what a pre-fr-5wlv.6
+    // snapshot (or a decode of one) looks like — so this also pins that
+    // fromSnapshot supplies the real default rather than merely clearing.
+    const base: AppState = {
+      ...initialState(true),
+      balloonEcho: true,
+      balloonRadius: 2,
+    };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.balloonEcho).toBe(false);
+    expect(result.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
+  });
+
+  it("fromSnapshot lands the balloon pair on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonEcho: true,
+      balloonRadius: 2,
+    };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect(result.balloonEcho).toBe(true);
+    expect(result.balloonRadius).toBe(2);
   });
 });

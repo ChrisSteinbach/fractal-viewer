@@ -3368,6 +3368,11 @@ function main(): void {
             state.symmetry,
           );
           surfaceSessionIs4D = true;
+          // fr-5wlv.6: no 4D escape lift exists yet (CLAUDE.md/escape-de.ts)
+          // — every live 4D session is IFS-shaped, so the balloon rows'
+          // escape gate never applies here (fourDSurfaceLive already hides
+          // them for the 4D reason).
+          ui.setSurfaceSessionKind("ifs");
           // The fr-wa6o thickness slider is live only where the slab is
           // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
           // to arcs, so those sessions clamp sliceHalfW to 0 at every
@@ -3452,6 +3457,11 @@ function main(): void {
           // device loss). No grid either way — the empty-space chain's
           // validity argument is IFS-specific.
           surfaceSessionIs4D = false;
+          // fr-5wlv.6: the balloon is PERMANENTLY inert for the escape
+          // solid (fr-5wlv.4's measured degeneracy — scene.ts nulls the
+          // ball), so its controls hide outright rather than sitting there
+          // visible-but-inert.
+          ui.setSurfaceSessionKind("escape");
           const de = buildEscapeDE(
             state.transforms,
             state.finalTransform ?? null,
@@ -3499,6 +3509,10 @@ function main(): void {
           );
         } else {
           surfaceSessionIs4D = false;
+          // fr-5wlv.6: an ordinary IFS session — the balloon's live shape,
+          // so its controls stay reachable (subject to the 4D/off gates
+          // elsewhere).
+          ui.setSurfaceSessionKind("ifs");
           const de = buildSurfaceDE(
             state.transforms,
             state.finalTransform ?? null,
@@ -3719,6 +3733,10 @@ function main(): void {
       surfaceSessionIs4D = false;
       surface4SlabExact = true;
       ui.setFourDSlabAvailable(true);
+      // fr-5wlv.6: a dead session's shape must not greet the next one —
+      // the same "session-scoped progress/detail, not document state"
+      // reset every other routing flag on this line gets.
+      ui.setSurfaceSessionKind(null);
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {
@@ -4059,10 +4077,19 @@ function main(): void {
     pendingRenderSeed = null;
     pendingFourDPose = null;
     fourDTween.cancel();
+    // The balloon "Inflate" sweep (fr-5wlv.6) is session-only replay motion
+    // over a now-superseded document — the user just jumped states, so any
+    // in-flight sweep is cancelled exactly like a genuine control edit
+    // would (control-spec.ts's cancelBalloonSweep effect), rather than
+    // continuing to animate a radius the restored document didn't author.
+    balloonSweepStartMs = null;
     // The pre-load display target — the morph's `from` endpoint (a chained
     // restart ignores it and resumes from the live sample; see
     // MorphTween.start). Captured before fromSnapshot replaces the document.
     const morphFrom = currentMorphSystem();
+    // Captured for the balloon re-entry check below — fromSnapshot is about
+    // to overwrite state.balloonEcho with the restored document's value.
+    const previousBalloonEcho = state.balloonEcho;
     state = fromSnapshot(snap, state);
     if (
       typeof state.selectedTransform === "number" &&
@@ -4113,6 +4140,30 @@ function main(): void {
     scene.setPointSize(state.pointSize);
     scene.setFourDDepthFade(state.fourDDepthFade);
     scene.setSolidParams(state.solid);
+    // The balloon pair (fr-5wlv.6): pushed unconditionally, like solid
+    // above — both scene channels are equality-guarded and inert for
+    // whichever renderer isn't active, so there is no harm in keeping both
+    // in sync with every load regardless of state.renderMode. A live
+    // surface session whose EFFECTIVE balloon on/off just changed needs a
+    // full re-enter to pick it up (a variant-level change — SURFACE_BALLOON
+    // compile / compute routing / grid on-off — not a uniform write), the
+    // same seam the surfaceBalloonCheckbox effect uses
+    // (restartSurfaceRender in control-spec.ts). In practice this branch is
+    // unreachable HERE today: switchRenderMode("points") above has already
+    // exited any active surface session by this point, so state.renderMode
+    // is always "points" below — kept anyway as the honest invariant for
+    // this function (a surface session entered afterward re-derives the
+    // balloon fresh from state regardless of this branch — see
+    // surfaceSession's start()).
+    scene.setBalloonEchoEnabled(state.balloonEcho);
+    scene.setBalloonEchoRadius(state.balloonRadius);
+    scene.setSurfaceBalloonRadius(state.balloonRadius);
+    if (
+      state.renderMode === "surface" &&
+      state.balloonEcho !== previousBalloonEcho
+    ) {
+      controlEffects.restartSurfaceRender();
+    }
     // Covers the grid/axes/scaffold too — refreshGuides pushes the whole
     // guide-visibility derivation, not just the boxes.
     refreshGuides();
@@ -4935,25 +4986,39 @@ function main(): void {
         ui.updateLabels(state);
       }
     },
-    // "Inflate" (fr-5wlv.2): animate the balloon echo's radius from a
-    // crumpled near-center ball out to its rest size — tickRender's
-    // points-mode block pushes the sweep every frame while
-    // balloonSweepStartMs is set. Turns the echo on first if it wasn't
-    // already, mirroring the checkbox effect's own enabled+radius push
-    // (control-spec.ts), so a click from off plays the whole sweep instead
-    // of silently jumping straight to rest. Session-only view motion, like
-    // auto-orbit: no undo checkpoint, no stopShows.
+    // "Inflate" (fr-5wlv.2, surface entry point fr-5wlv.6): animate the
+    // balloon's radius from a crumpled near-center ball out to its rest
+    // size — tickLogic's absolute-time poll pushes the sweep every frame
+    // while balloonSweepStartMs is set, in BOTH points and surface modes.
+    // Turns the balloon on first if it wasn't already, mirroring the
+    // checkbox effects' own enabled(+radius) push (control-spec.ts), so a
+    // click from off plays the whole sweep instead of silently jumping
+    // straight to rest — the explorer and surface checkboxes share this
+    // same on-first behavior via the mode-appropriate path below. Session-
+    // only view motion, like auto-orbit: no undo checkpoint, no stopShows
+    // (the balloon pair's OWN persistence, fr-5wlv.6, still applies at
+    // whatever the sweep is left resting on, via the next ordinary edit's
+    // debounced save — this handler itself just never cuts one).
     onBalloonInflate: () => {
       if (!state.balloonEcho) {
         state = setBalloonEcho(state, true);
-        scene.setBalloonEchoEnabled(true);
-        scene.setBalloonEchoRadius(state.balloonRadius);
+        if (state.renderMode === "surface") {
+          // Variant-level change, exactly like the surfaceBalloonCheckbox
+          // effect (control-spec.ts): re-enter the session so it
+          // recompiles/reroutes with the balloon on, rather than writing a
+          // uniform the active variant doesn't carry.
+          controlEffects.restartSurfaceRender();
+        } else {
+          scene.setBalloonEchoEnabled(true);
+          scene.setBalloonEchoRadius(state.balloonRadius);
+        }
         ui.updateLabels(state);
       }
       if (prefersReducedMotion()) {
         balloonSweepStartMs = null;
         state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
         scene.setBalloonEchoRadius(state.balloonRadius);
+        scene.setSurfaceBalloonRadius(state.balloonRadius);
         ui.updateLabels(state);
         return;
       }
@@ -5558,6 +5623,17 @@ function main(): void {
   // the dark default, so a document restored with haze/custom would render
   // dark until the Background select first moved.
   applyBackgroundNow();
+  // Same push for the restored balloon pair (fr-5wlv.6): the scene
+  // constructs with the echo off / the surface balloon at its own default
+  // radius, so a document restored with the balloon on would render
+  // without it (or at the wrong size) until a balloon control first moved.
+  // Both channels pushed unconditionally like setSolidParams above — the
+  // boot render mode is always "points" (renderMode is never persisted),
+  // so setSurfaceBalloonRadius is inert here until a later surface entry,
+  // which re-derives the on/off flag itself from state.balloonEcho.
+  scene.setBalloonEchoEnabled(state.balloonEcho);
+  scene.setBalloonEchoRadius(state.balloonRadius);
+  scene.setSurfaceBalloonRadius(state.balloonRadius);
   // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
   // regeneration goes through the worker (fr-5kx): the first paint should
   // include the cloud, not an empty backdrop for a worker round-trip — and
@@ -5750,12 +5826,14 @@ function main(): void {
    * The animate loop's LOGIC phase (split out for fr-92t9): everything that
    * decides WHAT this frame shows — camera/pose tween advance, the panel
    * inset ease, the morph sample (which issues this frame's generation
-   * request), and the drift/timeline show polls (which may launch a leg or
-   * finish a run). The realtime loop runs it back-to-back with
-   * {@link tickRender}; the offline export driver runs it at each frame's
-   * virtual time and AWAITS the generator settling in between, so the
-   * frame's own sample — not the previous frame's — is what gets rendered
-   * and encoded.
+   * request), the drift/timeline show polls (which may launch a leg or
+   * finish a run), and the balloon "Inflate" sweep (fr-5wlv.6 — absolute-
+   * time motion like the tweens above, mode-independent so it reaches both
+   * the explorer and a live surface session). The realtime loop runs it
+   * back-to-back with {@link tickRender}; the offline export driver runs it
+   * at each frame's virtual time and AWAITS the generator settling in
+   * between, so the frame's own sample — not the previous frame's — is what
+   * gets rendered and encoded.
    */
   function tickLogic(now: number): void {
     cameraTween.advance();
@@ -5831,6 +5909,56 @@ function main(): void {
       } else {
         finishTimelinePlayback();
       }
+    }
+    // The balloon's "Inflate" replay (fr-5wlv.2, surface fr-5wlv.6): while a
+    // sweep is running, ease its radius from MIN_BALLOON_RADIUS up to the
+    // rest target over BALLOON_SWEEP_MS. Lives HERE rather than in
+    // tickRender (fr-5wlv.6 moved it) because it keys off ABSOLUTE time
+    // (now - balloonSweepStartMs) exactly like the tween samples above, not
+    // a per-mode render dt — and tickLogic runs unconditionally every frame
+    // where tickRender's per-mode branches early-return, so one poll here
+    // covers both points and surface (and costs nothing in flame/solid,
+    // where the balloon has no renderer to reach anyway). Direct reducer +
+    // scene calls, not the onScalarControl pipeline (this is session-only
+    // replay motion, not a user edit — no undo checkpoint, no save, and
+    // critically it can never reach the control-spec.ts effects that call
+    // cancelBalloonSweep, or the sweep would cancel itself every tick).
+    // Both scene channels are pushed every tick — setBalloonEchoRadius for
+    // the explorer echo, setSurfaceBalloonRadius for the surface balloon —
+    // each equality-guarded and inert for whichever renderer isn't active,
+    // exactly the same "push both, let the setters no-op" idiom as
+    // applyDecodedSnapshot's load-time push; the surface compute path reads
+    // the scene's stored rMult from its own per-frame spec, so this is the
+    // complete set with nothing extra to wire for that path. No tier
+    // changes needed for the surface march during a sweep (fr-5wlv.1's
+    // analysis): a sweeping frame is a PREVIEW under the budget-capped
+    // rungs the interaction tier already uses, and settle only ever arms
+    // once the view (and now the radius) is parked — the sweep's own
+    // motion keeps invalidating the frame exactly like a camera drag does.
+    // The rest pose fits the full-tier budget (fr-5wlv.1 measured mandelbox-
+    // lens p95 131 steps < the 160-step full-tier cap), so an unattended
+    // Inflate click always settles cleanly; only a user who manually PARKS
+    // the slider mid-sweep on a lens monster (fr-5wlv.1's early-inflation
+    // transient, p95 215 steps at R=0.35rho) can reach a settle whose
+    // deepest creases exhaust the budget — disclosed as softer detail
+    // there, never a watchdog exposure (the bounded strip pump owns that
+    // safety regardless of how expensive the frame gets).
+    if (balloonSweepStartMs !== null) {
+      const t = (now - balloonSweepStartMs) / BALLOON_SWEEP_MS;
+      if (t >= 1) {
+        balloonSweepStartMs = null;
+        state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
+      } else {
+        const u = t * t * (3 - 2 * t); // smoothstep easing
+        state = setBalloonRadius(
+          state,
+          MIN_BALLOON_RADIUS +
+            (DEFAULT_BALLOON_RADIUS - MIN_BALLOON_RADIUS) * u,
+        );
+      }
+      scene.setBalloonEchoRadius(state.balloonRadius);
+      scene.setSurfaceBalloonRadius(state.balloonRadius);
+      ui.updateLabels(state);
     }
   }
 
@@ -6118,31 +6246,6 @@ function main(): void {
     }
     scene.applyCamera(orbit);
     scene.updateFog();
-    // The balloon echo's "Inflate" replay (fr-5wlv.2): while a sweep is
-    // running, ease its radius from MIN_BALLOON_RADIUS up to the rest
-    // target over BALLOON_SWEEP_MS. Direct reducer + scene calls, not the
-    // onScalarControl pipeline (this is session-only replay motion, not a
-    // user edit — no undo checkpoint, no save, and critically it can never
-    // reach the two control-spec.ts effects that call cancelBalloonSweep,
-    // or the sweep would cancel itself every tick). The scene setter's own
-    // equality guard keeps this render-on-demand-correct with no further
-    // needsRender plumbing.
-    if (balloonSweepStartMs !== null) {
-      const t = (now - balloonSweepStartMs) / BALLOON_SWEEP_MS;
-      if (t >= 1) {
-        balloonSweepStartMs = null;
-        state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
-      } else {
-        const u = t * t * (3 - 2 * t); // smoothstep easing
-        state = setBalloonRadius(
-          state,
-          MIN_BALLOON_RADIUS +
-            (DEFAULT_BALLOON_RADIUS - MIN_BALLOON_RADIUS) * u,
-        );
-      }
-      scene.setBalloonEchoRadius(state.balloonRadius);
-      ui.updateLabels(state);
-    }
     if (viewIs4D) {
       // Advance the pose and push the rotor every 4D frame, paused or not —
       // 16 floats/frame is nothing and it keeps one code path.

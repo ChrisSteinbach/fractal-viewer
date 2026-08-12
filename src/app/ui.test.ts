@@ -563,6 +563,49 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
+
+  it("hides both rows when the active surface session is escape-shaped (fr-5wlv.6)", () => {
+    // The balloon is permanently inert for the escape solid (fr-5wlv.4) —
+    // main.ts pushes the session's actual routing decision via
+    // setSurfaceSessionKind, independent of fourDSurfaceLive's own
+    // document-derived gate.
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows both rows again once the session kind resets off escape", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("fires onBalloonInflate when the surface Inflate button is clicked (fr-5wlv.6)", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    (
+      document.getElementById(
+        "surfaceBalloonInflateButton",
+      ) as HTMLButtonElement
+    ).click();
+
+    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("Ui surface palette row (fr-7jlk)", () => {

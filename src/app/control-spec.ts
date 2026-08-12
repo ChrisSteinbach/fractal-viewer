@@ -590,17 +590,20 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, checked) => setAdaptiveResolution(s, checked),
   },
   {
-    // The balloon echo checkbox (fr-5wlv.2): like adaptiveResolution, a
-    // session-only exploratory view toggle that never enters the encoded
-    // document. Applies both the enabled flag AND the current radius so
-    // switching on shows the echo at the slider's authored size, not
-    // whatever the scene's last (or never-set) radius happened to be.
+    // The balloon echo checkbox (fr-5wlv.2): persisted since fr-5wlv.6 —
+    // the balloon graduates from session-only view toggle to scene content
+    // (epic fr-5wlv's "mode persists" acceptance), so a checkbox edit now
+    // cuts an undo checkpoint and a debounced save like any other
+    // appearance control. Applies both the enabled flag AND the current
+    // radius so switching on shows the echo at the slider's authored size,
+    // not whatever the scene's last (or never-set) radius happened to be.
     // cancelBalloonSweep takes over from an in-flight Inflate replay — see
     // its doc; this only ever runs from the DOM checkbox's own "change"
-    // event, never from the sweep's direct reducer calls.
+    // event — the sweep's own per-tick reducer calls write state/scene
+    // directly and so never reach (or persist through) this table-driven
+    // pipeline at all.
     kind: "checkbox",
     id: "balloonEchoCheckbox",
-    persisted: false,
     read: (s) => s.balloonEcho,
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
@@ -611,13 +614,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The balloon echo's radius slider (fr-5wlv.2) — a plain 1:1 numeric
-    // mapping like pointSizeSlider, session-only like the checkbox above.
-    // Live effect (unlike numPointsSlider's deferred commit): re-inverting
-    // the shared point buffer through the shader is a uniform write, not a
-    // regenerate, so every drag tick can push it.
+    // mapping like pointSizeSlider, persisted like the checkbox above
+    // since fr-5wlv.6. Live effect (unlike numPointsSlider's deferred
+    // commit): re-inverting the shared point buffer through the shader is
+    // a uniform write, not a regenerate, so every drag tick can push it —
+    // each tick coalesces into the drag's one undo checkpoint exactly like
+    // pointSizeSlider's own live effect. The Inflate sweep
+    // (onBalloonInflate/tickLogic) moves this same field every frame via
+    // its own direct reducer + scene calls, bypassing this table entirely
+    // — the sweep itself is never an undoable/saved edit, only wherever it
+    // settles rides the next ordinary debounced save.
     kind: "range",
     id: "balloonRadiusSlider",
-    persisted: false,
     label: {
       id: "balloonRadiusLabel",
       text: (s) => `${s.balloonRadius.toFixed(2)}×`,
@@ -1018,17 +1026,17 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: surfaceParamsEffect,
   },
   {
-    // The surface balloon checkbox (fr-5wlv.4): binds the SAME session-only
-    // state pair as the explorer's balloonEchoCheckbox — one balloon across
-    // renderers (the epic's one-continuous-parameter framing: the explorer
-    // echo and the surface balloon are the same object through different
-    // renderers). Unlike every other surface control this is a
-    // VARIANT-level change (SURFACE_BALLOON recompile + compute/WebGL
-    // rerouting + grid on/off), so the effect re-enters the session,
-    // which re-derives all of it from state in one sweep.
+    // The surface balloon checkbox (fr-5wlv.4): binds the SAME state pair
+    // as the explorer's balloonEchoCheckbox — one balloon across renderers
+    // (the epic's one-continuous-parameter framing: the explorer echo and
+    // the surface balloon are the same object through different
+    // renderers), persisted since fr-5wlv.6 exactly like its explorer
+    // twin. Unlike every other surface control this is a VARIANT-level
+    // change (SURFACE_BALLOON recompile + compute/WebGL rerouting + grid
+    // on/off), so the effect re-enters the session, which re-derives all
+    // of it from state in one sweep.
     kind: "checkbox",
     id: "surfaceBalloonCheckbox",
-    persisted: false,
     read: (s) => s.balloonEcho,
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
@@ -1038,12 +1046,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The surface balloon's radius (fr-5wlv.4) — same state field as
-    // balloonRadiusSlider (one balloon, two renderers). Live effect: the
-    // scene's cheap path rewrites uniforms only (never the shader), so
-    // every drag tick can push it.
+    // balloonRadiusSlider (one balloon, two renderers), persisted like it
+    // since fr-5wlv.6. Live effect: the scene's cheap path rewrites
+    // uniforms only (never the shader), so every drag tick can push it,
+    // each coalescing into the drag's one undo checkpoint. The Inflate
+    // sweep (main.ts's onBalloonInflate/tickLogic) moves this same field
+    // every frame directly, bypassing this table entirely — never an
+    // undoable/saved edit in its own right, only wherever it settles.
     kind: "range",
     id: "surfaceBalloonRadiusSlider",
-    persisted: false,
     label: {
       id: "surfaceBalloonRadiusLabel",
       text: (s) => `${s.balloonRadius.toFixed(2)}×`,

@@ -962,10 +962,16 @@ export class Ui {
   private readonly surfaceColorSpeedRow: HTMLElement;
   // The surface balloon rows (fr-5wlv.4): 3D-surface-only this cut — the
   // variant exists only in the 3D material, so both hide under a live 4D
-  // surface session (fourDSurfaceLive); the radius row additionally waits
-  // for the balloon itself, mirroring the explorer pair (fr-5wlv.2).
+  // surface session (fourDSurfaceLive) and under an escape-shaped one
+  // (surfaceSessionKind, fr-5wlv.6 — the balloon is permanently inert
+  // there, not just momentarily unavailable like the 4D case); the radius
+  // row additionally waits for the balloon itself, mirroring the explorer
+  // pair (fr-5wlv.2). Its own Inflate button (fr-5wlv.6) binds the SAME
+  // handler as the explorer's balloonInflateButton — one sweep, one
+  // handler, two entry points.
   private readonly surfaceBalloonRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
+  private readonly surfaceBalloonInflateButton: HTMLButtonElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
@@ -1011,6 +1017,20 @@ export class Ui {
    * thickness row hides rather than showing a slider the session ignores.
    * Session-scoped, set by main.ts's routing; true outside such sessions. */
   private fourDSlabAvailable = true;
+  /**
+   * The ACTIVE surface session's shape (fr-5wlv.6): `"escape"` for the
+   * escape-time fold render (fr-kltj) — whose forward-orbit object has no
+   * ball to invert, so scene.ts nulls it (fr-5wlv.4's measured
+   * degeneracy) and the balloon is permanently inert there — `"ifs"` for
+   * every ordinary IFS or live 4D session, `null` outside a surface
+   * session (or before the routing decision lands). Session-scoped like
+   * {@link fourDSlabAvailable}, set by main.ts's own routing at
+   * surfaceSession.start() and reset on session end — NOT document-derived
+   * like {@link fourDSurfaceLive} above, since "would this document route
+   * to escape" needs the same analysis main.ts's routing already ran; read
+   * by updateLabels alongside fourDSurfaceLive to gate the balloon rows.
+   */
+  private surfaceSessionKind: "ifs" | "escape" | null = null;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
   // the slice controls above. The toggle's own wrapper row (fr-osgs) hides —
   // with the speed row — in a live 4D surface session, where the ambient
@@ -1243,6 +1263,7 @@ export class Ui {
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
+    this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
@@ -1522,8 +1543,13 @@ export class Ui {
     this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
     this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
     // The balloon echo's "Inflate" replay (fr-5wlv.2) — a bespoke button
-    // like watchBuildBtn above, not a table-driven scalar control.
+    // like watchBuildBtn above, not a table-driven scalar control. The
+    // surface balloon's own Inflate button (fr-5wlv.6) fires the exact
+    // SAME handler — one sweep, one radius field, two renderers' buttons.
     this.balloonInflateButton.addEventListener("click", () =>
+      handlers.onBalloonInflate(),
+    );
+    this.surfaceBalloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
     // Every table-driven scalar control (see control-spec.ts) shares one
@@ -1758,6 +1784,19 @@ export class Ui {
     this.syncFourDViewRows();
   }
 
+  /** fr-5wlv.6: which shape the active surface session actually routed to
+   * (see {@link surfaceSessionKind}) — main.ts sets it once per
+   * surfaceSession.start() branch and resets it to `null` on session end,
+   * mirroring {@link setFourDSlabAvailable}'s own routing-pushed pattern.
+   * Unlike that setter, this one does not self-sync: the gated rows also
+   * depend on `state.balloonEcho`, which this class doesn't cache, so the
+   * caller's next `updateLabels` call (already the established pattern —
+   * main.ts's refreshUi runs right after every surface routing decision)
+   * is what actually applies it. */
+  setSurfaceSessionKind(kind: "ifs" | "escape" | null): void {
+    this.surfaceSessionKind = kind;
+  }
+
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
    * a slice left behind by the previous visit never silently applies. The
    * slice-relative color option (fr-nn6) resets with it: it's slice view
@@ -1902,13 +1941,18 @@ export class Ui {
     );
     // The surface balloon (fr-5wlv.4) is 3D-only this cut — the variant
     // exists only in the 3D material — so both rows hide under a live 4D
-    // surface session; the radius row additionally waits for the balloon
-    // itself to be on, mirroring the explorer pair (fr-5wlv.2). The
-    // surface section as a whole already gates on renderMode above.
-    this.surfaceBalloonRow.classList.toggle("hidden", this.fourDSurfaceLive);
+    // surface session, AND under an escape-shaped one (fr-5wlv.6: the
+    // balloon is PERMANENTLY inert for that filled solid, not just
+    // unavailable like the 4D case — see surfaceSessionKind's own doc);
+    // the radius row additionally waits for the balloon itself to be on,
+    // mirroring the explorer pair (fr-5wlv.2). The surface section as a
+    // whole already gates on renderMode above.
+    const surfaceBalloonHidden =
+      this.fourDSurfaceLive || this.surfaceSessionKind === "escape";
+    this.surfaceBalloonRow.classList.toggle("hidden", surfaceBalloonHidden);
     this.surfaceBalloonRadiusRow.classList.toggle(
       "hidden",
-      this.fourDSurfaceLive || !state.balloonEcho,
+      surfaceBalloonHidden || !state.balloonEcho,
     );
     // …including each mode's non-section block above the accordion (fr-374p):
     // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
