@@ -3321,10 +3321,15 @@ ${balloonHitWrapText}`
   let t = st.x;
   // --- shade: surface-material.ts main()'s hit path, term for term ---
   let pos = ro + rd * t;
-  // The sphere entry when one exists, clamped to t: a shell hit can
-  // land NEARER than the entry, and the fog pow below must never see a
-  // negative base (the GLSL arm's guard) — such hits read fog-free.
-  let tEnter = min(select(0.0, max(-bq - sq, 0.0), disc >= 0.0), t);`
+  // The sphere entry when one exists — and the closest-approach depth
+  // max(-bq, 0) for rays that MISS the sphere, NOT 0: both forms meet at
+  // the silhouette (disc -> 0 collapses the entry to -bq), so the fog
+  // origin is CONTINUOUS across the frame (the GLSL arm's fix — seeding
+  // misses from the camera painted the sphere's silhouette as a lighter
+  // disc over the shell). Clamped to t: a shell hit can land NEARER than
+  // the origin, and the fog pow below must never see a negative base —
+  // such hits read fog-free.
+  let tEnter = min(max(-bq - sq, 0.0), t);`
     : `  // Sphere-gate recompute, only for tEnter (the fog origin) — cheaper
   // than persisting it in the march state.
   let radius = params.visibleRadius * 1.02;

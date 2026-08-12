@@ -2193,16 +2193,23 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // shell, so every ray marches from the camera, capped at uBalloonFar
     // past the balloon center — capped rays fall through to the existing
     // background below (the balloon is a HIT, not a background). The
-    // sphere entry still seeds the fog origin when it exists, so the
-    // FRACTAL's own depth fog is unchanged; shell hits nearer than the
-    // sphere clamp fog at zero (the min just before the fog term).
+    // sphere entry still seeds the fog origin, so the FRACTAL's own depth
+    // fog is unchanged — and for rays that MISS the sphere the origin is
+    // the closest-approach depth max(-b, 0), NOT 0: both forms meet at
+    // the silhouette (disc -> 0 collapses the entry to -b), so the fog
+    // origin is CONTINUOUS across the whole frame. Seeding misses from
+    // the camera instead painted the sphere's silhouette as a visibly
+    // lighter disc over the shell — same wall, ~|cam| less fog distance
+    // inside the disc than one pixel outside it (user-reported on the
+    // R=0.99 mid-flip from a far camera). Shell hits nearer than the
+    // origin clamp fog at zero (the min just before the fog term).
     float radius = uVisibleRadius * 1.02;
     float b = dot(ro, rd);
     float c = dot(ro, ro) - radius * radius;
     float disc = b * b - c;
     float tFar = length(uCamPos - uBalloonCenter) + uBalloonFar;
     float t = 0.0;
-    float tEnter = disc >= 0.0 ? max(-b - sqrt(disc), 0.0) : 0.0;
+    float tEnter = max(-b - (disc >= 0.0 ? sqrt(disc) : 0.0), 0.0);
 #else
     // Entry/exit against the origin-centered sphere bounding the VISIBLE
     // set (small margin so silhouettes right at the bound aren't clipped):
