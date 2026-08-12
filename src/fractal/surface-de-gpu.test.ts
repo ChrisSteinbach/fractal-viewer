@@ -642,8 +642,8 @@ function shadeParams(
 }
 
 describe("packSurfaceGpuShade", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (128 bytes, per the module doc)", () => {
-    expect(SURFACE_GPU_SHADE_BYTES).toBe(128);
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (144 bytes, per the module doc)", () => {
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(144);
     const buf = packSurfaceGpuShade(shadeParams());
     expect(buf).toBeInstanceOf(ArrayBuffer);
     expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
@@ -686,6 +686,26 @@ describe("packSurfaceGpuShade", () => {
       packSurfaceGpuShade(shadeParams({ dither: false })),
     );
     expect(off.getUint32(124, true)).toBe(0);
+  });
+
+  it("defaults fogTint to [1, 1, 1] at offset 128 and fogTintStrength to 0 at offset 140 when omitted (the fr-5h5d identity)", () => {
+    const view = new DataView(packSurfaceGpuShade(shadeParams()));
+    expect(view.getFloat32(128, true)).toBe(1);
+    expect(view.getFloat32(132, true)).toBe(1);
+    expect(view.getFloat32(136, true)).toBe(1);
+    expect(view.getFloat32(140, true)).toBe(0);
+  });
+
+  it("round-trips explicit fogTint/fogTintStrength at their documented offsets", () => {
+    const shade = shadeParams({
+      fogTint: [0.375, 0.625, 0.875],
+      fogTintStrength: 0.4,
+    });
+    const view = new DataView(packSurfaceGpuShade(shade));
+    expect(view.getFloat32(128, true)).toBe(0.375);
+    expect(view.getFloat32(132, true)).toBe(0.625);
+    expect(view.getFloat32(136, true)).toBe(0.875);
+    expect(view.getFloat32(140, true)).toBe(Math.fround(0.4));
   });
 });
 
