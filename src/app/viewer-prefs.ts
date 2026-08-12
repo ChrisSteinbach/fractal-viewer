@@ -10,7 +10,10 @@
  * localStorage key (`STORAGE_KEY` below) and never touches the URL, hash, or
  * `history` — localStorage only, always.
  *
- * Right now there is exactly ONE pref — see {@link ViewerPrefs.autoMotion}.
+ * Two prefs live here today — see {@link ViewerPrefs.autoMotion} and
+ * {@link ViewerPrefs.surfacePreview}. Writers should go through
+ * {@link updateViewerPrefs}, which merges over the stored document — a bare
+ * {@link saveViewerPrefs} of one field would silently drop the others.
  *
  * Deliberately does NOT import from persist.ts, even though the two share a
  * tiny "safe localStorage" helper and the same `deps?.storage ?? ...`
@@ -31,6 +34,13 @@ export interface ViewerPrefs {
    * = never chosen, so boot follows the prefers-reduced-motion default. Set to
    * true/false once the user flips EITHER motion toggle; seeds BOTH on next load. */
   autoMotion?: boolean;
+  /** The surface mode's quick-preview tier on/off (fr-37c6): `false` means
+   * invalidations never trace the cheap preview — the pane holds its last
+   * frame while the view moves and the full-detail render starts the moment
+   * it parks. A patience preference, so it belongs to the person at this
+   * browser (the fr-24to/fr-zx34 line: the mode never guesses willingness
+   * to wait). `undefined` = never chosen = previews on, today's behavior. */
+  surfacePreview?: boolean;
 }
 
 /** Injectable storage; defaults to `window.localStorage`. Mirrors persist.ts's PersistDeps. */
@@ -90,6 +100,9 @@ export function loadViewerPrefs(deps?: ViewerPrefsDeps): ViewerPrefs {
     const p = parsed as Record<string, unknown>;
     const prefs: ViewerPrefs = {};
     if (typeof p.autoMotion === "boolean") prefs.autoMotion = p.autoMotion;
+    if (typeof p.surfacePreview === "boolean") {
+      prefs.surfacePreview = p.surfacePreview;
+    }
     return prefs;
   } catch {
     return {};
@@ -118,6 +131,21 @@ export function saveViewerPrefs(
   } catch {
     // QuotaExceededError / private-mode SecurityError — ignore silently.
   }
+}
+
+/**
+ * Merge `patch` over the stored prefs and save the result — the one write
+ * path callers should use now that more than one pref exists: writing a
+ * single field through {@link saveViewerPrefs} directly would erase every
+ * other stored choice (the shape the original one-pref call sites had).
+ * Load-then-save is not atomic, but prefs are only written from user
+ * gestures in one tab's event loop — there is no concurrent writer to race.
+ */
+export function updateViewerPrefs(
+  patch: ViewerPrefs,
+  deps?: ViewerPrefsDeps,
+): void {
+  saveViewerPrefs({ ...loadViewerPrefs(deps), ...patch }, deps);
 }
 
 /** localStorage access throws in some private-browsing / sandboxed contexts.

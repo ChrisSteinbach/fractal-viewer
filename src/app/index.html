@@ -199,8 +199,33 @@
           moment for most systems, minutes or more for fold-heavy ones like
           Mandelbox KIFS. The readout below says how far along it is.
         </p>
+        <!-- fr-37c6: the preview tier under user control — the fr-24to/
+             fr-zx34 principle (never guess willingness to wait) applied to
+             the preview itself. A per-BROWSER viewer pref (viewer-prefs.ts,
+             never the share URL): off freezes the pane while the view moves
+             and starts the full render the moment it parks. -->
+        <label
+          class="checkbox-label"
+          id="surfacePreviewRow"
+          title="Trace a fast, coarse preview on every move that sharpens once you stop. Off: the view holds its last frame while you move, and the full-detail render starts as soon as you pause."
+        >
+          <input type="checkbox" id="surfacePreviewToggle" checked />
+          Quick previews
+        </label>
         <p id="surfaceNote" class="flame-note-info hidden"></p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
+        <!-- fr-37c6's one-shot escape: shown only while a preview strip job
+             is actually grinding (setSurfaceProgress's skippable flag) —
+             abandon it and start the full-detail render now, previews
+             untouched for the next move. -->
+        <button
+          class="btn btn-ghost hidden"
+          id="surfaceSkipPreviewBtn"
+          type="button"
+          title="Abandon the in-flight preview and start the full-detail render of this view now"
+        >
+          Skip preview — full detail now
+        </button>
       </div>
 
       <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way

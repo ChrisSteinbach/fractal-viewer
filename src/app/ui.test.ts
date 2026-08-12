@@ -83,6 +83,8 @@ function noopHandlers(): UiHandlers {
     onRenderMode: vi.fn(),
     onAutoOrbitToggle: vi.fn(),
     onAutoOrbitSpeedInput: vi.fn(),
+    onSurfacePreviewToggle: vi.fn(),
+    onSurfaceSkipPreview: vi.fn(),
     onFourDSliceToggle: vi.fn(),
     onFourDSliceInput: vi.fn(),
     onFourDSliceThicknessInput: vi.fn(),
@@ -4863,6 +4865,75 @@ describe("Ui.setSurfaceProgress", () => {
     ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 99 });
     ui.setSurfaceProgress(null);
     expect(progress()?.textContent).toBe("");
+  });
+
+  function skipButton(): HTMLElement | null {
+    return document.getElementById("surfaceSkipPreviewBtn");
+  }
+
+  it("shows the Skip button only for a skippable phase (fr-37c6)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({
+      label: "Preview · WebGL",
+      pct: 3,
+      skippable: true,
+    });
+    expect(skipButton()?.classList.contains("hidden")).toBe(false);
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 3 });
+    expect(skipButton()?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the Skip button when the row hides (fr-37c6)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({
+      label: "Preview · WebGL",
+      pct: 3,
+      skippable: true,
+    });
+    ui.setSurfaceProgress(null);
+    expect(skipButton()?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("fires onSurfaceSkipPreview when the Skip button is clicked (fr-37c6)", () => {
+    const ui = new Ui(document);
+    const handlers = noopHandlers();
+    ui.bind(handlers);
+    ui.setSurfaceProgress({
+      label: "Preview · WebGL",
+      pct: 3,
+      skippable: true,
+    });
+    (skipButton() as HTMLButtonElement).click();
+    expect(handlers.onSurfaceSkipPreview).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Ui surface quick-previews toggle (fr-37c6)", () => {
+  function toggle(): HTMLInputElement {
+    return document.getElementById("surfacePreviewToggle") as HTMLInputElement;
+  }
+
+  it("ships checked (previews on) in the markup", () => {
+    new Ui(document);
+    expect(toggle().checked).toBe(true);
+  });
+
+  it("fires onSurfacePreviewToggle with the new checked state", () => {
+    const ui = new Ui(document);
+    const handlers = noopHandlers();
+    ui.bind(handlers);
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event("change"));
+    expect(handlers.onSurfacePreviewToggle).toHaveBeenCalledWith(false);
+  });
+
+  it("setSurfacePreviewToggle seeds the checkbox without firing the handler", () => {
+    const ui = new Ui(document);
+    const handlers = noopHandlers();
+    ui.bind(handlers);
+    ui.setSurfacePreviewToggle(false);
+    expect(toggle().checked).toBe(false);
+    expect(handlers.onSurfacePreviewToggle).not.toHaveBeenCalled();
   });
 });
 

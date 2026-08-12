@@ -586,9 +586,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     document (fr-0ya): a pref belongs to the person at this browser, so it
     must never ride the `#v1=` hash a shared link carries. localStorage only,
     never the URL/hash/`history`. Never-throwing load with strict validation
-    (`false` is a real choice and survives); currently one pref, `autoMotion`
-    — the shared 3D auto-orbit / 4D auto-tumble choice, `undefined` = never
-    chosen, so boot follows prefers-reduced-motion. Pure, tested.
+    (`false` is a real choice and survives); writes go through
+    `updateViewerPrefs` (merge over stored — a bare save of one field would
+    drop the others). Two prefs: `autoMotion` — the shared 3D auto-orbit /
+    4D auto-tumble choice, `undefined` = never chosen, so boot follows
+    prefers-reduced-motion — and `surfacePreview` (fr-37c6) — the surface
+    quick-preview tier on/off; `false` freezes the pane during motion and
+    settles straight to full detail on park (both engines), the
+    fr-24to/fr-zx34 no-patience-guessing line applied to the preview tier,
+    with the progress row's one-shot Skip button as the in-the-moment
+    escape. Pure, tested.
   - `history.ts` — session-only undo/redo stacks (pure, tested).
   - `edit-session.ts` — burst-coalescing over `history.ts`: one undo checkpoint
     per slider drag + debounced save. All effects injected; pure, tested.

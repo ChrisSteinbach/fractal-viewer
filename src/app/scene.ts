@@ -4058,7 +4058,7 @@ export class FractalScene {
    * blits keep the grind visible and interruptible; a silent refusal
    * would read as a broken render (the fr-096u review lesson).
    */
-  beginSurfaceSettle(): void {
+  beginSurfaceSettle(seed: "preview" | "hold" = "preview"): void {
     // main.ts holds the settle off until the preview job completes; a
     // still-armed job here would resume later with THIS frame's full-tier
     // uniforms, so drop it defensively.
@@ -4066,10 +4066,20 @@ export class FractalScene {
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
     this.setSurfaceFrameUniforms("full", size.y, size.y);
-    this.blitSurface(
-      this.surfacePreviewTarget.texture,
-      this.surfaceSettleTarget,
-    );
+    // Seed for the rows the strips haven't traced yet. "preview" — the
+    // normal choreography — upscales the completed preview of THIS pose.
+    // "hold" (fr-37c6, previews off) keeps the target's own stale pixels:
+    // no preview of this pose exists, and the previous settled frame is the
+    // exact image the frozen pane is already showing, so the develop stays
+    // seamless — the compute path's prefill-from-last-frame discipline.
+    // (A resize re-allocates the target and the hold seed degrades to
+    // undefined rows — rare, and strips overwrite them progressively.)
+    if (seed === "preview") {
+      this.blitSurface(
+        this.surfacePreviewTarget.texture,
+        this.surfaceSettleTarget,
+      );
+    }
     // Force the seed — and every frame still queued before it — to
     // COMPLETE before the probe strip runs, so the probe's measurement is
     // the probe alone, not leftover backlog. A 1x1 readback is the one
