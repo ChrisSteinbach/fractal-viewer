@@ -21,17 +21,18 @@
  *     [--surface-size=320x180] [--surface-cap-ms=120000]
  *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
  *     [--surface-force=1] [--surface-shade-width=1,4]
- *     [--surface-aff4-sweep=1]
+ *     [--surface-aff4-sweep=1] [--surface-canary-trip=N]
  *
  * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
  * (`?surface=only`). The `--surface-*` passthrough flags map 1:1 onto the
  * page's URL params (see `parseSurfaceConfig` in src/app/gpu-bench/main.ts
  * for defaults/semantics). With either flag the exit code additionally
- * gates on `results.surfaceDe.verdict` (1 on "fail", 2 on "skipped"); the
- * flame agreement gate below applies exactly as before, but only when the
- * flame scenarios actually ran (i.e. not under --surface-only). Without
- * any surface flag, behavior is bit-for-bit unchanged — CI unaffected.
+ * gates on `results.surfaceDe.verdict` (1 on "fail", 2 on "skipped" or
+ * "device-unreliable" — rerun on a quiet machine); the flame agreement gate
+ * below applies exactly as before, but only when the flame scenarios
+ * actually ran (i.e. not under --surface-only). Without any surface flag,
+ * behavior is bit-for-bit unchanged — CI unaffected.
  *
  * `--display=<d>` launches HEADED Chrome against a real X display (the
  * fold-width-sweep.mjs x11 recipe: DISPLAY in the env, no --headless=new,
@@ -118,6 +119,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // kaleidoscope order (1,2,3,4,6), slab vs no-slab; absent/anything else
   // = the leg is skipped (see runSurfaceAff4SweepLeg's doc in main.ts).
   "surface-aff4-sweep": "surfaceAff4Sweep",
+  // fr-76pp: synthetic device-sanity trip at the Nth canary check — a
+  // rehearsal of the "device-unreliable" verdict path; absent = the canary
+  // runs for real (see createSurfaceCanary's doc in main.ts).
+  "surface-canary-trip": "surfaceCanaryTrip",
 };
 
 function parseArgs(argv) {
@@ -211,6 +216,18 @@ function printSurfaceSummary(surfaceDe) {
   }
   const reason = surfaceDe.reason ? ` reason="${surfaceDe.reason}"` : "";
   console.log(`surfaceDe: verdict=${surfaceDe.verdict}${reason}`);
+  // fr-76pp: device-sanity canary state, printed as early as possible — a
+  // TRIPPED canary means every row below is suspect, not kernel evidence.
+  const ds = surfaceDe.deviceSanity;
+  if (ds) {
+    if (ds.trippedAt) {
+      console.log(
+        `  deviceSanity: checks=${ds.checks} n=${ds.n} TRIPPED after ${ds.trippedAt}: ${ds.detail}`,
+      );
+    } else {
+      console.log(`  deviceSanity: checks=${ds.checks} n=${ds.n}`);
+    }
+  }
   for (const r of surfaceDe.agreement ?? []) {
     const cls = r.failuresByClass;
     const failureDetail =
@@ -669,6 +686,13 @@ async function main() {
           "[gpu-flame-bench] surface DE check FAILED — see results.surfaceDe in results.json",
         );
         exitCode = 1;
+      } else if (surfaceDe && surfaceDe.verdict === "device-unreliable") {
+        // fr-76pp: the device-sanity canary tripped mid-run — numeric rows
+        // above are not kernel evidence (see results.surfaceDe.deviceSanity).
+        console.error(
+          "[gpu-flame-bench] surface DE device UNRELIABLE mid-run — rerun on a quiet machine (idle CPU); this run's numeric failures are NOT evidence of a kernel defect, do not bisect on them (see results.surfaceDe.deviceSanity)",
+        );
+        if (exitCode === 0) exitCode = 2;
       } else if (!surfaceDe || surfaceDe.verdict === "skipped") {
         // Same refusal as the flame gate: a surface section that verified
         // nothing must not exit green.
