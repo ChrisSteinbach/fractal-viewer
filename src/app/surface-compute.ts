@@ -63,6 +63,7 @@
 import type { EscapeDE } from "../fractal/escape-de";
 import type {
   SurfaceGpu4View,
+  SurfaceGpuGroundPlane,
   SurfaceGpuRunParams,
 } from "../fractal/surface-de-gpu";
 import {
@@ -78,10 +79,12 @@ import {
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
@@ -155,8 +158,8 @@ export class SurfaceComputeUnavailableError extends Error {}
  * child.
  */
 export type SurfaceComputeTarget =
-  | { kind: "ifs"; de: SurfaceDE; balloon?: boolean }
-  | { kind: "escape"; de: EscapeDE }
+  | { kind: "ifs"; de: SurfaceDE; balloon?: boolean; groundPlane?: boolean }
+  | { kind: "escape"; de: EscapeDE; groundPlane?: boolean }
   | { kind: "ifs4"; de: SurfaceDE4 };
 
 /** Everything one frame needs beyond the session-frozen DE: raster size,
@@ -236,6 +239,12 @@ export interface SurfaceComputeFrameSpec {
    * the pixel's own backdrop color alone; misses keep the pure untinted
    * backdrop either way. */
   fogTintStrength?: number;
+  /** Ground plane block (fr-rhn5) — REQUIRED whenever the session's
+   * target carried `groundPlane: true` (the kernels' 320-byte params
+   * struct has no meaningful default; view4/balloon's required-throw
+   * discipline), ignored otherwise. Re-derived from scene state at every
+   * spec assembly like the balloon block. */
+  groundPlane?: SurfaceGpuGroundPlane;
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -275,8 +284,16 @@ export interface SurfaceComputeFrame {
   /** Final ray-status tallies — how the frame's rays ended (`active` is
    * nonzero only on truncated frames). Field-debuggability: an
    * exhausted-dominated frame means the march budget ran dry, a
-   * miss-dominated one that rays left the visible sphere. */
-  counts: { hit: number; miss: number; exhausted: number; active: number };
+   * miss-dominated one that rays left the visible sphere; `plane`
+   * (fr-rhn5) counts misses the march classified onto the ground plane
+   * (always 0 without a plane target). */
+  counts: {
+    hit: number;
+    miss: number;
+    exhausted: number;
+    active: number;
+    plane: number;
+  };
 }
 
 /**
@@ -677,6 +694,14 @@ export class SurfaceComputeRenderer {
           // kinds never set the flag (escape's codegen throw is the
           // backstop).
           balloon: target.kind === "ifs" && target.balloon === true,
+          // fr-rhn5: the ground plane compiles into ifs and escape
+          // kernels alike (the classic Mandelbox floor); ifs4 never sets
+          // the flag (the codegen throw is the backstop, like balloon's),
+          // and a balloon+plane target is a caller bug the codegen
+          // rejects loudly.
+          groundPlane:
+            (target.kind === "ifs" || target.kind === "escape") &&
+            target.groundPlane === true,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -811,7 +836,12 @@ export class SurfaceComputeRenderer {
             ? // fr-5wlv.5: the balloon kernel's params struct appends the
               // balloon block at the frozen offset 272.
               SURFACE_GPU_PARAMS_BALLOON_BYTES
-            : SURFACE_GPU_PARAMS_BYTES,
+            : target.groundPlane === true
+              ? // fr-rhn5: the plane kernel's params struct appends the
+                // plane block at the same frozen offset (the two are
+                // mutually exclusive by the codegen throw).
+                SURFACE_GPU_PARAMS_PLANE_BYTES
+              : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({
@@ -1289,9 +1319,26 @@ export class SurfaceComputeRenderer {
     // loud here rather than defaulted (a 4D frame with no pose has no
     // meaningful default).
     const target = this.target;
+    // fr-rhn5: a plane session's spec must carry the live floor block
+    // (view4/balloon's required-throw discipline — the 320-byte kernel
+    // struct has no meaningful default); a no-plane session ignores any
+    // stray spec.groundPlane — its buffer never grew.
+    const groundPlane =
+      (target.kind === "ifs" || target.kind === "escape") &&
+      target.groundPlane === true
+        ? (() => {
+            const gp = spec.groundPlane;
+            if (!gp) {
+              throw new Error(
+                "Surface compute: a ground-plane frame spec must carry groundPlane",
+              );
+            }
+            return gp;
+          })()
+        : null;
     const packParams: (run: SurfaceGpuRunParams) => ArrayBuffer =
       target.kind === "escape"
-        ? (run) => packEscapeGpuParams(target.de, run)
+        ? (run) => packEscapeGpuParams(target.de, run, groundPlane)
         : target.kind === "ifs4"
           ? (() => {
               const view4 = spec.view4;
@@ -1320,7 +1367,7 @@ export class SurfaceComputeRenderer {
                   packSurfaceGpuParams(target.de, run, balloon);
               }
               return (run: SurfaceGpuRunParams) =>
-                packSurfaceGpuParams(target.de, run);
+                packSurfaceGpuParams(target.de, run, null, groundPlane);
             })();
     // fr-d0nn: an ifs4 frame at the shipped sliceHalfW 0 rides the
     // slab-free kernel pair (measured 2.2-2.4x cheaper at every
@@ -1481,7 +1528,17 @@ export class SurfaceComputeRenderer {
           const rayStatus = stateCopy[ray * 4 + 1];
           if (rayStatus === SURFACE_GPU_RAY_ACTIVE) {
             next.push(ray);
-          } else if (rayStatus === SURFACE_GPU_RAY_HIT) {
+          } else if (
+            rayStatus === SURFACE_GPU_RAY_HIT ||
+            rayStatus === SURFACE_GPU_RAY_PLANE
+          ) {
+            // fr-rhn5: plane rays are priced WITH the hits — a floor
+            // pixel pays the penumbra-shadow/AO probe evals a hit pays
+            // (within its corridor gates), nothing like a miss's one
+            // background write; the hit EMA's slow-trust policy absorbs
+            // the remaining within-band spread, and the original
+            // 100-1000x miss/hit bimodality that forced the queue split
+            // never recurs.
             shadeHitQueue.push(ray);
           } else {
             shadeFreeQueue.push(ray);
@@ -1551,13 +1608,14 @@ export class SurfaceComputeRenderer {
       await this.readback(buffers.color, buffers.stagingColor, rays * 4),
     );
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
-    const counts = { hit: 0, miss: 0, exhausted: 0, active: 0 };
+    const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     if (finalStates) {
       for (let i = 0; i < rays; i++) {
         const status = finalStates[i * 4 + 1];
         if (status === SURFACE_GPU_RAY_HIT) counts.hit++;
         else if (status === SURFACE_GPU_RAY_MISS) counts.miss++;
         else if (status === SURFACE_GPU_RAY_EXHAUSTED) counts.exhausted++;
+        else if (status === SURFACE_GPU_RAY_PLANE) counts.plane++;
         else counts.active++;
       }
     } else {
