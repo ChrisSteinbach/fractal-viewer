@@ -1389,13 +1389,18 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     expect(noProbe).toContain("surfaceDE(pos + e.xyy * h, 0.0, li)");
   });
 
-  it("balloon shade drops the defensive no-intersection miss and clamps the fog origin to t (the pow-negative-base guard)", () => {
+  it("balloon shade drops the defensive no-intersection miss and keeps the fog origin continuous across the sphere silhouette", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", width: 12, balloon: true }),
     );
-    expect(wgsl).toContain(
-      "let tEnter = min(select(0.0, max(-bq - sq, 0.0), disc >= 0.0), t);",
-    );
+    // The continuous form: sq is sqrt(max(disc, 0)), so a ray missing the
+    // sphere reads the closest-approach depth max(-bq, 0) rather than 0 —
+    // both forms meet at the silhouette (a discontinuous camera-seeded
+    // origin painted the sphere's silhouette as a lighter disc over the
+    // shell, user-reported at the R=0.99 mid-flip from a far camera). The
+    // min(..., t) clamp is the fog pow's negative-base guard.
+    expect(wgsl).toContain("let tEnter = min(max(-bq - sq, 0.0), t);");
+    expect(wgsl).toContain("let sq = sqrt(max(disc, 0.0));");
     expect(wgsl).not.toContain("Defensive — a HIT ray always intersected");
     const plain = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
     expect(plain).toContain("Defensive — a HIT ray always intersected");
