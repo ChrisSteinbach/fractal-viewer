@@ -2035,18 +2035,22 @@ export class FractalScene {
   /**
    * Set the depth-fog density multiplier (fr-5h5d) — see state.ts's
    * `AppState.fogDensity` for what `0`/`1` mean. Pushes `uFogDensity` to
-   * both surface tracers (the {@link setSurfaceParams} push-to-both
-   * pattern: whichever the next session activates is already current),
-   * then re-derives the two OTHER fog-bearing renderers this one control
-   * reaches from the new value — the points explorer's own fog band
-   * ({@link updateFog}) and the balloon echo's radial fade
-   * ({@link syncBalloonEchoUniforms}).
+   * both surface tracers and the solid render's voxel raymarcher (the
+   * {@link setSurfaceParams} push-to-both pattern: whichever the next
+   * session activates is already current), then re-derives the two OTHER
+   * fog-bearing renderers this one control reaches from the new value —
+   * the points explorer's own fog band ({@link updateFog}) and the
+   * balloon echo's radial fade ({@link syncBalloonEchoUniforms}).
    */
   setFogDensity(v: number): void {
     if (this.fogDensity === v) return;
     this.fogDensity = v;
     this.renderNeeded = true;
-    for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
+    for (const material of [
+      this.surfaceMaterial,
+      this.surfaceMaterial4,
+      this.voxelMaterial,
+    ]) {
       material.uniforms.uFogDensity.value = v;
     }
     this.updateFog();
