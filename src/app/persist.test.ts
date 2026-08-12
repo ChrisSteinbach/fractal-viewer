@@ -3919,3 +3919,83 @@ describe("toSnapshot / fromSnapshot fog tint (fr-5h5d)", () => {
     expect(result.fogTintStrength).toBe(0.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ground plane (fr-rhn5) — persisted alongside the balloon pair the
+// identical way: optional on SceneSnapshot, always written by
+// toSnapshot/encodeScene, quiet-drop on decode (no clamping — a plain
+// boolean, not a PARAM-backed numeric like balloonRadius), with
+// fromSnapshot supplying the real default (`false`).
+// ---------------------------------------------------------------------------
+
+describe("decodeScene ground plane", () => {
+  it("round-trips groundPlane true", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), groundPlane: true };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.groundPlane).toBe(true);
+  });
+
+  it("round-trips groundPlane false", () => {
+    const s: SceneSnapshot = { ...baseSnapshot(), groundPlane: false };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.groundPlane).toBe(false);
+  });
+
+  it("keeps decoding a scene with no groundPlane field at all as a valid, non-null scene", () => {
+    // A hand-built payload with no groundPlane key — what every
+    // pre-fr-rhn5 link looks like.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.groundPlane).toBeUndefined();
+  });
+
+  it("drops groundPlane when it is not a real boolean", () => {
+    // Unlike showGuides/fourDDepthFade, groundPlane does NOT coerce with
+    // Boolean(x) — a truthy non-boolean must not silently turn it on.
+    const raw = { ...baseSnapshot(), groundPlane: "true" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.groundPlane).toBeUndefined();
+  });
+
+  it("does not reject the whole scene over a malformed groundPlane", () => {
+    const raw = { ...baseSnapshot(), groundPlane: 42 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms).toHaveLength(1);
+    expect(result!.groundPlane).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot ground plane (fr-rhn5)", () => {
+  it("toSnapshot carries groundPlane", () => {
+    const state: AppState = { ...initialState(true), groundPlane: true };
+    expect(toSnapshot(state).groundPlane).toBe(true);
+  });
+
+  it("fromSnapshot defaults groundPlane to false when the snapshot lacks it", () => {
+    // baseSnapshot() carries no groundPlane key at all — what a
+    // pre-fr-rhn5 snapshot (or a decode of one) looks like.
+    const base: AppState = { ...initialState(true), groundPlane: true };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.groundPlane).toBe(false);
+  });
+
+  it("fromSnapshot lands groundPlane on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = { ...baseSnapshot(), groundPlane: true };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect(result.groundPlane).toBe(true);
+  });
+});

@@ -546,6 +546,24 @@ export interface AppState {
    * session-only.
    */
   fogTintStrength: number;
+  /**
+   * Whether the surface render's ground plane is showing (fr-rhn5): an
+   * infinite floor beneath the session ball, catching the fractal's
+   * penumbra shadow — see `scene.ts`'s `setSurfaceGroundPlane` and
+   * `surface-material.ts`'s `SurfaceGroundPlaneSpec`/WGSL `PLANE` arm.
+   * Surface-mode only, render-side — unlike {@link balloonEcho} this has no
+   * explorer-echo presence in the points render. {@link balloonEcho} takes
+   * precedence while both are on: the two never compile/pack together
+   * (`surface-de-gpu.ts`'s `groundPlane`+`balloon` exclusion), so `main.ts`
+   * resolves the plane flag down to `state.groundPlane && !state.balloonEcho`
+   * at the one place both reads happen. Persisted scene content, the same
+   * treatment as `balloonEcho`/`fogDensity` — a shared link carries the
+   * floor at the state it was authored. `persist.ts`'s decoder is tolerant,
+   * like `balloonEcho`'s (an absent/malformed value quietly falls back to
+   * off), so a pre-fr-rhn5 link still opens with the floor off, exactly as
+   * it always rendered.
+   */
+  groundPlane: boolean;
 }
 
 /** An IFS needs at least one map. */
@@ -1180,6 +1198,7 @@ export function initialState(panelOpen: boolean): AppState {
     fogDensity: DEFAULT_FOG_DENSITY,
     fogTint: DEFAULT_FOG_TINT,
     fogTintStrength: DEFAULT_FOG_TINT_STRENGTH,
+    groundPlane: false,
   };
 }
 
@@ -2057,4 +2076,17 @@ export function setFogTintStrength(
     ...state,
     fogTintStrength: clampToSpec(PARAM.fogTintStrength, fogTintStrength),
   };
+}
+
+/**
+ * Toggle the surface ground plane (fr-rhn5) — see
+ * {@link AppState.groundPlane}. No validation boundary needed: unlike
+ * `setFogTint`'s raw-string input, this reducer's own parameter is already
+ * the checkbox's `boolean`.
+ */
+export function setGroundPlane(
+  state: AppState,
+  groundPlane: boolean,
+): AppState {
+  return { ...state, groundPlane };
 }

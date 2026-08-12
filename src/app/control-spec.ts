@@ -38,6 +38,7 @@ import {
   setFourDColor,
   setFourDDepthFade,
   setGlowBrightness,
+  setGroundPlane,
   setMorphDetail,
   setNumPoints,
   setPointSize,
@@ -1109,6 +1110,23 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => {
       fx.cancelBalloonSweep();
       fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
+    },
+  },
+  {
+    // The surface ground plane checkbox (fr-rhn5): a persisted Floor toggle
+    // for the surface render alone — unlike the balloon pair above, there
+    // is no explorer-echo counterpart in the points render. Like
+    // surfaceBalloonCheckbox, this is a VARIANT-level change
+    // (SURFACE_GROUND_PLANE recompile / compute params-struct size / shade
+    // arm), so the effect re-enters the surface session, which re-derives
+    // the floor uniforms/kernel choice from state in one sweep — no direct
+    // scene call, and no sweep to cancel (the floor has no Inflate replay).
+    kind: "checkbox",
+    id: "surfaceGroundPlaneCheckbox",
+    read: (s) => s.groundPlane,
+    apply: (s, checked) => setGroundPlane(s, checked),
+    effect: (s, fx) => {
+      fx.restartSurfaceRender();
     },
   },
   {

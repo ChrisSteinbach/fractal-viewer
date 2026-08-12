@@ -985,6 +985,16 @@ export class Ui {
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
 
+  // The surface ground plane row (fr-rhn5): unlike the balloon rows above,
+  // visible for BOTH the "ifs" and "escape" surfaceSessionKind — the floor
+  // survives where the balloon degenerates (fr-5wlv.4's measured
+  // escape-solid interior swallowing the camera never applied to a flat
+  // plane) — and hidden only under a live 4D surface session
+  // (fourDSurfaceLive). Its
+  // checkbox is table-driven (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox
+  // entry), so only the row itself needs a reference here.
+  private readonly surfaceGroundPlaneRow: HTMLElement;
+
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
   // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
   // shown exactly when the 4D block is not (flat system, no render active).
@@ -1277,6 +1287,7 @@ export class Ui {
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
+    this.surfaceGroundPlaneRow = this.byId("surfaceGroundPlaneRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
     this.fourDSliceToggleRow = this.byId("fourDSliceToggleRow");
@@ -1973,6 +1984,17 @@ export class Ui {
     this.surfaceBalloonRadiusRow.classList.toggle(
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
+    );
+    // The surface ground plane (fr-rhn5) is 3D-only like the balloon above,
+    // so it hides under a live 4D surface session too — but unlike the
+    // balloon it is NOT permanently inert for the escape solid (the floor
+    // survives where the balloon degenerates, scene.ts's
+    // enterSurfaceComputeEscapeSession), so it stays visible for BOTH the
+    // "ifs" and "escape" surfaceSessionKind and does not share
+    // surfaceBalloonHidden's escape-kind gate.
+    this.surfaceGroundPlaneRow.classList.toggle(
+      "hidden",
+      this.fourDSurfaceLive,
     );
     // …including each mode's non-section block above the accordion (fr-374p):
     // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't

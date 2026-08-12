@@ -274,6 +274,18 @@ export interface SceneSnapshot {
    * pre-fr-5h5d link's absent pair reproduces today's fog exactly.
    */
   fogTintStrength?: number;
+  /**
+   * Whether the surface ground plane is on (fr-rhn5, see `state.ts`'s
+   * {@link AppState.groundPlane}): scene content, the same treatment as
+   * `balloonEcho` above — optional here (so a hand-built/pre-fr-rhn5
+   * `SceneSnapshot` need not supply it) even though `toSnapshot`/
+   * `encodeScene` always WRITE a defined value once `AppState` carries one;
+   * `fromSnapshot` merges it in with a real default (`false`) rather than
+   * just excluding it. A malformed value (anything but a real boolean)
+   * decodes to `undefined` rather than rejecting the scene, `balloonEcho`'s
+   * own no-coercion stance.
+   */
+  groundPlane?: boolean;
 }
 
 /** Injectable browser dependencies; both default to their `window.*` counterparts. */
@@ -332,6 +344,10 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // legacy document whose meaning depends on either field's absence.
     fogTint: state.fogTint,
     fogTintStrength: state.fogTintStrength,
+    // Always written (fr-rhn5), the identical fogTintStrength shape just
+    // above: AppState.groundPlane is always defined, and there is no
+    // legacy document whose meaning depends on this field's absence.
+    groundPlane: state.groundPlane,
   };
 }
 
@@ -357,7 +373,8 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * hand-built) snapshot came back without one. `fogDensity` (fr-5h5d) follows
  * the identical shape, falling back to {@link DEFAULT_FOG_DENSITY} — as do
  * `fogTint`/`fogTintStrength`, falling back to {@link DEFAULT_FOG_TINT} /
- * {@link DEFAULT_FOG_TINT_STRENGTH}.
+ * {@link DEFAULT_FOG_TINT_STRENGTH} — and `groundPlane` (fr-rhn5), falling
+ * back to `false`.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -373,6 +390,7 @@ export function fromSnapshot(
     fogDensity: snapshot.fogDensity ?? DEFAULT_FOG_DENSITY,
     fogTint: snapshot.fogTint ?? DEFAULT_FOG_TINT,
     fogTintStrength: snapshot.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH,
+    groundPlane: snapshot.groundPlane ?? false,
   };
 }
 
@@ -1412,6 +1430,7 @@ export function encodeScene(s: SceneSnapshot): string {
     fogDensity: number;
     fogTint: string;
     fogTintStrength: number;
+    groundPlane: boolean;
     background?: { mode: BackgroundMode; top?: string; bottom?: string };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
@@ -1510,6 +1529,10 @@ export function encodeScene(s: SceneSnapshot): string {
     // fogTintStrength rounds like every other float in this payload.
     fogTint: s.fogTint ?? DEFAULT_FOG_TINT,
     fogTintStrength: round4(s.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH),
+    // Always written (fr-rhn5), like fogTintStrength just above — the `??`
+    // fallback only matters for a hand-built SceneSnapshot that skipped
+    // toSnapshot (which always supplies it). A boolean, so no rounding.
+    groundPlane: s.groundPlane ?? false,
   };
   // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
   // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
@@ -1688,6 +1711,14 @@ export function encodeScene(s: SceneSnapshot): string {
  * it decodes to `undefined`. `fromSnapshot` supplies {@link DEFAULT_FOG_TINT}
  * / {@link DEFAULT_FOG_TINT_STRENGTH}, so a pre-fr-5h5d link decodes with
  * the pair absent and still boots untinted, reproducing today's fog exactly.
+ *
+ * groundPlane (fr-rhn5) follows `balloonEcho`'s exact quiet-drop contract:
+ * it requires a REAL boolean (no `Boolean(x)` coercion — a stray truthy
+ * value must not silently turn the floor on), and a malformed or absent
+ * value decodes to `undefined` rather than rejecting the scene.
+ * `fromSnapshot` supplies the true default, `false`, so a pre-fr-rhn5 link
+ * decodes here with the field absent and still boots with the floor off,
+ * exactly as it always rendered.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1883,6 +1914,12 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.fogTintStrength, rawFogTintStrength)
       : undefined;
 
+    // groundPlane (fr-rhn5): same quiet-drop contract as balloonEcho above
+    // — a real boolean or undefined, never a rejected scene. fromSnapshot
+    // supplies `false` when this comes back undefined.
+    const groundPlane: boolean | undefined =
+      typeof o.groundPlane === "boolean" ? o.groundPlane : undefined;
+
     return {
       transforms,
       finalTransform,
@@ -1910,6 +1947,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       fogDensity,
       fogTint,
       fogTintStrength,
+      groundPlane,
     };
   } catch {
     return null;

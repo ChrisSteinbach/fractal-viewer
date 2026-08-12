@@ -3258,6 +3258,23 @@ function main(): void {
             spec.balloon.far,
           ]
         : []),
+      // The ground plane block (fr-rhn5): the balloon block's own
+      // precedent one level up — a parked camera with the floor toggled
+      // must never re-present a stale frame. The "groundPlane" literal is
+      // the on-flag; the block exists exactly when the session's kernels
+      // carry the plane arm (never alongside "balloon" above — the two
+      // are mutually exclusive by construction).
+      ...(spec.groundPlane
+        ? [
+            "groundPlane",
+            spec.groundPlane.y,
+            spec.groundPlane.fadeStart,
+            spec.groundPlane.fadeEnd,
+            spec.groundPlane.ballCenter.join(","),
+            spec.groundPlane.ballRadius,
+            spec.groundPlane.albedo.join(","),
+          ]
+        : []),
     ].join("|");
   }
 
@@ -3474,8 +3491,18 @@ function main(): void {
           // ball and renders plain), so their compute preference stands
           // regardless of the shared toggle.
           if (surfaceComputeAvailable()) {
-            computeTarget = { kind: "escape", de };
-            scene.enterSurfaceComputeEscapeSession();
+            // The ground plane (fr-rhn5) survives where the balloon
+            // degenerates — escape sessions never balloon, so there is no
+            // precedence to resolve here, unlike the IFS compute arm below.
+            computeTarget = {
+              kind: "escape",
+              de,
+              groundPlane: state.groundPlane,
+            };
+            scene.enterSurfaceComputeEscapeSession(
+              state.groundPlane,
+              de.boundingRadius,
+            );
           } else {
             // fr-tmgf: a pure-fold map is compute-shaped — compute is
             // its home, so the WebGL session says why it passed (null
@@ -3534,8 +3561,25 @@ function main(): void {
             // spec attaches the live balloon block — state.balloonEcho
             // is the one source both reads come from, at the same
             // moment.
-            computeTarget = { kind: "ifs", de, balloon: state.balloonEcho };
-            scene.enterSurfaceComputeSession(de, state.balloonEcho);
+            //
+            // The ground plane (fr-rhn5) yields to an active balloon: the
+            // two never compile together (surface-de-gpu.ts's
+            // groundPlane+balloon codegen throw), so this is the one
+            // place both reads resolve down to a single flag, at the same
+            // moment — fed to both the compute target and the scene's
+            // stored intent below.
+            const groundPlane = state.groundPlane && !state.balloonEcho;
+            computeTarget = {
+              kind: "ifs",
+              de,
+              balloon: state.balloonEcho,
+              groundPlane,
+            };
+            scene.enterSurfaceComputeSession(
+              de,
+              state.balloonEcho,
+              groundPlane,
+            );
           } else {
             // fr-tmgf: this session runs the WebGL tracer — the progress
             // row says why compute passed, when it did (null for affine
@@ -3578,6 +3622,15 @@ function main(): void {
           !surfaceSessionIs4D && state.balloonEcho,
           state.balloonRadius,
         );
+        // The ground plane (fr-rhn5) is 3D-only like the balloon just
+        // above. This stores the live intent; the scene's own gate keeps
+        // it off under the balloon variant (packSurfaceGroundPlane
+        // force-drops the plane define when the balloon lands) and
+        // re-asserts it per install, so the WebGL route needs no
+        // `&& !state.balloonEcho` here — on the compute route the GLSL
+        // material stays untouched by the session, so this write is inert
+        // until a fallback re-enter compiles it.
+        scene.setSurfaceGroundPlane(!surfaceSessionIs4D && state.groundPlane);
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
         // persisted SurfaceParams; the control-spec effects keep them live
@@ -4091,6 +4144,10 @@ function main(): void {
     // Captured for the balloon re-entry check below — fromSnapshot is about
     // to overwrite state.balloonEcho with the restored document's value.
     const previousBalloonEcho = state.balloonEcho;
+    // Captured for the ground plane re-entry check below (fr-rhn5), the
+    // balloon's own precedent — fromSnapshot is about to overwrite
+    // state.groundPlane with the restored document's value.
+    const previousGroundPlane = state.groundPlane;
     state = fromSnapshot(snap, state);
     if (
       typeof state.selectedTransform === "number" &&
@@ -4167,9 +4224,17 @@ function main(): void {
     // Same push for the restored fog tint pair (fr-5h5d), right beside the
     // density it rides with.
     scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
+    // No unconditional scene push for the restored ground plane (fr-rhn5)
+    // here, unlike the balloon/fog pairs above: it has no explorer-mode
+    // presence to keep in sync while renderMode is "points" (switchRenderMode
+    // above already left it there) — a live surface session's flip is
+    // instead covered by the restart condition right below, and a session
+    // entered afterward re-derives the floor fresh from state regardless
+    // (surfaceSession's own start()), the same balloon precedent noted above.
     if (
       state.renderMode === "surface" &&
-      state.balloonEcho !== previousBalloonEcho
+      (state.balloonEcho !== previousBalloonEcho ||
+        state.groundPlane !== previousGroundPlane)
     ) {
       controlEffects.restartSurfaceRender();
     }

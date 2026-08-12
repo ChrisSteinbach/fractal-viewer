@@ -1257,6 +1257,25 @@
               Inflate
             </button>
           </div>
+
+          <!-- The surface ground plane (fr-rhn5): an infinite floor under
+               the fractal, catching its shadow. Persisted
+               (state.groundPlane), surface-mode only — no explorer-echo
+               counterpart the way the balloon above has one. Visible for
+               BOTH "ifs" and "escape" surface sessions (unlike the balloon
+               row, which hides for escape — the floor survives where the
+               balloon degenerates), hidden only in a live 4D surface
+               session. The balloon takes precedence while both are on: the
+               two never compile together (main.ts's compute-target
+               assembly resolves it). -->
+          <label
+            class="checkbox-label"
+            id="surfaceGroundPlaneRow"
+            title="Infinite floor under the fractal, catching its shadow (surface render)"
+          >
+            <input type="checkbox" id="surfaceGroundPlaneCheckbox" />
+            Floor
+          </label>
         </details>
       </div>
 
