@@ -4711,10 +4711,10 @@ export class FractalScene {
    * another writer: the caller must fence the live tier off for the
    * duration ({@link surfaceCaptureBusy}), or a preview tick would clobber
    * the frozen full-tier uniforms and a settle would re-size the target
-   * being drained. main.ts's tick does exactly that for the tracing arms;
-   * two uniform writers still slip past it (a live 4D view update and a
-   * late grid upload — fr-p0mr), so a mid-drain pose glide can still split
-   * an exported 4D frame.
+   * being drained. main.ts's tick does exactly that — for the tracing arms,
+   * and (fr-p0mr) for the two uniform writers that used to sit outside the
+   * guard: a live 4D view push, which would have split an exported frame
+   * across two hyperplanes, and a late grid upload.
    *
    * Since fr-y6m0 the main thread never blocks on GPU work at all, so
    * responsiveness no longer bottoms out at one strip's cost (the planner
