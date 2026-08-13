@@ -122,11 +122,35 @@ export const ESCAPE_TIME_ITERATIONS = 30;
  * marginally smoother far fields for strictly more iterations. */
 export const ESCAPE_TIME_RADIUS = 4;
 
-/** March step fudge for the escape-time marchers (GLSL variant and WGSL
- * core alike): the scalar-derivative estimate is the field's standard
- * heuristic, not a certified lower bound — every published Mandelbox
- * marcher damps its steps; 0.7 is the common conservative pick. */
-export const ESCAPE_STEP_SCALE = 0.7;
+/**
+ * March step fudge for the escape-time marchers (GLSL variant and WGSL core
+ * alike): the scalar-derivative estimate is the field's standard heuristic,
+ * not a certified lower bound, so every published Mandelbox marcher damps
+ * its steps.
+ *
+ * 0.7 — the common conservative pick — was chosen (fr-kltj) against an
+ * object that could not test it: the Julia form's blob filled 94% of its
+ * own bounding ball and every ray hit on its first step, at a measured 0.3
+ * steps per ray. The Mandelbrot form (fr-7u8t.8) is 10% solid and threaded
+ * with filaments, and there 0.7 visibly OVERSHOOTS — rays step past thin
+ * features and the surface renders as dark dropout speckle rather than a
+ * lit solid. Measured over the classic weight-2 Mandelbox
+ * (`scripts/escape-form-sweep.harness.ts`, whose sheet is the picture that
+ * settles it), hit coverage against step scale:
+ *
+ *     1.0 -> 62.0%   0.7 -> 74.3%   0.5 -> 80.2%
+ *     0.35 -> 84.3%  0.2 -> 87.4%   0.1 -> 89.1%
+ *
+ * There is no convergence knee to find — a fractal keeps yielding surface
+ * as the march refines — so this is a cost/quality pick, not a correctness
+ * one. 0.35 is where the image stops reading as erosion and starts reading
+ * as a lit object, at 15.0 steps per ray against 0.7's 7.9: 1.9x the
+ * marching on a mode that settles in tens of milliseconds. Damping further
+ * buys little and costs a lot (0.2 is 26.1 steps/ray, 0.1 is 52.5) and
+ * would start pressing the marcher's own per-ray step budget, which
+ * exhausts into exactly the dropout this is fixing.
+ */
+export const ESCAPE_STEP_SCALE = 0.35;
 
 export type EscapeEligibilityStatus = "eligible" | "ineligible";
 

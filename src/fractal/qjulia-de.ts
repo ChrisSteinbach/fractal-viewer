@@ -74,8 +74,8 @@
  *     200-iteration membership oracle, 24 probe directions per query, ~5400
  *     queries each, at three values of c including one with a real fourth
  *     component: 0.00% overshoot at every scale, 1.0 included. The fold
- *     path's 0.7 damping (`escape-de.ts`'s `ESCAPE_STEP_SCALE`) is not
- *     needed here,
+ *     path's damping (`escape-de.ts`'s `ESCAPE_STEP_SCALE`, measured down
+ *     to 0.35 by fr-7u8t.8) is not needed here,
  *     which is the conformality above showing up in the marcher.
  * Together that is roughly 15x cheaper per ray than the escape-time fold
  * mode. `qjulia-de.test.ts` keeps both claims honest.
@@ -115,7 +115,7 @@ export const QJULIA_ITERATIONS = 30;
 export const QJULIA_BAILOUT_FLOOR = 4;
 
 /**
- * March step fudge. UNLIKE the fold marchers' 0.7
+ * March step fudge. UNLIKE the fold marchers' heavy damping
  * (`escape-de.ts`'s `ESCAPE_STEP_SCALE`), this is 1.0: the estimate is the
  * conformal Böttcher form rather than a Lipschitz heuristic, and the module
  * doc's step-scale sweep measured 0.00% overshoot at full step length

@@ -254,6 +254,37 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
     });
   });
 
+  it("checks ESCAPE_STEP_SCALE still fits the object the form changed", () => {
+    // fr-7u8t.8 turned a 94%-solid blob into a 10%-solid filamented set, and
+    // ESCAPE_STEP_SCALE (0.7) was picked against the blob. If 0.7 now
+    // OVERSHOOTS thin features, damping further recovers surface a coarser
+    // march was stepping past — visible as hits climbing as the scale falls.
+    // A flat hit count means 0.7 is not the limiting factor and any residual
+    // speckle is sampling, not step damping.
+    const de = foldDE("mandelbox", 2, [0, 0, 0]);
+    const panels = [1, ESCAPE_STEP_SCALE, 0.5, 0.35, 0.2, 0.1].map(
+      (stepScale) => {
+        const panel = renderPreview(
+          {
+            de: (p) => estimateEscapeDistance(de, p),
+            boundingRadius: ESCAPE_TIME_RADIUS,
+            stepScale,
+            zoom: 0.28,
+          },
+          SIZE,
+        );
+        console.log(
+          `  stepScale ${stepScale}  hits ${((panel.hits / (SIZE * SIZE)) * 100).toFixed(2)}%  ` +
+            `steps/ray ${(panel.steps / (SIZE * SIZE)).toFixed(1)}  ${panel.ms}ms`,
+        );
+        return panel;
+      },
+    );
+    console.log(
+      `  wrote ${writeContactSheet(panels, 3, "escape-step-scale.png")}`,
+    );
+  });
+
   it("scans the Julia form's constant space for a reason to keep it", () => {
     // The numbers behind the module doc's "only stops being a sphere past
     // |t| ~ 2.5": ball fill against |t| along one axis, per fold weight. The
