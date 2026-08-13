@@ -530,51 +530,84 @@ and UI**, so the interesting math is unit-tested without a browser:
     rAF). No-prior jobs (affine) keep the legacy sync-collapse: serial
     joined strips completing whole light jobs in one call, escaping to
     the pipeline past `SURFACE_STRIP_SYNC_ESCAPE_MS`.
-    Capture/offline export still drains serially with forced-completion joins,
-    now under cost ceilings (fr-id9r): measured evidence predicts the frame up
-    front — never the class prior, which would refuse every fold export
-    sight unseen — and refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS`
-    (120s); the drain itself aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS`
-    (60s) of real spend; both throw `SurfaceCaptureCostError` — save-PNG
-    toasts it, the offline exporter fails the run, the thumbnail path falls
-    back to the explorer render. Capture observations raise-only into the
-    evidence chain without killing it — the pose hasn't moved, so live
-    settle/preview evidence stays valid, and the drain's export-scale,
-    join-tax-inflated observation may only tighten that floor, never own it (a
-    micro-strip capture priced at pure readback overhead would otherwise pin
-    the next settle to dissolved micro-strips). fr-24to asked for a
-    runtime-mode verdict on monster-pose previews: the floor-rung preview
-    at mandelboxKifs's entry ran past 210s/4500px, no terminal state, settle
-    never arming. A mode bail and a sub-floor rung were rejected (pose-local
-    cost, ~2x/rung against a >=50-150x gap). Two rounds of budget/prediction
-    truncation shipped, then REVERTED (fr-zx34): both clipped a completable
-    heavy-lens preview, the first a 20-map Menger-lens preview 62% done
-    with ~2.5s left. Final verdict, the user's: no automatic give-up —
-    `surfaceRenderProgress()` + the surface progress row ("Preview 43%" /
-    "Full detail 0.4%", one decimal under 10%, hidden when idle; since
-    fr-tmgf the label names its engine — "· WebGL" / "· WebGPU", the
-    compute side fed by onProgress ray tallies) disclose
-    honest coverage and the user decides; at true monsters the preview may
-    grind minutes, settle never arming, safely (120/120 pings, 0s stalled
-    — the bounded-strip pump, not truncation, carries safety). Save-PNG's
-    refusals gained the "Render anyway" opt-in (300s consented
-    backstop). Measured A/B (Iris, real driver, `?surfacegl`): lens-system
-    settle 2.5s vs main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair
-    settle 0.2s, escape 45ms — at full safety caps, kernel-silent through
-    every monster run. The settle always ARMS, however expensive the frame —
-    bounded strips grind visibly and interruptibly (an early fr-096u cut
-    gated it on predicted cost and silently blanked legitimate lens
-    settles into permanent preview blur: a silent refusal reads as a
-    broken render); the same never-refuse discipline now covers the
-    preview too — it always runs to completion, with progress
-    disclosed rather than bounded. Fold surface sessions also
-    gate their first frame on `compileAsync` of the fold tracer program
-    (~25s links happen off the critical path where the driver offers
-    `KHR_parallel_shader_compile`; the compile mesh MUST mirror
-    FullScreenQuad's position+uv triangle or the draw links a second
-    program variant, and the gate defers activate()'s guide/selection
-    refresh so no other re-link joins the driver's compile queue behind
-    the fold program). Pure, tested.
+    Capture/offline export runs the SAME pump (fr-y6m0). Those drains used
+    to join every strip themselves — the pre-fr-096u shape in export
+    clothing, multiplying the sync tax by the planner's strip count. Both now
+    loop the pump and differ only in how they WAIT between calls — the
+    synchronous one (offline export, thumbnails) blocks on ONE whole-queue
+    readback per queueful, the yielding one (fr-7mfx's Save-PNG) hands the
+    main thread back on rAF (timer-backstopped at a frame, because a page
+    whose frame clock runs slow starves the queue — headless SwiftShader
+    serves rAF at ~10Hz; a bounded macrotask spin when the page is hidden,
+    where rAF stops and timers throttle), so a cancel now lands within a tick
+    instead of behind a multi-second crease strip. A
+    capture job never presents (the export-scale target must not reach the
+    canvas), ADOPTS the fence backlog like the live jobs (a pipelined refill
+    has to price the real GL queue), and winds its own queue down before
+    returning from an abort so no export leftovers outlive the export.
+    The synchronous drain retires its fences WITHOUT polling them, straight
+    after its readback: that readback is the stronger barrier, and a sync
+    object's signaled state is only refreshed on the page's message loop, so
+    a loop that never yields reads TIMEOUT_EXPIRED forever and spins on a
+    queue the GPU finished long ago (measured: a 4.3s thumbnail became a
+    > 300s hang with `spentMs` frozen at 0, so even the spend ceiling could
+    > not end it). MEASURED A/B, SwiftShader, same pose and build otherwise:
+    > at 1280x720 on a pose neither path can finish, the live settle covered
+    > 38% of a 60s window in both arms while the capture went 0.4% -> 15%
+    > (~37x); on a cheap 900x560 frame the live settle finishes in 2.6s, where
+    > main's Save-PNG burned the whole 60s spend ceiling and refused to
+    > produce a PNG at all — the fix delivers it in 4.7s, cancels in 0.9s
+    > (main: 2.2s), and renders the collection thumbnail through the sync
+    > drain in 2.5s (main: 4.3s parked, 6.8s after a drag), byte-identical
+    > image. `scripts/capture-export.verify.mjs` is that gate;
+    > `scripts/capture-drain.verify.mjs` is the measurement harness beside it.
+    > Cost ceilings unchanged (fr-id9r): measured evidence predicts the frame up
+    > front — never the class prior, which would refuse every fold export
+    > sight unseen — and refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS`
+    > (120s); the drain itself aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS`
+    > (60s) of real spend; both throw `SurfaceCaptureCostError` — save-PNG
+    > toasts it, the offline exporter fails the run, the thumbnail path falls
+    > back to the explorer render. The ceiling's currency changed meaning with
+    > the drain: `spentMs` is batch-attributed busy wall with the sync tax
+    > subtracted, so the same 60s now buys tracing where it used to buy joins.
+    > Capture observations raise-only into the
+    > evidence chain without killing it — the pose hasn't moved, so live
+    > settle/preview evidence stays valid, and the drain's export-scale
+    > observation may only tighten that floor, never own it (a
+    > micro-strip capture priced at pure readback overhead would otherwise pin
+    > the next settle to dissolved micro-strips). fr-24to asked for a
+    > runtime-mode verdict on monster-pose previews: the floor-rung preview
+    > at mandelboxKifs's entry ran past 210s/4500px, no terminal state, settle
+    > never arming. A mode bail and a sub-floor rung were rejected (pose-local
+    > cost, ~2x/rung against a >=50-150x gap). Two rounds of budget/prediction
+    > truncation shipped, then REVERTED (fr-zx34): both clipped a completable
+    > heavy-lens preview, the first a 20-map Menger-lens preview 62% done
+    > with ~2.5s left. Final verdict, the user's: no automatic give-up —
+    > `surfaceRenderProgress()` + the surface progress row ("Preview 43%" /
+    > "Full detail 0.4%", one decimal under 10%, hidden when idle; since
+    > fr-tmgf the label names its engine — "· WebGL" / "· WebGPU", the
+    > compute side fed by onProgress ray tallies) disclose
+    > honest coverage and the user decides; at true monsters the preview may
+    > grind minutes, settle never arming, safely (120/120 pings, 0s stalled
+    > — the bounded-strip pump, not truncation, carries safety). Save-PNG's
+    > refusals gained the "Render anyway" opt-in (300s consented
+    > backstop). Measured A/B (Iris, real driver, `?surfacegl`): lens-system
+    > settle 2.5s vs main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair
+    > settle 0.2s, escape 45ms — at full safety caps, kernel-silent through
+    > every monster run. The settle always ARMS, however expensive the frame —
+    > bounded strips grind visibly and interruptibly (an early fr-096u cut
+    > gated it on predicted cost and silently blanked legitimate lens
+    > settles into permanent preview blur: a silent refusal reads as a
+    > broken render); the same never-refuse discipline now covers the
+    > preview too — it always runs to completion, with progress
+    > disclosed rather than bounded. Fold surface sessions also
+    > gate their first frame on `compileAsync` of the fold tracer program
+    > (~25s links happen off the critical path where the driver offers
+    > `KHR_parallel_shader_compile`; the compile mesh MUST mirror
+    > FullScreenQuad's position+uv triangle or the draw links a second
+    > program variant, and the gate defers activate()'s guide/selection
+    > refresh so no other re-link joins the driver's compile queue behind
+    > the fold program). Pure, tested.
   - `state.ts` — `AppState` + pure reducers (pure, tested).
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and
