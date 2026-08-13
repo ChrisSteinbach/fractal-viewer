@@ -38,7 +38,7 @@
  * measured directly on this app's default layout, where #showGuides and
  * #fogSlider both land the panel already pinned at its max scrollTop
  * (639px). Each trial walks up from the target to find its nearest actual
- * scroll container (the panel itself for the four Appearance targets, the
+ * scroll container (the panel itself for the four static targets, the
  * nested `.transform-list` for the row trial) and swipes toward whichever
  * direction — up or down — currently has more room, so "did this gesture
  * actually scroll" stays a fair question instead of an artifact of where
@@ -141,11 +141,20 @@ async function snapshotState(page, selector) {
   }, selector);
 }
 
-/** The four instrumented Appearance-section targets (item 3 of the brief).
+/** The four instrumented static panel targets (item 3 of the brief).
  * fogSlider is the KNOWN hazard — the positive control that proves the
- * harness detects a real one when it exists. */
+ * harness detects a real one when it exists. All four sat in Appearance
+ * when this was written; fr-186c split that section three ways, so each
+ * trial now opens whichever section actually contains its target. */
 const TARGETS = [
-  { name: "colorMode", selector: "#colorMode", kind: "select" },
+  // The select trial was #colorMode until fr-186c, which split Appearance and
+  // left Color 106px tall — short enough that the panel no longer overflows
+  // when it is the open section, so the trial swiped 1px and (correctly)
+  // reported INCONCLUSIVE rather than a SAFE it had not earned. #background
+  // is the same shape in Atmosphere, the tallest of the three, which still
+  // leaves ~253px of scroll room. Worth knowing if a future split shortens
+  // that one too: the verdict will say so rather than quietly pass.
+  { name: "background", selector: "#background", kind: "select" },
   { name: "showGuides", selector: "#showGuides", kind: "checkbox" },
   { name: "regenerateBtn", selector: "#regenerateBtn", kind: "button" },
   {
@@ -503,30 +512,37 @@ async function main() {
     );
     await page.waitForTimeout(400); // let the 0.32s slide-in transition land.
 
-    const appearanceSummary = "#appearanceSection > summary";
-    if ((await page.$(appearanceSummary)) === null) {
-      throw new Error("#appearanceSection > summary not found");
-    }
-    await page.click(appearanceSummary);
-    await page.waitForFunction(
-      () => document.getElementById("appearanceSection")?.open === true,
-      undefined,
-      { timeout: 5_000 },
-    );
-    await page.waitForTimeout(150);
+    // Open whichever section actually contains each target, rather than one
+    // named section: fr-186c split Appearance into Cloud/Color/Atmosphere and
+    // scattered these four across all three, so a hardcoded section name is
+    // one rename away from a harness that proves nothing.
+    const openSectionFor = async (selector) => {
+      const opened = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const section = el?.closest("details.panel-section");
+        if (!section) return null;
+        if (!section.open) section.querySelector("summary")?.click();
+        return section.id;
+      }, selector);
+      if (!opened) throw new Error(`no panel section contains ${selector}`);
+      await page.waitForTimeout(150);
+      return opened;
+    };
 
     await page.screenshot({
       type: "jpeg",
       quality: 85,
-      path: path.join(OUT_DIR, "panel-touch-scroll-1-appearance.jpg"),
+      path: path.join(OUT_DIR, "panel-touch-scroll-1-panel.jpg"),
     });
 
-    // ---- the four instrumented Appearance targets, center + left-edge --
+    // ---- the four instrumented panel targets, center + left-edge -------
     for (const target of TARGETS) {
       if ((await page.$(target.selector)) === null) {
         fail(`${target.name}: control missing (${target.selector})`);
         continue;
       }
+      const section = await openSectionFor(target.selector);
+      console.error(`[panel-touch-scroll] ${target.name} lives in #${section}`);
       for (const xMode of ["center", "left-edge"]) {
         console.error(
           `[panel-touch-scroll] trial: ${target.name} (${target.kind}) @ ${xMode}`,
@@ -539,7 +555,7 @@ async function main() {
     await page.screenshot({
       type: "jpeg",
       quality: 85,
-      path: path.join(OUT_DIR, "panel-touch-scroll-2-after-appearance.jpg"),
+      path: path.join(OUT_DIR, "panel-touch-scroll-2-after-controls.jpg"),
     });
 
     // ---- the transform-list row (item 6) --------------------------------
