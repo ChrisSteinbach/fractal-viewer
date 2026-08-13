@@ -260,11 +260,10 @@ morphs into place instead of snapping (see **Presets** below).
   shared link. With previews on, a grinding preview shows a one-shot
   **Skip preview — full detail now** button under the progress row that
   abandons just that preview and starts the full render at once — the next
-  move previews as usual. **Save PNG** can likewise refuse a capture with an
-  honest estimate of how long it would take rather than start one with no
-  reasonable finish time, but its toast offers a **Render anyway** action
-  that grinds ahead regardless for up to about five minutes before giving
-  up. The
+  move previews as usual. **Save PNG** refuses nothing and guesses at no
+  patience of yours: its modal discloses how much of the frame is
+  resolved and its **Cancel** stops the work within a tick, however long
+  the capture would otherwise take. The
   first fold surface entry of a session also compiles the fold tracer
   program — a one-off measured at ~25s on Mesa/Iris (the browser caches
   the compiled program afterwards) — which now happens while the explorer
