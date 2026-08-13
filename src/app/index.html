@@ -481,12 +481,15 @@
           </button>
         </details>
 
-        <details
-          class="panel-section"
-          id="appearanceSection"
-          name="panel-section"
-        >
-          <summary>Appearance</summary>
+        <!-- fr-186c: Appearance measured 839px with 29 controls, ~81% of it
+             control rows with no inert band longer than 12px — nowhere to
+             rest a thumb while scrolling it. Split three ways, along the
+             fr-6ue seam: every gate keeps the rows it reveals, so colorMode
+             and its 4D sibling stay welded to the ramp/axis/contrast rows
+             they gate, background to its custom stops, balloon echo to its
+             radius, and depth style to glow brightness. -->
+        <details class="panel-section" id="cloudSection" name="panel-section">
+          <summary>Cloud</summary>
           <label class="select-label">
             Points: <span id="numPointsLabel">100,000</span>
             <input
@@ -534,6 +537,22 @@
             />
           </label>
 
+          <label class="checkbox-label">
+            <input type="checkbox" id="showGuides" checked />
+            Show guides
+          </label>
+
+          <label
+            class="checkbox-label"
+            title="Automatically lowers render resolution when frames get slow, and restores it when they recover"
+          >
+            <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
+            Adaptive resolution
+          </label>
+        </details>
+
+        <details class="panel-section" id="colorSection" name="panel-section">
+          <summary>Color</summary>
           <div id="colorModeRow">
             <label class="select-label">
               Color Mode
@@ -656,7 +675,14 @@
               />
             </label>
           </div>
+        </details>
 
+        <details
+          class="panel-section"
+          id="atmosphereSection"
+          name="panel-section"
+        >
+          <summary>Atmosphere</summary>
           <div id="renderStyleRow">
             <label class="select-label">
               Depth Style
@@ -799,19 +825,6 @@
               </label>
             </div>
           </div>
-
-          <label class="checkbox-label">
-            <input type="checkbox" id="showGuides" checked />
-            Show guides
-          </label>
-
-          <label
-            class="checkbox-label"
-            title="Automatically lowers render resolution when frames get slow, and restores it when they recover"
-          >
-            <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
-            Adaptive resolution
-          </label>
         </details>
 
         <details

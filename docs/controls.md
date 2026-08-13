@@ -64,10 +64,14 @@ Transform** sliders that appear in the panel while a transform is selected.
 ## Panel controls
 
 The panel's categories — **Capture**, **Share**, **Collection**,
-**Timeline**, **Transforms**, **Presets**, **Appearance**, **Symmetry**, and
-**3D View**/**4D View** — are collapsible sections, and opening one closes
-the previous (fr-zoi), so the whole panel stays about one phone-screen tall
-instead of demanding a long scroll. The Flame, Solid, and Surface render
+**Timeline**, **Transforms**, **Presets**, **Cloud**, **Color**,
+**Atmosphere**, **Symmetry**, and **3D View**/**4D View** — are collapsible
+sections, and opening one closes the previous (fr-zoi). The collapsed ones
+pack into rows of chips rather than stacking (fr-vha5), because nine stacked
+headers cost 473px of a 727px phone screen before any control was visible.
+Measured, that keeps the panel between one and two phone screens rather than
+the one it used to claim: 727px with **Color** open, 1336px with
+**Transforms** open and a transform selected. The Flame, Solid, and Surface render
 modes get the same treatment (fr-99o) — **Tone** / **Blur** / **Quality** for
 Flame, **Surface** / **Lighting** / **Quality** for Solid, and **Surface
 Look** for Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface**
@@ -119,7 +123,7 @@ morphs into place instead of snapping (see **Presets** below).
     very lowest densities ride a straight line instead of the curve, so a
     single stray early sample can't flare into a bright speckle on an
     unconverged frame. **Palette (restarts render)** picks the gradient (see
-    **Appearance → Custom** for the shared editor), and it does mean the
+    **Color → Custom** for the shared editor), and it does mean the
     restart: the accumulated color sums have the old palette baked into them.
   - **Blur** — flam3's _density estimation_, which smooths sparse regions
     while leaving converged ones sharp. Every output cell picks its own blur
@@ -158,7 +162,7 @@ morphs into place instead of snapping (see **Presets** below).
     densest core, crisper but liable to thin fine structure away entirely.
     **Palette (restarts render)** offers the same gradients as the flame's,
     plus **By Color Mode (legacy)**, which hands coloring back to
-    **Appearance**'s **Color Mode**; the restart is needed because each
+    **Color**'s **Color Mode**; the restart is needed because each
     voxel's running mean color already has the old palette in it.
   - **Lighting** — **Light Angle** (−180°–180°, default 135°) swings a single
     directional light around the shape; **Light Height** (5°–85°, default
@@ -287,7 +291,7 @@ morphs into place instead of snapping (see **Presets** below).
   select — By Transform, the orbit-trap Palette, a Height ramp, a Radius
   ramp, Orbit rings, or Orbit sheets — with a **Palette** select underneath
   (the same named gradients as Flame/Solid, the shared **Custom** gradient
-  included — see **Appearance**) that appears for the orbit-trap,
+  included — see **Color**) that appears for the orbit-trap,
   rings, and sheets sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
   color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
@@ -301,7 +305,7 @@ morphs into place instead of snapping (see **Presets** below).
   slider above, which fades descent levels rather than picks.
   Two persisted scene toggles round out the section. **Balloon** (fr-5wlv)
   — with its **Balloon size** slider and **Inflate** button — is the same
-  balloon as **Appearance**'s **Balloon echo** below (one setting, shared
+  balloon as **Atmosphere**'s **Balloon echo** below (one setting, shared
   across renderers), here traced as real geometry rather than echoed
   points: the scene becomes the union of the attractor and its
   sphere-inverted copy, so the fractal sits at the center of an enclosing

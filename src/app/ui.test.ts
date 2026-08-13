@@ -3910,9 +3910,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").previousElementSibling).toBe(
       el("fourDColorRow"),
     );
-    expect(el("rampPaletteRow").closest("details")?.id).toBe(
-      "appearanceSection",
-    );
+    expect(el("rampPaletteRow").closest("details")?.id).toBe("colorSection");
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
 
     // Non-flat: the visible select flips; the ramp row itself never moves —
@@ -4147,11 +4145,9 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(false);
     expect(el("fourDDepthFadeRow").classList.contains("hidden")).toBe(false);
-    expect(el("fourDColorRow").closest("details")?.id).toBe(
-      "appearanceSection",
-    );
+    expect(el("fourDColorRow").closest("details")?.id).toBe("colorSection");
     expect(el("fourDDepthFadeRow").closest("details")?.id).toBe(
-      "appearanceSection",
+      "atmosphereSection",
     );
     expect(el("fourDControls").contains(el("fourDColorRow"))).toBe(false);
   });
