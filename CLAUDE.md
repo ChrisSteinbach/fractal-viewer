@@ -299,7 +299,11 @@ and UI**, so the interesting math is unit-tested without a browser:
     core (test-pinned) and the escape DE is eval-pinned, so a rate band
     absorbs the same chaotic-orbit flips without duplicating that
     machinery for a second DE type (measured on real Iris: 256x144 in
-    ~100ms wall, 27 passes, GPU hit rate 0.239 vs CPU 0.240).
+    136ms wall, 33 passes, 0 exhausted, GPU hit rate 0.153 vs CPU 0.158 —
+    the rates roughly halved at fr-7u8t.8, which is the Mandelbrot form
+    replacing a blob that filled 94% of its own ball with an object that
+    fills 10%; the gate is the GAP between the two rates, so it moved with
+    them).
     Ground plane (fr-rhn5) is an orthogonal `groundPlane` option, not a
     sixth core — it composes with every descent/escape core and the lens
     wrapper. It adds a fifth ray status, `SURFACE_GPU_RAY_PLANE` (4), that
