@@ -968,6 +968,39 @@ and UI**, so the interesting math is unit-tested without a browser:
     one with no wall budget to expire — memoized offline force frames,
     one-way fallback: create failure or device loss re-enters through the
     untouched WebGL path; `?surfacegl` forces WebGL).
+    A frame's RASTER is bounded by the device, not the caller (fr-biox):
+    the five per-ray buffers cost 44 B/ray (the 16 B ray state twice —
+    storage + MAP_READ staging — is what a limit bites), so
+    `maxFrameRays` = min(maxBufferSize, maxStorageBufferBindingSize)/16
+    and a frame past it throws `SurfaceComputeFrameSizeError` up front
+    instead of reaching the kernels, because WebGPU refuses SILENTLY
+    here — an over-limit `createBuffer` returns an invalid buffer plus a
+    validation error, and the first REJECTION is a staging `mapAsync`
+    ("Mapping WebGPU buffer failed: Invalid buffer" — the field report,
+    from a 4x Save-PNG whose 32.5M rays wanted a 520 MB state buffer
+    inside a ~1.4 GB frame; the size that caused it appeared nowhere).
+    Both callers size against it: the live pane FITS
+    (`fitSurfaceComputeRaster` — one frame IS the image, so a hidpi
+    raster past the ceiling traces soft and blits up, the preview tier's
+    own mechanism, disclosed once per session) and a capture TILES
+    (`surfaceComputeTileRows`, also capped at
+    `SURFACE_COMPUTE_MAX_TILE_RAYS` so a device reporting gigabytes
+    still exports in ~176 MB pieces). scene.ts's
+    `captureSurfaceComputeFrame` traces the export as full-width BANDS —
+    every band's spec assembled in ONE synchronous span (a tiled export
+    outlives an auto-orbit/drift camera move, the compute answer to the
+    WebGL drain's frozen uniforms), each a `camera.setViewOffset`
+    sub-frustum, at the FULL image's trace eps, with
+    `surfaceComputeBandStops` restricting the backdrop pair to the band's
+    own edges (every tracer spreads its stops over its OWN rasterHeight,
+    so whole-image stops would repeat the gradient per band) — and the
+    frames run `capture: true`, outside the live pane's seed chain. One
+    band is the whole image on an ordinary export, byte-identical to the
+    untiled path. `?surfacemaxrays=N` pretends a device ceiling;
+    `scripts/surface-export-tile.verify.mjs` is the gate (tiled vs
+    untiled export of one pinned pose: measured mean 0.002/255, 0.006%
+    of pixels off by >8 — the march-start dither's own per-raster hash
+    phase, nothing structural).
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

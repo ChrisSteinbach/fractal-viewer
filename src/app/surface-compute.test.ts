@@ -1,5 +1,6 @@
 import {
   buildSurfaceComputeBackground,
+  fitSurfaceComputeRaster,
   marchChunkFor,
   nextShadeBatchSize,
   nextShadeHitEmaUs,
@@ -10,10 +11,15 @@ import {
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
   SURFACE_COMPUTE_MAX_SHADE_BATCH,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
+  SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
+  SURFACE_COMPUTE_RAY_STATE_BYTES,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
+  surfaceComputeBandStops,
+  surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
+  surfaceComputeTileRows,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -70,6 +76,145 @@ describe("buildSurfaceComputeBackground", () => {
         expect(rows[o + 3]).toBe(255);
       }
     }
+  });
+});
+
+describe("surfaceComputeMaxFrameRays", () => {
+  it("sizes the frame by the ray-state buffer against the tighter ceiling", () => {
+    // A 128 MiB storage-binding ceiling under a 256 MiB buffer ceiling:
+    // the binding one governs, and it buys 128 MiB / 16 B = 8.4M rays —
+    // just over a 4K raster, and a quarter of what a 4x export of a
+    // 1920x1057 pane would ask for (fr-biox's report).
+    expect(
+      surfaceComputeMaxFrameRays({
+        maxBufferSize: 256 * 1024 * 1024,
+        maxStorageBufferBindingSize: 128 * 1024 * 1024,
+      }),
+    ).toBe((128 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES);
+  });
+
+  it("takes the buffer ceiling when it is the lower of the two", () => {
+    expect(
+      surfaceComputeMaxFrameRays({
+        maxBufferSize: 64 * 1024 * 1024,
+        maxStorageBufferBindingSize: 2 * 1024 * 1024 * 1024,
+      }),
+    ).toBe((64 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES);
+  });
+});
+
+describe("surfaceComputeTileRows", () => {
+  it("traces an ordinary export as one whole tile", () => {
+    // 1920x1057 at 1x is 2.0M rays — comfortably inside the cap, so the
+    // capture keeps its single-frame path.
+    expect(surfaceComputeTileRows(1920, 1057, Infinity)).toBe(1057);
+  });
+
+  it("bands a 4x export under the tile cap", () => {
+    // The fr-biox report's raster: 7680x4228 = 32.5M rays, which asked
+    // for a 520 MB ray-state buffer as one frame.
+    const rows = surfaceComputeTileRows(7680, 4228, Infinity);
+    expect(rows * 7680).toBeLessThanOrEqual(SURFACE_COMPUTE_MAX_TILE_RAYS);
+    expect(Math.ceil(4228 / rows)).toBe(9);
+  });
+
+  it("balances the bands rather than leaving a one-row remainder", () => {
+    // 521 rows per tile would fit the cap, but 4228 = 8x521 + 60: the
+    // last band would be a 60-row sliver, and the export modal's
+    // per-tile progress would lurch through it.
+    const rows = surfaceComputeTileRows(7680, 4228, Infinity);
+    const count = Math.ceil(4228 / rows);
+    expect(4228 - (count - 1) * rows).toBeGreaterThan(rows / 2);
+  });
+
+  it("covers every row exactly once, none of them over the cap", () => {
+    for (const [w, h, cap] of [
+      [7680, 4228, Infinity],
+      [3840, 2160, 1_000_000],
+      [1000, 1000, 999_999],
+      [1920, 1057, 100_000],
+    ] as const) {
+      const rows = surfaceComputeTileRows(w, h, cap);
+      const count = Math.ceil(h / rows);
+      let covered = 0;
+      for (let i = 0; i < count; i++) {
+        const band = Math.min(rows, h - i * rows);
+        expect(band).toBeGreaterThan(0);
+        expect(band * w).toBeLessThanOrEqual(
+          Math.min(cap, SURFACE_COMPUTE_MAX_TILE_RAYS),
+        );
+        covered += band;
+      }
+      expect(covered).toBe(h);
+    }
+  });
+
+  it("honours a device ceiling below the tile cap", () => {
+    // A device that allocates 500k rays per frame gets 250-row bands
+    // (500k / 2000 px), not the 4M-ray constant's 2000-row whole image.
+    expect(surfaceComputeTileRows(2000, 2000, 500_000)).toBe(250);
+  });
+});
+
+describe("surfaceComputeBandStops", () => {
+  it("reproduces the full image's gradient band by band", () => {
+    // The identity the tiled export depends on: every tracer spreads its
+    // two stops over its OWN raster, so a band handed the whole image's
+    // stops would repeat the whole gradient. Assembling the bands' own
+    // prefills must rebuild the full-height prefill row for row —
+    // buildSurfaceComputeBackground being the CPU mirror of the kernel's
+    // own mix(bgBottom, bgTop, (py + 0.5) / rasterHeight).
+    const top: [number, number, number] = [1, 0, 0];
+    const bottom: [number, number, number] = [0, 0, 1];
+    const whole = buildSurfaceComputeBackground(1, 12, top, bottom);
+    for (const rows of [12, 6, 4, 5]) {
+      const assembled = new Uint8Array(12 * 4);
+      for (let bandBottom = 0; bandBottom < 12; bandBottom += rows) {
+        const height = Math.min(rows, 12 - bandBottom);
+        const stops = surfaceComputeBandStops(
+          top,
+          bottom,
+          bandBottom,
+          height,
+          12,
+        );
+        assembled.set(
+          buildSurfaceComputeBackground(1, height, stops.bgTop, stops.bgBottom),
+          bandBottom * 4,
+        );
+      }
+      expect(Array.from(assembled)).toEqual(Array.from(whole));
+    }
+  });
+
+  it("hands a full-height band the original stops", () => {
+    const stops = surfaceComputeBandStops([1, 0.5, 0], [0, 0.25, 1], 0, 8, 8);
+    expect(stops.bgTop).toEqual([1, 0.5, 0]);
+    expect(stops.bgBottom).toEqual([0, 0.25, 1]);
+  });
+});
+
+describe("fitSurfaceComputeRaster", () => {
+  it("leaves a raster the device can allocate for alone", () => {
+    expect(fitSurfaceComputeRaster(1920, 1057, Infinity)).toEqual({
+      width: 1920,
+      height: 1057,
+    });
+  });
+
+  it("shrinks an oversized live raster keeping its aspect", () => {
+    // A hidpi 5K pane (14.7M rays) on a device that allocates 8.4M: the
+    // pane traces softer and blits up rather than failing to allocate.
+    const fit = fitSurfaceComputeRaster(5120, 2880, 8_388_608);
+    expect(fit.width * fit.height).toBeLessThanOrEqual(8_388_608);
+    expect(fit.width / fit.height).toBeCloseTo(5120 / 2880, 2);
+  });
+
+  it("fits even a ceiling below one row of the raster", () => {
+    const fit = fitSurfaceComputeRaster(1000, 1, 2);
+    expect(fit.width * fit.height).toBeLessThanOrEqual(2);
+    expect(fit.width).toBeGreaterThanOrEqual(1);
+    expect(fit.height).toBeGreaterThanOrEqual(1);
   });
 });
 
