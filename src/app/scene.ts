@@ -3608,8 +3608,13 @@ export class FractalScene {
     // Capture-mode retirement: an export-scale drain's observation may
     // TIGHTEN the live evidence but never own it — the pose did not move,
     // so the completed live settle/preview evidence is still the truth the
-    // next live job should price from.
-    this.retireStripJob(arm.job, "capture");
+    // next live job should price from. A COMPLETED one may additionally
+    // SEED an empty chain (fr-y1m7), which is the only evidence an offline
+    // export ever gets.
+    this.retireStripJob(
+      arm.job,
+      outcome === "done" ? "capture-completed" : "capture",
+    );
     if (SURFPERF) {
       console.log(
         `[surfperf] capture ${outcome} px=${String(totalPx)}` +
@@ -3736,16 +3741,16 @@ export class FractalScene {
    * observation replaces the evidence (and clears the partial raise); a
    * "superseded" job's observation can only raise; a "capture" drain
    * (fr-id9r) can only raise WITHOUT killing the evidence — the pose did
-   * not move, and its export-scale, join-tax-inflated observation must
-   * tighten the live floor, never own it (a micro-strip capture priced
-   * at readback overhead would otherwise pin the next settle to
-   * dissolved micro-strips, the exact poison the evidence semantics
-   * exist to avoid). A job that measured NOTHING (superseded before its
-   * first strip completed, or done in a single strip) carries no
-   * information and changes nothing. */
+   * not move, so live settle/preview evidence is still the truth a live
+   * job should price from, and an export-scale observation must tighten
+   * that floor, never own it. "capture-completed" adds the one thing a
+   * capture may do beyond raising: SEED a chain that is empty (fr-y1m7).
+   * A job that measured NOTHING (superseded before its first strip
+   * completed, or done in a single strip) carries no information and
+   * changes nothing. */
   private retireStripJob(
     job: SurfaceStripJob,
-    outcome: "completed" | "superseded" | "capture",
+    outcome: "completed" | "superseded" | "capture" | "capture-completed",
   ): void {
     const observed = job.planner.observedWorstMsPerPx;
     if (outcome === "completed") {
@@ -3754,6 +3759,25 @@ export class FractalScene {
         this.surfaceStripPartialWorstMsPerPx = 0;
       }
       return;
+    }
+    // A capture that COMPLETED may SEED an empty evidence chain (fr-y1m7),
+    // never replace a live one. The seed matters because an offline export
+    // is the one caller that never produces live evidence at all: a system
+    // upload clears the chain, force frames bypass the preview, and a
+    // raise-only retire cannot fill it — so every frame of a fold-scene
+    // video priced its queue at the class prior, ~100x above what its own
+    // pixels measured, and paid a forced-completion join per ~400px. Frame
+    // one still does; the rest now price from it. It is safe in the
+    // direction it can be wrong: a capture traces the WHOLE frame at the
+    // same pose, so its observation is a settle's in kind, and an
+    // export-scale trace resolves finer pixels than the live tier, which
+    // reads HIGH — tighter strips, never looser.
+    if (
+      outcome === "capture-completed" &&
+      observed > 0 &&
+      this.surfaceStripEvidencedWorstMsPerPx === null
+    ) {
+      this.surfaceStripEvidencedWorstMsPerPx = observed;
     }
     // A SUPERSEDED job means the pose moved on — and with it whatever a
     // completed predecessor proved cheap. Keeping stale evidence bit
