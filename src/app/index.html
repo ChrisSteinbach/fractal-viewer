@@ -501,6 +501,23 @@
               value="540"
             />
           </label>
+
+          <!-- Directly under Points on purpose: the two are the cloud's pair
+               of scalars — how many, and how big — and reading one while
+               reaching for the other is the common move. Regenerate below
+               them applies the count; Point Size needs no regeneration. -->
+          <label class="select-label">
+            Point Size: <span id="pointSizeLabel">1.00×</span>
+            <input
+              type="range"
+              id="pointSizeSlider"
+              min="0.25"
+              max="4"
+              step="0.05"
+              value="1"
+            />
+          </label>
+
           <button class="btn btn-blue" id="regenerateBtn" type="button">
             Regenerate Points
           </button>
@@ -523,18 +540,6 @@
               <option value="dense">Dense</option>
               <option value="full">Full (all points)</option>
             </select>
-          </label>
-
-          <label class="select-label">
-            Point Size: <span id="pointSizeLabel">1.00×</span>
-            <input
-              type="range"
-              id="pointSizeSlider"
-              min="0.25"
-              max="4"
-              step="0.05"
-              value="1"
-            />
           </label>
 
           <label class="checkbox-label">
