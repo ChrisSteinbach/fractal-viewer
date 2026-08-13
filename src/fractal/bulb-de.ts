@@ -113,12 +113,18 @@
  *     shell, not the step length. At FRAME level the full step loses no
  *     geometry: 46.7% hits against a 0.2-step reference's 46.8% on the
  *     classic fixture, with 2.2% of pixels differing by more than 12/255
- *     (crease shading). For scale, the fold family on its own object still
- *     loses 4.6% of its hits and differs on 12.1% at the 0.35 fr-7u8t.8
- *     measured it down to — and lost 17% at the 0.7 it shipped with before
- *     that. The bulb needs none of it: 0.7 here would buy 2.4x fewer
- *     differing pixels for 1.45x the steps, if fr-7u8t.9's real tracer
- *     ever wants it.
+ *     (crease shading). Re-run at a CLOSE pose, where creases and filigree
+ *     rather than a silhouette are what the marcher must resolve — the pose
+ *     fr-7u8t.8's own sweep found the fold's overshoot at — the six panels
+ *     from 1.0 down to 0.2 are indistinguishable and hits move 89.52% ->
+ *     89.53%, about two pixels in 176k
+ *     (`scripts/out/bulb-step-scale.png`). For scale, the fold family on
+ *     its own object still loses 4.6% of its hits and differs on 12.1% at
+ *     the 0.35 fr-7u8t.8 measured it down to — and lost 17% at the 0.7 it
+ *     shipped with before that, climbing 62% -> 84% of its hits as the
+ *     damping fell, which is what a step scale that is actually binding
+ *     looks like. Nothing here climbs: 0.7 would buy 2.4x fewer differing
+ *     pixels for 1.45x the steps, if fr-7u8t.9's real tracer ever wants it.
  *
  * ONE WARNING FOR THE MIRRORS (fr-7u8t.9), learned by fr-dlxh one object
  * over and re-measured here: a forward power-8 orbit multiplies any
