@@ -942,7 +942,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     host-compacted active list; progressive presents between
     every bounded piece; colorOut prefill seeded from the last frame
     (nearest-resampled — the strip settle's preview-seeded-target
-    discipline); per-frame status counts for field debugging. scene.ts
+    discipline; fr-f4bx measured what that buys during MOTION on a slow
+    adapter, where every preview is a budget-truncated one: the present
+    is the PREVIOUS frame with its newly resolved rays overwritten, so
+    the pane never shows backdrop mid-drag — 1280x720 Firefox WebGPU,
+    dragging into a mandelbox-lens close-up, mid-drag frames measured
+    0.98-0.99x the completed preview's size, i.e. full coverage — and at
+    the extreme a preview resolving ZERO rays in its 2.2s budget
+    presents the prior image byte for byte. That refutes the bead's own
+    premise: there is no worse frame being painted over a better one to
+    suppress, and a coverage threshold on the present would have had
+    nothing to fix. The pane heals at park through fr-ud7n's completion
+    pass); per-frame status counts for field debugging. scene.ts
     presents frames as a DataTexture through the shared surface blit (the
     one WebGL canvas — capture/recorder unchanged) and assembles specs
     with the uniform-exact camera/eps/tier quantities (acceptance eps
