@@ -385,13 +385,39 @@ and UI**, so the interesting math is unit-tested without a browser:
     `scripts/escape-form-sweep.harness.ts`: it only thins past |t| ~ 2.5
     and is a pitted ball even at its best, so it does not earn the
     permanent document flag it would cost.
+  - `bulb-de.ts` — the Mandelbulb's CPU oracle (fr-7u8t.7), third object in
+    the escape-time family beside the folds and `qjulia-de.ts`: the triplex
+    8th power (`variations.ts`'s `bulb`) iterated in the MANDELBROT form
+    fr-7u8t.8 established — `v <- V(Mv + t) + p`, `t` the pre-power offset
+    and a live deformation knob, no document state. `dr` seeds at
+    `sigma_max(M)` (not 1 — `dy0/dp` IS `M`) and its trailing
+    `+ sigma_max(M)` is `escape-de.ts`'s `+ 1` carried through `M`: exact,
+    and load-bearing as a FLOOR, since `8|y|^7` shrinks wherever `|y| < 1`,
+    which is most of the interior. Estimate is the Böttcher log form off
+    `|y|`, never `|v|`, with the `ln|r|` clamp below 1 (a negative DE
+    marches backwards). A HEURISTIC unlike the quaternion square: the
+    triplex power stretches azimuthally by `8r^7·|U7(cos θ)|`, up to 8x at
+    the poles, so `dr` under-estimates there — yet MEASURED step scale 1.0,
+    because damping does not clear that residual (it lives in the boundary
+    shell) and at frame level the full step loses no geometry. 0.29 us/eval,
+    3.5x CHEAPER than the fold mode that already ships, refuting the bead's
+    own prediction. `scripts/bulb-preview.harness.ts` is its sheet; no
+    shader mirrors yet (fr-7u8t.9).
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
-  - `variations.ts` — fifteen nonlinear flame variations as pure functions: a
-    dozen classics plus the Mandelbox fold family (`boxfold`/`spherefold`/
-    `mandelbox`, fr-p7nu); `composeVariations` blends a transform's weighted
-    list.
+  - `variations.ts` — seventeen nonlinear flame variations as pure functions:
+    a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
+    `mandelbox`, fr-p7nu), and the two escape-time maps that exist so their
+    renderers can gate on a document shape — `qsquare` (fr-7u8t.3, the
+    quaternion square) and `bulb` (fr-7u8t.7, the White/Nylander triplex
+    8th power, `triplexPow8`: a TRIG-FREE closed form via the Chebyshev
+    `T8`/`U7` polynomials plus de Moivre, an exact rewrite of the
+    `acos`/`atan2`/`sin`/`cos`/`pow` one at 6e-14 and ~11x cheaper. The
+    power is baked in because triplex multiplication is not associative —
+    `p^8` is NOT `((p^2)^2)^2`, which disagrees on 48.8% of queries — so
+    every power would need its own closed form). `composeVariations` blends
+    a transform's weighted list.
   - `variations4.ts` — same variations lifted to 4D, bit-exact at `w = 0`.
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →

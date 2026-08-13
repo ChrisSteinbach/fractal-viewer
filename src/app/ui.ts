@@ -479,6 +479,7 @@ const DEFAULT_VARIATION_WEIGHT = 1;
  */
 const VARIATION_LABELS: Partial<Record<VariationType, string>> = {
   qsquare: "Quaternion square",
+  bulb: "Mandelbulb power 8",
 };
 
 /** Title-case a variation type for display, e.g. "handkerchief" → "Handkerchief". */

@@ -3,7 +3,7 @@ import type { Variation, VariationType, Vec4 } from "./types";
 import { clamp } from "./vec";
 
 /**
- * The 4D lift of the fifteen nonlinear variation functions (fr-hy8), the fourth
+ * The 4D lift of the sixteen nonlinear variation functions (fr-hy8), the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
@@ -19,6 +19,11 @@ import { clamp } from "./vec";
  *     the sphere fold inverts through the full 4-D radius.
  *   - `sinusoidal` folds each of the four axes through a sine; `linear` is the
  *     identity.
+ *   - `qsquare` (fr-7u8t.3) is the only entry whose 4D form is the DEFINITION
+ *     and whose 3D form is the restriction — the quaternions are natively 4D.
+ *     `bulb` (fr-7u8t.7) is the opposite extreme: triplex numbers have no 4D
+ *     structure at all, so it warps `x, y, z` and carries `w` through, the
+ *     angular warps' treatment of an axis their formula never mentions.
  *
  * ## The anchor property (the heart of the embed — see `embedTransform3`)
  *
@@ -29,8 +34,9 @@ import { clamp } from "./vec";
  * so at `w = 0` the final `+ 0` leaves the floating-point value BIT-identical to
  * the 3D expression `x*x + y*y + z*z` — hence identical `c`, identical x/y/z, and
  * `w' = w·c = 0`. Fold warps anchor the same way: `foldAxis(0) = 0` exactly, and
- * the sphere-fold radius ends in `+ w*w`. The equality is exact (not merely
- * close) for all fifteen; the tests pin `toEqual`. That is what makes an
+ * the sphere-fold radius ends in `+ w*w`. `bulb` carries `w` like an angular
+ * warp and duplicates its x/y/z arithmetic term for term. The equality is
+ * exact (not merely close) for all sixteen; the tests pin `toEqual`. That is what makes an
  * embedded 3D system's `w = 0` slice warp bit-for-bit like the native 3D path.
  */
 export type VariationFn4 = (
@@ -208,6 +214,51 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
     2 * x * z,
     2 * x * w,
   ],
+
+  // The White/Nylander triplex 8th power (see `variations.ts`'s
+  // `triplexPow8` for the formula), with `w` CARRIED THROUGH unchanged.
+  //
+  // This is the one entry whose lift is an admission rather than a
+  // generalisation. `qsquare` above lifts because the quaternions ARE 4D and
+  // the 3D form is their `w = 0` restriction; the fold and radial warps lift
+  // because a 4th axis and a 4-radius are well defined. Triplex numbers are
+  // none of that — they are R³ with a spherical-coordinate product that is
+  // neither associative nor distributive, defined by the two angles a point
+  // in THREE dimensions has. There is no fourth angle to add, and inventing
+  // one (say, powering a quaternion's polar decomposition) would be a
+  // different map wearing this one's name. So `w` rides through untouched,
+  // which is exactly what the ANGULAR warps above do with the axes their
+  // formula does not mention — and it anchors for the same reason: `w = 0`
+  // in gives `w' = 0` out, with x/y/z arithmetic duplicated term for term
+  // from the 3D file under the twin-file convention.
+  bulb: (x, y, z, w) => {
+    const a = x * x + y * y; // ρ²
+    const r2 = a + z * z;
+    const z2 = z * z;
+    const r4 = r2 * r2;
+    const zOut =
+      128 * z2 * z2 * z2 * z2 -
+      256 * z2 * z2 * z2 * r2 +
+      160 * z2 * z2 * r4 -
+      32 * z2 * r4 * r2 +
+      r4 * r4;
+    const s =
+      128 * z2 * z2 * z2 * z -
+      192 * z2 * z2 * z * r2 +
+      80 * z2 * z * r4 -
+      8 * z * r4 * r2;
+    const rho = Math.sqrt(a);
+    const inv = rho > 0 ? 1 / rho : 0;
+    const u1 = x * inv;
+    const v1 = y * inv;
+    const u2 = u1 * u1 - v1 * v1;
+    const v2 = 2 * u1 * v1;
+    const u4 = u2 * u2 - v2 * v2;
+    const v4 = 2 * u2 * v2;
+    const u8 = u4 * u4 - v4 * v4;
+    const v8 = 2 * u4 * v4;
+    return [rho * s * u8, rho * s * v8, zOut, w];
+  },
 };
 
 /** A transform's blended 4D variation map, ready to apply to its affine output. */

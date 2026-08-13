@@ -48,9 +48,10 @@
  *   CPU fallback for variation-heavy systems. Slots now carry
  *   {@link MAX_SLOT_VARIATIONS} (type, weight) lanes — one per
  *   {@link VariationType} (fr-p7nu added the Mandelbox fold family —
- *   `boxfold`/`spherefold`/`mandelbox`, then fr-7u8t.3 added `qsquare` —
- *   bringing the count to 16, which exactly fills the storage the lane
- *   array always reserved).
+ *   `boxfold`/`spherefold`/`mandelbox`, fr-7u8t.3 added `qsquare` to fill the
+ *   16 lanes the arrays had always reserved, and fr-7u8t.7's `bulb` took the
+ *   count to 17 — widening both lane arrays by one `vec4`, the smallest step
+ *   a `vec4` array has, so three of the 20 lanes now ride spare).
  */
 import type { Rng } from "./rng";
 import type { SymmetryParams, Transform, VariationType } from "./types";
@@ -87,7 +88,7 @@ export const COLOR_FIXED_POINT_SCALE = 256;
 /** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
  * (`types.ts`), so a single transform can carry every {@link VariationType}
  * at once and no system's variation list can force a CPU fallback. */
-export const MAX_SLOT_VARIATIONS = 16;
+export const MAX_SLOT_VARIATIONS = 17;
 
 /** u32 words per histogram bucket: four emulated-u64 channels —
  * [hitsLo, hitsHi, rLo, rHi, gLo, gHi, bLo, bHi]. */
@@ -121,6 +122,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
   spherefold: 13,
   mandelbox: 14,
   qsquare: 15,
+  bulb: 16,
 };
 
 /**
@@ -140,14 +142,16 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * (read only when hasFinal = 1, never drawn by the transform pick):
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
- *   96 varWeights array<vec4f, 4> | 160 varTypes array<vec4u, 4> (16 lanes of
- *   storage, all 16 used — one per {@link VariationType})
- *   224 varCount u32 | 228 hasPost u32 | 232 cumWeight f32
- *   236 colorIndex f32 | 240 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   96 varWeights array<vec4f, 5> | 176 varTypes array<vec4u, 5> (20 lanes of
+ *   storage, 17 used — one per {@link VariationType}; fr-7u8t.7's `bulb` took
+ *   the count past the 16 four vec4s held, and a vec4 array cannot be widened
+ *   by less than four lanes, so three ride spare)
+ *   256 varCount u32 | 260 hasPost u32 | 264 cumWeight f32
+ *   268 colorIndex f32 | 272 colorSpeed f32 (fr-hiyu's flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
  *   exactly like cumWeight's base-map weight — so the kernel reads
- *   `slots[idx]` with no modulo) | 244..255 trailing pad (three spare words
- *   the 16-byte struct alignment demands once the pair grew the tail past 240)
+ *   `slots[idx]` with no modulo) | 276..287 trailing pad (three spare words
+ *   the 16-byte struct alignment demands once the pair grew the tail past 272)
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -161,7 +165,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 96;
-export const SLOT_STRIDE_BYTES = 256;
+export const SLOT_STRIDE_BYTES = 288;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
@@ -204,8 +208,8 @@ struct Slot {
   postX: vec4f,
   postY: vec4f,
   postZ: vec4f,
-  varWeights: array<vec4f, 4>,
-  varTypes: array<vec4u, 4>,
+  varWeights: array<vec4f, 5>,
+  varTypes: array<vec4u, 5>,
   varCount: u32,
   hasPost: u32,
   cumWeight: f32,
@@ -339,6 +343,28 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
     }
     case 15u: { // qsquare — quaternion square on w = 0; p.x is the real part.
       return vec3f(p.x * p.x - p.y * p.y - p.z * p.z, 2.0 * p.x * p.y, 2.0 * p.x * p.z);
+    }
+    case 16u: { // bulb — White/Nylander triplex 8th power, z the polar axis.
+      // variations.ts's triplexPow8 term for term: Chebyshev T8/U7 in z/r
+      // (homogenised) for the polar angle, three complex squarings for the
+      // azimuth. No trig, so no acos/atan2 in the inner loop.
+      let a = p.x * p.x + p.y * p.y;
+      let r2 = a + p.z * p.z;
+      let z2 = p.z * p.z;
+      let r4 = r2 * r2;
+      let zOut = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 + 160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+      let s = 128.0 * z2 * z2 * z2 * p.z - 192.0 * z2 * z2 * p.z * r2 + 80.0 * z2 * p.z * r4 - 8.0 * p.z * r4 * r2;
+      let rho = sqrt(a);
+      let inv = select(0.0, 1.0 / rho, rho > 0.0);
+      let u1 = p.x * inv;
+      let v1 = p.y * inv;
+      let u2 = u1 * u1 - v1 * v1;
+      let v2 = 2.0 * u1 * v1;
+      let u4 = u2 * u2 - v2 * v2;
+      let v4 = 2.0 * u2 * v2;
+      let u8 = u4 * u4 - v4 * v4;
+      let v8 = 2.0 * u4 * v4;
+      return vec3f(rho * s * u8, rho * s * v8, zOut);
     }
     default: {
       return p;
@@ -493,7 +519,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 64.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 72.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -501,27 +527,27 @@ const SLOT_POST_X = 12;
 const SLOT_POST_Y = 16;
 const SLOT_POST_Z = 20;
 /**
- * `varWeights: array<vec4f, 4>` — 16 lanes of storage, all 16 used (one per
+ * `varWeights: array<vec4f, 5>` — 20 lanes of storage, 17 used (one per
  * {@link VariationType}). A storage-buffer
  * `array<vec4, N>` has no inter-element padding (each `vec4` is already
- * 16-byte aligned, exactly its own size), so 4 consecutive vec4s are 16
+ * 16-byte aligned, exactly its own size), so 5 consecutive vec4s are 20
  * CONTIGUOUS elements and lane `v` sits at `SLOT_VAR_WEIGHTS + v` directly —
  * matching the WGSL side's `varWeights[v >> 2u][v & 3u]` (vec4 index `v / 4`,
  * component `v % 4`, which is exactly linear index `v` again once the array
  * is flattened).
  */
 const SLOT_VAR_WEIGHTS = 24;
-/** `varTypes: array<vec4u, 4>` — same contiguous-lane reasoning as {@link SLOT_VAR_WEIGHTS}. */
-const SLOT_VAR_TYPES = 40;
-const SLOT_VAR_COUNT = 56;
-const SLOT_HAS_POST = 57;
-const SLOT_CUM_WEIGHT = 58;
+/** `varTypes: array<vec4u, 5>` — same contiguous-lane reasoning as {@link SLOT_VAR_WEIGHTS}. */
+const SLOT_VAR_TYPES = 44;
+const SLOT_VAR_COUNT = 64;
+const SLOT_HAS_POST = 65;
+const SLOT_CUM_WEIGHT = 66;
 /** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across its
  * kaleidoscope copies (see {@link packGpuSystem}) — the kernel's structural
  * walk reads them straight off the picked slot. */
-const SLOT_COLOR_INDEX = 59;
-const SLOT_COLOR_SPEED = 60;
-// Elements 61-63 are Slot's trailing pad, left at the ArrayBuffer's zero
+const SLOT_COLOR_INDEX = 67;
+const SLOT_COLOR_SPEED = 68;
+// Elements 69-71 are Slot's trailing pad, left at the ArrayBuffer's zero
 // default.
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.

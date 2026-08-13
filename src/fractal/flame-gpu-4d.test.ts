@@ -55,7 +55,7 @@ function baseSpec4(
 // flame-gpu-4d.ts's byte-layout doc comment (byte offset / 4) — independent
 // of that module's own (private) offset constants, so a mistake in the
 // implementation could not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 76
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 84
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
@@ -65,18 +65,18 @@ const POST_X = 20; // byte 80
 const POST_Y = 24; // byte 96
 const POST_Z = 28; // byte 112
 const POST_W = 32; // byte 128
-const VAR_WEIGHTS = 36; // byte 144, array<vec4f, 4>
-const VAR_TYPES = 52; // byte 208, array<vec4u, 4>
-const VAR_COUNT = 68; // byte 272
-const HAS_POST = 69; // byte 276
-const CUM_WEIGHT = 70; // byte 280
-const COLOR_INDEX = 71; // byte 284
-const COLOR_SPEED = 72; // byte 288
+const VAR_WEIGHTS = 36; // byte 144, array<vec4f, 5>
+const VAR_TYPES = 56; // byte 224, array<vec4u, 5>
+const VAR_COUNT = 76; // byte 304
+const HAS_POST = 77; // byte 308
+const CUM_WEIGHT = 78; // byte 312
+const COLOR_INDEX = 79; // byte 316
+const COLOR_SPEED = 80; // byte 320
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(208);
-    expect(SLOT4_STRIDE_BYTES).toBe(304);
+    expect(SLOT4_STRIDE_BYTES).toBe(336);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
