@@ -54,6 +54,7 @@ import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
 import { SurfaceGridClient } from "./surface-grid-client";
+import type { SurfaceGrid } from "../fractal/surface-grid";
 import type {
   SurfaceGridRequest,
   SurfaceGridResult,
@@ -2048,6 +2049,19 @@ function main(): void {
   // outstanding id, so a late build can never land on the wrong system.
   // Unlike the cloud there is NO sync fallback — a lost worker just means
   // gridless (correct, slower) marching, and the client stays quiet.
+  //
+  // A build that lands while a capture owns the tracer waits here first
+  // (fr-p0mr): the grid is a live uniform write, and a capture's frame is
+  // traced across many task turns.
+  let pendingSurfaceGrid: SurfaceGrid | null = null;
+  const applySurfaceGrid = (grid: SurfaceGrid): void => {
+    scene.setSurfaceGrid(grid);
+    // The tier loop treats this like any other invalidation: re-preview,
+    // then re-settle — now with the faster march. An in-flight settle
+    // job is superseded the same frame, so its gridless strips never mix
+    // with grid-assisted ones on screen.
+    scene.invalidate();
+  };
   const surfaceGrid = new SurfaceGridClient({
     createWorker: (onResult, onError) => {
       if (typeof Worker === "undefined") return null;
@@ -2072,12 +2086,18 @@ function main(): void {
       };
     },
     onGrid: (grid) => {
-      scene.setSurfaceGrid(grid);
-      // The tier loop treats this like any other invalidation: re-preview,
-      // then re-settle — now with the faster march. An in-flight settle
-      // job is superseded the same frame, so its gridless strips never mix
-      // with grid-assisted ones on screen.
-      scene.invalidate();
+      // A capture owns the tracer's uniforms for the whole of its drain
+      // (fr-p0mr). Uploading a grid mid-drain keeps the SURFACE identical
+      // — the floors are conservative either way — but changes the
+      // march-step/skip-cap regime (fr-z70m's erosion class) partway down
+      // the frame, so rows traced before the upload sample it differently
+      // from rows traced after. Hold it for the tick that owns the
+      // uniforms again; the export is the only thing waiting on them.
+      if (scene.surfaceCaptureBusy) {
+        pendingSurfaceGrid = grid;
+        return;
+      }
+      applySurfaceGrid(grid);
     },
     onError: (error) => {
       console.warn(
@@ -6508,13 +6528,31 @@ function main(): void {
         // resumes it on exit. The panel hides the tumble controls
         // in-mode (ui.ts's syncFourDViewRows).
         if (fourDTween.active) advanceFourDPose(dt4);
-        scene.setSurface4View(
-          fourDView.matrix(),
-          fourDView.sliceCenter,
-          // fr-rsp6: sessions whose fold set breaks segment exactness
-          // clamp the fr-wa6o thickness to 0 (the row is hidden too).
-          surface4SlabExact ? fourDView.sliceThickness : 0,
-        );
+        // A capture owns the tracer's uniforms (fr-p0mr): pushing a live
+        // rotor/w-slice between two pump calls of a drain would trace the
+        // frame's remaining rows at a DIFFERENT hyperplane from the ones
+        // already written, and the export would be a PNG split across two
+        // poses. The pose itself keeps advancing — a timeline leg runs on
+        // an absolute schedule, so pausing it here would desync every leg
+        // after it — and only the PUSH waits; the first tick past the
+        // export sends whatever pose the glide actually reached.
+        if (!surfaceCaptureFlight) {
+          scene.setSurface4View(
+            fourDView.matrix(),
+            fourDView.sliceCenter,
+            // fr-rsp6: sessions whose fold set breaks segment exactness
+            // clamp the fr-wa6o thickness to 0 (the row is hidden too).
+            surface4SlabExact ? fourDView.sliceThickness : 0,
+          );
+        }
+      }
+      // A grid the worker delivered while a capture held the tracer
+      // (fr-p0mr) lands on the first tick that owns the uniforms again —
+      // before this frame's arms, so nothing traces half-gridded.
+      if (!surfaceCaptureFlight && pendingSurfaceGrid !== null) {
+        const grid = pendingSurfaceGrid;
+        pendingSurfaceGrid = null;
+        applySurfaceGrid(grid);
       }
       if (surfaceSession.hasFirstFrame) {
         // The interaction tier split (fr-5ne3; strips fr-sjff): an
