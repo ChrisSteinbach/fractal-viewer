@@ -561,15 +561,24 @@ and UI**, so the interesting math is unit-tested without a browser:
     drain in 2.5s (main: 4.3s parked, 6.8s after a drag), byte-identical
     image. `scripts/capture-export.verify.mjs` is that gate;
     `scripts/capture-drain.verify.mjs` is the measurement harness beside it.
-    Cost ceilings unchanged (fr-id9r): measured evidence predicts the frame up
+    Cost ceilings are the SYNCHRONOUS drain's alone since fr-avf6 — offline
+    export and thumbnails, the callers that freeze the tab for a frame's
+    whole duration and offer no way to stop it. There, measured evidence
+    predicts the frame up
     front — never the class prior, which would refuse every fold export
     sight unseen — and refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS`
     (120s); the drain itself aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS`
-    (60s) of real spend; both throw `SurfaceCaptureCostError` — save-PNG
-    toasts it, the offline exporter fails the run, the thumbnail path falls
+    (60s) of real spend; both throw `SurfaceCaptureCostError` — the offline
+    exporter fails the run, the thumbnail path falls
     back to the explorer render. The ceiling's currency changed meaning with
     the drain: `spentMs` is batch-attributed busy wall with the sync tax
     subtracted, so the same 60s now buys tracing where it used to buy joins.
+    The INTERACTIVE Save-PNG is refused nothing. Its modal discloses
+    measured coverage, its Cancel works, and the drain yields — so a
+    prediction (measured ~4x high) deciding for the user is the
+    patience-guessing fr-zx34 already reverted for the preview tier, one
+    render mode over, and its WebGPU arm had never done it anyway. "Render
+    anyway" went with the refusal it escalated past.
     Capture observations raise-only into the
     evidence chain without killing it — the pose hasn't moved, so live
     settle/preview evidence stays valid, and the drain's export-scale
@@ -598,8 +607,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     honest coverage and the user decides; at true monsters the preview may
     grind minutes, settle never arming, safely (120/120 pings, 0s stalled
     — the bounded-strip pump, not truncation, carries safety). Save-PNG's
-    refusals gained the "Render anyway" opt-in (300s consented
-    backstop). Measured A/B (Iris, real driver, `?surfacegl`): lens-system
+    refusals gained the "Render anyway" opt-in (300s consented backstop),
+    and fr-avf6 later retired both: once the export modal disclosed coverage
+    and Cancel worked, the refusal was guessing at a patience the user was
+    already expressing. Measured A/B (Iris, real driver, `?surfacegl`): lens-system
     settle 2.5s vs main's 3.2s (total-to-settled 6.8s vs 7.4s), boxfold-pair
     settle 0.2s, escape 45ms — at full safety caps, kernel-silent through
     every monster run. The settle always ARMS, however expensive the frame —

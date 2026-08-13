@@ -83,7 +83,6 @@ import {
   type ExportImage,
   FOUR_D_SLICE_WIDTH,
   FractalScene,
-  SURFACE_CAPTURE_PREDICT_CEILING_MS,
   SurfaceCaptureCostError,
 } from "./scene";
 import { attachInteractions } from "./interactions";
@@ -3443,10 +3442,7 @@ function main(): void {
    * shows the explorer, so the export honestly captures that instead —
    * the same fr-75sq discipline as onSaveToCollection's thumbnail.
    */
-  function planPngExport(
-    scale: number,
-    liftCostCeilings: boolean,
-  ): PngExportPlan {
+  function planPngExport(scale: number): PngExportPlan {
     if (state.renderMode === "surface" && surfaceSession.hasFirstFrame) {
       const size = scene.exportSize(scale);
       const dims = `${String(size.width)} × ${String(size.height)}`;
@@ -3466,24 +3462,16 @@ function main(): void {
           capture: (run) => captureSurfaceComputePng(renderer, scale, run),
         };
       }
-      const predictedMs = scene.predictSurfaceCaptureMs(scale);
-      // A prediction past the export ceiling is about to be REFUSED
-      // outright (fr-id9r) — an instant rejection, not a long trace. Hand
-      // the modal null instead, so the grace period swallows the run and
-      // the refusal toast arrives on its own rather than behind a modal
-      // that flashed for a single frame.
-      const refusedUpFront =
-        !liftCostCeilings &&
-        predictedMs !== null &&
-        predictedMs > SURFACE_CAPTURE_PREDICT_CEILING_MS;
       return {
         detail: `${dims} · WebGL`,
-        predictedMs: refusedUpFront ? null : predictedMs,
+        // Used for ONE thing: whether the modal skips its grace period and
+        // shows at once. Nothing is refused on it (fr-avf6) — the WebGL arm
+        // traces and discloses exactly like the WebGPU one above.
+        predictedMs: scene.predictSurfaceCaptureMs(scale),
         cancellable: true,
         holdsSurfaceTracer: true,
         capture: (run) =>
           scene.captureSurfaceFrame(scale, {
-            liftCostCeilings,
             onProgress: (fraction) => {
               run.report(fraction);
             },
@@ -3544,17 +3532,14 @@ function main(): void {
   }
 
   /**
-   * Capture a still behind the export modal (fr-7mfx). `liftCostCeilings`
-   * is save-PNG's consented retry (fr-24to) — it re-enters through this
-   * same function, so the escalation the user agreed to is disclosed the
-   * way the first attempt was, which is exactly when disclosure matters
-   * most.
+   * Capture a still behind the export modal (fr-7mfx): the modal discloses
+   * measured coverage, Cancel stops the work, and nothing else decides
+   * when an export has gone on long enough (fr-avf6 — the surface arms
+   * carry no cost ceiling, so there is no refusal to escalate past and no
+   * consented retry to disclose).
    */
-  async function savePng(
-    scale: number,
-    liftCostCeilings: boolean,
-  ): Promise<void> {
-    const plan = planPngExport(scale, liftCostCeilings);
+  async function savePng(scale: number): Promise<void> {
+    const plan = planPngExport(scale);
     const run = exportProgress.begin({
       title: "Saving PNG",
       detail: plan.detail,
@@ -3584,27 +3569,15 @@ function main(): void {
         ui.flashToast("Export cancelled");
         return;
       }
-      // The surface cost ceiling refusing a monster-pose trace (fr-id9r)
-      // carries its own user-presentable message; anything else is the
-      // generic encode failure.
-      if (!(err instanceof SurfaceCaptureCostError)) {
-        ui.flashToast("Couldn't encode the PNG");
-        return;
-      }
-      // The capture escalation verdict (fr-24to): the predict refusal is
-      // user-overridable (measured ~4x overprediction), the raised spend
-      // ceiling is not — so a retry that trips it offers no further
-      // action, a single escalation level.
+      // No surface arm refuses on cost any more (fr-avf6), so anything
+      // reaching here is a genuine failure. A SurfaceCaptureCostError
+      // still carries a user-presentable message — only the synchronous
+      // drain raises one now, which this path cannot reach, but honouring
+      // the message costs nothing and beats swallowing it.
       ui.flashToast(
-        err.message,
-        liftCostCeilings
-          ? undefined
-          : {
-              label: "Render anyway",
-              onAction: () => {
-                void savePng(scale, true);
-              },
-            },
+        err instanceof SurfaceCaptureCostError
+          ? err.message
+          : "Couldn't encode the PNG",
       );
     } finally {
       surfaceCaptureFlight = false;
@@ -5781,7 +5754,7 @@ function main(): void {
       // Recording pins 1x: a hi-res capture resizes the shared canvas
       // mid-stream, which MediaRecorder capture doesn't survive (the flame
       // branch never resizes, so it's exempt).
-      void savePng(recorderActive ? 1 : state.exportScale, false);
+      void savePng(recorderActive ? 1 : state.exportScale);
     },
     onExportCancel: () => {
       exportProgress.requestCancel();

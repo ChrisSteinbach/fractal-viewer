@@ -3454,10 +3454,7 @@ export class FractalScene {
    * this device actually manages on this system — and only preview frames
    * are sampled, never the settle or capture paths.
    */
-  renderSurface(
-    tier: RenderTier = "full",
-    opts?: { liftCostCeilings?: boolean },
-  ): void {
+  renderSurface(tier: RenderTier = "full"): void {
     // A yielding capture owns the target and the frozen full-tier uniforms
     // (fr-7mfx). main.ts's tick already stands aside on
     // {@link surfaceCaptureBusy}; leaving renderNeeded set means the
@@ -3498,17 +3495,19 @@ export class FractalScene {
     // refuses up front when measured evidence predicts past the export
     // ceiling (checked before any live job is disturbed), and the drain
     // below aborts when an unpredicted pose lies. Both throw
-    // {@link SurfaceCaptureCostError}; callers own the surface (save-PNG
-    // toast, offline "Export failed", thumbnail's explorer fallback).
-    // Save-PNG's opt-in retry (fr-24to) lifts the predict ceiling and
-    // raises the spend ceiling — consent replaces prediction, the
-    // backstop stays.
+    // {@link SurfaceCaptureCostError}; callers own the surface (offline
+    // "Export failed", thumbnail's explorer fallback). This is where the
+    // ceilings live NOW and only here (fr-avf6): these callers freeze the
+    // tab for the frame's whole duration and offer no way to stop it, so a
+    // predicted monster has to be refused for them. The interactive
+    // Save-PNG has a modal, a percentage and a Cancel, so it is refused
+    // nothing — see {@link captureSurfaceFrame}.
     const totalPx = size.x * size.y;
-    const arm = this.beginSurfaceFullFrame(size.x, size.y, opts);
+    const arm = this.beginSurfaceFullFrame(size.x, size.y, true);
     const completed = this.drainStripsSync(
       arm.job,
       this.surfaceSettleTarget,
-      surfaceCaptureSpendCeilingMs(opts),
+      SURFACE_CAPTURE_SPEND_CEILING_MS,
     );
     this.finishSurfaceFullFrame(arm, totalPx, completed ? "done" : "ceiling");
     this.blitSurface(this.surfaceSettleTarget.texture, null);
@@ -3530,16 +3529,22 @@ export class FractalScene {
    * {@link setSurfaceFrameUniforms} snapshots the camera into uniforms and
    * nothing after it reads the camera again.
    *
-   * Throws {@link SurfaceCaptureCostError} on the predict ceiling —
-   * deliberately BEFORE any live job is disturbed, so a refused export
-   * leaves the pane exactly as it was.
+   * `costCeilings` is the fr-avf6 split. The SYNCHRONOUS callers pass true:
+   * offline export and thumbnails run with nobody watching and no way to
+   * interrupt a frame, so a predicted monster is refused here — BEFORE any
+   * live job is disturbed, so a refused export leaves the pane exactly as
+   * it was — with {@link SurfaceCaptureCostError}. The interactive capture
+   * passes false and is never refused: it has a modal disclosing measured
+   * coverage and a Cancel that works, which is a better answer than a
+   * prediction that over-predicts ~4x, and the same button already behaves
+   * that way on the WebGPU arm.
    */
   private beginSurfaceFullFrame(
     width: number,
     height: number,
-    opts?: { liftCostCeilings?: boolean },
+    costCeilings: boolean,
   ): SurfaceFullFrameArm {
-    if (!opts?.liftCostCeilings) {
+    if (costCeilings) {
       const predictedMs = this.predictSurfaceFullCostMs(width * height);
       if (
         predictedMs !== null &&
@@ -3587,8 +3592,9 @@ export class FractalScene {
   /**
    * Retire a full-tier job and record what it taught. The shared tail of
    * {@link renderSurface} and {@link captureSurfaceFrame}; throws
-   * {@link SurfaceCaptureCostError} on the spend ceiling, and the caller
-   * surfaces the refusal.
+   * {@link SurfaceCaptureCostError} on the spend ceiling, which only the
+   * synchronous drain can reach (fr-avf6), and the caller surfaces the
+   * refusal.
    *
    * A frame that did not finish teaches nothing about its own cost — a
    * partial's per-pixel figure understates a frame whose expensive rows
@@ -3596,9 +3602,11 @@ export class FractalScene {
    * a 100-1000x band) that under-predicting is the direction that freezes
    * a tab. But the evidence the ARMING threw away is still good: the pose
    * has not moved, so what priced this view a moment ago prices it now.
-   * Restoring it keeps a cancelled export from sending the next one to
-   * the preview fallback's ~5x over-prediction, where the predict ceiling
-   * can refuse work the user just watched running (fr-7mfx).
+   * Restoring it keeps a cancelled export from sending the next one to the
+   * preview fallback's ~5x over-prediction (fr-7mfx) — which since fr-avf6
+   * decides only whether the modal skips its grace period for an
+   * interactive save, but still decides whether a thumbnail or an offline
+   * frame is refused outright.
    */
   private finishSurfaceFullFrame(
     arm: SurfaceFullFrameArm,
@@ -4690,12 +4698,14 @@ export class FractalScene {
    * ({@link joinStripQueue}) — the wait it has instead of a yield.
    *
    * Tolerate is not "forever" (fr-id9r): a monster fold pose prices a frame
-   * in hours of frozen tab, so past `spendCeilingMs`
-   * ({@link SURFACE_CAPTURE_SPEND_CEILING_MS}, or save-PNG's consented
-   * lifted one, fr-24to) of measured spend the drain gives up and returns
-   * false — the caller surfaces the refusal. Giving up winds the queue down
-   * first (see {@link windDownStrips} for why the fences cannot simply be
-   * left behind).
+   * in hours of frozen tab, and THIS drain really does freeze it — its
+   * callers have no modal, no percentage and no Cancel — so past
+   * `spendCeilingMs` ({@link SURFACE_CAPTURE_SPEND_CEILING_MS}) of measured
+   * spend it gives up and returns false, and the caller surfaces the
+   * refusal. The yielding drain, which has all three, is bounded by the
+   * user instead (fr-avf6). Giving up winds the queue down first (see
+   * {@link windDownStrips} for why the fences cannot simply be left
+   * behind).
    */
   private drainStripsSync(
     job: SurfaceStripJob,
@@ -4746,11 +4756,18 @@ export class FractalScene {
    * monster fold pose single crease pixels have measured 1.7-3.1s): a
    * cancel is observed within a tick even while such a strip executes.
    * What a cancel still waits for is the queue it already submitted.
+   *
+   * There is no spend ceiling here (fr-avf6). This drain runs exactly as
+   * long as the user lets it: `cancelled` is the stop, `onProgress` is the
+   * basis they stop on, and an abort the app decided for itself would be
+   * the same patience-guessing fr-zx34 reverted for the preview tier — and
+   * worse timed, since it would arrive after a minute of watching a
+   * percentage climb. {@link drainStripsSync} keeps its ceiling: its
+   * callers have neither a percentage nor a Cancel.
    */
   private async drainStripsAsync(
     job: SurfaceStripJob,
     target: THREE.WebGLRenderTarget,
-    spendCeilingMs: number,
     hooks: {
       onProgress?: (fraction: number) => void;
       cancelled?: () => boolean;
@@ -4759,9 +4776,6 @@ export class FractalScene {
     for (;;) {
       if (this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS).done) {
         return "done";
-      }
-      if (job.spentMs > spendCeilingMs) {
-        return this.windDownStrips(job, "ceiling");
       }
       hooks.onProgress?.(stripJobCoverage(job));
       await nextDrainTick();
@@ -4974,18 +4988,24 @@ export class FractalScene {
    * the drain never reads it again.
    *
    * `opts.onProgress` reports traced coverage in [0, 1]; `opts.cancelled`
-   * is polled at every yield and resolves the capture `null` — the caller
+   * is polled at every tick and resolves the capture `null` — the caller
    * knows it asked, so it owns the difference between "cancelled" and "the
-   * browser refused the encode". Rejects with
-   * {@link SurfaceCaptureCostError} when the frame's cost ceilings refuse
-   * the trace (fr-id9r); `opts.liftCostCeilings` is save-PNG's consented
-   * retry (fr-24to), passed only by the interactive save path — offline
-   * export and thumbnails keep the default ceilings and the sync drain.
+   * browser refused the encode".
+   *
+   * NO COST CEILING RUNS HERE (fr-avf6). fr-id9r's predict refusal and
+   * spend abort were written for a drain that froze the tab for its whole
+   * duration, where refusing was the only protection there was. This one
+   * yields, discloses measured coverage and stops the instant the user
+   * says so — so a refusal would only be the app guessing at a patience
+   * the user is already expressing, off a prediction measured to
+   * over-predict ~4x, on a button whose WebGPU arm has never refused
+   * anything. The ceilings stay where nobody is watching:
+   * {@link renderSurface}'s full tier, which offline export and thumbnails
+   * drain synchronously with no way to interrupt a frame.
    */
   async captureSurfaceFrame(
     exportScale = 1,
     opts?: {
-      liftCostCeilings?: boolean;
       onProgress?: (fraction: number) => void;
       cancelled?: () => boolean;
     },
@@ -4999,7 +5019,7 @@ export class FractalScene {
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
     const arm = this.withCenteredProjection(() =>
-      this.beginSurfaceFullFrame(width, height, opts),
+      this.beginSurfaceFullFrame(width, height, false),
     );
     this.surfaceCaptureFlight = true;
     let outcome: SurfaceDrainOutcome;
@@ -5007,15 +5027,14 @@ export class FractalScene {
       outcome = await this.drainStripsAsync(
         arm.job,
         this.surfaceSettleTarget,
-        surfaceCaptureSpendCeilingMs(opts),
         opts ?? {},
       );
     } finally {
       this.surfaceCaptureFlight = false;
     }
-    // Throws on "ceiling"; "cancelled" returns having restored the
-    // evidence the arming discarded, so the next export prices this pose
-    // from what already measured it rather than being refused outright.
+    // "cancelled" returns having restored the evidence the arming
+    // discarded, so the next export prices this pose from what already
+    // measured it.
     this.finishSurfaceFullFrame(arm, width * height, outcome);
     if (outcome === "cancelled") return null;
     // A viewport resize during the drain leaves the traced target and the
@@ -5188,8 +5207,10 @@ const SURFACE_PREVIEW_STRIP_TARGET_MS = 12;
  * never feel it; post-discovery monster poses pin to ~one strip in
  * flight, which a 3s crease strip saturates anyway. */
 const SURFACE_STRIP_QUEUE_WORST_MS = STRIP_WORST_CASE_CAP_MS;
-/** Predicted-cost ceiling (ms) past which a full-tier sync frame
- * REFUSES up front (fr-id9r). Prediction uses measured evidence only —
+/** Predicted-cost ceiling (ms) past which a full-tier SYNCHRONOUS frame
+ * REFUSES up front (fr-id9r; sync-only since fr-avf6 — the interactive
+ * capture discloses and lets the user stop it instead of predicting for
+ * them). Prediction uses measured evidence only —
  * a completed settle's whole-frame cost, else the completed preview's
  * scaled by the tier gap; never the fold-class prior, which is
  * probe-sizing pessimism ~100x past typical fold pixels and would
@@ -5206,17 +5227,10 @@ export const SURFACE_CAPTURE_PREDICT_CEILING_MS = 120_000;
  * the frame's bounded-submission-but-hours-long duration. A minute of
  * genuine grind is the tolerated worst case — long enough for every
  * legitimately expensive export measured to date, short enough that a
- * user (or the browser's hang detector) still owns the tab. */
+ * user (or the browser's hang detector) still owns the tab. The yielding
+ * capture drain has no equivalent (fr-avf6): nothing about it is frozen,
+ * so the tab is the user's throughout and Cancel is the backstop. */
 const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
-/** The consented spend backstop (ms) behind save-PNG's "Render anyway"
- * (fr-24to): the predict ceiling is the user-overridable half (its
- * refusals overpredict ~4x, fr-096u), but a runaway drain still aborts —
- * 5x the default ceiling covers the honest just-past-refusal band
- * without letting a true monster freeze the tab indefinitely. Single
- * escalation level: the opt-in retry that trips THIS ceiling refuses
- * for good. */
-const SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS = 300_000;
-
 /** Pacing floor (ms) for the yielding capture drain's hand-back when the
  * page is HIDDEN (fr-y6m0) — see {@link nextDrainTick}. A visible page
  * paces on rAF, which leaves the main thread genuinely idle between polls;
@@ -5257,16 +5271,6 @@ interface SurfaceFullFrameArm {
    * `abandonSurfaceSettle` cleared it. Restored when the frame does not
    * complete — see {@link FractalScene.finishSurfaceFullFrame}. */
   priorPxCostMs: number | null;
-}
-
-/** The drain's spend backstop for this frame: save-PNG's consented retry
- * (fr-24to) raises it, everything else keeps the default. */
-function surfaceCaptureSpendCeilingMs(opts?: {
-  liftCostCeilings?: boolean;
-}): number {
-  return opts?.liftCostCeilings
-    ? SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS
-    : SURFACE_CAPTURE_SPEND_CEILING_MS;
 }
 
 /** The `prevMs` the planner's next sizing call gets: the estimate in the
@@ -5364,10 +5368,11 @@ async function spinYieldToEventLoop(ms: number): Promise<void> {
 
 /** Thrown by {@link FractalScene.renderSurface}'s full tier when a
  * frame's predicted or measured cost crosses the export ceilings
- * (fr-id9r) — the tab-freeze guard for capture, offline export, and
- * thumbnails. The message is user-presentable; callers own the surface:
- * save-PNG toasts it, the offline exporter fails the run with it, the
- * thumbnail path falls back to the explorer render. */
+ * (fr-id9r) — the tab-freeze guard for the callers that really do freeze
+ * the tab: offline export, which fails the run with it, and thumbnails,
+ * which fall back to the explorer render. The message is
+ * user-presentable. The interactive Save-PNG raises it no longer
+ * (fr-avf6). */
 export class SurfaceCaptureCostError extends Error {}
 
 /** "~Ns of GPU" / "~N min of GPU" / "~N hr of GPU" for
