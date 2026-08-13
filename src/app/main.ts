@@ -6705,18 +6705,43 @@ function main(): void {
             scene.needsRender || surfaceWebglPreviewPending,
           );
           if (tier === "preview") {
-            surfaceWebglPreviewPending = false;
             scene.abandonSurfaceSettle();
             surfaceSettled = false;
             surfaceSettlePending = false;
-            if (surfacePreviewsEnabled) {
-              scene.renderSurface("preview");
-            } else {
+            if (!surfacePreviewsEnabled) {
               // Previews off (fr-37c6): the pane freezes on its last
               // frame while the view moves — consume the invalidation so
               // the tier clock can quiet, and let the settle below
               // develop the new pose over the held image once it fires.
+              surfaceWebglPreviewPending = false;
               scene.clearRenderNeeded();
+            } else if (scene.surfacePreviewActive) {
+              // Latest-wins COALESCING (fr-nl32) — kickSurfaceComputePreview's
+              // rule, which the strip path never got. renderSurface("preview")
+              // ARMS a fresh job, discarding the in-flight one's partial, so
+              // on a renderer where a preview spans frames every invalidation
+              // killed the job before it could present: a continuous drag
+              // painted NOTHING for its whole duration, while the row read
+              // "Preview · WebGL 0%" and previewActive stayed true (measured
+              // under SwiftShader at 100ms move cadence: 6s of drag, the
+              // canvas byte-identical at every 300ms sample — the tier's
+              // "every move traces a quick preview" promise delivering the
+              // opposite of a preview).
+              //
+              // Step the job instead and leave the invalidation LATCHED —
+              // nothing but the arm below consumes scene.needsRender — so the
+              // next job arms at the freshest camera, exactly as the compute
+              // loop re-reads its `pending` after each completed frame. Pose
+              // coherence is free here: armSurfacePreview snapshots the
+              // camera into uniforms (setSurfaceFrameUniforms), so a job that
+              // spans frames traces ONE pose rather than tearing across the
+              // gesture. A device that finishes a preview inside its arming
+              // call — every healthy GPU on a fold-free system — never
+              // reaches this branch, and behaves exactly as before.
+              scene.stepSurfacePreview();
+            } else {
+              surfaceWebglPreviewPending = false;
+              scene.renderSurface("preview");
             }
           } else {
             // The settle verdict fires on the tier clock, but on systems

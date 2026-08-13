@@ -643,7 +643,24 @@ and UI**, so the interesting math is unit-tested without a browser:
     `scripts/surface-preview-completion.verify.mjs` is that gate, Firefox-
     shaped by necessity: Chrome's preview completes inside the budget, so
     the bug is device-speed-dependent (slow adapters, software devices,
-    big viewports), never browser-specific. Fold surface sessions also
+    big viewports), never browser-specific. The STRIP path had the mirror
+    hole (fr-nl32): `renderSurface("preview")` ARMS a fresh job, so
+    re-arming per invalidation discarded the in-flight partial, and on any
+    renderer where a preview spans frames the job died before it could
+    present — a continuous drag painted NOTHING for its whole duration
+    (measured under SwiftShader at a 100ms move cadence: 6s of drag, the
+    canvas byte-identical at every 300ms sample, the row stuck at
+    "Preview · WebGL 0%" with previewActive true throughout). main.ts's
+    tick now COALESCES like the compute loop: while a job is in flight an
+    invalidation steps it instead of re-arming, and stays latched in
+    `scene.needsRender` so the next arm takes the freshest camera.
+    Pose coherence is free — `armSurfacePreview` snapshots the camera into
+    uniforms, so a multi-frame job traces ONE pose — and a device that
+    completes a preview inside its arming call never reaches the branch.
+    `scripts/surface-tier.verify.mjs`'s mid-drag softness check is that
+    gate: it had been failing at jpeg ratio 0.99-1.00 (the mid-drag frame
+    was the SETTLED one, unchanged) and reads 0.83 with the coalescing.
+    Fold surface sessions also
     gate their first frame on `compileAsync` of the fold tracer program
     (~25s links happen off the critical path where the driver offers
     `KHR_parallel_shader_compile`; the compile mesh MUST mirror
