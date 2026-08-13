@@ -1708,6 +1708,91 @@ describe("Ui.renderTransformEditor", () => {
     expect(editorSliders()).toHaveLength(23);
   });
 
+  it("opens only Position for a flat transform (fr-64ku)", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
+
+    const open = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor details[open]",
+      ),
+    ].map((d) => d.querySelector("summary")?.textContent);
+    expect(open).toEqual(["Position"]);
+  });
+
+  it("groups every editor section under one exclusive disclosure name (fr-64ku)", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
+
+    // The eight top-level groups; the 4D sub-groups stay plain divs, since a
+    // second level of exclusivity inside 4D would close Position W to read
+    // Rotation W.
+    const names = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor > details",
+      ),
+    ].map((d) => d.getAttribute("name"));
+    expect(names).toHaveLength(8);
+    expect(new Set(names).size).toBe(1);
+  });
+
+  it("keeps the group the user opened when the selection changes (fr-64ku)", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
+
+    // jsdom implements neither the exclusive-name behaviour nor the implicit
+    // toggle event, so opening a group by hand is spelled out: the browser
+    // would close Position itself and fire both events.
+    const rotation = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor > details",
+      ),
+    ].find((d) => d.querySelector("summary")?.textContent === "Rotation");
+    rotation!.open = true;
+    rotation!.dispatchEvent(new Event("toggle"));
+
+    ui.renderTransformEditor(transforms[1], 1, transforms.length);
+
+    const open = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor details[open]",
+      ),
+    ].map((d) => d.querySelector("summary")?.textContent);
+    expect(open).toEqual(["Rotation"]);
+  });
+
+  it("falls back to Position when the remembered group has no final-transform counterpart (fr-64ku)", () => {
+    const transforms = defaultTransforms();
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(transforms[0], 0, transforms.length);
+
+    const color = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor > details",
+      ),
+    ].find((d) => d.querySelector("summary")?.textContent === "Color");
+    color!.open = true;
+    color!.dispatchEvent(new Event("toggle"));
+
+    // The final transform builds no Color group — a lens applied to every
+    // point has no per-map color — so the remembered choice cannot be honored.
+    ui.renderTransformEditor(transforms[0], "final", transforms.length);
+
+    const open = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor details[open]",
+      ),
+    ].map((d) => d.querySelector("summary")?.textContent);
+    expect(open).toEqual(["Position"]);
+  });
+
   it("shows the stored rotation radians as degrees", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -2358,9 +2443,13 @@ describe("Ui 4D group", () => {
   };
 
   function fourDDetails(): HTMLDetailsElement {
-    const details = document.querySelector<HTMLDetailsElement>(
-      "#transformEditor details",
-    );
+    // Every editor group is a <details> since fr-64ku, so this has to name the
+    // one it wants rather than take the first.
+    const details = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor details",
+      ),
+    ].find((d) => d.querySelector("summary")?.textContent === "4D");
     if (!details) throw new Error("No 4D <details> group in the editor");
     return details;
   }
@@ -5230,7 +5319,7 @@ describe("panel accordion sections (fr-zoi)", () => {
     expect(presets.open).toBe(false);
   });
 
-  it("keeps the editor's 4D disclosure out of the accordion group", () => {
+  it("keeps the editor's disclosures out of any enclosing accordion group", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(
@@ -5244,14 +5333,25 @@ describe("panel accordion sections (fr-zoi)", () => {
       1,
     );
 
-    const editorDetails = document.querySelector<HTMLDetailsElement>(
-      "#transformEditor details",
-    );
-    expect(editorDetails).not.toBeNull();
-    // The 4D group nests INSIDE the Transforms section; a details name group
-    // must not contain nested members, so sharing "panel-section" would hand
-    // browsers an invalid group (and the exclusivity would misfire).
-    expect(editorDetails?.getAttribute("name")).toBeNull();
+    const editorDetails = [
+      ...document.querySelectorAll<HTMLDetailsElement>(
+        "#transformEditor details",
+      ),
+    ];
+    expect(editorDetails.length).toBeGreaterThan(0);
+
+    // The editor's groups nest INSIDE the Transforms section, and a details
+    // name group must not contain nested members — sharing a name with any
+    // ancestor disclosure would hand browsers an invalid group and make the
+    // exclusivity misfire. fr-64ku gave the groups a name of their own, so
+    // assert the actual spec rule rather than "no name at all": no editor
+    // disclosure may share a name with a disclosure that contains it.
+    for (const details of editorDetails) {
+      const name = details.getAttribute("name");
+      expect(name).not.toBeNull();
+      const clash = details.parentElement?.closest(`details[name="${name}"]`);
+      expect(clash).toBeFalsy();
+    }
   });
 });
 

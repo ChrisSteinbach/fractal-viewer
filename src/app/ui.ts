@@ -411,6 +411,15 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
 
 const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale", "shear"];
 
+/** Shared `<details name>` for the transform editor's groups (fr-64ku), so
+ * opening one closes the rest — the same exclusive-accordion idiom the panel's
+ * outer sections use, one level in. */
+const EDITOR_GROUP_NAME = "transform-editor-group";
+
+/** The group a fresh selection opens when the user has expressed no
+ * preference and the transform is flat. */
+const DEFAULT_EDITOR_GROUP = "Position";
+
 /**
  * Deep-copy a transform's optional `w` extension (fr-bf6.3, see `types.ts`'s
  * `WExtension`) so the editor's mutable working copy and the transform's own
@@ -1184,6 +1193,19 @@ export class Ui {
   private sectionMode: RenderMode = "points";
 
   private editor: EditorState | null = null;
+
+  /**
+   * Session memory of which transform-editor group is open (fr-64ku). Every
+   * fresh selection restores it, so tuning Rotation across several transforms
+   * doesn't mean reopening the group at each one.
+   *
+   * `null` = the user has never chosen, which is where fr-bf6.3's rule still
+   * applies: a transform that already carries a `w` extension opens on "4D",
+   * so a system authored by preset or URL hash shows its 4D values instead of
+   * hiding them a click away. Once a choice exists it wins — the same "never
+   * fight a manual toggle mid-session" line that rule was written on.
+   */
+  private editorOpenGroup: string | null = null;
 
   /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3702,12 +3724,62 @@ export class Ui {
     }
   }
 
+  /**
+   * Create one collapsible editor group (fr-64ku). The editor measured 786px
+   * of the Transforms section's 1253px on a 393x727 phone — two and a half
+   * screens for one selected transform, and nearly every pixel of it a live
+   * slider a thumb has to cross to scroll past. Only one group is ever being
+   * edited at a time, so they collapse into an exclusive sub-accordion under
+   * one shared `name`.
+   *
+   * The 4D group (fr-bf6.3) was already exactly this shape; the other seven
+   * join it. Sharing the `name` is also what folds 4D's bespoke
+   * open-when-`w`-is-present rule into a single decision — under exclusivity
+   * at most one group can win, so the choice has to be made in one place
+   * ({@link buildEditor}) rather than per group.
+   */
+  private createEditorGroup(title: string, openGroup: string): HTMLElement {
+    const group = this.doc.createElement("details");
+    group.className = "editor-group";
+    // setAttribute, not `.name`: the property reached lib.dom later than the
+    // attribute reached browsers, and only the attribute drives exclusivity.
+    group.setAttribute("name", EDITOR_GROUP_NAME);
+    group.open = title === openGroup;
+
+    const summary = this.doc.createElement("summary");
+    summary.className = "editor-group-title";
+    summary.textContent = title;
+    group.appendChild(summary);
+
+    // Only opens are recorded. The exclusive accordion closes the outgoing
+    // group in the same turn, and reacting to that close would race the
+    // incoming group's own toggle for the last word.
+    group.addEventListener("toggle", () => {
+      if (group.open) this.editorOpenGroup = title;
+    });
+    return group;
+  }
+
   private buildEditor(
     transform: Transform,
     target: number | "final",
     transformCount: number,
   ): void {
     this.transformEditor.replaceChildren();
+
+    // The final transform omits Weight and Color (see below), so a remembered
+    // choice of either would build an editor with nothing open at all.
+    const remembered =
+      target === "final" &&
+      (this.editorOpenGroup === "Weight" || this.editorOpenGroup === "Color")
+        ? null
+        : this.editorOpenGroup;
+    // Resolved per build and deliberately NOT written back to
+    // `editorOpenGroup`: leaving the field null until a real user toggle keeps
+    // fr-bf6.3's rule alive for every 4D transform selected before then, not
+    // just the first one the session happens to build.
+    const openGroup =
+      remembered ?? (transform.w !== undefined ? "4D" : DEFAULT_EDITOR_GROUP);
 
     const heading = this.doc.createElement("h3");
     heading.className = "editor-title";
@@ -3740,13 +3812,7 @@ export class Ui {
 
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
-      const group = this.doc.createElement("div");
-      group.className = "editor-group";
-
-      const title = this.doc.createElement("div");
-      title.className = "editor-group-title";
-      title.textContent = spec.title;
-      group.appendChild(title);
+      const group = this.createEditorGroup(spec.title, openGroup);
 
       const axisLabels = spec.axisLabels ?? AXES;
       axisLabels.forEach((axisLabel, axis) => {
@@ -3798,7 +3864,9 @@ export class Ui {
     // The selection weight is meaningless for a lens applied to every point, so
     // the final transform's editor omits it.
     const weightControl =
-      target === "final" ? null : this.buildWeightControl(geometry.weight);
+      target === "final"
+        ? null
+        : this.buildWeightControl(geometry.weight, openGroup);
     // Color sits directly below Weight and above Variations (fr-hiyu): the
     // two per-map structural-color fields belong beside the other whole-map
     // property the chaos game reads when it PICKS this map, not among the
@@ -3812,14 +3880,15 @@ export class Ui {
             transformCount,
             geometry.colorIndex,
             geometry.colorSpeed,
+            openGroup,
           );
-    const { list, add } = this.buildVariationsGroup();
+    const { list, add } = this.buildVariationsGroup(openGroup);
     // Placed last (after Variations): a deliberate choice to leave the
     // existing layout for every ordinary (flat) transform undisturbed — this
     // is purely an opt-in extension appended at the end, always built (never
     // conditionally omitted) so add/remove/selection keep working uniformly
     // whether or not this transform (or system) is currently non-flat.
-    const fourD = this.buildFourDGroup(transform);
+    const fourD = this.buildFourDGroup(transform, openGroup);
 
     this.editor = {
       target,
@@ -3872,14 +3941,8 @@ export class Ui {
   }
 
   /** Build the single-value weight control in its own group below the axes. */
-  private buildWeightControl(weight: number): AxisControl {
-    const group = this.doc.createElement("div");
-    group.className = "editor-group";
-
-    const title = this.doc.createElement("div");
-    title.className = "editor-group-title";
-    title.textContent = "Weight";
-    group.appendChild(title);
+  private buildWeightControl(weight: number, openGroup: string): AxisControl {
+    const group = this.createEditorGroup("Weight", openGroup);
 
     const row = this.doc.createElement("div");
     row.className = "editor-row";
@@ -3952,14 +4015,9 @@ export class Ui {
     transformCount: number,
     colorIndex: number | undefined,
     colorSpeed: number | undefined,
+    openGroup: string,
   ): ColorControls {
-    const group = this.doc.createElement("div");
-    group.className = "editor-group";
-
-    const title = this.doc.createElement("div");
-    title.className = "editor-group-title";
-    title.textContent = "Color";
-    group.appendChild(title);
+    const group = this.createEditorGroup("Color", openGroup);
 
     // The two fields do not share one reach (fr-c6yd). Index also steers a
     // Surface render, but only under its Palette (orbit-trap) color source —
@@ -4054,17 +4112,11 @@ export class Ui {
    * the add-variation dropdown. Rows themselves are filled by
    * {@link renderVariationRows} once the editor state exists.
    */
-  private buildVariationsGroup(): {
+  private buildVariationsGroup(openGroup: string): {
     list: HTMLElement;
     add: HTMLSelectElement;
   } {
-    const group = this.doc.createElement("div");
-    group.className = "editor-group";
-
-    const title = this.doc.createElement("div");
-    title.className = "editor-group-title";
-    title.textContent = "Variations";
-    group.appendChild(title);
+    const group = this.createEditorGroup("Variations", openGroup);
 
     const list = this.doc.createElement("div");
     list.className = "variation-list";
@@ -4247,23 +4299,21 @@ export class Ui {
    * other editor interaction keeps working uniformly whether or not this
    * particular transform is currently non-flat.
    *
-   * `<details>`'s native open/closed state is the entire "collapsed by
-   * default" affordance: open only when `transform.w` is already present
-   * (regardless of whether it happens to be flat/trivial), so a system
-   * authored via preset or URL hash shows its 4D values immediately instead
-   * of hiding them a click away. Only {@link buildEditor} (a fresh selection)
-   * decides this — {@link syncFourDControls} never touches `.open`, so a
-   * user's manual toggle is never fought mid-session.
+   * This was the editor's only collapsible group until fr-64ku made all eight
+   * collapsible and exclusive, so the open/closed decision moved out to
+   * {@link buildEditor} — under one shared `name` only one group can win, and
+   * that has to be decided in one place. The rule this group contributed
+   * survives there: `transform.w` already present (flat/trivial or not) opens
+   * 4D, so a system authored via preset or URL hash shows its 4D values
+   * instead of hiding them a click away. Only a fresh selection decides —
+   * {@link syncFourDControls} never touches `.open`, so a user's manual
+   * toggle is never fought mid-session.
    */
-  private buildFourDGroup(transform: Transform): FourDControls {
-    const details = this.doc.createElement("details");
-    details.className = "editor-group";
-    details.open = transform.w !== undefined;
-
-    const summary = this.doc.createElement("summary");
-    summary.className = "editor-group-title";
-    summary.textContent = "4D";
-    details.appendChild(summary);
+  private buildFourDGroup(
+    transform: Transform,
+    openGroup: string,
+  ): FourDControls {
+    const details = this.createEditorGroup("4D", openGroup);
 
     const w = transform.w;
 
