@@ -192,8 +192,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     construction (escape+lens throws); the maps storage binding is NOT
     DECLARED for escape (hosts must skip buffer 1), width/sharedFrontier/
     bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
-    trap as the escape fraction (`escapedAt/maxDepth`, the canonical
-    Mandelbox palette coordinate) with rings/sheets over the orbit's
+    trap as the CONTINUOUS escape fraction (fr-7u8t.8: `escapedAt` minus
+    `log(r/R)/log(growth)`, over `maxDepth` — the raw integer count is a
+    step function of position and painted the real Mandelbox as palette
+    confetti; it looked fine only while the escape set was a blob with one
+    count everywhere — smoothed, it is the canonical Mandelbox palette
+    coordinate) with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
     `core:"affine4"` (fr-dlxh's 4D cut) is the refined ladder ONE
     DIMENSION UP — `surface-de-4d.ts`'s `estimateDistance4Refined`

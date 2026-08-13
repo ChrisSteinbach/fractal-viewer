@@ -959,7 +959,7 @@ uniform float uBalloonFar;
   }
 
   /** Hit-shading overload: the same loop, with the classic escape-time
-   * extras — trap is the escape fraction (the canonical Mandelbox palette
+   * extras — trap is the CONTINUOUS escape fraction (the canonical Mandelbox palette
    * coordinate), rings/sheets are the orbit's closest radial / y-plane
    * approaches, the same trap vocabulary the IFS variants feed the shared
    * color sources. firstChoice is always 0 (one map). */
@@ -999,7 +999,22 @@ uniform float uBalloonFar;
       rings = min(rings, r / uBoundingRadius);
       sheets = min(sheets, abs(v.y) / uBoundingRadius);
     }
-    trap = float(escapedAt) / float(uMaxDepth);
+    // fr-7u8t.8: the CONTINUOUS escape count, not the raw integer. escapedAt
+    // is a step function of position, so a palette over it lands adjacent
+    // pixels on unrelated colours — confetti, and the more so the finer the
+    // structure. Invisible while the escape set was a blob (one iteration
+    // count everywhere = one flat colour); the real Mandelbox shows it at
+    // once. The orbit leaves the bailout ball by a factor of about
+    // uEscParams.z per step, so how far PAST the radius it landed says where
+    // between two counts it really crossed: n - log(r/R)/log(growth). Guarded
+    // on having escaped at all (a bounded orbit has r <= R, which would add
+    // rather than subtract) and on a growth rate above 1 (below it nothing
+    // escapes, and log would flip the sign).
+    float escFrac = 0.0;
+    if (escapedAt < uMaxDepth && uEscParams.z > 1.0) {
+      escFrac = clamp(log(r / uBoundingRadius) / log(uEscParams.z), 0.0, 1.0);
+    }
+    trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     return r / dr;
