@@ -230,160 +230,170 @@
         </button>
       </div>
 
-      <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way
+      <!-- fr-vha5: the always-present document sections, packed as one chip
+           strip. Three strips exist rather than one because the mode wrappers
+           below own the display:none that gates a render mode's sections; see
+           the .section-strip block in style.css. -->
+      <div class="section-strip">
+        <!-- Capture vs Share (fr-5mdt): this section is PIXELS ONLY — one-way
            snapshots of what's on screen. The scene-document traffic (link,
            JSON file, .flame, import) lives in the Share section below. -->
-      <details class="panel-section" id="captureSection" name="panel-section">
-        <summary>Capture</summary>
-        <label class="select-label">
-          Capture size
-          <select
-            id="exportScale"
-            title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
-          >
-            <option value="1" selected>1× (screen)</option>
-            <option value="2">2×</option>
-            <option value="4">4× (print)</option>
-          </select>
-        </label>
-        <button class="btn btn-ghost" id="savePngBtn" type="button">
-          ⤓ Save PNG
-        </button>
-        <button class="btn btn-ghost" id="recordVideoBtn" type="button">
-          ● Record video
-        </button>
-      </details>
+        <details class="panel-section" id="captureSection" name="panel-section">
+          <summary>Capture</summary>
+          <label class="select-label">
+            Capture size
+            <select
+              id="exportScale"
+              title="Resolution Save PNG renders at, as a multiple of the screen — large sizes may be capped by this device. While a Flame render is active it re-renders at the chosen size."
+            >
+              <option value="1" selected>1× (screen)</option>
+              <option value="2">2×</option>
+              <option value="4">4× (print)</option>
+            </select>
+          </label>
+          <button class="btn btn-ghost" id="savePngBtn" type="button">
+            ⤓ Save PNG
+          </button>
+          <button class="btn btn-ghost" id="recordVideoBtn" type="button">
+            ● Record video
+          </button>
+        </details>
 
-      <!-- Share (fr-5mdt): the current scene as a portable DOCUMENT — link,
+        <!-- Share (fr-5mdt): the current scene as a portable DOCUMENT — link,
            JSON file, .flame interop — plus the app's one import door, which
            format-sniffs every file kind (scene JSON, .flame, collection and
            timeline backups; decodeImportFile routes). Outside
            #explorerControls like its neighbors (fr-75sq): all of it works
            while a flame/solid render is showing. -->
-      <details class="panel-section" id="shareSection" name="panel-section">
-        <summary>Share</summary>
-        <button class="btn btn-ghost" id="copyLinkBtn" type="button">
-          🔗 Copy link
-        </button>
-        <button
-          class="btn btn-ghost"
-          id="saveSceneFileBtn"
-          type="button"
-          title="Download the current scene as a JSON file — the file counterpart of 🔗 Copy link; load it back with ⬆ Import file on any device"
-        >
-          ⤓ Save scene file
-        </button>
-        <!-- flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a
+        <details class="panel-section" id="shareSection" name="panel-section">
+          <summary>Share</summary>
+          <button class="btn btn-ghost" id="copyLinkBtn" type="button">
+            🔗 Copy link
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="saveSceneFileBtn"
+            type="button"
+            title="Download the current scene as a JSON file — the file counterpart of 🔗 Copy link; load it back with ⬆ Import file on any device"
+          >
+            ⤓ Save scene file
+          </button>
+          <!-- flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a
              .flame file other flame tools can open. -->
-        <button
-          class="btn btn-ghost"
-          id="saveFlameFileBtn"
-          type="button"
-          title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) that other flame tools can open"
-        >
-          ⤓ Export .flame
-        </button>
-        <button
-          class="btn btn-ghost"
-          id="importFileBtn"
-          type="button"
-          title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into the gallery; you can also drop the file anywhere on the page"
-        >
-          ⬆ Import file
-        </button>
-        <input
-          type="file"
-          id="importFileInput"
-          class="hidden"
-          accept=".json,application/json,.flame,.xml,application/xml,text/xml"
-          aria-hidden="true"
-          tabindex="-1"
-        />
-        <p class="flame-hint">
-          Files also load by dropping them anywhere on the page.
-        </p>
-      </details>
+          <button
+            class="btn btn-ghost"
+            id="saveFlameFileBtn"
+            type="button"
+            title="Download the system as a flam3/Apophysis .flame file (its flat XY shadow) that other flame tools can open"
+          >
+            ⤓ Export .flame
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="importFileBtn"
+            type="button"
+            title="Load a scene file, a flam3/Apophysis .flame file, or a timeline backup — or merge a collection backup into the gallery; you can also drop the file anywhere on the page"
+          >
+            ⬆ Import file
+          </button>
+          <input
+            type="file"
+            id="importFileInput"
+            class="hidden"
+            accept=".json,application/json,.flame,.xml,application/xml,text/xml"
+            aria-hidden="true"
+            tabindex="-1"
+          />
+          <p class="flame-hint">
+            Files also load by dropping them anywhere on the page.
+          </p>
+        </details>
 
-      <!-- Outside #explorerControls on purpose (fr-75sq), like Capture: saving
+        <!-- Outside #explorerControls on purpose (fr-75sq), like Capture: saving
            a keeper / opening the gallery works while a flame/solid render is
            showing — the save then captures the rendered frame and tags the
            entry with the mode it came from. -->
-      <details
-        class="panel-section"
-        id="collectionSection"
-        name="panel-section"
-      >
-        <summary>Collection</summary>
-        <button class="btn btn-green" id="saveCollectionBtn" type="button">
-          ★ Save to collection
-        </button>
-        <button class="btn btn-ghost" id="galleryBtn" type="button">
-          ▦ Gallery (<span id="collectionCount">0</span>)
-        </button>
-        <!-- File backup (fr-de9t): the collection otherwise lives only in
+        <details
+          class="panel-section"
+          id="collectionSection"
+          name="panel-section"
+        >
+          <summary>Collection</summary>
+          <button class="btn btn-green" id="saveCollectionBtn" type="button">
+            ★ Save to collection
+          </button>
+          <button class="btn btn-ghost" id="galleryBtn" type="button">
+            ▦ Gallery (<span id="collectionCount">0</span>)
+          </button>
+          <!-- File backup (fr-de9t): the collection otherwise lives only in
              this browser profile's localStorage. Restore goes through the
              Share section's ⬆ Import file / drag-drop (fr-5mdt). -->
-        <button
-          class="btn btn-ghost"
-          id="exportCollectionBtn"
-          type="button"
-          title="Download the whole collection as a JSON backup file — restore it with Share's ⬆ Import file"
-        >
-          ⬇ Back up collection
-        </button>
-      </details>
+          <button
+            class="btn btn-ghost"
+            id="exportCollectionBtn"
+            type="button"
+            title="Download the whole collection as a JSON backup file — restore it with Share's ⬆ Import file"
+          >
+            ⬇ Back up collection
+          </button>
+        </details>
 
-      <!-- Animation timeline (fr-8v41): an authored sequence of keyframes played
+        <!-- Animation timeline (fr-8v41): an authored sequence of keyframes played
            back as a chain of morphs — the drift show's directed counterpart.
            Outside #explorerControls like Collection: adding a keyframe works from
            a flame/solid render too (the capture falls back to what's showing). -->
-      <details class="panel-section" id="timelineSection" name="panel-section">
-        <summary>Timeline</summary>
-        <button
-          class="btn btn-green"
-          id="timelineAddBtn"
-          type="button"
-          title="Capture the current view — system and camera — as the next keyframe"
+        <details
+          class="panel-section"
+          id="timelineSection"
+          name="panel-section"
         >
-          📍 Add keyframe
-        </button>
-        <button
-          class="btn btn-ghost"
-          id="timelinePlayBtn"
-          type="button"
-          aria-pressed="false"
-          title="Play the timeline: morph through the keyframes in order, with each one's own timings"
-        >
-          ▶ Play timeline
-        </button>
-        <button
-          class="btn btn-ghost"
-          id="timelineExportBtn"
-          type="button"
-          title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
-        >
-          ⏺ Export clip
-        </button>
-        <!-- File backup (fr-h9rk): the timeline otherwise lives only in this
+          <summary>Timeline</summary>
+          <button
+            class="btn btn-green"
+            id="timelineAddBtn"
+            type="button"
+            title="Capture the current view — system and camera — as the next keyframe"
+          >
+            📍 Add keyframe
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="timelinePlayBtn"
+            type="button"
+            aria-pressed="false"
+            title="Play the timeline: morph through the keyframes in order, with each one's own timings"
+          >
+            ▶ Play timeline
+          </button>
+          <button
+            class="btn btn-ghost"
+            id="timelineExportBtn"
+            type="button"
+            title="Play the timeline while recording the canvas — downloads a video clip when it finishes"
+          >
+            ⏺ Export clip
+          </button>
+          <!-- File backup (fr-h9rk): the timeline otherwise lives only in this
              browser profile's localStorage. Restore goes through the Share
              section's ⬆ Import file / drag-drop (fr-5mdt). -->
-        <button
-          class="btn btn-ghost"
-          id="exportTimelineBtn"
-          type="button"
-          title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it with Share's ⬆ Import file"
-        >
-          ⬇ Back up timeline
-        </button>
-        <div id="timelineStatus" class="timeline-status hidden"></div>
-        <div id="timelineList" class="timeline-list"></div>
-        <p id="timelineEmpty" class="timeline-empty">
-          📍 Add keyframe captures the current view. Build a sequence, then ▶
-          Play it — or ⏺ Export it as a video clip.
-        </p>
-      </details>
+          <button
+            class="btn btn-ghost"
+            id="exportTimelineBtn"
+            type="button"
+            title="Download the timeline as a JSON backup file — keyframes, timings, and the playback seed; restore it with Share's ⬆ Import file"
+          >
+            ⬇ Back up timeline
+          </button>
+          <div id="timelineStatus" class="timeline-status hidden"></div>
+          <div id="timelineList" class="timeline-list"></div>
+          <p id="timelineEmpty" class="timeline-empty">
+            📍 Add keyframe captures the current view. Build a sequence, then ▶
+            Play it — or ⏺ Export it as a video clip.
+          </p>
+        </details>
+      </div>
 
-      <div id="explorerControls">
+      <div id="explorerControls" class="section-strip">
         <details
           class="panel-section"
           id="transformsSection"
@@ -847,7 +857,7 @@
         </details>
       </div>
 
-      <div id="flameControls" class="hidden">
+      <div id="flameControls" class="section-strip hidden">
         <details
           class="panel-section"
           id="flameToneSection"
@@ -1006,7 +1016,7 @@
         </details>
       </div>
 
-      <div id="solidControls" class="hidden">
+      <div id="solidControls" class="section-strip hidden">
         <details
           class="panel-section"
           id="solidSurfaceSection"
@@ -1142,7 +1152,7 @@
         </details>
       </div>
 
-      <div id="surfaceControls" class="hidden">
+      <div id="surfaceControls" class="section-strip hidden">
         <details
           class="panel-section"
           id="surfaceLookSection"
@@ -1307,97 +1317,99 @@
         </details>
       </div>
 
-      <details
-        class="panel-section hidden"
-        id="threeDControls"
-        name="panel-section"
-      >
-        <summary>3D View</summary>
-        <label class="checkbox-label">
-          <input type="checkbox" id="autoOrbitToggle" checked />
-          Auto-orbit (turntable)
-        </label>
-        <div id="autoOrbitRow">
-          <label class="select-label">
-            Orbit speed: <span id="autoOrbitSpeedLabel">1.0×</span>
-            <input
-              type="range"
-              id="autoOrbitSpeedSlider"
-              min="0.1"
-              max="3"
-              step="0.1"
-              value="1"
-            />
+      <div class="section-strip">
+        <details
+          class="panel-section hidden"
+          id="threeDControls"
+          name="panel-section"
+        >
+          <summary>3D View</summary>
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoOrbitToggle" checked />
+            Auto-orbit (turntable)
           </label>
-        </div>
-      </details>
-
-      <details
-        class="panel-section hidden"
-        id="fourDControls"
-        name="panel-section"
-      >
-        <summary>4D View</summary>
-        <p class="flame-hint">
-          Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
-          ZW.
-        </p>
-        <label class="checkbox-label" id="fourDTumbleToggleRow">
-          <input type="checkbox" id="fourDTumbleToggle" checked />
-          Auto-tumble (XY+ZW)
-        </label>
-        <div id="fourDTumbleRow">
-          <label class="select-label">
-            Tumble speed: <span id="fourDTumbleSpeedLabel">1.0×</span>
-            <input
-              type="range"
-              id="fourDTumbleSpeedSlider"
-              min="0.1"
-              max="3"
-              step="0.1"
-              value="1"
-            />
-          </label>
-        </div>
-        <label class="checkbox-label" id="fourDSliceToggleRow">
-          <input type="checkbox" id="fourDSliceToggle" />
-          W slice (cross-section)
-        </label>
-        <div id="fourDSliceRow" class="hidden">
-          <label class="select-label">
-            Slice position: <span id="fourDSliceLabel">0.00</span>
-            <input
-              type="range"
-              id="fourDSliceSlider"
-              min="-1"
-              max="1"
-              step="0.01"
-              value="0"
-            />
-          </label>
-          <div id="fourDSliceThicknessRow">
+          <div id="autoOrbitRow">
             <label class="select-label">
-              Slice thickness: <span id="fourDSliceThicknessLabel">0.00</span>
+              Orbit speed: <span id="autoOrbitSpeedLabel">1.0×</span>
               <input
                 type="range"
-                id="fourDSliceThicknessSlider"
-                min="0"
-                max="0.5"
+                id="autoOrbitSpeedSlider"
+                min="0.1"
+                max="3"
+                step="0.1"
+                value="1"
+              />
+            </label>
+          </div>
+        </details>
+
+        <details
+          class="panel-section hidden"
+          id="fourDControls"
+          name="panel-section"
+        >
+          <summary>4D View</summary>
+          <p class="flame-hint">
+            Shift-drag turns the hidden planes (↔ XW, ↕ YW); Shift-scroll turns
+            ZW.
+          </p>
+          <label class="checkbox-label" id="fourDTumbleToggleRow">
+            <input type="checkbox" id="fourDTumbleToggle" checked />
+            Auto-tumble (XY+ZW)
+          </label>
+          <div id="fourDTumbleRow">
+            <label class="select-label">
+              Tumble speed: <span id="fourDTumbleSpeedLabel">1.0×</span>
+              <input
+                type="range"
+                id="fourDTumbleSpeedSlider"
+                min="0.1"
+                max="3"
+                step="0.1"
+                value="1"
+              />
+            </label>
+          </div>
+          <label class="checkbox-label" id="fourDSliceToggleRow">
+            <input type="checkbox" id="fourDSliceToggle" />
+            W slice (cross-section)
+          </label>
+          <div id="fourDSliceRow" class="hidden">
+            <label class="select-label">
+              Slice position: <span id="fourDSliceLabel">0.00</span>
+              <input
+                type="range"
+                id="fourDSliceSlider"
+                min="-1"
+                max="1"
                 step="0.01"
                 value="0"
               />
             </label>
+            <div id="fourDSliceThicknessRow">
+              <label class="select-label">
+                Slice thickness: <span id="fourDSliceThicknessLabel">0.00</span>
+                <input
+                  type="range"
+                  id="fourDSliceThicknessSlider"
+                  min="0"
+                  max="0.5"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+            </div>
+            <label
+              class="checkbox-label"
+              id="fourDSliceRelColorRow"
+              title="Spread the W-depth palette across the slice window instead of the whole cloud — inside the slice everything sits near one w, so the whole-cloud ramp renders it nearly flat"
+            >
+              <input type="checkbox" id="fourDSliceRelColorToggle" />
+              Slice-relative color
+            </label>
           </div>
-          <label
-            class="checkbox-label"
-            id="fourDSliceRelColorRow"
-            title="Spread the W-depth palette across the slice window instead of the whole cloud — inside the slice everything sits near one w, so the whole-cloud ramp renders it nearly flat"
-          >
-            <input type="checkbox" id="fourDSliceRelColorToggle" />
-            Slice-relative color
-          </label>
-        </div>
-      </details>
+        </details>
+      </div>
     </div>
 
     <div
