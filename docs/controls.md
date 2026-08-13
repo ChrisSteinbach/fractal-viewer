@@ -228,9 +228,12 @@ morphs into place instead of snapping (see **Presets** below).
   A single pure-fold map that does NOT contract — the canonical Mandelbox
   parameterization, weight ~2 — keeps the Surface button enabled anyway
   (fr-kltj): such a map has no IFS attractor at all, so Surface marches
-  its **escape-time set** instead (the classic ray-marched Mandelbox
-  object, Julia-form: the transform's own offset plays the role of the
-  constant), disclosed by the mode's status note. This render is cheap —
+  its **escape-time set** instead — the classic ray-marched Mandelbox
+  object, in the Mandelbrot form every published render uses (fr-7u8t.8),
+  disclosed by the mode's status note. The transform's own offset is not
+  the escape constant; it shifts the fold's centre, so it deforms the
+  object rather than replacing it, and an offset of zero gives the
+  textbook Mandelbox at whatever weight the fold carries. This render is cheap —
   ~30 branchless fold iterations per ray step, no branch frontier — and
   the session opens with the camera pulled out to frame the bailout ball
   (the chaos-game cloud such a map produces is escape-reset debris, so

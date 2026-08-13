@@ -3400,8 +3400,10 @@ function surfaceQueries(
  * scatter a cloud onto), so this samples directly: 400 uniform cube points,
  * 200 bisected onto the `DE < 0.02` near-boundary shell (the region a
  * distance estimator most needs to be right in), and 100 clustered on the
- * map's own fixed offset (deep "inside", non-escaping by construction for
- * every eligible map). 700 total, every component `Math.fround`ed — see
+ * ORIGIN — deep "inside" for the Mandelbrot form these maps now iterate,
+ * whose bounded orbits are exactly the critical orbit's neighbourhood
+ * (fr-7u8t.8; the cluster sat on the map's fixed offset `t` while that was
+ * the Julia constant). 700 total, every component `Math.fround`ed — see
  * `surfaceQueries`' doc for why (the kernel only ever sees f32 query points).
  *
  * The near-boundary batch starts `a` SMALL (unscaled by `R`, so it is very
@@ -3453,9 +3455,9 @@ function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
   for (let i = 0; i < 100; i++) {
     const s = rng() * 0.5;
     out.push([
-      Math.fround(de.t[0] + (rng() - 0.5) * s),
-      Math.fround(de.t[1] + (rng() - 0.5) * s),
-      Math.fround(de.t[2] + (rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
     ]);
   }
   return out;
@@ -3721,9 +3723,9 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
       yz = f(yz * s);
       localL = s;
     }
-    vx = f(w * yx);
-    vy = f(w * yy);
-    vz = f(w * yz);
+    vx = f(f(w * yx) + f(p[0]));
+    vy = f(f(w * yy) + f(p[1]));
+    vz = f(f(w * yz) + f(p[2]));
     dr = f(f(f(g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
   }
@@ -8050,9 +8052,12 @@ async function runSurfaceDeSection(
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
   // they never enter `systemDefs`/`systems` above and never touch
-  // `deHasFolds`/fold/affine routing. Four systems: both fold arms gated
-  // solo (boxfold, spherefold), both together (mandelbox), and an off-axis
-  // rotated/scaled matrix with a negative fold weight.
+  // `deHasFolds`/fold/affine routing. Five systems: both fold arms gated
+  // solo (boxfold, spherefold), both together (mandelbox), an off-axis
+  // rotated/scaled matrix with a negative fold weight, and — since
+  // fr-7u8t.8 moved the per-iteration offset onto the query point — the
+  // ZERO-offset mandelbox, which is the textbook object the escape presets
+  // ship and the only fixture whose pre-fold offset contributes nothing.
   const escapeSystemDefs: {
     name: string;
     transforms: Transform[];
@@ -8094,6 +8099,19 @@ async function runSurfaceDeSection(
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
           variations: [{ type: "spherefold", weight: 2 }],
+        },
+      ],
+    },
+    {
+      name: "escMandelboxPure",
+      seed: 405,
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
         },
       ],
     },
