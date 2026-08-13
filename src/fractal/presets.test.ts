@@ -19,6 +19,8 @@ import {
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
+  juliaDust,
+  juliaSet,
   mandelboxKifs,
   mandelboxLattice,
   mengerSponge,
@@ -420,6 +422,8 @@ describe("variation flame presets", () => {
     swirlFlame: swirlFlame(),
     mandelboxLattice: mandelboxLattice(),
     mandelboxKifs: mandelboxKifs(),
+    juliaSet: juliaSet(),
+    juliaDust: juliaDust(),
   })) {
     it(`${name} renders a finite, non-degenerate cloud`, () => {
       const { bounds } = runChaosGame(transforms, 3000, mulberry32(1));
@@ -430,6 +434,178 @@ describe("variation flame presets", () => {
       expect(bounds.maxY - bounds.minY).toBeGreaterThan(0);
     });
   }
+});
+
+// The recipe pin for fr-7u8t.1: `juliaSet`/`juliaDust` render the genuine
+// Julia set of z^2 + c by exact Inverse Iteration (see the presets' own
+// docs and docs/julia-sets.md), which is a claim about where the PLOTTED
+// POINTS land relative to the escape boundary of z^2 + c — not something
+// "renders a finite, non-degenerate cloud" can tell apart from an ordinary
+// blob. These tests exist so that recipe cannot silently rot if `julia`
+// stops being the juliaN inverse branches, or the affine order stops
+// applying -c before the variation: either change would still pass every
+// other preset test while producing a cloud that no longer concentrates on
+// the Julia set.
+describe("juliaSet / juliaDust (IIM Julia sets, fr-7u8t.1)", () => {
+  /** Recover a juliaSet/juliaDust preset's Julia constant from its one
+   * transform's position (c = -position) rather than duplicating the
+   * literal — these tests check what the preset actually emits. */
+  function juliaConstant(transforms: Transform[]): [number, number] {
+    const [px, py] = transforms[0].position;
+    return [-px, -py];
+  }
+
+  /** Iterate z <- z^2 + c from z = 0 (the Mandelbrot-set membership test):
+   * the 1-based escape iteration if |z| exceeds the classic bailout radius
+   * 2 within `maxIters` steps, else -1 (never escaped). */
+  function mandelbrotEscapeIteration(
+    cx: number,
+    cy: number,
+    maxIters: number,
+  ): number {
+    let x = 0;
+    let y = 0;
+    for (let i = 0; i < maxIters; i++) {
+      const nx = x * x - y * y + cx;
+      const ny = 2 * x * y + cy;
+      x = nx;
+      y = ny;
+      if (x * x + y * y > 4) return i + 1;
+    }
+    return -1;
+  }
+
+  /** Forward-iterate z <- z^2 + c from `(px, py)`; true if it escapes the
+   * classic bailout radius 2 within `iters` steps. */
+  function escapesForward(
+    px: number,
+    py: number,
+    cx: number,
+    cy: number,
+    iters: number,
+  ): boolean {
+    let x = px;
+    let y = py;
+    for (let i = 0; i < iters; i++) {
+      const nx = x * x - y * y + cx;
+      const ny = 2 * x * y + cy;
+      x = nx;
+      y = ny;
+      if (x * x + y * y > 4) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fraction of points `(xs[i], ys[i])` whose 8-direction, radius-`delta`
+   * neighborhood has SOME probe directions that escape z^2 + c within 40
+   * forward iterations and some that don't — i.e. straddles the boundary
+   * between the filled and escaping sets. A point deep inside a bounded
+   * component, or deep in the escaping exterior, never straddles; only
+   * points close to the Julia set itself do (the fr-7u8t.1 probe's
+   * methodology, cleaned up).
+   */
+  function straddleFraction(
+    xs: Float32Array,
+    ys: Float32Array,
+    cx: number,
+    cy: number,
+    delta: number,
+  ): number {
+    const dirs = 8;
+    const iters = 40;
+    let straddling = 0;
+    for (let i = 0; i < xs.length; i++) {
+      let escapeCount = 0;
+      for (let d = 0; d < dirs; d++) {
+        const angle = (d / dirs) * 2 * Math.PI;
+        const ox = xs[i] + delta * Math.cos(angle);
+        const oy = ys[i] + delta * Math.sin(angle);
+        if (escapesForward(ox, oy, cx, cy, iters)) escapeCount++;
+      }
+      if (escapeCount > 0 && escapeCount < dirs) straddling++;
+    }
+    return straddling / xs.length;
+  }
+
+  // The recipe's central claim: IIM concentrates plotted points ON the
+  // Julia set, so a small neighborhood around a typical plotted point has
+  // both escaping and non-escaping directions. A uniform sample of the same
+  // disk mostly lands deep in one region or the other instead. Thresholds
+  // sit with real headroom around the measured values (93.84% / 8.39% at
+  // delta 0.01, juliaSet's own doc) so ordinary run-to-run/engine noise
+  // can't flip this, while a broken recipe (wrong sign on -c, a dropped
+  // z-pin letting variations.ts's `julia` see a nonzero seed z, or `julia`
+  // itself changing) reliably would.
+  it("juliaSet concentrates points on the Julia boundary, unlike a uniform sample of the same disk", () => {
+    const transforms = juliaSet();
+    const [cx, cy] = juliaConstant(transforms);
+    const n = 50000;
+    const { positions, bounds } = runChaosGame(transforms, n, mulberry32(7));
+    const xs = new Float32Array(n);
+    const ys = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      xs[i] = positions[i * 3];
+      ys[i] = positions[i * 3 + 1];
+    }
+
+    // Guards the straddle metric itself: a variation with no per-step
+    // randomness (unlike `julia`'s coin flip) collapses the whole orbit onto
+    // a single fixed point after warmup, which can straddle the boundary
+    // trivially (50000 copies of one point, all-or-nothing) and slip past
+    // the assertion below unless the cloud's actual spread is checked too.
+    // The true Julia set spans a max radius of 1.4148 (juliaSet's doc); 0.5
+    // is comfortably below that and above a collapsed orbit's ~0 spread.
+    expect(bounds.maxR - bounds.minR).toBeGreaterThan(0.5);
+    expect(straddleFraction(xs, ys, cx, cy, 0.01)).toBeGreaterThan(0.8);
+
+    // Uniform control over the disk the cloud actually filled.
+    const radius = bounds.maxR;
+    const controlRng = mulberry32(11);
+    const cxs = new Float32Array(n);
+    const cys = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const r = radius * Math.sqrt(controlRng());
+      const theta = controlRng() * 2 * Math.PI;
+      cxs[i] = r * Math.cos(theta);
+      cys[i] = r * Math.sin(theta);
+    }
+    expect(straddleFraction(cxs, cys, cx, cy, 0.01)).toBeLessThan(0.3);
+  });
+
+  // The recipe's z-pin: `variations.ts`'s `julia` carries z through
+  // unchanged, so without `scale.z = 0` the cloud would sit wherever the
+  // seed point's z happened to warm up to, not flattened at 0 (juliaIim's
+  // doc). The straddle test above only reads x/y, so this is the z-pin's
+  // own check.
+  it("juliaSet and juliaDust stay pinned to z = 0", () => {
+    for (const transforms of [juliaSet(), juliaDust()]) {
+      const { bounds } = runChaosGame(transforms, 2000, mulberry32(3));
+      expect(bounds.minZ).toBe(0);
+      expect(bounds.maxZ).toBe(0);
+    }
+  });
+
+  // juliaDust's whole reason to exist (see its doc): c sits OUTSIDE the
+  // Mandelbrot set, where IIM's two inverse branches genuinely contract
+  // into disjoint sub-disks. Checked against the preset's OWN transform, so
+  // an edit to its Julia constant that wanders back into M goes red instead
+  // of silently shipping a "dust" preset that no longer is one.
+  it("juliaDust's constant is outside the Mandelbrot set (the critical orbit of z^2+c escapes)", () => {
+    const [cx, cy] = juliaConstant(juliaDust());
+    expect(mandelbrotEscapeIteration(cx, cy, 1000)).toBeGreaterThan(0);
+  });
+
+  // juliaSet's constant is Douady's rabbit — the center of M's period-3
+  // hyperbolic component, so the critical orbit doesn't just fail to
+  // escape within some arbitrary budget, it settles onto an attracting
+  // cycle. This pins the fact the doc relies on for calling the Julia set
+  // genuinely connected, not just its consequence for the point cloud (the
+  // straddle test above).
+  it("juliaSet's constant stays bounded (is inside M) over a long iteration budget", () => {
+    const [cx, cy] = juliaConstant(juliaSet());
+    expect(mandelbrotEscapeIteration(cx, cy, 5000)).toBe(-1);
+  });
 });
 
 describe("nextId", () => {
@@ -847,6 +1023,13 @@ describe("PRESET_RENDER_HINTS", () => {
   // loading it switches the app into that renderer.
   it("hints mandelboxKifs as a surface showcase", () => {
     expect(PRESET_RENDER_HINTS.mandelboxKifs).toBe("surface");
+  });
+
+  // Both are flat 2D sheets (z pinned to 0) whose point density is heavily
+  // tip-weighted — exactly what the flame's log-density exposure is for.
+  it("hints julia and juliaDust as flame showcases", () => {
+    expect(PRESET_RENDER_HINTS.julia).toBe("flame");
+    expect(PRESET_RENDER_HINTS.juliaDust).toBe("flame");
   });
 
   // Guards against a typo'd key silently falling out of the Preset union.
