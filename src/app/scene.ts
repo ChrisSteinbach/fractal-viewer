@@ -815,15 +815,22 @@ export class FractalScene {
    * keep submission order — everything rides the ONE GL queue — and
    * `busyMark` keeps the oldest job's busy continuity so the successor's
    * first batch attributes over backlog + own pixels. Adopted at
-   * {@link armSurfacePreview}/{@link beginSurfaceSettle} arm time; a
-   * system upload or a capture drain FLUSHES instead (cross-system
-   * observations must not seed a fresh evidence chain, and capture's
-   * synchronous joins drain the queue regardless — fr-id9r's raise-only
-   * capture discipline stays intact). */
+   * {@link armSurfacePreview}/{@link beginSurfaceSettle}/
+   * {@link beginSurfaceFullFrame} arm time; a system upload flushes
+   * instead (cross-system observations must not seed a fresh evidence
+   * chain). */
   private surfaceStripBacklog: {
     entries: { sync: WebGLSync; px: number }[];
     px: number;
     busyMark: number;
+    /** Predicted GPU cost (ms) of `px` at the pooling jobs' own estimates
+     * — the bound on how much busy wall this pool can honestly still owe
+     * (fr-y6m0). A pool has a timestamp, not a clock: nothing observes it
+     * while it waits, so an adoption minutes later would otherwise carry
+     * a busy origin from work that finished in the first second, and the
+     * adopting job's first batch would read (and TEACH) that whole idle
+     * wall as trace cost. */
+    predictedMs: number;
   } | null = null;
   /** Scene holding a throwaway mesh that shares the active surface
    * material, for {@link compileSurfaceMaterial}'s async program compile
@@ -3431,11 +3438,11 @@ export class FractalScene {
    * resolution rather than the on-screen one.
    *
    * `tier` (fr-5ne3) is main.ts's interaction split: "full" (the default —
-   * capture and offline export land here by construction) traces at full
-   * quality SYNCHRONOUSLY, as the same adaptive scissored strips the async
-   * settle job uses (fr-sjff: a `gl.finish()` between strips bounds every
-   * GPU submission, so even a pathological close-up export cannot wedge
-   * the GPU process), then presents the completed frame; "preview" traces
+   * offline export and thumbnails land here by construction) traces at full
+   * quality SYNCHRONOUSLY, through the same adaptive scissored strips and
+   * the same pump the async settle job uses (fr-sjff: every strip is its
+   * own flushed submission, so even a pathological close-up export cannot
+   * wedge the GPU process), then presents the completed frame; "preview" traces
    * {@link surfacePreviewTarget} at {@link surfacePreviewGovernor}'s
    * measured rung with the preview-tier quality knobs (depth clamp,
    * march/shadow/AO budgets, hit floor) and stretches it over the canvas —
@@ -3482,9 +3489,10 @@ export class FractalScene {
       return;
     }
     // Full quality, synchronously — but never as one unbounded GPU
-    // submission (fr-sjff): the same adaptive strips as the async settle
-    // job, run to completion right here. Capture and offline export land
-    // on this path, so a pathological close-up export is watchdog-safe
+    // submission (fr-sjff): the same adaptive strips through the same
+    // pipelined pump as the async settle job (fr-y6m0), run to completion
+    // right here. Offline export and thumbnails land on this path, so a
+    // pathological close-up export is watchdog-safe
     // too — and COST-BOUNDED (fr-id9r): a monster fold pose prices a
     // full-tier frame in minutes to HOURS of frozen tab, so the frame
     // refuses up front when measured evidence predicts past the export
@@ -3545,14 +3553,9 @@ export class FractalScene {
     }
     // A stale async job must not interleave with this frame's strips —
     // nor a stale preview job resume after it with full-tier uniforms.
-    // Their pooled fences flush unadopted (fr-7to5): the drain below
-    // joins synchronously behind whatever is queued anyway, and its
-    // observations must stay raise-only capture evidence, never a
-    // backlog attribution.
     const priorPxCostMs = this.surfaceFullPxCostMs;
     this.abandonSurfaceSettle();
     this.abandonSurfacePreview();
-    this.flushStripBacklog();
     sizeTarget(this.surfaceSettleTarget, width, height);
     this.setSurfaceFrameUniforms("full", height, height);
     // The job stays LOCAL: {@link surfaceStripJob} is the ASYNC settle's
@@ -3564,8 +3567,20 @@ export class FractalScene {
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
       }),
       this.surfaceStripPriorMsPerPx(),
-      SURFACE_SETTLE_PRESENT_MS,
+      // A capture NEVER presents: the export-scale target must not reach
+      // the canvas mid-drain (fr-7mfx keeps the giant buffer off screen),
+      // and a present-on-drain gap would only idle the GPU for a blit
+      // nobody sees. An unreachable present due keeps the pump refilling.
+      Number.POSITIVE_INFINITY,
     );
+    // Adopt whatever the jobs just abandoned still have executing (fr-7to5)
+    // rather than flushing it: since fr-y6m0 the drains pipeline, so their
+    // refill ceiling has to price the REAL GL queue, and their first fence
+    // batch has to attribute its busy wall over backlog + own pixels
+    // instead of charging a predecessor's queue to this frame. Inherited
+    // pixels stay out of `spentMs`, which is what keeps the export's spend
+    // ceiling measuring this frame and nothing else.
+    this.adoptStripBacklog(job);
     return { job, priorPxCostMs };
   }
 
@@ -3590,12 +3605,20 @@ export class FractalScene {
     totalPx: number,
     outcome: SurfaceDrainOutcome,
   ): void {
-    // Capture-mode retirement: an export-scale drain's observation (its
-    // per-strip join tax included) may TIGHTEN the live evidence but
-    // never own it — the pose did not move, so the completed live
-    // settle/preview evidence is still the truth the next live job
-    // should price from.
+    // Capture-mode retirement: an export-scale drain's observation may
+    // TIGHTEN the live evidence but never own it — the pose did not move,
+    // so the completed live settle/preview evidence is still the truth the
+    // next live job should price from.
     this.retireStripJob(arm.job, "capture");
+    if (SURFPERF) {
+      console.log(
+        `[surfperf] capture ${outcome} px=${String(totalPx)}` +
+          ` spentMs=${arm.job.spentMs.toFixed(1)}` +
+          ` wall=${(performance.now() - arm.job.stat.t0).toFixed(0)}` +
+          ` strips=${arm.job.stat.strips} polls=${arm.job.stat.polls}` +
+          ` calls=${arm.job.stat.calls}`,
+      );
+    }
     if (outcome !== "done") {
       this.surfaceFullPxCostMs = arm.priorPxCostMs;
       if (outcome === "ceiling") {
@@ -3758,7 +3781,7 @@ export class FractalScene {
    * frozen {@link surfaceStripQueueWorstMsPerPx} (fr-id9r — frozen like
    * the planner's floor, and raised live by the planner's own ratchet),
    * and presents pace at `presentIntervalMs` (see present-on-drain in
-   * pumpStrips). */
+   * pumpStrips; `Infinity` for the capture jobs, which never present). */
   private newStripJob(
     planner: StripPlanner,
     priorMsPerPx: number | null,
@@ -3975,28 +3998,13 @@ export class FractalScene {
     phase: "preview" | "settle";
     fraction: number;
   } | null {
-    // Own in-flight pixels only (fr-7to5): an adopted backlog's fences
-    // are a superseded frame's work, never part of this planner's
-    // plannedPx — subtracting them too would report negative coverage.
     const preview = this.surfacePreviewJob;
     if (preview) {
-      return {
-        phase: "preview",
-        fraction:
-          (preview.planner.plannedPx -
-            (preview.inFlightPx - preview.inheritedPx)) /
-          Math.max(1, preview.planner.totalPx),
-      };
+      return { phase: "preview", fraction: stripJobCoverage(preview) };
     }
     const settle = this.surfaceStripJob;
     if (settle) {
-      return {
-        phase: "settle",
-        fraction:
-          (settle.planner.plannedPx -
-            (settle.inFlightPx - settle.inheritedPx)) /
-          Math.max(1, settle.planner.totalPx),
-      };
+      return { phase: "settle", fraction: stripJobCoverage(settle) };
     }
     return null;
   }
@@ -4290,9 +4298,9 @@ export class FractalScene {
    * Advance the in-flight settle job through {@link pumpStrips} —
    * pipelined fenced strips against the given queue budget (see
    * pumpStrips' doc for the regimes and why fences and readbacks bound
-   * every submission where `gl.finish()` could not; the capture drain
-   * has its own entry, {@link drainStripsSync}). Disarms the job when
-   * all pixels are traced.
+   * every submission where `gl.finish()` could not; the capture drains
+   * pump the same way from their own loops, {@link drainStripsSync}).
+   * Disarms the job when all pixels are traced.
    */
   private renderSurfaceStrips(queueBudgetMs: number): {
     done: boolean;
@@ -4339,8 +4347,15 @@ export class FractalScene {
    * GPU into ~55s of drains where main's ~50 uncapped strips paid ~1s.
    * Fences amortize the floor to ~50us/strip; the caps become free.
    *
-   * Two regimes (the capture drain is not one of them — the full-tier
-   * sync frame calls {@link drainStripsSync} directly):
+   * EVERY surface trace runs through this pump: the live preview and settle
+   * one budget per rAF, the capture and offline drains in their own loops
+   * (fr-y6m0 — they used to join every strip themselves, which is the same
+   * multiplication in export clothing). The drains differ from the live
+   * callers in exactly two ways: how they WAIT between pump calls (a
+   * blocking {@link joinStripQueue} for the synchronous one, a hand-back for
+   * the yielding one) and that they never present.
+   *
+   * Two regimes:
    *
    * - SYNC COLLAPSE (`msPerPxEstimate` null — affine-cheap systems, no
    *   cost prior): render strips and join each with the forced-completion
@@ -4354,10 +4369,11 @@ export class FractalScene {
    *   system): every strip goes out as its own flushed draw group closed
    *   by a fence, ~{@link SURFACE_STRIP_QUEUE_MS} of PREDICTED work rides
    *   in flight, and the pump NEVER blocks. Completed fences are measured
-   *   in batches per poll — the busy wall since the queue last had work,
-   *   attributed across the batch's pixels (poll timestamps quantize to
-   *   the rAF, so cheap batches read high, which only over-queues cheap
-   *   regions; at saturation, where pricing matters, it is accurate). The
+   *   in batches per poll ({@link collectStripFences} — the busy wall since
+   *   the queue last had work, attributed across the batch's pixels; poll
+   *   timestamps quantize to the caller's clock, so cheap batches read
+   *   high, which only over-queues cheap regions, and at saturation, where
+   *   pricing matters, it is accurate). The
    *   estimate feeds the planner as `estimate x lastSubmittedPx` (the
    *   shape its sizing formula expects) and spikes the moment a batch
    *   lands in an expensive band, emptying the refill behind it. The
@@ -4400,69 +4416,9 @@ export class FractalScene {
       const escaped = this.collapseStripsSync(job, target);
       if (!escaped) return { done: true, present: true };
     }
-    // Pipelined regime. Collect completed fences head-first (one GL
-    // queue: completion is in submission order; the first still-running
-    // fence ends the batch).
+    // Pipelined regime: retire whatever the GPU has finished, then refill.
+    this.collectStripFences(job);
     let now = performance.now();
-    let completedPx = 0;
-    let completedOwnPx = 0;
-    let completedCount = 0;
-    while (job.inFlight.length > 0) {
-      const head = job.inFlight[0];
-      const status = gl.clientWaitSync(head.sync, 0, 0);
-      if (status === gl.TIMEOUT_EXPIRED) break;
-      // Signaled (or WAIT_FAILED on a dying context — treat as done
-      // rather than polling forever): account it.
-      gl.deleteSync(head.sync);
-      job.inFlight.shift();
-      job.inFlightPx -= head.px;
-      if (head.inherited) {
-        job.inheritedPx -= head.px;
-      } else {
-        completedOwnPx += head.px;
-      }
-      completedPx += head.px;
-      completedCount += 1;
-    }
-    if (completedCount > 0) {
-      const busyMs = now - (job.busyMark ?? now);
-      // spentMs is THIS frame's cost (the governor sample, the px-cost
-      // fields): inherited pixels belong to a superseded pose's frame,
-      // so only the own share lands here (fr-7to5). The estimate and
-      // the planner's ratchet below take the WHOLE batch — that wall
-      // time really did trace that many pixels of this system, and the
-      // ratchet is a max, so a cheap inherited batch cannot lower it.
-      job.spentMs += busyMs * (completedOwnPx / completedPx);
-      // MARGINAL px rate: subtract the fixed sync tax the batch's fence
-      // observation cost, floored at 5% of the raw figure so a cheap
-      // stack cannot drive the estimate to zero.
-      const marginalMs = Math.max(
-        busyMs - SURFACE_STRIP_SYNC_TAX_MS,
-        busyMs * 0.05,
-      );
-      job.msPerPxEstimate = marginalMs / Math.max(1, completedPx);
-      // Report at measurement time (fr-id9r): the `prevMs` door on
-      // next() never hears about a job's LAST batch — which is exactly
-      // the batch that discovers the expensive band on frames traced
-      // top-down toward the surface.
-      job.planner.observe(marginalMs, completedPx);
-      job.measured = true;
-      job.stat.polls += 1;
-      if (SURFPERF && busyMs > SURFPERF_HEAVY_STRIP_MS) {
-        console.log(
-          `[surfperf] heavy batch px=${completedPx}` +
-            ` strips=${completedCount} ms=${busyMs.toFixed(0)}`,
-        );
-      }
-    }
-    // Re-base the busy mark ONLY when time was just attributed (or the
-    // queue drained): advancing it on a completion-less poll would
-    // silently discard the GPU-busy time since the previous poll, and
-    // both spentMs (the governor's sample) and the estimate would read
-    // low by exactly the discarded share.
-    if (completedCount > 0 || job.inFlight.length === 0) {
-      job.busyMark = job.inFlight.length > 0 ? now : null;
-    }
     let present = false;
     if (job.inFlight.length === 0 && now >= job.presentDue) {
       // The queue is drained on schedule: present into the gap and let
@@ -4511,13 +4467,7 @@ export class FractalScene {
         // alone, never a stall.
         (job.inFlightPx + groupPx) * worst() < SURFACE_STRIP_QUEUE_WORST_MS
       ) {
-        const prevMs =
-          job.measured &&
-          job.msPerPxEstimate !== null &&
-          job.lastSubmittedPx > 0
-            ? job.msPerPxEstimate * job.lastSubmittedPx
-            : null;
-        const strip = job.planner.next(prevMs);
+        const strip = job.planner.next(seedStripMeasurement(job));
         if (!strip) break;
         this.renderStripRects(target, strip.rects);
         // The flush hands the strip to the GPU as its own submission now —
@@ -4559,6 +4509,105 @@ export class FractalScene {
     }
     this.resetScissor(target);
     return { done: job.planner.done && job.inFlight.length === 0, present };
+  }
+
+  /**
+   * Retire every fence at the head of `job`'s queue that the GPU has
+   * finished, attribute the busy wall since the last observation across the
+   * batch, and teach the planner what it measured. The pump's first act on
+   * every call — and the whole of what an aborting capture drain still owes
+   * its own queue ({@link windDownStrips}).
+   *
+   * `assumeComplete` retires the queue WITHOUT polling it, and only
+   * {@link drainStripsSync} passes it, only immediately after a
+   * {@link joinStripQueue}. The second reason for it is not an
+   * optimisation. The readback is a strictly stronger barrier than the
+   * fences it retires — every command submitted before it has executed, so
+   * every fence behind it is signaled by construction — and MEASURED, a
+   * sync object's signaled state is NOT observable from a loop that never
+   * returns to the event loop: `clientWaitSync(sync, 0, 0)` is a
+   * client-side check against state the command buffer refreshes on the
+   * page's own message loop, so a synchronous drain that polls it reads
+   * TIMEOUT_EXPIRED forever. The pump then collects nothing, the queue
+   * bound blocks every refill, and the drain spins on a queue the GPU
+   * finished long ago — measured as a thumbnail capture going from 4.3s to
+   * a >300s hang, with `spentMs` frozen at 0 so even the spend ceiling
+   * could not end it. The yielding drain never meets this: its ticks ARE
+   * the message loop.
+   *
+   * When polling, completion is in submission order (one GL queue), so the
+   * first still-running fence ends the batch. Time lands in three places
+   * with three different rules, all of them load-bearing:
+   *
+   * - `spentMs` — THIS frame's cost (the governor sample, the px-cost
+   *   fields, the capture spend ceiling) — takes only the OWN-pixel share:
+   *   inherited fences traced a superseded pose's frame (fr-7to5).
+   * - the estimate and the planner's ratchet take the WHOLE batch: that
+   *   wall really did trace that many pixels of this system, and the
+   *   ratchet is a max, so a cheap inherited batch cannot lower it.
+   * - the busy MARK re-bases only when time was just attributed (or the
+   *   queue drained): advancing it on a completion-less poll would silently
+   *   discard the GPU-busy time since the previous poll, and both `spentMs`
+   *   and the estimate would read low by exactly the discarded share.
+   */
+  private collectStripFences(
+    job: SurfaceStripJob,
+    assumeComplete = false,
+  ): void {
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    const now = performance.now();
+    let completedPx = 0;
+    let completedOwnPx = 0;
+    let completedCount = 0;
+    while (job.inFlight.length > 0) {
+      const head = job.inFlight[0];
+      if (
+        !assumeComplete &&
+        gl.clientWaitSync(head.sync, 0, 0) === gl.TIMEOUT_EXPIRED
+      ) {
+        break;
+      }
+      // Signaled (or WAIT_FAILED on a dying context — treat as done
+      // rather than polling forever): account it.
+      gl.deleteSync(head.sync);
+      job.inFlight.shift();
+      job.inFlightPx -= head.px;
+      if (head.inherited) {
+        job.inheritedPx -= head.px;
+      } else {
+        completedOwnPx += head.px;
+      }
+      completedPx += head.px;
+      completedCount += 1;
+    }
+    if (completedCount > 0) {
+      const busyMs = now - (job.busyMark ?? now);
+      job.spentMs += busyMs * (completedOwnPx / completedPx);
+      // MARGINAL px rate: subtract the fixed sync tax the batch's fence
+      // observation cost, floored at 5% of the raw figure so a cheap
+      // stack cannot drive the estimate to zero.
+      const marginalMs = Math.max(
+        busyMs - SURFACE_STRIP_SYNC_TAX_MS,
+        busyMs * 0.05,
+      );
+      job.msPerPxEstimate = marginalMs / Math.max(1, completedPx);
+      // Report at measurement time (fr-id9r): the `prevMs` door on
+      // next() never hears about a job's LAST batch — which is exactly
+      // the batch that discovers the expensive band on frames traced
+      // top-down toward the surface.
+      job.planner.observe(marginalMs, completedPx);
+      job.measured = true;
+      job.stat.polls += 1;
+      if (SURFPERF && busyMs > SURFPERF_HEAVY_STRIP_MS) {
+        console.log(
+          `[surfperf] heavy batch px=${completedPx}` +
+            ` strips=${completedCount} ms=${busyMs.toFixed(0)}`,
+        );
+      }
+    }
+    if (completedCount > 0 || job.inFlight.length === 0) {
+      job.busyMark = job.inFlight.length > 0 ? now : null;
+    }
   }
 
   /** The sync-collapse regime of {@link pumpStrips}: serial strips with
@@ -4603,59 +4652,76 @@ export class FractalScene {
     return false;
   }
 
-  /** The capture/offline drain ({@link renderSurface}'s full tier calls
-   * this directly, never through {@link pumpStrips}): run the job
-   * serially, each strip joined by a forced-completion readback — exact
-   * per-strip measurement for the planner, and no submission ever spans
-   * more than one strip. Its callers tolerate the stalls; the ~10-25ms
-   * per-join floor is the price of frame-exact synchronous completion.
-   * Tolerate is not "forever" (fr-id9r): a monster fold pose prices a
-   * frame in hours of frozen tab, so past `spendCeilingMs` (default
-   * {@link SURFACE_CAPTURE_SPEND_CEILING_MS}; save-PNG's consented retry
-   * passes the lifted ceiling, fr-24to) of measured spend the drain
-   * gives up and returns false — the caller surfaces the refusal. */
+  /**
+   * The capture/offline drain ({@link renderSurface}'s full tier calls
+   * this): run the job to completion right here, through the same
+   * {@link pumpStrips} the live settle rides — pipelined fence groups, not
+   * the per-strip forced-completion joins this drain used to pay (fr-y6m0).
+   * The old shape bought exact per-strip measurements at one
+   * ~{@link SURFACE_STRIP_SYNC_TAX_MS} sync point PER STRIP, and a capped
+   * frame plans hundreds to thousands of them: measured on SwiftShader at
+   * 1280x720, a Save-PNG of a pose the live settle finished in 19s had
+   * covered ~37% when it hit the 60s spend ceiling. Now the queue carries
+   * the frame and a synchronous caller pays ONE sync point per queueful
+   * ({@link joinStripQueue}) — the wait it has instead of a yield.
+   *
+   * Tolerate is not "forever" (fr-id9r): a monster fold pose prices a frame
+   * in hours of frozen tab, so past `spendCeilingMs`
+   * ({@link SURFACE_CAPTURE_SPEND_CEILING_MS}, or save-PNG's consented
+   * lifted one, fr-24to) of measured spend the drain gives up and returns
+   * false — the caller surfaces the refusal. Giving up winds the queue down
+   * first (see {@link windDownStrips} for why the fences cannot simply be
+   * left behind).
+   */
   private drainStripsSync(
     job: SurfaceStripJob,
     target: THREE.WebGLRenderTarget,
-    spendCeilingMs: number = SURFACE_CAPTURE_SPEND_CEILING_MS,
+    spendCeilingMs: number,
   ): boolean {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    let lastMs = seedStripMeasurement(job);
     for (;;) {
-      lastMs = this.stepCaptureStrip(job, target, gl, lastMs);
-      if (lastMs === null) break;
-      if (job.spentMs > spendCeilingMs) {
-        this.resetScissor(target);
-        return false;
+      if (this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS).done) {
+        return true;
       }
+      const abort = job.spentMs > spendCeilingMs;
+      // The pump has queued everything the budget admits, so nothing can
+      // advance until the GPU catches up: block on the queue rather than
+      // spin. The retire that follows must NOT poll the fences the join
+      // just made moot — a loop that never reaches the message loop cannot
+      // observe a sync object signal (see collectStripFences) — so it is
+      // also the whole of the abort path's wind-down.
+      this.joinStripQueue(gl, target);
+      this.collectStripFences(job, true);
+      if (abort) return false;
     }
-    this.resetScissor(target);
-    return true;
   }
 
   /**
-   * {@link drainStripsSync}, yielding (fr-7mfx). Same serial strips, same
-   * forced-completion joins, same spend backstop — but every
-   * {@link SURFACE_CAPTURE_YIELD_MS} of wall it hands the main thread back,
-   * so the export modal can paint its coverage and its Cancel button can
-   * actually be clicked. Without this the modal would open on an already
-   * frozen tab and read as a hang: worse than no modal at all.
+   * {@link drainStripsSync}, yielding (fr-7mfx): the same pump, the same
+   * fence groups, the same spend backstop — but between pump calls it hands
+   * the main thread back ({@link nextDrainTick}) instead of blocking on a
+   * join, so the export modal can paint its coverage and its Cancel button
+   * can actually be clicked. Without this the modal would open on an
+   * already frozen tab and read as a hang: worse than no modal at all.
    *
-   * The yield is safe precisely here. The drain fences nothing (its joins
-   * are readbacks, so no `WebGLSync` is ever outstanding), the strip's
-   * measurement is already folded into the job and the planner, and the
-   * scissor state is unwound before each hand-back and re-established by
-   * the next {@link renderStripRects}. What it does NOT survive is another
-   * writer: the caller must fence the live tier off for the duration
-   * ({@link surfaceCaptureBusy}), or a preview tick would clobber the
-   * frozen full-tier uniforms and a settle would re-size the target being
-   * drained.
+   * The hand-back is safe precisely here: every strip's measurement is
+   * already folded into the job and the planner, the scissor state is
+   * unwound by each pump call and re-established by the next, and the
+   * queue's fences are POLLED, never waited on. What it does NOT survive is
+   * another writer: the caller must fence the live tier off for the
+   * duration ({@link surfaceCaptureBusy}), or a preview tick would clobber
+   * the frozen full-tier uniforms and a settle would re-size the target
+   * being drained. main.ts's tick does exactly that for the tracing arms;
+   * two uniform writers still slip past it (a live 4D view update and a
+   * late grid upload — fr-p0mr), so a mid-drain pose glide can still split
+   * an exported 4D frame.
    *
-   * Responsiveness is bounded BELOW by one strip — the planner caps a
-   * strip at `STRIP_WORST_CASE_CAP_MS` of predicted cost, and on a monster
-   * fold pose single crease pixels have measured 1.7-3.1s — so a yield
-   * budget under one strip's cost simply yields after every strip, which
-   * is the honest floor rather than a knob worth tuning.
+   * Since fr-y6m0 the main thread never blocks on GPU work at all, so
+   * responsiveness no longer bottoms out at one strip's cost (the planner
+   * caps a strip at `STRIP_WORST_CASE_CAP_MS` of predicted GPU, and on a
+   * monster fold pose single crease pixels have measured 1.7-3.1s): a
+   * cancel is observed within a tick even while such a strip executes.
+   * What a cancel still waits for is the queue it already submitted.
    */
   private async drainStripsAsync(
     job: SurfaceStripJob,
@@ -4666,61 +4732,68 @@ export class FractalScene {
       cancelled?: () => boolean;
     },
   ): Promise<SurfaceDrainOutcome> {
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    let lastMs = seedStripMeasurement(job);
-    let sliceStart = performance.now();
     for (;;) {
-      lastMs = this.stepCaptureStrip(job, target, gl, lastMs);
-      if (lastMs === null) break;
-      if (job.spentMs > spendCeilingMs) {
-        this.resetScissor(target);
-        return "ceiling";
+      if (this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS).done) {
+        return "done";
       }
-      if (performance.now() - sliceStart < SURFACE_CAPTURE_YIELD_MS) continue;
-      this.resetScissor(target);
-      hooks.onProgress?.(
-        job.planner.plannedPx / Math.max(1, job.planner.totalPx),
-      );
-      await yieldToEventLoop();
-      if (hooks.cancelled?.() === true) return "cancelled";
-      sliceStart = performance.now();
+      if (job.spentMs > spendCeilingMs) {
+        return this.windDownStrips(job, "ceiling");
+      }
+      hooks.onProgress?.(stripJobCoverage(job));
+      await nextDrainTick();
+      if (hooks.cancelled?.() === true) {
+        return this.windDownStrips(job, "cancelled");
+      }
     }
-    this.resetScissor(target);
-    return "done";
   }
 
   /**
-   * One capture-drain strip: render its rects, join them with a
-   * forced-completion readback, and fold the measured wall into the job
-   * and the planner. Returns that wall, or null once the planner is out of
-   * strips. The ONE body {@link drainStripsSync} and
-   * {@link drainStripsAsync} share, so the sync and yielding drains cannot
-   * drift in what they measure or what they teach.
+   * Let an abandoned capture's already-submitted strips finish before the
+   * drain returns (fr-y6m0). The queued GPU work cannot be recalled, and an
+   * export's leftovers are the last thing the live tier should inherit: the
+   * strips write the EXPORT-SIZED settle target, which the next settle
+   * re-sizes (reallocating texture and framebuffer) the moment it takes the
+   * pane back — defined behaviour in GL, but not a queue worth leaving
+   * outstanding for a live job to price, attribute and draw behind.
+   * Attribution is the sharper half: the fences are THIS frame's, so
+   * collecting them here charges their wall to the frame that submitted
+   * them rather than to whichever live job observes the queue next
+   * (fr-7to5's contamination, one queueful of it).
+   *
+   * The wait costs the queue's own remaining time, with the main thread
+   * free throughout. That is what a cancel waits for, and it is not free:
+   * the refill admitted {@link SURFACE_STRIP_QUEUE_WORST_MS} of work priced
+   * at the job's QUEUE price (the typical-cost class floor, fr-id9r), so a
+   * queue that entered an expensive band before the planner's ratchet
+   * caught it can hold several worst-capped strips — low seconds on the
+   * measured transition class, the same order the per-strip drain's cancel
+   * already cost while a crease strip joined. Once the ratchet has seen the
+   * band the queue pins to ~one strip and a cancel is near-instant.
    */
-  private stepCaptureStrip(
+  private async windDownStrips(
     job: SurfaceStripJob,
-    target: THREE.WebGLRenderTarget,
-    gl: WebGL2RenderingContext,
-    lastMs: number | null,
-  ): number | null {
-    const strip = job.planner.next(lastMs);
-    if (!strip) return null;
-    this.renderStripRects(target, strip.rects);
-    const t0 = performance.now();
-    this.readStripCorner(gl, strip);
-    const ms = performance.now() - t0;
-    job.spentMs += ms;
-    job.lastSubmittedPx = strip.px;
-    job.msPerPxEstimate = ms / Math.max(1, strip.px);
-    // Measurement-time report (fr-id9r): the final strip's measurement
-    // never reaches next() — and on capture frames the final strips
-    // are the frame's bottom rows, fold monsters' favorite home.
-    job.planner.observe(ms, strip.px);
-    job.measured = true;
-    if (SURFPERF && ms > SURFPERF_HEAVY_STRIP_MS) {
-      console.log(`[surfperf] heavy strip px=${strip.px} ms=${ms.toFixed(0)}`);
+    outcome: SurfaceDrainOutcome,
+  ): Promise<SurfaceDrainOutcome> {
+    while (job.inFlight.length > 0) {
+      await nextDrainTick();
+      this.collectStripFences(job);
     }
-    return ms;
+    return outcome;
+  }
+
+  /** Block until every strip the pump has submitted has executed: a 1x1
+   * readback from the target they wrote is a data dependency the whole GL
+   * queue must clear first (`gl.finish()` returns early on some
+   * command-buffer paths — see {@link readStripCorner}). The synchronous
+   * drain's wait, paid once per QUEUEFUL where that drain used to pay the
+   * same ~{@link SURFACE_STRIP_SYNC_TAX_MS} once per STRIP (fr-y6m0). */
+  private joinStripQueue(
+    gl: WebGL2RenderingContext,
+    target: THREE.WebGLRenderTarget,
+  ): void {
+    this.renderer.setRenderTarget(target);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
+    this.renderer.setRenderTarget(null);
   }
 
   /** Render one strip's 1-3 scissor rects (fr-096u: sub-row strips are
@@ -4771,8 +4844,21 @@ export class FractalScene {
       entries: [],
       px: 0,
       busyMark,
+      predictedMs: 0,
     });
     pool.busyMark = Math.min(pool.busyMark, busyMark);
+    // What this job's own estimate says its queue still owes — the clamp
+    // adoption needs on a pool nobody claimed promptly (fr-y6m0). A job
+    // with NO estimate can still hold fences (it adopted a backlog and was
+    // superseded before a batch landed), and pricing that queue at zero
+    // would hand the next adopter `busyMark = now`: a first batch measuring
+    // ~0ms/px, which is the one estimate the refill's own doc calls
+    // dangerous. Unpriced means unclamped — the honest bound on unknown
+    // work is no bound.
+    pool.predictedMs +=
+      job.msPerPxEstimate === null
+        ? Number.POSITIVE_INFINITY
+        : job.inFlightPx * job.msPerPxEstimate;
     for (const f of job.inFlight) {
       pool.entries.push({ sync: f.sync, px: f.px });
       pool.px += f.px;
@@ -4796,7 +4882,17 @@ export class FractalScene {
     job.inFlight = pool.entries.map((e) => ({ ...e, inherited: true }));
     job.inFlightPx = pool.px;
     job.inheritedPx = pool.px;
-    job.busyMark = pool.busyMark;
+    // Busy continuity, bounded by what the pooled work could still owe
+    // (fr-y6m0): the normal adoption is a frame or two after pooling, where
+    // the clamp is inert; the pathological one is a pool that waited out an
+    // idle stretch (a cancelled export leaves the pane parked, and a parked
+    // pane arms nothing), where crediting the whole wait as GPU busy would
+    // spike the estimate and ratchet the planner's worst-price evidence off
+    // a queue that had long since finished.
+    job.busyMark = Math.max(
+      pool.busyMark,
+      performance.now() - pool.predictedMs,
+    );
     if (SURFPERF) {
       console.log(
         `[surfperf] adopted backlog px=${pool.px}` +
@@ -4808,9 +4904,9 @@ export class FractalScene {
   /** Delete the pooled backlog's fences without adoption — for the entry
    * points that must NOT price or attribute a predecessor's queue: a
    * system upload (fresh evidence chain, cross-system observations would
-   * seed it wrong) and the synchronous drains, whose first join absorbs
-   * whatever is queued regardless (capture measurements raise-only into
-   * evidence by design). The GPU work itself still drains FIFO. */
+   * seed it wrong) and the settle's clean-probe barrier, which has just
+   * joined the whole queue anyway. The GPU work itself still drains
+   * FIFO. */
   private flushStripBacklog(): void {
     const pool = this.surfaceStripBacklog;
     if (!pool) return;
@@ -4842,9 +4938,9 @@ export class FractalScene {
    *
    * That split is fr-7mfx's prerequisite. The drain used to run inside the
    * ratio/projection wrappers with no yield, freezing the tab for its whole
-   * duration; now it hands the main thread back every
-   * {@link SURFACE_CAPTURE_YIELD_MS} so the export modal can disclose
-   * coverage and offer a working Cancel. Two consequences follow. The
+   * duration; now it hands the main thread back on every
+   * {@link nextDrainTick} between pump calls, so the export modal can
+   * disclose coverage and offer a working Cancel. Two consequences follow. The
    * export pixel ratio is NOT held across the trace — the size is derived
    * arithmetically instead (three.js floors a buffer out of a ratio the
    * same way), so the live canvas keeps its own buffer and nothing giant
@@ -5097,14 +5193,32 @@ const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
  * for good. */
 const SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS = 300_000;
 
-/** How much wall the yielding capture drain (fr-7mfx) may spend before
- * handing the main thread back. Sized as a frame rather than tuned: the
- * export modal gets a paint opportunity every rung, and on cheap frames
- * (where strips are sub-millisecond) the ~40 hand-backs per second cost
- * nothing measurable. On expensive frames a single strip already outruns
- * it, so the drain degrades to yielding after every strip — one strip is
- * the real floor on responsiveness, and no smaller budget can beat it. */
-const SURFACE_CAPTURE_YIELD_MS = 24;
+/** Pacing floor (ms) for the yielding capture drain's hand-back when the
+ * page is HIDDEN (fr-y6m0) — see {@link nextDrainTick}. A visible page
+ * paces on rAF, which leaves the main thread genuinely idle between polls;
+ * a hidden one has no frame clock and cannot use timers either (throttled
+ * to 1s, and to a minute past five minutes hidden), so it spins the
+ * un-throttleable macrotask yield instead. That spin holds a core for the
+ * length of the export — no worse than the per-strip drain, which blocked
+ * the thread outright in every tab, but worth naming rather than calling
+ * the cycles free: it buys a backgrounded export full speed instead of a
+ * throttled crawl. This bound is what keeps the GL fence polling behind it
+ * at ~125/s rather than the ~20k/s a bare yield loop would reach — a rate
+ * at which the poll's own driver round trip competes with the tracing it is
+ * waiting for. Far tighter than the ~600ms queue needs either way. */
+const SURFACE_CAPTURE_TICK_MS = 8;
+/** Timer backstop (ms) behind the visible page's rAF pacing (fr-y6m0): a
+ * frame, so the drain polls at a frame's cadence whether or not this page
+ * is actually being ASKED for frames. Both halves of that matter. A page
+ * that never gets a frame callback would otherwise hang the export
+ * outright; and a page whose frame clock merely runs SLOW starves the GPU
+ * between polls, which is not hypothetical — headless SwiftShader serves
+ * rAF at ~10Hz, where a 100ms backstop measured a 504k-px export at 6.5s
+ * against the same frame's 2.7s settle, all of the difference idle queue.
+ * A timer is the right instrument for that: unlike the hidden-page spin it
+ * leaves the main thread genuinely idle between polls, and a visible page's
+ * timers are not throttled. */
+const SURFACE_CAPTURE_TICK_BACKSTOP_MS = 16;
 
 /** How a capture drain ended (fr-7mfx). "ceiling" is fr-id9r's spend
  * backstop — a refusal the caller reports; "cancelled" is the user's own
@@ -5131,13 +5245,30 @@ function surfaceCaptureSpendCeilingMs(opts?: {
     : SURFACE_CAPTURE_SPEND_CEILING_MS;
 }
 
-/** The `prevMs` a drain's FIRST {@link StripPlanner.next} gets: a job that
- * already carries a measurement (an adopted/re-armed one) sizes its first
- * strip from it instead of paying the probe again. */
+/** The `prevMs` the planner's next sizing call gets: the estimate in the
+ * planner's own units (`msPerPxEstimate x lastSubmittedPx`), or null while
+ * nothing REAL has been measured yet — a prior-seeded estimate must never
+ * reach the planner as a measurement (see {@link SurfaceStripJob.measured}),
+ * and a job that already carries one (an adopted/re-armed one) sizes its
+ * first strip from it instead of paying the probe again. */
 function seedStripMeasurement(job: SurfaceStripJob): number | null {
   return job.measured && job.msPerPxEstimate !== null && job.lastSubmittedPx > 0
     ? job.msPerPxEstimate * job.lastSubmittedPx
     : null;
+}
+
+/** Traced-and-measured coverage of `job` in [0, 1]: planned pixels less the
+ * ones still riding this job's OWN fences (an adopted backlog's pixels were
+ * never in `plannedPx`, fr-7to5, so subtracting them too would report
+ * negative coverage). The one definition {@link
+ * FractalScene.surfaceRenderProgress} and the capture drain's progress hook
+ * share — a pipelined drain always has a queueful in flight, so reporting
+ * `plannedPx` alone would claim pixels no measurement has landed on. */
+function stripJobCoverage(job: SurfaceStripJob): number {
+  return (
+    (job.planner.plannedPx - (job.inFlightPx - job.inheritedPx)) /
+    Math.max(1, job.planner.totalPx)
+  );
 }
 
 /** Hand the main thread back for one macrotask. A `MessageChannel` rather
@@ -5153,6 +5284,58 @@ function yieldToEventLoop(): Promise<void> {
     };
     channel.port2.postMessage(null);
   });
+}
+
+/**
+ * One tick of the yielding capture drain (fr-y6m0): hand the main thread
+ * back and give the submitted queue time to advance before the next pump.
+ *
+ * A visible page paces on rAF — the live pump's own clock. 60Hz is ~40x
+ * more often than a {@link SURFACE_STRIP_QUEUE_MS} queue needs to stay fed,
+ * and between callbacks the main thread is genuinely IDLE: the export modal
+ * paints, its Cancel button responds, and nothing spins. A frame callback
+ * is not a GUARANTEE though (a page can be "visible" and still not be asked
+ * to produce frames), and a tick that never resolves is an export that
+ * hangs with a Cancel button that cannot even be observed — so a plain
+ * timer backstops it at {@link SURFACE_CAPTURE_TICK_BACKSTOP_MS}, whichever
+ * arrives first.
+ *
+ * A hidden page stops firing rAF altogether, and there timers are the one
+ * primitive that must NOT be reached for (throttled to 1s hidden, to a
+ * minute past five minutes hidden — a backgrounded export would crawl), so
+ * it falls back to spinning the un-throttleable macrotask yield for
+ * {@link SURFACE_CAPTURE_TICK_MS}. Re-checked every tick, so a tab switch
+ * mid-export lands on the right clock immediately.
+ */
+function nextDrainTick(): Promise<void> {
+  if (
+    typeof requestAnimationFrame === "function" &&
+    typeof document !== "undefined" &&
+    document.visibilityState === "visible"
+  ) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const tick = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      requestAnimationFrame(tick);
+      setTimeout(tick, SURFACE_CAPTURE_TICK_BACKSTOP_MS);
+    });
+  }
+  return spinYieldToEventLoop(SURFACE_CAPTURE_TICK_MS);
+}
+
+/** {@link yieldToEventLoop} until `ms` of wall has passed — the hidden-tab
+ * pacing floor. Each turn is a macrotask, so the page stays responsive
+ * throughout; what the spin costs is main-thread cycles that are otherwise
+ * idle while the GPU traces. */
+async function spinYieldToEventLoop(ms: number): Promise<void> {
+  const until = performance.now() + ms;
+  do {
+    await yieldToEventLoop();
+  } while (performance.now() < until);
 }
 
 /** Thrown by {@link FractalScene.renderSurface}'s full tier when a
@@ -5202,8 +5385,16 @@ interface SurfaceStripJob {
    * `lastPx`, mirrored so the estimate can be handed back in its
    * units). */
   lastSubmittedPx: number;
-  /** Accumulated GPU-busy wall time (ms) — the preview governor's sample
-   * and the px-cost numerator. */
+  /** Accumulated GPU-busy wall time (ms) — the preview governor's sample,
+   * the px-cost numerator, and the capture drains' spend ceiling. "Busy" is
+   * measured as WALL WITH THE QUEUE OUTSTANDING, not as GPU time: a batch
+   * is charged from the moment its group was fenced to the moment a poll
+   * observed it complete, so a queue that empties between polls bills the
+   * idle remainder too (up to one caller tick). At saturation — the regime
+   * the pacing aims for and the one where the numbers are used — the two
+   * agree; a queue pinned small by the fr-id9r worst-price bound over a
+   * cheap band is where they diverge, and the drift is one-directional
+   * (reads high, refuses early, never over-spends). */
   spentMs: number;
   /** Fenced strips submitted but not yet observed complete, in
    * submission order. `inherited` entries are a superseded predecessor's
@@ -5236,7 +5427,8 @@ interface SurfaceStripJob {
     t0: number;
   };
   /** Present cadence — tighter for the interactive preview than for the
-   * parked settle. */
+   * parked settle, `Infinity` for a capture (which presents once, at the
+   * end, and only into the export image). */
   presentIntervalMs: number;
 }
 /** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
