@@ -48,7 +48,9 @@
  *   CPU fallback for variation-heavy systems. Slots now carry
  *   {@link MAX_SLOT_VARIATIONS} (type, weight) lanes — one per
  *   {@link VariationType} (fr-p7nu added the Mandelbox fold family —
- *   `boxfold`/`spherefold`/`mandelbox` — bringing the count to 15).
+ *   `boxfold`/`spherefold`/`mandelbox`, then fr-7u8t.3 added `qsquare` —
+ *   bringing the count to 16, which exactly fills the storage the lane
+ *   array always reserved).
  */
 import type { Rng } from "./rng";
 import type { SymmetryParams, Transform, VariationType } from "./types";
@@ -85,7 +87,7 @@ export const COLOR_FIXED_POINT_SCALE = 256;
 /** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
  * (`types.ts`), so a single transform can carry every {@link VariationType}
  * at once and no system's variation list can force a CPU fallback. */
-export const MAX_SLOT_VARIATIONS = 15;
+export const MAX_SLOT_VARIATIONS = 16;
 
 /** u32 words per histogram bucket: four emulated-u64 channels —
  * [hitsLo, hitsHi, rLo, rHi, gLo, gHi, bLo, bHi]. */
@@ -118,6 +120,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
   boxfold: 12,
   spherefold: 13,
   mandelbox: 14,
+  qsquare: 15,
 };
 
 /**
@@ -138,7 +141,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
  *   96 varWeights array<vec4f, 4> | 160 varTypes array<vec4u, 4> (16 lanes of
- *   storage, 15 used — one per {@link VariationType} — the 16th left zeroed)
+ *   storage, all 16 used — one per {@link VariationType})
  *   224 varCount u32 | 228 hasPost u32 | 232 cumWeight f32
  *   236 colorIndex f32 | 240 colorSpeed f32 (fr-hiyu's flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
@@ -334,6 +337,9 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
       let b = 2.0 * clamp(p, vec3f(-1.0), vec3f(1.0)) - p;
       return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
     }
+    case 15u: { // qsquare — quaternion square on w = 0; p.x is the real part.
+      return vec3f(p.x * p.x - p.y * p.y - p.z * p.z, 2.0 * p.x * p.y, 2.0 * p.x * p.z);
+    }
     default: {
       return p;
     }
@@ -495,8 +501,8 @@ const SLOT_POST_X = 12;
 const SLOT_POST_Y = 16;
 const SLOT_POST_Z = 20;
 /**
- * `varWeights: array<vec4f, 4>` — 16 lanes of storage, 15 used (one per
- * {@link VariationType}; the 16th stays zeroed). A storage-buffer
+ * `varWeights: array<vec4f, 4>` — 16 lanes of storage, all 16 used (one per
+ * {@link VariationType}). A storage-buffer
  * `array<vec4, N>` has no inter-element padding (each `vec4` is already
  * 16-byte aligned, exactly its own size), so 4 consecutive vec4s are 16
  * CONTIGUOUS elements and lane `v` sits at `SLOT_VAR_WEIGHTS + v` directly —

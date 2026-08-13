@@ -471,9 +471,19 @@ const VARIATION_WEIGHT_MIN = -2;
 const VARIATION_WEIGHT_MAX = 2;
 const DEFAULT_VARIATION_WEIGHT = 1;
 
+/**
+ * Display names for variation types whose identifier does not title-case into
+ * readable English. Only types that need it appear here; everything else
+ * falls through to {@link variationLabel}'s title-case, which is why the
+ * existing names are untouched.
+ */
+const VARIATION_LABELS: Partial<Record<VariationType, string>> = {
+  qsquare: "Quaternion square",
+};
+
 /** Title-case a variation type for display, e.g. "handkerchief" → "Handkerchief". */
 function variationLabel(type: VariationType): string {
-  return type.charAt(0).toUpperCase() + type.slice(1);
+  return VARIATION_LABELS[type] ?? type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 /** Structural equality for a variation list, so the editor only rebuilds on real change. */

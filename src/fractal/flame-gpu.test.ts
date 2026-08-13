@@ -1116,6 +1116,7 @@ describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
       boxfold: 12,
       spherefold: 13,
       mandelbox: 14,
+      qsquare: 15,
     });
   });
 
