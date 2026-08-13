@@ -240,8 +240,19 @@ morphs into place instead of snapping (see **Presets** below).
   the explorer camera would otherwise start inside the solid). Multi-map,
   blended, kaleidoscoped or final-transform systems have no escape-time
   reading; they keep the ordinary eligibility reasons.
-  **Mandelbox KIFS** in the Presets menu is the pure-fold showcase and
-  loads straight into Surface mode. Orbiting or tumbling one also starts
+  The Presets menu's **Escape-time** group — Mandelbox, Mandelbox Rings,
+  Mandelbox Cube — are that mode's showcase (fr-7u8t.8), and they load
+  straight into it. All three are the same single map at three fold
+  weights — 2 (the classic knobbly ball), 3 (a ball drilled through by
+  rings of voids) and −1.5 (a cube with fractal faces). The weight is the
+  family's real knob and small moves along it give wholly different
+  objects, so the fastest way to see what this mode does is to load one
+  and drag the fold weight. Their
+  position slider moves the fold's centre, which deforms rather than
+  translates. The menu's **Fold Lattice** (formerly labelled Mandelbox)
+  is an unrelated eight-map IFS that merely uses the same fold variation.
+  **Mandelbox KIFS** in the Presets menu is the pure-fold showcase for the
+  IFS-side fold descent and loads straight into Surface mode. Orbiting or tumbling one also starts
   its live preview at the preview ladder's floor rung rather than the
   usual mid-ladder entry — sized so the first frame costs about what a
   fold-free system's does, since a fold descent runs orders of magnitude

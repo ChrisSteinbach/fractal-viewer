@@ -701,9 +701,13 @@ export function juliaDust(): Transform[] {
 }
 
 /**
- * "Mandelbox" — an eight-map fold lattice built on the `mandelbox` variation
- * (fr-p7nu), the box-fold + sphere-fold composite behind the escape-time
- * Mandelbox, here driving an IFS. Each map runs the classic step
+ * "Fold Lattice" — an eight-map fold lattice built on the `mandelbox`
+ * variation (fr-p7nu), the box-fold + sphere-fold composite behind the
+ * escape-time Mandelbox, here driving an IFS. It carried the menu label
+ * "Mandelbox" until fr-7u8t.8 made the actual Mandelbox reachable
+ * ({@link mandelboxClassic}) and the name had to go to the object that
+ * earns it; the preset KEY is untouched, since keys never reach a saved
+ * document. Each map runs the classic step
  * `s·sphereFold(boxFold(p̃))` at `s = 1.2` over a contracted, slightly
  * twisted copy of space, with a whisper of `linear` keeping the creases
  * connected. Rendered: a hollow cube of folded plates over vaulted interior
@@ -797,6 +801,68 @@ export function mandelboxLattice(): Transform[] {
  * arrangement of the same maps measured ~14x this system's descent cost for
  * no more structure.
  */
+/**
+ * The escape-time Mandelbox family's shared recipe (fr-7u8t.8): ONE fold map
+ * at a non-contracting weight, no pre-fold offset.
+ *
+ * `analyzeSurfaceSystem` refuses this shape — an expanding map has no IFS
+ * attractor to descend onto — and that refusal is precisely what routes it to
+ * `escape-de.ts` instead, which iterates the map FORWARD from each query and
+ * marches the boundary of the set whose orbits stay bounded. So these presets
+ * reach a render mode no other preset can, which is the whole reason they
+ * exist: before them the only way into the escape-time mode was to author a
+ * single fold map by hand and hope the weight was a good one.
+ *
+ * `weight` is the classic Mandelbox `scale`, and it is the family's real
+ * knob — the three presets below are one number apart and are three different
+ * objects. `position` (the fold's box/sphere centre) is a second, continuous
+ * one: left at zero here for the textbook object, but live, and morphs and
+ * mutations already interpolate it.
+ */
+function escapeMandelbox(weight: number): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "mandelbox", weight }],
+    },
+  ];
+}
+
+/**
+ * The Mandelbox itself, at the canonical scale 2 (fr-7u8t.8) — the knobbly
+ * fractal ball with crevices running to every depth, and the object the
+ * escape-time mode was built for. Measured (`scripts/escape-form-sweep.harness.ts`):
+ * its non-escaping set fills 10.6% of the bailout ball and reaches to the
+ * ball's own radius, so the session's opening framing is right for it.
+ */
+export function mandelboxClassic(): Transform[] {
+  return escapeMandelbox(2);
+}
+
+/**
+ * The same map at scale 3 (fr-7u8t.8): a far sparser set (2.8% ball fill)
+ * that reads as a ball drilled through by rings of circular voids — the
+ * scale where the box fold's reflections start winning against the sphere
+ * fold's inflation.
+ */
+export function mandelboxRings(): Transform[] {
+  return escapeMandelbox(3);
+}
+
+/**
+ * The same map at scale -1.5 (fr-7u8t.8). Negative scales turn the Mandelbox
+ * inside out: the set becomes a solid CUBE (17.7% ball fill, the fattest of
+ * the three) with fractal detail carved into its faces rather than a lobed
+ * ball — the cheapest of the three to march, and the one that reads clearly
+ * at a glance.
+ */
+export function mandelboxCube(): Transform[] {
+  return escapeMandelbox(-1.5);
+}
+
 export function mandelboxKifs(): Transform[] {
   const foldWeight = 1.2;
   const foldScale = 0.19;
@@ -1197,6 +1263,11 @@ const PRESETS = {
   juliaDust,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
+  // The escape-time set's own presets (fr-7u8t.8): the mode had none, so the
+  // only route in was authoring a lone fold map by hand.
+  mandelboxClassic,
+  mandelboxRings,
+  mandelboxCube,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
@@ -1260,6 +1331,15 @@ export const PRESET_RENDER_HINTS: Partial<
   // (fr-5rvk) — as a point cloud it under-delivers the same way the flame
   // presets do.
   mandelboxKifs: "surface",
+  // The escape-time trio (fr-7u8t.8) needs the hint more than any preset
+  // here: the chaos-game cloud of a non-contracting map is escape-reset
+  // debris, so as a point cloud these look BROKEN rather than merely
+  // under-delivered. Surface mode is the only place they are anything at
+  // all — and the mode reached this way is the escape-time marcher, not the
+  // IFS descent mandelboxKifs above lands in.
+  mandelboxClassic: "surface",
+  mandelboxRings: "surface",
+  mandelboxCube: "surface",
 };
 
 /** Build the transform set for a named preset. */

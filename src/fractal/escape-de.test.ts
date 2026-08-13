@@ -5,6 +5,7 @@ import {
   ESCAPE_TIME_RADIUS,
   estimateEscapeDistance,
 } from "./escape-de";
+import { mandelboxClassic, mandelboxCube, mandelboxRings } from "./presets";
 import { analyzeSurfaceSystem, SURFACE_FOLD_MANDELBOX } from "./surface-de";
 import type { Transform, Vec3 } from "./types";
 
@@ -189,6 +190,67 @@ describe("estimateEscapeDistance (fr-kltj)", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const p: Vec3 = [0.3, -0.7, 0.4];
     expect(estimateEscapeDistance(de, p)).toBe(estimateEscapeDistance(de, p));
+  });
+});
+
+describe("the escape-time presets (fr-7u8t.8)", () => {
+  // These three exist to make the mode reachable, and they reach it only by
+  // being refused by the IFS gate — a preset that quietly became contracting
+  // would land in the attractor tracer and render an empty point, with
+  // nothing anywhere saying why.
+  it.each([
+    ["mandelboxClassic", mandelboxClassic()],
+    ["mandelboxRings", mandelboxRings()],
+    ["mandelboxCube", mandelboxCube()],
+  ])(
+    "%s is refused by the IFS gate and admitted by the escape gate",
+    (_name, transforms) => {
+      expect(analyzeSurfaceSystem(transforms).status).toBe("ineligible");
+      expect(analyzeEscapeSystem(transforms)).toEqual({
+        status: "eligible",
+        reasons: [],
+      });
+    },
+  );
+
+  it("renders three DIFFERENT objects — the fold weight is the family's knob", () => {
+    // Ball fill measured by scripts/escape-form-sweep.harness.ts: 10.6% /
+    // 2.8% / 17.7%. Collapse the weights onto one value and this fails.
+    const fill = (transforms: Transform[]): number => {
+      const de = buildEscapeDE(transforms);
+      const N = 17;
+      let inBall = 0;
+      let interior = 0;
+      const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          for (let k = 0; k < N; k++) {
+            const p: Vec3 = [
+              -ESCAPE_TIME_RADIUS + step * i,
+              -ESCAPE_TIME_RADIUS + step * j,
+              -ESCAPE_TIME_RADIUS + step * k,
+            ];
+            if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
+            inBall++;
+            if (estimateEscapeDistance(de, p) < 1e-3) interior++;
+          }
+        }
+      }
+      return interior / inBall;
+    };
+    const [ball, rings, cube] = [
+      fill(mandelboxClassic()),
+      fill(mandelboxRings()),
+      fill(mandelboxCube()),
+    ];
+    // Each is non-empty (a preset that renders nothing is worse than no
+    // preset) and each is a distinctly different amount of solid.
+    for (const f of [ball, rings, cube]) {
+      expect(f).toBeGreaterThan(0.01);
+      expect(f).toBeLessThan(0.3);
+    }
+    expect(rings).toBeLessThan(ball);
+    expect(ball).toBeLessThan(cube);
   });
 });
 
