@@ -614,7 +614,7 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
           de: (p) => estimateBulbDistance(de, p),
           boundingRadius: de.boundingRadius,
           stepScale,
-          zoom: 0.22,
+          zoom: 0.34,
         },
         SIZE,
       );
