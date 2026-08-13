@@ -2888,7 +2888,7 @@ ${
 
   // Escape hit-info (fr-dlxh — the GLSL SURFACE_ESCAPE shading overload,
   // term for term): the same forward orbit with the classic escape-time
-  // extras — trap is the ESCAPE FRACTION escapedAt/maxDepth (the
+  // extras — trap is the CONTINUOUS ESCAPE FRACTION (fr-7u8t.8; the
   // canonical Mandelbox palette coordinate), rings/sheets the orbit's
   // closest radial / y-plane approaches — the same trap vocabulary the
   // descent variants feed the shared color sources. firstChoice is
@@ -2923,7 +2923,13 @@ ${
     info.rings = min(info.rings, r / params.boundingRadius);
     info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
   }
-  info.trap = f32(escapedAt) / f32(params.maxDepth);
+  // fr-7u8t.8: the CONTINUOUS escape count — the GLSL arm's escFrac term for
+  // term (see surface-material.ts for why the raw integer reads as confetti).
+  var escFrac = 0.0;
+  if (escapedAt < params.maxDepth && params.escParams.z > 1.0) {
+    escFrac = clamp(log(r / params.boundingRadius) / log(params.escParams.z), 0.0, 1.0);
+  }
+  info.trap = clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
   return info;

@@ -1952,7 +1952,9 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     );
     expect(wgsl).toContain("fn shadeRays");
     expect(wgsl).toContain("escapedAt = i");
-    expect(wgsl).toContain("f32(escapedAt) / f32(params.maxDepth)");
+    // The CONTINUOUS escape count (fr-7u8t.8) — the raw integer read as
+    // confetti under a palette once the object stopped being a blob.
+    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(params.maxDepth)");
     expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
     expect(wgsl).toContain(
       "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",
