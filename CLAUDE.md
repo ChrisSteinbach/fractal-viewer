@@ -647,10 +647,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     hole (fr-nl32): `renderSurface("preview")` ARMS a fresh job, so
     re-arming per invalidation discarded the in-flight partial, and on any
     renderer where a preview spans frames the job died before it could
-    present — a continuous drag painted NOTHING for its whole duration
-    (measured under SwiftShader at a 100ms move cadence: 6s of drag, the
-    canvas byte-identical at every 300ms sample, the row stuck at
-    "Preview · WebGL 0%" with previewActive true throughout). main.ts's
+    present — a continuous drag painted essentially NOTHING for its whole
+    duration (measured under SwiftShader at a 100ms move cadence: 6s of
+    drag, 13 of 15 samples byte-identical at jpeg 69360 with the row
+    reading "Preview · WebGL 0%" and previewActive true throughout. The
+    two exceptions are the mechanism caught in the act: one sample found a
+    job at 19%, and the next — 175ms later — was 0.3% larger and back at
+    0%. ONE partial strip present in six seconds, and the job that made it
+    re-armed away before it could finish). main.ts's
     tick now COALESCES like the compute loop: while a job is in flight an
     invalidation steps it instead of re-arming, and stays latched in
     `scene.needsRender` so the next arm takes the freshest camera.
