@@ -622,6 +622,84 @@ export function dyedSpiral(): Transform[] {
   ];
 }
 
+/** The Julia constant {@link juliaSet} renders: −0.123 + 0.745i, Douady's
+ * rabbit — the center of the Mandelbrot set's period-3 hyperbolic
+ * component. See {@link juliaSet}'s doc. */
+const JULIA_SET_C: [number, number] = [-0.123, 0.745];
+
+/** The Julia constant {@link juliaDust} renders: 0.36 + 0.6i, verified
+ * outside the Mandelbrot set with a clean, fast escape (iteration 27 from
+ * z = 0 — not a razor's-edge near-boundary crawl). See presets.test.ts. */
+const JULIA_DUST_C: [number, number] = [0.36, 0.6];
+
+/**
+ * The one-transform recipe shared by {@link juliaSet} and {@link juliaDust}
+ * (fr-7u8t.1): exact Inverse Iteration (IIM) for the Julia set of z² + c.
+ * `variations.ts`'s `julia` IS flam3's `juliaN(power=2, dist=1)` — half the
+ * angle, square-root the radius, a random half-turn — which is exactly the
+ * pair of inverse branches w±(z) = ±sqrt(z − c) that make
+ * J = w+(J) ∪ w−(J), Hutchinson's IFS fixed-point equation with non-affine
+ * maps. The chaos game applies a transform's variation to its affine
+ * output, V(Mv + t), so translating by −c BEFORE the variation is the one
+ * piece of setup IIM needs; `julia`'s own random half-turn already IS the
+ * random branch pick. `scale.z = 0` pins the sheet at z = 0 — `julia`
+ * carries z through untouched (see `variations.ts`'s file doc), so without
+ * it the plane would sit wherever the seed point's z happened to warm up
+ * to, not at 0.
+ */
+function juliaIim(cx: number, cy: number): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [-cx, -cy, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 0],
+      variations: [{ type: "julia", weight: 1 }],
+    },
+  ];
+}
+
+/**
+ * The Julia set of z² + c at {@link JULIA_SET_C} (fr-7u8t.1), by exact
+ * Inverse Iteration — see {@link juliaIim}. `−0.123 + 0.745i` is Douady's
+ * rabbit, the center of M's period-3 hyperbolic component: the critical
+ * orbit of z² + c lands on an attracting 3-cycle (magnitude ~0.869,
+ * confirmed identical at iteration 5000 and 50000 — matching residues mod
+ * 3) rather than ever escaping, so this Julia set is genuinely, robustly
+ * connected — not a near-boundary judgment call (contrast
+ * {@link juliaDust}, verified outside M instead; presets.test.ts pins both
+ * facts). Measured 93.84% of 50k plotted points straddle the
+ * forward-escape boundary within delta 0.01 (91.61% at 0.02, 92.31% at
+ * 0.004), against 8.39% for a uniform control over the same disk
+ * (2026-08-13 probe, mulberry32(7); presets.test.ts pins the > 0.8 / < 0.3
+ * shape of that gap so the recipe cannot silently rot if `julia` or the
+ * affine order changes). The bounded cloud's max planar radius (1.4148)
+ * sits just under the theoretical escape bailout
+ * `(1 + sqrt(1 + 4|c|)) / 2 = 1.5025`, exactly as IIM predicts. See
+ * `docs/julia-sets.md` for the harmonic-measure caveat behind the ~6%
+ * residual above (it applies to both presets, connected or not).
+ */
+export function juliaSet(): Transform[] {
+  return juliaIim(...JULIA_SET_C);
+}
+
+/**
+ * {@link juliaSet}'s dust twin (fr-7u8t.1): the identical IIM recipe at
+ * {@link JULIA_DUST_C}, a c verified outside the Mandelbrot set with room
+ * to spare (unlike a marginal outside-M c, whose Cantor gaps would be too
+ * fine to read as anything but connected — see `docs/julia-sets.md`). For
+ * such c the textbook conformal-IFS case holds — both inverse branches
+ * w±(z) = ±sqrt(z − c) map a disk containing the Julia set into two
+ * genuinely DISJOINT sub-disks — so the attractor is an unambiguous,
+ * visibly separated Cantor dust (measured straddle ~11% at delta 0.01,
+ * roughly 8x below `juliaSet`'s 93.84%: presets.test.ts checks the
+ * constant is outside M directly rather than re-deriving that
+ * percentage). See `docs/julia-sets.md`.
+ */
+export function juliaDust(): Transform[] {
+  return juliaIim(...JULIA_DUST_C);
+}
+
 /**
  * "Mandelbox" — an eight-map fold lattice built on the `mandelbox` variation
  * (fr-p7nu), the box-fold + sphere-fold composite behind the escape-time
@@ -1115,6 +1193,8 @@ const PRESETS = {
   radiolarian,
   swirl: swirlFlame,
   dyedSpiral,
+  julia: juliaSet,
+  juliaDust,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
@@ -1170,6 +1250,11 @@ export const PRESET_RENDER_HINTS: Partial<
   radiolarian: "flame",
   swirl: "flame",
   dyedSpiral: "flame",
+  // Flat 2D sheets in the XY plane (fr-7u8t.1): the flame's log-density
+  // exposure is what turns an IIM Julia set's tip-heavy point density into
+  // a legible curve instead of a faint, mostly-empty sparkle.
+  julia: "flame",
+  juliaDust: "flame",
   mandelbox: "flame",
   // The pure-fold twin exists to showcase the fold-branch surface descent
   // (fr-5rvk) — as a point cloud it under-delivers the same way the flame

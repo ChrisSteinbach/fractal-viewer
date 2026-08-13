@@ -95,6 +95,15 @@ them live. A map whose variation list is exactly one fold-family entry is also t
 one nonlinear case the surface distance estimator can descend — see **The surface
 distance estimator** below (fr-5rvk).
 
+One variation renders a wholly different fractal on its own, unblended: `julia`
+on a single transform translated by `−c` performs exact Inverse Iteration for the
+classic 2-D Julia set of `z² + c` (fr-7u8t.1) — a fractal with no self-similar
+IFS structure of its own, found "for free" in the existing variation vocabulary
+rather than designed in. The `julia`/`juliaDust` presets showcase it, one a
+genuinely connected curve (Douady's rabbit) and one an unambiguous Cantor
+dust; see `docs/julia-sets.md` for the recipe, why two presets, and the
+harmonic-measure coverage bias IIM inherits.
+
 ## Final transform
 
 A **final transform** (the fractal-flame _final xform_) is one more affine +
