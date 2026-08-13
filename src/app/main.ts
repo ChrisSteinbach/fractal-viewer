@@ -2984,6 +2984,10 @@ function main(): void {
   // freshest camera, instead of restarting (and never finishing) per rAF.
   let surfaceComputePreviewFlight = false;
   let surfaceComputePreviewPending = false;
+  // The preview in flight is the unbudgeted COMPLETION pass (fr-ud7n) —
+  // the one preview frame that can outlive an invalidation, so the kick
+  // path cancels it explicitly instead of waiting out a wall budget.
+  let surfaceComputePreviewCompleting = false;
   let surfaceComputeSettleFlight = false;
   // Memo key of the last completed offline-export force frame: dwell
   // frames re-present it instead of re-tracing seconds of identical
@@ -2994,6 +2998,13 @@ function main(): void {
   // (fr-tmgf: the progress row's compute-path feed — null outside a
   // settle, so the row hides exactly like the strip path's idle state).
   let surfaceComputeSettleProgress: number | null = null;
+  // The same for the preview loop's COMPLETION pass (fr-ud7n). Separate
+  // field rather than a phase-tagged one, because the two loops overlap
+  // for exactly as long as a superseded settle takes to notice its
+  // cancel(): a shared field would let that settle's teardown null the
+  // fresh preview's coverage. The preview wins that tie in the row —
+  // it is the trace still running.
+  let surfaceComputePreviewProgress: number | null = null;
   // The surface progress row's trailing WebGL detail token (fr-tmgf):
   // why THIS session runs the WebGL tracer when compute would have been
   // its home ("compute unavailable" / "compute failed"), null when WebGL
@@ -3015,6 +3026,15 @@ function main(): void {
   // presents, and SAMPLES: the governor's panic path then drops the rung.
   // Without it, continuous motion could cancel every over-heavy preview
   // before a single measurement existed and the ladder would never learn.
+  //
+  // It is a MEASUREMENT device and nothing more (fr-ud7n). A truncated
+  // frame is a verdict about the rung, never a verdict about the pose:
+  // when the ladder has no cheaper rung left and no invalidation is
+  // waiting, the loop re-runs the frame UNBUDGETED and lets it finish —
+  // see runSurfaceComputePreviewLoop's completion pass. Budgeting the
+  // last preview of a parked session is the automatic give-up fr-24to/
+  // fr-zx34 removed from the WebGL tier, and on a Firefox-class adapter
+  // (~10-20x slower WebGPU) it was every preview of every fold session.
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
   // Progress cadence for an EXPORT-scale compute frame (fr-7mfx): twice
@@ -3068,9 +3088,11 @@ function main(): void {
     surfaceComputeRenderer?.destroy();
     surfaceComputeRenderer = null;
     surfaceComputePreviewPending = false;
+    surfaceComputePreviewCompleting = false;
     surfaceComputeSettleFlight = false;
     surfaceComputeForceKey = null;
     surfaceComputeSettleProgress = null;
+    surfaceComputePreviewProgress = null;
     scene.exitSurfaceComputeSession();
     updateSoftwareRendererNote();
   }
@@ -3190,10 +3212,54 @@ function main(): void {
 
   function kickSurfaceComputePreview(): void {
     surfaceComputePreviewPending = true;
-    if (surfaceComputePreviewFlight) return;
+    if (surfaceComputePreviewFlight) {
+      // The completion pass (fr-ud7n) is the one preview frame with no
+      // wall budget, so a fresh invalidation cannot simply wait it out —
+      // supersede it here and let the loop pick the new pose up on its
+      // next turn. Budgeted frames are deliberately left alone: they
+      // resolve within SURFACE_COMPUTE_PREVIEW_BUDGET_MS anyway, and
+      // cancelling one would throw away the governor sample the ladder
+      // needs most while the view is moving.
+      if (surfaceComputePreviewCompleting) surfaceComputeRenderer?.cancel();
+      return;
+    }
     void runSurfaceComputePreviewLoop();
   }
 
+  /**
+   * The compute path's preview driver: one frame per invalidation,
+   * latest-wins — plus the COMPLETION pass (fr-ud7n), the frame that runs
+   * with NO wall budget when the ladder has nothing cheaper left and the
+   * view has parked.
+   *
+   * Why the pass exists: {@link SURFACE_COMPUTE_PREVIEW_BUDGET_MS} cuts a
+   * preview the device cannot afford so the governor gets a sample and
+   * drops a rung. At the FLOOR rung there is no drop to make, so a
+   * truncated floor frame used to be the preview's last word — the loop
+   * drained, the settle fired, and the user was handed a mostly-backdrop
+   * pane and a multi-minute full render nobody asked for. That is the
+   * automatic give-up fr-24to/fr-zx34 removed from the WebGL tier and
+   * fr-37c6 gave a Skip button instead, and on a Firefox-class adapter
+   * (~10-20x slower WebGPU) it was EVERY preview of every fold session.
+   * So the truncated frame stays an intermediate paint, and the pass
+   * re-runs the same rung to completion: progressive presents as rays
+   * resolve, honest coverage in the progress row, and the Skip button
+   * live throughout for the user who would rather have the settle now.
+   *
+   * Dropping the budget costs no safety: every submission the renderer
+   * makes is bounded by its own measured pass sizing (the i915 watchdog
+   * discipline in surface-compute.ts), which is what keeps the equally
+   * unbudgeted SETTLE safe — the wall budget only ever decided when to
+   * stop, never how big a piece of work to send. And the pass is nearly
+   * free against what follows it: the floor rung traces ~200x fewer rays
+   * than the full frame, at a shallower depth clamp. MEASURED on the
+   * reporter's case (Firefox 151 WebGPU, 1920x1057, 20-map Menger + fold
+   * lens + balloon): two 2.1s truncated floor previews resolving 5% of
+   * their rays, then a completion pass that resolved all 9916 in 13.8s
+   * and disclosed 3.9% -> 97% while it did — where the settle behind it
+   * was still at 48% after 179s. ~4% of the wall, for the only whole
+   * image the user sees in the first several minutes.
+   */
   async function runSurfaceComputePreviewLoop(): Promise<void> {
     const renderer = surfaceComputeRenderer;
     if (!renderer) {
@@ -3201,22 +3267,61 @@ function main(): void {
       return;
     }
     surfaceComputePreviewFlight = true;
+    // Latched by a truncated frame the governor could not answer with a
+    // cheaper rung: the loop's one reason to render again with no fresh
+    // invalidation behind it.
+    let completionDue = false;
     try {
       // A loop already in flight when a capture starts would resume from
       // its await and cancel the export (fr-7mfx); leave `pending` latched
       // and let the invalidation the capture's own ratio restore raises
       // re-kick it afterwards.
-      while (surfaceComputePreviewPending && !surfaceCaptureFlight) {
+      while (
+        (surfaceComputePreviewPending || completionDue) &&
+        !surfaceCaptureFlight
+      ) {
+        // An invalidation outranks a due completion: the pose that frame
+        // would have completed is stale, and the fresh one gets the
+        // budgeted (measuring) treatment like any other.
+        const completing = !surfaceComputePreviewPending;
         surfaceComputePreviewPending = false;
+        completionDue = false;
         if (surfaceComputeRenderer !== renderer) return;
         // Supersede whatever is in flight — a stale settle or an older
         // preview; latest wins, exactly the cloud generator's slot rule.
         renderer.cancel();
         const spec = scene.surfaceComputeFrameSpec("preview");
         const t0 = performance.now();
-        const frame = await renderer.renderFrame(spec, {
-          budgetMs: SURFACE_COMPUTE_PREVIEW_BUDGET_MS,
-        });
+        surfaceComputePreviewCompleting = completing;
+        const frame = await renderer.renderFrame(
+          spec,
+          completing
+            ? {
+                // Unbudgeted, so it discloses and paints like the settle:
+                // resolved rays shade in over the truncated frame this
+                // pass re-runs (the renderer prefills from it), and the
+                // ray tallies feed "Preview · WebGPU N%" + the Skip
+                // button (fr-37c6) through syncSurfaceProgress.
+                onProgress: (pixels, done, total) => {
+                  if (
+                    surfaceComputeRenderer !== renderer ||
+                    state.renderMode !== "surface"
+                  ) {
+                    return;
+                  }
+                  scene.presentSurfaceComputeFrame(
+                    pixels,
+                    spec.width,
+                    spec.height,
+                  );
+                  surfaceComputePreviewProgress =
+                    total > 0 ? done / total : null;
+                },
+              }
+            : { budgetMs: SURFACE_COMPUTE_PREVIEW_BUDGET_MS },
+        );
+        surfaceComputePreviewCompleting = false;
+        surfaceComputePreviewProgress = null;
         if (
           surfaceComputeRenderer !== renderer ||
           state.renderMode !== "surface"
@@ -3229,27 +3334,42 @@ function main(): void {
             frame.width,
             frame.height,
           );
-          const dropped = scene.sampleSurfaceComputeCost(
-            performance.now() - t0,
-            frame.truncated,
-          );
-          // A truncated preview that just dropped the rung must be RE-RUN
-          // (fr-khxy round 3): a parked entry has no further invalidations
-          // coming, so without this re-kick the panic verdict would fire
-          // after the session's last preview and the pane would hold the
-          // truncated frame's backdrop until the full settle lands
-          // (measured 45s of black on Firefox's ~10-20x slower WebGPU
-          // where Chrome's preview completes in 0.4s). At the dropped rung
-          // the re-run completes within the same wall budget and paints
-          // real content, which the settle's prefill then carries. At the
-          // floor the governor reports no change, so this cannot loop.
-          if (frame.truncated && dropped !== null) {
-            surfaceComputePreviewPending = true;
+          // The completion pass feeds the governor NOTHING: it is by
+          // construction the frame that did not fit, measured under a
+          // regime (no budget, parked view) the interactive ladder never
+          // renders in. Its seconds-to-minutes cost would only pin the EMA
+          // high and hold the rung down long after the pose it belonged to
+          // is gone.
+          if (!completing) {
+            const dropped = scene.sampleSurfaceComputeCost(
+              performance.now() - t0,
+              frame.truncated,
+            );
+            if (frame.truncated) {
+              // A truncated preview that just dropped the rung must be
+              // RE-RUN (fr-khxy round 3): a parked entry has no further
+              // invalidations coming, so without this re-kick the panic
+              // verdict would fire after the session's last preview and
+              // the pane would hold the truncated frame's backdrop until
+              // the full settle lands (measured 45s of black on Firefox's
+              // ~10-20x slower WebGPU where Chrome's preview completes in
+              // 0.4s). At the dropped rung the re-run usually completes
+              // inside the same wall budget and paints real content, which
+              // the settle's prefill then carries.
+              //
+              // No drop means the floor rung (any truncation panics, and
+              // panic saturates there), so the ladder has answered as far
+              // as it can — the completion pass takes it from here, which
+              // is also why this cannot loop: `completing` frames are
+              // never truncated and never sampled.
+              if (dropped !== null) surfaceComputePreviewPending = true;
+              else completionDue = true;
+            }
           }
           console.debug(
             `Surface compute preview ${String(frame.width)}x${String(frame.height)}: ` +
               `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes` +
-              `${frame.truncated ? " (truncated)" : ""}, ` +
+              `${frame.truncated ? " (truncated)" : completing ? " (completion)" : ""}, ` +
               `hit ${String(frame.counts.hit)} / miss ${String(frame.counts.miss)} / ` +
               `exhausted ${String(frame.counts.exhausted)} / active ${String(frame.counts.active)}`,
           );
@@ -3257,6 +3377,8 @@ function main(): void {
       }
     } finally {
       surfaceComputePreviewFlight = false;
+      surfaceComputePreviewCompleting = false;
+      surfaceComputePreviewProgress = null;
     }
   }
 
@@ -3674,9 +3796,10 @@ function main(): void {
       }
       // Latest-wins in reverse: drop the pending latch so the loop drains,
       // cancel the frame it is awaiting, and arm the settle — which
-      // surfaceComputeTick fires the moment the flight clears. (Compute
-      // previews are wall-budgeted at 2s, so this saves seconds at most —
-      // the button never shows here; this arm serves the pref flip.)
+      // surfaceComputeTick fires the moment the flight clears. A budgeted
+      // frame is seconds at most, but the completion pass (fr-ud7n) is
+      // exactly as unbounded as a WebGL preview job — this is the arm the
+      // Skip button drives there, not just the pref flip.
       surfaceComputePreviewPending = false;
       surfaceComputeRenderer.cancel();
       surfaceSettlePending = true;
@@ -6402,31 +6525,42 @@ function main(): void {
    * in-flight preview/settle, so the user — not a prediction — decides
    * whether a heavy pose is worth the wait. Called every surface tick on
    * both paths; null hides the row (instant renders and settled frames,
-   * the common case). Compute settles feed it from onProgress ray
-   * tallies; the label's backend token (fr-tmgf) says which engine owns
-   * the session — WebGPU compute vs the WebGL tracer.
+   * the common case). Compute settles — and compute previews that outrun
+   * their wall budget at the floor rung (fr-ud7n) — feed it from
+   * onProgress ray tallies; the label's backend token (fr-tmgf) says
+   * which engine owns the session — WebGPU compute vs the WebGL tracer.
    */
   function syncSurfaceProgress(): void {
     // The label's backend token is fr-tmgf's minimal cut: after a day of
     // silently software-rendered sessions, "which engine is this?" must
     // not require the console breadcrumb.
     if (surfaceComputeRenderer !== null) {
-      // Compute sessions: the settle's onProgress ray tallies feed the
-      // row; previews finish inside their 2s budget and never surface
-      // here (the first onProgress fires after the present interval).
-      if (surfaceComputeSettleProgress === null) {
+      // Compute sessions: onProgress ray tallies feed the row, from the
+      // settle and from the preview loop's unbudgeted completion pass
+      // (fr-ud7n) alike. Budgeted previews still never reach it — bounded
+      // work needs no disclosure, and at 2s the first onProgress would
+      // barely fire before the frame did, flickering the row through every
+      // drag. The preview wins the tie: while a superseded settle is still
+      // noticing its cancel(), the preview is the trace actually running.
+      const preview = surfaceComputePreviewProgress;
+      const fraction = preview ?? surfaceComputeSettleProgress;
+      if (fraction === null) {
         ui.setSurfaceProgress(null);
         return;
       }
-      const pct = formatRenderPercent(surfaceComputeSettleProgress);
       // "(software)" rides the engine token (fr-tmgf): a SwiftShader-class
       // adapter must not read as the real GPU; the warning note carries
       // the full story.
+      const engine = surfaceComputeRenderer.software
+        ? "WebGPU (software)"
+        : "WebGPU";
       ui.setSurfaceProgress({
-        label: surfaceComputeRenderer.software
-          ? "Full detail · WebGPU (software)"
-          : "Full detail · WebGPU",
-        pct,
+        label: `${preview !== null ? "Preview" : "Full detail"} · ${engine}`,
+        pct: formatRenderPercent(fraction),
+        // The fr-37c6 Skip button, on the engine the bead's own comment
+        // said it would never show on: a completion pass is a preview
+        // with a full render to skip TO, which is the whole rule.
+        skippable: preview !== null,
       });
       return;
     }
@@ -6441,8 +6575,7 @@ function main(): void {
     // absent when WebGL is the natural engine. Trailing, so the engine
     // token and percentage keep the prominent read. A grinding preview is
     // skippable (fr-37c6): the Skip button rides the row exactly while
-    // there is a full render to skip TO — never during settles, and the
-    // compute path's wall-budgeted previews never reach the row at all.
+    // there is a full render to skip TO — never during settles.
     ui.setSurfaceProgress({
       label:
         progress.phase === "preview"
