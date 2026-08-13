@@ -131,7 +131,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   why fr-q0h6's `baseTransformCount` grew it back into the same 208 bytes
  *   rather than past them)
  *
- * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 304 stride);
+ * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
  * (read only when hasFinal = 1, never drawn by the transform pick). The
  * post-rotation rows sit where the 3D Slot's do — right after the affine
@@ -141,13 +141,15 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   0 rowX vec4f (m0..m3) | 16 rowY (m4..m7) | 32 rowZ (m8..m11) | 48 rowW (m12..m15)
  *   64 trans vec4f (t0..t3)
  *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
- *   144 varWeights array<vec4f, 4> | 208 varTypes array<vec4u, 4> (16 lanes of
- *   storage, all 16 used — one per `VariationType`)
- *   272 varCount u32 | 276 hasPost u32 | 280 cumWeight f32
- *   284 colorIndex f32 | 288 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   144 varWeights array<vec4f, 5> | 224 varTypes array<vec4u, 5> (20 lanes of
+ *   storage, 17 used — one per `VariationType`; fr-7u8t.7's `bulb` took the
+ *   count past the 16 four vec4s held, and a vec4 array cannot be widened by
+ *   less than four lanes, so three ride spare)
+ *   304 varCount u32 | 308 hasPost u32 | 312 cumWeight f32
+ *   316 colorIndex f32 | 320 colorSpeed f32 (fr-hiyu's flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
  *   exactly like cumWeight's base-map weight — so the kernel reads
- *   `slots[idx]` with no modulo) | 292..303 trailing pad
+ *   `slots[idx]` with no modulo) | 324..335 trailing pad
  *
  * The stride arithmetic (fr-q0h6): the pre-symmetry 224 was exactly 14 x 16
  * with no slack — fr-hiyu's color pair had already taken this struct's last
@@ -155,7 +157,11 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * nowhere to hide. 224 + 68 = 292 bytes of content, and WGSL rounds a struct
  * up to its own alignment (16, from the `vec4f`s), so 292 -> 304 with three
  * trailing pad words. Repurposing a lane instead was not available: unlike
- * the 3D rows, a 4D post-rotation row has no unused `.w`.
+ * the 3D rows, a 4D post-rotation row has no unused `.w`. fr-7u8t.7 then
+ * added a 17th `VariationType` (`bulb`), which does not fit 16 lanes: both
+ * lane arrays grew by one `vec4` (+32 bytes, the smallest step available),
+ * so content runs to 324 and the struct rounds 324 -> 336, keeping the same
+ * three trailing pad words.
  *
  * Chain4 (storage array element, {@link CHAIN4_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (the FULL 4D orbit point — unlike the 3D Chain, no lane is
@@ -177,7 +183,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * `convertGpuHistogram`.
  */
 export const PARAMS4_BYTES = 208;
-export const SLOT4_STRIDE_BYTES = 304;
+export const SLOT4_STRIDE_BYTES = 336;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -231,8 +237,8 @@ struct Slot {
   postY: vec4f,
   postZ: vec4f,
   postW: vec4f,
-  varWeights: array<vec4f, 4>,
-  varTypes: array<vec4u, 4>,
+  varWeights: array<vec4f, 5>,
+  varTypes: array<vec4u, 5>,
   varCount: u32,
   hasPost: u32,
   cumWeight: f32,
@@ -360,6 +366,28 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
     }
     case 15u: { // qsquare — quaternion square; p.x is the real part, p.yzw = (i, j, k).
       return vec4f(p.x * p.x - dot(p.yzw, p.yzw), 2.0 * p.x * p.yzw);
+    }
+    case 16u: { // bulb — triplex 8th power on x/y/z, w carried through.
+      // variations4.ts's bulb term for term: triplex numbers have no 4D
+      // structure, so the fourth coordinate rides along untouched, exactly
+      // as it does for the angular warps.
+      let a = p.x * p.x + p.y * p.y;
+      let r2 = a + p.z * p.z;
+      let z2 = p.z * p.z;
+      let r4 = r2 * r2;
+      let zOut = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 + 160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+      let s = 128.0 * z2 * z2 * z2 * p.z - 192.0 * z2 * z2 * p.z * r2 + 80.0 * z2 * p.z * r4 - 8.0 * p.z * r4 * r2;
+      let rho = sqrt(a);
+      let inv = select(0.0, 1.0 / rho, rho > 0.0);
+      let u1 = p.x * inv;
+      let v1 = p.y * inv;
+      let u2 = u1 * u1 - v1 * v1;
+      let v2 = 2.0 * u1 * v1;
+      let u4 = u2 * u2 - v2 * v2;
+      let v4 = 2.0 * u2 * v2;
+      let u8 = u4 * u4 - v4 * v4;
+      let v8 = 2.0 * u4 * v4;
+      return vec4f(rho * s * u8, rho * s * v8, zOut, p.w);
     }
     default: {
       return p;
@@ -573,7 +601,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 76.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 84.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
@@ -585,20 +613,20 @@ const SLOT4_POST_X = 20;
 const SLOT4_POST_Y = 24;
 const SLOT4_POST_Z = 28;
 const SLOT4_POST_W = 32;
-/** `varWeights: array<vec4f, 4>` — 16 lanes of storage, all 16 used (one per
+/** `varWeights: array<vec4f, 5>` — 20 lanes of storage, 17 used (one per
  * `VariationType`) — contiguous lanes, same
  * flattening argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
 const SLOT4_VAR_WEIGHTS = 36;
-const SLOT4_VAR_TYPES = 52;
-const SLOT4_VAR_COUNT = 68;
-const SLOT4_HAS_POST = 69;
-const SLOT4_CUM_WEIGHT = 70;
+const SLOT4_VAR_TYPES = 56;
+const SLOT4_VAR_COUNT = 76;
+const SLOT4_HAS_POST = 77;
+const SLOT4_CUM_WEIGHT = 78;
 /** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across
  * its kaleidoscope copies (see {@link packGpuSystem4}) — the kernel's
  * structural walk reads them straight off the picked slot. */
-const SLOT4_COLOR_INDEX = 71;
-const SLOT4_COLOR_SPEED = 72;
-// Elements 73-75 are Slot4's trailing pad, left at the ArrayBuffer's zero
+const SLOT4_COLOR_INDEX = 79;
+const SLOT4_COLOR_SPEED = 80;
+// Elements 81-83 are Slot4's trailing pad, left at the ArrayBuffer's zero
 // default.
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.

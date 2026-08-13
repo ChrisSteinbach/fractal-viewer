@@ -17,7 +17,7 @@
  *    `scale.z = 0` (and every z field to 0), so the orbit lives in the
  *    `z = 0` plane where our 3D variation lifts reproduce flam3's planar
  *    formulas bit-for-bit.
- *  - Twelve of our fifteen {@link VARIATION_TYPES} ARE flam3 variation
+ *  - Twelve of our seventeen {@link VARIATION_TYPES} ARE flam3 variation
  *    names, with matching formulas at `z = 0` and the same unnormalized
  *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
  *    variation sum), so those pass through by name in both directions. The

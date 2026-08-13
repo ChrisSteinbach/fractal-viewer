@@ -50,6 +50,73 @@ const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
 const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
 
 /**
+ * The White/Nylander triplex 8th power — the Mandelbulb's map (fr-7u8t.7).
+ * The "triplex" product is the spherical-coordinate one, `(r, θ, φ) · (r',
+ * θ', φ') = (r·r', θ+θ', φ+φ')` with `z` as the polar axis, so the 8th power
+ * is `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)`:
+ *
+ *     x' = r⁸·sin(8θ)·cos(8φ)   y' = r⁸·sin(8θ)·sin(8φ)   z' = r⁸·cos(8θ)
+ *     cos θ = z/r,  ρ = √(x²+y²),  (cos φ, sin φ) = (x, y)/ρ
+ *
+ * Written WITHOUT trigonometry, which is an exact rewrite and not an
+ * approximation: `cos 8θ` and `sin 8θ / sin θ` are the Chebyshev polynomials
+ * `T₈`/`U₇` evaluated at `cos θ` (homogenised here so no division by `r`
+ * appears), and `(cos 8φ, sin 8φ)` is the 8th power of the unit complex
+ * number `(x + iy)/ρ` — de Moivre, three squarings. Measured: the estimator
+ * built on it (`bulb-de.ts`) runs ~11x cheaper than the same loop with the
+ * trigonometric form, and the two agree to 6e-14 relative — f64 rounding —
+ * over 200k queries (`bulb-de.test.ts` pins the agreement;
+ * `scripts/bulb-preview.harness.ts` is the measurement).
+ *
+ * NOT an algebra: triplex multiplication is neither associative nor
+ * distributive, so `p⁸` means this closed form and nothing else — in
+ * particular it is NOT `((p²)²)²`. Squaring three times re-canonicalises the
+ * polar angle into `[0, π]` at every step and flips the azimuth by π
+ * whenever it leaves, which renders a DIFFERENT object — measured: the two
+ * disagree on 48.8% of a uniform query set, and the harness keeps the
+ * squaring as the refutation's executable record. That non-associativity is
+ * also why the power is baked in rather than parameterised: every power
+ * needs its own closed form (the harness renders 3, 5 and 12 from the
+ * trigonometric reference, which is the only form that generalises).
+ *
+ * Total on all finite input. On the polar axis (`ρ = 0`) `sin θ = 0`, so the
+ * `x'`/`y'` terms vanish and the reciprocal is replaced by 0 rather than
+ * floored by an EPS — the azimuth is genuinely undefined there, not merely
+ * ill-conditioned, and 0 is the value the limit takes from every direction.
+ */
+export function triplexPow8(x: number, y: number, z: number): Vec3 {
+  const a = x * x + y * y; // ρ²
+  const r2 = a + z * z;
+  const z2 = z * z;
+  const r4 = r2 * r2;
+  // z' = r⁸·T₈(z/r) = 128z⁸ − 256z⁶r² + 160z⁴r⁴ − 32z²r⁶ + r⁸.
+  const zOut =
+    128 * z2 * z2 * z2 * z2 -
+    256 * z2 * z2 * z2 * r2 +
+    160 * z2 * z2 * r4 -
+    32 * z2 * r4 * r2 +
+    r4 * r4;
+  // r⁸·sin(8θ) = ρ · r⁷·U₇(z/r) = ρ · (128z⁷ − 192z⁵r² + 80z³r⁴ − 8z·r⁶).
+  const s =
+    128 * z2 * z2 * z2 * z -
+    192 * z2 * z2 * z * r2 +
+    80 * z2 * z * r4 -
+    8 * z * r4 * r2;
+  const rho = Math.sqrt(a);
+  const inv = rho > 0 ? 1 / rho : 0;
+  // (cos 8φ, sin 8φ) = ((x + iy)/ρ)⁸ — three complex squarings.
+  const u1 = x * inv;
+  const v1 = y * inv;
+  const u2 = u1 * u1 - v1 * v1;
+  const v2 = 2 * u1 * v1;
+  const u4 = u2 * u2 - v2 * v2;
+  const v4 = 2 * u2 * v2;
+  const u8 = u4 * u4 - v4 * v4;
+  const v8 = 2 * u4 * v4;
+  return [rho * s * u8, rho * s * v8, zOut];
+}
+
+/**
  * The variation registry: every {@link VariationType} mapped to its warp. Typed
  * as a total `Record`, so adding a name to `VARIATION_TYPES` without an
  * implementation here (or vice versa) fails to compile.
@@ -178,6 +245,15 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
   // quaternion Julia set be a render mode over the existing document
   // vocabulary rather than a second document format — see `qjulia-de.ts`.
   qsquare: (x, y, z) => [x * x - y * y - z * z, 2 * x * y, 2 * x * z],
+
+  // The White/Nylander triplex 8th power — see {@link triplexPow8} for the
+  // formula, the trig-free rewrite and why the power is fixed. Composed as
+  // `V(M v + t)` with the QUERY POINT re-added each iteration, this is the
+  // map whose escape-time set is the Mandelbulb (`bulb-de.ts`); iterated
+  // inside the chaos game it is simply a very sharp radial warp (`r⁸` sends
+  // anything past the unit sphere away fast, which `chaos-game.ts`'s
+  // ESCAPE_LIMIT reseed then catches, exactly as it does for `qsquare`).
+  bulb: triplexPow8,
 };
 
 /** A transform's blended variation map, ready to apply to its affine output. */

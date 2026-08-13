@@ -43,6 +43,17 @@ export const VARIATION_TYPES = [
   // transform's translation as the Julia constant `c`, this is the map whose
   // escape-time set the surface renderer marches (`qjulia-de.ts`).
   "qsquare",
+  // The White/Nylander triplex 8th power (fr-7u8t.7): the Mandelbulb's map,
+  // `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)` in spherical coordinates about the z axis
+  // (`variations.ts`'s `triplexPow8`). Parameter-free on purpose — the power
+  // is fixed at the iconic 8 and is NOT a document field, so this stays one
+  // vocabulary entry rather than a knob every renderer, morph and persisted
+  // scene would have to carry. Unlike `qsquare` it has NO 4D structure to
+  // lift (triplex numbers are not an algebra), so the 4D twin warps `x, y, z`
+  // and carries `w` through, exactly as the angular warps do. Iterated with
+  // the query point re-added each step, its escape-time set is the Mandelbulb
+  // (`bulb-de.ts`).
+  "bulb",
 ] as const;
 
 /** One nonlinear warp a transform can apply after its affine part. */
