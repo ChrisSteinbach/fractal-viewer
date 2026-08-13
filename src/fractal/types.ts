@@ -36,6 +36,13 @@ export const VARIATION_TYPES = [
   "boxfold",
   "spherefold",
   "mandelbox",
+  // The quaternion square (fr-7u8t.3): `x` is the REAL part and `(y, z, w)`
+  // the imaginary basis `(i, j, k)`, which is what makes the w = 0 restriction
+  // bit-exact — `span{1, i, j}` is closed under squaring, so the 3D and 4D
+  // registries agree at `w = 0` like every other entry. Authored with a
+  // transform's translation as the Julia constant `c`, this is the map whose
+  // escape-time set the surface renderer marches (`qjulia-de.ts`).
+  "qsquare",
 ] as const;
 
 /** One nonlinear warp a transform can apply after its affine part. */

@@ -188,6 +188,26 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
     const c = sphereFoldFactor(bx * bx + by * by + bz * bz + bw * bw);
     return [bx * c, by * c, bz * c, bw * c];
   },
+
+  // The quaternion square `q²` for `q = x + y·i + z·j + w·k` — `x` is the
+  // REAL part. Writing `q = x + v` with `v` the vector part,
+  // `q² = x² - |v|² + 2x·v` (the `v × v` term vanishes), which is the closed
+  // form below. Anchors at `w = 0` the way this file requires: the fourth
+  // output is `2xw = 0` exactly, and the first three collapse to
+  // `variations.ts`'s `[x² - y² - z², 2xy, 2xz]` term for term, because
+  // `span{1, i, j}` is closed under squaring.
+  //
+  // This is the only variation here whose 4D lift is the DEFINITION and whose
+  // 3D form is the restriction, rather than the other way round — the
+  // quaternions are natively 4D. See `qjulia-de.ts` for the escape-time set
+  // it generates and why a transform's translation reads as the Julia
+  // constant.
+  qsquare: (x, y, z, w) => [
+    x * x - y * y - z * z - w * w,
+    2 * x * y,
+    2 * x * z,
+    2 * x * w,
+  ],
 };
 
 /** A transform's blended 4D variation map, ready to apply to its affine output. */

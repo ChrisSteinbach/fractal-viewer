@@ -164,6 +164,20 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
     const c = sphereFoldFactor(bx * bx + by * by + bz * bz);
     return [bx * c, by * c, bz * c];
   },
+
+  // The quaternion square with `x` as the REAL part and `(y, z)` as `(i, j)`
+  // — the `w = 0` restriction of `variations4.ts`'s full `q²`. The subalgebra
+  // `span{1, i, j}` is closed under squaring (`ij + ji = 0` kills the `k`
+  // term), so this is not a projection or a truncation: it is the exact 4D
+  // map on the slice, which is what keeps the twin files bit-exact at
+  // `w = 0`. Total on all finite input — no divisor, hence no EPS.
+  //
+  // Composed as `V(M v + t)`, a transform carrying this alone iterates
+  // `v ← (v + t)²`, which is conjugate by translation to the classic Julia
+  // form `q ← q² + c` with `c = t`. That conjugacy is what lets the
+  // quaternion Julia set be a render mode over the existing document
+  // vocabulary rather than a second document format — see `qjulia-de.ts`.
+  qsquare: (x, y, z) => [x * x - y * y - z * z, 2 * x * y, 2 * x * z],
 };
 
 /** A transform's blended variation map, ready to apply to its affine output. */

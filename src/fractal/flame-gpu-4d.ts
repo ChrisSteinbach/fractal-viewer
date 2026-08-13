@@ -142,7 +142,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   64 trans vec4f (t0..t3)
  *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
  *   144 varWeights array<vec4f, 4> | 208 varTypes array<vec4u, 4> (16 lanes of
- *   storage, 15 used — one per `VariationType` — the 16th left zeroed)
+ *   storage, all 16 used — one per `VariationType`)
  *   272 varCount u32 | 276 hasPost u32 | 280 cumWeight f32
  *   284 colorIndex f32 | 288 colorSpeed f32 (fr-hiyu's flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
@@ -357,6 +357,9 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
     case 14u: { // mandelbox — spherefold after boxfold, one variation.
       let b = 2.0 * clamp(p, vec4f(-1.0), vec4f(1.0)) - p;
       return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
+    }
+    case 15u: { // qsquare — quaternion square; p.x is the real part, p.yzw = (i, j, k).
+      return vec4f(p.x * p.x - dot(p.yzw, p.yzw), 2.0 * p.x * p.yzw);
     }
     default: {
       return p;
@@ -582,8 +585,8 @@ const SLOT4_POST_X = 20;
 const SLOT4_POST_Y = 24;
 const SLOT4_POST_Z = 28;
 const SLOT4_POST_W = 32;
-/** `varWeights: array<vec4f, 4>` — 16 lanes of storage, 15 used (one per
- * `VariationType`; the 16th stays zeroed) — contiguous lanes, same
+/** `varWeights: array<vec4f, 4>` — 16 lanes of storage, all 16 used (one per
+ * `VariationType`) — contiguous lanes, same
  * flattening argument as flame-gpu.ts's `SLOT_VAR_WEIGHTS`. */
 const SLOT4_VAR_WEIGHTS = 36;
 const SLOT4_VAR_TYPES = 52;
