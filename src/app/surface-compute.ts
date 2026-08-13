@@ -95,6 +95,7 @@ import {
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
+import type { RgbStop } from "../fractal/palette";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { webgpuAdapterStatus } from "./render-backend";
@@ -146,6 +147,17 @@ export const SURFACE_COMPUTE_PROGRESS_MS = 500;
  * compatible adapter) — the session's signal to route to the WebGL tracer
  * without noting an error. */
 export class SurfaceComputeUnavailableError extends Error {}
+
+/**
+ * A raster this device cannot allocate a frame's buffers for (fr-biox):
+ * past its own `maxBufferSize`/`maxStorageBufferBindingSize`, or refused
+ * by the allocator. Thrown BEFORE the kernels ever see it, because WebGPU
+ * does not throw here on its own — an over-limit `createBuffer` returns an
+ * INVALID buffer plus a validation error, and the first thing that rejects
+ * is the staging `mapAsync`, whose "Invalid buffer" says nothing about the
+ * size that caused it (the fr-biox field report, from a 4x export).
+ */
+export class SurfaceComputeFrameSizeError extends Error {}
 
 /**
  * What one compute session traces (fr-dlxh): an IFS attractor descent
@@ -262,6 +274,13 @@ export interface SurfaceComputeFrameOptions {
   /** Wall-clock cap for the whole frame; rays still active when it runs
    * out keep their background prefill and the frame reports `truncated`. */
   budgetMs?: number;
+  /** This frame is an off-canvas CAPTURE (a Save-PNG tile), not the live
+   * pane (fr-biox): it neither seeds from the last live frame nor becomes
+   * the seed for the next one. Both directions would be wrong — an export
+   * traces a different raster (and, tiled, a BAND of a different image),
+   * and it needs no seed at all, having no wall budget to leave rays
+   * unresolved by. */
+  capture?: boolean;
   /** Progressive present: called with a full-frame RGBA snapshot at most
    * every `progressIntervalMs` while rays are still marching. `done` /
    * `total` are ray-work tallies from `surfaceComputeProgressDone`
@@ -509,6 +528,134 @@ export function resampleSurfacePixels(
     }
   }
   return out;
+}
+
+/** Bytes the WIDEST per-ray buffer costs (the `vec4f` ray state, mirrored
+ * by its MAP_READ staging twin) — the one a device's buffer/binding
+ * ceilings bite first. */
+export const SURFACE_COMPUTE_RAY_STATE_BYTES = 16;
+
+/** Bytes of GPU buffer ONE ray costs a frame, across all five per-ray
+ * buffers: states 16 + stagingStates 16 + color 4 + stagingColor 4 +
+ * active 4. */
+export const SURFACE_COMPUTE_RAY_BYTES = 44;
+
+/** Byte count as MiB, for the size errors' messages. */
+function mib(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+/**
+ * The largest raster ONE frame may allocate for on a device with these
+ * limits, in rays (fr-biox). `states` is both the widest per-ray buffer
+ * and a bound STORAGE buffer, so it meets whichever ceiling is lower;
+ * the MAP_READ staging twin is the same size under `maxBufferSize` alone.
+ * Pure so the arithmetic behind a refusal is unit-tested.
+ */
+export function surfaceComputeMaxFrameRays(limits: {
+  maxBufferSize: number;
+  maxStorageBufferBindingSize: number;
+}): number {
+  const widest = Math.min(
+    limits.maxBufferSize,
+    limits.maxStorageBufferBindingSize,
+  );
+  return Math.max(1, Math.floor(widest / SURFACE_COMPUTE_RAY_STATE_BYTES));
+}
+
+/**
+ * Rays one CAPTURE tile may cost, however much the device would allow
+ * (fr-biox). A frame's buffers are 44 B/ray and its host mirrors another
+ * ~24 B/ray, so an untiled 4x export of a 1920x1057 pane (32.5M rays)
+ * commits ~1.4 GB of GPU memory and reads back a 520 MB state buffer per
+ * march sweep — a device that reports gigabytes of `maxBufferSize` will
+ * still refuse or thrash. At this cap a tile is ~176 MB of buffers,
+ * comfortably above the live rasters the same code paths run all session
+ * (a 1920x1057 pane is 2.0M rays), so tiling costs an export nothing it
+ * was not already paying per frame.
+ */
+export const SURFACE_COMPUTE_MAX_TILE_RAYS = 4_000_000;
+
+/**
+ * Rows per capture tile: as tall a band as {@link
+ * SURFACE_COMPUTE_MAX_TILE_RAYS} and the device's own ceiling allow,
+ * BALANCED across the tiles it takes (so the last band is never a
+ * one-row remainder, and the export modal's per-tile progress advances
+ * evenly). Full-width bands on purpose — rows are the raster's own
+ * contiguous unit, so a tile's pixels land in the assembled image with
+ * one `set`. Floored at ONE row, which no real device can refuse: an
+ * export row is at most EXPORT_MAX_LONG_SIDE rays (~131 KB of ray
+ * state) against a `maxStorageBufferBindingSize` whose SPEC MINIMUM is
+ * 128 MiB. Pure so the bound is unit-tested.
+ */
+export function surfaceComputeTileRows(
+  width: number,
+  height: number,
+  maxFrameRays: number,
+): number {
+  const cap = Math.max(
+    1,
+    Math.min(maxFrameRays, SURFACE_COMPUTE_MAX_TILE_RAYS),
+  );
+  const perTile = Math.max(1, Math.floor(cap / Math.max(1, width)));
+  if (perTile >= height) return height;
+  return Math.ceil(height / Math.ceil(height / perTile));
+}
+
+/**
+ * The two gradient stops a horizontal BAND of a taller image carries
+ * (fr-biox). Every tracer paints its backdrop — and fogs toward it — as
+ * `mix(bgBottom, bgTop, (py + 0.5) / rasterHeight)` over its OWN raster,
+ * so handing a band the whole image's stops would repeat the full
+ * gradient in every tile and band the assembled export. Restricting the
+ * stops to the band's own endpoints reproduces the full-image gradient
+ * exactly: the pixel-center parameter maps affinely from band to image
+ * (`v = bandBottom/fullHeight + u · bandHeight/fullHeight`), so matching
+ * the endpoints matches every pixel between them. Pure so that identity
+ * is unit-tested.
+ */
+export function surfaceComputeBandStops(
+  bgTop: RgbStop,
+  bgBottom: RgbStop,
+  bandBottom: number,
+  bandHeight: number,
+  fullHeight: number,
+): { bgTop: Vec3; bgBottom: Vec3 } {
+  const at = (row: number): Vec3 => {
+    const v = clamp(row / Math.max(1, fullHeight), 0, 1);
+    return [
+      bgBottom[0] + (bgTop[0] - bgBottom[0]) * v,
+      bgBottom[1] + (bgTop[1] - bgBottom[1]) * v,
+      bgBottom[2] + (bgTop[2] - bgBottom[2]) * v,
+    ];
+  };
+  return { bgBottom: at(bandBottom), bgTop: at(bandBottom + bandHeight) };
+}
+
+/**
+ * Shrink a raster to fit a device's own frame ceiling, keeping its aspect
+ * (fr-biox). The live pane cannot tile the way a capture can — one frame
+ * IS the image — so an enormous drawing buffer (a hidpi 5K desktop) that
+ * would overrun {@link surfaceComputeMaxFrameRays} traces slightly soft
+ * and blits up, the preview tier's own mechanism, instead of failing to
+ * allocate. Pure so the fit is unit-tested.
+ */
+export function fitSurfaceComputeRaster(
+  width: number,
+  height: number,
+  maxFrameRays: number,
+): { width: number; height: number } {
+  if (width * height <= maxFrameRays) return { width, height };
+  const s = Math.sqrt(maxFrameRays / (width * height));
+  let w = Math.max(1, Math.floor(width * s));
+  let h = Math.max(1, Math.floor(height * s));
+  if (w * h > maxFrameRays) {
+    // Only reachable for a ceiling below one row or column of the raster
+    // — no real device — but the fit has to hold there too.
+    w = Math.max(1, Math.min(w, Math.floor(maxFrameRays / h)));
+    h = Math.max(1, Math.min(h, Math.floor(maxFrameRays / w)));
+  }
+  return { width: w, height: h };
 }
 
 /**
@@ -962,6 +1109,19 @@ export class SurfaceComputeRenderer {
     return this.isLost;
   }
 
+  /**
+   * The largest raster this device can trace as ONE frame, in rays
+   * (fr-biox) — {@link surfaceComputeMaxFrameRays} of its real limits.
+   * Callers that own the raster read it: captures TILE against it
+   * ({@link surfaceComputeTileRows}), the live pane FITS to it
+   * ({@link fitSurfaceComputeRaster}). A frame past it throws
+   * {@link SurfaceComputeFrameSizeError} rather than reaching the
+   * kernels.
+   */
+  get maxFrameRays(): number {
+    return surfaceComputeMaxFrameRays(this.device.limits);
+  }
+
   /** Fired once when the device is lost OUTSIDE {@link destroy} — the
    * session's cue to re-enter via the WebGL path. */
   onLost: (() => void) | null = null;
@@ -1065,22 +1225,74 @@ export class SurfaceComputeRenderer {
     this.device.destroy();
   }
 
+  /**
+   * {@link ensureFrameBuffers} with the device's own verdict attached
+   * (fr-biox). A frame's five per-ray buffers are the only allocation
+   * that scales with the caller's raster, and WebGPU reports both ways it
+   * can fail WITHOUT throwing: an over-limit size is a validation error
+   * returning an invalid buffer, an exhausted allocator an out-of-memory
+   * one. Either way the first REJECTION comes from a staging `mapAsync`
+   * several awaits later ("Invalid buffer" — the fr-biox report), so the
+   * size that caused it is checked up front and the scopes convert what
+   * is left into an error that names it.
+   *
+   * Only the allocating call pays for this: a reused frame (every frame
+   * at a steady raster) returns before the scopes are pushed, so the
+   * `popErrorScope` round-trip never lands in the per-frame path.
+   */
+  private async allocateFrameBuffers(rays: number): Promise<FrameBuffers> {
+    if (this.frame && this.frame.rays >= rays) return this.frame;
+    const cap = this.maxFrameRays;
+    if (rays > cap) {
+      const limits = this.device.limits;
+      throw new SurfaceComputeFrameSizeError(
+        `Surface compute: a ${String(rays)}-ray frame needs a ` +
+          `${mib(rays * SURFACE_COMPUTE_RAY_STATE_BYTES)} ray-state buffer, ` +
+          `past this device's limits (maxStorageBufferBindingSize ` +
+          `${mib(limits.maxStorageBufferBindingSize)}, maxBufferSize ` +
+          `${mib(limits.maxBufferSize)}) — at most ${String(cap)} rays fit`,
+      );
+    }
+    this.device.pushErrorScope("validation");
+    this.device.pushErrorScope("out-of-memory");
+    const buffers = this.ensureFrameBuffers(rays);
+    const oom = await this.device.popErrorScope();
+    const validation = await this.device.popErrorScope();
+    const error = oom ?? validation;
+    if (error) {
+      // The buffers behind an error scope are invalid but still cached,
+      // and a later (smaller) frame would happily reuse them — drop them
+      // so the next raster allocates fresh.
+      this.releaseFrameBuffers();
+      throw new SurfaceComputeFrameSizeError(
+        `Surface compute: allocating a ${String(rays)}-ray frame ` +
+          `(${mib(rays * SURFACE_COMPUTE_RAY_BYTES)} of buffers) failed: ` +
+          error.message,
+      );
+    }
+    return buffers;
+  }
+
+  private releaseFrameBuffers(): void {
+    if (!this.frame) return;
+    for (const b of [
+      this.frame.states,
+      this.frame.active,
+      this.frame.color,
+      this.frame.stagingStates,
+      this.frame.stagingColor,
+    ]) {
+      b.destroy();
+    }
+    this.frame = null;
+  }
+
   private ensureFrameBuffers(rays: number): FrameBuffers {
     if (this.frame && this.frame.rays >= rays) return this.frame;
-    if (this.frame) {
-      for (const b of [
-        this.frame.states,
-        this.frame.active,
-        this.frame.color,
-        this.frame.stagingStates,
-        this.frame.stagingColor,
-      ]) {
-        b.destroy();
-      }
-    }
+    this.releaseFrameBuffers();
     const device = this.device;
     const states = device.createBuffer({
-      size: rays * 16,
+      size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -1098,7 +1310,7 @@ export class SurfaceComputeRenderer {
         GPUBufferUsage.COPY_SRC,
     });
     const stagingStates = device.createBuffer({
-      size: rays * 16,
+      size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
     const stagingColor = device.createBuffer({
@@ -1200,7 +1412,8 @@ export class SurfaceComputeRenderer {
     const { width, height } = spec;
     const rays = width * height;
     const device = this.device;
-    const buffers = this.ensureFrameBuffers(rays);
+    const buffers = await this.allocateFrameBuffers(rays);
+    if (token !== this.frameToken || this.isLost || this.destroyed) return null;
 
     if (spec.lutVersion !== this.uploadedLutVersion) {
       device.queue.writeTexture(
@@ -1238,8 +1451,9 @@ export class SurfaceComputeRenderer {
     // the LAST frame — resampled across raster changes — is the strip
     // settle's preview-seeded-target discipline: a frame's presents never
     // look worse than the image they follow. First frame of a session
-    // seeds the backdrop gradient.
-    const last = this.lastFrame;
+    // seeds the backdrop gradient, and so does every capture frame
+    // (fr-biox: an export tile has no live image to carry).
+    const last = opts.capture === true ? null : this.lastFrame;
     device.queue.writeBuffer(
       buffers.color,
       0,
@@ -1693,7 +1907,7 @@ export class SurfaceComputeRenderer {
     tr(
       `frame done passes=${passes} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
     );
-    this.lastFrame = { pixels, width, height };
+    if (opts.capture !== true) this.lastFrame = { pixels, width, height };
     return {
       pixels,
       width,

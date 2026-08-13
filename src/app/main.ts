@@ -2958,6 +2958,20 @@ function main(): void {
   ).has("surfacegl")
     ? "flag"
     : null;
+  // fr-biox: `?surfacemaxrays=N` stands in for the device's own per-frame
+  // ray ceiling — the ?surfshadewidth-style escape hatch for the sizing
+  // that ceiling drives. A real device only bands an export at 2-4x
+  // (~8-32M rays), which is minutes of tracing to look at; pretending the
+  // ceiling is small bands a CHEAP export the same way, which is what
+  // scripts/surface-export-tile.verify.mjs measures against the untiled
+  // arm — and what turns a field report into an answer.
+  const surfaceComputeMaxRaysFlag = ((): number | null => {
+    const raw = new URLSearchParams(window.location.search).get(
+      "surfacemaxrays",
+    );
+    const n = raw === null ? NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
   // fr-khxy: modern Firefox EXPOSES navigator.gpu while requestAdapter()
   // can still return null (WebGPU ships progressively per platform), so
   // the sync supported() gate admits fold-4D entry on the OBJECT alone
@@ -3153,6 +3167,13 @@ function main(): void {
           return;
         }
         surfaceComputeRenderer = renderer;
+        // What this device can allocate for ONE frame (fr-biox): the
+        // scene sizes every frame it asks for against it — the live pane
+        // fits under it, a capture tiles under it. Only knowable now,
+        // since the enters above all ran while create() was in flight.
+        scene.setSurfaceComputeRayCap(
+          surfaceComputeMaxRaysFlag ?? renderer.maxFrameRays,
+        );
         // Field-debuggability breadcrumb (the ?surfacegl escape hatch's
         // counterpart): one line saying which tracer owns this session.
         console.info(
@@ -3507,15 +3528,21 @@ function main(): void {
   }
 
   // Save-PNG while a compute surface session is live: trace at export
-  // size off-canvas, then present + read in one synchronous span
-  // (scene.captureSurfaceComputeFrame).
+  // size off-canvas — in device-sized bands since fr-biox — then present
+  // + read in one synchronous span (scene.captureSurfaceComputeFrame).
   function captureSurfaceComputePng(
     renderer: SurfaceComputeRenderer,
     scale: number,
     run: ExportRun,
   ): Promise<ExportImage | null> {
-    return scene.captureSurfaceComputeFrame(scale, async (spec) => {
+    return scene.captureSurfaceComputeFrame(scale, async (spec, tile) => {
+      // Cancel lands BETWEEN tiles as readily as inside one (fr-biox):
+      // the modal's onCancel supersedes the frame in flight, but the next
+      // tile would open a fresh one — an export that kept tracing after
+      // its own cancellation.
+      if (run.cancelled) return null;
       renderer.cancel();
+      const t0 = performance.now();
       const frame = await renderer.renderFrame(spec, {
         // The fr-tmgf disclosure hook the live settle already uses,
         // pointed at the export modal instead of the progress row. The
@@ -3524,13 +3551,25 @@ function main(): void {
         // captureSurfaceComputeFrame's own present-and-read span, and a
         // progressive present would fight that.
         onProgress: (_pixels, done, total) => {
-          run.report(total > 0 ? done / total : null);
+          run.report(
+            total > 0 ? (tile.index + done / total) / tile.count : null,
+          );
         },
         // Every tick costs a width*height*4 readback and an export traces
         // 1-16x the live frame's rays, so halve the live cadence: the
         // modal reads coverage, it doesn't need the live rate.
         progressIntervalMs: SURFACE_COMPUTE_EXPORT_PROGRESS_MS,
+        // Neither seeded by the live pane nor the seed for it (fr-biox).
+        capture: true,
       });
+      if (frame) {
+        console.debug(
+          `Surface compute export tile ${String(tile.index + 1)}/${String(tile.count)} ` +
+            `${String(frame.width)}x${String(frame.height)}: ` +
+            `${(performance.now() - t0).toFixed(0)}ms wall, ` +
+            `${String(frame.passes)} passes, hit ${String(frame.counts.hit)}`,
+        );
+      }
       return frame ? frame.pixels : null;
     });
   }

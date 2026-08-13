@@ -735,7 +735,11 @@ morphs into place instead of snapping (see **Presets** below).
   that render so it accumulates at the new size and its grain matches the
   output. Large sizes get clamped: the long side never exceeds 8192px, the
   device's own texture limit can cut it further, and a live flame is capped
-  again by its accumulation memory. While a video recording is rolling, Save
+  again by its accumulation memory. A Surface render on the WebGPU tracer
+  is not clamped by GPU memory, though: a big export traces in horizontal
+  bands sized to what the device can hold and assembles them, so 4× is a
+  matter of waiting (the modal's percentage counts the bands) rather than
+  of what fits. While a video recording is rolling, Save
   PNG is pinned to 1× whatever this says — resizing the shared canvas
   mid-stream would break the capture.
 - **Save PNG** — download the current frame as a PNG. The image is the bare

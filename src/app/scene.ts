@@ -87,6 +87,11 @@ import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
 import { unmaskedWebglRenderer } from "./render-backend";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
+import {
+  fitSurfaceComputeRaster,
+  surfaceComputeBandStops,
+  surfaceComputeTileRows,
+} from "./surface-compute";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -916,6 +921,18 @@ export class FractalScene {
    * While true every frame spec carries the live floor block re-derived
    * from the stored ball. */
   private surfaceComputeGroundPlane = false;
+  /** Rays the ACTIVE compute session's device can trace as ONE frame
+   * (fr-biox) — `SurfaceComputeRenderer.maxFrameRays`, handed over at
+   * create by {@link setSurfaceComputeRayCap}. Infinity until then (and
+   * again after exit), which reads as "unbounded" everywhere it is
+   * consulted: {@link captureSurfaceComputeFrame} still tiles at
+   * SURFACE_COMPUTE_MAX_TILE_RAYS, and the live fit becomes a no-op. */
+  private surfaceComputeRayCap = Number.POSITIVE_INFINITY;
+  /** Whether a live frame has already been fitted under
+   * {@link surfaceComputeRayCap} this session — the one-shot latch behind
+   * the "traced at N x M" console note, so an every-frame clamp discloses
+   * itself once instead of per frame. */
+  private surfaceComputeFitNoted = false;
   /** Last compute frame, uploaded as a plain RGBA8 texture and stretched
    * over the canvas by the shared surface blit — the same presentation
    * seam as the preview/settle targets, so capture and the recorder keep
@@ -3195,6 +3212,18 @@ export class FractalScene {
     this.flushStripBacklog();
   }
 
+  /**
+   * Record what the session's device can allocate for ONE frame (fr-biox):
+   * `SurfaceComputeRenderer.maxFrameRays`, set once the renderer exists —
+   * the enters above all run while `create()` is still in flight. Frames
+   * are sized against it from here on: the live pane fits under it, a
+   * capture tiles under it.
+   */
+  setSurfaceComputeRayCap(rays: number): void {
+    this.surfaceComputeRayCap = rays;
+    this.surfaceComputeFitNoted = false;
+  }
+
   /** Leave the compute presentation (session exit or fallback re-enter):
    * drop the flag and free the frame texture — a settled full-resolution
    * frame holds megabytes of GPU memory nothing will re-present. */
@@ -3203,6 +3232,8 @@ export class FractalScene {
     this.surfaceComputeGroundPlane = false;
     this.surfaceCompute4 = false;
     this.surfaceComputeBalloon = false;
+    this.surfaceComputeRayCap = Number.POSITIVE_INFINITY;
+    this.surfaceComputeFitNoted = false;
     this.surfaceComputeTexture?.dispose();
     this.surfaceComputeTexture = null;
   }
@@ -3224,9 +3255,24 @@ export class FractalScene {
   surfaceComputeFrameSpec(tier: RenderTier): SurfaceComputeFrameSpec {
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     const scale = tier === "preview" ? this.surfacePreviewGovernor.scale : 1;
+    // fr-biox: a live frame IS the image — it cannot tile the way a
+    // capture does — so an enormous drawing buffer traces at the largest
+    // raster the device can allocate for and blits up (the preview tier's
+    // own mechanism) rather than failing to allocate. A no-op on every
+    // ordinary display; acceptance eps stays native-height either way
+    // (fr-7xgi).
     const w = Math.max(1, Math.round(size.x * scale));
     const h = Math.max(1, Math.round(size.y * scale));
-    return this.surfaceComputeFrameSpecAt(tier, w, h, size.y);
+    const fit = fitSurfaceComputeRaster(w, h, this.surfaceComputeRayCap);
+    if (fit.width !== w && !this.surfaceComputeFitNoted) {
+      this.surfaceComputeFitNoted = true;
+      console.info(
+        `Surface compute: tracing ${String(fit.width)}x${String(fit.height)} for a ` +
+          `${String(w)}x${String(h)} raster — this device allocates at most ` +
+          `${String(this.surfaceComputeRayCap)} rays per frame.`,
+      );
+    }
+    return this.surfaceComputeFrameSpecAt(tier, fit.width, fit.height, size.y);
   }
 
   private surfaceComputeFrameSpecAt(
@@ -3234,6 +3280,16 @@ export class FractalScene {
     width: number,
     height: number,
     acceptHeight: number,
+    /** The horizontal BAND of a taller image this raster covers, when it
+     * is one capture tile of several (fr-biox): `bottom` rows above the
+     * full image's bottom row, out of `fullHeight`. The camera's
+     * sub-frustum ({@link withViewBand}) already aims the rays; what the
+     * band changes HERE is everything derived from the raster's height —
+     * the trace eps (a tile's pixels are the full image's pixels, so its
+     * cone footprint is the full image's) and the backdrop stops (every
+     * tracer spreads them over its OWN raster, so a band needs the two
+     * the full gradient holds at its edges). */
+    band?: { bottom: number; fullHeight: number },
   ): SurfaceComputeFrameSpec {
     const params = this.surfaceComputeParams;
     if (!params) {
@@ -3249,6 +3305,18 @@ export class FractalScene {
     const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
     const preview = tier === "preview";
     const light = lightDirection(params.lightAzimuth, params.lightElevation);
+    // A band traces the full image's pixels through a sub-frustum, so its
+    // per-pixel cone footprint is the full image's, not its own raster's.
+    const traceHeight = band ? band.fullHeight : height;
+    const stops = band
+      ? surfaceComputeBandStops(
+          this.backdrop.top,
+          this.backdrop.bottom,
+          band.bottom,
+          height,
+          band.fullHeight,
+        )
+      : { bgTop: this.backdrop.top, bgBottom: this.backdrop.bottom };
     return {
       width,
       height,
@@ -3259,7 +3327,7 @@ export class FractalScene {
         this.camera.position.z,
       ],
       acceptPixelEps: angularPerPixel / Math.max(acceptHeight, 1),
-      tracePixelEps: angularPerPixel / Math.max(height, 1),
+      tracePixelEps: angularPerPixel / Math.max(traceHeight, 1),
       maxDepth: preview
         ? previewMaxDepth(
             this.surfaceFullMaxDepth,
@@ -3289,13 +3357,9 @@ export class FractalScene {
       // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a
-      // lighting change.
-      bgTop: [this.backdrop.top[0], this.backdrop.top[1], this.backdrop.top[2]],
-      bgBottom: [
-        this.backdrop.bottom[0],
-        this.backdrop.bottom[1],
-        this.backdrop.bottom[2],
-      ],
+      // lighting change (restricted to a capture tile's own band above).
+      bgTop: [stops.bgTop[0], stops.bgTop[1], stops.bgTop[2]],
+      bgBottom: [stops.bgBottom[0], stops.bgBottom[1], stops.bgBottom[2]],
       colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
       colorSpeed: params.colorSpeed,
       lut:
@@ -3405,10 +3469,27 @@ export class FractalScene {
    * projection so the export composes like every other capture
    * (fr-936q), at the export buffer's own eps (finer resolution traces
    * finer, exactly like the GLSL capture).
+   *
+   * TILED since fr-biox, because a frame's cost in GPU memory scales with
+   * its rays (44 B/ray across five buffers) and an export's rays scale
+   * with exportScale SQUARED: a 4x export of a 1920x1057 pane is 32.5M
+   * rays — a 520 MB ray-state buffer inside a ~1.4 GB frame — which
+   * devices refuse. WebGPU does not throw for it either; `createBuffer`
+   * returns an invalid buffer and the first REJECTION is a staging
+   * `mapAsync` ("Invalid buffer"), which is how the bug reached a user as
+   * a failed export and a console line naming nothing. So the export
+   * traces as full-width horizontal BANDS, each a sub-frustum of the same
+   * camera ({@link withViewBand}) at the same eps, sized under the
+   * device's own ceiling ({@link surfaceComputeTileRows}), assembled here.
+   * One tile is the whole image on any ordinary export, and that path is
+   * byte-identical to the untiled one.
    */
   async captureSurfaceComputeFrame(
     exportScale: number,
-    trace: (spec: SurfaceComputeFrameSpec) => Promise<Uint8Array | null>,
+    trace: (
+      spec: SurfaceComputeFrameSpec,
+      tile: { index: number; count: number },
+    ) => Promise<Uint8Array | null>,
   ): Promise<ExportImage | null> {
     const ratio = this.exportPixelRatio(exportScale);
     // The renderer floors when deriving a buffer from a ratio — match it
@@ -3416,15 +3497,102 @@ export class FractalScene {
     // measure.
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
-    const spec = this.withCenteredProjection(() =>
-      this.surfaceComputeFrameSpecAt("full", width, height, height),
+    const rows = surfaceComputeTileRows(
+      width,
+      height,
+      this.surfaceComputeRayCap,
     );
-    const pixels = await trace(spec);
-    if (!pixels) return null;
+    // EVERY band's spec is assembled in this one synchronous span, before
+    // any of them traces. A tiled export spans minutes, and the live
+    // camera can move through it (auto-orbit, a drift leg, a tween still
+    // gliding): re-reading the pose per band would compose each stripe
+    // from a different one. This is the compute path's answer to the
+    // WebGL drain's frozen full-tier uniforms (fr-7mfx) — and it freezes
+    // the live lighting/backdrop/palette inputs with it.
+    const bands = this.withCenteredProjection(() => {
+      const specs: SurfaceComputeFrameSpec[] = [];
+      for (let bottom = 0; bottom < height; bottom += rows) {
+        const bandHeight = Math.min(rows, height - bottom);
+        specs.push(
+          this.withViewBand(width, height, bottom, bandHeight, () =>
+            this.surfaceComputeFrameSpecAt("full", width, bandHeight, height, {
+              bottom,
+              fullHeight: height,
+            }),
+          ),
+        );
+      }
+      return specs;
+    });
+    const count = bands.length;
+    // One band is the whole image: trace it and present its own pixels,
+    // no assembly buffer (a 4x export's would be another 130 MB).
+    const image = count === 1 ? null : new Uint8Array(width * height * 4);
+    for (let index = 0; index < count; index++) {
+      const band = bands[index];
+      const traced = await trace(band, { index, count });
+      if (!traced) return null;
+      if (image === null) {
+        return this.deliverSurfaceCapture(traced, width, height, ratio);
+      }
+      // Row 0 is the bottom row on both sides (the kernel's py=0 row is
+      // ndcY=-1), so a band's rows land contiguously at its own offset.
+      image.set(
+        traced.subarray(0, width * band.height * 4),
+        index * rows * width * 4,
+      );
+    }
+    return image
+      ? this.deliverSurfaceCapture(image, width, height, ratio)
+      : null;
+  }
+
+  /** Present a finished capture at the export pixel ratio and read it
+   * back — the paint and the `toBlob` snapshot in ONE synchronous span
+   * (the renderer runs without `preserveDrawingBuffer`). */
+  private deliverSurfaceCapture(
+    pixels: Uint8Array,
+    width: number,
+    height: number,
+    ratio: number,
+  ): Promise<ExportImage | null> {
     return this.withPixelRatio(ratio, () => {
       this.presentSurfaceComputeFrame(pixels, width, height);
       return exportImageFrom(this.renderer.domElement);
     });
+  }
+
+  /**
+   * Assemble something under a SUB-FRUSTUM of the live projection: the
+   * band of `bandHeight` rows sitting `bandBottom` rows above the bottom
+   * of a `fullWidth` x `fullHeight` image (fr-biox). Three.js's view
+   * offset is exactly this — a sub-view of a notional full image, with
+   * its own y measured from the TOP — so a band's rays are the full
+   * image's rays, no reprojection of our own. Restores through
+   * {@link syncProjection} like {@link withCenteredProjection}, whose
+   * inset-free projection this composes inside.
+   */
+  private withViewBand<T>(
+    fullWidth: number,
+    fullHeight: number,
+    bandBottom: number,
+    bandHeight: number,
+    read: () => T,
+  ): T {
+    this.camera.setViewOffset(
+      fullWidth,
+      fullHeight,
+      0,
+      fullHeight - bandBottom - bandHeight,
+      fullWidth,
+      bandHeight,
+    );
+    this.camera.updateProjectionMatrix();
+    try {
+      return read();
+    } finally {
+      this.syncProjection();
+    }
   }
 
   /**
