@@ -371,7 +371,11 @@ import type { Vec3 } from "./types";
  *              240 vec3f escM row2    252 f32 escT.z
  *              256 vec4f escParams — (foldKind as f32, w, derivGrowth,
  *                  0), the GLSL `uEscParams` order plus the packed-zero
- *                  spare.
+ *                  spare. `escT` is the map's PRE-fold offset; the
+ *                  per-iteration offset is the query point itself
+ *                  (fr-7u8t.8's Mandelbrot form), so no wire field
+ *                  carries it — and the spare stays reserved for the
+ *                  1-or-0 form scale a Julia arm would need.
  *          · `balloon: true` (fr-5wlv.5) — the 3D block GROWS: {@link
  *              SURFACE_GPU_PARAMS_BALLOON_BYTES} = 304 bytes total. The
  *              struct declares the lens variant block UNCONDITIONALLY
@@ -2914,7 +2918,7 @@ ${
       let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
       y *= f;
     }
-    v = params.escParams.y * y;
+    v = params.escParams.y * y + p;
     r = length(v);
     info.rings = min(info.rings, r / params.boundingRadius);
     info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
@@ -6118,7 +6122,9 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
       y *= f;
       localL = f;
     }
-    v = params.escParams.y * y;
+    // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT, not the
+    // document's t (which stays the pre-fold offset inside y above).
+    v = params.escParams.y * y + pIn;
     dr = params.escParams.z * localL * dr + 1.0;
     r = length(v);
   }

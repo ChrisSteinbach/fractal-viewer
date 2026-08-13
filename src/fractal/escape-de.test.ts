@@ -191,3 +191,48 @@ describe("estimateEscapeDistance (fr-kltj)", () => {
     expect(estimateEscapeDistance(de, p)).toBe(estimateEscapeDistance(de, p));
   });
 });
+
+describe("the Mandelbrot form (fr-7u8t.8)", () => {
+  it("adds the QUERY POINT as the per-iteration offset, not the document's t", () => {
+    // One iteration of a box fold at weight 2, t = 0, hand-computed:
+    //   fold  = 2·clamp(1.2, -1, 1) - 1.2 = 0.8   (local factor 1)
+    //   v     = w·fold + p = 2(0.8) + 1.2 = 2.8   <- the +p under test
+    //   dr    = |w|·sigma_max(M)·1·dr + 1 = 2(1)(1) + 1 = 3
+    // Drop the offset and this reads 1.6/3 — the shipped fr-kltj value.
+    const de = buildEscapeDE([
+      canonicalMandelbox({
+        position: [0, 0, 0],
+        variations: [{ type: "boxfold", weight: 2 }],
+      }),
+    ]);
+    expect(estimateEscapeDistance(de, [1.2, 0, 0], 1)).toBeCloseTo(2.8 / 3, 12);
+  });
+
+  it("leaves most of the bounding ball OUTSIDE the object — the fr-7u8t.8 bug", () => {
+    // The defect this form fixes: the Julia-form set at an authored constant
+    // filled 96% of its own marching ball, so the escape mode rendered its
+    // bounding sphere. Probe the same fixture on a deterministic grid and
+    // count the marcher's own view of inside (a DE collapsed by a runaway
+    // dr). Measured here: ~11%. Restore the fixed offset and it reads 96%.
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const N = 21;
+    let inBall = 0;
+    let interior = 0;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        for (let k = 0; k < N; k++) {
+          const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
+          const p: Vec3 = [
+            -ESCAPE_TIME_RADIUS + step * i,
+            -ESCAPE_TIME_RADIUS + step * j,
+            -ESCAPE_TIME_RADIUS + step * k,
+          ];
+          if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
+          inBall++;
+          if (estimateEscapeDistance(de, p) < 1e-3) interior++;
+        }
+      }
+    }
+    expect(interior / inBall).toBeLessThan(0.3);
+  });
+});

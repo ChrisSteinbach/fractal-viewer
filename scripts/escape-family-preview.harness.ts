@@ -9,23 +9,23 @@
  * beside prototypes of the Mandelbulb family, all through `de-preview.ts`'s
  * identical shading, so the sheet compares OBJECTS and not lighting.
  *
- * THE FINDING THIS HARNESS PRODUCED, and it is about code already shipped:
- * the escape-time mode's JULIA form renders a near-SPHERE. Measured on the
+ * THE FINDING THIS HARNESS PRODUCED, and it was about code already shipped:
+ * the escape-time mode's JULIA form rendered a near-SPHERE. Measured on the
  * project's own bench fixture (`escMandelbox`: mandelbox weight 2, position
- * (0.4, 0.3, 0.2)), 94% of the bounding ball is non-escaping — the estimator
- * returns 1e-10..1e-15 at every radius below 4 and jumps to |p| outside it.
- * The object genuinely IS its own bounding ball, speckled where the thin
- * escaping filaments fall below a pixel. Nothing is wrong with the
+ * (0.4, 0.3, 0.2)), 94% of the bounding ball was non-escaping — the
+ * estimator returned 1e-10..1e-15 at every radius below 4 and jumped to |p|
+ * outside it. The object genuinely WAS its own bounding ball, speckled where
+ * the thin escaping filaments fell below a pixel. Nothing was wrong with the
  * estimator; the fixed-c fold map at a small constant is simply a fat blob.
  *
- * The MANDELBROT form is what everyone means by "Mandelbox": the offset
- * applied AFTER the fold and taken from the SAMPLE POINT rather than the
- * document (`v <- w·V(Mv) + p`, against the shipped `v <- w·V(Mv + t)`).
- * Panels 1-2 below are that one-line change, and they resolve the
- * unmistakable Mandelbox cube and fractal ball. Note the shipped `dr`
- * recurrence already carries the `+ 1` term that belongs to this form —
- * `escape-de.ts` calls it "the Mandelbrot-form's conservatism" — so the
- * derivative needs no change at all, only the offset.
+ * fr-7u8t.8 acted on that: the mode now marches the MANDELBROT form, the
+ * offset taken from the SAMPLE POINT (`v <- w·V(Mv + t) + p`), so panels 0-2
+ * below are the SHIPPED estimator and resolve the unmistakable Mandelbox.
+ * The `+ 1` in the shipped `dr` recurrence turned out to belong to this form
+ * all along — `escape-de.ts` could only call it "the Mandelbrot-form's
+ * conservatism" — so the derivative needed no change, only the offset.
+ * `escape-form-sweep.harness.ts` is that decision's own sheet, including the
+ * measurements that retired the Julia form rather than making it a flag.
  *
  * The bulb estimators here are deliberately throwaway locals, not modules:
  * the point is to see the images before paying for six mirrors and a bench
@@ -96,32 +96,6 @@ function bulbDE(
   };
 }
 
-/**
- * The shipped fold orbit with the offset moved AFTER the fold and taken from
- * the sample point: the Mandelbrot form (module doc). Term for term
- * `estimateEscapeDistance` otherwise, including the `+ 1` in `dr`.
- */
-function mandelbrotFold(w: number, iters = 30, bail = 4): (p: Vec3) => number {
-  const foldAxis = (t: number) => 2 * Math.max(-1, Math.min(1, t)) - t;
-  return (p) => {
-    let [x, y, z] = p;
-    let dr = 1;
-    let r = Math.hypot(x, y, z);
-    for (let i = 0; i < iters && r <= bail; i++) {
-      const bx = foldAxis(x);
-      const by = foldAxis(y);
-      const bz = foldAxis(z);
-      const f = 1 / Math.max(0.25, Math.min(1, bx * bx + by * by + bz * bz));
-      x = w * bx * f + p[0];
-      y = w * by * f + p[1];
-      z = w * bz * f + p[2];
-      dr = Math.abs(w) * f * dr + 1;
-      r = Math.hypot(x, y, z);
-    }
-    return r / dr;
-  };
-}
-
 /** A single pure-fold map, the shape `analyzeEscapeSystem` admits. */
 function foldSystem(weight: number, extra: Partial<Transform> = {}): Transform {
   return {
@@ -157,29 +131,30 @@ interface Entry {
 describe("fr-7u8t escape-family visual comparison", () => {
   it("renders the shipped fold set beside the bulb prototypes", () => {
     const mbox = buildEscapeDE([foldSystem(2, { position: [0.4, 0.3, 0.2] })]);
+    const ball = buildEscapeDE([foldSystem(2)]);
+    const shell = buildEscapeDE([foldSystem(3)]);
     const qj = buildQJuliaDE([qjuliaSystem([0, 1, 0, 0])]);
 
     const entries: Entry[] = [
       {
-        label:
-          "SHIPS TODAY — julia-form Mandelbox (the escMandelbox bench fixture)",
+        label: "SHIPS TODAY — Mandelbox at the escMandelbox fixture's offset",
         de: (p) => estimateEscapeDistance(mbox, p),
         radius: mbox.boundingRadius,
         stepScale: ESCAPE_STEP_SCALE,
         zoom: 0.5,
       },
       {
-        label: "ONE-LINE CHANGE — Mandelbrot-form fold, weight 2",
-        de: mandelbrotFold(2),
-        radius: 4,
-        stepScale: 0.5,
+        label: "SHIPS TODAY — Mandelbox weight 2, no offset",
+        de: (p) => estimateEscapeDistance(ball, p),
+        radius: ball.boundingRadius,
+        stepScale: ESCAPE_STEP_SCALE,
         zoom: 0.5,
       },
       {
-        label: "ONE-LINE CHANGE — Mandelbrot-form fold, weight 3 (the cube)",
-        de: mandelbrotFold(3),
-        radius: 4,
-        stepScale: 0.5,
+        label: "SHIPS TODAY — Mandelbox weight 3, no offset",
+        de: (p) => estimateEscapeDistance(shell, p),
+        radius: shell.boundingRadius,
+        stepScale: ESCAPE_STEP_SCALE,
         zoom: 0.5,
       },
       {

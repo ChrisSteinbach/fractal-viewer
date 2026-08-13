@@ -655,7 +655,10 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * the FORWARD affine (M, t) of the single fold map and
    * (foldKind, w, |w|·sigma_max(M), unused). The variant replaces the
    * inverse-descent bodies wholesale — see escape-de.ts, the CPU oracle
-   * its loop mirrors. */
+   * its loop mirrors. t is the PRE-fold offset; the per-iteration offset
+   * is the query point (fr-7u8t.8's Mandelbrot form), and the unused
+   * slot is where a form flag would ride if the bulb family ever earns
+   * one. */
   uniform mat3 uEscM;
   uniform vec3 uEscT;
   uniform vec4 uEscParams;
@@ -942,7 +945,9 @@ uniform float uBalloonFar;
         y *= f;
         localL = f;
       }
-      v = uEscParams.y * y;
+      // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT, not the
+      // document's t (which stays the pre-fold offset inside y above).
+      v = uEscParams.y * y + p;
       dr = uEscParams.z * localL * dr + 1.0;
       r = length(v);
     }
@@ -988,7 +993,7 @@ uniform float uBalloonFar;
         y *= f;
         localL = f;
       }
-      v = uEscParams.y * y;
+      v = uEscParams.y * y + p;
       dr = uEscParams.z * localL * dr + 1.0;
       r = length(v);
       rings = min(rings, r / uBoundingRadius);

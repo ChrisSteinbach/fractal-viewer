@@ -8,15 +8,52 @@
  * map authored at the classic Mandelbox parameters (weight ~2) is not
  * contractive — it has NO IFS attractor, `analyzeSurfaceSystem` correctly
  * reads "does not contract", and no inverse-descent estimator exists. But
- * that map has a different canonical set: iterate `v <- T(v) = w·V(M v + t)`
- * FORWARD from the query point and ask whether the orbit stays bounded.
- * The boundary of the non-escaping region is the object every published
- * Mandelbox render marches. Because the document's `t` is a fixed offset
- * (not the per-pixel `c` of the Mandelbrot-form), the rendered set is the
- * JULIA-form fold set of the authored transform — the same vocabulary the
- * chaos game, morphs and mutations already speak, which is what makes this
- * a render MODE rather than a second document format (the fr-kltj scoping
- * decision).
+ * that map has a different canonical set: iterate the map FORWARD from the
+ * query point and ask whether the orbit stays bounded. The boundary of the
+ * non-escaping region is the object every published Mandelbox render
+ * marches.
+ *
+ * TWO FORMS, ONE TERM APART (fr-7u8t.8), and this mode shipped the wrong
+ * one. Where the per-iteration offset comes from decides which of the
+ * escape-time family's two canonical objects gets rendered:
+ *
+ *     Mandelbrot   v <- w·V(M v + t) + p     (p = the query point)
+ *     Julia        v <- w·V(M v + t)         (offset fixed by the document)
+ *
+ * fr-kltj chose the Julia form deliberately and for a good reason: the
+ * document's `t` is a fixed offset, so the mode stayed a render MODE over
+ * the existing transform vocabulary rather than becoming a second document
+ * format. The reasoning was sound. The object was not: at a small `t` the
+ * Julia-form fold set is a FAT BLOB, and every authorable constant near the
+ * origin lands there. Measured on the project's own bench fixture
+ * (`escMandelbox`: mandelbox weight 2 at position (0.4, 0.3, 0.2)), 94% of
+ * the bounding ball was non-escaping — the rendered object WAS its own
+ * bounding sphere, speckled where the escaping filaments fell below a
+ * pixel. That was the mode's entire visual output.
+ *
+ * So the offset now comes from the query point, unconditionally: `+ p`, the
+ * object everyone means by "Mandelbox". `t` loses nothing — it stays the
+ * PRE-fold offset (the fold's box/sphere centre), which is a live
+ * deformation knob here, with the classic Mandelbox at exactly `t = 0`.
+ * Morphs, mutations and the chaos game keep speaking the same vocabulary,
+ * and the mode still adds NO document state.
+ *
+ * WHY NOT BOTH FORMS, since one flag would buy the Juliabox
+ * (`scripts/escape-form-sweep.harness.ts` is that decision's evidence, and
+ * keeps the rejected form as an executable local): because the flag would
+ * be a permanent document field, and the measurement does not earn it. At
+ * the classic weight 2 the Julia set fills 97 / 93 / 77 / 60 / 23% of the
+ * marching ball as |t| runs 0.5 / 1 / 1.5 / 2 / 2.5 — a sphere across
+ * everything a user would plausibly author, thinning only in a narrow band
+ * just before it vanishes entirely — and even at the best constant found
+ * (weight -1.5, t = (2.5, 0, 0), 6% fill) the object is a pitted BALL,
+ * where the Mandelbrot form at those same weights gives three distinct
+ * objects and needs no constant at all. A knob whose default 95% of range
+ * renders a sphere is worse than no knob. If the bulb family (fr-7u8t.7)
+ * measures that ITS Julia form earns a flag, this loop inherits one
+ * cheaply: the wire has a spare float reserved for exactly that
+ * (`surface-de-gpu.ts`'s escParams tail), and the term is a multiply by
+ * 1-or-0, not a branch.
  *
  * THE ESTIMATE. The classic scalar-derivative distance estimate
  * (Hart's unbounding volumes via the Buddhi/Rrrola Mandelbox form the
@@ -25,7 +62,8 @@
  *     v = p; dr = 1
  *     repeat ESCAPE_TIME_ITERATIONS times or until |v| > ESCAPE_TIME_RADIUS:
  *       y  = M v + t
- *       v  = w · V(y)          // the fold, exactly variations.ts's forward math
+ *       v  = w · V(y) + p      // the fold, exactly variations.ts's forward
+ *                              // math, plus the Mandelbrot form's offset
  *       dr = |w| · L(y) · sigma_max(M) · dr + 1
  *     DE = |v| / dr
  *
@@ -35,11 +73,21 @@
  * over-estimates the orbit derivative and the quotient under-estimates
  * distance in the direction a sphere tracer needs. Unlike the IFS
  * estimators this is the field's standard HEURISTIC bound, not a
- * certified one (the `+ 1` keeps the Mandelbrot-form's conservatism);
- * the marcher's stepScale and acceptance epsilon absorb the usual slack
- * exactly as every published Mandelbox marcher does. A non-escaping
- * orbit returns |v|/dr with dr grown huge — effectively 0, the inside
- * signal.
+ * certified one; the marcher's stepScale and acceptance epsilon absorb
+ * the usual slack exactly as every published Mandelbox marcher does. A
+ * non-escaping orbit returns |v|/dr with dr grown huge — effectively 0,
+ * the inside signal.
+ *
+ * The `+ 1` in `dr` needed no change: it is the Mandelbrot form's own
+ * `d(+p)/dp` term, which is why the pre-fr-7u8t.8 doc could only call it
+ * "the Mandelbrot-form's conservatism" — it belonged to a form the loop
+ * did not yet compute. It is also load-bearing beyond exactness: it
+ * floors `dr` at 1, hence `DE <= |v|`. Without it a map whose derivative
+ * bound SHRINKS (`|w|·L·sigma_max` can sit at a quarter and still clear
+ * the non-contraction gate, which prices `L` at its 4x maximum) drives
+ * `dr` toward zero over the iteration budget and returns a distance
+ * vastly larger than the query's own radius — a marcher that steps clean
+ * past the object.
  *
  * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this
  * formula covers: exactly one active map, whose active variation list is
@@ -266,9 +314,9 @@ export function estimateEscapeDistance(
       fz = bz * f;
       localL = f;
     }
-    vx = de.w * fx;
-    vy = de.w * fy;
-    vz = de.w * fz;
+    vx = de.w * fx + p[0];
+    vy = de.w * fy + p[1];
+    vz = de.w * fz + p[2];
     dr = de.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }

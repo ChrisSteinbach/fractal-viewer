@@ -368,10 +368,19 @@ and UI**, so the interesting math is unit-tested without a browser:
     `surface-de-gpu.ts`'s `core:"escape"` kernel — `ESCAPE_STEP_SCALE`
     is the one marcher-damping definition both the GLSL variant and the
     WGSL packer import. Phone-cheap by construction (~30 branchless
-    folds per eval). The rendered set is the JULIA-form set of the
-    authored transform (`t` is the document's fixed offset), so the mode
-    stays a render MODE over the existing transform vocabulary —
-    morphs/mutations/persistence untouched.
+    folds per eval). The rendered set is the MANDELBROT-form set — the
+    per-iteration offset is the QUERY POINT (fr-7u8t.8), which is what
+    makes it the object published Mandelbox renders show. fr-kltj had
+    shipped the Julia form (offset = the document's `t`), and it rendered
+    a near-SPHERE: 94% of the bounding ball non-escaping at the bench
+    fixture's own constant. `t` survives as the PRE-fold offset — a live
+    deformation knob, classic Mandelbox at `t = 0` — so the mode still
+    adds NO document state and stays a render MODE over the existing
+    vocabulary (morphs/mutations/persistence untouched). The Julia form
+    was measured, not merely argued away, and lives on as a local in
+    `scripts/escape-form-sweep.harness.ts`: it only thins past |t| ~ 2.5
+    and is a pitted ball even at its best, so it does not earn the
+    permanent document flag it would cost.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
