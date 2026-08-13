@@ -619,7 +619,31 @@ and UI**, so the interesting math is unit-tested without a browser:
     settles into permanent preview blur: a silent refusal reads as a
     broken render); the same never-refuse discipline now covers the
     preview too — it always runs to completion, with progress
-    disclosed rather than bounded. Fold surface sessions also
+    disclosed rather than bounded. fr-ud7n carried that line across the
+    WebGPU seam, where all three affordances had been missed. A compute
+    preview is wall-budgeted (main.ts's
+    `SURFACE_COMPUTE_PREVIEW_BUDGET_MS`, 2s) so the rung ladder can learn
+    during motion — legitimate, and unchanged — but at the FLOOR rung a
+    truncated frame was the preview's LAST word: nothing cheaper to drop
+    to, so the loop drained and the settle fired over a mostly-backdrop
+    pane, undisclosed and unskippable. The budget stays a MEASUREMENT
+    device; what changed is the terminal state on a parked view, where a
+    floor-rung truncation now re-runs the same rung UNBUDGETED to
+    completion — progressive presents, "Preview · WebGPU N%" in the row,
+    Skip button live (`skipSurfacePreviewNow`'s compute arm already
+    implemented the handoff; only visibility was missing). Bounded
+    submissions, not the budget, carry watchdog safety — the settle is
+    equally unbudgeted. MEASURED (Playwright Firefox 151 WebGPU,
+    ~10-20x slower than Chrome's, 1920x1057, the reporter's 20-map
+    Menger + mandelbox fold lens + balloon): two 2.1s truncated floor
+    previews resolving 5% of their 9916 rays, then a completion pass
+    resolving all of them in 13.8s and disclosing 3.9% -> 97% while it
+    did, where the settle behind it was still at 48% after 179s — ~4% of
+    the wall for the only whole image of the first several minutes.
+    `scripts/surface-preview-completion.verify.mjs` is that gate, Firefox-
+    shaped by necessity: Chrome's preview completes inside the budget, so
+    the bug is device-speed-dependent (slow adapters, software devices,
+    big viewports), never browser-specific. Fold surface sessions also
     gate their first frame on `compileAsync` of the fold tracer program
     (~25s links happen off the critical path where the driver offers
     `KHR_parallel_shader_compile`; the compile mesh MUST mirror
@@ -647,7 +671,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     settles straight to full detail on park (both engines), the
     fr-24to/fr-zx34 no-patience-guessing line applied to the preview tier,
     with the progress row's one-shot Skip button as the in-the-moment
-    escape. Pure, tested.
+    escape (both engines since fr-ud7n). Pure, tested.
   - `history.ts` — session-only undo/redo stacks (pure, tested).
   - `edit-session.ts` — burst-coalescing over `history.ts`: one undo checkpoint
     per slider drag + debounced save. All effects injected; pure, tested.
@@ -906,10 +930,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     one WebGL canvas — capture/recorder unchanged) and assembles specs
     with the uniform-exact camera/eps/tier quantities (acceptance eps
     stays native-height, fr-7xgi); main.ts routes and choreographs (same
-    tier clock + preview governor, latest-wins preview coalescing,
-    memoized offline force frames, one-way fallback: create failure or
-    device loss re-enters through the untouched WebGL path; `?surfacegl`
-    forces WebGL).
+    tier clock + preview governor, latest-wins preview coalescing +
+    fr-ud7n's unbudgeted completion pass — the preview frame an
+    invalidation must CANCEL rather than wait out, since it is the only
+    one with no wall budget to expire — memoized offline force frames,
+    one-way fallback: create failure or device loss re-enters through the
+    untouched WebGL path; `?surfacegl` forces WebGL).
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

@@ -3542,10 +3542,11 @@ export class Ui {
    * leading tokens.
    *
    * `skippable` (fr-37c6) shows the one-shot "Skip preview" button under
-   * the row — main.ts passes it exactly while a preview strip job is
-   * grinding (the phase with a full render to skip TO); the button hides
-   * with the row, and settles never show it (there is nothing after a
-   * settle to skip to).
+   * the row — main.ts passes it exactly while a preview is grinding (the
+   * phase with a full render to skip TO): a WebGL preview strip job, or
+   * the compute path's unbudgeted completion pass (fr-ud7n). The button
+   * hides with the row, and settles never show it (there is nothing after
+   * a settle to skip to).
    */
   setSurfaceProgress(
     progress: {

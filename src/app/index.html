@@ -214,10 +214,12 @@
         </label>
         <p id="surfaceNote" class="flame-note-info hidden"></p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
-        <!-- fr-37c6's one-shot escape: shown only while a preview strip job
-             is actually grinding (setSurfaceProgress's skippable flag) —
-             abandon it and start the full-detail render now, previews
-             untouched for the next move. -->
+        <!-- fr-37c6's one-shot escape: shown only while a preview is
+             actually grinding (setSurfaceProgress's skippable flag) — a
+             WebGL preview strip job, or the compute path's unbudgeted
+             completion pass (fr-ud7n) — abandon it and start the
+             full-detail render now, previews untouched for the next
+             move. -->
         <button
           class="btn btn-ghost hidden"
           id="surfaceSkipPreviewBtn"
