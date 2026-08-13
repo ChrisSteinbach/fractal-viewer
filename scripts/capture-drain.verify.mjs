@@ -17,12 +17,14 @@
  *
  * NOTE ON SCALE. The 1280x720 default is the bead's configuration, not a
  * universally affordable one: on a software-GL box a default-preset frame
- * at that size can be ~10 minutes of tracing, so BOTH phases report
- * timeouts and the capture is refused up front by the predict ceiling
- * rather than grinding to the spend ceiling. That is a legitimate reading
- * of a too-slow box, not a script failure — but for an A/B you want a frame
- * both phases can finish, so run it somewhere the settle completes, or
- * compare coverage-at-a-fixed-window instead of totals.
+ * at that size can be ~10 minutes of tracing, so both phases report
+ * timeouts. That is a legitimate reading of a too-slow box, not a script
+ * failure — but for an A/B you want a frame both phases can finish, so run
+ * it somewhere the settle completes, or compare coverage-at-a-fixed-window
+ * instead of totals. (Before fr-avf6 such a run ended in a `refused`
+ * outcome instead, the predict ceiling rejecting the export up front; the
+ * interactive capture carries no cost ceiling now, so `refused` is
+ * reachable only if some future change puts one back.)
  *
  * This is a MEASUREMENT harness, not a pass/fail gate: a refused or
  * timed-out export is a valid, reportable outcome, never a script failure.
