@@ -146,12 +146,16 @@
  * `spherefold3 pre-scale 6 -> mbox2` all probe empty, and every one of
  * them passes this gate. So {@link probeEscapeFill} exists: a seeded,
  * deterministic sample of the bailout ball, asking
- * {@link escapeSetContains} rather than thresholding a distance, so a
- * later UI pass can say "this chain's set is empty" instead of showing
- * nothing. It is deliberately NOT part of {@link analyzeEscapeSystem}
- * (a structural gate that runs on every state change must stay cheap) and
- * NOT computed in {@link buildEscapeDE} (1-5 ms nobody has asked for yet);
- * it is a call the caller makes when it wants the answer.
+ * {@link escapeSetContains} rather than thresholding a distance, so the
+ * mode can say "this chain's set looks empty" instead of showing nothing.
+ * main.ts calls it once per surface session, at the single moment the DE
+ * is built (fr-17qu), and reports a zero as a toast without refusing the
+ * render — a probe is not a proof, and a set thinner than the sample
+ * reads 0. It is deliberately NOT part of {@link analyzeEscapeSystem} (a
+ * structural gate that runs on every state change must stay cheap, and
+ * this costs 1.2-3.2 ms measured) and NOT computed in
+ * {@link buildEscapeDE} (a build has callers that never want the answer);
+ * it is a call the caller makes when it wants it.
  *
  * ONE THING LEFT ON THE TABLE, deliberately: the prototype measured the
  * Böttcher/log estimate form (`0.5·r·ln r / dr`, `bulb-de.ts`'s) beating
@@ -783,11 +787,12 @@ export function escapeSetContains(
   return orbitR <= ESCAPE_TIME_RADIUS;
 }
 
-/** Probe points {@link buildEscapeDE} samples the bailout ball with for
- * {@link EscapeDE.probeFill}. `surface-de.ts`'s bounding-radius probe is the
- * precedent (8192 there); half of it here, because this probe answers a
- * coarse yes/no rather than fitting a radius, and it runs a full forward
- * orbit per point. Measured cost of the whole probe: 1-5 ms. */
+/** Points {@link probeEscapeFill} samples the bailout ball with.
+ * `surface-de.ts`'s bounding-radius probe is the precedent (8192 there);
+ * half of it here, because this probe answers a coarse yes/no rather than
+ * fitting a radius, and it runs a full forward orbit per point. Measured
+ * cost of the whole probe: 1.2-3.2 ms on the shipped presets — which is
+ * why its caller pays it once per session, never per state change. */
 export const ESCAPE_PROBE_POINTS = 4096;
 
 /** Fixed seed for that probe, so a given system always reports the same

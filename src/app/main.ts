@@ -11,7 +11,11 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
+import {
+  analyzeEscapeSystem,
+  buildEscapeDE,
+  probeEscapeFill,
+} from "../fractal/escape-de";
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
@@ -4037,6 +4041,32 @@ function main(): void {
               state.symmetry,
             );
             R = de.boundingRadius;
+            // fr-17qu: the gate admits shapes whose non-escaping set is
+            // EMPTY, and this mode then draws a background gradient with a
+            // live progress row and nothing anywhere saying why — the
+            // silent-failure class fr-096u's blanked lens settles belong
+            // to. A chain whose composite expands too hard escapes on its
+            // first pass everywhere (measured: `mbox2 pre-scale 4`,
+            // `boxfold6 x3`, and a lone spherefold at any weight —
+            // fr-kkb9's shape, which this covers too), so probe the
+            // bailout ball ONCE, here, at the single moment the set is
+            // determined. Deliberately not in refreshSurfaceEligibility:
+            // that gate runs on every state change and this costs 1.2-3.2ms
+            // measured, which is escape-de.ts's own reason for leaving the
+            // probe out of analyzeEscapeSystem.
+            //
+            // It stays a REPORT, never a refusal. The probe is not a proof
+            // — a set thinner than the sample reads 0 — so the honest claim
+            // is "the probe found nothing", and the mode still renders: the
+            // fr-24to/fr-zx34 line that this renderer discloses and lets
+            // the user decide rather than guessing on their behalf.
+            if (probeEscapeFill(de) === 0) {
+              ui.flashToast(
+                de.links.length > 1
+                  ? "This chain's escape-time set looks empty — every probe point escaped on its first pass. Try a smaller fold weight or scale on one of the links."
+                  : "This fold's escape-time set looks empty — every probe point escaped on its first pass. Try a smaller fold weight or scale.",
+              );
+            }
             if (surfaceComputeAvailable()) {
               computeTarget = {
                 kind: "escape",
