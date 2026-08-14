@@ -42,9 +42,11 @@ export const VARIATION_TYPES = [
   // registries agree at `w = 0` like every other entry. Authored with a
   // transform's translation as the Julia constant `c`, this is the map
   // `qjulia-de.ts`'s oracle estimates. NOTHING MARCHES IT: the renderer is
-  // fr-7u8t.5, open and demoted by measurement, so authoring a `qsquare`
-  // map and pressing Surface gets the ordinary "uses variations" refusal
-  // (fr-zi3c). It renders as a plain nonlinear warp in every other mode.
+  // fr-7u8t.5, CLOSED won't-do — refused by measurement — so authoring a
+  // `qsquare` map and pressing Surface gets the ordinary "uses variations"
+  // refusal (fr-zi3c). The route that could still reach it is fr-j231,
+  // where the map is a chain LINK rather than an object of its own. It
+  // renders as a plain nonlinear warp in every other mode.
   "qsquare",
   // The White/Nylander triplex 8th power (fr-7u8t.7): the Mandelbulb's map,
   // `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)` in spherical coordinates about the z axis
