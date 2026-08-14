@@ -509,6 +509,30 @@ and UI**, so the interesting math is unit-tested without a browser:
     `scripts/escape-form-sweep.harness.ts`: it only thins past |t| ~ 2.5
     and is a pitted ball even at its best, so it does not earn the
     permanent document flag it would cost.
+  - `qjulia-de.ts` — the quaternion Julia set's CPU oracle (fr-7u8t.4):
+    `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own
+    vocabulary, since `q^2 + c` is conjugate by translation to `(q + c)^2`
+    — i.e. `variations.ts`'s `qsquare` with the transform's translation as
+    the Julia constant. `analyzeQJuliaSystem` gates, `buildQJuliaDE`
+    builds, `estimateQJuliaDistance` returns the Böttcher log form
+    `0.5·|y|·ln|y| / dr`. The only CERTIFIED estimator in the escape-time
+    family (quaternion norm is multiplicative, so `|dq'| = 2|q|·|dq|`
+    EXACTLY, where the folds' and the bulb's are heuristics) and the
+    cheapest thing the marcher has ever run — 0.059 us/eval against the
+    shipped fold's 0.633, at step scale 1.0 with 0.00% measured overshoot.
+    NO RENDERER READS IT, deliberately: it is production-dead by the
+    verdict of `scripts/qjulia-beauty.harness.ts`, whose twenty panels
+    across rotations, rotor-posed slices, non-zero `w0` and several
+    constants are all SMOOTH — shells, whorls and blobs, handsome and
+    entirely without fractal detail — and whose zoom sheet resolves
+    nothing new at three levels on four systems. Surface mode's central
+    promise is that zoom keeps resolving; for this object there is
+    nothing there to resolve, which is why fr-7u8t.5 (the WGSL/GLSL
+    cores) and fr-7u8t.6 (the 4D lift, the only cut that is not a solid
+    of revolution) stay OPEN rather than shipped. Kept because the oracle
+    is what those beads are blocked on, not blocked by, and because the
+    measurement that demoted them is worth more executable than
+    remembered.
   - `bulb-de.ts` — the Mandelbulb's CPU oracle (fr-7u8t.7), third object in
     the escape-time family beside the folds and `qjulia-de.ts`: the triplex
     8th power (`variations.ts`'s `bulb`) iterated in the MANDELBROT form
