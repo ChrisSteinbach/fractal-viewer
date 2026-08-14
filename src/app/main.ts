@@ -12,35 +12,6 @@ import {
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
-import type { AppState as EscapeGateState } from "./state";
-
-/**
- * Can the app actually RENDER this escape system, as opposed to estimate it?
- *
- * fr-za0n widened `analyzeEscapeSystem` to admit a CHAIN of fold maps and
- * taught the CPU oracle to cycle through them, deliberately leaving the two
- * shader mirrors out of scope so the idea could be judged before six copies
- * of it were paid for. But this module gates the escape session on that same
- * analysis, so the moment the gate widened, a 2+-map document began entering
- * escape mode and rendering only its HEAD LINK — `EscapeDE extends
- * EscapeLink`, so the flat wire is link 0's and a chain compiles, marches and
- * looks plausible while being silently wrong.
- *
- * So the ORACLE's gate and the APP's gate are no longer the same question,
- * and this is the app's: eligible AND single-link. A chain is reported
- * ineligible with a reason that names fr-s04t rather than rendering a lie.
- * Delete this the moment the mirrors carry the cycle.
- */
-function escapeRenderable(state: EscapeGateState): boolean {
-  return (
-    analyzeEscapeSystem(
-      state.transforms,
-      state.finalTransform ?? null,
-      state.symmetry,
-    ).status === "eligible" &&
-    state.transforms.filter((t) => (t.weight ?? 1) > 0).length === 1
-  );
-}
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
@@ -3099,8 +3070,9 @@ function main(): void {
   const NEXT_PAINT_FALLBACK_MS = 120;
 
   // Compute is on the table at all — no block latched, an API present.
-  // The escape branch consults this alone (fr-dlxh: a single pure-fold
-  // map is always compute-shaped); the 3D IFS branch adds its shape
+  // The escape branch consults this alone (fr-dlxh: a pure-fold map is
+  // always compute-shaped, and so is a CHAIN of them — fr-s04t, whose
+  // kernel cycles the list); the 3D IFS branch adds its shape
   // test below, and the 4D branch its own (the 4D cut's measured
   // verdict: plain 4D is compute-shaped, kaleidoscope 4D is not —
   // fr-b72d).
@@ -3119,10 +3091,13 @@ function main(): void {
     );
   }
 
-  /** A FORWARD-ORBIT session's one shade slot: the active map's explorer
-   * color — the exact pick `setEscapeSystem`'s (and, since fr-tdin,
-   * `setBulbSystem`'s) GLSL packing takes. Both objects are single-map by
-   * their gates, so "the active map" is unambiguous for either. */
+  /** A FORWARD-ORBIT session's one shade slot: the first active map's
+   * explorer color — the exact pick `setEscapeSystem`'s (and, since
+   * fr-tdin, `setBulbSystem`'s) GLSL packing takes. The bulb gate is
+   * single-map, and an escape CHAIN (fr-s04t) still shades from one slot:
+   * a forward orbit applies every link in turn and CHOOSES none, so its
+   * hit-info reports `firstChoice = 0` at any chain length and the head
+   * link's color is the one the "By Transform" source can honestly use. */
   function escapeSlotColor(): Vec3 {
     const active = Math.max(
       0,
@@ -4047,7 +4022,13 @@ function main(): void {
           // no precedence to resolve here, unlike the IFS compute arm
           // below.
           let R: number;
-          if (escapeRenderable(state)) {
+          if (
+            analyzeEscapeSystem(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            ).status === "eligible"
+          ) {
             ui.setSurfaceSessionKind("escape");
             const de = buildEscapeDE(
               state.transforms,
@@ -4624,20 +4605,30 @@ function main(): void {
         state.symmetry,
       );
       if (escape.status === "eligible") {
-        // ...but only where the SHADERS can draw what the oracle estimates.
-        // fr-za0n made the estimator composable ahead of its mirrors, so a
-        // chain would render its head link alone — see escapeRenderable.
-        // Naming the reason beats a silent wrong picture (fr-s04t).
-        if (!escapeRenderable(state)) {
+        // The chain's own uniform cap (fr-s04t): the WebGL fallback arm
+        // carries one uEscM/uEscT/uEscParams slot per LINK, sized like the
+        // descent's per-map arrays, and eligibility is one answer for both
+        // engines — so the fragment tracer's cap is the mode's cap even
+        // though the compute arm's storage list has none. The IFS arm's
+        // gate below, one render shape over.
+        const links = state.transforms.filter(
+          (t) => (t.weight ?? 1) > 0,
+        ).length;
+        if (links > SURFACE_MAX_MAPS) {
           ui.setSurfaceEligibility(
             "ineligible",
-            "Escape-time chains render one map at a time for now: the estimator composes but the tracers do not yet. Reduce to a single active fold map.",
+            `${links} chain links (the escape-time tracer carries at most ${SURFACE_MAX_MAPS})`,
           );
           return;
         }
         ui.setSurfaceEligibility(
           "degraded",
-          "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
+          links > 1
+            ? // fr-za0n's hybrid: the transform list IS the formula
+              // sequence, so name the object as a chain rather than as
+              // "the canonical Mandelbox".
+              `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+            : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
         );
         return;
       }

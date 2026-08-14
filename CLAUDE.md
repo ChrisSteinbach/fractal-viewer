@@ -199,16 +199,24 @@ and UI**, so the interesting math is unit-tested without a browser:
     `escape-de.ts`'s `estimateEscapeDistance`, the FORWARD fold orbit
     with the Buddhi/Rrrola scalar derivative, in the `SURFACE_ESCAPE`
     GLSL arm's f32 formulation, for exactly the systems
-    `analyzeEscapeSystem` admits; the one forward map rides the params
-    uniform's 208-271 VARIANT block via `packEscapeGpuParams` (bailout
+    `analyzeEscapeSystem` admits; the session's marching quantities ride
+    the params uniform via `packEscapeGpuParams` (bailout
     ball packed as both bounding AND visible sphere, `ESCAPE_STEP_SCALE`,
-    `maxDepth` as the orbit's iteration budget through the same preview
-    door the descents use), mutually exclusive with the lens block by
-    construction (escape+lens throws); the maps storage binding is NOT
-    DECLARED for escape (hosts must skip buffer 1), width/sharedFrontier/
+    `maxDepth` as the orbit's iteration budget in PASSES through the same
+    preview door the descents use, `mapCount` the LINK COUNT and
+    `symOrder`/`symPlane` the query-space wedge fold), with the head link
+    still in the 208-271 VARIANT block as frozen ballast, mutually
+    exclusive with the lens block by construction (escape+lens throws).
+    Since fr-s04t the orbit CYCLES the document's whole formula chain —
+    link `i mod n`, `+ p` and the bailout test after EACH link,
+    `maxDepth * n` single-link steps — reading one `GpuMap` per link off
+    the maps storage binding (`packEscapeGpuMaps`), so the escape core
+    DOES declare buffer 1 now and `core:"bulb"` is the one bindingless
+    core left; width/sharedFrontier/
     bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
     trap as the CONTINUOUS escape fraction (fr-7u8t.8: `escapedAt` minus
-    `log(r/R)/log(growth)`, over `maxDepth` — the raw integer count is a
+    `log(r/R)/log(growth)` for the link that produced the escaping radius,
+    over the chain's own step count — the raw integer count is a
     step function of position and painted the real Mandelbox as palette
     confetti; it looked fine only while the escape set was a blob with one
     count everywhere — smoothed, it is the canonical Mandelbox palette
@@ -458,11 +466,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     balls across the seam), free per orbit step, and `SymmetryParams.blend`
     is deliberately unread exactly as in `surface-de.ts`.
     ONE-LINK, UNSYMMETRISED SYSTEMS ARE BIT-IDENTICAL to fr-kltj's loop
-    (pinned in `escape-de.test.ts` against a frozen copy of it), which is
-    what lets `EscapeDE extends EscapeLink` keep the six mirrors reading
-    the HEAD link's flat wire until they gain the same inner step
-    (fr-za0n's mirror pass — until it lands, a multi-link document
-    renders its head link on the GPU/GLSL paths). The rendered set is the MANDELBROT-form set — the
+    (pinned in `escape-de.test.ts` against a frozen copy of it), and
+    fr-s04t carried the cycle into the two shader mirrors, so a CHAIN now
+    renders what this module estimates on every path: GLSL as one
+    `uEscM`/`uEscT`/`uEscParams` slot per link (24-slot cap, the descent's
+    own — and the mode's, since eligibility is one answer for both
+    engines), WGSL as one `GpuMap` per link on the maps storage binding.
+    `EscapeDE extends EscapeLink` survives as the head link's flat wire,
+    now frozen layout ballast nothing reads to render. The rendered set is the MANDELBROT-form set — the
     per-iteration offset is the QUERY POINT (fr-7u8t.8), which is what
     makes it the object published Mandelbox renders show. fr-kltj had
     shipped the Julia form (offset = the document's `t`), and it rendered
@@ -924,7 +935,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     gate refuses but `analyzeEscapeSystem` admits — the FALLBACK since
     fr-dlxh, `surface-compute.ts`'s WebGPU renderer preferred whenever an
     adapter exists) — same marcher, tiers, strips, capture; no grid (its
-    validity chain is IFS-specific). The `SURFACE_BULB` variant (fr-7u8t.9)
+    validity chain is IFS-specific). Since fr-s04t it CYCLES the whole
+    formula chain: `uEscM`/`uEscT`/`uEscParams` are declared INSIDE the arm
+    (the `SURFACE_BULB` precedent) as one slot per link, `uMapCount` is the
+    link count, `uMaxDepth * uMapCount` single-link steps keep `uMaxDepth`
+    meaning PASSES, and `uSymOrder`/`uSymPlane` drive `foldQuerySector` —
+    the kaleidoscope's dihedral query-space wedge fold, applied once before
+    the orbit. The 24-slot cap is the mode's cap (eligibility is one answer
+    for both engines, and the compute arm's storage list has none). The `SURFACE_BULB` variant (fr-7u8t.9)
     is that arm's SIBLING and `resolveVariantArms`' fifth JS-resolved key,
     nested inside `SURFACE_ESCAPE`'s `#else` (the two are alternatives —
     each replaces the descent bodies wholesale, so `surfaceFragmentFor`
@@ -1021,8 +1039,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
     the kernel core and the lens wrapper, and the two first-sizing
     priors scale by the lens branch count 27/3/81 ÷ 8), — since
-    fr-dlxh — escape-time sessions (the single non-contracting pure-fold
-    map the IFS gate refuses), and — since fr-dlxh's 4D cut — PLAIN 4D
+    fr-dlxh — escape-time sessions (the non-contracting pure-fold map —
+    or, since fr-s04t, the CHAIN of them — that the IFS gate refuses), and — since fr-dlxh's 4D cut — PLAIN 4D
     surface sessions (symmetry order 1): those ALL PREFER it when an
     adapter exists — no fold GLSL ever compiles (the ~25s Mesa link /
     ~5.7s lens link / fr-096u entry hazards never engage), no grid

@@ -98,6 +98,7 @@ import {
   estimateDistance,
   estimateDistanceRefined,
   SURFACE_FOLD_BEAM_WIDTH,
+  SYM_PLANE_CODE,
 } from "../../fractal/surface-de";
 import type { SurfaceDE } from "../../fractal/surface-de";
 import {
@@ -111,6 +112,7 @@ import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
 import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
+  SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
@@ -120,6 +122,7 @@ import {
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packBulbGpuParams,
+  packEscapeGpuMaps,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -3798,28 +3801,67 @@ function affine4Queries(
  */
 function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
   const f = Math.fround;
-  const m = de.m.map(f);
-  const t = de.t.map(f);
-  const w = f(de.w);
-  const g = f(de.derivGrowth);
-  let vx = f(p[0]);
-  let vy = f(p[1]);
-  let vz = f(p[2]);
+  // fr-s04t: the whole CHAIN, in the kernel's own f32 lanes — one
+  // pre-rounded link per slot, cycled `i mod n`.
+  const links = de.links.map((link) => ({
+    m: link.m.map(f),
+    t: link.t.map(f),
+    w: f(link.w),
+    g: f(link.derivGrowth),
+    kind: link.foldKind,
+  }));
+  const n = links.length;
+  // The kaleidoscope's query-space wedge fold, ONCE before the orbit —
+  // the kernels' foldQuerySector, f32 throughout (its own trig included,
+  // which is where this twin and the GPU can legitimately differ by a
+  // rounding on a sector boundary; the ensemble classifier absorbs it
+  // exactly as it absorbs the orbit's chaos).
+  const q: Vec3 = [f(p[0]), f(p[1]), f(p[2])];
+  if (de.symmetryOrder > 1) {
+    const code = SYM_PLANE_CODE[de.symmetryPlane];
+    const a = code === 0 ? q[1] : q[0];
+    const b = code === 2 ? q[1] : q[2];
+    const sector = f(f(2 * Math.PI) / de.symmetryOrder);
+    const turn = f(Math.round(f(Math.atan2(b, a) / sector)) * sector);
+    const c = f(Math.cos(turn));
+    const s = f(Math.sin(turn));
+    const fa = f(f(a * c) + f(b * s));
+    const fb = Math.abs(f(f(b * c) - f(a * s)));
+    if (code === 0) {
+      q[1] = fa;
+      q[2] = fb;
+    } else if (code === 1) {
+      q[0] = fa;
+      q[2] = fb;
+    } else {
+      q[0] = fa;
+      q[1] = fb;
+    }
+  }
+  let vx = q[0];
+  let vy = q[1];
+  let vz = q[2];
   let dr = 1;
   let r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
   const fold = (x: number): number =>
     f(f(2 * Math.max(-1, Math.min(1, x))) - x);
-  for (let i = 0; i < ESCAPE_TIME_ITERATIONS && r <= de.boundingRadius; i++) {
+  // A PASS is one full cycle, so the budget is ESCAPE_TIME_ITERATIONS
+  // applications OF EACH LINK (escape-de.ts's A PASS IS ONE FULL CYCLE).
+  const steps = ESCAPE_TIME_ITERATIONS * n;
+  for (let i = 0; i < steps && r <= de.boundingRadius; i++) {
+    const link = links[i % n];
+    const m = link.m;
+    const t = link.t;
     let yx = f(f(f(f(m[0] * vx) + f(m[1] * vy)) + f(m[2] * vz)) + t[0]);
     let yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + t[1]);
     let yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + t[2]);
     let localL = 1;
-    if (de.foldKind !== 2) {
+    if (link.kind !== 2) {
       yx = fold(yx);
       yy = fold(yy);
       yz = fold(yz);
     }
-    if (de.foldKind !== 1) {
+    if (link.kind !== 1) {
       const r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
       const s = f(1 / Math.max(0.25, Math.min(1, r2)));
       yx = f(yx * s);
@@ -3827,10 +3869,10 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
       yz = f(yz * s);
       localL = s;
     }
-    vx = f(f(w * yx) + f(p[0]));
-    vy = f(f(w * yy) + f(p[1]));
-    vz = f(f(w * yz) + f(p[2]));
-    dr = f(f(f(g * localL) * dr) + 1);
+    vx = f(f(link.w * yx) + q[0]);
+    vy = f(f(link.w * yy) + q[1]);
+    vz = f(f(link.w * yz) + q[2]);
+    dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
   }
   return r / dr;
@@ -4640,6 +4682,12 @@ interface SurfaceForwardSystemState<TDe> {
   stable: boolean[];
   buffers?: {
     params: GPUBuffer;
+    /** The forward chain's storage list (fr-s04t): the escape core's
+     * links, one `GpuMap` each; ONE zero stride for the bulb core, whose
+     * single map still rides the params variant block and which never
+     * declares the binding (the layout may carry an entry a shader
+     * ignores — surface-compute.ts's own idiom). */
+    maps: GPUBuffer;
     input: GPUBuffer;
     output: GPUBuffer;
     staging: GPUBuffer;
@@ -4730,6 +4778,14 @@ function surfaceForwardBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
         binding: 0,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "uniform" },
+      },
+      {
+        // fr-s04t: the ESCAPE core's formula chain (one GpuMap per link).
+        // The BULB core ignores it — a layout may carry entries a shader
+        // never declares, which is what lets both legs share this one.
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
       },
       {
         binding: 2,
@@ -4866,15 +4922,17 @@ function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
 
 /** {@link ensureSurfaceEvalBuffers}'s FORWARD-core twin (fr-dlxh; made
  * core-agnostic by fr-7u8t.9, which passes the packed params in rather
- * than naming a packer): the same lazy-create-once contract, minus the
- * maps buffer/binding — a forward kernel's one map rides the params
- * uniform's variant block, never a storage binding (see
- * {@link surfaceForwardBindGroupLayout}). */
+ * than naming a packer): the same lazy-create-once contract, with the
+ * caller passing BOTH packed buffers — the escape core's formula chain
+ * rides the maps binding (fr-s04t, `packEscapeGpuMaps`), while the bulb
+ * core's single map still rides the params variant block and takes one
+ * zero stride here (see {@link surfaceForwardBindGroupLayout}). */
 async function ensureSurfaceForwardEvalBuffers<TDe>(
   device: GPUDevice,
   layout: GPUBindGroupLayout,
   sys: SurfaceForwardSystemState<TDe>,
   paramsData: ArrayBuffer,
+  mapsData: Float32Array,
 ): Promise<NonNullable<SurfaceForwardSystemState<TDe>["buffers"]>> {
   if (sys.buffers) return sys.buffers;
   const n = sys.queries.length;
@@ -4891,6 +4949,13 @@ async function ensureSurfaceForwardEvalBuffers<TDe>(
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
   device.queue.writeBuffer(params, 0, paramsData);
+  const maps = await createSurfaceBuffer(
+    device,
+    `surface-de forward maps ${sys.name}`,
+    mapsData.byteLength,
+    GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  );
+  device.queue.writeBuffer(maps, 0, new Float32Array(mapsData));
   const input = await createSurfaceBuffer(
     device,
     `surface-de forward queries ${sys.name}`,
@@ -4915,11 +4980,12 @@ async function ensureSurfaceForwardEvalBuffers<TDe>(
     layout,
     entries: [
       { binding: 0, resource: { buffer: params } },
+      { binding: 1, resource: { buffer: maps } },
       { binding: 2, resource: { buffer: input } },
       { binding: 3, resource: { buffer: output } },
     ],
   });
-  sys.buffers = { params, input, output, staging, bindGroup };
+  sys.buffers = { params, maps, input, output, staging, bindGroup };
   return sys.buffers;
 }
 
@@ -4928,6 +4994,7 @@ function destroySurfaceForwardEvalBuffers<TDe>(
 ): void {
   if (!sys.buffers) return;
   sys.buffers.params.destroy();
+  sys.buffers.maps.destroy();
   sys.buffers.input.destroy();
   sys.buffers.output.destroy();
   sys.buffers.staging.destroy();
@@ -8263,16 +8330,29 @@ async function runSurfaceDeSection(
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
   // they never enter `systemDefs`/`systems` above and never touch
-  // `deHasFolds`/fold/affine routing. Five systems: both fold arms gated
+  // `deHasFolds`/fold/affine routing. Five SINGLE-MAP systems: both fold arms gated
   // solo (boxfold, spherefold), both together (mandelbox), an off-axis
   // rotated/scaled matrix with a negative fold weight, and — since
   // fr-7u8t.8 moved the per-iteration offset onto the query point — the
   // ZERO-offset mandelbox, which is the textbook object the escape presets
   // ship and the only fixture whose pre-fold offset contributes nothing.
+  //
+  // THREE MORE SINCE fr-s04t, and they are the load-bearing ones for the
+  // chain: the orbit CYCLES through the document's transform list, so on
+  // any single-map fixture the whole inner step is a no-op and every
+  // mutation of it passes (fr-7u8t.9's sigma_max lesson, one level up).
+  // So `escChainPair` runs two links whose FOLD KIND, weight and matrix
+  // all differ (a kernel that read slot 0 every step, or applied the
+  // links in the wrong order, gets a different orbit); `escChainTriple`
+  // adds the third fold kind, so both `kind` dispatches are exercised
+  // per-link rather than per-system; and `escChainKaleido` is the same
+  // pair under a 5-fold kaleidoscope, because the query-space wedge fold
+  // is equally a no-op on every unsymmetrised row.
   const escapeSystemDefs: {
     name: string;
     transforms: Transform[];
     seed: number;
+    symmetry?: SymmetryParams;
   }[] = [
     {
       name: "escMandelbox",
@@ -8339,6 +8419,77 @@ async function runSurfaceDeSection(
         },
       ],
     },
+    // The chain rows (fr-s04t) — escape-chain.harness.ts's own fixtures,
+    // which is where their measured bound/step-violation and fill numbers
+    // come from.
+    {
+      name: "escChainPair",
+      seed: 406,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+    },
+    {
+      name: "escChainTriple",
+      seed: 407,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+        {
+          id: 2,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "spherefold", weight: 1.2 }],
+        },
+      ],
+    },
+    {
+      name: "escChainKaleido",
+      seed: 408,
+      symmetry: { order: 5, plane: "xz" },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+    },
   ];
   const escapeSystems: SurfaceEscapeSystemState[] = [];
   for (const def of escapeSystemDefs) {
@@ -8346,13 +8497,17 @@ async function runSurfaceDeSection(
     activity.setState("cpu", `Surface escape CPU oracle — ${def.name}`);
     await new Promise<void>((resolve) => setTimeout(resolve));
     try {
-      const eligibility = analyzeEscapeSystem(def.transforms);
+      // fr-s04t: the kaleidoscope row carries a symmetry, so both gate
+      // and build take the def's own (the others default to order 1,
+      // exactly as before).
+      const symmetry = def.symmetry;
+      const eligibility = analyzeEscapeSystem(def.transforms, null, symmetry);
       if (eligibility.status === "ineligible") {
         results.notes.push(
           `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
         );
       } else {
-        const de = buildEscapeDE(def.transforms);
+        const de = buildEscapeDE(def.transforms, null, symmetry);
         const queries = escapeQueries(de, def.seed);
         const cpu64 = queries.map((q) => estimateEscapeDistance(de, q));
         const cpu32 = queries.map((q) => estimateEscapeDistanceF32(de, q));
@@ -9422,12 +9577,12 @@ async function runSurfaceDeSection(
     // Forward escape-time systems never enter `systems` above — `buildSurfaceDE`
     // refuses their shape by design — so `escapeSystems` (built right after
     // the systemDefs CPU-oracle loop) is the only source for this leg. One
-    // pipeline for all four systems: the escape core takes no width/variant/
-    // stage2 sweep (inert, like the affine ladder), and it never declares
-    // binding 1 (surface-de-gpu.ts module doc — its one forward map rides
-    // the params uniform's variant block), so this leg gets its own bind
-    // group layout and buffers helper rather than `ensureSurfaceEvalBuffers`'s
-    // maps-bound one.
+    // pipeline for every system: the escape core takes no width/variant/
+    // stage2 sweep (inert, like the affine ladder), and its maps binding
+    // carries the formula CHAIN rather than inverse descent maps
+    // (fr-s04t — one `GpuMap` per link, `packEscapeGpuMaps`), so this leg
+    // gets its own bind group layout and buffers helper rather than
+    // `ensureSurfaceEvalBuffers`'s descent-shaped one.
     if (escapeSystems.length > 0) {
       const escapeEvalConfig: SurfaceKernelConfig = {
         core: "escape",
@@ -9479,6 +9634,8 @@ async function runSurfaceDeSection(
               itemCount: sys.queries.length,
               cutoff: 0,
             }),
+            // fr-s04t: the chain the kernel cycles through.
+            packEscapeGpuMaps(sys.de),
           );
           const t0 = performance.now();
           const gpu = await runSurfaceEvalDispatch(
@@ -9588,6 +9745,10 @@ async function runSurfaceDeSection(
               itemCount: sys.queries.length,
               cutoff: 0,
             }),
+            // One zero stride: the bulb kernel declares no maps binding
+            // (its single map rides the params variant block), so this
+            // buffer exists only to satisfy the shared layout.
+            new Float32Array(SURFACE_GPU_MAP_VEC4 * 4),
           );
           const t0 = performance.now();
           const gpu = await runSurfaceEvalDispatch(

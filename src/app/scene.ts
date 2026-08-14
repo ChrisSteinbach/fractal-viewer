@@ -2766,12 +2766,14 @@ export class FractalScene {
 
   /**
    * Escape-time sibling of {@link setSurfaceSystem} (fr-kltj): upload the
-   * single fold map's forward affine + fold params and flip the material
-   * onto the SURFACE_ESCAPE variant. Everything else about the mode —
-   * tiers, strips, compile gate, capture — runs unchanged on the same
-   * material; the iteration budget rides {@link surfaceFullMaxDepth}, so
-   * the preview depth clamp trades boundary detail for speed exactly as
-   * the IFS descent trades levels. No grid exists for this mode.
+   * fold CHAIN's forward affines + fold params (fr-s04t — one slot per
+   * link, the document's transform list being the formula sequence) and
+   * flip the material onto the SURFACE_ESCAPE variant. Everything else
+   * about the mode — tiers, strips, compile gate, capture — runs unchanged
+   * on the same material; the iteration budget rides
+   * {@link surfaceFullMaxDepth} as PASSES, so the preview depth clamp
+   * trades boundary detail for speed exactly as the IFS descent trades
+   * levels, at any chain length. No grid exists for this mode.
    */
   setEscapeSystem(de: EscapeDE, color: Vec3): void {
     this.renderNeeded = true;

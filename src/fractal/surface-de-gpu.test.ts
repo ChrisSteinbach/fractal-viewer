@@ -1,5 +1,6 @@
 import {
   packBulbGpuParams,
+  packEscapeGpuMaps,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -124,6 +125,20 @@ function negativeWeightMandelbox(): Transform {
     rotation: [0, 0, 0],
     scale: [1.5, 1.5, 1.5],
     variations: [{ type: "mandelbox", weight: -2 }],
+  };
+}
+
+/** A second, DIFFERENT link for the chain fixtures (fr-s04t): a rotated
+ * boxfold at weight 1.6 — a different fold kind, weight and matrix from
+ * {@link canonicalMandelbox}, so a packer that wrote the head link n times
+ * (or read slot 0 every step) could not pass. */
+function rotatedBoxfold(): Transform {
+  return {
+    id: 1,
+    position: [0, 0, 0],
+    rotation: [0, 0.35, 0],
+    scale: [1, 1, 1],
+    variations: [{ type: "boxfold", weight: 1.6 }],
   };
 }
 
@@ -1688,6 +1703,22 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
   });
 
+  it("packs the LINK COUNT at mapCount and the wedge fold's order/plane at symOrder/symPlane (fr-s04t)", () => {
+    const chain = buildEscapeDE(
+      [canonicalMandelbox(), rotatedBoxfold()],
+      null,
+      { order: 5, plane: "xz" },
+    );
+    const view = new DataView(packEscapeGpuParams(chain, { itemCount: 1 }));
+    expect(view.getUint32(48, true)).toBe(2);
+    expect(view.getUint32(40, true)).toBe(5);
+    expect(view.getUint32(44, true)).toBe(1); // SYM_PLANE_CODE.xz
+    // The sector-sweep pair stays inert — that is a descent concept; the
+    // escape arm derives its sector angle from the order alone.
+    expect(view.getFloat32(32, true)).toBe(1);
+    expect(view.getFloat32(36, true)).toBe(0);
+  });
+
   it("packs the frozen scalar offsets: zero boundCenter, the bailout ball doubling as bounding/visible radius, the dead 2R escapeRadius, ESCAPE_STEP_SCALE, and symmetry pinned off", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
@@ -1878,6 +1909,76 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
   });
 });
 
+describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
+  it("packs one GpuMap stride per link, in document order, with the forward rows and the uEscParams quartet", () => {
+    const de = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    const maps = packEscapeGpuMaps(de);
+    expect(maps.length).toBe(2 * SURFACE_GPU_MAP_VEC4 * 4);
+    de.links.forEach((link, j) => {
+      const base = j * SURFACE_GPU_MAP_VEC4 * 4;
+      // r0/r1/r2: the FORWARD linear part's rows, t in the .w lanes.
+      expect(Array.from(maps.slice(base, base + 12))).toEqual(
+        [
+          link.m[0],
+          link.m[1],
+          link.m[2],
+          link.t[0],
+          link.m[3],
+          link.m[4],
+          link.m[5],
+          link.t[1],
+          link.m[6],
+          link.m[7],
+          link.m[8],
+          link.t[2],
+        ].map(Math.fround),
+      );
+      // p0: the GLSL uEscParams order, so both mirrors read one quartet.
+      expect(maps[base + 12]).toBe(link.foldKind);
+      expect(maps[base + 13]).toBe(Math.fround(link.w));
+      expect(maps[base + 14]).toBe(Math.fround(link.derivGrowth));
+      expect(maps[base + 15]).toBe(0);
+      // bnb/p1: inverse-descent lanes this core never reads, zero-packed
+      // for layout parity (the affine cores' own contract).
+      expect(Array.from(maps.slice(base + 16, base + 24))).toEqual(
+        new Array(8).fill(0),
+      );
+    });
+  });
+
+  it("keeps the links DISTINCT — a chain of two different folds packs two different strides", () => {
+    const de = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    const maps = packEscapeGpuMaps(de);
+    const stride = SURFACE_GPU_MAP_VEC4 * 4;
+    const head = Array.from(maps.slice(0, stride));
+    const tail = Array.from(maps.slice(stride, 2 * stride));
+    expect(head).not.toEqual(tail);
+    // Specifically the fold KIND lane: mandelbox (3) then boxfold (1), the
+    // dispatch every body branches on.
+    expect(maps[12]).not.toBe(maps[stride + 12]);
+  });
+
+  it("agrees with the params block's head link — the wire's one redundancy cannot drift", () => {
+    const de = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    const maps = packEscapeGpuMaps(de);
+    const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
+    expect(maps[0]).toBe(view.getFloat32(208, true));
+    expect(maps[3]).toBe(view.getFloat32(220, true));
+    expect(maps[12]).toBe(view.getFloat32(256, true));
+    expect(maps[13]).toBe(view.getFloat32(260, true));
+    expect(maps[14]).toBe(view.getFloat32(264, true));
+  });
+
+  it("pads to one zero stride rather than an empty array, like packSurfaceGpuMaps", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const empty = packEscapeGpuMaps({ ...de, links: [] });
+    expect(empty.length).toBe(SURFACE_GPU_MAP_VEC4 * 4);
+    expect(Array.from(empty)).toEqual(
+      new Array(SURFACE_GPU_MAP_VEC4 * 4).fill(0),
+    );
+  });
+});
+
 describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
   it("throws when combined with a fold-final lens — the escape gate refuses final transforms, so no shape is pinned", () => {
     expect(() =>
@@ -1894,7 +1995,7 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     ).toThrow();
   });
 
-  it("mode 'eval' emits the forward-loop body once, declares the esc* uniform fields, and carries none of the fold/affine descent markers", () => {
+  it("mode 'eval' emits the forward-loop body once, reads its chain from the maps binding, and carries none of the fold/affine descent markers", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "eval", core: "escape" }),
     );
@@ -1902,13 +2003,18 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     expect(
       wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
     ).toBe(2);
-    expect(wgsl).toContain("dr = params.escParams.z * localL * dr + 1.0");
+    expect(wgsl).toContain("dr = L.p0.z * localL * dr + 1.0");
+    // fr-s04t: the formula chain rides the maps storage binding — one
+    // GpuMap per link — and the head link's params block stays declared
+    // as frozen layout ballast the body no longer reads.
+    expect(wgsl).toContain(
+      "@group(0) @binding(1) var<storage, read> maps: array<GpuMap>;",
+    );
+    expect(wgsl).toContain("struct GpuMap {");
     expect(wgsl).toContain("escM0: vec3f");
     expect(wgsl).toContain("escT0: f32");
     expect(wgsl).toContain("escParams: vec4f");
     for (const marker of [
-      "@binding(1)",
-      "struct GpuMap",
       "mapApply",
       "stepSector",
       "frontierIx",
@@ -1920,14 +2026,48 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     }
   });
 
+  it("mode 'eval' CYCLES through the chain: maxDepth * mapCount single-link steps, slot i mod n, the offset and the bailout test after EACH link", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape" }),
+    );
+    // A PASS is one full cycle, so maxDepth keeps meaning "how many times
+    // is each link applied" (escape-de.ts's A PASS IS ONE FULL CYCLE).
+    expect(wgsl).toContain("let n = params.mapCount;");
+    expect(wgsl).toContain("let steps = params.maxDepth * n;");
+    expect(wgsl).toContain("let L = maps[link];");
+    // The cycle's wrap — slot i mod n without an integer division.
+    expect(wgsl).toContain("link++;");
+    expect(wgsl).toContain("if (link == n) {");
+    // The bailout test sits at the head of the SINGLE-LINK step, and the
+    // Mandelbrot offset lands per link — never once per pass (chaining
+    // fattens the set to 72.8% of the bailout ball at six links).
+    expect(wgsl).toContain("v = L.p0.y * y + q;");
+  });
+
+  it("mode 'eval' folds the query into the kaleidoscope's wedge ONCE before the orbit, dihedrally", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape" }),
+    );
+    expect(wgsl).toContain("fn foldQuerySector(p: vec3f) -> vec3f {");
+    // Order 1 returns the point untouched — what keeps an unsymmetrised
+    // document bit-identical to the pre-chain kernel.
+    expect(wgsl).toContain("if (params.symOrder <= 1u) {\n    return p;");
+    // DIHEDRAL: a rotation back to the wedge AND a mirror (the abs). A
+    // rotate-only fold is discontinuous across seams and has no Lipschitz
+    // bound at all (escape-de.ts's KALEIDOSCOPE IS FREE section).
+    expect(wgsl).toContain("let turn = round(atan2(b, a) / sector) * sector;");
+    expect(wgsl).toContain("let fb = abs(b * c - a * s);");
+    // Seeded AND offset by the folded point, so the set is exactly
+    // g^-1(M) rather than a rotated smear of it.
+    expect(wgsl).toContain("let q = foldQuerySector(pIn);");
+  });
+
   it("mode 'march' keeps the same absence set, and rays 'unproject' composes normally with ShadeParams at binding 4", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "march", core: "escape" }),
     );
     expect(wgsl).toContain("fn marchRays");
     for (const marker of [
-      "@binding(1)",
-      "struct GpuMap",
       "mapApply",
       "stepSector",
       "frontierIx",
@@ -1955,8 +2095,14 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     expect(wgsl).toContain("fn shadeRays");
     expect(wgsl).toContain("escapedAt = i");
     // The CONTINUOUS escape count (fr-7u8t.8) — the raw integer read as
-    // confetti under a palette once the object stopped being a blob.
-    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(params.maxDepth)");
+    // confetti under a palette once the object stopped being a blob. Both
+    // counts are SINGLE-LINK steps since fr-s04t, so the fraction stays in
+    // [0, 1] at any chain length.
+    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(steps)");
+    // ...and the growth rate the fraction divides by is the link that
+    // actually produced the escaping radius, not a fixed uniform.
+    expect(wgsl).toContain("growth = L.p0.z;");
+    expect(wgsl).toContain("let q = foldQuerySector(p);");
     expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
     expect(wgsl).toContain(
       "@group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;",

@@ -64,16 +64,19 @@ import type { Vec3 } from "./types";
  *   `escape-de.ts`'s {@link estimateEscapeDistance} — the FORWARD fold
  *   orbit with the Buddhi/Rrrola scalar derivative, `DE = |v| / dr` —
  *   in the `SURFACE_ESCAPE` GLSL arm's f32 formulation, for exactly the
- *   systems `analyzeEscapeSystem` admits (single non-contracting pure
- *   fold; the IFS gate's complement). The one forward map rides the
- *   208..271 VARIANT block of the params uniform ({@link
- *   packEscapeGpuParams}); the maps storage binding is NOT DECLARED
- *   (a statically-unused binding would drop out of the auto layout
- *   anyway — hosts must skip buffer 1), `width`/`sharedFrontier`/
+ *   systems `analyzeEscapeSystem` admits (one or more non-contracting
+ *   pure folds; the IFS gate's complement). Since fr-s04t the orbit
+ *   CYCLES through the document's whole formula chain — link `i mod n`,
+ *   `+ p` and the bailout test after EACH link, one `GpuMap` per link on
+ *   the maps storage binding ({@link packEscapeGpuMaps}), `mapCount` the
+ *   link count and `maxDepth` still PASSES (`maxDepth * n` single-link
+ *   steps) — with the kaleidoscope a query-space wedge fold off
+ *   `symOrder`/`symPlane`. The head link also still rides the 208..271
+ *   VARIANT block of the params uniform ({@link packEscapeGpuParams}) as
+ *   frozen layout ballast the bodies no longer read.
+ *   `width`/`sharedFrontier`/
  *   `bnbStage2`/`shadeDeWidth` are all inert (no frontier, no branch
- *   fan, no probe — the GLSL arm's shape), `maxDepth` is the orbit's
- *   iteration budget (`ESCAPE_TIME_ITERATIONS` full, preview-clamped
- *   through the same `run.maxDepth` override the descents use), and a
+ *   fan, no probe — the GLSL arm's shape), and a
  *   fold-final `lens` THROWS (the escape gate refuses final
  *   transforms; nothing pins that shape).
  * - `core: "bulb"` (fr-7u8t.9) is the escape core's SIBLING, one
@@ -398,8 +401,8 @@ import type { Vec3 } from "./types";
  *              240 vec3f lensM row2   252 f32 lensT.z
  *              256 vec4f lensParams — (foldKind as f32, invW, absW,
  *                  sigmaMin), the GLSL `uLensParams` order.
- *          · `core: "escape"` (fr-dlxh) — the FORWARD map in the same
- *              interleave:
+ *          · `core: "escape"` (fr-dlxh) — the HEAD LINK's forward map in
+ *              the same interleave:
  *              208 vec3f escM row0    220 f32 escT.x
  *              224 vec3f escM row1    236 f32 escT.y
  *              240 vec3f escM row2    252 f32 escT.z
@@ -410,6 +413,15 @@ import type { Vec3 } from "./types";
  *                  (fr-7u8t.8's Mandelbrot form), so no wire field
  *                  carries it — and the spare stays reserved for the
  *                  1-or-0 form scale a Julia arm would need.
+ *              Since fr-s04t the KERNEL reads every link — the head
+ *              included — from the maps storage binding below, and this
+ *              block is layout ballast: its offsets are frozen (the
+ *              ground-plane block lands at 272 behind it) and it cannot
+ *              drift from the list, `EscapeDE`'s flat fields being
+ *              `links[0]`'s by construction. `symOrder`/`symPlane` in the
+ *              frozen block carry the query-space wedge fold (not a
+ *              sector sweep — the `stepCos`/`stepSin` pair stays inert),
+ *              and `mapCount` the LINK COUNT the orbit cycles through.
  *          · `core: "bulb"` (fr-7u8t.9) — the escape block's interleave
  *              one formula over, and the whole `BulbDE` fits it: the
  *              map is `m`/`t` and everything else is two scalars, so
@@ -500,6 +512,12 @@ import type { Vec3 } from "./types";
  *   p0  = sigmaMin, foldInvW, foldSigma, foldKind (0/1/2/3 as f32)
  *   bnb = bnbDir xyz, invTNorm
  *   p1  = invMSigmaMin, 0, 0, 0
+ * `core: "escape"` shares that layout for its formula CHAIN (fr-s04t,
+ * {@link packEscapeGpuMaps}) — one entry per LINK in document order,
+ * carrying FORWARD affines in r0/r1/r2 and the GLSL `uEscParams` quartet
+ * (foldKind, w, derivGrowth, 0) in p0, with bnb/p1 zero: the same
+ * "one layout, lanes a core may ignore" contract the affine cores already
+ * ride.
  *
  * 4D maps storage (`core: "affine4"` / `core: "fold4"`) — {@link
  * SURFACE_GPU_MAP4_VEC4} vec4f per map, matching WGSL `struct GpuMap4`:
@@ -548,9 +566,10 @@ import type { Vec3 } from "./types";
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
  * plus shade: ShadeParams (rays + dither inputs only — it declares none
  * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8. The
- * two FORWARD cores (ESCAPE, BULB) never declare binding 1 (maps) in
- * any mode — their one forward map rides the params variant block — so
- * their hosts skip that buffer; the AFFINE4 core declares binding 1 as
+ * BULB core never declares binding 1 (maps) in any mode — its one forward
+ * map rides the params variant block — so its hosts skip that buffer;
+ * the ESCAPE core DOES declare it (fr-s04t: its chain is a list of
+ * forward maps, one `GpuMap` per link); the AFFINE4 core declares binding 1 as
  * `array<GpuMap4>` (pack with {@link packSurfaceGpuMaps4}), and under
  * `mapsUniform: true` (fr-b72d probe, option doc) that binding becomes
  * a fixed-size UNIFORM array — `array<GpuMap4, `{@link
@@ -664,9 +683,10 @@ export interface SurfaceGpuKernelOptions {
    * are all inert (the ladder has one width and no branch fan to cheapen
    * — the GLSL affine arm carries no probe either). "escape" (fr-dlxh)
    * is the forward escape-time loop mirroring `estimateEscapeDistance`
-   * for `analyzeEscapeSystem` systems — pack with
-   * {@link packEscapeGpuParams}, skip the maps buffer (binding 1 is not
-   * declared), same inert options as "affine", and `lens` throws.
+   * for `analyzeEscapeSystem` systems, CYCLING through its formula chain
+   * since fr-s04t — pack with {@link packEscapeGpuParams} AND
+   * {@link packEscapeGpuMaps} (binding 1 carries one `GpuMap` per link),
+   * same inert options as "affine", and `lens` throws.
    * "affine4" (fr-dlxh's 4D cut) is the refined ladder ONE DIMENSION UP
    * — `surface-de-4d.ts`'s `estimateDistance4Refined` behind the view
    * lift (rotor + w0 + fr-wa6o slab) — for `analyzeSurfaceSystem4`
@@ -1100,20 +1120,30 @@ function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
 }
 
 /**
- * Pack the params uniform for the ESCAPE core (fr-dlxh). The frozen
- * offsets carry the escape session's marching quantities — the bailout
- * ball is both bounding and visible sphere, {@link ESCAPE_STEP_SCALE}
- * damps steps (the GLSL variant's `uStepScale`), and `maxDepth` is the
- * orbit's iteration budget ({@link ESCAPE_TIME_ITERATIONS} full,
- * preview-clamped by `run.maxDepth`) — and the 208..271 VARIANT block
- * carries the FORWARD map in the lens rows' interleave, tail vec4f in
- * the GLSL `uEscParams` order (foldKind, w, derivGrowth, 0). Symmetry
- * packs OFF and the final packs identity/1 (the escape gate refuses
- * both); `escapeRadius` packs the GLSL's dead `2R` so the wire never
- * carries an uninitialized word; `footprint` packs 0 — a forward loop
- * has no cone-footprint depth cap. The maps storage binding does not
- * exist in escape kernels, so there is no escape `packSurfaceGpuMaps`
- * twin.
+ * Pack the params uniform for the ESCAPE core (fr-dlxh; its formula CHAIN
+ * since fr-s04t). The frozen offsets carry the escape session's marching
+ * quantities — the bailout ball is both bounding and visible sphere,
+ * {@link ESCAPE_STEP_SCALE} damps steps (the GLSL variant's
+ * `uStepScale`), `maxDepth` is the orbit's iteration budget in PASSES
+ * ({@link ESCAPE_TIME_ITERATIONS} full, preview-clamped by
+ * `run.maxDepth`), `mapCount` is the LINK COUNT the cycle wraps at, and
+ * `symOrder`/`symPlane` are the query-space wedge fold's own order and
+ * plane (the `stepCos`/`stepSin` sector-sweep pair stays inert — that is
+ * a descent concept) — and the 208..271 VARIANT block carries the HEAD
+ * link in the lens rows' interleave, tail vec4f in the GLSL `uEscParams`
+ * order (foldKind, w, derivGrowth, 0).
+ *
+ * That head-link block is the wire's ONE redundancy since fr-s04t, kept
+ * deliberately: the bodies read every link — the head included — from the
+ * maps storage binding ({@link packEscapeGpuMaps}), but the block's
+ * offsets are frozen (the ground-plane block lands at 272 behind it) and
+ * a struct member cannot be left undeclared without moving that. It
+ * cannot drift, since `EscapeDE`'s flat fields ARE `links[0]`'s.
+ *
+ * The final packs identity/1 (the escape gate refuses final transforms);
+ * `escapeRadius` packs the GLSL's dead `2R` so the wire never carries an
+ * uninitialized word; `footprint` packs 0 — a forward loop has no
+ * cone-footprint depth cap.
  */
 export function packEscapeGpuParams(
   de: EscapeDE,
@@ -1130,9 +1160,12 @@ export function packEscapeGpuParams(
   view.setFloat32(24, de.boundingRadius, true);
   view.setFloat32(28, 1, true);
   view.setFloat32(32, 1, true);
-  view.setUint32(40, 1, true);
-  view.setUint32(44, 1, true);
-  view.setUint32(48, 1, true);
+  // The kaleidoscope's wedge fold (fr-s04t) — the same two slots the
+  // descent's sector sweep reads, meaning the same thing here.
+  view.setUint32(40, de.symmetryOrder, true);
+  view.setUint32(44, SYM_PLANE_CODE[de.symmetryPlane], true);
+  // The LINK COUNT the orbit's cycle wraps at (fr-s04t).
+  view.setUint32(48, de.links.length, true);
   view.setUint32(52, run.maxDepth ?? ESCAPE_TIME_ITERATIONS, true);
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
@@ -1177,6 +1210,50 @@ export function packEscapeGpuParams(
     writeGroundPlane(view, groundPlane);
   }
   return buf;
+}
+
+/**
+ * Pack the ESCAPE core's formula chain into the per-map storage array
+ * (fr-s04t) — {@link packSurfaceGpuMaps}' forward-orbit twin, in the
+ * SAME `GpuMap` layout and stride, because a chain of maps is exactly
+ * what that binding is for and a second struct would be a second thing
+ * to keep in step. Per LINK, in document order (the orbit applies
+ * `links[step mod n]`):
+ *   r0/r1/r2 = the FORWARD linear part's rows, `t` in the `.w` lanes
+ *              (the params variant block's own interleave)
+ *   p0       = (foldKind, w, derivGrowth, 0) — the GLSL `uEscParams`
+ *              order, so the WGSL body and the GLSL arm read the same
+ *              quartet in the same lanes
+ *   bnb/p1   = zero: branch-and-bound and the descent's sigma lanes are
+ *              inverse-descent concepts, packed for layout parity the
+ *              way the affine cores pack the fold lanes they never read
+ * A chain always has at least one link (the gate refuses zero active
+ * maps), but the empty case still pads to one zero stride like every
+ * other packer here.
+ */
+export function packEscapeGpuMaps(de: EscapeDE): Float32Array {
+  const out = new Float32Array(
+    de.links.length * SURFACE_GPU_MAP_VEC4 * 4 || SURFACE_GPU_MAP_VEC4 * 4,
+  );
+  de.links.forEach((link, j) => {
+    const base = j * SURFACE_GPU_MAP_VEC4 * 4;
+    out[base + 0] = link.m[0];
+    out[base + 1] = link.m[1];
+    out[base + 2] = link.m[2];
+    out[base + 3] = link.t[0];
+    out[base + 4] = link.m[3];
+    out[base + 5] = link.m[4];
+    out[base + 6] = link.m[5];
+    out[base + 7] = link.t[1];
+    out[base + 8] = link.m[6];
+    out[base + 9] = link.m[7];
+    out[base + 10] = link.m[8];
+    out[base + 11] = link.t[2];
+    out[base + 12] = link.foldKind;
+    out[base + 13] = link.w;
+    out[base + 14] = link.derivGrowth;
+  });
+  return out;
 }
 
 /**
@@ -1628,12 +1705,18 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // shared header/entry interpolations below key on this, so a fifth
   // core cannot forget one of them.
   const core4 = core === "affine4" || core === "fold4";
-  // The two FORWARD cores (fr-dlxh's escape, fr-7u8t.9's bulb): one
-  // forward map riding the params variant block, so no maps binding, no
-  // GpuMap struct and none of the descent helpers. The shared
-  // header/entry interpolations below key on this the way they key on
-  // `core4`, so a seventh core cannot forget one of them.
+  // The two FORWARD cores (fr-dlxh's escape, fr-7u8t.9's bulb): a forward
+  // orbit rather than a descent, so none of the descent helpers and no
+  // frontier. The shared header/entry interpolations below key on this the
+  // way they key on `core4`, so a seventh core cannot forget one of them.
   const forward = core === "escape" || core === "bulb";
+  // ...but the escape core's formula CHAIN (fr-s04t) rides the maps
+  // storage binding — one `GpuMap` per LINK, the descent cores' own
+  // layout carrying FORWARD affines (packed by {@link
+  // packEscapeGpuMaps}), because a list is exactly what that binding is
+  // for. Bulb is the one bindingless core left: its single map still
+  // rides the params variant block.
+  const mapsBinding = !forward || core === "escape";
   // fr-5wlv.5: the balloon inverted-union wrapper (THE BALLOON WRAPPER,
   // module doc). Absent means no balloon, so every no-balloon config
   // generates byte-identical source.
@@ -3066,19 +3149,28 @@ ${
   // value-side term trimmed here.
   const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
-  var v = p;
+  let q = foldQuerySector(p);
+  var v = q;
   var r = length(v);
-  let kind = u32(params.escParams.x);
-  var escapedAt = params.maxDepth;
-  for (var i = 0u; i < params.maxDepth; i++) {
+  let n = params.mapCount;
+  let steps = params.maxDepth * n;
+  var link = 0u;
+  var escapedAt = steps;
+  // The growth factor of the link whose application produced the current
+  // r — the head link's until a step has run, so a one-link document
+  // reads maps[0].p0.z at every step exactly as it did before the chain.
+  var growth = maps[0].p0.z;
+  for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
       break;
     }
+    let L = maps[link];
+    let kind = u32(L.p0.x);
     var y = vec3f(
-      dot(params.escM0, v) + params.escT0,
-      dot(params.escM1, v) + params.escT1,
-      dot(params.escM2, v) + params.escT2,
+      dot(L.r0.xyz, v) + L.r0.w,
+      dot(L.r1.xyz, v) + L.r1.w,
+      dot(L.r2.xyz, v) + L.r2.w,
     );
     if (kind != 2u) {
       y = clamp(y, vec3f(-1.0), vec3f(1.0)) * 2.0 - y;
@@ -3087,18 +3179,25 @@ ${
       let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
       y *= f;
     }
-    v = params.escParams.y * y + p;
+    v = L.p0.y * y + q;
     r = length(v);
+    growth = L.p0.z;
     info.rings = min(info.rings, r / params.boundingRadius);
     info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
+    link++;
+    if (link == n) {
+      link = 0u;
+    }
   }
   // fr-7u8t.8: the CONTINUOUS escape count — the GLSL arm's escFrac term for
   // term (see surface-material.ts for why the raw integer reads as confetti).
+  // Both counts are SINGLE-LINK steps (fr-s04t), so the fraction stays in
+  // [0, 1] at any chain length.
   var escFrac = 0.0;
-  if (escapedAt < params.maxDepth && params.escParams.z > 1.0) {
-    escFrac = clamp(log(r / params.boundingRadius) / log(params.escParams.z), 0.0, 1.0);
+  if (escapedAt < steps && growth > 1.0) {
+    escFrac = clamp(log(r / params.boundingRadius) / log(growth), 0.0, 1.0);
   }
-  info.trap = clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
+  info.trap = clamp((f32(escapedAt) - escFrac) / f32(steps), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
   return info;
@@ -4292,7 +4391,7 @@ struct Params {
             : ""
   }
 }${
-    forward
+    !mapsBinding
       ? ""
       : core4
         ? /* wgsl */ `
@@ -4320,15 +4419,16 @@ struct GpuMap {
   }
 
 @group(0) @binding(0) var<uniform> params: Params;${
-    // The two forward cores read their one map from the params variant
-    // block and never touch per-map storage; a declared-but-unused
-    // binding would drop out of the auto layout anyway (module doc), so
-    // it is not declared and hosts skip buffer 1. Both 4D cores' maps
-    // are the 4D layout (GpuMap4) — one binding text for the pair, in
-    // the address space `mapsUniform` picks (fr-b72d probe, option doc):
-    // the bodies index `maps[j]` identically either way, so the variant
-    // is exactly this one line.
-    forward
+    // The BULB core reads its one map from the params variant block and
+    // never touches per-map storage; a declared-but-unused binding would
+    // drop out of the auto layout anyway (module doc), so it is not
+    // declared and hosts skip buffer 1. The ESCAPE core does declare it
+    // (fr-s04t: its formula chain is a LIST of forward maps in the same
+    // GpuMap layout). Both 4D cores' maps are the 4D layout (GpuMap4) —
+    // one binding text for the pair, in the address space `mapsUniform`
+    // picks (fr-b72d probe, option doc): the bodies index `maps[j]`
+    // identically either way, so the variant is exactly this one line.
+    !mapsBinding
       ? ""
       : core4
         ? mapsUniform
@@ -6330,19 +6430,76 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
   // `li` never indexes anything (the affine ladder's precedent). Plain
   // params.maxDepth — the orbit's iteration budget; no footprint cap,
   // like the GLSL arm.
-  const escapeDescentText = /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
-  var v = pIn;
+  //
+  // THE CHAIN (fr-s04t): the orbit CYCLES through `params.mapCount` links
+  // read from the maps storage binding — slot `i mod n`, Mandelbulber2's
+  // `seq->GetSequence(i)`, with `+ q` and the bailout test after EACH link
+  // (chaining them fattens the set to 72.8% of the bailout ball at six
+  // links, which is fr-7u8t.8's "the object WAS its own bounding sphere"
+  // returning). A PASS is one full cycle, so the loop runs
+  // `maxDepth * n` single-link steps and `maxDepth` keeps meaning "how
+  // many times is each link applied" — the preview clamp's contract at any
+  // chain length. Every link contributes its own factor to the ONE shared
+  // `dr`, whose `+ 1` (the per-link offset's own derivative) floors it
+  // once per link.
+  const escapeDescentText = /* wgsl */ `// escape-de.ts's foldQueryIntoSector (fr-s04t) — the kaleidoscope as a
+// QUERY-SPACE wedge fold applied ONCE before the orbit, never as an orbit
+// operation (the escape set of v <- F(v) + p inherits a rotation only
+// where F commutes with it). DIHEDRAL, and forced rather than chosen: the
+// chaos game's cyclic fold jumps across sector seams, and a discontinuous
+// map has no Lipschitz bound, so the estimate would certify empty balls
+// through the seam. g is 1-Lipschitz and an isometry per sector, so the
+// marching ball does not move and dr needs no new term. symOrder <= 1
+// returns the point untouched — what keeps an unsymmetrised document
+// bit-identical to fr-dlxh's. Plane codes are SYM_PLANE_CODE's
+// (0 = yz, 1 = xz, 2 = xy), axes the oracle's own ia/ib.
+fn foldQuerySector(p: vec3f) -> vec3f {
+  if (params.symOrder <= 1u) {
+    return p;
+  }
+  let a = select(p.x, p.y, params.symPlane == 0u);
+  let b = select(p.z, p.y, params.symPlane == 2u);
+  let sector = 6.283185307179586 / f32(params.symOrder);
+  // Rotate BACK by the nearest whole sector, then mirror across the first
+  // axis: the reflection group's fundamental-domain retraction. A tie
+  // exactly on a boundary is consistent either way it rounds (the two
+  // roundings differ by a reflection the mirror undoes).
+  let turn = round(atan2(b, a) / sector) * sector;
+  let c = cos(turn);
+  let s = sin(turn);
+  let fa = a * c + b * s;
+  let fb = abs(b * c - a * s);
+  if (params.symPlane == 0u) {
+    return vec3f(p.x, fa, fb);
+  }
+  if (params.symPlane == 1u) {
+    return vec3f(fa, p.y, fb);
+  }
+  return vec3f(fa, fb, p.z);
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let q = foldQuerySector(pIn);
+  var v = q;
   var dr = 1.0;
   var r = length(v);
-  let kind = u32(params.escParams.x);
-  for (var i = 0u; i < params.maxDepth; i++) {
+  let n = params.mapCount;
+  let steps = params.maxDepth * n;
+  var link = 0u;
+  for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       break;
     }
+    // The fr-za0n cycle: link i mod n, which is the single map itself at
+    // n = 1. GpuMap rows carry the FORWARD affine here (M row j in
+    // r{j}.xyz, t.{xyz} in the .w lanes) and p0 is the GLSL uEscParams
+    // quartet (foldKind, w, derivGrowth, 0).
+    let L = maps[link];
+    let kind = u32(L.p0.x);
     var y = vec3f(
-      dot(params.escM0, v) + params.escT0,
-      dot(params.escM1, v) + params.escT1,
-      dot(params.escM2, v) + params.escT2,
+      dot(L.r0.xyz, v) + L.r0.w,
+      dot(L.r1.xyz, v) + L.r1.w,
+      dot(L.r2.xyz, v) + L.r2.w,
     );
     var localL = 1.0;
     if (kind != 2u) {
@@ -6357,11 +6514,16 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
       y *= f;
       localL = f;
     }
-    // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT, not the
-    // document's t (which stays the pre-fold offset inside y above).
-    v = params.escParams.y * y + pIn;
-    dr = params.escParams.z * localL * dr + 1.0;
+    // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT (folded,
+    // fr-s04t), not the document's t (which stays the pre-fold offset
+    // inside y above).
+    v = L.p0.y * y + q;
+    dr = L.p0.z * localL * dr + 1.0;
     r = length(v);
+    link++;
+    if (link == n) {
+      link = 0u;
+    }
   }
   return r / dr;
 }`;
