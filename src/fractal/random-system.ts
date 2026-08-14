@@ -451,6 +451,20 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * appended. Returns `undefined` when nothing was rolled, matching how a plain
  * preset transform carries no `variations` key at all (see e.g.
  * `defaultTransforms`).
+ *
+ * NEVER rolls `minRadius`/`fixedRadius`/`boxLimit` (fr-s9ll), even when the
+ * rolled type lands on `boxfold`/`spherefold`/`mandelbox`: a rolled fold
+ * variation always comes out at the canonical Mandelbox lengths (absent, per
+ * `variations.ts`'s `resolveFoldRadii`). This generator is quality-gated by
+ * chaos-game probes against a measured-good acceptance rate
+ * ({@link MAX_ATTEMPTS} rerolls, {@link STABILITY_PROBES} consecutive
+ * passes), and the fold's two dimensionless ratios are exactly the kind of
+ * axis that can empty a set or push a map out of the surface-render gate —
+ * `variations.ts`'s `sphereFoldLipschitz` is `fixedRadius²/minRadius²` and
+ * multiplies straight into `analyzeSurfaceSystem`'s contraction test — so
+ * rolling them here would trade a measured-good generator for an unmeasured
+ * one. `mutate-system.ts` is where a document that already carries
+ * non-classic lengths gets to explore near them instead.
  */
 function randomVariations(rng: Rng): Variation[] | undefined {
   const variations: Variation[] = [];
@@ -630,6 +644,8 @@ function randomFinalTransform(rng: Rng): Transform | null {
     scale: [1, 1, 1],
     variations: [
       {
+        // boxLimit stays absent here too (fr-s9ll, see randomVariations'
+        // fold-radii note): a rolled boxfold lens is always the canonical one.
         type,
         weight: uniform(
           rng,

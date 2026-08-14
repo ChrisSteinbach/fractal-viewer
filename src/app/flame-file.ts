@@ -22,7 +22,10 @@
  *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
  *    variation sum), so those pass through by name in both directions. The
  *    other three — the Mandelbox fold family (fr-p7nu) — are ours, not
- *    flam3's; see `docs/flame-interop.md` for the round-trip consequences.
+ *    flam3's; see `docs/flame-interop.md` for the round-trip consequences
+ *    (their `minRadius`/`fixedRadius`/`boxLimit`, fr-s9ll, have no XML slot
+ *    at all and export with a warning whenever they're not the classic
+ *    lengths).
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
  *    the orbit — exactly our `finalTransform`.
  *  - An xform's `color` is a palette COORDINATE, not an RGB triple: the slot
@@ -81,6 +84,11 @@ import type {
   Variation,
   VariationType,
 } from "../fractal/types";
+import {
+  isClassicFoldRadii,
+  isFoldVariationType,
+  resolveFoldRadii,
+} from "../fractal/variations";
 import { COLLECTION_CAP } from "./collection";
 import { decodeScene, encodeScene, toSnapshot } from "./persist";
 import type { SceneSnapshot } from "./persist";
@@ -771,6 +779,25 @@ function isAffineBlend(merged: Map<VariationType, number>): boolean {
 }
 
 /**
+ * Whether `v`'s fold lengths (fr-s9ll — `variations.ts`'s
+ * `resolveFoldRadii`) are anything but the classic Mandelbox lengths, i.e.
+ * whether writing it to flam3 XML — which has no per-variation radius
+ * concept at all, just a bare `type="weight"` attribute — would lose real
+ * authored shape rather than the classic default every fold already renders
+ * as. Always `false` for a non-fold type: `minRadius`/`fixedRadius`/
+ * `boxLimit` are inert there regardless of what a hand-edited document might
+ * set. Resolved (not a raw field comparison) so an out-of-domain value that
+ * `resolveFoldRadii` would clamp BACK to the classic length — e.g. a
+ * `boxLimit` of `-1` — correctly reports no loss, matching what the export
+ * actually renders.
+ */
+function hasNonClassicFoldRadii(v: Variation): boolean {
+  return (
+    isFoldVariationType(v.type) && !isClassicFoldRadii(resolveFoldRadii(v))
+  );
+}
+
+/**
  * A resolved color speed written in BOTH of flam3's spellings: the modern
  * `color_speed` and the deprecated `symmetry = 1 - 2·speed` it superseded
  * (the exact inverse of {@link xformColorSpeed}'s import conversion).
@@ -965,6 +992,26 @@ export function encodeFlameFile(
     (s.finalTransform !== undefined && !isFlatTransform(s.finalTransform))
   ) {
     warnings.add("4D structure was flattened onto the XY plane");
+  }
+
+  // fr-s9ll: flam3 XML has no per-variation radius concept, so a fold's
+  // minRadius/fixedRadius/boxLimit never gets a slot to write into (see
+  // hasNonClassicFoldRadii and docs/flame-interop.md's "deliberate
+  // deviation" section) — only worth a warning when the document's lengths
+  // would actually render differently than the classic ones the file reads
+  // back as.
+  const transformsForFoldCheck =
+    s.finalTransform !== undefined
+      ? [...transforms, s.finalTransform]
+      : transforms;
+  if (
+    transformsForFoldCheck.some((t) =>
+      (t.variations ?? []).some(hasNonClassicFoldRadii),
+    )
+  ) {
+    warnings.add(
+      "A fold's custom minRadius/fixedRadius/boxLimit has no .flame equivalent and exports at the classic Mandelbox lengths",
+    );
   }
 
   const xforms: string[] = [];

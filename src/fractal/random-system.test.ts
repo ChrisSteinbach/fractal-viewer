@@ -208,6 +208,23 @@ describe("randomSystem", () => {
   );
 });
 
+describe("randomSystem fold radii (fr-s9ll)", () => {
+  it("never rolls minRadius/fixedRadius/boxLimit onto any variation, base map or final transform", () => {
+    for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, finalTransform } = randomSystem(mulberry32(seed));
+      const allVariations = [
+        ...transforms.flatMap((t) => t.variations ?? []),
+        ...(finalTransform?.variations ?? []),
+      ];
+      for (const v of allVariations) {
+        expect("minRadius" in v).toBe(false);
+        expect("fixedRadius" in v).toBe(false);
+        expect("boxLimit" in v).toBe(false);
+      }
+    }
+  });
+});
+
 // fr-i4q8: most tests below roll FOUR_D_SEED_SAMPLE_SIZE (200) seeds through
 // randomSystem's quality gate -- itself up to 40 chaos-game reroll probes per
 // seed -- which sits close to vitest's 5s default timeout under full-suite
