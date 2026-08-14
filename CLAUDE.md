@@ -268,12 +268,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     single-link steps and an orbit escapes after a handful of them however
     long the chain is, so dividing by a budget that multiplied with the
     link count shrank the reachable ramp per link added and a chain
-    painted in the bottom of its palette — measured at marched hit points,
-    [p05 p50 p95] moving from [0.108 0.180 0.716] to [0.216 0.360 1.000]
-    on the two-link preset against the single map's unmoved
-    [0.152 0.291 0.832], for a disclosed 12% of hit pixels saturating at
-    the ramp's top. Chain-length-INVARIANT, identical at n = 1 by being
-    the same expression, and the convention `core:"bulb"` always used)
+    painted in the bottom of its palette. Measured at marched hit points,
+    the median trap at 2/3/6 links was 0.180/0.110/0.056 — halving with
+    every link or two — and is 0.360/0.331/0.333 now: FLAT in chain
+    length, beside the single map's unmoved 0.291, for a disclosed 12-16%
+    of hit pixels saturating at the ramp's top. Identical at n = 1 by
+    being the same expression, and the convention `core:"bulb"` always
+    used)
     with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
     `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING, one formula

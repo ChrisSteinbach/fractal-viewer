@@ -1119,12 +1119,17 @@ uniform float uBalloonFar;
     //                                  [0.216 0.360 1.000] 12.2% saturated
     //   foldChainBoulder  3 links  was [0.071 0.110 0.575]  now
     //                                  [0.214 0.331 1.000] 12.2% saturated
+    //   the same chain x2  6 links  was [0.036 0.056 0.439]  now
+    //                                  [0.215 0.333 1.000] 15.8% saturated
     //
-    // The chains' medians move from roughly half the single map's to
-    // roughly its own, which is the whole point. The disclosed cost is that
-    // 12% of hit pixels — the longest-surviving orbits, i.e. the deepest
-    // creases — now share the ramp's top with the never-escaped ones. That
-    // is a better trade than the whole object sharing its bottom.
+    // The last row is the one that settles it: at two, three and six links
+    // the median lands on 0.36/0.33/0.33 — FLAT in chain length, which is
+    // what a colour coordinate should be — where the old denominator ran
+    // 0.180/0.110/0.056, halving with every link or two added. The
+    // disclosed cost is that 12-16% of hit pixels — the longest-surviving
+    // orbits, i.e. the deepest creases — now share the ramp's top with the
+    // never-escaped ones. That is a better trade than the whole object
+    // sharing its bottom.
     float escFrac = 0.0;
     if (escapedAt < steps && growth > 1.0) {
       escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);
