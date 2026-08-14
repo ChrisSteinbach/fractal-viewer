@@ -74,12 +74,12 @@
  *
  * The n-times-the-budget price is a CEILING, and only a non-escaping orbit
  * ever pays it. Measured over 60k uniform queries in each fixture's own
- * marching ball (`scripts/escape-chain.harness.ts`), the single map costs
- * 0.67 us/eval and the chains 0.37-1.45, with the SIX-link chain at 0.72 —
- * no worse than the map it generalises. Every extra link is another chance
- * for the orbit to leave the bailout ball, and it draws the object (and so
- * the marching ball the queries are drawn in) inward as well, so the two
- * effects cancel the ceiling in practice.
+ * marching ball (`scripts/escape-chain.harness.ts`, f64, single thread),
+ * the single map costs 0.25 us/eval and the eight chains 0.27-1.10, with
+ * the SIX-link chain at 0.60 — 2.4x the single map, not the 6x the ceiling
+ * implies. Every extra link is another chance for the orbit to leave the
+ * bailout ball, and it tends to draw the object (and so the marching ball
+ * the queries are drawn in) inward as well.
  *
  * TWO FORMS, ONE TERM APART (fr-7u8t.8), and this mode shipped the wrong
  * one. Where the per-iteration offset comes from decides which of the
@@ -619,9 +619,14 @@ export function estimateEscapeDistance(
     de.symmetryOrder > 1
       ? foldQueryIntoSector(p, de.symmetryOrder, de.symmetryPlane, FOLDED)
       : p;
-  let vx = q[0];
-  let vy = q[1];
-  let vz = q[2];
+  // Copied out of the scratch before the loop reads it, so nothing in the
+  // hot path depends on module state surviving the call.
+  const qx = q[0];
+  const qy = q[1];
+  const qz = q[2];
+  let vx = qx;
+  let vy = qy;
+  let vz = qz;
   let dr = 1;
   let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   const maxSteps = maxIterations * n;
@@ -660,9 +665,9 @@ export function estimateEscapeDistance(
       fz = bz * f;
       localL = f;
     }
-    vx = link.w * fx + q[0];
-    vy = link.w * fy + q[1];
-    vz = link.w * fz + q[2];
+    vx = link.w * fx + qx;
+    vy = link.w * fy + qy;
+    vz = link.w * fz + qz;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }
