@@ -636,6 +636,38 @@ describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
   });
 });
 
+describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
+  it("normalizes the escape count by the PASS budget, so a chain reaches the same ramp a single map does", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // uMaxDepth, never uMaxDepth * uMapCount: escapedAt counts single-link
+    // steps and an orbit escapes after a handful of them however long the
+    // chain is, so a step-budget denominator shrank the reachable slice of
+    // the palette with every link added.
+    expect(resolved).toContain(
+      "trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);",
+    );
+    expect(resolved).not.toContain("escFrac) / float(steps)");
+  });
+
+  it("keeps the step BUDGET as the loop bound and the escaped test, which are per-link quantities", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // Only the trap's denominator moved: the orbit still runs uMaxDepth
+    // passes of the whole chain, and "did it escape" still compares against
+    // that same step count.
+    expect(resolved).toContain("int steps = uMaxDepth * n;");
+    expect(resolved).toContain("if (escapedAt < steps && growth > 1.0) {");
+  });
+
+  it("normalizes the same way the bulb arm always has — one convention across both forward-orbit variants", () => {
+    const escape = surfaceFragmentFor(1, 0);
+    const bulb = surfaceFragmentFor(0, 0, 0, 0, 1);
+    const line =
+      "trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);";
+    expect(escape).toContain(line);
+    expect(bulb).toContain(line);
+  });
+});
+
 describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
   /** The classic Mandelbulb shape `analyzeBulbSystem` admits, with a
    * NON-UNIT uniform scale so `sigmaMax` is a value distinguishable from

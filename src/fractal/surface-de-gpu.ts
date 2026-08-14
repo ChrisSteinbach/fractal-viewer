@@ -3191,13 +3191,14 @@ ${
   }
   // fr-7u8t.8: the CONTINUOUS escape count — the GLSL arm's escFrac term for
   // term (see surface-material.ts for why the raw integer reads as confetti).
-  // Both counts are SINGLE-LINK steps (fr-s04t), so the fraction stays in
-  // [0, 1] at any chain length.
+  // Normalized by params.maxDepth, NOT by the step budget — fr-byxb, and the
+  // GLSL arm carries the argument.
   var escFrac = 0.0;
   if (escapedAt < steps && growth > 1.0) {
     escFrac = clamp(log(r / params.boundingRadius) / log(growth), 0.0, 1.0);
   }
-  info.trap = clamp((f32(escapedAt) - escFrac) / f32(steps), 0.0, 1.0);
+  info.trap =
+    clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
   return info;

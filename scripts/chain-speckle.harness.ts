@@ -665,9 +665,11 @@ function escapeTrap(
   if (escapedAt < steps && growth > 1) {
     escFrac = Math.max(0, Math.min(1, Math.log(r / R) / Math.log(growth)));
   }
+  // fr-byxb: normalized by the PASS budget, not the single-link step budget
+  // — the shipped mirrors' denominator (surface-material.ts carries why).
   return {
-    trap: Math.max(0, Math.min(1, (escapedAt - escFrac) / steps)),
-    raw: Math.max(0, Math.min(1, escapedAt / steps)),
+    trap: Math.max(0, Math.min(1, (escapedAt - escFrac) / maxIterations)),
+    raw: Math.max(0, Math.min(1, escapedAt / maxIterations)),
   };
 }
 
