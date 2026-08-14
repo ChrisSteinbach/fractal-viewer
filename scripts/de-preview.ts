@@ -14,7 +14,18 @@
  * what lets a comparison sheet carry a verdict about the objects rather than
  * about their lighting.
  *
- * Consumers: `qjulia-preview.harness.ts`, `escape-family-preview.harness.ts`.
+ * `chain-speckle.harness.ts` added the INSTRUMENTS, purely additively: a
+ * settable step budget, switches for the two shading terms that read the
+ * marcher's own statistics rather than the object (the step-count AO
+ * stand-in and the cone-traced shadow), an always-counted `exhausted` tally,
+ * and opt-in per-pixel status/hit-position/step arrays. Every default
+ * reproduces the pre-existing panels byte for byte — the point of that
+ * harness is that a speckled sheet has three possible causes and the
+ * defaults cannot tell them apart.
+ *
+ * Consumers: `qjulia-preview.harness.ts`, `escape-family-preview.harness.ts`,
+ * `escape-chain.harness.ts`, `chain-speckle.harness.ts` and the rest of the
+ * `*.harness.ts` preview family.
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -46,7 +57,38 @@ export interface PreviewScene {
   eyeOffset?: Vec3;
   /** Half-angle spread of the frustum; smaller = tighter framing. */
   zoom?: number;
+  /**
+   * Per-ray march step budget. Defaults to {@link DEFAULT_MAX_STEPS} — the
+   * one every panel drawn before `chain-speckle.harness.ts` used, so leaving
+   * it unset reproduces those sheets byte for byte. Raise it to ask whether
+   * a speckled render is STARVED rather than fine (`PanelStats.exhausted` is
+   * the answer).
+   */
+  maxSteps?: number;
+  /**
+   * The step-count AO stand-in (default on). It is a PROXY — "this ray took
+   * many steps, so it sits in a crease" — and on a fold DE the step count
+   * swings hard between neighbouring pixels, so the proxy manufactures
+   * pixel-scale contrast of its own. Off isolates the object's shape from
+   * the harness's shading heuristic.
+   */
+  ao?: boolean;
+  /** The Quilez cone-traced soft shadow (default on). Off with {@link ao}
+   * leaves normal-based lighting alone, which is the shading with the least
+   * of the marcher's own step statistics baked into it. */
+  shadow?: boolean;
+  /** Fill {@link PanelStats}'s per-pixel arrays. Off by default so no
+   * existing multi-panel sheet pays the allocation. */
+  collect?: boolean;
 }
+
+/** Per-pixel terminal state in {@link PanelStats.status}. */
+export const PREVIEW_MISS = 0;
+export const PREVIEW_HIT = 1;
+/** Ran out of {@link PreviewScene.maxSteps} still inside the marching ball —
+ * the direct fingerprint of an UNDER-BUDGETED march, as against an object
+ * that is genuinely finer than the pixel grid. */
+export const PREVIEW_EXHAUSTED = 2;
 
 export interface PanelStats {
   rgb: Uint8Array;
@@ -56,9 +98,23 @@ export interface PanelStats {
   evals: number;
   steps: number;
   ms: number;
+  /** Rays that spent the whole step budget without hitting or leaving the
+   * marching ball. */
+  exhausted: number;
+  /** Set when {@link PreviewScene.collect}: `PREVIEW_MISS|HIT|EXHAUSTED`. */
+  status?: Uint8Array;
+  /** Set when {@link PreviewScene.collect}: the surface point of every hit
+   * pixel (3 floats per pixel, zero elsewhere), so a caller can evaluate a
+   * per-hit quantity — an orbit trap, say — without re-marching. */
+  hitPos?: Float32Array;
+  /** Set when {@link PreviewScene.collect}: steps the primary ray spent. */
+  stepCount?: Uint16Array;
 }
 
-const MAX_STEPS = 600;
+/** The step budget every panel predating `chain-speckle.harness.ts` marched
+ * with, and still the default. */
+export const DEFAULT_MAX_STEPS = 600;
+const MAX_STEPS = DEFAULT_MAX_STEPS;
 /** Step count at which the step-count AO stand-in bottoms out. Must track
  * MAX_STEPS: a DE that needs many small steps is not automatically occluded,
  * and tying this to a fixed count crushes fold renders to black. */
@@ -129,10 +185,17 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
   const zoom = scene.zoom ?? 0.55;
   const light = norm([0.62, 0.78, 0.36]);
 
+  const maxSteps = scene.maxSteps ?? MAX_STEPS;
+  const wantAo = scene.ao ?? true;
+  const wantShadow = scene.shadow ?? true;
   const rgb = new Uint8Array(size * size * 3);
+  const status = scene.collect ? new Uint8Array(size * size) : undefined;
+  const hitPos = scene.collect ? new Float32Array(size * size * 3) : undefined;
+  const stepCount = scene.collect ? new Uint16Array(size * size) : undefined;
   let hits = 0;
   let evals = 0;
   let steps = 0;
+  let exhausted = 0;
   // Backdrop: a quiet vertical gradient, so silhouettes read.
   const bgTop: Vec3 = [0.1, 0.12, 0.16];
   const bgBot: Vec3 = [0.04, 0.045, 0.06];
@@ -165,7 +228,7 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
         const eps = (1.1 / size) * zoom;
         let hit = false;
         let used = 0;
-        for (; used < MAX_STEPS && t < tEnd; used++) {
+        for (; used < maxSteps && t < tEnd; used++) {
           const p: Vec3 = [
             eye[0] + dir[0] * t,
             eye[1] + dir[1] * t,
@@ -180,6 +243,16 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
           t += Math.max(d * scene.stepScale, eps * 0.5);
         }
         steps += used;
+        const spent = used >= maxSteps && t < tEnd && !hit;
+        if (spent) exhausted++;
+        if (status) {
+          status[py * size + px] = hit
+            ? PREVIEW_HIT
+            : spent
+              ? PREVIEW_EXHAUSTED
+              : PREVIEW_MISS;
+        }
+        if (stepCount) stepCount[py * size + px] = Math.min(used, 65535);
         if (hit) {
           hits++;
           const p: Vec3 = [
@@ -187,6 +260,12 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             eye[1] + dir[1] * t,
             eye[2] + dir[2] * t,
           ];
+          if (hitPos) {
+            const at = (py * size + px) * 3;
+            hitPos[at] = p[0];
+            hitPos[at + 1] = p[1];
+            hitPos[at + 2] = p[2];
+          }
           const h = eps * Math.max(t, 1);
           const n = normalAt(scene.de, p, h);
           const lift: Vec3 = [
@@ -195,16 +274,11 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             p[2] + n[2] * h * 2,
           ];
           const diff = Math.max(0, dot(n, light));
-          const sh = softShadow(
-            scene.de,
-            lift,
-            light,
-            h,
-            R * 1.5,
-            scene.stepScale,
-          );
+          const sh = wantShadow
+            ? softShadow(scene.de, lift, light, h, R * 1.5, scene.stepScale)
+            : 1;
           // Step count stands in for AO: deep steppers sit in creases.
-          const ao = Math.max(0.25, 1 - used / AO_REFERENCE_STEPS);
+          const ao = wantAo ? Math.max(0.25, 1 - used / AO_REFERENCE_STEPS) : 1;
           const sky = 0.5 + 0.5 * n[1];
           const lit = 0.16 * sky * ao + 0.92 * diff * sh;
           const half = norm([
@@ -251,6 +325,10 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
     hits,
     evals,
     steps,
+    exhausted,
+    status,
+    hitPos,
+    stepCount,
     ms: Date.now() - started,
   };
 }
