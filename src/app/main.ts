@@ -12,6 +12,35 @@ import {
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
+import type { AppState as EscapeGateState } from "./state";
+
+/**
+ * Can the app actually RENDER this escape system, as opposed to estimate it?
+ *
+ * fr-za0n widened `analyzeEscapeSystem` to admit a CHAIN of fold maps and
+ * taught the CPU oracle to cycle through them, deliberately leaving the two
+ * shader mirrors out of scope so the idea could be judged before six copies
+ * of it were paid for. But this module gates the escape session on that same
+ * analysis, so the moment the gate widened, a 2+-map document began entering
+ * escape mode and rendering only its HEAD LINK — `EscapeDE extends
+ * EscapeLink`, so the flat wire is link 0's and a chain compiles, marches and
+ * looks plausible while being silently wrong.
+ *
+ * So the ORACLE's gate and the APP's gate are no longer the same question,
+ * and this is the app's: eligible AND single-link. A chain is reported
+ * ineligible with a reason that names fr-s04t rather than rendering a lie.
+ * Delete this the moment the mirrors carry the cycle.
+ */
+function escapeRenderable(state: EscapeGateState): boolean {
+  return (
+    analyzeEscapeSystem(
+      state.transforms,
+      state.finalTransform ?? null,
+      state.symmetry,
+    ).status === "eligible" &&
+    state.transforms.filter((t) => (t.weight ?? 1) > 0).length === 1
+  );
+}
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
@@ -4018,13 +4047,7 @@ function main(): void {
           // no precedence to resolve here, unlike the IFS compute arm
           // below.
           let R: number;
-          if (
-            analyzeEscapeSystem(
-              state.transforms,
-              state.finalTransform ?? null,
-              state.symmetry,
-            ).status === "eligible"
-          ) {
+          if (escapeRenderable(state)) {
             ui.setSurfaceSessionKind("escape");
             const de = buildEscapeDE(
               state.transforms,
@@ -4601,6 +4624,17 @@ function main(): void {
         state.symmetry,
       );
       if (escape.status === "eligible") {
+        // ...but only where the SHADERS can draw what the oracle estimates.
+        // fr-za0n made the estimator composable ahead of its mirrors, so a
+        // chain would render its head link alone — see escapeRenderable.
+        // Naming the reason beats a silent wrong picture (fr-s04t).
+        if (!escapeRenderable(state)) {
+          ui.setSurfaceEligibility(
+            "ineligible",
+            "Escape-time chains render one map at a time for now: the estimator composes but the tracers do not yet. Reduce to a single active fold map.",
+          );
+          return;
+        }
         ui.setSurfaceEligibility(
           "degraded",
           "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",

@@ -400,19 +400,51 @@ and UI**, so the interesting math is unit-tested without a browser:
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
     validity chain; 3D only (4D's live rotor/slice would invalidate a grid per
     frame).
-  - `escape-de.ts` — escape-time fold render's CPU oracle (fr-kltj): the
-    canonical Mandelbox/Juliabox object for exactly the systems the IFS
-    gate refuses (single non-contracting pure-fold map, flat, no
-    final/kaleidoscope — `analyzeEscapeSystem` is the deliberate
-    COMPLEMENT of `analyzeSurfaceSystem` on that shape).
-    `estimateEscapeDistance` iterates the map FORWARD with a scalar
-    running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
+  - `escape-de.ts` — escape-time fold render's CPU oracle (fr-kltj), and
+    since fr-za0n a HYBRID FORMULA CHAIN: the canonical
+    Mandelbox/Juliabox object and its hybrids, for exactly the systems
+    the IFS gate refuses (one or more pure-fold flat maps of which at
+    least one does NOT contract, no final transform, no kaleidoscope
+    that rotates out of 3D — `analyzeEscapeSystem` is the deliberate
+    COMPLEMENT of `analyzeSurfaceSystem` on that shape, which admits
+    exactly when EVERY map contracts).
+    `estimateEscapeDistance` iterates the maps FORWARD with ONE shared
+    scalar running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
     standard heuristic, not a certified bound), mirrored by
     `surface-material.ts`'s `SURFACE_ESCAPE` variant and, since fr-dlxh,
     `surface-de-gpu.ts`'s `core:"escape"` kernel — `ESCAPE_STEP_SCALE`
     is the one marcher-damping definition both the GLSL variant and the
-    WGSL packer import. Phone-cheap by construction (~30 branchless
-    folds per eval). The rendered set is the MANDELBROT-form set — the
+    WGSL packer import, with `ESCAPE_CHAIN_STEP_SCALE` (0.2) for chains
+    and `escapeStepScale(de)` the one place that picks. Phone-cheap by
+    construction (~30 branchless folds per link per eval; measured 0.25
+    us/eval at one link and 0.27-1.10 across eight chains, the six-link one
+    at 0.60 — the n-times budget is a ceiling only a non-escaping orbit
+    pays, and every extra link is another chance to escape).
+    THE LIST IS THE SEQUENCE (Mandelbulber2's `seq->GetSequence(i)`):
+    orbit step `i` applies link `i mod n`, `+ p` and the bailout test
+    after EACH link, and a PASS is one full cycle — so
+    `ESCAPE_TIME_ITERATIONS`, the preview depth clamp and the GPU's
+    `maxDepth` keep meaning "how many times is each link applied". The
+    rejected alternative, CHAINING (all n links inside one pass), was
+    measured into a near-solid ball as links were added — 72.8% of the
+    bailout ball at six links, the fr-7u8t.8 defect returning — and
+    lives on as an executable local in
+    `scripts/escape-chain.harness.ts`, the sheet the SHIPPED estimator
+    draws (`scripts/hybrid-chain.harness.ts` is the prototype that asked
+    the question first, on the cross-family links this gate still
+    refuses). KALEIDOSCOPE is a query-space wedge fold
+    (`foldQueryIntoSector`), not an orbit operation: `g` is 1-Lipschitz
+    and an isometry per sector, the orbit is seeded AND offset by `g(p)`,
+    so the set is exactly `g^-1(M)` — dihedral rather than the chaos
+    game's cyclic (a cyclic fold is discontinuous and would certify empty
+    balls across the seam), free per orbit step, and `SymmetryParams.blend`
+    is deliberately unread exactly as in `surface-de.ts`.
+    ONE-LINK, UNSYMMETRISED SYSTEMS ARE BIT-IDENTICAL to fr-kltj's loop
+    (pinned in `escape-de.test.ts` against a frozen copy of it), which is
+    what lets `EscapeDE extends EscapeLink` keep the six mirrors reading
+    the HEAD link's flat wire until they gain the same inner step
+    (fr-za0n's mirror pass — until it lands, a multi-link document
+    renders its head link on the GPU/GLSL paths). The rendered set is the MANDELBROT-form set — the
     per-iteration offset is the QUERY POINT (fr-7u8t.8), which is what
     makes it the object published Mandelbox renders show. fr-kltj had
     shipped the Julia form (offset = the document's `t`), and it rendered

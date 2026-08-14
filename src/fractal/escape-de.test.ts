@@ -210,6 +210,16 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
     expect(analysis.status).toBe("eligible");
   });
 
+  it("refuses an empty chain, and buildEscapeDE never reaches its head link", () => {
+    // The chain's head is spread into the DE, so an empty links array would
+    // throw somewhere unhelpful. The gate is what stands in front of it.
+    expect(analyzeEscapeSystem([]).reasons).toEqual(["no active maps"]);
+    expect(
+      analyzeEscapeSystem([canonicalMandelbox({ weight: 0 })]).reasons,
+    ).toEqual(["no active maps"]);
+    expect(() => buildEscapeDE([])).toThrow(/no active maps/);
+  });
+
   it("names the offending link by its DOCUMENT index", () => {
     // An inactive map still occupies a row in the panel, so the label has to
     // count document positions rather than chain slots or the reason points
