@@ -473,9 +473,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     pre-scale escapes everywhere on the first pass and the mode renders a
     blank frame — so `escapeSetContains` (membership, from the same orbit
     the estimate reads) and `probeEscapeFill` (a seeded sample of the
-    bailout ball, `0` = "the probe found nothing") exist for a later UI
-    pass to say so; neither is wired into `analyzeEscapeSystem` or
-    `buildEscapeDE`, which stay cheap. KALEIDOSCOPE is a query-space wedge fold
+    bailout ball, `0` = "the probe found nothing") exist to say so, and
+    fr-17qu wired them: main.ts probes ONCE per surface session, at the
+    single moment the DE is built, and toasts a zero without refusing the
+    render (a probe is not a proof — a set thinner than the sample reads
+    0 — and it covers fr-kkb9's lone spherefold by the same measurement).
+    Neither is wired into `analyzeEscapeSystem` or
+    `buildEscapeDE`, which stay cheap — the probe costs 1.2-3.2 ms
+    measured and that gate runs on every state change.
+    KALEIDOSCOPE is a query-space wedge fold
     (`foldQueryIntoSector`), not an orbit operation: `g` is 1-Lipschitz
     and an isometry per sector, the orbit is seeded AND offset by `g(p)`,
     so the set is exactly `g^-1(M)` — dihedral rather than the chaos
