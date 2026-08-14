@@ -752,6 +752,62 @@ describe("fr-qi9c spherefold radius sweep", () => {
     }
   });
 
+  it("pins the PRODUCTION estimator's own fold radii against this copy", () => {
+    // fr-s9ll gave `Variation` the three lengths, so `estimateEscapeDistance`
+    // now reads them off the document instead of baking them in. This sheet's
+    // copy predates that and was pinned at the classic lengths before it
+    // existed — which makes it an INDEPENDENT oracle for the parameterized
+    // production path, not a restatement of it. Same lengths, two
+    // implementations, bit-exact or the change is wrong.
+    const rng = mulberry32(0x5f03c);
+    const cases: [string, FoldParams[]][] = [
+      ["one link, wider ball", [{ mR: 0.35, fR: 1.4, wall: 1, bailout: 4 }]],
+      ["one link, tighter box", [{ mR: 0.5, fR: 1, wall: 0.6, bailout: 4 }]],
+      [
+        "two links, DIFFERENT lengths per link",
+        [
+          { mR: 0.3, fR: 1.2, wall: 0.9, bailout: 4 },
+          { mR: 0.45, fR: 0.8, wall: 1.5, bailout: 4 },
+        ],
+      ],
+    ];
+    for (const [label, per] of cases) {
+      // The document the app would carry: one fold variation per link, each
+      // with its own three fields.
+      const authored: Transform[] = per.map((fp, i) => ({
+        id: i,
+        position: [0, 0, 0],
+        rotation: [0, (i * 20 * Math.PI) / 180, 0],
+        scale: [1, 1, 1],
+        variations: [
+          {
+            type: "mandelbox" as const,
+            weight: i === 0 ? 2 : 1.6,
+            minRadius: fp.mR,
+            fixedRadius: fp.fR,
+            boxLimit: fp.wall,
+          },
+        ],
+      }));
+      // The same system with the fields absent — the carrier this sheet's own
+      // estimator parameterizes from the outside.
+      const bare: Transform[] = authored.map((t) => ({
+        ...t,
+        variations: [
+          { type: "mandelbox" as const, weight: t.variations![0].weight },
+        ],
+      }));
+      const production = buildEscapeDE(authored);
+      const local = paramEscapeDE(buildEscapeDE(bare), per);
+      for (let i = 0; i < 4000; i++) {
+        const p: Vec3 = [rng() * 12 - 6, rng() * 12 - 6, rng() * 12 - 6];
+        expect(local(p), `${label} p=[${p.join(", ")}]`).toBe(
+          estimateEscapeDistance(production, p),
+        );
+      }
+    }
+  });
+
   it("sweeps the magnification ratio fR²/mR²", () => {
     const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
     const shippedAt = arms.indexOf(SHIPPED.mR);

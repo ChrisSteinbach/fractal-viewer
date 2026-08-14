@@ -121,6 +121,7 @@ function expandedReference(de: SurfaceDE): SurfaceDE {
         foldKind: base.foldKind,
         foldInvW: base.foldInvW,
         foldSigma: base.foldSigma,
+        foldRadii: base.foldRadii,
         baseIndex: base.baseIndex,
         // Rotations leave singular values (and invT) alone, so the
         // composed copy's stage-2 scalars are the base map's exactly;

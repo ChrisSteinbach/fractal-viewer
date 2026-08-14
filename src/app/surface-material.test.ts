@@ -25,7 +25,11 @@ import {
   balloonBall,
   buildBalloon,
 } from "../fractal/balloon-de";
-import { buildSurfaceDE, SURFACE_FOLD_BEAM_WIDTH } from "../fractal/surface-de";
+import {
+  buildSurfaceDE,
+  CLASSIC_SURFACE_FOLD_RADII,
+  SURFACE_FOLD_BEAM_WIDTH,
+} from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform, Vec3 } from "../fractal/types";
@@ -51,6 +55,7 @@ function map3(overrides: Partial<SurfaceDEMap> = {}): SurfaceDEMap {
     foldKind: 0,
     foldInvW: 1,
     foldSigma: 0.5,
+    foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     baseIndex: 0,
     invMSigmaMin: 1,
     invTNorm: 0,
@@ -188,6 +193,7 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
       foldKind: 1,
       invW: 1 / 1.4,
       absW: 1.4,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, de, [black]);
     const u = material.uniforms;
@@ -225,6 +231,7 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
     expect(material.fragmentShader).toContain("surfaceDECore");
@@ -241,6 +248,7 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
       foldKind: 3,
       invW: 1,
       absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
     expect(material.defines.SURFACE_FOLD_LENS).toBe(1);
@@ -483,6 +491,7 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
     expect(material.defines.SURFACE_BALLOON).toBe(1);
@@ -596,6 +605,7 @@ describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
       foldKind: 1,
       invW: 1,
       absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     };
     setSurfaceSystem(material, withLens, [black]);
     expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);

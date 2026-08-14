@@ -9,6 +9,11 @@ import type {
   Variation,
   Vec3,
 } from "./types";
+import {
+  CLASSIC_FOLD_RADII,
+  resolveFoldRadii,
+  sphereFoldLipschitz,
+} from "./variations";
 
 /**
  * Surface distance estimation for an affine IFS (epic fr-7jlk).
@@ -500,18 +505,104 @@ export const DEPTH_RESOLUTION = 1e-4;
  * like the eligibility constants above. */
 export const MAX_DESCENT_DEPTH = 128;
 
-/** Forward Lipschitz bound of the spherefold's worst branch: the ×4
- * inflation inside the minimum-radius ball (the mid inversion's local scale
- * also peaks at 4, at `|x| = 0.5`). The boxfold's branches are isometries
- * (L = 1). Multiplied into the pure-fold contraction gate and the depth-cap
- * sizing (fold-branch sweep, module doc). */
-export const SPHEREFOLD_LIPSCHITZ = 4;
+/** Forward Lipschitz bound of the spherefold's worst branch AT THE CLASSIC
+ * RADII: the ×4 inflation inside the minimum-radius ball (the mid
+ * inversion's local scale also peaks at 4, at `|x| = 0.5`). The boxfold's
+ * branches are isometries (L = 1). Since fr-s9ll the fold's radii are
+ * authorable, and the bound a map actually gates on is
+ * `variations.ts`'s {@link sphereFoldLipschitz} — the magnification
+ * `fR²/mR²`, of which this is the value at the classic lengths. Kept as the
+ * classic constant because that is what the fold-family DOCS and tests
+ * quote; nothing derives a live bound from it. */
+export const SPHEREFOLD_LIPSCHITZ = sphereFoldLipschitz(CLASSIC_FOLD_RADII);
 
 /** u-space query radius below which the spherefold MID branch folds the
- * unit-shell bound instead of descending: inverting a point this close to
- * the origin would overflow the GLSL mirror's f32 arithmetic (`|u|⁻¹` up to
- * 1e3 here — comfortably finite — but unbounded without the floor). */
+ * shell bound instead of descending: inverting a point this close to the
+ * origin would overflow the GLSL mirror's f32 arithmetic (`|u|⁻¹` up to 1e3
+ * here — comfortably finite — but unbounded without the floor).
+ *
+ * RELATIVE TO `fR`, not absolute (fr-s9ll): the mid branch inverts in the
+ * sphere of radius `fR`, so the image radius is `fR²/|u|` and holding it to
+ * `1e3·fR` — equivalently holding the DIMENSIONLESS `fR²/|u|²` to 1e6 —
+ * means the threshold is `SPHEREFOLD_MID_MIN_R · fR`. A threshold scaling
+ * with `fR²` (as fr-s9ll's own sketch proposed) would be a length² where a
+ * length belongs, and would break the uniform-rescale equivariance the whole
+ * fold family has (fr-qi9c): a system and its 2x-scaled twin would guard at
+ * different relative radii and stop being the same shape. The two are
+ * indistinguishable at the classic `fR = 1`, which is why the sketch could
+ * not see the difference. */
 export const SPHEREFOLD_MID_MIN_R = 1e-3;
+
+/**
+ * The fold's three lengths as the INVERSE branch algebra wants them —
+ * derived once per map at build time, because every one of these appears
+ * inside a per-candidate, per-branch loop that runs ~1e7 times a frame.
+ *
+ * Each field is named for the role it plays in the branch enumeration
+ * (fold-branch sweep, module doc), and each carries its value at the classic
+ * lengths, because "absent means classic" has to be checkable by eye at
+ * every site: at the classic radii the expressions below reduce to the
+ * literals that shipped, multiplication by exactly 1 and 2*1 included, so a
+ * document that predates the fields descends BIT-IDENTICALLY.
+ */
+export interface SurfaceFoldRadii {
+  /** `boxLimit` — the box fold's reflection plane. Its per-axis preimages
+   * are `u`, `2·wall − u`, `−2·wall − u` and its in-box region is
+   * `[−wall, wall]`. Classic 1. */
+  wall: number;
+  /** `fR` — the outer branch's region radius, the mid shell's INNER edge,
+   * and the divisor of the mid branch's certified factor `|u|/fR`.
+   * Classic 1. */
+  fixedR: number;
+  /** `1/fR`, so that certified factor costs a multiply rather than a divide
+   * inside the branch loop. Classic 1. */
+  invFixedR: number;
+  /** `fR²` — the mid branch's inversion numerator (`v = fR²·u/|u|²`).
+   * Classic 1. */
+  fixedR2: number;
+  /** `mR²/fR²` — the INNER branch's inverse scaling (the forward branch
+   * inflates by the reciprocal). Classic 0.25. */
+  innerScale: number;
+  /** `fR²/mR²` — the inner branch's conformal sigma, which is also the
+   * fold's forward Lipschitz bound. Classic 4. */
+  innerSigma: number;
+  /** `fR²/mR` — the largest radius the sphere fold can output, hence both
+   * the INNER branch's region radius and the mid shell's OUTER edge.
+   * Classic 2. */
+  outputR: number;
+  /** {@link SPHEREFOLD_MID_MIN_R}`·fR` — the mid branch's inversion floor.
+   * Classic 1e-3. */
+  midMinR: number;
+}
+
+/** The classic lengths, shared by every map that has no fold to speak of
+ * (plain affine slots never read these) and by every fold left at the
+ * defaults — one frozen object rather than an allocation per map. */
+export const CLASSIC_SURFACE_FOLD_RADII: SurfaceFoldRadii =
+  surfaceFoldRadii(null);
+
+/** {@link SurfaceFoldRadii} for a pure-fold variation, or the classic set
+ * for `null`. The domain rules live in `variations.ts`'s
+ * {@link resolveFoldRadii}; this only re-expresses the resolved lengths in
+ * the branch algebra's own terms. */
+export function surfaceFoldRadii(fold: Variation | null): SurfaceFoldRadii {
+  const {
+    minRadius: mR,
+    fixedRadius: fR,
+    boxLimit: wall,
+  } = fold ? resolveFoldRadii(fold) : CLASSIC_FOLD_RADII;
+  const fixedR2 = fR * fR;
+  return {
+    wall,
+    fixedR: fR,
+    invFixedR: 1 / fR,
+    fixedR2,
+    innerScale: (mR * mR) / fixedR2,
+    innerSigma: fixedR2 / (mR * mR),
+    outputR: fixedR2 / mR,
+    midMinR: SPHEREFOLD_MID_MIN_R * fR,
+  };
+}
 
 /** {@link SurfaceDEMap.foldKind} vocabulary. Numeric, not a string union:
  * the GLSL mirror carries the kind inside a packed per-map `vec4` uniform,
@@ -590,6 +681,9 @@ export interface SurfaceDEMap {
    * branches multiply their own conformal sigma on top. Equal to `sigmaMin`
    * (and unused) at foldKind 0. */
   foldSigma: number;
+  /** The fold's authored lengths in branch-algebra form (fr-s9ll) — the
+   * classic set at foldKind 0, where nothing reads it. */
+  foldRadii: SurfaceFoldRadii;
   /** Which input transform this slot inverts — the index into the caller's
    * `transforms`, for per-transform coloring. */
   baseIndex: number;
@@ -731,6 +825,9 @@ export interface SurfaceDE {
     foldKind: SurfaceFoldKind;
     invW: number;
     absW: number;
+    /** The lens fold's authored lengths (fr-s9ll), in the same
+     * branch-algebra form the base maps carry. */
+    foldRadii: SurfaceFoldRadii;
   } | null;
 }
 
@@ -759,11 +856,15 @@ function pureFoldVariation(t: Transform): Variation | null {
 }
 
 /** Forward Lipschitz bound of a pure-fold variation, weight folded in:
- * `|w| · L_V`, with L = 1 for the boxfold's reflection isometries and
- * {@link SPHEREFOLD_LIPSCHITZ} for the families containing the spherefold's
- * ×4 inner branch. */
+ * `|w| · L_V`, with L = 1 for the boxfold's reflection isometries (at any
+ * `boxLimit`) and the sphere fold's magnification `fR²/mR²` for the families
+ * containing its inner branch — so the fold's own radii move the contraction
+ * gate with them (fr-s9ll; fr-77oy measured how far). */
 function foldLipschitz(v: Variation): number {
-  return Math.abs(v.weight) * (v.type === "boxfold" ? 1 : SPHEREFOLD_LIPSCHITZ);
+  return (
+    Math.abs(v.weight) *
+    (v.type === "boxfold" ? 1 : sphereFoldLipschitz(resolveFoldRadii(v)))
+  );
 }
 
 /** `transform.weight ?? 1 > 0` — the maps that can ever be selected, i.e.
@@ -1070,6 +1171,7 @@ export function buildSurfaceDE(
       foldKind,
       foldInvW: fold ? 1 / fold.weight : 1,
       foldSigma: fold ? Math.abs(fold.weight) * sigmaMin : sigmaMin,
+      foldRadii: surfaceFoldRadii(fold),
       baseIndex: i,
       // Reciprocal singular values: sigma(inv(M)) = 1/sigma(M), so the
       // smallest of the inverse is exactly one over the largest of the
@@ -1174,7 +1276,7 @@ export function buildSurfaceDE(
         ? b.sigmaMin
         : b.foldKind === SURFACE_FOLD_BOXFOLD
           ? b.foldSigma
-          : b.foldSigma * SPHEREFOLD_LIPSCHITZ;
+          : b.foldSigma * b.foldRadii.innerSigma;
     return Math.max(acc, factor);
   }, 0);
   const maxDepth = Math.min(
@@ -1215,6 +1317,7 @@ export function buildSurfaceDE(
           : fold.type === "spherefold"
             ? SURFACE_FOLD_SPHEREFOLD
             : SURFACE_FOLD_MANDELBOX;
+      const radii = surfaceFoldRadii(fold);
       foldFinal = {
         invM,
         invT,
@@ -1222,21 +1325,23 @@ export function buildSurfaceDE(
         foldKind: kind,
         invW: 1 / fold.weight,
         absW: Math.abs(fold.weight),
+        foldRadii: radii,
       };
       // Bound the visible set w·V(M·A + t). Per axis the boxfold obeys
-      // |fold(t)| <= max(|t|, 1), so |boxfold(y)|² <= Σ max(y_a², 1)
-      // <= |y|² + 3; the spherefold's clamp caps every branch's output at
-      // max(|y|, 2) (identity keeps |y|, the shell inverts into (1, 2],
-      // the ×4 inner region tops out at 4·0.5 = 2); the mandelbox chains
-      // the two.
-      const boxR = Math.sqrt(affineR * affineR + 3);
+      // |fold(t)| <= max(|t|, wall), so |boxfold(y)|² <= Σ max(y_a², wall²)
+      // <= |y|² + 3·wall²; the spherefold's clamp caps every branch's output
+      // at max(|y|, fR²/mR) (identity keeps |y|, the shell inverts into
+      // (fR, fR²/mR], the inner region tops out at (fR²/mR²)·mR = fR²/mR);
+      // the mandelbox chains the two. At the classic lengths those are the
+      // `+ 3` and the `2` that shipped (fr-s9ll).
+      const boxR = Math.sqrt(affineR * affineR + 3 * radii.wall * radii.wall);
       visibleBoundingRadius =
         foldFinal.absW *
         (kind === SURFACE_FOLD_BOXFOLD
           ? boxR
           : kind === SURFACE_FOLD_SPHEREFOLD
-            ? Math.max(affineR, 2)
-            : Math.max(boxR, 2));
+            ? Math.max(affineR, radii.outputR)
+            : Math.max(boxR, radii.outputR));
     } else {
       final = { invM, invT, sigmaMin: s.min };
       visibleBoundingRadius = affineR;
@@ -1574,26 +1679,34 @@ function refinedCertValue(
       let vz = 0;
       let sfSigma = 1;
       let sfRd = 0;
+      // The map's authored fold lengths (fr-s9ll), hoisted out of the branch
+      // loop. At the classic set every expression below reduces to the
+      // literal that shipped — `wall` 1, `innerScale` 0.25, `innerSigma` 4,
+      // `fixedR`/`invFixedR`/`fixedR2` 1, `outputR` 2 — so an unparameterized
+      // document descends bit-identically.
+      const fr = mapJ.foldRadii;
+      const wall = fr.wall;
+      const wall2 = 2 * wall;
       if (kindJ !== SURFACE_FOLD_NONE) {
         ux = sx * mapJ.foldInvW;
         uy = sy * mapJ.foldInvW;
         uz = sz * mapJ.foldInvW;
         if (kindJ === SURFACE_FOLD_BOXFOLD) {
           px0 = ux;
-          px1 = 2 - ux;
-          px2 = -2 - ux;
+          px1 = wall2 - ux;
+          px2 = -wall2 - ux;
           py0 = uy;
-          py1 = 2 - uy;
-          py2 = -2 - uy;
+          py1 = wall2 - uy;
+          py2 = -wall2 - uy;
           pz0 = uz;
-          pz1 = 2 - uz;
-          pz2 = -2 - uz;
-          dxUp = ux > 1 ? ux - 1 : 0;
-          dxDn = ux < -1 ? -1 - ux : 0;
-          dyUp = uy > 1 ? uy - 1 : 0;
-          dyDn = uy < -1 ? -1 - uy : 0;
-          dzUp = uz > 1 ? uz - 1 : 0;
-          dzDn = uz < -1 ? -1 - uz : 0;
+          pz1 = wall2 - uz;
+          pz2 = -wall2 - uz;
+          dxUp = ux > wall ? ux - wall : 0;
+          dxDn = ux < -wall ? -wall - ux : 0;
+          dyUp = uy > wall ? uy - wall : 0;
+          dyDn = uy < -wall ? -wall - uy : 0;
+          dzUp = uz > wall ? uz - wall : 0;
+          dzDn = uz < -wall ? -wall - uz : 0;
         } else {
           ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
         }
@@ -1620,45 +1733,50 @@ function refinedCertValue(
               vy = uy;
               vz = uz;
               sfSigma = 1;
-              sfRd = ru < 1 ? 1 - ru : 0;
+              sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
             } else if (s === 1) {
-              vx = 0.25 * ux;
-              vy = 0.25 * uy;
-              vz = 0.25 * uz;
-              sfSigma = 4;
-              sfRd = ru > 2 ? ru - 2 : 0;
+              vx = fr.innerScale * ux;
+              vy = fr.innerScale * uy;
+              vz = fr.innerScale * uz;
+              sfSigma = fr.innerSigma;
+              sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
             } else {
-              if (ru < SPHEREFOLD_MID_MIN_R) {
+              if (ru < fr.midMinR) {
                 // Same shell stand-in the frontier folds, in the frozen
                 // child's own frame.
-                const shellTerm = absWJ * (1 - ru);
+                const shellTerm = absWJ * (fr.fixedR - ru);
                 if (shellTerm < inner) inner = shellTerm;
                 if (kindJ === SURFACE_FOLD_MANDELBOX) b += 26;
                 continue;
               }
-              const invR2 = 1 / (ru * ru);
+              const invR2 = fr.fixedR2 / (ru * ru);
               vx = ux * invR2;
               vy = uy * invR2;
               vz = uz * invR2;
-              sfSigma = ru;
-              sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+              sfSigma = ru * fr.invFixedR;
+              sfRd =
+                ru < fr.fixedR
+                  ? fr.fixedR - ru
+                  : ru > fr.outputR
+                    ? ru - fr.outputR
+                    : 0;
             }
             if (kindJ === SURFACE_FOLD_MANDELBOX) {
               px0 = vx;
-              px1 = 2 - vx;
-              px2 = -2 - vx;
+              px1 = wall2 - vx;
+              px2 = -wall2 - vx;
               py0 = vy;
-              py1 = 2 - vy;
-              py2 = -2 - vy;
+              py1 = wall2 - vy;
+              py2 = -wall2 - vy;
               pz0 = vz;
-              pz1 = 2 - vz;
-              pz2 = -2 - vz;
-              dxUp = vx > 1 ? vx - 1 : 0;
-              dxDn = vx < -1 ? -1 - vx : 0;
-              dyUp = vy > 1 ? vy - 1 : 0;
-              dyDn = vy < -1 ? -1 - vy : 0;
-              dzUp = vz > 1 ? vz - 1 : 0;
-              dzDn = vz < -1 ? -1 - vz : 0;
+              pz1 = wall2 - vz;
+              pz2 = -wall2 - vz;
+              dxUp = vx > wall ? vx - wall : 0;
+              dxDn = vx < -wall ? -wall - vx : 0;
+              dyUp = vy > wall ? vy - wall : 0;
+              dyDn = vy < -wall ? -wall - vy : 0;
+              dzUp = vz > wall ? vz - wall : 0;
+              dzDn = vz < -wall ? -wall - vz : 0;
             }
           }
           let cx: number;
@@ -2510,26 +2628,32 @@ function descendFold(
           let vz = 0;
           let sfSigma = 1;
           let sfRd = 0;
+          // The map's authored fold lengths (fr-s9ll), hoisted out of the
+          // branch loop; classic values reduce every expression to the
+          // literal that shipped.
+          const fr = map.foldRadii;
+          const wall = fr.wall;
+          const wall2 = 2 * wall;
           if (kind !== SURFACE_FOLD_NONE) {
             ux = sX * map.foldInvW;
             uy = sY * map.foldInvW;
             uz = sZ * map.foldInvW;
             if (kind === SURFACE_FOLD_BOXFOLD) {
               px0 = ux;
-              px1 = 2 - ux;
-              px2 = -2 - ux;
+              px1 = wall2 - ux;
+              px2 = -wall2 - ux;
               py0 = uy;
-              py1 = 2 - uy;
-              py2 = -2 - uy;
+              py1 = wall2 - uy;
+              py2 = -wall2 - uy;
               pz0 = uz;
-              pz1 = 2 - uz;
-              pz2 = -2 - uz;
-              dxUp = ux > 1 ? ux - 1 : 0;
-              dxDn = ux < -1 ? -1 - ux : 0;
-              dyUp = uy > 1 ? uy - 1 : 0;
-              dyDn = uy < -1 ? -1 - uy : 0;
-              dzUp = uz > 1 ? uz - 1 : 0;
-              dzDn = uz < -1 ? -1 - uz : 0;
+              pz1 = wall2 - uz;
+              pz2 = -wall2 - uz;
+              dxUp = ux > wall ? ux - wall : 0;
+              dxDn = ux < -wall ? -wall - ux : 0;
+              dyUp = uy > wall ? uy - wall : 0;
+              dyDn = uy < -wall ? -wall - uy : 0;
+              dzUp = uz > wall ? uz - wall : 0;
+              dzDn = uz < -wall ? -wall - uz : 0;
             } else {
               ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
             }
@@ -2578,34 +2702,34 @@ function descendFold(
                 (kind === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
               ) {
                 // (Re)compute the spherefold branch this b enters: outer
-                // identity, inner /4 (conformal sigma 4), mid unit-sphere
-                // inversion (query-dependent sigma |u| — module doc),
-                // each with its distance to the branch's OUTPUT region
-                // (outer outside the unit ball, inner inside radius 2,
-                // mid the shell between).
+                // identity, inner ×mR²/fR² (conformal sigma fR²/mR²), mid
+                // inversion in the sphere of radius fR (query-dependent
+                // sigma |u|/fR — module doc), each with its distance to the
+                // branch's OUTPUT region (outer outside radius fR, inner
+                // inside fR²/mR, mid the shell between).
                 const s = kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 27;
                 if (s === 0) {
                   vx = ux;
                   vy = uy;
                   vz = uz;
                   sfSigma = 1;
-                  sfRd = ru < 1 ? 1 - ru : 0;
+                  sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
                 } else if (s === 1) {
-                  vx = 0.25 * ux;
-                  vy = 0.25 * uy;
-                  vz = 0.25 * uz;
-                  sfSigma = 4;
-                  sfRd = ru > 2 ? ru - 2 : 0;
+                  vx = fr.innerScale * ux;
+                  vy = fr.innerScale * uy;
+                  vz = fr.innerScale * uz;
+                  sfSigma = fr.innerSigma;
+                  sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
                 } else {
-                  if (ru < SPHEREFOLD_MID_MIN_R) {
+                  if (ru < fr.midMinR) {
                     // Inverting a chain point this close to the sector
-                    // origin would overflow the GLSL mirror's f32; the
-                    // mid piece lives in the u-space shell 1 <= |·| <= 2,
-                    // so fold the shell bound |w|·(1 − |u|) — ~pScale·|w|,
+                    // origin would overflow the GLSL mirror's f32; the mid
+                    // piece lives in the u-space shell fR <= |·| <= fR²/mR,
+                    // so fold the shell bound |w|·(fR − |u|) — ~pScale·|w|·fR,
                     // never a near-zero ghost term — and skip the branch
                     // (box expansion included). A settled fold, so the
                     // standard exits apply.
-                    let shellCert = pScale * absW * (1 - ru);
+                    let shellCert = pScale * absW * (fr.fixedR - ru);
                     if (pFloor > shellCert) shellCert = pFloor;
                     if (shellCert < best) {
                       best = shellCert;
@@ -2619,32 +2743,37 @@ function descendFold(
                     if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
                     continue;
                   }
-                  const invR2 = 1 / (ru * ru);
+                  const invR2 = fr.fixedR2 / (ru * ru);
                   vx = ux * invR2;
                   vy = uy * invR2;
                   vz = uz * invR2;
-                  sfSigma = ru;
-                  sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+                  sfSigma = ru * fr.invFixedR;
+                  sfRd =
+                    ru < fr.fixedR
+                      ? fr.fixedR - ru
+                      : ru > fr.outputR
+                        ? ru - fr.outputR
+                        : 0;
                 }
                 // This sphere branch's childScale reciprocal for the
                 // stage-2 skip (sfSigma just changed).
                 invChildScale = 1 / (pScale * map.foldSigma * sfSigma);
                 if (kind === SURFACE_FOLD_MANDELBOX) {
                   px0 = vx;
-                  px1 = 2 - vx;
-                  px2 = -2 - vx;
+                  px1 = wall2 - vx;
+                  px2 = -wall2 - vx;
                   py0 = vy;
-                  py1 = 2 - vy;
-                  py2 = -2 - vy;
+                  py1 = wall2 - vy;
+                  py2 = -wall2 - vy;
                   pz0 = vz;
-                  pz1 = 2 - vz;
-                  pz2 = -2 - vz;
-                  dxUp = vx > 1 ? vx - 1 : 0;
-                  dxDn = vx < -1 ? -1 - vx : 0;
-                  dyUp = vy > 1 ? vy - 1 : 0;
-                  dyDn = vy < -1 ? -1 - vy : 0;
-                  dzUp = vz > 1 ? vz - 1 : 0;
-                  dzDn = vz < -1 ? -1 - vz : 0;
+                  pz1 = wall2 - vz;
+                  pz2 = -wall2 - vz;
+                  dxUp = vx > wall ? vx - wall : 0;
+                  dxDn = vx < -wall ? -wall - vx : 0;
+                  dyUp = vy > wall ? vy - wall : 0;
+                  dyDn = vy < -wall ? -wall - vy : 0;
+                  dzUp = vz > wall ? vz - wall : 0;
+                  dzDn = vz < -wall ? -wall - vz : 0;
                 }
               }
               let cx: number;
@@ -3080,22 +3209,28 @@ function descendLens(
   let sfSigma = 1;
   let sfRd = 0;
   let ru = 0;
+  // The LENS fold's own authored lengths (fr-s9ll) — a final transform
+  // carries its three fields exactly like a base map, and the classic set
+  // reduces every expression below to the literal that shipped.
+  const fr = lens.foldRadii;
+  const wall = fr.wall;
+  const wall2 = 2 * wall;
   if (kind === SURFACE_FOLD_BOXFOLD) {
     px0 = ux;
-    px1 = 2 - ux;
-    px2 = -2 - ux;
+    px1 = wall2 - ux;
+    px2 = -wall2 - ux;
     py0 = uy;
-    py1 = 2 - uy;
-    py2 = -2 - uy;
+    py1 = wall2 - uy;
+    py2 = -wall2 - uy;
     pz0 = uz;
-    pz1 = 2 - uz;
-    pz2 = -2 - uz;
-    dxUp = ux > 1 ? ux - 1 : 0;
-    dxDn = ux < -1 ? -1 - ux : 0;
-    dyUp = uy > 1 ? uy - 1 : 0;
-    dyDn = uy < -1 ? -1 - uy : 0;
-    dzUp = uz > 1 ? uz - 1 : 0;
-    dzDn = uz < -1 ? -1 - uz : 0;
+    pz1 = wall2 - uz;
+    pz2 = -wall2 - uz;
+    dxUp = ux > wall ? ux - wall : 0;
+    dxDn = ux < -wall ? -wall - ux : 0;
+    dyUp = uy > wall ? uy - wall : 0;
+    dyDn = uy < -wall ? -wall - uy : 0;
+    dzUp = uz > wall ? uz - wall : 0;
+    dzDn = uz < -wall ? -wall - uz : 0;
   } else {
     ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
   }
@@ -3112,18 +3247,18 @@ function descendLens(
         vy = uy;
         vz = uz;
         sfSigma = 1;
-        sfRd = ru < 1 ? 1 - ru : 0;
+        sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
       } else if (s === 1) {
-        vx = 0.25 * ux;
-        vy = 0.25 * uy;
-        vz = 0.25 * uz;
-        sfSigma = 4;
-        sfRd = ru > 2 ? ru - 2 : 0;
+        vx = fr.innerScale * ux;
+        vy = fr.innerScale * uy;
+        vz = fr.innerScale * uz;
+        sfSigma = fr.innerSigma;
+        sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
       } else {
-        if (ru < SPHEREFOLD_MID_MIN_R) {
+        if (ru < fr.midMinR) {
           // Shell guard (see doc): fold the settled shell bound and skip
           // the branch, box expansion included.
-          const shellCert = absW * (1 - ru);
+          const shellCert = absW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) return visBound;
@@ -3134,29 +3269,34 @@ function descendLens(
           if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
           continue;
         }
-        const invR2 = 1 / (ru * ru);
+        const invR2 = fr.fixedR2 / (ru * ru);
         vx = ux * invR2;
         vy = uy * invR2;
         vz = uz * invR2;
-        sfSigma = ru;
-        sfRd = ru < 1 ? 1 - ru : ru > 2 ? ru - 2 : 0;
+        sfSigma = ru * fr.invFixedR;
+        sfRd =
+          ru < fr.fixedR
+            ? fr.fixedR - ru
+            : ru > fr.outputR
+              ? ru - fr.outputR
+              : 0;
       }
       if (kind === SURFACE_FOLD_MANDELBOX) {
         px0 = vx;
-        px1 = 2 - vx;
-        px2 = -2 - vx;
+        px1 = wall2 - vx;
+        px2 = -wall2 - vx;
         py0 = vy;
-        py1 = 2 - vy;
-        py2 = -2 - vy;
+        py1 = wall2 - vy;
+        py2 = -wall2 - vy;
         pz0 = vz;
-        pz1 = 2 - vz;
-        pz2 = -2 - vz;
-        dxUp = vx > 1 ? vx - 1 : 0;
-        dxDn = vx < -1 ? -1 - vx : 0;
-        dyUp = vy > 1 ? vy - 1 : 0;
-        dyDn = vy < -1 ? -1 - vy : 0;
-        dzUp = vz > 1 ? vz - 1 : 0;
-        dzDn = vz < -1 ? -1 - vz : 0;
+        pz1 = wall2 - vz;
+        pz2 = -wall2 - vz;
+        dxUp = vx > wall ? vx - wall : 0;
+        dxDn = vx < -wall ? -wall - vx : 0;
+        dyUp = vy > wall ? vy - wall : 0;
+        dyDn = vy < -wall ? -wall - vy : 0;
+        dzUp = vz > wall ? vz - wall : 0;
+        dzDn = vz < -wall ? -wall - vz : 0;
       }
     }
     let cx: number;

@@ -45,7 +45,11 @@ import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
-import { buildSurfaceDE, SURFACE_FOLD_BOXFOLD } from "./surface-de";
+import {
+  buildSurfaceDE,
+  CLASSIC_SURFACE_FOLD_RADII,
+  SURFACE_FOLD_BOXFOLD,
+} from "./surface-de";
 import type { SurfaceDE } from "./surface-de";
 import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
@@ -301,6 +305,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: 3,
         invW: 2.5,
         absW: 0.4,
+        foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
     const view = new DataView(
@@ -393,6 +398,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: SURFACE_FOLD_BOXFOLD,
         invW: 1,
         absW: 1,
+        foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
     expect(() =>
@@ -415,6 +421,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
         foldKind: SURFACE_FOLD_BOXFOLD,
         invW: 1,
         absW: 1,
+        foldRadii: CLASSIC_SURFACE_FOLD_RADII,
       },
     };
     expect(() => packSurfaceGpuParams(violating, { itemCount: 1 })).toThrow(
