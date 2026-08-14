@@ -91,6 +91,18 @@ after the fact:
   flagged as unsupported. It no longer contributes to the aggregated
   unknown-variations warning, because the name-matching import path can't
   tell it apart from a real one.
+- **Custom radii (fr-s9ll).** A fold variation's `minRadius`/`fixedRadius`/
+  `boxLimit` have no flam3 attribute to live in at all — the format has no
+  per-variation parameter concept for a plain named variation, just a single
+  weight. Export therefore always writes the bare `type="weight"` attribute,
+  regardless of the document's lengths, and warns whenever they would render
+  differently than what a `.flame` reader (ours re-importing included) sees:
+  absent lengths, or lengths present but numerically equal to the classic
+  Mandelbox values, export silently, since nothing about the shape changes;
+  anything else warns, because the exported file always reads back at the
+  classic lengths. Import has nothing to recover — there is nowhere in the
+  XML the value could have come from, so a re-imported fold variation is
+  always unparameterized.
 
 `VARIATION_NAMES` (the set `decodeFlameFile`/`encodeFlameFile` match against)
 stays mechanically derived from `VARIATION_TYPES` — one array, not a
@@ -206,6 +218,11 @@ The export writes the system's **XY shadow**:
   is invalid): our Mandelbox fold family isn't a flam3 variation at all, so a
   `boxfold`/`spherefold`/`mandelbox` attribute is inert in every other
   flam3/Apophysis tool. See "A deliberate deviation" above.
+- A fold variation's custom `minRadius`/`fixedRadius`/`boxLimit` (export —
+  **warned**, fr-s9ll): flam3 XML has no attribute for them, so the exported
+  shape always reads back at the classic Mandelbox lengths. Absent or
+  explicitly-classic lengths lose nothing and warn nothing. See "A deliberate
+  deviation" above.
 - Our kaleidoscope exports as baked xforms, so re-importing an export returns
   plain maps (the symmetry metadata itself doesn't round-trip).
 - Camera pose (flame files have no 3D camera).

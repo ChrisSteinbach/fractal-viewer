@@ -971,3 +971,65 @@ describe("encodeFlameFile warnings", () => {
     expect(xml).toContain('brightness="4"');
   });
 });
+
+describe("encodeFlameFile fold radii (fr-s9ll)", () => {
+  it("warns when a fold variation's lengths differ from the classic Mandelbox radii", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        variations: [{ type: "mandelbox", weight: 1, minRadius: 0.3 }],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+    const { warnings } = encodeFlameFile(source, "custom-fold-radii");
+    expect(warnings.some((w) => /classic Mandelbox lengths/i.test(w))).toBe(
+      true,
+    );
+  });
+
+  it("adds no warning and unchanged XML for a fold variation at the (absent) classic lengths", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        variations: [{ type: "mandelbox", weight: 1 }],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+    const { xml, warnings } = encodeFlameFile(source, "default-fold-radii");
+    expect(warnings).toEqual([]);
+    // No radius attribute exists to write -- the xform is exactly the bare
+    // type="weight" attribute it would have been before minRadius/
+    // fixedRadius/boxLimit existed.
+    expect(xml).toContain('mandelbox="1"');
+    expect(xml).not.toMatch(/minRadius|fixedRadius|boxLimit/);
+  });
+
+  it("adds no warning for a fold variation whose lengths are present but exactly the classic values", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 1,
+            minRadius: 0.5,
+            fixedRadius: 1,
+            boxLimit: 1,
+          },
+        ],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+    const { warnings } = encodeFlameFile(source, "explicit-classic-fold-radii");
+    expect(warnings).toEqual([]);
+  });
+});

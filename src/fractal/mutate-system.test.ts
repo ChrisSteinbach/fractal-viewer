@@ -513,3 +513,112 @@ describe("mutateSystem colorIndex/colorSpeed", () => {
     });
   });
 });
+
+describe("mutateSystem fold radii (fr-s9ll)", () => {
+  it("perturbs a present fold length and keeps it within its clamped, ordered range", () => {
+    const foldMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [
+        {
+          type: "spherefold",
+          weight: 1,
+          minRadius: 0.6,
+          fixedRadius: 1.2,
+          boxLimit: 0.9,
+        },
+      ],
+    };
+    const base = system({
+      transforms: [foldMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    let sawChange = false;
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      const v = mutant.transforms[0].variations![0];
+      expect(v.minRadius).toBeGreaterThanOrEqual(0.05 - 1e-9);
+      expect(v.minRadius).toBeLessThanOrEqual(2 + 1e-9);
+      expect(v.fixedRadius).toBeGreaterThanOrEqual(0.05 - 1e-9);
+      expect(v.fixedRadius).toBeLessThanOrEqual(2 + 1e-9);
+      expect(v.minRadius!).toBeLessThanOrEqual(v.fixedRadius! + 1e-9);
+      expect(v.boxLimit).toBeGreaterThanOrEqual(-1e-9);
+      expect(v.boxLimit).toBeLessThanOrEqual(2 + 1e-9);
+      if (v.minRadius !== 0.6 || v.fixedRadius !== 1.2 || v.boxLimit !== 0.9) {
+        sawChange = true;
+      }
+    }
+    expect(sawChange).toBe(true);
+  });
+
+  it("leaves an absent fold length absent for a non-wildcard mutation", () => {
+    const foldMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "mandelbox", weight: 1 }],
+    };
+    const base = system({
+      transforms: [foldMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      const v = mutant.transforms[0].variations![0];
+      expect("minRadius" in v).toBe(false);
+      expect("fixedRadius" in v).toBe(false);
+      expect("boxLimit" in v).toBe(false);
+    }
+  });
+
+  it("still does not introduce an absent fold length under wildcard", () => {
+    // fr-xb8o: the GPU shader mirrors are still frozen at the classic
+    // lengths, so a mutation -- wildcard included -- must never hand the
+    // user a scene the renderer draws differently on the CPU estimators
+    // than on a GPU path. Whether this particular seed's structural kick
+    // lands on this very map and swaps its type away is irrelevant here:
+    // neither the plain jitter path nor the swap ever materializes one.
+    const foldMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [{ type: "mandelbox", weight: 1 }],
+    };
+    const base = system({
+      transforms: [foldMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
+      const v = mutant.transforms[0].variations![0];
+      expect("minRadius" in v).toBe(false);
+      expect("fixedRadius" in v).toBe(false);
+      expect("boxLimit" in v).toBe(false);
+    }
+  });
+
+  it("never gains fold lengths on a non-fold variation, even under wildcard", () => {
+    const base = system({ transforms: swirlFlame() });
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
+      for (const t of mutant.transforms) {
+        for (const v of t.variations ?? []) {
+          if (
+            v.type === "boxfold" ||
+            v.type === "spherefold" ||
+            v.type === "mandelbox"
+          ) {
+            continue;
+          }
+          expect("minRadius" in v).toBe(false);
+          expect("fixedRadius" in v).toBe(false);
+          expect("boxLimit" in v).toBe(false);
+        }
+      }
+    }
+  });
+});
