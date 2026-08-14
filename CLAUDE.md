@@ -27,6 +27,21 @@ npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
+The escape-time family's in-app gate (fr-tdin, not an npm script — it drives a
+real build in a real browser): `npm run build && npm run preview &` then
+`node scripts/escape-family.verify.mjs --mode=x11::0`. It loads every preset in
+the Escape-time menu group FROM THE MENU, enters Surface, waits on the fr-opgk
+settle latch and checks four things no unit test reaches: that each preset
+enters unaided; that the members of each trio render DIFFERENT objects (a knob
+that never reaches the DE renders the same picture three times); that
+`PRESET_FINALS` installs and clears in both directions, read out of the `#v1=`
+document hash rather than the panel (the transform list hides outside explorer
+mode, so a DOM probe passes vacuously); and WHICH ENGINE each session takes —
+measured compute for all nine, which is what keeps the `core:"bulb"` WGSL
+kernel from being dead code. It also gates fr-17qu's empty-set toast and
+fr-vpbq's `antialiasing pass k/8` disclosure. `--mode=sw` runs everything but
+the engine question without a display.
+
 Requires **Node.js 18+** (ES2022 target; developed on Node 22).
 
 Reproduce the COOP/COEP first-visit reload locally:
