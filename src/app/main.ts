@@ -3022,6 +3022,32 @@ function main(): void {
   // (fr-tmgf: the progress row's compute-path feed — null outside a
   // settle, so the row hides exactly like the strip path's idle state).
   let surfaceComputeSettleProgress: number | null = null;
+  /**
+   * Samples per pixel the compute SETTLE traces (fr-vpbq). Previews stay
+   * at 1 — a preview exists to be cheap, and its whole job is to be
+   * replaced.
+   *
+   * WHY IT IS ON BY DEFAULT, with no setting to turn it off. Pass 0 is the
+   * pre-fr-vpbq settle exactly — same rays, same wall, same image, and it
+   * presents its partials the way it always did — so nothing a user had
+   * before arrives later or looks different. Every pass after it only
+   * refines, presents when it lands, and dies the instant the camera moves
+   * (the renderer's own token). So the cost is paid only by a parked view,
+   * which is the one case where the extra quality is what the user is
+   * waiting for, and the progress row discloses the passes as they run
+   * rather than guessing at anyone's patience (the fr-24to/fr-zx34 line).
+   *
+   * EIGHT, not sixteen: fr-vpbq measured 16 spp removing 67-73% of the
+   * impulse rate, but its own coverage curve is steepest early — the
+   * distribution's tail is what the last doublings buy — and eight keeps a
+   * settle's total wall inside the same order of magnitude as the frame the
+   * user already waited for.
+   */
+  const SURFACE_COMPUTE_SETTLE_SAMPLES = 8;
+  // Which of those passes is in flight (1-based), for the row's trailing
+  // detail token — null outside a settle, and left null through pass 1, so
+  // an ordinary settle's row reads exactly as it did before fr-vpbq.
+  let surfaceComputeSettleSample: number | null = null;
   // The same for the preview loop's COMPLETION pass (fr-ud7n). Separate
   // field rather than a phase-tagged one, because the two loops overlap
   // for exactly as long as a superseded settle takes to notice its
@@ -3428,6 +3454,11 @@ function main(): void {
       renderer.cancel();
       const spec = scene.surfaceComputeFrameSpec("full");
       const frame = await renderer.renderFrame(spec, {
+        // fr-vpbq: the settle is the one frame worth supersampling — it is
+        // what a parked view finally shows, and the escape-time objects'
+        // speckle is sub-pixel structure no march budget or viewport
+        // reaches. Pass 0 is the pre-fr-vpbq settle exactly.
+        samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
         // Progressive presents: a full-resolution fold settle is tens of
         // seconds of bounded passes — the image develops on screen
         // (resolved rays shade in, unresolved ones keep backdrop) instead
@@ -3440,6 +3471,19 @@ function main(): void {
           ) {
             scene.presentSurfaceComputeFrame(pixels, spec.width, spec.height);
             surfaceComputeSettleProgress = total > 0 ? done / total : null;
+            // Which supersampling pass this coverage belongs to. `done`
+            // spans the whole job, so the pass is just which N-th of it we
+            // are in — floored, 1-based, and clamped because the final
+            // present lands exactly on the end.
+            surfaceComputeSettleSample =
+              total > 0
+                ? Math.min(
+                    SURFACE_COMPUTE_SETTLE_SAMPLES,
+                    Math.floor(
+                      (done / total) * SURFACE_COMPUTE_SETTLE_SAMPLES,
+                    ) + 1,
+                  )
+                : null;
           }
         },
       });
@@ -3466,6 +3510,7 @@ function main(): void {
     } finally {
       surfaceComputeSettleFlight = false;
       surfaceComputeSettleProgress = null;
+      surfaceComputeSettleSample = null;
     }
   }
 
@@ -3538,6 +3583,11 @@ function main(): void {
     const key = surfaceComputeForceFrameKey(spec);
     if (key === surfaceComputeForceKey) return;
     renderer.cancel();
+    // Single-sampled on purpose (fr-vpbq): this is the OFFLINE VIDEO path,
+    // and its cost multiplies by the frame count — a clip is hundreds of
+    // these, where the live settle and the Save-PNG are one apiece. Motion
+    // also hides per-frame aliasing that a still cannot. Revisit if the
+    // exporter ever grows a quality tier to hang it on.
     const frame = await renderer.renderFrame(spec);
     if (!frame || surfaceComputeRenderer !== renderer) return;
     scene.presentSurfaceComputeFrame(frame.pixels, frame.width, frame.height);
@@ -3578,6 +3628,15 @@ function main(): void {
         progressIntervalMs: SURFACE_COMPUTE_EXPORT_PROGRESS_MS,
         // Neither seeded by the live pane nor the seed for it (fr-biox).
         capture: true,
+        // fr-vpbq: a saved PNG gets the same supersampling the pane it was
+        // saved from does — the aliasing is scale-invariant (measured
+        // exponent -0.21..-0.36 against output resolution, where a sphere's
+        // perimeter law is -0.98), so exporting larger does not fix it and
+        // an unsampled export would be visibly worse than the screen it
+        // came from. The modal's coverage report already spans the passes
+        // (`done`/`total` are the whole job's), and Cancel still lands
+        // between them.
+        samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
       });
       if (frame) {
         console.debug(
@@ -6765,6 +6824,18 @@ function main(): void {
         : "WebGPU";
       ui.setSurfaceProgress({
         label: `${preview !== null ? "Preview" : "Full detail"} · ${engine}`,
+        // fr-vpbq's supersampling passes, disclosed the way fr-tmgf's
+        // engine reason is — TRAILING, so the coverage percentage stays
+        // the prominent read. Silent through pass 1, which is the frame
+        // this row has always described; from pass 2 it says why the
+        // percentage is still climbing under an image that already looks
+        // finished.
+        detail:
+          preview === null &&
+          surfaceComputeSettleSample !== null &&
+          surfaceComputeSettleSample > 1
+            ? `antialiasing pass ${String(surfaceComputeSettleSample)}/${String(SURFACE_COMPUTE_SETTLE_SAMPLES)}`
+            : undefined,
         pct: formatRenderPercent(fraction),
         // The fr-37c6 Skip button, on the engine the bead's own comment
         // said it would never show on: a completion pass is a preview

@@ -662,11 +662,28 @@ function shadeParams(
 }
 
 describe("packSurfaceGpuShade", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (144 bytes, per the module doc)", () => {
-    expect(SURFACE_GPU_SHADE_BYTES).toBe(144);
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (160 bytes, per the module doc)", () => {
+    // 144 through fr-5h5d's fog tint pair; 160 since fr-vpbq's pixelJitter
+    // at 144, because a WGSL uniform struct rounds to its largest member's
+    // 16-byte alignment and the trailing vec2f costs a full stride.
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(160);
     const buf = packSurfaceGpuShade(shadeParams());
     expect(buf).toBeInstanceOf(ArrayBuffer);
     expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
+  });
+
+  it("defaults pixelJitter to the pixel centre, so an unset jitter is the pre-supersampling kernel input", () => {
+    const view = new DataView(packSurfaceGpuShade(shadeParams()));
+    expect(view.getFloat32(144, true)).toBe(0.5);
+    expect(view.getFloat32(148, true)).toBe(0.5);
+  });
+
+  it("round-trips an explicit pixelJitter at offset 144 (fr-vpbq)", () => {
+    const view = new DataView(
+      packSurfaceGpuShade(shadeParams({ pixelJitter: [0.25, 0.8125] })),
+    );
+    expect(view.getFloat32(144, true)).toBe(0.25);
+    expect(view.getFloat32(148, true)).toBe(0.8125);
   });
 
   it("round-trips the invProjView matrix column-major: element k at byte k*4", () => {

@@ -554,9 +554,14 @@ import type { Vec3 } from "./types";
  *         112  u32  colorSource       116  u32 shadowSteps
  *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
  *         128  vec3f fogTint          140  f32 fogTintStrength
+ *         144  vec2f pixelJitter     (152..159 struct alignment pad)
  * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
  * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
  * identity (fog blends toward bg alone), and misses never read it.
+ * pixelJitter (fr-vpbq) is the sub-pixel position every ray derivation
+ * aims at inside its pixel; its default (0.5, 0.5) is the pixel centre
+ * those derivations used to spell as a literal, so an unset jitter is the
+ * pre-supersampling kernel value for value.
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -640,8 +645,11 @@ export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
  * shares sizing math with the 3D {@link SURFACE_GPU_MAP_VEC4}. */
 export const SURFACE_GPU_MAP4_VEC4 = 8;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
- * "shade"; layout contract in the module doc). */
-export const SURFACE_GPU_SHADE_BYTES = 144;
+ * "shade"; layout contract in the module doc). 144 through fr-5h5d's fog
+ * tint pair, then 160 with fr-vpbq's `pixelJitter` at 144 — a WGSL
+ * uniform struct rounds to its largest member's 16-byte alignment, so the
+ * vec2f costs a full stride. */
+export const SURFACE_GPU_SHADE_BYTES = 160;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
@@ -1625,6 +1633,21 @@ export interface SurfaceGpuShadeParams {
    * alone — when omitted, matching the GLSL tracers' uFogTintStrength
    * default; misses never read it. */
   fogTintStrength?: number;
+  /**
+   * Sub-pixel sample position (fr-vpbq), packed at offset 144 — where
+   * inside pixel `(px, py)` this frame's ray is aimed. The DEFAULT
+   * `[0.5, 0.5]` is the pixel centre, i.e. every ray derivation's former
+   * literal, so an omitted jitter resolves the pre-supersampling kernel
+   * value for value and every bench agreement leg is unmoved.
+   *
+   * Supersampling is N FRAMES at N offsets averaged by the host, not N
+   * rays inside one frame: fr-biox bounds a frame's raster by the
+   * device's own buffer limits, and multiplying the ray count would hit
+   * that ceiling N times sooner for an image the compute path already
+   * renders progressively. The march-start dither reads the jittered
+   * coordinate too, so the samples do not share a `t` offset.
+   */
+  pixelJitter?: [number, number];
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -1647,6 +1670,9 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setUint32(124, shade.dither ? 1 : 0, true);
   writeVec3(view, 128, shade.fogTint ?? [1, 1, 1]);
   view.setFloat32(140, shade.fogTintStrength ?? 0, true);
+  const jitter = shade.pixelJitter ?? [0.5, 0.5];
+  view.setFloat32(144, jitter[0], true);
+  view.setFloat32(148, jitter[1], true);
   return buf;
 }
 
@@ -1875,6 +1901,7 @@ struct ShadeParams {
   flags: u32,
   fogTint: vec3f,
   fogTintStrength: f32,
+  pixelJitter: vec2f,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -1903,8 +1930,11 @@ fn hash2(p: vec2f) -> f32 {
   // March-arm interpolation points, so the "pose" bench baseline stays
   // byte-identical while "unproject" swaps in the GLSL tracer's ray.
   const marchRd = unproject
-    ? `  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+    ? `  // fr-vpbq: the sub-pixel sample position, shade.pixelJitter, in place
+  // of the pixel centre this line used to spell as 0.5 — its default.
+  let sub = shade.pixelJitter;
+  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
   // The GLSL tracer's unproject (main(): near/far clip points through
   // uInvProjView); params.ro doubles as uCamPos, and the pose basis
   // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
@@ -1925,9 +1955,11 @@ fn hash2(p: vec2f) -> f32 {
   const marchDither = unproject
     ? `
     // Tiny dithered start (main()'s hash line), flag-gated so agreement
-    // runs stay deterministic against the CPU emulator.
+    // runs stay deterministic against the CPU emulator. Fed the JITTERED
+    // coordinate (fr-vpbq) so supersampling's passes do not all share one
+    // start offset — at the default centre this is the shipped input.
     if ((shade.flags & 1u) != 0u) {
-      t += hash2(vec2f(f32(px) + 0.5, f32(py) + 0.5)) *
+      t += hash2(vec2f(f32(px) + sub.x, f32(py) + sub.y)) *
         shade.tracePixelEps * max(t, 1.0);
     }`
     : "";
@@ -4053,7 +4085,14 @@ fn shadeRays(
   }
   let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
+  // fr-vpbq: this pass's sub-pixel sample position, the march entry's own
+  // (default (0.5, 0.5), the pixel centre these lines used to spell out).
+  let sub = shade.pixelJitter;
   // main()'s background gradient at this pixel's vUv.y (pixel center).
+  // Deliberately NOT jittered: the backdrop is a smooth vertical ramp with
+  // nothing to alias, it must agree with the host's own backgroundRows
+  // prefill, and holding it fixed keeps supersampling a no-op wherever the
+  // object is absent.
   let bg = mix(
     shade.bgBottom,
     shade.bgTop,
@@ -4065,8 +4104,8 @@ ${
     // Ground plane (fr-rhn5): the march classified this miss as
     // crossing the floor inside the fade band — unproject the ray (the
     // hit path's exact lines below) and light the analytic crossing.
-    let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
-    let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+    let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
+    let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
     let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
     let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
     let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
@@ -4080,8 +4119,8 @@ ${
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
     return;
   }
-  let ndcX = ((f32(px) + 0.5) / f32(params.rasterWidth)) * 2.0 - 1.0;
-  let ndcY = ((f32(py) + 0.5) / f32(params.rasterHeight)) * 2.0 - 1.0;
+  let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
+  let ndcY = ((f32(py) + sub.y) / f32(params.rasterHeight)) * 2.0 - 1.0;
   // The GLSL tracer's unproject (main(): near/far clip points through
   // uInvProjView); params.ro doubles as uCamPos, and the pose basis
   // right/up/fwd/tanHalf/aspect fields are ignored in this mode.
