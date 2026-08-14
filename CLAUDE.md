@@ -414,8 +414,19 @@ and UI**, so the interesting math is unit-tested without a browser:
     `surface-material.ts`'s `SURFACE_ESCAPE` variant and, since fr-dlxh,
     `surface-de-gpu.ts`'s `core:"escape"` kernel — `ESCAPE_STEP_SCALE`
     is the one marcher-damping definition both the GLSL variant and the
-    WGSL packer import, with `ESCAPE_CHAIN_STEP_SCALE` (0.2) for chains
-    and `escapeStepScale(de)` the one place that picks. Phone-cheap by
+    WGSL packer import, and it stays 0.35 at EVERY chain length, MEASURED
+    rather than assumed: fr-za0n predicted chains would need heavier
+    damping, and both harnesses refute it (the single map's hit-coverage
+    curve is the steepest of eight fixtures, and as a fraction of its own
+    0.05 asymptote 0.35 reaches 96.6% for a chain against 95.7% for the
+    control). Cycling floors `dr` after every link, so no two folds
+    compound between floors and the slack per step is the single map's.
+    Composition in fact BUYS bound quality: bound/damped-step violation
+    rates over a common bailout ball run 13.4%/6.6% for the shipped single
+    map against 4.3%/1.5% (two links) down to 1.5%/0.6% (six). Bailout
+    stays 4 for the same measured reason it always was — raising it at a
+    fixed budget inflates the set rather than revealing it (control fill
+    2.9% → 57.7% → 65.6% at 4/8/16). Phone-cheap by
     construction (~30 branchless folds per link per eval; measured 0.25
     us/eval at one link and 0.27-1.10 across eight chains, the six-link one
     at 0.60 — the n-times budget is a ceiling only a non-escaping orbit
@@ -425,14 +436,21 @@ and UI**, so the interesting math is unit-tested without a browser:
     after EACH link, and a PASS is one full cycle — so
     `ESCAPE_TIME_ITERATIONS`, the preview depth clamp and the GPU's
     `maxDepth` keep meaning "how many times is each link applied". The
-    rejected alternative, CHAINING (all n links inside one pass), was
-    measured into a near-solid ball as links were added — 72.8% of the
+    rejected alternative, CHAINING (all n links inside one pass, i.e. the
+    per-PASS offset — the same fork under the prototype's other name),
+    was measured into a near-solid ball as links were added — 72.8% of the
     bailout ball at six links, the fr-7u8t.8 defect returning — and
     lives on as an executable local in
     `scripts/escape-chain.harness.ts`, the sheet the SHIPPED estimator
     draws (`scripts/hybrid-chain.harness.ts` is the prototype that asked
     the question first, on the cross-family links this gate still
-    refuses). KALEIDOSCOPE is a query-space wedge fold
+    refuses). EMPTY CHAINS ARE REACHABLE inside the gate — a big enough
+    pre-scale escapes everywhere on the first pass and the mode renders a
+    blank frame — so `escapeSetContains` (membership, from the same orbit
+    the estimate reads) and `probeEscapeFill` (a seeded sample of the
+    bailout ball, `0` = "the probe found nothing") exist for a later UI
+    pass to say so; neither is wired into `analyzeEscapeSystem` or
+    `buildEscapeDE`, which stay cheap. KALEIDOSCOPE is a query-space wedge fold
     (`foldQueryIntoSector`), not an orbit operation: `g` is 1-Lipschitz
     and an isometry per sector, the orbit is seeded AND offset by `g(p)`,
     so the set is exactly `g^-1(M)` — dihedral rather than the chaos

@@ -1,13 +1,14 @@
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
-  ESCAPE_CHAIN_STEP_SCALE,
-  ESCAPE_STEP_SCALE,
+  ESCAPE_PROBE_POINTS,
+  ESCAPE_PROBE_SEED,
   ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
-  escapeStepScale,
+  escapeSetContains,
   estimateEscapeDistance,
   foldQueryIntoSector,
+  probeEscapeFill,
 } from "./escape-de";
 import type { EscapeDE } from "./escape-de";
 import { mandelboxClassic, mandelboxCube, mandelboxRings } from "./presets";
@@ -551,16 +552,120 @@ describe("the chain (fr-za0n)", () => {
     const outside: Vec3 = [ESCAPE_TIME_RADIUS + 0.5, 0, 0];
     expect(estimateEscapeDistance(de, outside)).toBe(ESCAPE_TIME_RADIUS + 0.5);
   });
+});
 
-  it("damps a chain's march harder than a single map's", () => {
-    const single = buildEscapeDE([canonicalMandelbox()]);
-    const chain = buildEscapeDE([
-      canonicalMandelbox(),
-      foldMap(1, "boxfold", 1.6),
+describe("escapeSetContains and the emptiness probe (fr-za0n)", () => {
+  const CHAIN: Transform[] = [canonicalMandelbox(), foldMap(1, "boxfold", 1.6)];
+
+  it("answers membership from the SAME orbit the estimate reads", () => {
+    const de = buildEscapeDE([canonicalMandelbox({ position: [0, 0, 0] })]);
+    // The origin is a fixed point of a t = 0 fold, so it never escapes and
+    // the estimate collapses to 0 — the two readers agree at the one point
+    // where the answer is certain by construction.
+    expect(escapeSetContains(de, [0, 0, 0])).toBe(true);
+    expect(estimateEscapeDistance(de, [0, 0, 0])).toBe(0);
+    // Past the bailout the loop never runs, so the point is outside.
+    const far: Vec3 = [ESCAPE_TIME_RADIUS + 0.5, 0, 0];
+    expect(escapeSetContains(de, far)).toBe(false);
+  });
+
+  it("is MONOTONE in the budget — a shorter orbit can only find more members", () => {
+    // The rendered set is the finite-budget one, so membership has to be
+    // read at the budget being rendered. Fewer passes means fewer chances
+    // to prove escape, so the set can only grow.
+    const de = buildEscapeDE(CHAIN);
+    const rng = mulberry32(0xb0d1e5);
+    let shallowOnly = 0;
+    for (let i = 0; i < 2000; i++) {
+      const p: Vec3 = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+      const full = escapeSetContains(de, p);
+      const shallow = escapeSetContains(de, p, 2);
+      expect(!full || shallow, `deep member lost at a shallow budget`).toBe(
+        true,
+      );
+      if (shallow && !full) shallowOnly++;
+    }
+    // And the two budgets really do differ, or the check above is vacuous.
+    expect(shallowOnly).toBeGreaterThan(0);
+  });
+
+  it("cannot be replaced by a threshold on the estimate", () => {
+    // Why this reader exists at all: |v|/dr goes small for a near-boundary
+    // ESCAPER too, whose dr has run away just as far as a member's. Sweep a
+    // grid and find the counterexamples.
+    const de = buildEscapeDE(CHAIN);
+    let smallButOutside = 0;
+    const N = 30;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        for (let k = 0; k < N; k++) {
+          const p: Vec3 = [
+            -4 + (8 * i) / (N - 1),
+            -4 + (8 * j) / (N - 1),
+            -4 + (8 * k) / (N - 1),
+          ];
+          if (estimateEscapeDistance(de, p) < 1e-3 && !escapeSetContains(de, p))
+            smallButOutside++;
+        }
+      }
+    }
+    expect(smallButOutside).toBeGreaterThan(0);
+  });
+
+  it("probes a fill for a chain that renders, and ZERO for one that does not", () => {
+    // The fr-za0n UX landmine, and the reporting that answers it. Both of
+    // these pass the gate; only one of them draws anything.
+    const renders = probeEscapeFill(buildEscapeDE(CHAIN));
+    expect(renders).toBeGreaterThan(0);
+    expect(renders).toBeLessThan(1);
+
+    // A pre-scale of 4 throws |y| far past the fold's range every step, so
+    // every orbit escapes on its first pass and the mode draws nothing.
+    const empty = buildEscapeDE([
+      canonicalMandelbox({ position: [0, 0, 0] }),
+      foldMap(1, "mandelbox", 2, { scale: [4, 4, 4] }),
     ]);
-    expect(escapeStepScale(single)).toBe(ESCAPE_STEP_SCALE);
-    expect(escapeStepScale(chain)).toBe(ESCAPE_CHAIN_STEP_SCALE);
-    expect(ESCAPE_CHAIN_STEP_SCALE).toBeLessThan(ESCAPE_STEP_SCALE);
+    expect(analyzeEscapeSystem([]).status).toBe("ineligible"); // sanity
+    expect(probeEscapeFill(empty)).toBe(0);
+  });
+
+  it("counts MEMBERSHIP, not a threshold on the estimate", () => {
+    // The two criteria do not agree, which is the whole reason the probe
+    // asks the orbit. Sample the same seeded points both ways: a distance
+    // threshold also catches near-boundary ESCAPERS, whose dr has run away
+    // as far as any member's, so it reports a strictly fatter set.
+    const de = buildEscapeDE(CHAIN);
+    const rng = mulberry32(ESCAPE_PROBE_SEED);
+    let byThreshold = 0;
+    for (let i = 0; i < ESCAPE_PROBE_POINTS; i++) {
+      const u = Math.cbrt(rng()) * ESCAPE_TIME_RADIUS;
+      const ct = 2 * rng() - 1;
+      const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+      const ph = 2 * Math.PI * rng();
+      const p: Vec3 = [u * st * Math.cos(ph), u * st * Math.sin(ph), u * ct];
+      if (estimateEscapeDistance(de, p) < 1e-3) byThreshold++;
+    }
+    expect(byThreshold).toBeGreaterThan(0);
+    expect(probeEscapeFill(de)).toBeLessThan(byThreshold / ESCAPE_PROBE_POINTS);
+  });
+
+  it("is deterministic, and honours its sample size", () => {
+    const de = buildEscapeDE(CHAIN);
+    expect(probeEscapeFill(de)).toBe(probeEscapeFill(de));
+    // A different seed is a different sample of the same set: it must land
+    // on a different count (the seed is read, not decorative) while
+    // agreeing in magnitude (it is the same set).
+    const other = probeEscapeFill(de, undefined, 0xdead);
+    expect(other).toBeGreaterThan(0);
+    expect(other).not.toBe(probeEscapeFill(de));
+    expect(Math.abs(other - probeEscapeFill(de))).toBeLessThan(0.02);
+    expect(probeEscapeFill(de, 0)).toBe(0);
+    // `points` is the denominator AND the loop count, so a fill from N
+    // samples is a whole number of them. Powers of two keep that exact.
+    for (const n of [64, 512]) {
+      const fill = probeEscapeFill(de, n);
+      expect(Number.isInteger(fill * n), `${n} samples`).toBe(true);
+    }
   });
 });
 
