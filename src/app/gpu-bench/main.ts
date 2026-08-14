@@ -52,6 +52,13 @@ import {
 } from "../../fractal/color";
 import type { FourDRenderColor } from "../../fractal/color";
 import {
+  analyzeBulbSystem,
+  buildBulbDE,
+  BULB_ITERATIONS,
+  estimateBulbDistance,
+} from "../../fractal/bulb-de";
+import type { BulbDE } from "../../fractal/bulb-de";
+import {
   analyzeEscapeSystem,
   buildEscapeDE,
   ESCAPE_STEP_SCALE,
@@ -112,6 +119,7 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
+  packBulbGpuParams,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -2028,7 +2036,9 @@ interface SurfaceKernelConfig {
    * generator ignores them) and `width` is always the ladder's own 4;
    * "escape" is the forward escape-time loop, where `variant`/`stage2` are
    * likewise inert and `width` is carried only for a readable label (the
-   * generator ignores it too); "affine4" is that ladder ONE DIMENSION UP
+   * generator ignores it too); "bulb" (fr-7u8t.9) is that loop's sibling
+   * one formula over — the forward triplex-power orbit — with the same
+   * inert options for the same reason; "affine4" is that ladder ONE DIMENSION UP
    * behind the view lift (fr-dlxh M3) — same inert options as "affine",
    * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`); "fold4" (fr-rsp6
    * M4) is the fold frontier ONE DIMENSION UP behind the same view lift —
@@ -2036,7 +2046,7 @@ interface SurfaceKernelConfig {
    * by construction, module doc) and `width` is LIVE like "fold"'s, so
    * unlike "affine4" it keeps a real width sweep and its own
    * production/informational split. */
-  core: "fold" | "affine" | "escape" | "affine4" | "fold4";
+  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2045,7 +2055,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine" | "escape" | "affine4" | "fold4";
+  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2102,10 +2112,11 @@ interface SurfaceAgreementRow {
    * doesn't share this layout, and `excluded` below is that leg's own
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
-  /** fr-dlxh escape + affine4 legs, fr-rsp6's fold4 leg, and (phase 2B) the
-   * M5 lens4 leg: queries a pre-hoc stability gate excluded before
-   * computing `failures` — `n - stableCount`. The escape leg's gate is the
-   * f32-vs-f64 orbit ensemble (`compareSurfaceEscapeAgreement`'s doc); the
+  /** fr-dlxh escape + affine4 legs, fr-rsp6's fold4 leg, (phase 2B) the
+   * M5 lens4 leg, and fr-7u8t.9's bulb leg: queries a pre-hoc stability
+   * gate excluded before
+   * computing `failures` — `n - stableCount`. The two FORWARD legs' gate is
+   * the f32-vs-f64 orbit ensemble (`compareSurfaceForwardAgreement`'s doc); the
    * affine4, fold4 AND lens4 legs' is the SAME oracle-continuity classifier
    * ({@link surface4QueryStable} — bisection queries parked on
    * beam-selection discontinuities), evaluated against whichever composed
@@ -2117,16 +2128,19 @@ interface SurfaceAgreementRow {
    * {@link SURFACE_LENS4_EXCLUDED_CAP}'s doc. `undefined` on every 3D
    * fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
-  /** fr-dlxh escape leg only: stable-classified failures POST-HOC
-   * verified as shadow flips (the GPU's value matched a 1..4-ULP
-   * neighbor orbit's fround value — {@link escapeShadowFlipVerified});
-   * excluded from `failures` but capped ({@link SURFACE_ESCAPE_FLIP_CAP}). */
+  /** The FORWARD-orbit legs only (fr-dlxh's escape, fr-7u8t.9's bulb):
+   * stable-classified failures POST-HOC verified as shadow flips (the
+   * GPU's value matched a 1..4-ULP neighbor orbit's fround value —
+   * {@link forwardShadowFlipVerified}); excluded from `failures` but
+   * capped ({@link SURFACE_ESCAPE_FLIP_CAP} /
+   * {@link SURFACE_BULB_FLIP_CAP}). */
   chaoticFlips?: number;
-  /** fr-dlxh escape leg only: the shared escape-core pipeline's compile
-   * time (identical across every escape row — one pipeline serves all four
+  /** The FORWARD-orbit legs only: the shared core pipeline's compile time
+   * (identical across every row of a leg — one pipeline serves all its
    * systems, like the M0 affine leg's). */
   compileMs?: number;
-  /** fr-dlxh escape leg only: this system's own GPU dispatch wall time. */
+  /** The FORWARD-orbit legs only: this system's own GPU dispatch wall
+   * time. */
   gpuMs?: number;
 }
 
@@ -2591,7 +2605,7 @@ const SURFACE_MAX_STEPS_PER_PASS = 32;
 const SURFACE_AFFINE_LADDER_WIDTH = 4;
 
 /** fr-dlxh: how many of the escape eval leg's 700 queries per system the
- * f32-stability gate (`compareSurfaceEscapeAgreement`'s doc) may exclude
+ * f32-stability gate (`compareSurfaceForwardAgreement`'s doc) may exclude
  * before the leg stops trusting its own `failures` count and fails the
  * section outright — 20%. The pin is STRUCTURAL (the classifier must not
  * eat the leg — a 20% exclusion still gates 560 queries), not a
@@ -2603,6 +2617,22 @@ const SURFACE_AFFINE_LADDER_WIDTH = 4;
  * disagreement behind "chaotic orbit," not absorbing expected f32
  * noise. */
 const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
+
+/** fr-7u8t.9: {@link SURFACE_ESCAPE_EXCLUDED_CAP} for the bulb eval leg,
+ * at the same structural 20% of 700. The classifier is the escape leg's
+ * unchanged ({@link forwardQueryStable}) and so is the reason for a cap
+ * — it must not be allowed to eat the leg — but the orbit it brackets is
+ * harsher: a power-8 map multiplies a perturbation by `8r⁷` per step, and
+ * bulb-de.ts measured two f64 implementations of the SAME map disagreeing
+ * about membership on 0.22% of the marching ball. 20% of a
+ * boundary-weighted mix (200 of the 700 queries are bisected ONTO the
+ * boundary) leaves 560 queries gating. */
+const SURFACE_BULB_EXCLUDED_CAP = 140;
+
+/** fr-7u8t.9: {@link SURFACE_ESCAPE_FLIP_CAP} for the bulb leg — same
+ * 1%-of-700 reasoning, same meaning (isolated post-hoc shadow flips are
+ * the chaos tax; dozens are a bug wearing its costume). */
+const SURFACE_BULB_FLIP_CAP = 7;
 
 /** fr-dlxh M3: how many of the affine4 leg's 700 queries per system the
  * oracle-continuity gate ({@link surface4QueryStable}) may exclude before
@@ -3463,6 +3493,80 @@ function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
   return out;
 }
 
+/**
+ * fr-7u8t.9: the bulb eval leg's query mix — {@link escapeQueries}' recipe
+ * RE-BRACKETED, not reused. Every constant there is written for a
+ * radius-4 marching ball (`ESCAPE_TIME_RADIUS` doubles as the escape
+ * mode's bounding radius); the Mandelbulb's marching ball is
+ * `BulbDE.boundingRadius` — around 0.9-1.35, per system — so the fixed
+ * 1.2 seed cube would have covered the WHOLE object and the fixed
+ * `DE < 0.02` shell would have been a band 1.7% of the ball wide instead
+ * of escape's 0.5%. Each bracket below is therefore expressed as a
+ * multiple of `R`, chosen to reproduce escape's own PROPORTIONS:
+ *   - 400 uniform cube points out to `1.2 R` (escape's `1.2 * R`, verbatim);
+ *   - 200 bisected onto the `DE < 0.005 R` near-boundary shell (escape's
+ *     0.02 IS `0.005 * 4`) — the region a distance estimator most needs to
+ *     be right in, and for this object the one the module doc's 0.22%
+ *     membership-disagreement shell lives in;
+ *   - 100 clustered near the ORIGIN, which for the Mandelbrot form is deep
+ *     INSIDE the set (the orbit of `y_0 = t` stays bounded) and is where
+ *     the `ln|y| < 0` clamp and the `dr` floor actually fire. Scaled by
+ *     `R` like the rest: escape's fixed 0.25 half-width would be a
+ *     near-degenerate speck of a ball this size.
+ * 700 total, every component `Math.fround`ed (the kernel only ever sees
+ * f32 query points). The bisection's `a`/`b` convention is escape's own —
+ * see that generator's doc.
+ */
+function bulbQueries(de: BulbDE, seed: number): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const uniformCubePoint = (): Vec3 => [
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformCubePoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateBulbDistance(de, p) < 0.005 * R;
+  for (let i = 0; i < 200; i++) {
+    // The inside seed: a quarter-radius cube about the origin, where the
+    // Mandelbulb is solid for every eligible map.
+    let a: Vec3 = [
+      (rng() - 0.5) * 0.5 * R,
+      (rng() - 0.5) * 0.5 * R,
+      (rng() - 0.5) * 0.5 * R,
+    ];
+    let b = uniformCubePoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5 * R;
+    out.push([
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
 /** The affine4 leg's tolerance/query radius rule: the lens GROWS or shrinks
  * the visible set, so error scales from the set the DE actually describes —
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
@@ -3689,7 +3793,7 @@ function affine4Queries(
  * iteration is chaotic — a single clamp-boundary rounding flip early on can
  * send the whole trajectory somewhere else, and unlike the IFS beam
  * estimators there is no min-of-several-chains to absorb it) from actual
- * kernel arithmetic bugs. See `compareSurfaceEscapeAgreement`'s doc for how
+ * kernel arithmetic bugs. See `compareSurfaceForwardAgreement`'s doc for how
  * the gap between the two oracles is used.
  */
 function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
@@ -3733,7 +3837,96 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
 }
 
 /**
- * fr-dlxh: the ENSEMBLE half of the escape stability classifier. The
+ * fr-7u8t.9: the bench's f32 twin of `estimateBulbDistance` — the SIXTH
+ * and last copy of that formula (oracle, GLSL value, GLSL hit, WGSL
+ * value, WGSL hit, this), written term for term against the oracle with
+ * every intermediate `Math.fround`ed and every association matched
+ * (JS, WGSL and GLSL all evaluate `a * b * c` left to right, so
+ * `128 * z2 * z2 * z2 * z2` is one shape in all four shader/CPU copies).
+ * Its job is the escape twin's: comparing it against the f64 oracle in
+ * isolation, before either touches the GPU, separates f32-vs-f64 ORBIT
+ * divergence from actual kernel arithmetic bugs — and a power-8 orbit
+ * multiplies a perturbation by `8r⁷` per step, so it diverges harder than
+ * the folds' ~8x (bulb-de.ts's closing warning measured two f64
+ * implementations of the SAME map disagreeing about membership on 0.22%
+ * of the ball).
+ */
+function estimateBulbDistanceF32(de: BulbDE, p: Vec3): number {
+  const f = Math.fround;
+  const m = de.m.map(f);
+  const t = de.t.map(f);
+  const sigma = f(de.sigmaMax);
+  const bail = f(de.bailout);
+  const px = f(p[0]);
+  const py = f(p[1]);
+  const pz = f(p[2]);
+  // y_0 = M p + t.
+  const cx = f(f(f(f(m[0] * px) + f(m[1] * py)) + f(m[2] * pz)) + t[0]);
+  const cy = f(f(f(f(m[3] * px) + f(m[4] * py)) + f(m[5] * pz)) + t[1]);
+  const cz = f(f(f(f(m[6] * px) + f(m[7] * py)) + f(m[8] * pz)) + t[2]);
+  let yx = cx;
+  let yy = cy;
+  let yz = cz;
+  let dr = sigma;
+  let r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
+  let r = f(Math.sqrt(r2));
+  for (let i = 0; i < BULB_ITERATIONS && r <= bail; i++) {
+    // 8 * (r2*r2*r2*r) * sigma * dr + sigma.
+    const r7 = f(f(f(r2 * r2) * r2) * r);
+    dr = f(f(f(f(8 * r7) * sigma) * dr) + sigma);
+    // triplexPow8, inlined exactly as the oracle inlines it.
+    const a = f(f(yx * yx) + f(yy * yy));
+    const z2 = f(yz * yz);
+    const r4 = f(r2 * r2);
+    const vz = f(
+      f(
+        f(
+          f(
+            f(f(f(f(128 * z2) * z2) * z2) * z2) -
+              f(f(f(f(256 * z2) * z2) * z2) * r2),
+          ) + f(f(f(160 * z2) * z2) * r4),
+        ) - f(f(f(32 * z2) * r4) * r2),
+      ) + f(r4 * r4),
+    );
+    const s = f(
+      f(
+        f(
+          f(f(f(f(128 * z2) * z2) * z2) * yz) -
+            f(f(f(f(192 * z2) * z2) * yz) * r2),
+        ) + f(f(f(80 * z2) * yz) * r4),
+      ) - f(f(f(8 * yz) * r4) * r2),
+    );
+    const rho = f(Math.sqrt(a));
+    const inv = rho > 0 ? f(1 / rho) : 0;
+    const u1 = f(yx * inv);
+    const v1 = f(yy * inv);
+    const u2 = f(f(u1 * u1) - f(v1 * v1));
+    const v2 = f(f(2 * u1) * v1);
+    const u4 = f(f(u2 * u2) - f(v2 * v2));
+    const v4 = f(f(2 * u2) * v2);
+    const u8 = f(f(u4 * u4) - f(v4 * v4));
+    const v8 = f(f(2 * u4) * v4);
+    const vx = f(f(rho * s) * u8);
+    const vy = f(f(rho * s) * v8);
+    yx = f(f(f(f(m[0] * vx) + f(m[1] * vy)) + f(m[2] * vz)) + cx);
+    yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + cy);
+    yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + cz);
+    r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
+    r = f(Math.sqrt(r2));
+  }
+  // The ln|y| clamp below 1 — a converging orbit reaches it, and a
+  // negative estimate would march the tracer backwards.
+  return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+}
+
+/**
+ * fr-dlxh: the ENSEMBLE half of the FORWARD-orbit stability classifier
+ * (fr-7u8t.9 generalized it from the escape leg's own by taking the f32
+ * evaluator as an argument — the mechanism is formula-agnostic, so the
+ * bulb leg reuses this one rather than growing a fourth copy of the
+ * ULP-neighbor walk; every word below was measured on the escape orbit
+ * and applies unchanged to the power orbit, whose noise growth is `8r⁷`
+ * per step rather than the folds' ~8x). The
  * fround twin alone tests ONE f32 realization, and that is measurably
  * not enough: the first real-Iris `--display=:0` run flipped 6 queries
  * the fround-only classifier had called stable (maxAbs 4.1e-1 on
@@ -3753,13 +3946,13 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
  * fround orbit agree with the f64 oracle — an orbit that survives all
  * seven is far from the dichotomy under any faithful f32's noise.
  */
-function escapeQueryStable(
-  de: EscapeDE,
+function forwardQueryStable(
+  evalF32: (p: Vec3) => number,
   q: Vec3,
   cpu64: number,
   tol: number,
 ): boolean {
-  if (Math.abs(estimateEscapeDistanceF32(de, q) - cpu64) > tol / 2) {
+  if (Math.abs(evalF32(q) - cpu64) > tol / 2) {
     return false;
   }
   for (let axis = 0; axis < 3; axis++) {
@@ -3768,7 +3961,7 @@ function escapeQueryStable(
       const base = Math.fround(p[axis]);
       const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38);
       p[axis] = Math.fround(base + dir * step);
-      if (Math.abs(estimateEscapeDistanceF32(de, p) - cpu64) > tol / 2) {
+      if (Math.abs(evalF32(p) - cpu64) > tol / 2) {
         return false;
       }
     }
@@ -4420,26 +4613,30 @@ interface SurfaceSystemState {
   };
 }
 
-/** One escape-time system's frozen state (fr-dlxh): the forward-map DE, its
- * own dedicated query set (`escapeQueries`, not `surfaceQueries` — a single
- * expanding map has no attractor to scatter a chaos-game cloud onto), and
- * the f64/f32 CPU-oracle pair the eval leg's stability gate is built from
- * (`compareSurfaceEscapeAgreement`'s doc). No `buffers.maps`: the escape
- * kernel core never declares binding 1 (surface-de-gpu.ts module doc), so
- * this state — unlike {@link SurfaceSystemState} — has no maps buffer to
- * carry. */
-interface SurfaceEscapeSystemState {
+/** One FORWARD-orbit system's frozen state (fr-dlxh's escape; fr-7u8t.9
+ * made it generic for the bulb, which differs only in the DE type): the
+ * forward-map DE, its own dedicated query set (`escapeQueries` /
+ * `bulbQueries`, not `surfaceQueries` — a single expanding map has no
+ * attractor to scatter a chaos-game cloud onto), and the f64/f32
+ * CPU-oracle pair the eval leg's stability gate is built from
+ * (`compareSurfaceForwardAgreement`'s doc). No `buffers.maps`: neither
+ * forward kernel core declares binding 1 (surface-de-gpu.ts module doc),
+ * so this state — unlike {@link SurfaceSystemState} — has no maps buffer
+ * to carry. */
+interface SurfaceForwardSystemState<TDe> {
   name: string;
-  de: EscapeDE;
+  de: TDe;
   queries: Vec3[];
-  /** `estimateEscapeDistance` (f64) — the CPU oracle. */
+  /** `estimateEscapeDistance` / `estimateBulbDistance` (f64) — the CPU
+   * oracle the kernel is pinned against. */
   cpu64: number[];
-  /** `estimateEscapeDistanceF32` — the bench's fround twin, evaluated at
-   * the SAME points, so any gap against `cpu64` isolates f32-vs-f64 orbit
+  /** The bench's fround twin of that oracle, evaluated at the SAME
+   * points, so any gap against `cpu64` isolates f32-vs-f64 orbit
    * divergence from kernel arithmetic (see its doc). */
   cpu32: number[];
-  /** Per-query stability: `|cpu32 − cpu64| <= tol/2`. Only stable queries
-   * enter the GPU agreement gate — see `compareSurfaceEscapeAgreement`. */
+  /** Per-query stability: the seven-orbit ensemble verdict
+   * ({@link forwardQueryStable}). Only stable queries enter the GPU
+   * agreement gate — see `compareSurfaceForwardAgreement`. */
   stable: boolean[];
   buffers?: {
     params: GPUBuffer;
@@ -4449,6 +4646,9 @@ interface SurfaceEscapeSystemState {
     bindGroup: GPUBindGroup;
   };
 }
+
+type SurfaceEscapeSystemState = SurfaceForwardSystemState<EscapeDE>;
+type SurfaceBulbSystemState = SurfaceForwardSystemState<BulbDE>;
 
 /** One affine4 (4D) agreement system's frozen state (fr-dlxh M3): the built
  * `SurfaceDE4`, the frozen per-system view (rotor + w0 + sliceHalfW — the
@@ -4514,16 +4714,17 @@ function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
   });
 }
 
-/** The escape core's 3-binding interface (surface-de-gpu.ts's contract): 0 =
+/** The FORWARD cores' 3-binding interface (surface-de-gpu.ts's contract;
+ * fr-dlxh's escape and fr-7u8t.9's bulb share it exactly): 0 =
  * params uniform, 2 = input storage read, 3 = output storage read_write —
- * binding 1 (maps) is not declared by the escape kernel (its one forward
+ * binding 1 (maps) is not declared by either kernel (their one forward
  * map rides the params uniform's 208..271 variant block instead), so it is
  * not declared here either. A bind group built against this layout must
  * skip binding 1 too, or `createBindGroup` throws (extra entry, no matching
  * layout slot). */
-function surfaceEscapeBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
+function surfaceForwardBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
   return device.createBindGroupLayout({
-    label: "surface-de escape bind group layout",
+    label: "surface-de forward bind group layout",
     entries: [
       {
         binding: 0,
@@ -4663,18 +4864,20 @@ function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
   sys.buffers = undefined;
 }
 
-/** {@link ensureSurfaceEvalBuffers}'s escape-core twin (fr-dlxh): the same
- * lazy-create-once contract, minus the maps buffer/binding — the escape
- * kernel's one forward map rides `packEscapeGpuParams`' params uniform,
- * never a storage binding (see {@link surfaceEscapeBindGroupLayout}). */
-async function ensureSurfaceEscapeEvalBuffers(
+/** {@link ensureSurfaceEvalBuffers}'s FORWARD-core twin (fr-dlxh; made
+ * core-agnostic by fr-7u8t.9, which passes the packed params in rather
+ * than naming a packer): the same lazy-create-once contract, minus the
+ * maps buffer/binding — a forward kernel's one map rides the params
+ * uniform's variant block, never a storage binding (see
+ * {@link surfaceForwardBindGroupLayout}). */
+async function ensureSurfaceForwardEvalBuffers<TDe>(
   device: GPUDevice,
   layout: GPUBindGroupLayout,
-  sys: SurfaceEscapeSystemState,
-): Promise<NonNullable<SurfaceEscapeSystemState["buffers"]>> {
+  sys: SurfaceForwardSystemState<TDe>,
+  paramsData: ArrayBuffer,
+): Promise<NonNullable<SurfaceForwardSystemState<TDe>["buffers"]>> {
   if (sys.buffers) return sys.buffers;
   const n = sys.queries.length;
-  const paramsData = packEscapeGpuParams(sys.de, { itemCount: n, cutoff: 0 });
   const inputData = new Float32Array(n * 4);
   sys.queries.forEach((q, i) => {
     inputData[i * 4] = q[0];
@@ -4683,32 +4886,32 @@ async function ensureSurfaceEscapeEvalBuffers(
   });
   const params = await createSurfaceBuffer(
     device,
-    `surface-de escape params ${sys.name}`,
+    `surface-de forward params ${sys.name}`,
     paramsData.byteLength,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
   device.queue.writeBuffer(params, 0, paramsData);
   const input = await createSurfaceBuffer(
     device,
-    `surface-de escape queries ${sys.name}`,
+    `surface-de forward queries ${sys.name}`,
     inputData.byteLength,
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   );
   device.queue.writeBuffer(input, 0, inputData);
   const output = await createSurfaceBuffer(
     device,
-    `surface-de escape results ${sys.name}`,
+    `surface-de forward results ${sys.name}`,
     n * 4,
     GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
   );
   const staging = await createSurfaceBuffer(
     device,
-    `surface-de escape staging ${sys.name}`,
+    `surface-de forward staging ${sys.name}`,
     n * 4,
     GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
   );
   const bindGroup = device.createBindGroup({
-    label: `surface-de escape bind group ${sys.name}`,
+    label: `surface-de forward bind group ${sys.name}`,
     layout,
     entries: [
       { binding: 0, resource: { buffer: params } },
@@ -4720,7 +4923,9 @@ async function ensureSurfaceEscapeEvalBuffers(
   return sys.buffers;
 }
 
-function destroySurfaceEscapeEvalBuffers(sys: SurfaceEscapeSystemState): void {
+function destroySurfaceForwardEvalBuffers<TDe>(
+  sys: SurfaceForwardSystemState<TDe>,
+): void {
   if (!sys.buffers) return;
   sys.buffers.params.destroy();
   sys.buffers.input.destroy();
@@ -4852,7 +5057,7 @@ async function runSurfaceEvalDispatch(
 }
 
 /** The standard surface eval tolerance — `compareSurfaceAgreement`'s formula,
- * factored out so its escape-leg twin ({@link compareSurfaceEscapeAgreement})
+ * factored out so its escape-leg twin ({@link compareSurfaceForwardAgreement})
  * uses the IDENTICAL bound rather than a second copy that could drift. */
 function surfaceEvalTol(cpu: number, R: number): number {
   return Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
@@ -5148,7 +5353,10 @@ function compareSurfaceAgreement(
 }
 
 /**
- * {@link compareSurfaceAgreement}'s escape-leg twin (fr-dlxh). A forward
+ * {@link compareSurfaceAgreement}'s FORWARD-leg twin (fr-dlxh's escape;
+ * fr-7u8t.9 parameterized it on the f32 evaluator and the tolerance
+ * radius so the bulb leg shares the identical error math rather than a
+ * second copy that could drift). A forward
  * escape-time orbit is CHAOTIC — with no beam-of-several-chains to absorb a
  * clamp-boundary rounding flip the way the IFS beam estimators do, an f32
  * trajectory can diverge from its f64 twin long before either orbit
@@ -5161,8 +5369,10 @@ function compareSurfaceAgreement(
  * that fraction (never silently loses its teeth) by failing the section
  * outright if too many queries end up excluded. */
 /**
- * fr-dlxh: the eval leg's POST-HOC flip verification — fr-7tl3's
- * per-mismatch discipline lifted from the march legs. A stable-classified
+ * fr-dlxh: the forward-orbit eval legs' POST-HOC flip verification —
+ * fr-7tl3's per-mismatch discipline lifted from the march legs, and
+ * (fr-7u8t.9) evaluator-parameterized beside its ensemble twin above, so
+ * escape and bulb share one definition. A stable-classified
  * query can still fail when the GPU's f32 rounding seeds (FMA
  * contraction, reciprocal rounding) push a marginal orbit across the
  * escape dichotomy in a direction none of the classifier's seven fround
@@ -5179,8 +5389,8 @@ function compareSurfaceAgreement(
  * masquerading as chaos would blow past both the cap and the stable
  * rows' fail=0 gate long before it could hide here.
  */
-function escapeShadowFlipVerified(
-  de: EscapeDE,
+function forwardShadowFlipVerified(
+  evalF32: (p: Vec3) => number,
   q: Vec3,
   gpuValue: number,
   tol: number,
@@ -5192,7 +5402,7 @@ function escapeShadowFlipVerified(
         const base = Math.fround(p[axis]);
         const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38) * ulps;
         p[axis] = Math.fround(base + dir * step);
-        if (Math.abs(estimateEscapeDistanceF32(de, p) - gpuValue) <= tol) {
+        if (Math.abs(evalF32(p) - gpuValue) <= tol) {
           return true;
         }
       }
@@ -5206,14 +5416,15 @@ function escapeShadowFlipVerified(
  * a bug wearing its costume. Measured on real Iris: 2/700. */
 const SURFACE_ESCAPE_FLIP_CAP = 7;
 
-function compareSurfaceEscapeAgreement(
-  sys: SurfaceEscapeSystemState,
+function compareSurfaceForwardAgreement<TDe>(
+  sys: SurfaceForwardSystemState<TDe>,
+  R: number,
+  evalF32: (p: Vec3) => number,
   cfg: SurfaceKernelConfig,
   gpu: Float32Array,
   compileMs: number,
   gpuMs: number,
 ): SurfaceAgreementRow {
-  const R = sys.de.boundingRadius;
   const absErrs: number[] = [];
   let stableCount = 0;
   let maxAbsErr = 0;
@@ -5232,7 +5443,7 @@ function compareSurfaceEscapeAgreement(
     const tol = surfaceEvalTol(cpu, R);
     if (
       err > tol &&
-      escapeShadowFlipVerified(sys.de, sys.queries[i], gpu[i], tol)
+      forwardShadowFlipVerified(evalF32, sys.queries[i], gpu[i], tol)
     ) {
       // A verified shadow flip: the GPU's value IS a neighboring orbit's
       // value — excluded from the error statistics like the pre-hoc
@@ -5267,7 +5478,7 @@ function compareSurfaceEscapeAgreement(
     maxAbsErr,
     maxRelErr,
     p99AbsErr,
-    // Escape rows always gate, like affine: the forward loop has no width
+    // Forward-orbit rows always gate, like affine: the loop has no width
     // sweep, so there is no narrower-than-production row to demote.
     gating: true,
     failures,
@@ -5275,8 +5486,8 @@ function compareSurfaceEscapeAgreement(
     minGpuMinusCpu: Number.isFinite(minGpuMinusCpu) ? minGpuMinusCpu : 0,
     failuresOver,
     // Not meaningful here — surfaceQueries' jittered/uniform/exact layout
-    // doesn't describe escapeQueries' uniform/boundary/cluster mix. This
-    // leg's own query-mix diagnostic is `excluded` below.
+    // doesn't describe escapeQueries'/bulbQueries' uniform/boundary/cluster
+    // mix. These legs' own query-mix diagnostic is `excluded` below.
     failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
     excluded: sys.cpu64.length - stableCount,
     chaoticFlips,
@@ -8146,14 +8357,135 @@ async function runSurfaceDeSection(
         const cpu64 = queries.map((q) => estimateEscapeDistance(de, q));
         const cpu32 = queries.map((q) => estimateEscapeDistanceF32(de, q));
         const R = de.boundingRadius;
-        // The f32-stability gate (compareSurfaceEscapeAgreement's doc):
+        // The f32-stability gate (compareSurfaceForwardAgreement's doc):
         // only queries the ENSEMBLE classifier (escapeQueryStable — the
         // fround twin at the query plus its six one-ULP neighbors, all
         // agreeing with the f64 oracle) enter the GPU comparison below.
         const stable = cpu64.map((c64, i) =>
-          escapeQueryStable(de, queries[i], c64, surfaceEvalTol(c64, R)),
+          forwardQueryStable(
+            (q) => estimateEscapeDistanceF32(de, q),
+            queries[i],
+            c64,
+            surfaceEvalTol(c64, R),
+          ),
         );
         escapeSystems.push({
+          name: def.name,
+          de,
+          queries,
+          cpu64,
+          cpu32,
+          stable,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
+  // ----- Mandelbulb systems (fr-7u8t.9): the escape gate's SIBLING -----
+  // `analyzeBulbSystem` admits exactly one shape — a lone pure triplex
+  // power at weight 1, flat, non-singular, no final, no kaleidoscope — and
+  // both `buildSurfaceDE` and `analyzeEscapeSystem` refuse it, so like the
+  // escape systems these carry their own defs, query generator and leg.
+  // FOUR systems, and the third is the load-bearing one: `dr` seeds at
+  // `sigma_max(M)` and its recurrence's trailing term is `+ sigma_max(M)`,
+  // so on an IDENTITY or ROTATION map (sigmaMax = 1) dropping either term
+  // is a BIT-EXACT no-op that passes the whole suite — the mutation
+  // fr-7u8t.4 shipped undetected one object over. `bulbScaled` is the
+  // uniformly scaled fixture (s = 1.3 > 1) that makes both visible;
+  // `bulbRotAniso` additionally separates sigmaMax from sigmaMin (the
+  // escape radius reads min, the derivative reads max) under an off-axis
+  // M, the deliberately-worst archetype this family's `escMandelboxRot`
+  // plays one object over.
+  const bulbSystemDefs: {
+    name: string;
+    transforms: Transform[];
+    seed: number;
+  }[] = [
+    {
+      name: "bulbClassic",
+      seed: 601,
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
+    {
+      name: "bulbOffset",
+      seed: 602,
+      transforms: [
+        {
+          id: 0,
+          position: [0.35, -0.2, 0.15],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
+    {
+      name: "bulbScaled",
+      seed: 603,
+      transforms: [
+        {
+          id: 0,
+          position: [0.12, -0.05, 0.08],
+          rotation: [0, 0, 0],
+          scale: [1.3, 1.3, 1.3],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
+    {
+      name: "bulbRotAniso",
+      seed: 604,
+      transforms: [
+        {
+          id: 0,
+          position: [0.2, -0.15, 0.1],
+          rotation: [0.3, 0.2, 0.5],
+          scale: [1.15, 0.85, 1],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
+  ];
+  const bulbSystems: SurfaceBulbSystemState[] = [];
+  for (const def of bulbSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface bulb CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const eligibility = analyzeBulbSystem(def.transforms);
+      if (eligibility.status === "ineligible") {
+        results.notes.push(
+          `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildBulbDE(def.transforms);
+        const queries = bulbQueries(de, def.seed);
+        const cpu64 = queries.map((q) => estimateBulbDistance(de, q));
+        const cpu32 = queries.map((q) => estimateBulbDistanceF32(de, q));
+        const R = de.boundingRadius;
+        // The identical seven-orbit ensemble gate the escape leg uses —
+        // the fround twin at the query plus its six one-ULP neighbors,
+        // all agreeing with the f64 oracle.
+        const stable = cpu64.map((c64, i) =>
+          forwardQueryStable(
+            (q) => estimateBulbDistanceF32(de, q),
+            queries[i],
+            c64,
+            surfaceEvalTol(c64, R),
+          ),
+        );
+        bulbSystems.push({
           name: def.name,
           de,
           queries,
@@ -8708,6 +9040,10 @@ async function runSurfaceDeSection(
   // `results.agreement`) because an over-wide exclusion is a red flag even
   // when the surviving `failures` count itself is 0.
   let escapeGateFail = false;
+  // fr-7u8t.9: the bulb eval leg's analog of escapeGateFail — same two
+  // caps (SURFACE_BULB_EXCLUDED_CAP for the pre-hoc ensemble exclusions,
+  // SURFACE_BULB_FLIP_CAP for the post-hoc verified shadow flips).
+  let bulbGateFail = false;
   // fr-dlxh M3: the affine4 leg's analog — set when the oracle-continuity
   // gate excludes more than SURFACE_AFFINE4_EXCLUDED_CAP of a system's
   // queries, for exactly the reason above.
@@ -8739,7 +9075,9 @@ async function runSurfaceDeSection(
         ? `affine4-ladder w${cfg.width} wg${cfg.wg}`
         : cfg.core === "escape"
           ? `escape-forward wg${cfg.wg}`
-          : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+          : cfg.core === "bulb"
+            ? `bulb-forward wg${cfg.wg}`
+            : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
   const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
     cfg.variant === "shared"
       ? surfaceGpuWorkgroupBytes({
@@ -9101,7 +9439,7 @@ async function runSurfaceDeSection(
       const label = configLabel(escapeEvalConfig);
       status(`agreement: compiling ${label}…`);
       activity.setState("gpu", `Surface DE agreement — ${label}`);
-      const escapeLayout = surfaceEscapeBindGroupLayout(device);
+      const escapeLayout = surfaceForwardBindGroupLayout(device);
       const escapePipelineLayout = device.createPipelineLayout({
         label: "surface-de escape pipeline layout",
         bindGroupLayouts: [escapeLayout],
@@ -9133,7 +9471,15 @@ async function runSurfaceDeSection(
         const pipeline = escapePipeline;
         for (const sys of escapeSystems) {
           status(`agreement: ${label} × ${sys.name}…`);
-          await ensureSurfaceEscapeEvalBuffers(device, escapeLayout, sys);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            escapeLayout,
+            sys,
+            packEscapeGpuParams(sys.de, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+          );
           const t0 = performance.now();
           const gpu = await runSurfaceEvalDispatch(
             device,
@@ -9142,8 +9488,10 @@ async function runSurfaceDeSection(
             escapeEvalConfig.wg,
           );
           const gpuMs = performance.now() - t0;
-          const row = compareSurfaceEscapeAgreement(
+          const row = compareSurfaceForwardAgreement(
             sys,
+            sys.de.boundingRadius,
+            (q) => estimateEscapeDistanceF32(sys.de, q),
             escapeEvalConfig,
             gpu,
             escapeCompileMs,
@@ -9156,7 +9504,7 @@ async function runSurfaceDeSection(
             results.notes.push(
               `escape agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
                 `queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP}) from the ` +
-                "f32-stability gate — see compareSurfaceEscapeAgreement's doc",
+                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
             );
           }
           const flips = row.chaoticFlips ?? 0;
@@ -9176,6 +9524,115 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M2 escape agreement leg");
+
+    // ----- M6 (fr-7u8t.9): the BULB core's agreement leg — GATING -----
+    // The escape leg's exact shape one formula over: `bulbSystems` is the
+    // only source (no other gate admits a pure triplex power), one
+    // pipeline serves every system (no width/variant/stage2 sweep — all
+    // inert), and the core declares no maps binding, so it borrows the
+    // escape leg's 3-binding layout and forward buffers helper. The gate
+    // is the same two-layer chaotic-orbit discipline: pre-hoc, only
+    // ensemble-stable queries enter (`forwardQueryStable`, capped by
+    // SURFACE_BULB_EXCLUDED_CAP); post-hoc, a residual failure is
+    // absolved only if some 1..4-ULP neighbor orbit reproduces the GPU's
+    // value (`forwardShadowFlipVerified`, capped by
+    // SURFACE_BULB_FLIP_CAP).
+    if (bulbSystems.length > 0) {
+      const bulbEvalConfig: SurfaceKernelConfig = {
+        core: "bulb",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(bulbEvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const bulbLayout = surfaceForwardBindGroupLayout(device);
+      const bulbPipelineLayout = device.createPipelineLayout({
+        label: "surface-de bulb pipeline layout",
+        bindGroupLayouts: [bulbLayout],
+      });
+      let bulbPipeline: GPUComputePipeline | null = null;
+      let bulbCompileMs = 0;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "bulb",
+          width: bulbEvalConfig.width,
+          workgroupSize: bulbEvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: bulbPipeline, compileMs: bulbCompileMs } =
+          await buildSurfacePipeline(
+            device,
+            bulbPipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (bulbPipeline !== null) {
+        const pipeline = bulbPipeline;
+        for (const sys of bulbSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            bulbLayout,
+            sys,
+            packBulbGpuParams(sys.de, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            bulbEvalConfig.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            sys.de.boundingRadius,
+            (q) => estimateBulbDistanceF32(sys.de, q),
+            bulbEvalConfig,
+            gpu,
+            bulbCompileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          const excluded = row.excluded ?? 0;
+          if (excluded > SURFACE_BULB_EXCLUDED_CAP) {
+            bulbGateFail = true;
+            results.notes.push(
+              `bulb agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                `queries (> ${SURFACE_BULB_EXCLUDED_CAP}) from the ` +
+                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
+            );
+          }
+          const flips = row.chaoticFlips ?? 0;
+          if (flips > SURFACE_BULB_FLIP_CAP) {
+            bulbGateFail = true;
+            results.notes.push(
+              `bulb agreement ${sys.name}: ${flips} verified chaotic ` +
+                `flips (> ${SURFACE_BULB_FLIP_CAP}) — a systematic ` +
+                "disagreement is wearing chaos's costume; failing the leg",
+            );
+          }
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the M6 bulb agreement leg");
 
     // ----- M3 (fr-dlxh): the AFFINE4 core's agreement leg — GATING -----
     // The 4D refined ladder behind the view lift — `estimateDistance4Refined`
@@ -10157,6 +10614,17 @@ async function runSurfaceDeSection(
       // escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
       // maps buffer). Same gates, plus the strided CPU sanity march's
       // hit-rate band on real hardware (see the leg's design comment).
+      //
+      // NO BULB TWIN, deliberately (fr-7u8t.9). This leg drives the
+      // PRODUCTION `SurfaceComputeRenderer`, whose target union has no
+      // `{ kind: "bulb" }` arm — adding one is the routing work fr-tdin
+      // owns, not this bead's, and a frame leg written against a renderer
+      // path that does not exist yet would pin nothing. What the leg
+      // actually buys is also already bought here: the march/shade ENTRY
+      // text is shared across every core (test-pinned) and the bulb DE is
+      // eval-pinned by M6 above, which is exactly the argument the escape
+      // frame leg's own doc makes for checking hit RATES instead of
+      // pixels. fr-tdin should add the twin when it adds the target.
       const escSys = escapeSystems.find((s) => s.name === "escMandelbox");
       if (!escSys) {
         results.computeFrameEscape = {
@@ -10530,6 +10998,7 @@ async function runSurfaceDeSection(
       unprojFailed ||
       frameFailed ||
       escapeGateFail ||
+      bulbGateFail ||
       affine4GateFail ||
       fold4GateFail ||
       fold4SlabExtFailed ||
@@ -10550,17 +11019,19 @@ async function runSurfaceDeSection(
                 ? "compute-frame (app path) failure — see computeFrame/notes"
                 : escapeGateFail
                   ? "escape agreement leg excluded too many queries from its f32-stability gate — see notes"
-                  : affine4GateFail
-                    ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                    : fold4GateFail
-                      ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                      : fold4SlabExtFailed
-                        ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
-                        : lens4GateFail
-                          ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                          : lens4PackGuardFailed
-                            ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
-                            : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                  : bulbGateFail
+                    ? "bulb agreement leg excluded too many queries from its f32-stability gate — see notes"
+                    : affine4GateFail
+                      ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                      : fold4GateFail
+                        ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                        : fold4SlabExtFailed
+                          ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
+                          : lens4GateFail
+                            ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                            : lens4PackGuardFailed
+                              ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
+                              : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -10589,7 +11060,8 @@ async function runSurfaceDeSection(
   } finally {
     canary?.destroy();
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
-    for (const sys of escapeSystems) destroySurfaceEscapeEvalBuffers(sys);
+    for (const sys of escapeSystems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of bulbSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4AffineSystems) destroySurface4EvalBuffers(sys);

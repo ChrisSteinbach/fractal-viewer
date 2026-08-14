@@ -1,4 +1,5 @@
 import {
+  packBulbGpuParams,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -37,6 +38,7 @@ import type {
   SurfaceGpuPose,
   SurfaceGpuShadeParams,
 } from "./surface-de-gpu";
+import { buildBulbDE, BULB_ITERATIONS, BULB_STEP_SCALE } from "./bulb-de";
 import {
   buildEscapeDE,
   ESCAPE_STEP_SCALE,
@@ -3593,5 +3595,342 @@ describe("packSurfaceGpuMaps4 (fr-dlxh 4D; fr-rsp6 phase 2A lanes)", () => {
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
     expect(out.length).toBe(stride);
     expect(Array.from(out)).toEqual(new Array(stride).fill(0));
+  });
+});
+
+/** The textbook Mandelbulb map — a lone pure triplex power at the
+ * identity affine part, which is what `analyzeBulbSystem` admits and what
+ * a preset would ship. */
+function canonicalBulb(): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    variations: [{ type: "bulb", weight: 1 }],
+  };
+}
+
+/** The same map uniformly SCALED (and rotated, and offset), so
+ * `sigmaMax` is 1.3 rather than 1 and the two variant-block scalars are
+ * distinguishable from each other and from a dropped term. An
+ * identity-or-rotation fixture cannot see either of the estimator's
+ * `sigma_max(M)` terms — dropping them there is a bit-exact no-op, the
+ * mutation fr-7u8t.4 shipped undetected one object over. */
+function scaledBulb(): Transform {
+  return {
+    id: 0,
+    position: [0.12, -0.05, 0.08],
+    rotation: [0.3, 0.2, -0.1],
+    scale: [1.3, 1.3, 1.3],
+    variations: [{ type: "bulb", weight: 1 }],
+  };
+}
+
+describe("packBulbGpuParams (fr-7u8t.9)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size every other 3D packer uses", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    const buf = packBulbGpuParams(de, { itemCount: 1 });
+    expect(buf).toBeInstanceOf(ArrayBuffer);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
+  });
+
+  it("packs the frozen scalar offsets: zero boundCenter, the QUERY-space marching ball as bounding/visible radius, the dead 2R escapeRadius, BULB_STEP_SCALE, and symmetry pinned off", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    const view = new DataView(packBulbGpuParams(de, { itemCount: 1 }));
+
+    expect(view.getFloat32(0, true)).toBe(0);
+    expect(view.getFloat32(4, true)).toBe(0);
+    expect(view.getFloat32(8, true)).toBe(0);
+    expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
+    expect(view.getFloat32(16, true)).toBe(Math.fround(de.boundingRadius * 2));
+    expect(view.getFloat32(20, true)).toBe(Math.fround(BULB_STEP_SCALE));
+    expect(view.getFloat32(24, true)).toBe(Math.fround(de.boundingRadius));
+    expect(view.getFloat32(28, true)).toBe(1); // slowestSigma
+    expect(view.getFloat32(32, true)).toBe(1); // stepCos
+    expect(view.getFloat32(36, true)).toBe(0); // stepSin
+    expect(view.getUint32(40, true)).toBe(1); // symOrder
+    expect(view.getUint32(44, true)).toBe(1); // symPlane
+    expect(view.getUint32(48, true)).toBe(1); // mapCount
+
+    // The ONE place this wire differs from the escape packer's: there the
+    // orbit's bailout ball WAS the marching ball, here the two are
+    // different numbers and only the marching one may reach offset 12.
+    expect(de.bailout).toBeGreaterThan(de.boundingRadius * 2);
+    expect(view.getFloat32(12, true)).not.toBe(Math.fround(de.bailout));
+  });
+
+  it("packs maxDepth at offset 52 as BULB_ITERATIONS by default, overridden by run.maxDepth (the preview clamp door)", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    const def = new DataView(packBulbGpuParams(de, { itemCount: 1 }));
+    expect(def.getUint32(52, true)).toBe(BULB_ITERATIONS);
+
+    const clamped = new DataView(
+      packBulbGpuParams(de, { itemCount: 1, maxDepth: 8 }),
+    );
+    expect(clamped.getUint32(52, true)).toBe(8);
+  });
+
+  it("defaults offset 204 (fogDensity) to 1 and round-trips a non-default", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    expect(
+      new DataView(packBulbGpuParams(de, { itemCount: 1 })).getFloat32(
+        204,
+        true,
+      ),
+    ).toBe(1);
+    expect(
+      new DataView(
+        packBulbGpuParams(de, { itemCount: 1, fogDensity: 0.35 }),
+      ).getFloat32(204, true),
+    ).toBe(Math.fround(0.35));
+  });
+
+  it("packs footprint at offset 68 as 0 even when run.footprint is passed — a forward loop has no cone-footprint depth cap", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    expect(
+      new DataView(
+        packBulbGpuParams(de, { itemCount: 1, footprint: 0.5 }),
+      ).getFloat32(68, true),
+    ).toBe(0);
+  });
+
+  it("packs hitFloorEps at offset 80 off the marching radius, default and overridden", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    expect(
+      new DataView(packBulbGpuParams(de, { itemCount: 1 })).getFloat32(
+        80,
+        true,
+      ),
+    ).toBe(Math.fround(de.boundingRadius * SURFACE_GPU_HIT_FLOOR));
+    expect(
+      new DataView(
+        packBulbGpuParams(de, { itemCount: 1, hitFloor: 0.03 }),
+      ).getFloat32(80, true),
+    ).toBe(Math.fround(de.boundingRadius * 0.03));
+  });
+
+  it("packs the final transform as identity/1 at 96..156 — the bulb gate refuses final transforms, so nothing is ever eligible to fill it", () => {
+    const de = buildBulbDE([canonicalBulb()]);
+    const view = new DataView(packBulbGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(96, true)).toBe(1);
+    expect(view.getFloat32(100, true)).toBe(0);
+    expect(view.getFloat32(104, true)).toBe(0);
+    expect(view.getFloat32(108, true)).toBe(0);
+    expect(view.getFloat32(112, true)).toBe(0);
+    expect(view.getFloat32(116, true)).toBe(1);
+    expect(view.getFloat32(120, true)).toBe(0);
+    expect(view.getFloat32(124, true)).toBe(0);
+    expect(view.getFloat32(128, true)).toBe(0);
+    expect(view.getFloat32(132, true)).toBe(0);
+    expect(view.getFloat32(136, true)).toBe(1);
+    expect(view.getFloat32(140, true)).toBe(0);
+    expect(view.getFloat32(156, true)).toBe(1);
+  });
+
+  it("packs the forward map's m rows / t / bulbParams at the documented 208..271 offsets, a SCALED map keeping sigmaMax distinguishable from 1", () => {
+    const de = buildBulbDE([scaledBulb()]);
+    // Sanity pin on the fixture (bulb-de.test.ts owns buildBulbDE's own
+    // correctness): sigmaMax must differ from 1 AND from the bailout, or
+    // this test could not catch a dropped term or a 256/260 swap.
+    expect(de.sigmaMax).toBeCloseTo(1.3, 12);
+    expect(de.bailout).not.toBeCloseTo(de.sigmaMax, 6);
+
+    const view = new DataView(packBulbGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(208, true)).toBe(Math.fround(de.m[0]));
+    expect(view.getFloat32(212, true)).toBe(Math.fround(de.m[1]));
+    expect(view.getFloat32(216, true)).toBe(Math.fround(de.m[2]));
+    expect(view.getFloat32(220, true)).toBe(Math.fround(de.t[0]));
+    expect(view.getFloat32(224, true)).toBe(Math.fround(de.m[3]));
+    expect(view.getFloat32(228, true)).toBe(Math.fround(de.m[4]));
+    expect(view.getFloat32(232, true)).toBe(Math.fround(de.m[5]));
+    expect(view.getFloat32(236, true)).toBe(Math.fround(de.t[1]));
+    expect(view.getFloat32(240, true)).toBe(Math.fround(de.m[6]));
+    expect(view.getFloat32(244, true)).toBe(Math.fround(de.m[7]));
+    expect(view.getFloat32(248, true)).toBe(Math.fround(de.m[8]));
+    expect(view.getFloat32(252, true)).toBe(Math.fround(de.t[2]));
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.sigmaMax));
+    expect(view.getFloat32(260, true)).toBe(Math.fround(de.bailout));
+    expect(view.getFloat32(264, true)).toBe(0); // packed-zero spare
+    expect(view.getFloat32(268, true)).toBe(0); // packed-zero spare
+  });
+
+  it("appends the ground-plane block past the bulb variant block, and omitting it returns the 272-byte buffer byte for byte", () => {
+    const de = buildBulbDE([scaledBulb()]);
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0.125,
+      fadeStart: 1.5,
+      fadeEnd: 4.5,
+      ballCenter: [0.25, -0.5, 0.75],
+      ballRadius: 1.25,
+      albedo: [0.375, 0.625, 0.875],
+    };
+    const plain = new Uint8Array(packBulbGpuParams(de, { itemCount: 2 }));
+    const buf = packBulbGpuParams(de, { itemCount: 2 }, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
+    const view = new DataView(buf);
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.sigmaMax));
+    expect(view.getFloat32(260, true)).toBe(Math.fround(de.bailout));
+    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
+
+    expect(
+      new Uint8Array(packBulbGpuParams(de, { itemCount: 2 }, null)),
+    ).toEqual(plain);
+  });
+});
+
+describe("surfaceDeKernelWgsl bulb core (core, fr-7u8t.9)", () => {
+  it("throws when combined with a fold-final lens or the balloon — the bulb gate refuses finals, and the solid's interior reaches the ball center", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "bulb", lens: true })),
+    ).toThrow(/bulb core cannot take a fold-final lens/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "bulb", balloon: true })),
+    ).toThrow(/balloon\+bulb/);
+  });
+
+  it("still validates width and workgroupSize, even though the forward loop ignores both", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "bulb", width: 0 })),
+    ).toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ core: "bulb", workgroupSize: 0 })),
+    ).toThrow();
+  });
+
+  it("mode 'eval' emits the forward power loop once, declares the bulb* uniform fields, and carries none of the descent or escape-fold markers", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "bulb" }),
+    );
+    expect(wgsl).toContain("fn evalQueries");
+    expect(
+      wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
+    ).toBe(2);
+    expect(wgsl.split("fn bulbPow8(").length).toBe(2);
+    expect(wgsl).toContain("bulbM0: vec3f");
+    expect(wgsl).toContain("bulbT0: f32");
+    expect(wgsl).toContain("bulbParams: vec4f");
+    for (const marker of [
+      "@binding(1)",
+      "struct GpuMap",
+      "mapApply",
+      "stepSector",
+      "frontierIx",
+      "fcX",
+      "refinedCert",
+      "surfaceDECore",
+      "escParams",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+  });
+
+  it("carries the three terms an identity-map fixture cannot see: the sigma seed, the sigma floor, and the ln|y| clamp", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "bulb" }),
+    );
+    // dr seeds at sigma_max(M), not 1 — dy0/dp IS M.
+    expect(wgsl).toContain("var dr = sigma;");
+    // ...and the trailing + sigma is escape-de.ts's + 1 through M, which
+    // also floors dr (8|y|^7 shrinks wherever |y| < 1).
+    expect(wgsl).toContain(
+      "dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;",
+    );
+    // The estimate reads |y| — the PRE-power vector — through the Boettcher
+    // log form, clamped below 1 so a converging orbit never marches the
+    // tracer backwards.
+    expect(wgsl).toContain("return 0.5 * r * log(r) / dr;");
+    expect(wgsl).toContain("if (r <= 1.0) {");
+  });
+
+  it("mode 'march' keeps the same absence set, and rays 'unproject' composes normally with ShadeParams at binding 4", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "bulb" }),
+    );
+    expect(wgsl).toContain("fn marchRays");
+    for (const marker of [
+      "@binding(1)",
+      "struct GpuMap",
+      "mapApply",
+      "frontierIx",
+      "refinedCert",
+      "surfaceDECore",
+    ]) {
+      expect(wgsl).not.toContain(marker);
+    }
+
+    const unprojected = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "bulb", rays: "unproject" }),
+    );
+    expect(unprojected).toContain("shade.invProjView");
+    expect(unprojected).toContain(
+      "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
+    );
+  });
+
+  it("mode 'shade' emits the bulb hit-info once, with the POWER map's continuous escape count as trap, over the full shading interface", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "bulb" }),
+    );
+    expect(wgsl).toContain("fn shadeRays");
+    expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
+    // The power map's smooth iteration count, NOT the fold arm's
+    // constant-factor log(r/R)/log(growth): r is raised to the power each
+    // step, so the fraction is log(log r / log R)/log n.
+    expect(wgsl).toContain(
+      "escFrac = clamp(log(log(r) / log(bail)) / log(8.0), 0.0, 1.0);",
+    );
+    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(params.maxDepth)");
+    // One bulbPow8, shared by the value body and the hit-info body.
+    expect(wgsl.split("fn bulbPow8(").length).toBe(2);
+    expect(wgsl).toContain(
+      "@group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;",
+    );
+    expect(wgsl).not.toContain("fn surfaceDEProbe");
+  });
+
+  it("ignores width, sharedFrontier, bnbStage2 and shadeDeWidth — all producing identical source", () => {
+    const base = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "bulb", width: 4 }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "bulb", width: 12 }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "bulb", sharedFrontier: true }),
+      ),
+    ).toBe(base);
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core: "bulb", bnbStage2: true }),
+      ),
+    ).toBe(base);
+
+    const shadeBase = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "bulb" }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core: "bulb", shadeDeWidth: 1 }),
+      ),
+    ).toBe(shadeBase);
+    expect(surfaceGpuWorkgroupBytes({ ...kernelOpts({ core: "bulb" }) })).toBe(
+      0,
+    );
+  });
+
+  it("composes with the ground plane, appending the plane block after the bulb variant block", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "bulb", groundPlane: true }),
+    );
+    expect(wgsl).toContain("bulbParams: vec4f,");
+    expect(wgsl).toContain("groundY: f32,");
+    expect(wgsl).toContain("fn shadeGroundPlane(");
   });
 });

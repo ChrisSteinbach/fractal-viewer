@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import type { BulbDE } from "../fractal/bulb-de";
+import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
 import {
   ESCAPE_STEP_SCALE,
@@ -1018,6 +1020,159 @@ uniform float uBalloonFar;
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     return r / dr;
+  }
+#else
+#if SURFACE_BULB
+  /** Mandelbulb render (fr-7u8t.9): the FORWARD affine (M, t) of the
+   * single triplex-power map and (sigma_max(M), bailout, unused, unused).
+   * Declared INSIDE the arm, unlike the escape variant's uEsc* trio: the
+   * other variants would pay these bytes against the measured ~80KB Mesa
+   * source cliff for uniforms they can never read. t is the PRE-power
+   * offset, a live deformation knob with the textbook Mandelbulb at
+   * t = 0; the per-iteration offset is derived from the query point (the
+   * Mandelbrot form). The BAILOUT rides .y because it is the ORBIT's
+   * ball, which — unlike the escape mode's — is NOT uBoundingRadius:
+   * that stays the query-space marching ball. */
+  uniform mat3 uBulbM;
+  uniform vec3 uBulbT;
+  uniform vec4 uBulbParams;
+
+  /** variations.ts's triplexPow8 — the White/Nylander 8th power in its
+   * trig-free form: Chebyshev T8/U7 for the polar angle, three complex
+   * squarings (de Moivre) for the azimuth, no transcendentals at all. The
+   * power is BAKED IN: triplex multiplication is not associative, so p^8
+   * is not ((p^2)^2)^2 (they disagree on 48.8% of queries) and every
+   * power needs its own closed form — see bulb-de.ts's BULB_POWER doc.
+   * r2 is passed in because every caller already has it. */
+  vec3 bulbPow8(vec3 y, float r2) {
+    float a = y.x * y.x + y.y * y.y;
+    float z2 = y.z * y.z;
+    float r4 = r2 * r2;
+    float vz = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 +
+      160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+    float s = 128.0 * z2 * z2 * z2 * y.z - 192.0 * z2 * z2 * y.z * r2 +
+      80.0 * z2 * y.z * r4 - 8.0 * y.z * r4 * r2;
+    float rho = sqrt(a);
+    float inv = rho > 0.0 ? 1.0 / rho : 0.0;
+    float u1 = y.x * inv;
+    float v1 = y.y * inv;
+    float u2 = u1 * u1 - v1 * v1;
+    float v2 = 2.0 * u1 * v1;
+    float u4 = u2 * u2 - v2 * v2;
+    float v4 = 2.0 * u2 * v2;
+    float u8 = u4 * u4 - v4 * v4;
+    float v8 = 2.0 * u4 * v4;
+    return vec3(rho * s * u8, rho * s * v8, vz);
+  }
+
+  /**
+   * Mandelbulb DE (fr-7u8t.9), mirroring bulb-de.ts's
+   * estimateBulbDistance: iterate the single triplex-power map FORWARD
+   * from y_0 = M p + t with a scalar running derivative, and read the
+   * Boettcher log estimate 0.5 * |y| * ln|y| / dr off |y| — the PRE-power
+   * vector, never the post-power one (the oracle's WHICH VECTOR THE
+   * ESTIMATE READS paragraph; mixing the two silently renders a different
+   * object). This variant REPLACES the inverse-descent bodies wholesale,
+   * exactly as SURFACE_ESCAPE does, and is cheaper than that one: uMaxDepth
+   * (16 full, preview-clamped) branchless iterations per evaluation, no
+   * frontier, no branches. cutoff is accepted for signature parity and
+   * ignored: the loop is fixed-cost, so the full value is always returned,
+   * trivially satisfying the fr-55r5 contract.
+   */
+  float surfaceDE(vec3 p, float cutoff) {
+    float sigma = uBulbParams.x;
+    float bail = uBulbParams.y;
+    // y_0 = M p + t — the point the power is applied to, and the
+    // Mandelbrot form's per-iteration offset in y space.
+    vec3 c = uBulbM * p + uBulbT;
+    vec3 y = c;
+    // dr bounds |d y_n / d p|, so it starts at |M| rather than 1.
+    float dr = sigma;
+    float r2 = dot(y, y);
+    float r = sqrt(r2);
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (r > bail) {
+        break;
+      }
+      // 8*r^7 is the triplex power's radial/polar stretch, then M's
+      // operator norm, then the offset's own derivative — the last term
+      // also FLOORS dr at sigma, which is load-bearing wherever |y| < 1
+      // (most of the interior: 8*r^7 SHRINKS there, and an unfloored dr
+      // would return a distance vastly larger than the query's own
+      // radius).
+      dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;
+      vec3 v = bulbPow8(y, r2);
+      y = uBulbM * v + c;
+      r2 = dot(y, y);
+      r = sqrt(r2);
+    }
+    // ln|y| goes NEGATIVE below |y| = 1, which a converging orbit reaches,
+    // and a negative estimate would march the tracer BACKWARDS. Returning
+    // 0 there is the inside signal and is safe in the direction a sphere
+    // tracer needs.
+    return r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr;
+  }
+
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }
+
+  /** Hit-shading overload: the same loop, with the escape family's
+   * extras — trap is the CONTINUOUS escape count, rings/sheets the
+   * orbit's closest radial / y-plane approaches, normalized by the
+   * ORBIT's own ball (the bailout) rather than the query-space marching
+   * radius. firstChoice is always 0 (one map). */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    firstChoice = 0;
+    rings = 1.0;
+    sheets = 1.0;
+    float sigma = uBulbParams.x;
+    float bail = uBulbParams.y;
+    vec3 c = uBulbM * p + uBulbT;
+    vec3 y = c;
+    float dr = sigma;
+    float r2 = dot(y, y);
+    float r = sqrt(r2);
+    int escapedAt = uMaxDepth;
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (r > bail) {
+        escapedAt = i;
+        break;
+      }
+      dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;
+      vec3 v = bulbPow8(y, r2);
+      y = uBulbM * v + c;
+      r2 = dot(y, y);
+      r = sqrt(r2);
+      rings = min(rings, r / bail);
+      sheets = min(sheets, abs(y.y) / bail);
+    }
+    // The CONTINUOUS escape count, the escape arm's escFrac one map
+    // family over — and NOT its formula. There the orbit leaves the
+    // bailout ball by a roughly constant FACTOR per step, so how far past
+    // the radius it landed is log(r/R)/log(growth); here the radius is
+    // raised to the POWER n each step (r -> r^n up to the affine part),
+    // so iterating once more takes log r to n*log r and the fraction is
+    // the classic smooth iteration count log(log r / log R)/log n — 0
+    // when the orbit lands exactly on the ball, 1 when it lands where one
+    // more step from the ball would have put it. Guarded on having
+    // escaped at all (a bounded orbit has r <= bail, whose log-ratio is
+    // below 1 and whose log would flip the sign) and on a bailout above 1
+    // (BULB_BAILOUT_FLOOR is 4, so log(bail) is comfortably positive).
+    float escFrac = 0.0;
+    if (escapedAt < uMaxDepth && bail > 1.0) {
+      escFrac = clamp(log(log(r) / log(bail)) / log(8.0), 0.0, 1.0);
+    }
+    trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);
+    rings = clamp(rings, 0.0, 1.0);
+    sheets = clamp(sheets, 0.0, 1.0);
+    return r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr;
   }
 #else
 
@@ -2129,8 +2284,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 #endif
 
-// Closes SURFACE_ESCAPE's #else arm: everything from the fold-lens rename
-// through the lens wrapper exists only when the escape variant is off.
+// Closes SURFACE_BULB's #else arm, then SURFACE_ESCAPE's: everything from
+// the fold-lens rename through the lens wrapper exists only when NEITHER
+// forward-orbit variant (fr-kltj's escape, fr-7u8t.9's bulb) is on.
+#endif
 #endif
 
 #if SURFACE_BALLOON
@@ -2174,12 +2331,26 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float rrEsc = length(p);
     if (rrEsc > uBoundingRadius) return rrEsc - uBoundingRadius;
 #endif
+#if SURFACE_BULB
+    // The bulb DE needs the identical far-field clamp (fr-7u8t.9): its
+    // zero-iteration far value is 0.5*|y|*ln|y|/sigma, likewise not a
+    // distance to anything, and the set lives inside the same marching
+    // ball. A separate #if rather than a compound condition, so both
+    // names stay JS-resolved (resolveVariantArms) and no dead text ever
+    // reaches the driver.
+    float rrBulb = length(p);
+    if (rrBulb > uBoundingRadius) return rrBulb - uBoundingRadius;
+#endif
     return surfaceDEFractal(p, cutoff);
   }
   float balloonInnerDE(vec3 p) {
 #if SURFACE_ESCAPE
     float rrEsc = length(p);
     if (rrEsc > uBoundingRadius) return rrEsc - uBoundingRadius;
+#endif
+#if SURFACE_BULB
+    float rrBulb = length(p);
+    if (rrBulb > uBoundingRadius) return rrBulb - uBoundingRadius;
 #endif
     return surfaceDEFractal(p);
   }
@@ -2857,6 +3028,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uEscM: { value: new THREE.Matrix3() },
       uEscT: { value: new THREE.Vector3() },
       uEscParams: { value: new THREE.Vector4(0, 1, 1, 0) },
+      // Mandelbulb render (fr-7u8t.9): inert defaults; alive only under
+      // the SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
+      // enabled read could never divide by zero or take log of zero).
+      uBulbM: { value: new THREE.Matrix3() },
+      uBulbT: { value: new THREE.Vector3() },
+      uBulbParams: { value: new THREE.Vector4(1, 1, 0, 0) },
       // Balloon inverted-union (fr-5wlv.4): inert defaults; alive only
       // under the SURFACE_BALLOON define (rho 1 so a stray enabled read
       // could never divide by zero). Three.js ignores entries the
@@ -2914,6 +3091,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       SURFACE_FOLDS: 0,
       SURFACE_FOLD_LENS: 0,
       SURFACE_ESCAPE: 0,
+      SURFACE_BULB: 0,
       SURFACE_BALLOON: 0,
       SURFACE_GROUND_PLANE: 0,
     },
@@ -2997,14 +3175,23 @@ export function setSurfaceSystem(
     material.defines.SURFACE_FOLDS !== wantFolds ||
     material.defines.SURFACE_FOLD_LENS !== wantLens ||
     material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_GROUND_PLANE !== plane
   ) {
     material.defines.SURFACE_FOLDS = wantFolds;
     material.defines.SURFACE_FOLD_LENS = wantLens;
-    // A previous escape-time session must hand the descent bodies back.
+    // A previous escape-time or Mandelbulb session must hand the descent
+    // bodies back.
     material.defines.SURFACE_ESCAPE = 0;
+    material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_GROUND_PLANE = plane;
-    material.fragmentShader = surfaceFragmentFor(0, wantLens, balloon, plane);
+    material.fragmentShader = surfaceFragmentFor(
+      0,
+      wantLens,
+      balloon,
+      plane,
+      0,
+    );
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
@@ -3145,13 +3332,18 @@ function resolveVariantArms(
  * roughly half, which is what lets every variant carry the floor, the
  * ~79KB lens included. Only `balloon` refuses the pair (the enclosing
  * shell has no horizon for a floor to sit on; callers gate, so reaching
- * the throw is a bug). `source` defaults to the module's assembled
+ * the throw is a bug). `bulb` (fr-7u8t.9) is the SECOND forward-orbit
+ * variant under the same contract — 0 resolves byte-identical to the
+ * pre-bulb build, and it refuses to compile alongside `escape` (each
+ * replaces the descent bodies wholesale, so both on would define
+ * surfaceDE twice). `source` defaults to the module's assembled
  * fragment; tests pass their own width-parameterized builds (fr-zqu8). */
 export function surfaceFragmentFor(
   escape: number,
   lens: number,
   balloon = 0,
   plane = 0,
+  bulb = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   if (plane !== 0 && balloon !== 0) {
@@ -3159,8 +3351,16 @@ export function surfaceFragmentFor(
       "SURFACE_GROUND_PLANE cannot compile into the balloon variant",
     );
   }
+  if (escape !== 0 && bulb !== 0) {
+    // The two forward-orbit variants are alternatives, not a composition:
+    // each replaces the descent bodies wholesale, so both on would define
+    // surfaceDE twice. Callers gate on the system's shape (a system is
+    // either fold-shaped or bulb-shaped), so reaching this is a bug.
+    throw new RangeError("SURFACE_BULB and SURFACE_ESCAPE are exclusive");
+  }
   const resolved = resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
+    SURFACE_BULB: bulb,
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
@@ -3229,13 +3429,88 @@ export function setEscapeSystem(
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
+    material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0
   ) {
     material.defines.SURFACE_ESCAPE = 1;
+    // The two forward-orbit variants are exclusive (fr-7u8t.9): a
+    // previous Mandelbulb session must hand the bodies back here too.
+    material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
-    material.fragmentShader = surfaceFragmentFor(1, 0, balloon, plane);
+    material.fragmentShader = surfaceFragmentFor(1, 0, balloon, plane, 0);
+    material.needsUpdate = true;
+  }
+}
+
+/**
+ * Pack a {@link BulbDE} (fr-7u8t.9) and flip the material onto the
+ * Mandelbulb variant — {@link setEscapeSystem}'s twin one formula over.
+ * The IFS-side uniforms the shared marcher still reads — bounding/visible
+ * radii, uMaxDepth (the iteration budget the preview tier clamps through
+ * previewMaxDepth), step scale, slot-0 color for the by-transform source
+ * — are packed to the bulb set's values; everything descent-specific
+ * (maps, symmetry, lenses, grid) is reset to inert, and no grid is ever
+ * uploaded for this mode (the empty-space chain's validity argument is
+ * IFS-specific). Note the ONE asymmetry against the escape packer: the
+ * ORBIT's bailout ball and the QUERY-space marching ball are different
+ * numbers here, so uBoundingRadius takes the latter and the bailout rides
+ * uBulbParams.y.
+ */
+export function setBulbSystem(
+  material: THREE.ShaderMaterial,
+  de: BulbDE,
+  color: Vec3,
+): void {
+  setSurfaceGrid(material, null);
+  const u = material.uniforms;
+  const m = de.m;
+  (u.uBulbM.value as THREE.Matrix3).set(
+    m[0],
+    m[1],
+    m[2],
+    m[3],
+    m[4],
+    m[5],
+    m[6],
+    m[7],
+    m[8],
+  );
+  (u.uBulbT.value as THREE.Vector3).set(...de.t);
+  (u.uBulbParams.value as THREE.Vector4).set(de.sigmaMax, de.bailout, 0, 0);
+  (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
+  (u.uTrapIndex.value as number[])[0] = 0;
+  u.uMapCount.value = 1;
+  u.uSymOrder.value = 1;
+  u.uSymPlane.value = 1;
+  (u.uSymStep.value as THREE.Vector2).set(1, 0);
+  u.uBoundingRadius.value = de.boundingRadius;
+  u.uEscapeRadius.value = de.boundingRadius * 2;
+  u.uMaxDepth.value = BULB_ITERATIONS;
+  u.uStepScale.value = BULB_STEP_SCALE;
+  u.uVisibleRadius.value = de.boundingRadius;
+  (u.uFinalInvM.value as THREE.Matrix3).identity();
+  (u.uFinalInvT.value as THREE.Vector3).set(0, 0, 0);
+  u.uFinalSigmaMin.value = 1;
+  (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+  (u.uLensInvM.value as THREE.Matrix3).identity();
+  (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  // Preserve the balloon and ground-plane flags exactly like
+  // setEscapeSystem — orthogonal session state its own setters own.
+  const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  if (
+    material.defines.SURFACE_BULB !== 1 ||
+    material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_FOLD_LENS !== 0
+  ) {
+    material.defines.SURFACE_BULB = 1;
+    material.defines.SURFACE_ESCAPE = 0;
+    material.defines.SURFACE_FOLDS = 0;
+    material.defines.SURFACE_FOLD_LENS = 0;
+    material.fragmentShader = surfaceFragmentFor(0, 0, balloon, plane, 1);
     material.needsUpdate = true;
   }
 }
@@ -3303,6 +3578,7 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
       want,
       plane,
+      material.defines.SURFACE_BULB === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -3376,6 +3652,7 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
       want,
+      material.defines.SURFACE_BULB === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
