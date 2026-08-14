@@ -2362,6 +2362,51 @@ describe("Ui variation editor", () => {
     expect(select.value).toBe("");
   });
 
+  it("adds a fold variation carrying none of its optional lengths, so it renders as the classic Mandelbox", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const select = addSelect();
+    select.value = "mandelbox";
+    select.dispatchEvent(new Event("change"));
+
+    // Absent means the classic 0.5 / 1 / 1 (fr-s9ll), so a freshly added fold
+    // must not materialize them — the add-dropdown has no opinion about the
+    // fold's apparatus.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "mandelbox", weight: 1 },
+    ]);
+  });
+
+  it("picks up a fold length that changed under a stable selection, instead of writing the stale one back", () => {
+    // The editor keeps a WORKING COPY of the variation list and emits it on
+    // the next edit, refreshing it only when the incoming list differs. The
+    // fold's three lengths (fr-s9ll) have no row of their own, so a
+    // comparison that only looked at type and weight would call these two
+    // renders equal — and the weight drag below would then silently revert
+    // `minRadius` to 0.3. A morph, an undo or a timeline leg all change a
+    // radius under a stable selection.
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const at = (minRadius: number): Transform => ({
+      ...plain,
+      variations: [{ type: "mandelbox", weight: 2, minRadius }],
+    });
+    ui.renderTransformEditor(at(0.3), 0, 1);
+    ui.renderTransformEditor(at(0.4), 0, 1);
+
+    const slider = editorSlider("Variation mandelbox");
+    slider.value = "1.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "mandelbox", weight: 1.5, minRadius: 0.4 },
+    ]);
+  });
+
   it("reports an edited variation weight back", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
