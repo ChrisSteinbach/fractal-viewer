@@ -76,6 +76,7 @@ import {
   PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
+  PRESET_SYMMETRIES,
   presetTransforms,
 } from "../fractal/presets";
 import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
@@ -5431,6 +5432,28 @@ function main(): void {
         // mode away outright (both gates refuse a final transform, so the
         // Surface button would just go dark).
         state = setFinalTransform(state, PRESET_FINALS[preset]?.() ?? null);
+        // The kaleidoscope a preset was composed under (fr-za0n,
+        // PRESET_SYMMETRIES) — the same shape as the lens above, and the
+        // same both-directions rule: a preset that IS its symmetry
+        // (foldChainFlower) installs it, and every other preset turns it
+        // OFF. A leftover kaleidoscope would replicate the arriving system
+        // into copies it was never composed with, and for the escape-time /
+        // Mandelbulb presets would take their render mode away outright
+        // (analyzeBulbSystem refuses any order above 1; analyzeEscapeSystem
+        // refuses one that rotates into 4D). Order goes first so
+        // setSymmetryTwist's cap — twist <= order - 1 — sees the new order,
+        // and the twist is cleared unconditionally: no table entry may carry
+        // one, and a stale one is exactly what makes a symmetry non-flat.
+        const symmetry = PRESET_SYMMETRIES[preset];
+        state = setSymmetryOrder(
+          state,
+          symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
+        );
+        state = setSymmetryPlane(
+          state,
+          symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
+        );
+        state = setSymmetryTwist(state, 0);
         // The flame palette a preset was composed against (fr-7u8t.5,
         // PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.

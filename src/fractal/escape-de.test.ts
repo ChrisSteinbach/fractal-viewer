@@ -11,7 +11,17 @@ import {
   probeEscapeFill,
 } from "./escape-de";
 import type { EscapeDE } from "./escape-de";
-import { mandelboxClassic, mandelboxCube, mandelboxRings } from "./presets";
+import { analyzeBulbSystem } from "./bulb-de";
+import {
+  foldChain,
+  foldChainFlower,
+  foldChainBoulder,
+  mandelboxClassic,
+  mandelboxCube,
+  mandelboxRings,
+  mandelbulbClassic,
+  PRESET_SYMMETRIES,
+} from "./presets";
 import {
   analyzeSurfaceSystem,
   SURFACE_FOLD_BOXFOLD,
@@ -19,7 +29,7 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
 } from "./surface-de";
 import { mulberry32 } from "./rng";
-import type { Transform, VariationType, Vec3 } from "./types";
+import type { SymmetryParams, Transform, VariationType, Vec3 } from "./types";
 
 /** The canonical single-map Mandelbox shape: identity-scale affine with an
  * offset, mandelbox variation at the classic weight 2 — exactly the
@@ -863,6 +873,163 @@ describe("the escape-time presets (fr-7u8t.8)", () => {
     }
     expect(rings).toBeLessThan(ball);
     expect(ball).toBeLessThan(cube);
+  });
+});
+
+describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
+  /** The kaleidoscope each preset is loaded under — PRESET_SYMMETRIES' own
+   * "absent means OFF" rule, which is what main.ts applies. Reading the table
+   * rather than restating its values keeps this suite honest if an entry
+   * moves. */
+  const symmetryFor = (name: keyof typeof PRESET_SYMMETRIES): SymmetryParams =>
+    PRESET_SYMMETRIES[name] ?? { order: 1, plane: "xz" };
+
+  const CHAINS = [
+    ["foldChain", foldChain()],
+    ["foldChainBoulder", foldChainBoulder()],
+    ["foldChainFlower", foldChainFlower()],
+  ] as const;
+
+  // Same property the single-map trio above is pinned on, and for the same
+  // reason: these presets reach the escape-time marcher ONLY by the IFS gate
+  // refusing them. One link quietly becoming contracting would land the
+  // system in the attractor tracer with nothing anywhere saying why.
+  it.each(CHAINS)(
+    "%s is refused by the IFS gate and admitted by the escape gate",
+    (name, transforms) => {
+      expect(analyzeSurfaceSystem(transforms).status).toBe("ineligible");
+      expect(analyzeEscapeSystem(transforms, null, symmetryFor(name))).toEqual({
+        status: "eligible",
+        reasons: [],
+      });
+    },
+  );
+
+  // The whole subject of these presets is that the transform LIST is the
+  // formula chain. A preset that collapsed to one map — or to n copies of the
+  // same map, which the orbit cannot tell from one — would still pass every
+  // gate above and would silently be `mandelboxClassic` again.
+  it.each(CHAINS)("%s is a chain of genuinely different links", (_n, t) => {
+    const { links } = buildEscapeDE(t);
+    expect(links.length).toBeGreaterThan(1);
+    const fingerprints = links.map((l) =>
+      JSON.stringify([l.foldKind, l.w, l.m, l.t]),
+    );
+    expect(new Set(fingerprints).size).toBe(links.length);
+  });
+
+  it("renders three DIFFERENT objects", () => {
+    // Fill of the bailout ball, the figure the single-map trio is documented
+    // with. Two presets landing on the same number would mean a parameter —
+    // the third link, or the kaleidoscope — never reached the estimator.
+    const fill = (
+      transforms: Transform[],
+      symmetry: SymmetryParams,
+    ): number => {
+      const de = buildEscapeDE(transforms, null, symmetry);
+      const N = 21;
+      let inBall = 0;
+      let interior = 0;
+      const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          for (let k = 0; k < N; k++) {
+            const p: Vec3 = [
+              -ESCAPE_TIME_RADIUS + step * i,
+              -ESCAPE_TIME_RADIUS + step * j,
+              -ESCAPE_TIME_RADIUS + step * k,
+            ];
+            if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
+            inBall++;
+            if (estimateEscapeDistance(de, p) < 1e-3) interior++;
+          }
+        }
+      }
+      return interior / inBall;
+    };
+    const chain = fill(foldChain(), symmetryFor("foldChain"));
+    const boulder = fill(foldChainBoulder(), symmetryFor("foldChainBoulder"));
+    const flower = fill(foldChainFlower(), symmetryFor("foldChainFlower"));
+    // Each is non-empty: an empty chain IS reachable inside this gate (a big
+    // enough pre-scale escapes everywhere on the first pass and the mode
+    // renders a blank frame), so "it rendered something" is a real claim.
+    for (const f of [chain, boulder, flower]) {
+      expect(f).toBeGreaterThan(0.01);
+      expect(f).toBeLessThan(0.3);
+    }
+    // main.ts frames a new escape session on the BAILOUT ball, the same ball
+    // for every system here, so ball fill is directly how much of the pane a
+    // preset opens on — and foldChainBoulder's third link is the one that
+    // buys presence. This is the assertion that would have caught the chain
+    // originally drafted for that slot, which fills a third of this and
+    // opened as a speck (see foldChainBoulder's doc).
+    expect(boulder).toBeGreaterThan(chain);
+    // The flower's whole difference from the chain is the wedge fold, which
+    // moves structure around the axis rather than changing how much there is
+    // — so ball fill is deliberately NOT what separates those two (measured
+    // 7.0% against 6.7%). The next test is.
+    expect(flower).toBeGreaterThan(0.01);
+  });
+
+  // The flower's links are foldChain's, byte for byte, so the kaleidoscope is
+  // the ONLY thing that makes it a different object — and the sector rotation
+  // is where that shows. Rendered under the table's symmetry the estimate is
+  // invariant under a one-fifth turn about `y`; rendered without it (which is
+  // what a dropped PRESET_SYMMETRIES lookup would give) it is not.
+  it("foldChainFlower differs from foldChain by the kaleidoscope alone", () => {
+    expect(buildEscapeDE(foldChainFlower()).links).toEqual(
+      buildEscapeDE(foldChain()).links,
+    );
+    const symmetry = symmetryFor("foldChainFlower");
+    const withFold = buildEscapeDE(foldChainFlower(), null, symmetry);
+    const without = buildEscapeDE(foldChainFlower());
+    const sector = (2 * Math.PI) / symmetry.order;
+    const c = Math.cos(sector);
+    const s = Math.sin(sector);
+    const rng = mulberry32(0x5ec_701);
+    let worstFolded = 0;
+    let worstBare = 0;
+    for (let i = 0; i < 600; i++) {
+      const p: Vec3 = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+      const q: Vec3 = [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c];
+      worstFolded = Math.max(
+        worstFolded,
+        Math.abs(
+          estimateEscapeDistance(withFold, p) -
+            estimateEscapeDistance(withFold, q),
+        ),
+      );
+      worstBare = Math.max(
+        worstBare,
+        Math.abs(
+          estimateEscapeDistance(without, p) -
+            estimateEscapeDistance(without, q),
+        ),
+      );
+    }
+    expect(worstFolded).toBeLessThan(1e-9);
+    expect(worstBare).toBeGreaterThan(0.1);
+  });
+
+  // Why main.ts must CLEAR the kaleidoscope on every preset load that carries
+  // no PRESET_SYMMETRIES entry: the flower's order-5 fold surviving into the
+  // next preset does not merely decorate it, it takes the render mode away.
+  it("leaks fatally if the flower's kaleidoscope survives the next load", () => {
+    const stale = symmetryFor("foldChainFlower");
+    expect(stale.order).toBeGreaterThan(1);
+    // The Mandelbulb gate refuses ANY order above 1 outright...
+    expect(analyzeBulbSystem(mandelbulbClassic(), null, stale).status).toBe(
+      "ineligible",
+    );
+    // ...and both are eligible again the moment symmetry is back off, which
+    // is the state main.ts's `?? DEFAULT_SYMMETRY_ORDER` restores.
+    const off: SymmetryParams = { order: 1, plane: "xz" };
+    expect(analyzeBulbSystem(mandelbulbClassic(), null, off).status).toBe(
+      "eligible",
+    );
+    expect(analyzeEscapeSystem(mandelboxClassic(), null, off).status).toBe(
+      "eligible",
+    );
   });
 });
 
