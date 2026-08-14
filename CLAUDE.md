@@ -42,6 +42,28 @@ kernel from being dead code. It also gates fr-17qu's empty-set toast and
 fr-vpbq's `antialiasing pass k/8` disclosure. `--mode=sw` runs everything but
 the engine question without a display.
 
+**Harness sheets** (`scripts/*.harness.ts`, run with
+`npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
+are this project's executable measurement records — the argument for a
+decision, kept runnable rather than summarized. `scripts/de-preview.ts` is
+the SHARED renderer eight of them import (`renderPreview`,
+`writeContactSheet`, `encodePng`, and the `DistanceEstimator`/`PanelStats`
+vocabulary): a CPU sphere-marcher with AO/shadow switches, a settable step
+budget and an always-counted `exhausted`, so a new sheet writes its
+estimator and its panel list, never a ninth marcher. Output lands under
+`scripts/out/`, which is gitignored — regenerate rather than commit
+megabytes of PNG. The escape-time family's sheets:
+`escape-form-sweep` (fr-7u8t.8's retired Julia form, still executable),
+`escape-chain` (fr-za0n's shipped cycling estimator, and the rejected
+per-pass CHAINING arm beside it), `hybrid-chain` (the cross-family
+prototype fr-j231 is filed from — links this gate still refuses),
+`chain-speckle` (fr-vpbq's and fr-byxb's evidence: the speckle is
+sub-pixel, the ramp is bottom-heavy), `bulb-preview` (fr-7u8t.7's step-scale
+sweep), `escape-family-preview` (the three estimators side by side),
+`qjulia-preview` and `qjulia-beauty` (fr-7u8t.4's proof, and the twenty
+panels that demoted fr-7u8t.5/.6), `julia-flame` (the compositions three
+flame presets were picked from).
+
 Requires **Node.js 18+** (ES2022 target; developed on Node 22).
 
 Reproduce the COOP/COEP first-visit reload locally:
