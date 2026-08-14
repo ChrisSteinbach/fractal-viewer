@@ -1,5 +1,11 @@
 import type { Rng } from "./rng";
 import type { Variation, VariationType, Vec4 } from "./types";
+import {
+  isClassicFoldRadii,
+  isFoldVariationType,
+  resolveFoldRadii,
+} from "./variations";
+import type { FoldRadii } from "./variations";
 import { clamp } from "./vec";
 
 /**
@@ -72,6 +78,45 @@ const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
  * to the 3D one.
  */
 const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
+
+/**
+ * The three fold warps at arbitrary lengths — `variations.ts`'s
+ * {@link foldVariationFn} one dimension up, and the twin-file convention's
+ * one exception: the ARITHMETIC is duplicated as always, but the domain rule
+ * ({@link resolveFoldRadii}) and the classic constants are IMPORTED, because
+ * "what does an absent field mean" must have exactly one answer across both
+ * dimensions or a 3D system and its 4D lift would render different objects.
+ * Returns the shared classic entry at classic lengths, so a document that
+ * predates the fields runs the same function it always did.
+ */
+function foldVariationFn4(
+  type: "boxfold" | "spherefold" | "mandelbox",
+  r: FoldRadii,
+): VariationFn4 {
+  if (isClassicFoldRadii(r)) return VARIATIONS4[type];
+  const { boxLimit: wall } = r;
+  const mR2 = r.minRadius * r.minRadius;
+  const fR2 = r.fixedRadius * r.fixedRadius;
+  const axis = (t: number) => 2 * clamp(t, -wall, wall) - t;
+  const factor = (r2: number) => fR2 / clamp(r2, mR2, fR2);
+  if (type === "boxfold") {
+    return (x, y, z, w) => [axis(x), axis(y), axis(z), axis(w)];
+  }
+  if (type === "spherefold") {
+    return (x, y, z, w) => {
+      const c = factor(x * x + y * y + z * z + w * w);
+      return [x * c, y * c, z * c, w * c];
+    };
+  }
+  return (x, y, z, w) => {
+    const bx = axis(x);
+    const by = axis(y);
+    const bz = axis(z);
+    const bw = axis(w);
+    const c = factor(bx * bx + by * by + bz * bz + bw * bw);
+    return [bx * c, by * c, bz * c, bw * c];
+  };
+}
 
 /**
  * The 4D variation registry: every {@link VariationType} mapped to its lifted
@@ -289,7 +334,12 @@ export function composeVariations4(
   if (!variations || variations.length === 0) return null;
   const active = variations
     .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
-    .map((v): [VariationFn4, number] => [VARIATIONS4[v.type], v.weight]);
+    .map((v): [VariationFn4, number] => [
+      isFoldVariationType(v.type)
+        ? foldVariationFn4(v.type, resolveFoldRadii(v))
+        : VARIATIONS4[v.type],
+      v.weight,
+    ]);
   if (active.length === 0) return null;
 
   return (x, y, z, w, rng) => {

@@ -82,10 +82,47 @@ export type VariationType = (typeof VARIATION_TYPES)[number];
  * depend on it — a repeated type simply adds, both on the CPU
  * (`composeVariations`) and in the kernels — so it is a budget convention,
  * not a parsing rule.
+ *
+ * THE FOLD RADII ARE THE FIRST PER-VARIATION PARAMETERS (fr-s9ll), and they
+ * deliberately break the type -> weight mental model above rather than
+ * pretending to fit it: `boxLimit` belongs to `boxfold` and `mandelbox`,
+ * `minRadius`/`fixedRadius` to `spherefold` and `mandelbox`, and every other
+ * type ignores all three. ABSENT MEANS THE CLASSIC MANDELBOX VALUES
+ * (`variations.ts`'s `SPHERE_FOLD_MIN_RADIUS` 0.5, `SPHERE_FOLD_FIXED_RADIUS`
+ * 1, `BOX_FOLD_LIMIT` 1) and renders BYTE-IDENTICALLY to a document that
+ * predates them — the same convention `weight` and `colorIndex` follow, and
+ * the thing that keeps every existing document, preset, morph and `.flame`
+ * import unmoved. `variations.ts`'s {@link resolveFoldRadii} is the one place
+ * that rule is written down; nothing else may re-derive it.
+ *
+ * WHY THERE ARE THREE AND NOT FOUR. The fold has exactly three lengths, and
+ * only TWO dimensionless ratios of them are new shape (fr-qi9c): uniform
+ * pre-scale is equivariant through both folds, so scaling all three together
+ * is what the transform's own affine part already does. The two that survive
+ * are the magnification `fixedRadius²/minRadius²` and the ball-vs-box ratio
+ * `fixedRadius/boxLimit`. There is no size field, because size is not a
+ * parameter.
  */
 export interface Variation {
   type: VariationType;
   weight: number;
+  /**
+   * The sphere fold's minimum radius `mR` — inside it the fold inflates by
+   * the magnification `fixedRadius²/minRadius²`. Absent ⇒ 0.5.
+   * `spherefold`/`mandelbox` only.
+   */
+  minRadius?: number;
+  /**
+   * The sphere fold's fixed radius `fR` — at and beyond it the fold is the
+   * identity, and between the two radii it inverts. Absent ⇒ 1.
+   * `spherefold`/`mandelbox` only.
+   */
+  fixedRadius?: number;
+  /**
+   * The box fold's reflection plane: each axis mirrors off `|t| = boxLimit`.
+   * Absent ⇒ 1. `boxfold`/`mandelbox` only.
+   */
+  boxLimit?: number;
 }
 
 /**

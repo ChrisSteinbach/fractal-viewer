@@ -1,4 +1,9 @@
-import { composeVariations } from "./variations";
+import {
+  composeVariations,
+  resolveFoldRadii,
+  CLASSIC_FOLD_RADII,
+} from "./variations";
+import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
 import { VARIATION_TYPES } from "./types";
 import type { Variation } from "./types";
@@ -169,5 +174,166 @@ describe("composeVariations", () => {
       { type: "spherical", weight: 0 },
     ]);
     expect(withDead!(2, 3, 4, Math.random)).toEqual([2, 3, 4]);
+  });
+});
+
+describe("fold radii (fr-s9ll)", () => {
+  it("absent fields resolve to the classic lengths", () => {
+    expect(resolveFoldRadii({ type: "mandelbox", weight: 2 })).toEqual(
+      CLASSIC_FOLD_RADII,
+    );
+  });
+
+  it("boxfold, spherefold and mandelbox render byte-identically whether the classic radii are absent or spelled out explicitly", () => {
+    const points = mulberry32(20260815);
+    const blendRng = mulberry32(7);
+    const samples: [number, number, number][] = [
+      [0, 0, 0],
+      [1, 0, 0],
+      [0.5, 0, 0],
+      [-1, -1, -1],
+    ];
+    for (let i = 0; i < 200; i++) {
+      samples.push([
+        (points() - 0.5) * 6,
+        (points() - 0.5) * 6,
+        (points() - 0.5) * 6,
+      ]);
+    }
+    for (const type of ["boxfold", "spherefold", "mandelbox"] as const) {
+      const implicit = composeVariations([{ type, weight: 2 }]);
+      const explicit = composeVariations([
+        { type, weight: 2, minRadius: 0.5, fixedRadius: 1, boxLimit: 1 },
+      ]);
+      if (!implicit || !explicit) {
+        throw new Error(`expected both blends for ${type}`);
+      }
+      for (const [x, y, z] of samples) {
+        const a = implicit(x, y, z, blendRng);
+        const b = explicit(x, y, z, blendRng);
+        expect(b[0]).toBe(a[0]);
+        expect(b[1]).toBe(a[1]);
+        expect(b[2]).toBe(a[2]);
+      }
+    }
+  });
+
+  it("a non-classic minRadius actually changes mandelbox's output, so the byte-identical test above is not vacuous", () => {
+    const classic = composeVariations([{ type: "mandelbox", weight: 2 }]);
+    const shrunk = composeVariations([
+      { type: "mandelbox", weight: 2, minRadius: 0.25 },
+    ]);
+    if (!classic || !shrunk) throw new Error("expected both blends");
+    // (0.2, 0, 0): the box fold leaves it untouched (inside the unit box), so
+    // the whole difference is the magnification fR²/mR²: classic clamps r² =
+    // 0.04 to mR² = 0.25 (factor 4 → 0.8, weight 2 → 1.6); minRadius 0.25
+    // clamps the same r² to mR² = 0.0625 (factor 16 → 3.2, weight 2 → 6.4).
+    expect(classic(0.2, 0, 0, Math.random)[0]).toBeCloseTo(1.6);
+    expect(shrunk(0.2, 0, 0, Math.random)[0]).toBeCloseTo(6.4);
+  });
+
+  it("minRadius above fixedRadius clamps down to fixedRadius, where the sphere fold becomes the identity", () => {
+    const r = resolveFoldRadii({
+      type: "spherefold",
+      weight: 1,
+      minRadius: 5,
+      fixedRadius: 1,
+    });
+    expect(r.minRadius).toBe(1);
+    expect(r.fixedRadius).toBe(1);
+
+    const identity = composeVariations([
+      { type: "spherefold", weight: 1, minRadius: 5, fixedRadius: 1 },
+    ]);
+    if (!identity) throw new Error("expected a blend");
+    for (const [x, y, z] of [
+      [0.3, -0.7, 0.2],
+      [2, 0, 0],
+      [0, 0, 0],
+      [-1.5, 4, -2.25],
+    ]) {
+      expect(identity(x, y, z, Math.random)).toEqual([x, y, z]);
+    }
+  });
+
+  it("fixedRadius of 0, negative, NaN or Infinity falls back to the classic 1", () => {
+    expect(
+      resolveFoldRadii({ type: "spherefold", weight: 1, fixedRadius: 0 })
+        .fixedRadius,
+    ).toBe(1);
+    expect(
+      resolveFoldRadii({ type: "spherefold", weight: 1, fixedRadius: -3 })
+        .fixedRadius,
+    ).toBe(1);
+    expect(
+      resolveFoldRadii({ type: "spherefold", weight: 1, fixedRadius: NaN })
+        .fixedRadius,
+    ).toBe(1);
+    expect(
+      resolveFoldRadii({
+        type: "spherefold",
+        weight: 1,
+        fixedRadius: Infinity,
+      }).fixedRadius,
+    ).toBe(1);
+  });
+
+  it("minRadius is floored above zero so the magnification fR²/mR² stays finite", () => {
+    const r = resolveFoldRadii({
+      type: "spherefold",
+      weight: 1,
+      minRadius: 0,
+    });
+    expect(r.minRadius).toBeGreaterThan(0);
+  });
+
+  it("boxLimit 0 is kept, not replaced — boxfold becomes the point reflection t → -t", () => {
+    const r = resolveFoldRadii({ type: "boxfold", weight: 1, boxLimit: 0 });
+    expect(r.boxLimit).toBe(0);
+
+    const reflect = composeVariations([
+      { type: "boxfold", weight: 1, boxLimit: 0 },
+    ]);
+    if (!reflect) throw new Error("expected a blend");
+    expect(reflect(0.3, -0.7, 2, Math.random)).toEqual([-0.3, 0.7, -2]);
+  });
+
+  it("boxLimit negative or NaN falls back to the classic 1", () => {
+    expect(
+      resolveFoldRadii({ type: "boxfold", weight: 1, boxLimit: -2 }).boxLimit,
+    ).toBe(1);
+    expect(
+      resolveFoldRadii({ type: "boxfold", weight: 1, boxLimit: NaN }).boxLimit,
+    ).toBe(1);
+  });
+
+  it("never produces NaN or Infinity across a grid of fold parameters and points, including the origin and 1e6-scale values", () => {
+    const paramSets: Partial<Variation>[] = [
+      {},
+      { weight: 0 },
+      { minRadius: 5, fixedRadius: 1 },
+      { minRadius: 0 },
+      { fixedRadius: 0 },
+      { minRadius: -3, fixedRadius: -2, boxLimit: -1 },
+      { minRadius: NaN, fixedRadius: NaN, boxLimit: NaN },
+    ];
+    const points: [number, number, number][] = [
+      [0, 0, 0],
+      [1e6, 0, 0],
+      [0, 1e6, -1e6],
+      [1, 2, -3],
+      [-0.5, 0.5, 0.25],
+    ];
+    for (const type of ["boxfold", "spherefold", "mandelbox"] as const) {
+      for (const params of paramSets) {
+        const blend = composeVariations([{ type, weight: 1, ...params }]);
+        if (blend === null) continue; // weight 0 legitimately yields no blend
+        for (const [x, y, z] of points) {
+          for (const c of blend(x, y, z, Math.random)) {
+            expect(Number.isFinite(c)).toBe(true);
+          }
+        }
+      }
+    }
   });
 });
