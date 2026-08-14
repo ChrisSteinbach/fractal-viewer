@@ -740,6 +740,247 @@ describe("decodeScene transform variations", () => {
   });
 });
 
+describe("decodeScene transform variation fold radii (fr-s9ll)", () => {
+  it("round-trips a variation with all three fold lengths set", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.3,
+              fixedRadius: 1.4,
+              boxLimit: 1.2,
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      {
+        type: "mandelbox",
+        weight: 2,
+        minRadius: 0.3,
+        fixedRadius: 1.4,
+        boxLimit: 1.2,
+      },
+    ]);
+  });
+
+  it("round-trips a variation with only one fold length set, leaving the other two absent", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherefold", weight: 1, minRadius: 0.3 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.3 },
+    ]);
+  });
+
+  it("leaves fold lengths undefined when the payload never carried them", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherefold", weight: 1 }],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].variations![0].minRadius).toBeUndefined();
+    expect(result!.transforms[0].variations![0].fixedRadius).toBeUndefined();
+    expect(result!.transforms[0].variations![0].boxLimit).toBeUndefined();
+  });
+
+  it("encodes byte-identically whether fold lengths are omitted or explicitly undefined", () => {
+    const withoutFields: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "spherefold", weight: 1 }],
+        },
+      ],
+    };
+    const withUndefinedFields: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "spherefold",
+              weight: 1,
+              minRadius: undefined,
+              fixedRadius: undefined,
+              boxLimit: undefined,
+            },
+          ],
+        },
+      ],
+    };
+    expect(encodeScene(withUndefinedFields)).toBe(encodeScene(withoutFields));
+  });
+
+  it("leaves fold lengths absent for non-numeric garbage, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: "big",
+              fixedRadius: "big",
+              boxLimit: "big",
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "mandelbox", weight: 1 },
+    ]);
+  });
+
+  it("leaves fold lengths absent for an explicit null, rather than decoding Number(null)'s 0", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: null,
+              fixedRadius: null,
+              boxLimit: null,
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "mandelbox", weight: 1 },
+    ]);
+  });
+
+  it("leaves fold lengths absent for a boolean, without coercing true to 1", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: true,
+              fixedRadius: false,
+              boxLimit: true,
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "mandelbox", weight: 1 },
+    ]);
+  });
+
+  it("leaves fold lengths absent for an array/object value, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: [0.3],
+              fixedRadius: { value: 1.4 },
+              boxLimit: [1.2],
+            },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "mandelbox", weight: 1 },
+    ]);
+  });
+
+  it("keeps an out-of-domain but finite fold length through decode untouched, without clamping", () => {
+    // resolveFoldRadii (variations.ts) owns the domain, not persist — so a
+    // negative fixedRadius survives the decode exactly as authored rather
+    // than being clamped or rejected.
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [
+            { type: "spherefold", weight: 1, minRadius: -5, fixedRadius: -2 },
+          ],
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: -5, fixedRadius: -2 },
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Final transform (optional field)
 // ---------------------------------------------------------------------------

@@ -4,6 +4,11 @@ import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { VARIATION_TYPES } from "./types";
 import type { Transform, VariationType } from "./types";
+import {
+  BOX_FOLD_LIMIT,
+  SPHERE_FOLD_FIXED_RADIUS,
+  SPHERE_FOLD_MIN_RADIUS,
+} from "./variations";
 
 function transform(overrides: Partial<Transform> = {}): Transform {
   return {
@@ -173,6 +178,216 @@ describe("lerpSystem variations", () => {
     // (fr-qgxi).
     expect(types).toHaveLength(VARIATION_TYPES.length);
     expect(new Set(types).size).toBe(VARIATION_TYPES.length);
+  });
+});
+
+describe("lerpSystem fold radii", () => {
+  it("returns a/b by reference at the endpoints with fold lengths present, absent, and mixed", () => {
+    const a = system({
+      transforms: [
+        // Both sides omit every fold length.
+        transform({ id: 0, variations: [{ type: "spherefold", weight: 1 }] }),
+        // Both sides author different values.
+        transform({
+          id: 1,
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: 0.2,
+              fixedRadius: 0.7,
+              boxLimit: 0.8,
+            },
+          ],
+        }),
+        // Mixed present/absent, one direction (a has it, b doesn't).
+        transform({
+          id: 2,
+          variations: [{ type: "boxfold", weight: 1, boxLimit: 0.6 }],
+        }),
+        // Mixed present/absent, the other direction (b has it, a doesn't).
+        transform({ id: 3, variations: [{ type: "spherefold", weight: 1 }] }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({ id: 0, variations: [{ type: "spherefold", weight: 1 }] }),
+        transform({
+          id: 1,
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 1,
+              minRadius: 0.4,
+              fixedRadius: 1.6,
+              boxLimit: 1.3,
+            },
+          ],
+        }),
+        transform({
+          id: 2,
+          variations: [{ type: "boxfold", weight: 1 }],
+        }),
+        transform({
+          id: 3,
+          variations: [{ type: "spherefold", weight: 1, minRadius: 0.9 }],
+        }),
+      ],
+    });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+  });
+
+  it("keeps fold lengths absent at the midpoint when both sides omit them", () => {
+    const a = system({
+      transforms: [
+        transform({ variations: [{ type: "spherefold", weight: 1 }] }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [{ type: "spherefold", weight: 0.4 }],
+          position: [1, 1, 1],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    const variations = mid.transforms[0].variations!;
+    expect(variations).toHaveLength(1);
+    expect(variations[0].type).toBe("spherefold");
+    expect(variations[0].weight).toBeCloseTo(0.7, 10); // lerp(1, 0.4, 0.5)
+    expect(variations[0].minRadius).toBeUndefined();
+    expect(variations[0].fixedRadius).toBeUndefined();
+    expect(variations[0].boxLimit).toBeUndefined();
+  });
+
+  it("lerps two authored fold lengths to their midpoint when both sides set them", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.2,
+              fixedRadius: 0.8,
+              boxLimit: 0.6,
+            },
+          ],
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.6,
+              fixedRadius: 1.6,
+              boxLimit: 1.4,
+            },
+          ],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    const v = mid.transforms[0].variations![0];
+    expect(v.type).toBe("mandelbox");
+    expect(v.weight).toBe(2); // a === b, exact via lerp's a + (b-a)*t form
+    expect(v.minRadius).toBeCloseTo(0.4, 10);
+    expect(v.fixedRadius).toBeCloseTo(1.2, 10);
+    expect(v.boxLimit).toBeCloseTo(1, 10);
+  });
+
+  it("interpolates a present minRadius against an absent one through the classic value's midpoint", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [{ type: "spherefold", weight: 1, minRadius: 0.3 }],
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({ variations: [{ type: "spherefold", weight: 1 }] }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    // b omits minRadius, which means the classic SPHERE_FOLD_MIN_RADIUS —
+    // never a synthesized 0 — so the midpoint sits halfway to THAT value.
+    expect(mid.transforms[0].variations![0].minRadius).toBeCloseTo(
+      (0.3 + SPHERE_FOLD_MIN_RADIUS) / 2,
+      10,
+    );
+  });
+
+  it("resolves each fold length independently through its own classic default when they're mixed present/absent in both directions", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [
+            { type: "mandelbox", weight: 1, minRadius: 0.3, boxLimit: 1.5 },
+          ],
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [{ type: "mandelbox", weight: 1, fixedRadius: 1.4 }],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    // a omits fixedRadius (-> classic SPHERE_FOLD_FIXED_RADIUS); b omits
+    // minRadius and boxLimit (-> their own classic defaults). Each field
+    // resolves independently of what the other fields on the same entry do.
+    const v = mid.transforms[0].variations![0];
+    expect(v.minRadius).toBeCloseTo((0.3 + SPHERE_FOLD_MIN_RADIUS) / 2, 10);
+    expect(v.fixedRadius).toBeCloseTo((SPHERE_FOLD_FIXED_RADIUS + 1.4) / 2, 10);
+    expect(v.boxLimit).toBeCloseTo((1.5 + BOX_FOLD_LIMIT) / 2, 10);
+  });
+
+  it("resolves fold lengths through the classic default when a fold type is present on only one side", () => {
+    const a = system({
+      transforms: [
+        transform({
+          variations: [{ type: "spherefold", weight: 1, minRadius: 0.2 }],
+        }),
+      ],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    const mid = lerpSystem(a, b, 0.5);
+    // b carries no spherefold entry at all, which resolves exactly like a
+    // present entry that merely omits minRadius: the classic default.
+    const v = mid.transforms[0].variations![0];
+    expect(v.type).toBe("spherefold");
+    expect(v.weight).toBeCloseTo(0.5, 10);
+    expect(v.minRadius).toBeCloseTo((0.2 + SPHERE_FOLD_MIN_RADIUS) / 2, 10);
+  });
+
+  it("morphs two unparameterized systems to a result carrying no fold fields at all", () => {
+    const a = system({
+      transforms: [
+        transform({ variations: [{ type: "spherical", weight: 1 }] }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [{ type: "swirl", weight: 0.5 }],
+          position: [1, 1, 1],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].variations).toEqual([
+      { type: "spherical", weight: 0.5 },
+      { type: "swirl", weight: 0.25 },
+    ]);
   });
 });
 

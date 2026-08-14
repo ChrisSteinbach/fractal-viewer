@@ -42,6 +42,14 @@
  *   at the midpoint, where both ends sit at blend 0 (bit-identical to order
  *   1, per `prepareChaosGame`). A matching pair stays untouched and an
  *   order-1 side needs no fade (it has no copies) — both ride by reference.
+ * - The fold's three lengths (fr-s9ll — `Variation.minRadius`/`fixedRadius`/
+ *   `boxLimit`) lerp like any other absent-means-default optional number
+ *   ({@link lerpOptional}), but the default they resolve an absent side
+ *   through is the CLASSIC length (`variations.ts`'s `SPHERE_FOLD_MIN_RADIUS`/
+ *   `SPHERE_FOLD_FIXED_RADIUS`/`BOX_FOLD_LIMIT`), never a synthesized 0 — so
+ *   `minRadius: 0.3` against an absent side morphs 0.3 -> 0.5, not 0.3 -> 0.
+ *   Both sides absent stays absent, keeping an unparameterized morph
+ *   byte-identical to before fr-s9ll.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
@@ -53,6 +61,11 @@ import type {
   Vec3,
   WExtension,
 } from "./types";
+import {
+  BOX_FOLD_LIMIT,
+  SPHERE_FOLD_FIXED_RADIUS,
+  SPHERE_FOLD_MIN_RADIUS,
+} from "./variations";
 
 /**
  * The attractor-shaping subset of a generation request that a morph
@@ -153,25 +166,59 @@ function lerpWPlanes(
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
-/** Sum a variation list into a type -> weight map (duplicate types add) —
- * the shape {@link lerpVariations} unions across both sides. Absent/empty ⇒
- * an empty map, matching that both mean "no variations". */
-function variationWeights(
+/** One type's pooled data: the summed weight plus whichever fold lengths
+ * (fr-s9ll) its entries carried — the shape {@link lerpVariations} unions
+ * across both sides. */
+type VariationInfo = {
+  weight: number;
+  minRadius?: number;
+  fixedRadius?: number;
+  boxLimit?: number;
+};
+
+/** Sum a variation list into a type -> {@link VariationInfo} map (duplicate
+ * types add their weights; a later same-type entry's fold lengths win — the
+ * shared invariant every producer upholds is AT MOST ONE ENTRY PER TYPE, see
+ * `types.ts`'s {@link Variation}, so this tie-break only ever matters for
+ * hand-crafted input) — the shape {@link lerpVariations} unions across both
+ * sides. Absent/empty ⇒ an empty map, matching that both mean "no
+ * variations". */
+function variationInfo(
   variations: Variation[] | undefined,
-): Map<VariationType, number> {
-  const weights = new Map<VariationType, number>();
-  if (!variations) return weights;
+): Map<VariationType, VariationInfo> {
+  const info = new Map<VariationType, VariationInfo>();
+  if (!variations) return info;
   for (const v of variations) {
-    weights.set(v.type, (weights.get(v.type) ?? 0) + v.weight);
+    const existing = info.get(v.type);
+    if (existing === undefined) {
+      info.set(v.type, {
+        weight: v.weight,
+        minRadius: v.minRadius,
+        fixedRadius: v.fixedRadius,
+        boxLimit: v.boxLimit,
+      });
+      continue;
+    }
+    existing.weight += v.weight;
+    if (v.minRadius !== undefined) existing.minRadius = v.minRadius;
+    if (v.fixedRadius !== undefined) existing.fixedRadius = v.fixedRadius;
+    if (v.boxLimit !== undefined) existing.boxLimit = v.boxLimit;
   }
-  return weights;
+  return info;
 }
 
 /** Union the two sides' variation types (a type missing on one side resolves
  * to weight 0 there) and lerp each type's weight — weights are free
- * strengths, never renormalized. Deterministic order: `a`'s types in `a`'s
- * order, then `b`'s remaining types in `b`'s order. `undefined` when the
- * union is empty.
+ * strengths, never renormalized — alongside its fold lengths (fr-s9ll), each
+ * through {@link lerpOptional} with the CLASSIC length as the fallback
+ * (`SPHERE_FOLD_MIN_RADIUS`/`SPHERE_FOLD_FIXED_RADIUS`/`BOX_FOLD_LIMIT` —
+ * `variations.ts`'s own constants, never re-typed here as a magic number). A
+ * type missing entirely on one side resolves through that same fallback
+ * exactly as an absent field on a present entry would — `minRadius: 0.3`
+ * against no entry at all morphs 0.3 -> 0.5 exactly as it would against an
+ * entry that merely omits `minRadius`. Deterministic order: `a`'s types in
+ * `a`'s order, then `b`'s remaining types in `b`'s order. `undefined` when
+ * the union is empty.
  *
  * Keying the union by TYPE (rather than concatenating the two lists) is also
  * what bounds a sample's blend LENGTH at the type vocabulary's own size, so
@@ -183,18 +230,44 @@ function lerpVariations(
   b: Variation[] | undefined,
   t: number,
 ): Variation[] | undefined {
-  const aWeights = variationWeights(a);
-  const bWeights = variationWeights(b);
-  if (aWeights.size === 0 && bWeights.size === 0) return undefined;
+  const aInfo = variationInfo(a);
+  const bInfo = variationInfo(b);
+  if (aInfo.size === 0 && bInfo.size === 0) return undefined;
 
-  const order: VariationType[] = [...aWeights.keys()];
-  for (const type of bWeights.keys()) {
-    if (!aWeights.has(type)) order.push(type);
+  const order: VariationType[] = [...aInfo.keys()];
+  for (const type of bInfo.keys()) {
+    if (!aInfo.has(type)) order.push(type);
   }
-  return order.map((type) => ({
-    type,
-    weight: lerp(aWeights.get(type) ?? 0, bWeights.get(type) ?? 0, t),
-  }));
+  return order.map((type) => {
+    const av = aInfo.get(type);
+    const bv = bInfo.get(type);
+    const result: Variation = {
+      type,
+      weight: lerp(av?.weight ?? 0, bv?.weight ?? 0, t),
+    };
+    const minRadius = lerpOptional(
+      av?.minRadius,
+      bv?.minRadius,
+      SPHERE_FOLD_MIN_RADIUS,
+      t,
+    );
+    if (minRadius !== undefined) result.minRadius = minRadius;
+    const fixedRadius = lerpOptional(
+      av?.fixedRadius,
+      bv?.fixedRadius,
+      SPHERE_FOLD_FIXED_RADIUS,
+      t,
+    );
+    if (fixedRadius !== undefined) result.fixedRadius = fixedRadius;
+    const boxLimit = lerpOptional(
+      av?.boxLimit,
+      bv?.boxLimit,
+      BOX_FOLD_LIMIT,
+      t,
+    );
+    if (boxLimit !== undefined) result.boxLimit = boxLimit;
+    return result;
+  });
 }
 
 /**
