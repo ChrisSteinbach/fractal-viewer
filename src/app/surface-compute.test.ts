@@ -20,6 +20,7 @@ import {
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
   surfaceComputeTileRows,
+  subPixelSample,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -479,5 +480,51 @@ describe("surfaceComputeProgressDone", () => {
     expect(preBoundary).toBe(42.5);
     expect(postBoundary).toBe(42.5);
     expect(preBoundary).toBe(postBoundary);
+  });
+});
+
+describe("subPixelSample (fr-vpbq)", () => {
+  it("puts pass 0 at the pixel CENTRE exactly — the claim that a supersampled frame's first pass is the pre-fr-vpbq one", () => {
+    // Not "close to" 0.5: every ray derivation used to spell the centre as a
+    // literal 0.5, so anything else here makes pass 0 a different image and
+    // the whole bit-identity argument false.
+    expect(subPixelSample(0)).toEqual([0.5, 0.5]);
+  });
+
+  it("treats a negative index as pass 0 rather than walking off the sequence", () => {
+    expect(subPixelSample(-1)).toEqual([0.5, 0.5]);
+  });
+
+  it("keeps every later pass strictly inside the pixel", () => {
+    for (let s = 1; s < 64; s++) {
+      const [x, y] = subPixelSample(s);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(1);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThan(1);
+    }
+  });
+
+  it("is deterministic and seedless — the same pass is the same offset on every device", () => {
+    for (let s = 0; s < 16; s++) {
+      expect(subPixelSample(s)).toEqual(subPixelSample(s));
+    }
+  });
+
+  it("stratifies the eight passes the settle actually traces: eight distinct 4x4 cells, all four quadrants", () => {
+    // The point of a low-discrepancy sequence over a jittered grid is that
+    // stopping after ANY number of passes leaves an evenly covered pixel, and
+    // the shipped count is where that has to hold. Measured: the first eight
+    // offsets occupy eight distinct sixteenths AND all four quarters. (Not
+    // asserted at sixteen, where the sequence does collide once — 15 cells,
+    // not 16. Pinning the shipped count is the honest claim.)
+    const cell = (n: number, s: number): string => {
+      const [x, y] = subPixelSample(s);
+      return `${Math.floor(x * n)},${Math.floor(y * n)}`;
+    };
+    const sixteenths = new Set(Array.from({ length: 8 }, (_, s) => cell(4, s)));
+    const quarters = new Set(Array.from({ length: 8 }, (_, s) => cell(2, s)));
+    expect(sixteenths.size).toBe(8);
+    expect(quarters.size).toBe(4);
   });
 });
