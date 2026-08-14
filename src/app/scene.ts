@@ -44,6 +44,7 @@ import {
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setSurfaceGrid as packSurfaceGrid,
+  setBulbSystem as packBulbSystem,
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
@@ -79,6 +80,8 @@ import {
 } from "./surface-material-4d";
 import type { EscapeDE } from "../fractal/escape-de";
 import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
+import type { BulbDE } from "../fractal/bulb-de";
+import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
@@ -2807,6 +2810,58 @@ export class FractalScene {
   }
 
   /**
+   * Mandelbulb sibling of {@link setEscapeSystem} (fr-tdin): upload the
+   * single triplex-power map's forward affine and flip the material onto
+   * the SURFACE_BULB variant. Everything else about the mode — tiers,
+   * strips, compile gate, capture — runs unchanged on the same material,
+   * and the orbit's iteration budget rides {@link surfaceFullMaxDepth}
+   * exactly like the escape arm's. No grid for this mode either (the
+   * empty-space chain's validity argument is IFS-specific).
+   *
+   * ONE asymmetry against the escape twin, and it is the same one the
+   * packers carry: the orbit's bailout ball and the QUERY-space marching
+   * ball are different numbers here, so the balls below take
+   * `de.boundingRadius` — the marching one.
+   */
+  setBulbSystem(de: BulbDE, color: Vec3): void {
+    this.renderNeeded = true;
+    this.dropSurfaceGridTexture();
+    packBulbSystem(this.surfaceMaterial, de, color);
+    // NO balloon ball, for the escape solid's reason re-measured on this
+    // object (fr-tdin): the Mandelbulb is a FILLED solid whose interior
+    // reaches the ball centre — DE(0) = 0 and 100% of a 0.1R neighbourhood
+    // of the centre is interior, against 0.1% for the Mandelbox at its own
+    // (much larger) bailout ball — so the sphere-inverted echo contains
+    // infinity, the camera sits inside it (measured union DE at the
+    // session's own opening eye: exactly 0 at R = 0.35 and 0.9 raw-ball
+    // radii), and every ray hits at t ~ 0 with degenerate normals: a flat,
+    // featureless frame at every R, exactly what fr-5wlv.4 observed one
+    // object over. Nulling the ball keeps applySurfaceBalloon packing the
+    // variant OFF however the shared toggle is set, so bulb sessions
+    // render plain.
+    this.surfaceBalloonBall = null;
+    this.applySurfaceBalloon();
+    // The floor (fr-rhn5) survives where the balloon degenerates, exactly
+    // as it does for the escape solid — and a plane under a Mandelbulb is
+    // the mode's classic look too.
+    this.surfaceGroundBall = { center: [0, 0, 0], radius: de.boundingRadius };
+    this.applySurfaceGroundPlane();
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+    this.surfaceFullMaxDepth = BULB_ITERATIONS;
+    // Cheaper per eval than the fold mode that already ships (0.29 us
+    // against 1.04, bulb-de.ts's measured verdict), so the plain anchor
+    // entry and the legacy strip probe are right here too.
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.surfaceFullPxCostMs = null;
+    this.surfaceDeFoldClass = false;
+    this.surfaceStripEvidencedWorstMsPerPx = null;
+    this.surfaceStripPartialWorstMsPerPx = 0;
+    this.flushStripBacklog();
+  }
+
+  /**
    * Turn the surface balloon (fr-5wlv.4) on or off at a normalized radius
    * `rMult` (multiples of the raw DE-ball radius — buildBalloon's rMult,
    * the same continuous parameter as the explorer echo's slider). Applies
@@ -3159,32 +3214,63 @@ export class FractalScene {
   }
 
   /**
-   * {@link enterSurfaceComputeSession}'s escape-time twin (fr-dlxh): the
-   * same session-entry resets {@link setEscapeSystem} makes — the orbit's
+   * {@link enterSurfaceComputeSession}'s FORWARD-ORBIT twin (fr-dlxh, and
+   * one object wider since fr-tdin): the same session-entry resets
+   * {@link setEscapeSystem}/{@link setBulbSystem} make — the orbit's
    * iteration budget as the preview depth clamp, a plain governor reset
-   * (the escape loop is phone-cheap; no descent cost weight exists) —
+   * (both forward loops are phone-cheap; no descent cost weight exists) —
    * without touching the GLSL material.
+   *
+   * `maxDepth` is the only thing that differs between the two objects
+   * here, which is why they share one method behind the two named
+   * wrappers below rather than one copy each.
+   * `ballRadius` is the marching ball the floor drops under — the escape
+   * DE's origin bailout ball, the bulb DE's query-space bounding ball.
    */
-  enterSurfaceComputeEscapeSession(groundPlane = false, ballRadius = 1): void {
+  private enterSurfaceComputeForwardSession(
+    maxDepth: number,
+    groundPlane: boolean,
+    ballRadius: number,
+  ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
-    // Escape sessions never balloon (fr-5wlv.4's measured degeneracy —
-    // setEscapeSystem's comment) — null the ball exactly like the WebGL
-    // install path, and the session flag with it.
+    // Forward-orbit sessions never balloon (fr-5wlv.4's measured
+    // degeneracy, re-measured on the Mandelbulb by fr-tdin —
+    // setEscapeSystem's and setBulbSystem's comments) — null the ball
+    // exactly like the WebGL install path, and the session flag with it.
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
-    // The floor (fr-rhn5) survives where the balloon degenerates —
-    // `ballRadius` is the escape DE's origin bailout ball, the WebGL
-    // path's setEscapeSystem move.
+    // The floor (fr-rhn5) survives where the balloon degenerates — the
+    // WebGL path's setEscapeSystem/setBulbSystem move.
     this.surfaceGroundBall = groundPlane
       ? { center: [0, 0, 0], radius: ballRadius }
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
+    this.surfaceFullMaxDepth = maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
+  }
+
+  /** The escape-time forward orbit's compute entry (fr-dlxh) — see
+   * {@link enterSurfaceComputeForwardSession}. */
+  enterSurfaceComputeEscapeSession(groundPlane = false, ballRadius = 1): void {
+    this.enterSurfaceComputeForwardSession(
+      ESCAPE_TIME_ITERATIONS,
+      groundPlane,
+      ballRadius,
+    );
+  }
+
+  /** The Mandelbulb forward orbit's compute entry (fr-tdin) — see
+   * {@link enterSurfaceComputeForwardSession}. */
+  enterSurfaceComputeBulbSession(groundPlane = false, ballRadius = 1): void {
+    this.enterSurfaceComputeForwardSession(
+      BULB_ITERATIONS,
+      groundPlane,
+      ballRadius,
+    );
   }
 
   /**

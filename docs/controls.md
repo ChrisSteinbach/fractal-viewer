@@ -249,7 +249,20 @@ morphs into place instead of snapping (see **Presets** below).
   objects, so the fastest way to see what this mode does is to load one
   and drag the fold weight. Their
   position slider moves the fold's centre, which deforms rather than
-  translates. The menu's **Fold Lattice** (formerly labelled Mandelbox)
+  translates.
+  The same group's **Mandelbulb**, **Mandelbulb Offset** and **Mandelbulb
+  Rotated** (fr-tdin) are the escape-time family's second object: a single
+  map whose only variation is the triplex 8th power, marched the same
+  forward way and disclosed by its own status note ("Mandelbulb render").
+  Its two knobs are the map's own — the position slider is a PRE-power
+  offset that bites into the bulbs rather than sliding them (zero gives the
+  textbook object), and the rotation is a genuinely different family rather
+  than a different camera angle, because a rotation applied before the
+  power does not commute with it. The power is fixed at 8. The balloon is
+  unavailable in a Mandelbulb session for the same measured reason as in a
+  Mandelbox one — a filled solid's sphere-inverted echo contains the camera
+  — but the ground plane works, and a Mandelbulb on a floor is the mode's
+  classic look. The menu's **Fold Lattice** (formerly labelled Mandelbox)
   is an unrelated eight-map IFS that merely uses the same fold variation.
   **Mandelbox KIFS** in the Presets menu is the pure-fold showcase for the
   IFS-side fold descent and loads straight into Surface mode. Orbiting or tumbling one also starts

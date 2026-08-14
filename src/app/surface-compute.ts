@@ -60,6 +60,7 @@
  * re-enters via the WebGL path.
  */
 
+import type { BulbDE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
 import type {
   SurfaceGpu4View,
@@ -67,6 +68,7 @@ import type {
   SurfaceGpuRunParams,
 } from "../fractal/surface-de-gpu";
 import {
+  packBulbGpuParams,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -163,7 +165,10 @@ export class SurfaceComputeFrameSizeError extends Error {}
  * What one compute session traces (fr-dlxh): an IFS attractor descent
  * (the fr-tzdg/fr-55s1 fold and fold-lens classes, `SurfaceDE` frozen at
  * enter), an escape-time forward orbit (`EscapeDE`, the systems
- * `analyzeEscapeSystem` admits — the IFS gate's complement), or a 4D IFS
+ * `analyzeEscapeSystem` admits — the IFS gate's complement), a
+ * Mandelbulb forward orbit (`BulbDE`, the systems `analyzeBulbSystem`
+ * admits — fr-tdin; structurally the escape kind one formula over, so
+ * every branch below that names "escape" names this too), or a 4D IFS
  * descent (`SurfaceDE4`, the fr-dlxh 4D cut — the systems
  * `analyzeSurfaceSystem4` admits; its rotor/slice VIEW is per-frame SPEC
  * state, never frozen here). The kind picks the kernel core, the params
@@ -175,15 +180,30 @@ export class SurfaceComputeFrameSizeError extends Error {}
  * the balloon inverted-union wrapper over whichever core/lens the DE
  * picks; the live balloon parameters then ride every frame's spec
  * (`SurfaceComputeFrameSpec.balloon` — the R slider's live-per-frame
- * door, view4's discipline). Escape targets never set it (the codegen
- * throw is the backstop: the escape solid's echo swallows the camera —
- * fr-5wlv.4's measured verdict) and the 4D lift is a later fr-5wlv
- * child.
+ * door, view4's discipline). Neither FORWARD kind ever sets it (the
+ * codegen throws for both: a filled solid's echo swallows the camera —
+ * fr-5wlv.4's measured verdict for the escape solid, re-measured on the
+ * Mandelbulb by fr-tdin) and the 4D lift is a later fr-5wlv child.
  */
 export type SurfaceComputeTarget =
   | { kind: "ifs"; de: SurfaceDE; balloon?: boolean; groundPlane?: boolean }
   | { kind: "escape"; de: EscapeDE; groundPlane?: boolean }
+  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean }
   | { kind: "ifs4"; de: SurfaceDE4 };
+
+/** The two FORWARD-orbit kinds (fr-dlxh's escape, fr-tdin's bulb): one
+ * map riding the params variant block, so no maps buffer, no descent
+ * lens, no frontier width — and the same session-shaping consequences
+ * everywhere the host loop asks "is this a descent?". Named once so a
+ * third forward core cannot be added to one branch and missed in
+ * another. */
+export function isForwardTarget(
+  target: SurfaceComputeTarget,
+): target is
+  | { kind: "escape"; de: EscapeDE; groundPlane?: boolean }
+  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean } {
+  return target.kind === "escape" || target.kind === "bulb";
+}
 
 /** Everything one frame needs beyond the session-frozen DE: raster size,
  * camera, tier budgets, live lighting/color params. Assembled by scene.ts
@@ -861,26 +881,34 @@ export class SurfaceComputeRenderer {
           core:
             target.kind === "escape"
               ? "escape"
-              : target.kind === "ifs4"
-                ? deHasFolds4(target.de)
-                  ? "fold4"
-                  : "affine4"
-                : deHasFolds(target.de)
-                  ? "fold"
-                  : "affine",
-          lens: target.kind !== "escape" && target.de.foldFinal !== null,
+              : target.kind === "bulb"
+                ? // fr-tdin: the Mandelbulb's forward triplex-power orbit
+                  // — the escape core's sibling, and a CORE of its own
+                  // rather than a fourth foldKind (surface-de-gpu.ts's
+                  // own reasoning: the escape bodies dispatch on
+                  // `kind != 2`/`kind != 1`, so an unrecognized kind
+                  // would silently run both folds).
+                  "bulb"
+                : target.kind === "ifs4"
+                  ? deHasFolds4(target.de)
+                    ? "fold4"
+                    : "affine4"
+                  : deHasFolds(target.de)
+                    ? "fold"
+                    : "affine",
+          lens: !isForwardTarget(target) && target.de.foldFinal !== null,
           // fr-5wlv.5: a balloon ifs target compiles the inverted-union
           // wrapper over whichever core+lens the DE picked; the other
           // kinds never set the flag (escape's codegen throw is the
           // backstop).
           balloon: target.kind === "ifs" && target.balloon === true,
-          // fr-rhn5: the ground plane compiles into ifs and escape
-          // kernels alike (the classic Mandelbox floor); ifs4 never sets
-          // the flag (the codegen throw is the backstop, like balloon's),
-          // and a balloon+plane target is a caller bug the codegen
-          // rejects loudly.
+          // fr-rhn5: the ground plane compiles into ifs and both FORWARD
+          // kernels alike (the classic Mandelbox/Mandelbulb floor); ifs4
+          // never sets the flag (the codegen throw is the backstop, like
+          // balloon's), and a balloon+plane target is a caller bug the
+          // codegen rejects loudly.
           groundPlane:
-            (target.kind === "ifs" || target.kind === "escape") &&
+            (target.kind === "ifs" || isForwardTarget(target)) &&
             target.groundPlane === true,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
@@ -1030,19 +1058,18 @@ export class SurfaceComputeRenderer {
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
     // (ArrayBufferLike-backed) don't satisfy writeBuffer's non-shared
-    // buffer requirement — the bench's own idiom. An escape kernel never
+    // buffer requirement — the bench's own idiom. A FORWARD kernel never
     // DECLARES the maps binding, but the explicit bind group layouts
     // below keep entry 1 (a layout may carry entries a shader ignores),
-    // so the escape target binds one zero stride there rather than
+    // so those targets bind one zero stride there rather than
     // forking every layout/bind-group path. A 4D target packs the
     // GpuMap4 layout (128-byte stride since fr-rsp6 grew it to eight
     // vec4s for the fold lanes; its own field contract).
-    const mapsData =
-      target.kind === "escape"
-        ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
-        : target.kind === "ifs4"
-          ? new Float32Array(packSurfaceGpuMaps4(target.de))
-          : new Float32Array(packSurfaceGpuMaps(target.de));
+    const mapsData = isForwardTarget(target)
+      ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
+      : target.kind === "ifs4"
+        ? new Float32Array(packSurfaceGpuMaps4(target.de))
+        : new Float32Array(packSurfaceGpuMaps(target.de));
     const mapsBuf = device.createBuffer({
       size: mapsData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -1505,7 +1532,9 @@ export class SurfaceComputeRenderer {
     // factor, surface-de.ts) — so first-slice/first-batch sizing starts
     // from a proportionally raised prior and stays watchdog-safe before
     // the EMAs take over.
-    // (Escape targets scale nothing: the forward loop is phone-cheap and
+    // (Both FORWARD kinds scale nothing: the orbit is phone-cheap — the
+    // bulb measured 3.5x CHEAPER per eval than the fold mode
+    // (bulb-de.ts's verdict) — and
     // the pessimistic base priors only err toward smaller first slices.
     // Affine 4D targets scale nothing either — the affine4 ladder starts
     // from the same pessimistic base priors the 3D affine class would.
@@ -1514,10 +1543,9 @@ export class SurfaceComputeRenderer {
     // wider — 81 boxfold / 243 mandelbox — so the first slice scales by
     // maxFan/27 (spherefold's 3 stays at the floor); a 4D fold FINAL
     // multiplies its own fan/8 exactly like the 3D lens.)
-    const lensKind =
-      this.target.kind !== "escape"
-        ? this.target.de.foldFinal?.foldKind
-        : undefined;
+    const lensKind = !isForwardTarget(this.target)
+      ? this.target.de.foldFinal?.foldKind
+      : undefined;
     const lensFan4 =
       this.target.kind === "ifs4" && lensKind !== undefined
         ? lensKind === 1
@@ -1576,7 +1604,7 @@ export class SurfaceComputeRenderer {
     // struct has no meaningful default); a no-plane session ignores any
     // stray spec.groundPlane — its buffer never grew.
     const groundPlane =
-      (target.kind === "ifs" || target.kind === "escape") &&
+      (target.kind === "ifs" || isForwardTarget(target)) &&
       target.groundPlane === true
         ? (() => {
             const gp = spec.groundPlane;
@@ -1591,36 +1619,42 @@ export class SurfaceComputeRenderer {
     const packParams: (run: SurfaceGpuRunParams) => ArrayBuffer =
       target.kind === "escape"
         ? (run) => packEscapeGpuParams(target.de, run, groundPlane)
-        : target.kind === "ifs4"
-          ? (() => {
-              const view4 = spec.view4;
-              if (!view4) {
-                throw new Error(
-                  "Surface compute: an ifs4 frame spec must carry view4",
-                );
-              }
-              return (run: SurfaceGpuRunParams) =>
-                packSurface4GpuParams(target.de, view4, run);
-            })()
-          : (() => {
-              // fr-5wlv.5: a balloon session's spec must carry the live
-              // balloon block (the R slider's per-frame door — view4's
-              // required-throw discipline; the 304-byte kernel struct has
-              // no meaningful default). A no-balloon session ignores any
-              // stray spec.balloon — its buffer is 272 bytes.
-              if (target.balloon === true) {
-                const balloon = spec.balloon;
-                if (!balloon) {
+        : target.kind === "bulb"
+          ? // fr-tdin: the escape packer's twin — one asymmetry, and it
+            // is inside packBulbGpuParams: the ORBIT bailout and the
+            // QUERY-space marching ball are different numbers for this
+            // object, so the frozen radii take the latter.
+            (run) => packBulbGpuParams(target.de, run, groundPlane)
+          : target.kind === "ifs4"
+            ? (() => {
+                const view4 = spec.view4;
+                if (!view4) {
                   throw new Error(
-                    "Surface compute: a balloon frame spec must carry balloon",
+                    "Surface compute: an ifs4 frame spec must carry view4",
                   );
                 }
                 return (run: SurfaceGpuRunParams) =>
-                  packSurfaceGpuParams(target.de, run, balloon);
-              }
-              return (run: SurfaceGpuRunParams) =>
-                packSurfaceGpuParams(target.de, run, null, groundPlane);
-            })();
+                  packSurface4GpuParams(target.de, view4, run);
+              })()
+            : (() => {
+                // fr-5wlv.5: a balloon session's spec must carry the live
+                // balloon block (the R slider's per-frame door — view4's
+                // required-throw discipline; the 304-byte kernel struct has
+                // no meaningful default). A no-balloon session ignores any
+                // stray spec.balloon — its buffer is 272 bytes.
+                if (target.balloon === true) {
+                  const balloon = spec.balloon;
+                  if (!balloon) {
+                    throw new Error(
+                      "Surface compute: a balloon frame spec must carry balloon",
+                    );
+                  }
+                  return (run: SurfaceGpuRunParams) =>
+                    packSurfaceGpuParams(target.de, run, balloon);
+                }
+                return (run: SurfaceGpuRunParams) =>
+                  packSurfaceGpuParams(target.de, run, null, groundPlane);
+              })();
     // fr-d0nn: an ifs4 frame at the shipped sliceHalfW 0 rides the
     // slab-free kernel pair (measured 2.2-2.4x cheaper at every
     // kaleidoscope order — the fr-wa6o ext registers are occupancy tax

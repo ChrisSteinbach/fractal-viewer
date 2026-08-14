@@ -382,10 +382,15 @@ into the points explorer), switched from a single segmented control at the
 top of the panel, so any pair of them is a direct switch, never a round-trip
 through the explorer. A preset can declare the mode it was authored to
 showcase (`PRESET_RENDER_HINTS` — the "Flame" optgroup's
-Radiolarian/Swirl/Dyed Spiral),
+Radiolarian/Swirl/Dyed Spiral, and the "Escape-time" group's Mandelboxes
+and Mandelbulbs),
 which `main.ts` applies when the freshly loaded system's cloud lands,
 snapping the camera fit first so the flame's frozen projection frames the
-new attractor. The flame and solid renders each run in their own Web Worker
+new attractor. Two sibling side tables ride the same lookup (fr-7u8t.5):
+`PRESET_FINALS` gives a preset the final-transform LENS it was composed
+around — and, absent, CLEARS whatever lens the session had, so one preset's
+lens can never re-pose the next one's attractor — and `PRESET_PALETTES`
+gives a flame showcase the built-in palette it was chosen with. The flame and solid renders each run in their own Web Worker
 (see "Render workers" below) so their hundreds of millions of iterations
 never touch the main thread; the surface render, covered in its own section
 below, needs neither.

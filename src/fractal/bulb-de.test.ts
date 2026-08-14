@@ -6,6 +6,12 @@ import {
   BULB_STEP_SCALE,
 } from "./bulb-de";
 import type { BulbDE } from "./bulb-de";
+import { analyzeEscapeSystem } from "./escape-de";
+import {
+  mandelbulbClassic,
+  mandelbulbOffset,
+  mandelbulbRotated,
+} from "./presets";
 import { analyzeSurfaceSystem } from "./surface-de";
 import { triplexPow8 } from "./variations";
 import type { Transform, Vec3 } from "./types";
@@ -436,5 +442,98 @@ describe("triplexPow8", () => {
     }
     const origin = triplexPow8(0, 0, 0);
     expect(origin.every((c) => c === 0)).toBe(true);
+  });
+});
+
+describe("the Mandelbulb presets (fr-tdin)", () => {
+  // These three exist to make the mode reachable, and they reach it only by
+  // being refused by BOTH other surface gates: the IFS descent (which has no
+  // inverse branch for a triplex power) and the escape-time fold gate (which
+  // takes only the fold family). A preset that drifted into either — an extra
+  // map, a stray fold, a weight other than 1 — would silently land in a
+  // different renderer, or in none at all with a reason that names neither
+  // this map nor the marcher that exists for it.
+  it.each([
+    ["mandelbulbClassic", mandelbulbClassic()],
+    ["mandelbulbOffset", mandelbulbOffset()],
+    ["mandelbulbRotated", mandelbulbRotated()],
+  ])("%s is admitted by the bulb gate alone", (_name, transforms) => {
+    expect(analyzeBulbSystem(transforms)).toEqual({
+      status: "eligible",
+      reasons: [],
+    });
+    expect(analyzeSurfaceSystem(transforms).status).toBe("ineligible");
+    expect(analyzeEscapeSystem(transforms).status).toBe("ineligible");
+  });
+
+  it("renders three NON-EMPTY sets", () => {
+    // A preset that renders nothing is worse than no preset (fr-7u8t.8's
+    // lesson). Fill measured in each system's own marching ball, which is
+    // per-system here rather than a shared constant.
+    for (const transforms of [
+      mandelbulbClassic(),
+      mandelbulbOffset(),
+      mandelbulbRotated(),
+    ]) {
+      const de = buildBulbDE(transforms);
+      const N = 17;
+      let inBall = 0;
+      let interior = 0;
+      const step = (2 * de.boundingRadius) / (N - 1);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          for (let k = 0; k < N; k++) {
+            const p: Vec3 = [
+              -de.boundingRadius + step * i,
+              -de.boundingRadius + step * j,
+              -de.boundingRadius + step * k,
+            ];
+            if (Math.hypot(...p) > de.boundingRadius) continue;
+            inBall++;
+            if (estimateBulbDistance(de, p) < 1e-3) interior++;
+          }
+        }
+      }
+      expect(interior / inBall).toBeGreaterThan(0.02);
+      expect(interior / inBall).toBeLessThan(0.6);
+    }
+  });
+
+  // The rotated preset's whole justification (see its doc, and the module
+  // doc's azimuthal factor): `M` does not commute with the triplex power, so
+  // the rotated system is a DIFFERENT object rather than a different view of
+  // the classic one. If it were merely a re-posing, this identity would hold
+  // everywhere and the preset would be a camera move wearing a menu entry.
+  it("mandelbulbRotated is not the classic bulb seen from another angle", () => {
+    const classic = buildBulbDE(mandelbulbClassic());
+    const rotated = buildBulbDE(mandelbulbRotated());
+    // The rotated system's own forward linear part, applied to the query:
+    // if rotation were a conjugation, DE_rotated(p) would equal
+    // DE_classic(M p).
+    const m = rotated.m;
+    let disagreements = 0;
+    let probed = 0;
+    for (let i = 0; i < 12; i++) {
+      for (let j = 0; j < 12; j++) {
+        const p: Vec3 = [
+          0.9 * Math.cos(i) * Math.cos(j),
+          0.9 * Math.sin(i) * Math.cos(j),
+          0.9 * Math.sin(j),
+        ];
+        const mp: Vec3 = [
+          m[0] * p[0] + m[1] * p[1] + m[2] * p[2],
+          m[3] * p[0] + m[4] * p[1] + m[5] * p[2],
+          m[6] * p[0] + m[7] * p[1] + m[8] * p[2],
+        ];
+        const a = estimateBulbDistance(rotated, p);
+        const b = estimateBulbDistance(classic, mp);
+        probed++;
+        if (Math.abs(a - b) > 1e-6 * Math.max(1, Math.abs(b))) {
+          disagreements++;
+        }
+      }
+    }
+    expect(probed).toBeGreaterThan(0);
+    expect(disagreements / probed).toBeGreaterThan(0.5);
   });
 });

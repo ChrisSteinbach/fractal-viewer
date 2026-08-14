@@ -68,11 +68,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     (`surface-material.ts`) and the `balloon: true` WGSL kernels
     (`surface-de-gpu.ts`, bench-pinned by `balloonEval`/`balloonMarch` legs);
     the explorer echo (`scene.ts`'s shared-geometry echo Points) reuses only
-    the inversion + the far-cap vocabulary. IFS systems only: escape-time
-    sessions render plain — the escape solid's interior reaches the ball
-    center, so its echo swallows the camera (fr-5wlv.4's measured verdict) —
-    and the estimator composed under the union must be far-field SOUND (a
-    true lower bound outside the ball; the escape heuristic's `|q|` is not).
+    the inversion + the far-cap vocabulary. IFS systems only: both
+    FORWARD-ORBIT modes render plain — a filled solid's interior reaches
+    the ball center, so its echo swallows the camera (fr-5wlv.4's measured
+    verdict for the escape folds; fr-tdin re-measured it on the Mandelbulb
+    rather than inheriting it — DE(0) = 0 with 100% of a 0.1R neighbourhood
+    of the centre interior, union DE exactly 0 at the session's own opening
+    eye for R = 0.35 and 0.9 raw-ball radii, and a flat featureless frame at
+    every R) — and the estimator composed under the union must be far-field
+    SOUND (a true lower bound outside the ball; the escape heuristic's `|q|`
+    is not).
     Balloon on/`R` persist in the scene document; `R` is authored NORMALIZED
     (multiples of the raw ball radius, `buildBalloon`'s `rMult`), one
     continuous parameter across the explorer echo and the surface balloon.
@@ -108,7 +113,16 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
       `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
-  - `presets.ts` — default + named systems + add-transform.
+  - `presets.ts` — default + named systems + add-transform, plus four
+    `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
+    consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
+    (the renderer a preset was authored for), and — fr-7u8t.5 —
+    `PRESET_FINALS` (the plot-time lens a composition is built around;
+    ABSENT MEANS CLEAR, so no lens survives a preset load into a system
+    whose gate refuses one) and `PRESET_PALETTES` (the flame palette a
+    composition was chosen with — built-in ids only, flame-hinted presets
+    only). Four tables rather than a wider `PRESETS` signature, so no
+    preset has to declare what it does not carry.
   - `project4.ts` — SO(4) rotor→matrix + camera projection, `FourDView`,
     `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
   - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,
@@ -431,8 +445,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     mirrored by the `SURFACE_BULB` GLSL variant
     (`surface-material.ts`) and the `core: "bulb"` WGSL kernel
     (`surface-de-gpu.ts`) since fr-7u8t.9, bench-pinned by the
-    `bulb-forward` eval leg — still UNREACHABLE from the app until
-    fr-tdin routes it.
+    `bulb-forward` eval leg. ROUTED since fr-tdin: `analyzeBulbSystem` is
+    the third arm of main.ts's flat surface path (beside
+    `analyzeSurfaceSystem` and `analyzeEscapeSystem`), the compute
+    renderer's `{kind:"bulb"}` target and the `SURFACE_BULB` GLSL
+    fallback carry it, and the `mandelbulbClassic`/`Offset`/`Rotated`
+    presets reach it from the Escape-time menu group.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
@@ -863,8 +881,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     refuses the pair): `bulb-de.ts`'s forward triplex-power loop, packed by
     `setBulbSystem`, whose `uBulb*` uniforms are declared INSIDE the arm so
     no other variant pays their bytes against the Mesa cliff (resolved
-    source ~33KB against the descent variants' ~77KB). No routing yet —
-    fr-tdin. The `SURFACE_GROUND_PLANE` variant
+    source ~33KB against the descent variants' ~77KB). Since fr-tdin it
+    is the FALLBACK arm for bulb sessions exactly as `SURFACE_ESCAPE` is
+    for fold ones (`?surfacegl` / no adapter / device loss); the compute
+    `core: "bulb"` kernel is preferred. The `SURFACE_GROUND_PLANE` variant
     (fr-rhn5) is `resolveVariantArms`' fourth JS-resolved key: an infinite
     one-sided floor below the session ball, lit by a `shadeGroundPlane`
     entry mirroring the WGSL arm term for term (penumbra shadow + AO under
@@ -973,9 +993,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     extended `--surface-aff4-sweep` leg — so the residual is this
     module's march-loop scheduling under an expensive-DE regime,
     fr-fniy). `create()` takes a
-    `SurfaceComputeTarget` union (`{kind:"ifs"|"escape"|"ifs4"}`) whose
+    `SurfaceComputeTarget` union
+    (`{kind:"ifs"|"escape"|"bulb"|"ifs4"}`) whose
     `kind` picks the kernel core (ifs4 → affine4 or fold4 off
-    `deHasFolds4`, the 3D `deHasFolds` split one dimension up), the
+    `deHasFolds4`, the 3D `deHasFolds` split one dimension up; `bulb` →
+    fr-tdin's `core:"bulb"`, structurally the escape arm one formula
+    over — `isForwardTarget` names the pair so a branch cannot serve one
+    and miss the other), the
     params packer and the maps
     buffer's layout/existence — the bounded march/shade host loop,
     progressive presents and failure ladder stay shared regardless.

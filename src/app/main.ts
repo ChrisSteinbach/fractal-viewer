@@ -12,6 +12,7 @@ import {
   W_SIDE_PALETTES,
 } from "../fractal/color";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
+import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -19,6 +20,7 @@ import {
   type SurfaceDE,
 } from "../fractal/surface-de";
 import {
+  isForwardTarget,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
@@ -70,6 +72,8 @@ import type {
 import { glowExposure } from "./exposure";
 import {
   defaultFinalTransform,
+  PRESET_FINALS,
+  PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   presetTransforms,
@@ -130,6 +134,7 @@ import {
   setBalloonRadius,
   setCustomPaletteStops,
   setFinalTransform,
+  setFlamePaletteId,
   setPanelOpen,
   setBackgroundCustom,
   setFogTint,
@@ -3085,8 +3090,10 @@ function main(): void {
     );
   }
 
-  /** The escape session's one shade slot: the active map's explorer
-   * color — the exact pick `setEscapeSystem`'s GLSL packing takes. */
+  /** A FORWARD-ORBIT session's one shade slot: the active map's explorer
+   * color — the exact pick `setEscapeSystem`'s (and, since fr-tdin,
+   * `setBulbSystem`'s) GLSL packing takes. Both objects are single-map by
+   * their gates, so "the active map" is unambiguous for either. */
   function escapeSlotColor(): Vec3 {
     const active = Math.max(
       0,
@@ -3151,13 +3158,14 @@ function main(): void {
     SurfaceComputeRenderer.create(
       target,
       // Per-slot shading inputs by kind: the IFS sessions (3D and 4D
-      // alike) shade de.maps[j] (fr-c6yd's shared derivation); the
-      // escape session has ONE slot — the active map's color, trap
-      // index 0, the GLSL setEscapeSystem shape.
-      target.kind === "escape"
+      // alike) shade de.maps[j] (fr-c6yd's shared derivation); the two
+      // FORWARD sessions (escape, and fr-tdin's bulb) have ONE slot —
+      // the active map's color, trap index 0, the GLSL
+      // setEscapeSystem/setBulbSystem shape.
+      isForwardTarget(target)
         ? [escapeSlotColor()]
         : surfaceSlotColors(state.transforms, target.de.maps),
-      target.kind === "escape"
+      isForwardTarget(target)
         ? [0]
         : surfaceTrapIndices(state.transforms, target.de.maps),
     )
@@ -3857,8 +3865,8 @@ function main(): void {
     start: () => {
       // Set when this session routes to the WebGPU compute path (fr-tzdg;
       // fr-dlxh widened it to the escape kind, then — the 4D cut — to
-      // ifs4) — the gate below then awaits device + pipeline instead of
-      // the GLSL link.
+      // ifs4, and fr-tdin to the bulb) — the gate below then awaits
+      // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
       // Recomputed by the routing below (fr-tmgf); only the plain-affine
       // 3D branch keeps null unconditionally — WebGL is its natural
@@ -3971,54 +3979,101 @@ function main(): void {
           analyzeSurfaceSystem(state.transforms, state.finalTransform ?? null)
             .status === "ineligible"
         ) {
-          // The IFS gate refused — the escape-time complement (fr-kltj):
-          // a single non-contracting pure-fold map has no attractor, but
-          // it has the canonical Mandelbox escape-time set, and THAT is
-          // what Surface renders for it. Since fr-dlxh the escape kind
-          // PREFERS the compute renderer like every fold-shaped session
-          // (the kernel's forward-orbit core); the SURFACE_ESCAPE GLSL
-          // variant is the fallback arm (?surfacegl / no adapter /
-          // device loss). No grid either way — the empty-space chain's
-          // validity argument is IFS-specific.
+          // The IFS gate refused — so one of the two FORWARD-ORBIT
+          // complements (fr-kltj's escape-time folds, fr-tdin's
+          // Mandelbulb). Neither map has an attractor to descend onto;
+          // each has an escape-time set whose boundary Surface marches by
+          // iterating the map FORWARD from every query, and that is what
+          // the mode renders for them. Both kinds PREFER the compute
+          // renderer like every fold-shaped session (the kernels'
+          // forward-orbit cores, fr-dlxh and fr-7u8t.9); the
+          // SURFACE_ESCAPE/SURFACE_BULB GLSL variants are the fallback
+          // arms (?surfacegl / no adapter / device loss). No grid for
+          // either — the empty-space chain's validity argument is
+          // IFS-specific. The order of the two tests below MATTERS only
+          // in the sense that the gates are disjoint by construction
+          // (a pure fold is not a pure triplex power), so it reads as
+          // the eligibility function's own order and nothing more.
           surfaceSessionIs4D = false;
-          // fr-5wlv.6: the balloon is PERMANENTLY inert for the escape
-          // solid (fr-5wlv.4's measured degeneracy — scene.ts nulls the
-          // ball), so its controls hide outright rather than sitting there
-          // visible-but-inert.
-          ui.setSurfaceSessionKind("escape");
-          const de = buildEscapeDE(
-            state.transforms,
-            state.finalTransform ?? null,
-            state.symmetry,
-          );
-          // Escape sessions never take the balloon (fr-5wlv.4, measured:
-          // the escape solid's interior reaches the ball center, so its
-          // echo swallows the camera — scene.setEscapeSystem nulls the
-          // ball and renders plain), so their compute preference stands
-          // regardless of the shared toggle.
-          if (surfaceComputeAvailable()) {
-            // The ground plane (fr-rhn5) survives where the balloon
-            // degenerates — escape sessions never balloon, so there is no
-            // precedence to resolve here, unlike the IFS compute arm below.
-            computeTarget = {
-              kind: "escape",
-              de,
-              groundPlane: state.groundPlane,
-            };
-            scene.enterSurfaceComputeEscapeSession(
-              state.groundPlane,
-              de.boundingRadius,
-            );
-          } else {
-            // fr-tmgf: a pure-fold map is compute-shaped — compute is
-            // its home, so the WebGL session says why it passed (null
-            // for the deliberate ?surfacegl flag).
+          // fr-tmgf: both shapes are compute-shaped — compute is their
+          // home, so a WebGL session says why it passed (null for the
+          // deliberate ?surfacegl flag).
+          const forwardWebglDetail = (): void => {
             surfaceWebglDetailToken = surfaceWebglDetail({
               computeShaped: true,
               supported: SurfaceComputeRenderer.supported(),
               block: surfaceComputeBlock,
             });
-            scene.setEscapeSystem(de, escapeSlotColor());
+          };
+          // Neither forward session ever takes the balloon (fr-5wlv.4 and
+          // fr-tdin, both measured: a filled solid's interior reaches the
+          // ball center, so its echo swallows the camera — scene.ts nulls
+          // the ball and renders plain), so their compute preference
+          // stands regardless of the shared toggle, and the panel hides
+          // the rows outright rather than leaving them visible-but-inert
+          // (fr-5wlv.6, ui.setSurfaceSessionKind).
+          //
+          // The GROUND PLANE (fr-rhn5) survives where the balloon
+          // degenerates, for both — and since neither balloons there is
+          // no precedence to resolve here, unlike the IFS compute arm
+          // below.
+          let R: number;
+          if (
+            analyzeEscapeSystem(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            ).status === "eligible"
+          ) {
+            ui.setSurfaceSessionKind("escape");
+            const de = buildEscapeDE(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            );
+            R = de.boundingRadius;
+            if (surfaceComputeAvailable()) {
+              computeTarget = {
+                kind: "escape",
+                de,
+                groundPlane: state.groundPlane,
+              };
+              scene.enterSurfaceComputeEscapeSession(
+                state.groundPlane,
+                de.boundingRadius,
+              );
+            } else {
+              forwardWebglDetail();
+              scene.setEscapeSystem(de, escapeSlotColor());
+            }
+          } else {
+            // The Mandelbulb (fr-tdin) — the escape arm one formula over.
+            // buildBulbDE throws on a system analyzeBulbSystem refuses,
+            // which the eligibility gate has already excluded; the outer
+            // catch is the backstop either way.
+            ui.setSurfaceSessionKind("bulb");
+            const de = buildBulbDE(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            );
+            // NOT the orbit bailout: the bulb's marching ball is its own
+            // query-space bound, the one number every radius here wants.
+            R = de.boundingRadius;
+            if (surfaceComputeAvailable()) {
+              computeTarget = {
+                kind: "bulb",
+                de,
+                groundPlane: state.groundPlane,
+              };
+              scene.enterSurfaceComputeBulbSession(
+                state.groundPlane,
+                de.boundingRadius,
+              );
+            } else {
+              forwardWebglDetail();
+              scene.setBulbSystem(de, escapeSlotColor());
+            }
           }
           surfaceGrid.cancel();
           // The explorer camera was framed on the chaos game's cloud —
@@ -4026,8 +4081,10 @@ function main(): void {
           // the origin, which sits INSIDE the escape-time solid: the
           // session would open on a featureless interior wall. Glide out
           // to frame the bailout ball instead; the user dives back in
-          // from a view that shows the object.
-          const R = de.boundingRadius;
+          // from a view that shows the object. (Exactly as true of the
+          // Mandelbulb, whose chaos-game cloud is the same debris and
+          // whose solid likewise contains the origin — fr-tdin measured
+          // 100% of a 0.1R neighbourhood of the centre interior.)
           cameraTween.fitToBounds(
             {
               minX: -R,
@@ -4547,6 +4604,27 @@ function main(): void {
         ui.setSurfaceEligibility(
           "degraded",
           "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
+        );
+        return;
+      }
+      // The escape family's second complement (fr-tdin): a single pure
+      // triplex-power map. Same channel and same reason as the fold arm
+      // above — the note names the different object being rendered,
+      // because a user who authored a `bulb` map and pressed Surface has
+      // no other way to learn that what they get is an escape-time set
+      // rather than an attractor. Without this arm the button simply went
+      // dark, with a reason ("map 1 uses variations") that described
+      // neither the map nor the fact that a renderer for it shipped.
+      if (
+        analyzeBulbSystem(
+          state.transforms,
+          state.finalTransform ?? null,
+          state.symmetry,
+        ).status === "eligible"
+      ) {
+        ui.setSurfaceEligibility(
+          "degraded",
+          "Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor.",
         );
         return;
       }
@@ -5319,6 +5397,20 @@ function main(): void {
     onPreset: (preset) => {
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
+        // The final-transform lens (fr-7u8t.5, PRESET_FINALS): a preset
+        // authored AROUND a plot-time lens installs it, and — the half
+        // that is a bug fix — every other preset CLEARS it. A preset load
+        // is a whole-system replacement, so a lens left over from the
+        // previous one would silently re-pose the arriving attractor, and
+        // for the escape-time / Mandelbulb presets would take their render
+        // mode away outright (both gates refuse a final transform, so the
+        // Surface button would just go dark).
+        state = setFinalTransform(state, PRESET_FINALS[preset]?.() ?? null);
+        // The flame palette a preset was composed against (fr-7u8t.5,
+        // PRESET_PALETTES) — set, never cleared: absent means "the user's
+        // palette is fine", which is every preset that predates the table.
+        const palette = PRESET_PALETTES[preset];
+        if (palette) state = setFlamePaletteId(state, palette);
       }, "always");
       // The tumbling scaffold (Show guides toggles it with the grid/axes) —
       // the polytope presets carry one (see PRESET_SCAFFOLDS); every other

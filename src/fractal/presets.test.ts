@@ -20,7 +20,12 @@ import {
   icosahedronFlake,
   jerusalemCube,
   juliaDust,
+  juliaIsland,
+  juliaPinwheel,
+  juliaPinwheelLens,
   juliaSet,
+  juliaSnowflake,
+  juliaSnowflakeLens,
   mandelboxKifs,
   mandelboxLattice,
   mengerSponge,
@@ -28,7 +33,9 @@ import {
   octahedronFlake,
   pentatope,
   pentatopeWireframe,
+  PRESET_FINALS,
   PRESET_NAMES,
+  PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   presetTransforms,
@@ -424,6 +431,8 @@ describe("variation flame presets", () => {
     mandelboxKifs: mandelboxKifs(),
     juliaSet: juliaSet(),
     juliaDust: juliaDust(),
+    juliaIsland: juliaIsland(),
+    juliaPinwheel: juliaPinwheel(),
   })) {
     it(`${name} renders a finite, non-degenerate cloud`, () => {
       const { bounds } = runChaosGame(transforms, 3000, mulberry32(1));
@@ -605,6 +614,123 @@ describe("juliaSet / juliaDust (IIM Julia sets, fr-7u8t.1)", () => {
   it("juliaSet's constant stays bounded (is inside M) over a long iteration budget", () => {
     const [cx, cy] = juliaConstant(juliaSet());
     expect(mandelbrotEscapeIteration(cx, cy, 5000)).toBe(-1);
+  });
+});
+
+// The julia SHOWCASES (fr-7u8t.5). These pin what was AUTHORED, not what
+// renders: every one of them would still make a pretty flame if its second
+// constant drifted, its lens were dropped, or its palette went missing, and
+// no other test in this file would notice — which is exactly the failure
+// mode `scripts/julia-flame.harness.ts`'s sheet cannot guard against on its
+// own, since a sheet is only ever run by hand.
+describe("julia showcases (fr-7u8t.5)", () => {
+  it("juliaIsland braids TWO exact inverse-iteration branches at two constants", () => {
+    const island = juliaIsland();
+
+    expect(island).toHaveLength(2);
+    for (const map of island) {
+      // Still an EXACT IIM branch each: one full-weight `julia` variation
+      // over a pre-affine translation, pinned to the plane. A blend or an
+      // extra scale would make it an ordinary flame map that merely looks
+      // Julia-ish (the sheet's own rejected class).
+      expect(map.variations).toEqual([{ type: "julia", weight: 1 }]);
+      expect(map.scale).toEqual([1, 1, 0]);
+      expect(map.weight).toBeUndefined();
+    }
+    // Two DIFFERENT constants — the whole point of the pair. (c = −position;
+    // read off the maps rather than re-stating the literals.)
+    const constants = island.map((m) => [-m.position[0], -m.position[1]]);
+    expect(constants[0]).not.toEqual(constants[1]);
+    expect(constants[0]).toEqual(
+      juliaSet()[0]
+        .position.slice(0, 2)
+        .map((v) => -v),
+    );
+  });
+
+  // The documented defect and its documented fix, side by side: the flame's
+  // color coordinate can only move between SLOTS, and a one-map system has
+  // exactly one.
+  it("gives the island the second color slot juliaSet structurally cannot have", () => {
+    expect(juliaSet()).toHaveLength(1);
+    expect(derivedColorIndex(0, juliaSet().length)).toBe(0.5);
+
+    const island = juliaIsland();
+    expect(derivedColorIndex(0, island.length)).not.toBe(
+      derivedColorIndex(1, island.length),
+    );
+  });
+
+  // The snowflake is the island THROUGH A LENS, not a second hand-tuned
+  // system — the lens applies at plot time and never feeds back, so the
+  // attractor underneath must stay byte-for-byte the island's.
+  it("juliaSnowflake is juliaIsland's attractor plus a plot-time lens", () => {
+    expect(juliaSnowflake()).toEqual(juliaIsland());
+    expect(PRESET_FINALS.juliaSnowflake?.()).toEqual(juliaSnowflakeLens());
+  });
+
+  it("both lenses are flat julia folds", () => {
+    for (const lens of [juliaSnowflakeLens(), juliaPinwheelLens()]) {
+      expect(lens.variations).toEqual([{ type: "julia", weight: 1 }]);
+      // z pinned to 0: `julia` carries z through untouched, so an unpinned
+      // lens would fold the sheet off its own plane.
+      expect(lens.scale[2]).toBe(0);
+    }
+  });
+
+  it("juliaPinwheel is a flat counter-rotating swirl pair", () => {
+    const pinwheel = juliaPinwheel();
+
+    expect(pinwheel).toHaveLength(2);
+    for (const map of pinwheel) {
+      expect(map.variations?.[0].type).toBe("swirl");
+      expect(map.scale[2]).toBe(0);
+      expect(map.rotation[0]).toBe(0);
+      expect(map.rotation[1]).toBe(0);
+    }
+    // Counter-rotating is the shape: the two in-plane turns have opposite
+    // signs, which is what the lens doubles into a pinwheel.
+    expect(Math.sign(pinwheel[0].rotation[2])).toBe(
+      -Math.sign(pinwheel[1].rotation[2]),
+    );
+  });
+});
+
+describe("PRESET_FINALS", () => {
+  // Guards against a typo'd key silently falling out of the Preset union,
+  // exactly like PRESET_RENDER_HINTS' own guard.
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_FINALS)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+  });
+
+  // ABSENT MEANS NONE (see the table's doc): main.ts clears the final on
+  // every load with no entry, which is what keeps a lens from surviving a
+  // preset load into a system whose render mode refuses one.
+  it("carries a lens only for the two compositions authored around one", () => {
+    expect(Object.keys(PRESET_FINALS).sort()).toEqual([
+      "juliaPinwheel",
+      "juliaSnowflake",
+    ]);
+  });
+});
+
+describe("PRESET_PALETTES", () => {
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_PALETTES)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+  });
+
+  // The table's own scoping claim: it repaints the FLAME palette, so it may
+  // only key presets the app actually takes into the flame renderer.
+  it("only paints presets that are flame showcases", () => {
+    for (const key of Object.keys(PRESET_PALETTES)) {
+      expect(PRESET_RENDER_HINTS[key as keyof typeof PRESET_RENDER_HINTS]).toBe(
+        "flame",
+      );
+    }
   });
 });
 
