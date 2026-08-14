@@ -1,7 +1,8 @@
 /**
- * Escape-time fold render (fr-kltj): the distance-estimated ESCAPE-TIME set
- * of a single fold map — the canonical Mandelbox/Juliabox object — for
- * exactly the systems the IFS surface mode is right to refuse.
+ * Escape-time fold render (fr-kltj, made COMPOSABLE by fr-za0n): the
+ * distance-estimated ESCAPE-TIME set of a CHAIN of fold maps — the canonical
+ * Mandelbox/Juliabox object and its hybrids — for exactly the systems the IFS
+ * surface mode is right to refuse.
  *
  * THE OBJECT. `surface-de.ts` renders IFS attractors: the fixed set of a
  * CONTRACTIVE map family, estimated by descending inverse maps. A pure-fold
@@ -12,6 +13,73 @@
  * query point and ask whether the orbit stays bounded. The boundary of the
  * non-escaping region is the object every published Mandelbox render
  * marches.
+ *
+ * THE TRANSFORM LIST IS THE SEQUENCE (fr-za0n). fr-kltj admitted EXACTLY ONE
+ * active map, and that made the mode a dead end: adding a transform, or
+ * turning symmetry on, dropped the document out of the renderer entirely.
+ * The narrowness was a scoping choice, not mathematics — a Lipschitz bound
+ * composes, so a running derivative accumulates through a sequence of maps
+ * exactly as it does through one. Mandelbulber2 (whose author wrote the
+ * Buddhi/Rrrola estimate this module uses) sequences its 470 formulas
+ * through one shared accumulator with our exact recurrence,
+ * `aux.DE = aux.DE * <local factor> + <offset>`, and picks the formula for
+ * iteration `i` with `seq->GetSequence(i)` — slot `i mod n`. So the
+ * document's own transform list IS the hybrid: every active map is a LINK,
+ * and no second document format is needed (morphs, mutations, persistence,
+ * timelines and sharing are all untouched, which is the price fr-kltj's
+ * scoping decision was protecting).
+ *
+ * Two harnesses stand behind this module rather than one.
+ * `scripts/hybrid-chain.harness.ts` asked the question from a local
+ * prototype, on maps this gate still refuses (the triplex power, the
+ * quaternion square) as well as the folds it admits;
+ * `scripts/escape-chain.harness.ts` answers it with the shipped estimator,
+ * and every number quoted below is that one's.
+ *
+ * CYCLING, NOT CHAINING, and the sheet decided it rather than the citation.
+ * The two candidate orbits differ in how often the Mandelbrot offset re-
+ * enters and how often escape is tested:
+ *
+ *     cycling   one link per step, `+ p` and the bailout test after EACH
+ *     chaining  the whole list per step, `+ p` and the test after all n
+ *
+ * At EQUAL WORK (both applying every link the same number of times) cycling
+ * won, and the ball-fill column is why. Chaining lets n folds compound
+ * before the query point tethers the orbit again, so its non-escaping set
+ * FATTENS as links are added, and it fattens toward the bailout ball it is
+ * supposed to sit inside — measured over
+ * `scripts/escape-chain.harness.ts`'s eight fixtures, chaining fills
+ * 32 / 13 / 43% of a radius-4 ball at two links, 47% at four and 72.8% at
+ * six, reaching the full bailout radius every time. That is exactly the
+ * defect fr-7u8t.8 existed to fix ("the rendered object WAS its own
+ * bounding sphere"), reappearing through the back door as soon as the list
+ * grows, and `escape-chain-sequence.png` shows it happening: the four- and
+ * six-link chaining panels are near-solid pale balls. Cycling's sets stay
+ * where they should — 6.0 / 7.0 / 7.4% of the same radius-4 ball at two
+ * links, and at four and six links the object has drawn IN, to 3.8% and
+ * 3.6% of that ball by volume — and the panels carry lobes, arches and
+ * filigree at every length. The one-link row of that sheet is its own
+ * control: the two arms are the same orbit there, and print identically.
+ *
+ * A PASS IS ONE FULL CYCLE, which is what keeps `maxIterations` meaning the
+ * same thing it always meant. The loop runs `maxIterations * links.length`
+ * single-link steps, so {@link ESCAPE_TIME_ITERATIONS}, the preview tier's
+ * depth clamp and the GPU's `maxDepth` all still say "how many times is each
+ * map applied" rather than silently going n times shallower on an n-link
+ * document. It also matters for the ESTIMATE and not just the object: the
+ * rendered set is already settled at 30 total steps (fill is identical at 30
+ * and at 30n for every fixture measured), but the shorter budget leaves `dr`
+ * under-grown for the points that never escape, which is where the estimate
+ * has to be smallest.
+ *
+ * The n-times-the-budget price is a CEILING, and only a non-escaping orbit
+ * ever pays it. Measured over 60k uniform queries in each fixture's own
+ * marching ball (`scripts/escape-chain.harness.ts`), the single map costs
+ * 0.67 us/eval and the chains 0.37-1.45, with the SIX-link chain at 0.72 —
+ * no worse than the map it generalises. Every extra link is another chance
+ * for the orbit to leave the bailout ball, and it draws the object (and so
+ * the marching ball the queries are drawn in) inward as well, so the two
+ * effects cancel the ceiling in practice.
  *
  * TWO FORMS, ONE TERM APART (fr-7u8t.8), and this mode shipped the wrong
  * one. Where the per-iteration offset comes from decides which of the
@@ -57,26 +125,33 @@
  *
  * THE ESTIMATE. The classic scalar-derivative distance estimate
  * (Hart's unbounding volumes via the Buddhi/Rrrola Mandelbox form the
- * fr-kltj sketch names):
+ * fr-kltj sketch names), with the chain's inner step folded in:
  *
- *     v = p; dr = 1
- *     repeat ESCAPE_TIME_ITERATIONS times or until |v| > ESCAPE_TIME_RADIUS:
- *       y  = M v + t
- *       v  = w · V(y) + p      // the fold, exactly variations.ts's forward
- *                              // math, plus the Mandelbrot form's offset
- *       dr = |w| · L(y) · sigma_max(M) · dr + 1
+ *     v = g(p); dr = 1
+ *     repeat maxIterations * n times or until |v| > ESCAPE_TIME_RADIUS:
+ *       L  = links[step mod n]                 // the fr-za0n cycle
+ *       y  = M_L v + t_L
+ *       v  = w_L · V_L(y) + g(p)   // the fold, exactly variations.ts's
+ *                                  // forward math, plus the Mandelbrot
+ *                                  // form's offset
+ *       dr = |w_L| · L_L(y) · sigma_max(M_L) · dr + 1
  *     DE = |v| / dr
  *
- * `L(y)` is the fold's local conformal factor at the point — 1 for the
- * boxfold's reflections, `sphereFoldFactor(|y|²)` (1..4) for the
- * spherefold family — and `sigma_max(M)` bounds the affine part, so `dr`
+ * `L_L(y)` is that link's fold's local conformal factor at the point — 1
+ * for the boxfold's reflections, `sphereFoldFactor(|y|²)` (1..4) for the
+ * spherefold family — and `sigma_max(M_L)` bounds its affine part, so `dr`
  * over-estimates the orbit derivative and the quotient under-estimates
- * distance in the direction a sphere tracer needs. Unlike the IFS
- * estimators this is the field's standard HEURISTIC bound, not a
- * certified one; the marcher's stepScale and acceptance epsilon absorb
- * the usual slack exactly as every published Mandelbox marcher does. A
- * non-escaping orbit returns |v|/dr with dr grown huge — effectively 0,
- * the inside signal.
+ * distance in the direction a sphere tracer needs. EVERY LINK CONTRIBUTES
+ * ITS OWN FACTOR TO THE ONE SHARED `dr`, which is the whole of what
+ * composition costs: the chain's bound is the product of the shipped
+ * single-map bounds, so a one-link chain is not merely similar to fr-kltj's
+ * estimator, it IS it, bit for bit (`escape-de.test.ts` pins that against a
+ * hand-computed reference and across a probe grid). Unlike the IFS
+ * estimators this is the field's standard HEURISTIC bound, not a certified
+ * one; the marcher's stepScale and acceptance epsilon absorb the usual
+ * slack exactly as every published Mandelbox marcher does. A non-escaping
+ * orbit returns |v|/dr with dr grown huge — effectively 0, the inside
+ * signal.
  *
  * The `+ 1` in `dr` needed no change: it is the Mandelbrot form's own
  * `d(+p)/dp` term, which is why the pre-fr-7u8t.8 doc could only call it
@@ -87,18 +162,77 @@
  * the non-contraction gate, which prices `L` at its 4x maximum) drives
  * `dr` toward zero over the iteration budget and returns a distance
  * vastly larger than the query's own radius — a marcher that steps clean
- * past the object.
+ * past the object. Cycling makes it MORE load-bearing, not less: it is the
+ * per-link offset's own derivative, so it now floors `dr` once per link
+ * rather than once per n, and a chain of contracting links (legal, as long
+ * as ONE link expands) leans on that floor at every step.
  *
- * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this
- * formula covers: exactly one active map, whose active variation list is
- * exactly one fold-family entry, flat, no final transform, no
- * kaleidoscope — and NOT an IFS-eligible contraction (a system the
- * attractor tracer already owns keeps its sound estimator; this mode
- * exists for the ones it refuses). Everything else stays ineligible for
- * both modes, with reasons.
+ * KALEIDOSCOPE IS FREE, AND IT IS A QUERY-SPACE FOLD (fr-za0n). The bead
+ * predicted symmetry would be free because a rotation has Lipschitz factor
+ * 1. It is free, but not as an orbit operation — putting a rotation inside
+ * the orbit buys nothing a link's own `rotation` field cannot already
+ * express, and it does not make the SET symmetric: the escape set of
+ * `v <- F(v) + p` inherits a rotational symmetry R only when F COMMUTES
+ * with R, which no added fold or rotation arranges. What does work is
+ * folding the QUERY, once, before the orbit starts:
+ *
+ *     E = { p : the orbit seeded and offset by g(p) stays bounded }
+ *       = g^-1(M)
+ *
+ * where `g` ({@link foldQueryIntoSector}) folds `p` into one wedge of the
+ * symmetry plane and `M` is the ordinary escape set. `E` is then EXACTLY
+ * symmetric under the wedge group by construction, and the estimate costs
+ * one `atan2` and one rotation PER QUERY — nothing per orbit step. It is
+ * also sound at no extra conservatism: `g` is 1-Lipschitz, so for any
+ * `q` in `E`, `|g(p) - g(q)| <= |p - q|` with `g(q)` in `M`, hence
+ * `dist(g(p), M) <= dist(p, E)` — the plain estimate for the folded point
+ * is already an estimate for the original. `dr` needs no new term either:
+ * the orbit's dependence on `p` now runs through `g`, whose derivative has
+ * norm 1 wherever it exists, so the literal `+ 1` still over-estimates.
+ *
+ * The fold is DIHEDRAL (rotations AND mirrors) where the chaos game's
+ * kaleidoscope is CYCLIC (rotated copies only), and that is forced rather
+ * than chosen: the cyclic fold — rotate by the nearest multiple of the
+ * sector — JUMPS across sector boundaries, and a discontinuous map has no
+ * Lipschitz bound at all, so the estimate would certify empty balls
+ * straight through the seam. Folding with a mirror is continuous, is a
+ * composition of half-space reflections, and is therefore 1-Lipschitz
+ * exactly. So `order` here means `order` rotations and their mirrors, and
+ * the fundamental wedge is `pi / order` wide about the plane's first axis.
+ *
+ * MEASURED (`scripts/escape-chain.harness.ts`, `escape-chain-kaleido.png`,
+ * a two-link chain at orders 1/2/3/5/8 seen down the symmetry axis): the
+ * estimate moves by at most 2.1e-14 under a whole sector rotation — f64
+ * rounding in the fold's own `atan2`/`cos`/`sin`, nothing else — and costs
+ * 0.45-0.75 us/eval with no trend in the order, against 0.65 unsymmetrised.
+ * Free, as predicted, for a reason the prediction had not identified.
+ * `SymmetryParams.blend` is deliberately not read, matching `surface-de.ts`
+ * (it fades the chaos game's copy SELECTION WEIGHTS, never geometry, and
+ * there are no weights in a sequenced orbit); `order` is the only symmetry
+ * field this module reads, plus the flatness clause a `w`-plane or a twist
+ * trips.
+ *
+ * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this formula
+ * covers: one or more active maps, each of whose active variation list is
+ * exactly one fold-family entry, all flat, no final transform, no
+ * kaleidoscope that rotates out of 3D — and NOT an IFS-eligible
+ * contraction. That last clause is what widened: `analyzeSurfaceSystem`
+ * admits a system when EVERY map contracts, so this gate admits when at
+ * least one does NOT. A two-map non-contracting fold system used to be
+ * refused by both gates and rendered by nothing; it is this mode's now.
+ * Everything else stays ineligible for both modes, with reasons.
+ *
+ * WHAT THE SIX MIRRORS SEE, until fr-za0n's mirror pass lands. {@link
+ * EscapeDE} extends {@link EscapeLink}, so the flat `m`/`t`/`foldKind`/
+ * `w`/`derivGrowth` wire the GLSL `SURFACE_ESCAPE` variant and the WGSL
+ * `core:"escape"` packer already read is the FIRST LINK's, unchanged. A
+ * one-link document therefore renders bit-identically on every path. A
+ * multi-link one renders its head link on the GPU paths until they gain the
+ * same inner step — the mirrors are a scheduled, separate pass, and a
+ * half-mirrored kernel would be worse than an unmirrored one.
  */
 import { composeAffine } from "./affine";
-import { isFlatTransform } from "./affine4";
+import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import {
   CONTRACTION_LIMIT,
@@ -109,12 +243,20 @@ import {
   transformSigmas,
 } from "./surface-de";
 import type { SurfaceFoldKind } from "./surface-de";
-import type { SymmetryParams, Transform, Variation, Vec3 } from "./types";
+import type {
+  SymmetryParams,
+  SymmetryPlane,
+  Transform,
+  Variation,
+  Vec3,
+} from "./types";
 
-/** Orbit length before a point counts as non-escaping. The classic
- * Mandelbox quality/cost balance (published marchers run 15-50); the
- * preview tier halves it through the same depth-clamp plumbing the IFS
- * descent uses. */
+/** How many times the orbit applies EACH link before a point counts as
+ * non-escaping — a PASS is one full cycle through the chain (module doc), so
+ * an n-link system runs `n` times this many single-link steps. The classic
+ * Mandelbox quality/cost balance (published marchers run 15-50); the preview
+ * tier halves it through the same depth-clamp plumbing the IFS descent
+ * uses. */
 export const ESCAPE_TIME_ITERATIONS = 30;
 
 /** Orbit radius past which escape is certain for every eligible map and
@@ -123,10 +265,11 @@ export const ESCAPE_TIME_ITERATIONS = 30;
 export const ESCAPE_TIME_RADIUS = 4;
 
 /**
- * March step fudge for the escape-time marchers (GLSL variant and WGSL core
- * alike): the scalar-derivative estimate is the field's standard heuristic,
- * not a certified lower bound, so every published Mandelbox marcher damps
- * its steps.
+ * March step fudge for the SINGLE-MAP escape-time marchers (GLSL variant and
+ * WGSL core alike): the scalar-derivative estimate is the field's standard
+ * heuristic, not a certified lower bound, so every published Mandelbox
+ * marcher damps its steps. Chains damp harder — see
+ * {@link ESCAPE_CHAIN_STEP_SCALE} and {@link escapeStepScale}.
  *
  * 0.7 — the common conservative pick — was chosen (fr-kltj) against an
  * object that could not test it: the Julia form's blob filled 94% of its
@@ -152,6 +295,64 @@ export const ESCAPE_TIME_RADIUS = 4;
  */
 export const ESCAPE_STEP_SCALE = 0.35;
 
+/**
+ * March step fudge for a CHAIN — two or more links (fr-za0n). Deliberately a
+ * second constant rather than a quieter edit to {@link ESCAPE_STEP_SCALE}:
+ * the single map's 0.35 is fr-7u8t.8's measured verdict on an object this
+ * bead did not change, and nothing here re-opens it.
+ *
+ * AND THE REASON IS NOT THE ONE THE BEAD PREDICTED, which is worth saying
+ * outright because it changed the size of the answer. fr-za0n expected a
+ * chain's bound to degrade multiplicatively — a product of per-link
+ * heuristics where the single map pays its slack once — and the CHAINING
+ * prototype measured exactly that. Cycling does not: it re-adds `+ p` and
+ * floors `dr` after EVERY link, so no two folds ever compound between
+ * derivative floors and the slack per step is the single map's, unchanged.
+ * The hit-coverage curves say so plainly. Measured over
+ * `scripts/escape-chain.harness.ts`'s eight fixtures
+ * (`escape-chain-march.png` is the sheet), hit coverage against step scale,
+ * the single map's own row first as the control:
+ *
+ *     CONTROL single mbox2       0.7 33.2  0.35 38.3  0.2 40.1  0.05 41.7
+ *     mbox2 -> boxfold1.6        0.7 35.5  0.35 40.3  0.2 41.9  0.05 43.2
+ *     mbox2 -> mbox2 rot20y      0.7 43.4  0.35 48.6  0.2 50.1  0.05 51.2
+ *     mbox2 -> box1.6 -> sph1.2  0.7 61.7  0.35 63.7  0.2 64.6  0.05 65.3
+ *     mbox2 -> mbox-1.5          0.7 48.6  0.35 53.0  0.2 55.2  0.05 57.1
+ *     box1 rot25y -> sph2        0.7 30.7  0.35 30.1  0.2 30.7  0.05 30.9
+ *     FOUR-link                  0.7 59.8  0.35 63.2  0.2 64.0  0.05 65.1
+ *     SIX-link                   0.7 42.0  0.35 48.6  0.2 50.5  0.05 52.5
+ *
+ * From 0.35 to 0.05 the SINGLE MAP gains the most of the eight (+8.8%
+ * relative, against +2.4 to +7.9% for the chains). By counts alone a chain
+ * would need no extra damping at all.
+ *
+ * What earns the second constant is the pictures, which is the currency
+ * fr-7u8t.8 spent too — and there is no knee to find here either, so it is
+ * a cost/quality pick rather than a correctness one. Chains put much more
+ * of their surface at GRAZING incidence: shells, arches and concentric
+ * rings, which the hit count barely moves over because the silhouette is
+ * unchanged while the structure inside it appears or does not. On the sheet
+ * the spherefold-tailed pair renders at 0.7 as a featureless dark disc and
+ * at 0.35 as one thin ring, resolving its rings only at 0.2 and below,
+ * while its hit count sits at 30.1-30.9% throughout; the four- and six-link
+ * panels are flat and dark at 0.35 and lit at 0.2. The single map at 0.35
+ * already reads as a lit object, which is what fr-7u8t.8 chose it for.
+ * 0.2 costs 1.6-1.8x the steps of 0.35 across all eight fixtures, on a mode
+ * that settles in tens of milliseconds, and below 0.2 the panels change
+ * little for another 1.4x.
+ */
+export const ESCAPE_CHAIN_STEP_SCALE = 0.2;
+
+/**
+ * The march damping a system's own chain length earns it — the ONE
+ * definition every marcher (CPU preview, GLSL variant, WGSL core) should
+ * import rather than picking a constant. A one-link chain is fr-7u8t.8's
+ * single map and keeps its number exactly.
+ */
+export function escapeStepScale(de: EscapeDE): number {
+  return de.links.length > 1 ? ESCAPE_CHAIN_STEP_SCALE : ESCAPE_STEP_SCALE;
+}
+
 export type EscapeEligibilityStatus = "eligible" | "ineligible";
 
 /** What {@link analyzeEscapeSystem} feeds the session gate. */
@@ -161,9 +362,9 @@ export interface EscapeEligibility {
   reasons: string[];
 }
 
-/** Everything the escape-time marcher needs — the GLSL uniform wire
- * format, mirroring {@link estimateEscapeDistance}. */
-export interface EscapeDE {
+/** One link of the orbit's formula chain (fr-za0n) — one active map of the
+ * document, in document order, and everything the orbit needs from it. */
+export interface EscapeLink {
   /** Row-major 3x3 FORWARD linear part M of the map. */
   m: number[];
   /** Forward translation t. */
@@ -172,11 +373,33 @@ export interface EscapeDE {
   foldKind: SurfaceFoldKind;
   /** Signed fold weight w — the classic Mandelbox scale. */
   w: number;
-  /** `|w| · sigma_max(M)` — the per-iteration derivative growth the local
+  /** `|w| · sigma_max(M)` — the per-step derivative growth the local
    * fold factor multiplies onto. */
   derivGrowth: number;
+}
+
+/**
+ * Everything the escape-time marcher needs — the GLSL uniform wire
+ * format, mirroring {@link estimateEscapeDistance}.
+ *
+ * It EXTENDS {@link EscapeLink} rather than merely holding a list: the flat
+ * fields are the FIRST link's, which is the wire fr-kltj's six mirrors
+ * already read (module doc's mirror note).
+ */
+export interface EscapeDE extends EscapeLink {
+  /** The formula chain, in document order — one entry per active map. The
+   * orbit applies `links[step mod links.length]` at each step. */
+  links: EscapeLink[];
+  /** Kaleidoscope sectors the query is folded into before the orbit starts
+   * ({@link foldQueryIntoSector}); `1` is off, and the whole fold is then
+   * skipped, which is what keeps an unsymmetrised system bit-identical. */
+  symmetryOrder: number;
+  /** The plane that fold turns in — w-free, guaranteed by the gate. Never
+   * read at order 1. */
+  symmetryPlane: SymmetryPlane;
   /** Marching bounds: the non-escaping set is contained in the bailout
-   * ball, so the sphere tracer enters/exits against this radius. */
+   * ball, so the sphere tracer enters/exits against this radius. The
+   * kaleidoscope fold is an isometry, so it does not move this. */
   boundingRadius: number;
 }
 
@@ -195,12 +418,32 @@ function pureFoldVariation(t: Transform): Variation | null {
     : null;
 }
 
+/** A map's composite forward Lipschitz bound `|w|·L_V·sigma_max(M)` — the
+ * same expression `analyzeSurfaceSystem` gates contraction on, so the two
+ * gates cannot disagree about which side of the line a map falls. */
+function foldLipschitz(fold: Variation, map: Transform): number {
+  return (
+    Math.abs(fold.weight) *
+    (fold.type === "boxfold" ? 1 : SPHEREFOLD_LIPSCHITZ) *
+    transformSigmas(map).max
+  );
+}
+
+/** The maps that make up the chain: active, in DOCUMENT ORDER. `weight` is
+ * the chaos game's SELECTION probability and a sequenced orbit has no
+ * selection, so it is read here only as on/off — the same rule fr-kltj's
+ * single-map gate used. */
+function activeMaps(transforms: Transform[]): Transform[] {
+  return transforms.filter((t) => (t.weight ?? 1) > 0);
+}
+
 /**
  * Classify a system for the escape-time render. Deliberately the
- * COMPLEMENT of the IFS gate on single pure-fold maps: a contractive map
- * has a genuine attractor and the sound inverse-descent estimator — this
- * mode exists for the canonical expanding parameterizations that gate
- * refuses.
+ * COMPLEMENT of the IFS gate on chains of pure-fold maps: a system whose
+ * maps ALL contract has a genuine attractor and the sound inverse-descent
+ * estimator — this mode exists for the canonical expanding
+ * parameterizations that gate refuses, which since fr-za0n includes every
+ * multi-map one.
  */
 export function analyzeEscapeSystem(
   transforms: Transform[],
@@ -208,43 +451,58 @@ export function analyzeEscapeSystem(
   symmetry: SymmetryParams = { order: 1, plane: "xz" },
 ): EscapeEligibility {
   const reasons: string[] = [];
-  const active = transforms.filter((t) => (t.weight ?? 1) > 0);
-  if (active.length !== 1) {
-    reasons.push(
-      active.length === 0
-        ? "no active maps"
-        : "more than one active map (escape-time sets are single-map)",
-    );
+  const active = activeMaps(transforms);
+  if (active.length === 0) {
+    reasons.push("no active maps");
   }
-  const map = active[0];
-  if (map) {
+  // At least one link must EXPAND, or the IFS attractor tracer owns the
+  // system: `analyzeSurfaceSystem` admits exactly when every map contracts.
+  let anyExpands = false;
+  transforms.forEach((map, i) => {
+    if ((map.weight ?? 1) <= 0) return;
+    const label = `map ${i + 1}`;
     const fold = pureFoldVariation(map);
     if (!fold) {
-      reasons.push("the map is not a pure fold");
+      reasons.push(`${label} is not a pure fold`);
     } else if (!isFlatTransform(map)) {
-      reasons.push("the map extends into 4D");
-    } else {
-      const s = transformSigmas(map);
-      const lip =
-        Math.abs(fold.weight) *
-        (fold.type === "boxfold" ? 1 : SPHEREFOLD_LIPSCHITZ) *
-        s.max;
-      if (lip < CONTRACTION_LIMIT) {
-        reasons.push(
-          "the map contracts (the attractor surface render owns it)",
-        );
-      }
+      reasons.push(`${label} extends into 4D`);
+    } else if (foldLipschitz(fold, map) >= CONTRACTION_LIMIT) {
+      anyExpands = true;
     }
+  });
+  if (active.length > 0 && reasons.length === 0 && !anyExpands) {
+    reasons.push("every map contracts (the attractor surface render owns it)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in escape-time mode)");
   }
-  if (effectiveSymmetryOrder(symmetry.order, transforms.length) > 1) {
-    reasons.push("kaleidoscope symmetry (unsupported in escape-time mode)");
+  // A kaleidoscope is welcome (module doc) as long as it stays in 3D: a
+  // `w`-plane or a nonzero twist rotates the copies out of the `w = 0`
+  // hyperplane, and this estimator has no fourth coordinate to fold in.
+  if (symmetryIsNonFlat(symmetry)) {
+    reasons.push("the kaleidoscope rotates into 4D");
   }
   return {
     status: reasons.length > 0 ? "ineligible" : "eligible",
     reasons,
+  };
+}
+
+/** One link of the chain, from the document's own vocabulary. */
+function buildEscapeLink(map: Transform): EscapeLink {
+  const fold = pureFoldVariation(map)!;
+  const affine = composeAffine(map);
+  return {
+    m: affine.m,
+    t: affine.t,
+    foldKind:
+      fold.type === "boxfold"
+        ? SURFACE_FOLD_BOXFOLD
+        : fold.type === "spherefold"
+          ? SURFACE_FOLD_SPHEREFOLD
+          : SURFACE_FOLD_MANDELBOX,
+    w: fold.weight,
+    derivGrowth: Math.abs(fold.weight) * transformSigmas(map).max,
   };
 }
 
@@ -264,21 +522,13 @@ export function buildEscapeDE(
       `system has no escape-time estimator: ${analysis.reasons.join("; ")}`,
     );
   }
-  const map = transforms.filter((t) => (t.weight ?? 1) > 0)[0];
-  const fold = pureFoldVariation(map)!;
-  const affine = composeAffine(map);
-  const s = transformSigmas(map);
+  const links = activeMaps(transforms).map(buildEscapeLink);
   return {
-    m: affine.m,
-    t: affine.t,
-    foldKind:
-      fold.type === "boxfold"
-        ? SURFACE_FOLD_BOXFOLD
-        : fold.type === "spherefold"
-          ? SURFACE_FOLD_SPHEREFOLD
-          : SURFACE_FOLD_MANDELBOX,
-    w: fold.weight,
-    derivGrowth: Math.abs(fold.weight) * s.max,
+    // The head link's fields, flat — the wire fr-kltj's mirrors read.
+    ...links[0],
+    links,
+    symmetryOrder: effectiveSymmetryOrder(symmetry.order, transforms.length),
+    symmetryPlane: symmetry.plane,
     boundingRadius: ESCAPE_TIME_RADIUS,
   };
 }
@@ -291,9 +541,68 @@ function foldAxis(t: number): number {
 }
 
 /**
+ * The kaleidoscope's query-space wedge fold (module doc) — `g`. Reflect
+ * `p` into the `pi / order` wedge about `plane`'s FIRST axis, writing into
+ * `out` so the estimator's per-query path never allocates. `out` may alias
+ * `p`.
+ *
+ * The two steps are a rotation by the nearest whole sector and a mirror
+ * across the first axis, which together are the reflection group's
+ * fundamental-domain retraction: a composition of half-space folds, hence
+ * continuous and exactly 1-Lipschitz, and an ISOMETRY on each sector — so
+ * `|g(p)| = |p|` and the marching ball never moves. `order <= 1` is the
+ * identity, copied through untouched, which is what keeps an unsymmetrised
+ * document bit-identical to fr-kltj's.
+ *
+ * Throws on a `w`-plane, exactly as `chaos-game.ts`'s `symmetryRotation`
+ * does and for the same reason: a 4D kaleidoscope has no 3x3, and
+ * {@link analyzeEscapeSystem} already refuses one, so reaching here with
+ * one is a bug rather than a case to degrade.
+ */
+export function foldQueryIntoSector(
+  p: Vec3,
+  order: number,
+  plane: SymmetryPlane,
+  out: Vec3,
+): Vec3 {
+  out[0] = p[0];
+  out[1] = p[1];
+  out[2] = p[2];
+  if (order <= 1) return out;
+  if (plane !== "xy" && plane !== "xz" && plane !== "yz") {
+    throw new Error(
+      `foldQueryIntoSector: "${plane}" mixes w and has no 3x3 — a 4D ` +
+        `kaleidoscope has no escape-time fold (analyzeEscapeSystem)`,
+    );
+  }
+  const ia = plane === "yz" ? 1 : 0;
+  const ib = plane === "xy" ? 1 : 2;
+  const sector = (2 * Math.PI) / order;
+  const a = p[ia];
+  const b = p[ib];
+  // Rotate BACK by the nearest whole sector, then mirror across the first
+  // axis. Landing exactly on a boundary is consistent either way (the two
+  // roundings differ by a reflection the mirror then undoes).
+  const turn = Math.round(Math.atan2(b, a) / sector) * sector;
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  out[ia] = a * c + b * s;
+  out[ib] = Math.abs(b * c - a * s);
+  return out;
+}
+
+/** The folded query, reused across calls — {@link estimateEscapeDistance}
+ * runs ~1e7 times a frame and an allocation per call is not free. Safe as
+ * module state because the estimator is synchronous and single-threaded,
+ * the convention `surface-de.ts`'s descent scratch already runs on. */
+const FOLDED: Vec3 = [0, 0, 0];
+
+/**
  * The escape-time distance estimate (module doc) — the CPU oracle the
  * `SURFACE_ESCAPE` GLSL variant mirrors line for line. `maxIterations`
- * exists for the preview tier's depth clamp; callers wanting the full
+ * counts PASSES, one pass being one full cycle through the chain, so it
+ * says "how many times is each link applied" at any chain length; it
+ * exists for the preview tier's depth clamp, and callers wanting the full
  * estimate pass nothing.
  */
 export function estimateEscapeDistance(
@@ -301,26 +610,39 @@ export function estimateEscapeDistance(
   p: Vec3,
   maxIterations = ESCAPE_TIME_ITERATIONS,
 ): number {
-  const m = de.m;
-  let vx = p[0];
-  let vy = p[1];
-  let vz = p[2];
+  const links = de.links;
+  const n = links.length;
+  // The kaleidoscope, once, before anything else: the orbit is seeded AND
+  // offset by the folded point, which is what makes the rendered set
+  // exactly wedge-symmetric (module doc).
+  const q =
+    de.symmetryOrder > 1
+      ? foldQueryIntoSector(p, de.symmetryOrder, de.symmetryPlane, FOLDED)
+      : p;
+  let vx = q[0];
+  let vy = q[1];
+  let vz = q[2];
   let dr = 1;
   let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
-  for (let i = 0; i < maxIterations && r <= ESCAPE_TIME_RADIUS; i++) {
-    const yx = m[0] * vx + m[1] * vy + m[2] * vz + de.t[0];
-    const yy = m[3] * vx + m[4] * vy + m[5] * vz + de.t[1];
-    const yz = m[6] * vx + m[7] * vy + m[8] * vz + de.t[2];
+  const maxSteps = maxIterations * n;
+  for (let step = 0; step < maxSteps && r <= ESCAPE_TIME_RADIUS; step++) {
+    // Mandelbulber2's `seq->GetSequence(i)`: slot `i mod n`, which is the
+    // single map itself at n = 1.
+    const link = links[step % n];
+    const m = link.m;
+    const yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
+    const yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
+    const yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
     let fx: number;
     let fy: number;
     let fz: number;
     let localL: number;
-    if (de.foldKind === SURFACE_FOLD_BOXFOLD) {
+    if (link.foldKind === SURFACE_FOLD_BOXFOLD) {
       fx = foldAxis(yx);
       fy = foldAxis(yy);
       fz = foldAxis(yz);
       localL = 1;
-    } else if (de.foldKind === SURFACE_FOLD_SPHEREFOLD) {
+    } else if (link.foldKind === SURFACE_FOLD_SPHEREFOLD) {
       const r2 = yx * yx + yy * yy + yz * yz;
       const f = 1 / Math.max(0.25, Math.min(1, r2));
       fx = yx * f;
@@ -338,10 +660,10 @@ export function estimateEscapeDistance(
       fz = bz * f;
       localL = f;
     }
-    vx = de.w * fx + p[0];
-    vy = de.w * fy + p[1];
-    vz = de.w * fz + p[2];
-    dr = de.derivGrowth * localL * dr + 1;
+    vx = link.w * fx + q[0];
+    vy = link.w * fy + q[1];
+    vz = link.w * fz + q[2];
+    dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }
   return r / dr;
