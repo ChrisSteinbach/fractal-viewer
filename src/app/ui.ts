@@ -498,11 +498,30 @@ function variationLabel(type: VariationType): string {
   return VARIATION_LABELS[type] ?? type.charAt(0).toUpperCase() + type.slice(1);
 }
 
-/** Structural equality for a variation list, so the editor only rebuilds on real change. */
+/**
+ * Structural equality for a variation list, so the editor only rebuilds on
+ * real change.
+ *
+ * It compares EVERY persisted field, not only the ones the rows render. The
+ * fold's three lengths (fr-s9ll) have no row of their own, but this predicate
+ * also decides whether the editor's WORKING COPY is refreshed from the
+ * document — and the working copy is what the next slider drag emits back. A
+ * comparison that ignored them would let a morph, an undo or a timeline leg
+ * change a radius under a stable selection, leave the working copy holding
+ * the old one, and silently revert the author's value on the next unrelated
+ * edit.
+ */
 function variationsEqual(a: Variation[], b: Variation[]): boolean {
   return (
     a.length === b.length &&
-    a.every((v, i) => v.type === b[i].type && v.weight === b[i].weight)
+    a.every(
+      (v, i) =>
+        v.type === b[i].type &&
+        v.weight === b[i].weight &&
+        v.minRadius === b[i].minRadius &&
+        v.fixedRadius === b[i].fixedRadius &&
+        v.boxLimit === b[i].boxLimit,
+    )
   );
 }
 
