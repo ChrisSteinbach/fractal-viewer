@@ -73,7 +73,7 @@ variation whatever palette they are given (measured hue entropy 0.04 against
 the RECIPE, which a blend or a second constant would put out of reach of the
 tests above. `scripts/julia-flame.harness.ts` searched for what the recipe
 can do when it is allowed to be an artwork, and three of its panels ship
-(fr-7u8t.5):
+(fr-7u8t.1):
 
 **`juliaIsland`** — the same exact IIM map at TWO constants, Douady's rabbit
 and `−0.4 + 0.6i` (deep in `M`'s period-2 disc, whose Julia set is the

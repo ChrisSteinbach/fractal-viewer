@@ -120,9 +120,9 @@ export const QJULIA_BAILOUT_FLOOR = 4;
  * conformal Böttcher form rather than a Lipschitz heuristic, and the module
  * doc's step-scale sweep measured 0.00% overshoot at full step length
  * across three values of `c`. Exported as a named constant anyway so that
- * IF the mirrors are ever written (fr-7u8t.5) they import the one
- * definition rather than inlining a literal, as the fold path does. NO
- * MIRROR IMPORTS IT TODAY — see the module doc's standing note.
+ * IF a mirror is ever written it imports the one definition rather than
+ * inlining a literal, as the fold path does. NONE EXISTS: fr-7u8t.5 is
+ * closed won't-do — see the module doc's standing note.
  */
 export const QJULIA_STEP_SCALE = 1;
 
@@ -137,8 +137,8 @@ export interface QJuliaEligibility {
 
 /** Everything a quaternion Julia marcher WOULD need — the uniform/params
  * wire format, mirroring {@link estimateQJuliaDistance}. No marcher reads
- * it yet (fr-7u8t.5); the shape is here so the kernel that eventually does
- * has nothing left to design. */
+ * it, and none is planned (fr-7u8t.5, closed won't-do); the shape is here
+ * because it is the wire the measurement was taken through. */
 export interface QJuliaDE {
   /** Row-major 4x4 FORWARD linear part `M` of the map. */
   m: number[];
@@ -240,7 +240,7 @@ function escapeRadius(sigmaMin: number, tLen: number): number {
  * Precompute the {@link QJuliaDE} for an eligible system. Throws on an
  * ineligible one ({@link analyzeQJuliaSystem}) — the contract the fold and
  * bulb builders keep, where the app gates first and reaching the throw is
- * a bug. There is no app caller here yet (fr-7u8t.5), so today the throw
+ * a bug. There is no app caller (fr-7u8t.5, closed won't-do), so the throw
  * is the only gate; the harnesses call {@link analyzeQJuliaSystem} first
  * exactly as a routing arm would.
  */
@@ -280,8 +280,10 @@ export function buildQJuliaDE(
  * The quaternion Julia distance estimate (module doc) — the f64 oracle a
  * GLSL variant and WGSL core WOULD mirror line for line, under the
  * `flame-gpu.ts` discipline the rest of this family follows. Neither
- * exists (fr-7u8t.5, demoted by measurement — module doc). `maxIterations`
- * exists
+ * exists, and neither will: fr-7u8t.5 is closed won't-do, refused by
+ * measurement (module doc). What DOES consume this module is fr-j231,
+ * which takes the exact `2|q|` derivative below for a chain LINK.
+ * `maxIterations` exists
  * for the preview tier's depth clamp, through the same door the fold
  * descents use; callers wanting the full estimate pass nothing.
  */

@@ -570,11 +570,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     nothing new at three levels on four systems. Surface mode's central
     promise is that zoom keeps resolving; for this object there is
     nothing there to resolve, which is why fr-7u8t.5 (the WGSL/GLSL
-    cores) and fr-7u8t.6 (the 4D lift, the only cut that is not a solid
-    of revolution) stay OPEN rather than shipped. Kept because the oracle
-    is what those beads are blocked on, not blocked by, and because the
-    measurement that demoted them is worth more executable than
-    remembered.
+    cores) and fr-7u8t.6 (the 4D lift, the only cut that is NOT a solid
+    of revolution — tested among those panels, and smooth too) are CLOSED
+    won't-do along with their epic. The module stays for two reasons: it
+    is the executable record of the measurement that refused them, and
+    fr-j231 cites it by name as where the quaternion square's EXACT
+    `2|q|` derivative lives — as a chain LINK the map rides the escape
+    core and needs neither its own kernel nor its own 4D lift, so the
+    object that is dull alone may still earn its place composed with a
+    fold.
   - `bulb-de.ts` — the Mandelbulb's CPU oracle (fr-7u8t.7), third object in
     the escape-time family beside the folds and `qjulia-de.ts`: the triplex
     8th power (`variations.ts`'s `bulb`) iterated in the MANDELBROT form
