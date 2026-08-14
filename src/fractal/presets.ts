@@ -1,3 +1,4 @@
+import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
 import type { Transform, Variation, Vec3, Vec4 } from "./types";
 
@@ -659,6 +660,13 @@ function juliaIim(cx: number, cy: number): Transform[] {
   ];
 }
 
+/** {@link juliaIim}'s single map at an explicit id, so a preset can braid
+ * SEVERAL constants into one system ({@link juliaIsland}). Same recipe,
+ * same numbers — only the slot differs. */
+function juliaBranch(id: number, c: [number, number]): Transform {
+  return { ...juliaIim(c[0], c[1])[0], id };
+}
+
 /**
  * The Julia set of z² + c at {@link JULIA_SET_C} (fr-7u8t.1), by exact
  * Inverse Iteration — see {@link juliaIim}. `−0.123 + 0.745i` is Douady's
@@ -678,6 +686,22 @@ function juliaIim(cx: number, cy: number): Transform[] {
  * `(1 + sqrt(1 + 4|c|)) / 2 = 1.5025`, exactly as IIM predicts. See
  * `docs/julia-sets.md` for the harmonic-measure caveat behind the ~6%
  * residual above (it applies to both presets, connected or not).
+ *
+ * A PROOF, NOT A SHOWCASE — and deliberately still one (fr-7u8t.5). A
+ * LONE transform parks the flame's color coordinate at
+ * `derivedColorIndex(0, 1) = 0.5` forever: there is no second slot for a
+ * point's history to move it toward, so this preset is STRUCTURALLY
+ * incapable of color variation whatever palette it is handed. That is
+ * not a tuning gap, and no palette table can close it — measured hue
+ * entropy 0.04, against `radiolarian`'s 0.80 and `swirlFlame`'s 0.94 on
+ * the same tone-map (`scripts/julia-flame.harness.ts`). ONE extra map is
+ * the entire fix, and {@link juliaIsland} is that fix and nothing else.
+ * This pair stays austere anyway, because what it exists to pin is the
+ * INVERSE-ITERATION RECIPE (presets.test.ts measures where its points
+ * land relative to the escape boundary); a blend or a second constant
+ * would render something prettier that those tests could no longer
+ * check. Being the demonstration and being the showcase are different
+ * jobs; the menu now carries both.
  */
 export function juliaSet(): Transform[] {
   return juliaIim(...JULIA_SET_C);
@@ -698,6 +722,129 @@ export function juliaSet(): Transform[] {
  */
 export function juliaDust(): Transform[] {
   return juliaIim(...JULIA_DUST_C);
+}
+
+/**
+ * The second constant the braid presets pair with the rabbit: `−0.4 +
+ * 0.6i`, deep inside M's period-2 disc, whose Julia set is the classic
+ * many-whorled "spiral". Braided against {@link JULIA_SET_C}'s dendrites
+ * the two read as different FAMILIES rather than two views of one, which
+ * is what makes the pair worth two transforms.
+ *
+ * Any c is reachable and no other affine freedom is: a transform applies
+ * `V(Mv + t)`, so a `julia` map behind a UNIFORM scale + in-plane
+ * rotation is still an exact inverse branch — of `λ(z² + c)`, which is
+ * linearly conjugate to some `z² + C`. Scale and rotation therefore only
+ * re-coordinate the picture, and the constant is the whole shape
+ * freedom, which is why these presets spend it on two constants rather
+ * than on affine noise.
+ */
+const JULIA_SPIRAL_C: [number, number] = [-0.4, 0.6];
+
+/**
+ * "Julia Island" (fr-7u8t.5) — TWO exact IIM maps, at {@link
+ * JULIA_SET_C} and {@link JULIA_SPIRAL_C}. Each alone is a genuine Julia
+ * set ({@link juliaIim}); both together are the attractor of FOUR
+ * inverse branches, which is no polynomial's Julia set — an island whose
+ * boundary carries the rabbit's dendrites and the spiral's whorls at
+ * once, still built from nothing but exact inverse branches.
+ *
+ * It is also the cheapest possible fix for what {@link juliaSet}'s doc
+ * calls the austere pair's real defect: with two maps the flame's color
+ * coordinate tracks WHICH branch the orbit took last, so the palette
+ * paints the structure's own history instead of a single flat slot
+ * (measured hue entropy 0.28 against `juliaSet`'s 0.04,
+ * `scripts/julia-flame.harness.ts`). Flame is its showcase — the
+ * log-density exposure is what turns an IIM sheet's tip-heavy density
+ * into a legible curve (see {@link PRESET_RENDER_HINTS}) — under the
+ * `dusk` palette ({@link PRESET_PALETTES}).
+ */
+export function juliaIsland(): Transform[] {
+  return [juliaBranch(0, JULIA_SET_C), juliaBranch(1, JULIA_SPIRAL_C)];
+}
+
+/**
+ * "Julia Snowflake" (fr-7u8t.5) — {@link juliaIsland} seen through a
+ * final `julia` LENS ({@link juliaSnowflakeLens}, installed by
+ * {@link PRESET_FINALS}). The plot-time map halves every angle and
+ * square-roots every radius, so the island folds into a two-fold star and
+ * its dendritic boundary wraps the origin.
+ *
+ * The lens applies at PLOT time only and never feeds back into the orbit,
+ * so the attractor under it stays exactly the island's — which is why
+ * this is that system plus one table entry rather than a hand-tuned
+ * second system, and why the factory below returns the island verbatim.
+ * The best panel on `scripts/julia-flame.harness.ts`'s sheet, and made
+ * out of nothing but julia maps and a julia lens.
+ */
+export function juliaSnowflake(): Transform[] {
+  return juliaIsland();
+}
+
+/** {@link juliaSnowflake}'s plot-time lens. Scale slightly under 1 so the
+ * folded star sits inside the frame the island's own auto-fit finds; z
+ * pinned to 0 like every map in this family. */
+export function juliaSnowflakeLens(): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.9, 0.9, 0],
+    variations: [{ type: "julia", weight: 1 }],
+  };
+}
+
+/**
+ * "Julia Pinwheel" (fr-7u8t.5) — the counter-rotating `swirl` PAIR (the
+ * same two arm maps {@link dyedSpiral} braids, without its authored color
+ * slots) flattened to the plane, seen through a final `julia` lens turned
+ * 1.1 rad ({@link juliaPinwheelLens}). The lens doubles the spiral and
+ * pulls its arms around the origin, so the churn reads as a pinwheel
+ * rather than a galaxy.
+ *
+ * Its own ablation already ships beside it: {@link swirlFlame} is this
+ * shape without the lens (and without the flattening), which is why the
+ * two sit in the same menu group — the fold is the whole difference.
+ *
+ * Written out rather than derived from that sibling: the two arms are
+ * pinned to z = 0 because the `julia` lens carries z through untouched
+ * (see `variations.ts`), so an unpinned sheet would sit wherever the seed
+ * point's z warmed up to — the same reason {@link juliaIim} pins its own.
+ */
+export function juliaPinwheel(): Transform[] {
+  const swirlPair: Variation[] = [
+    { type: "swirl", weight: 1 },
+    { type: "linear", weight: 0.25 },
+  ];
+  return [
+    {
+      id: 0,
+      position: [0.36, 0.24, 0],
+      rotation: [0, 0, 0.55],
+      scale: [0.72, 0.72, 0],
+      variations: swirlPair,
+    },
+    {
+      id: 1,
+      position: [-0.58, -0.34, 0],
+      rotation: [0, 0, -1.5],
+      scale: [0.5, 0.5, 0],
+      variations: swirlPair,
+    },
+  ];
+}
+
+/** {@link juliaPinwheel}'s plot-time lens — the 1.1 rad turn is what puts
+ * the arms where the sheet's panel has them; z pinned to 0 like the maps
+ * it folds. */
+export function juliaPinwheelLens(): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 1.1],
+    scale: [0.8, 0.8, 0],
+    variations: [{ type: "julia", weight: 1 }],
+  };
 }
 
 /**
@@ -865,6 +1012,78 @@ export function mandelboxRings(): Transform[] {
  */
 export function mandelboxCube(): Transform[] {
   return escapeMandelbox(-1.5);
+}
+
+/**
+ * The Mandelbulb family's shared recipe (fr-tdin): ONE map whose only
+ * variation is the `bulb` triplex 8th power at weight 1 — the exact shape
+ * `analyzeBulbSystem` admits, and the deliberate complement of both other
+ * surface gates (`analyzeSurfaceSystem` refuses it for "uses variations",
+ * `analyzeEscapeSystem` for "not a pure fold"). Surface then iterates the
+ * map FORWARD from every query and marches the boundary of the set whose
+ * orbits stay bounded: the Mandelbulb.
+ *
+ * These exist for {@link mandelboxClassic}'s reason, one object over: the
+ * `bulb` variation, its CPU estimator and both shader mirrors all shipped
+ * before anything routed a bulb system into the renderer, so the only way
+ * to reach the most famous 3D fractal there is was to author a single
+ * triplex-power map by hand and hope. A render mode with no preset is a
+ * mode nobody reaches.
+ *
+ * The whole family is ONE map with two knobs, and both are already
+ * document state that morphs and mutations interpolate: `position` is the
+ * PRE-power offset `t` (the textbook object is `t = 0`), and `rotation`
+ * is a genuinely SECOND family rather than a re-posing, because `M` does
+ * not commute with the triplex power (see `bulb-de.ts`). The power itself
+ * is fixed at 8 and deliberately not a knob — every power needs its own
+ * closed form, since triplex multiplication is not associative.
+ */
+function bulbMap(t: Vec3 = [0, 0, 0], rotation: Vec3 = [0, 0, 0]): Transform[] {
+  return [
+    {
+      id: 0,
+      position: t,
+      rotation,
+      scale: [1, 1, 1],
+      variations: [{ type: "bulb", weight: 1 }],
+    },
+  ];
+}
+
+/**
+ * The Mandelbulb itself (fr-tdin) — the White/Nylander triplex 8th power
+ * at `t = 0`, which is the object every published "Mandelbulb" render
+ * shows: a knobbly ball of stacked bulbs with a fluted equator and
+ * filigree running into every crease. `scripts/bulb-preview.harness.ts`'s
+ * first panel is this exact system through the shipped estimator.
+ */
+export function mandelbulbClassic(): Transform[] {
+  return bulbMap();
+}
+
+/**
+ * The same power with a pre-power offset (fr-tdin). `t` is added BEFORE
+ * the triplex power rather than after it, so it does not slide the object
+ * — it bites into it, opening the bulbs asymmetrically and breaking the
+ * z-axis symmetry the classic object has. The one continuous deformation
+ * knob the mode carries, at a value the harness sheet renders.
+ */
+export function mandelbulbOffset(): Transform[] {
+  return bulbMap([0.2, -0.1, 0.3]);
+}
+
+/**
+ * The same power behind a ROTATION (fr-tdin) — a genuinely different
+ * object, not a different view of the first. A rigid rotation `M` applied
+ * before the power does not commute with it (the triplex power is defined
+ * in spherical coordinates about the z axis, so rotating first moves
+ * which direction the eight-fold azimuthal fan is measured from), and the
+ * orbit re-applies `M` every iteration: the poles walk, and the stacked
+ * bulbs shear into a spiral rather than a stack. Turning the camera
+ * around {@link mandelbulbClassic} can never produce it.
+ */
+export function mandelbulbRotated(): Transform[] {
+  return bulbMap([0, 0, 0], [0.4, -0.8, 0.3]);
 }
 
 export function mandelboxKifs(): Transform[] {
@@ -1265,6 +1484,13 @@ const PRESETS = {
   dyedSpiral,
   julia: juliaSet,
   juliaDust,
+  // The julia family's SHOWCASES (fr-7u8t.5), beside the two austere
+  // proofs above — see `scripts/julia-flame.harness.ts` for the sheet
+  // these three were picked off, and {@link juliaSet}'s doc for why the
+  // proofs could not simply be prettied up instead.
+  juliaIsland,
+  juliaSnowflake,
+  juliaPinwheel,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
   // The escape-time set's own presets (fr-7u8t.8): the mode had none, so the
@@ -1272,6 +1498,11 @@ const PRESETS = {
   mandelboxClassic,
   mandelboxRings,
   mandelboxCube,
+  // The escape-time family's THIRD object (fr-tdin): the Mandelbulb had
+  // an estimator, two shader mirrors and no way in at all.
+  mandelbulbClassic,
+  mandelbulbOffset,
+  mandelbulbRotated,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
@@ -1330,6 +1561,12 @@ export const PRESET_RENDER_HINTS: Partial<
   // a legible curve instead of a faint, mostly-empty sparkle.
   julia: "flame",
   juliaDust: "flame",
+  // The julia SHOWCASES (fr-7u8t.5), for the same reason one line up —
+  // they are flat sheets too, and two of them are the same sheet through
+  // a plot-time lens ({@link PRESET_FINALS}).
+  juliaIsland: "flame",
+  juliaSnowflake: "flame",
+  juliaPinwheel: "flame",
   mandelbox: "flame",
   // The pure-fold twin exists to showcase the fold-branch surface descent
   // (fr-5rvk) — as a point cloud it under-delivers the same way the flame
@@ -1344,6 +1581,64 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxClassic: "surface",
   mandelboxRings: "surface",
   mandelboxCube: "surface",
+  // The Mandelbulb trio (fr-tdin) needs the hint for exactly the same
+  // reason — a single non-contracting map's chaos-game cloud is
+  // escape-reset debris — and the mode reached this way is the
+  // escape-time family's THIRD marcher, the forward triplex-power orbit.
+  mandelbulbClassic: "surface",
+  mandelbulbOffset: "surface",
+  mandelbulbRotated: "surface",
+};
+
+/**
+ * The FINAL-TRANSFORM lens a preset was authored around (fr-7u8t.5), for
+ * the compositions whose subject is the lens rather than the attractor:
+ * {@link juliaSnowflake} and {@link juliaPinwheel} are one plot-time map
+ * over a system that renders as something else entirely without it, so
+ * shipping them as transform lists alone would ship the wrong picture.
+ *
+ * A third table beside {@link PRESET_SCAFFOLDS}/{@link
+ * PRESET_RENDER_HINTS} for exactly their reason: `PRESETS` maps a name to
+ * `() => Transform[]`, and widening that signature would make every
+ * preset declare a lens it does not have. Keyed by {@link Preset} so
+ * `main.ts` looks one up by the name `presetTransforms` just used.
+ *
+ * ABSENT MEANS NONE, not "leave whatever was there": main.ts's preset
+ * handler CLEARS the final on every load that carries no entry. A preset
+ * is a whole-system replacement, and a lens surviving one would silently
+ * re-pose the next preset's attractor — and, for the escape-time and
+ * Mandelbulb presets, take their render mode away outright (both gates
+ * refuse a final transform).
+ */
+export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
+  juliaSnowflake: juliaSnowflakeLens,
+  juliaPinwheel: juliaPinwheelLens,
+};
+
+/**
+ * The flame palette a preset was composed against (fr-7u8t.5) — the
+ * fourth side table, and the one that needed the most justification,
+ * since a palette is the user's taste everywhere else in the app.
+ *
+ * It earns a table because for these compositions the palette is not
+ * decoration but part of the authored picture: `scripts/julia-flame.
+ * harness.ts` chose `dusk`/`sunset` per composition and reports colour
+ * as half a flame's impact, and the sheet the three were picked off is
+ * the sheet with those palettes on. Shipping the maps without them
+ * delivers a different picture than the one that was reviewed.
+ *
+ * Scoped deliberately narrow: built-in {@link FlamePaletteId}s only (no
+ * custom gradients — every value here is one the palette `<select>`
+ * offers), applied to the FLAME palette alone, and only for presets that
+ * also carry a `"flame"` {@link PRESET_RENDER_HINTS} entry, so it can
+ * never repaint a mode the preset was not authored for. Absent = the
+ * user's current palette, untouched — the ordinary case, and every
+ * pre-existing preset.
+ */
+export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
+  juliaIsland: "dusk",
+  juliaSnowflake: "sunset",
+  juliaPinwheel: "sunset",
 };
 
 /** Build the transform set for a named preset. */

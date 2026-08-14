@@ -597,6 +597,23 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
+  it("hides both rows when the active surface session is a Mandelbulb (fr-tdin)", () => {
+    // Measured, not inherited: the Mandelbulb's interior reaches the ball
+    // centre exactly as the escape solid's does, so its echo swallows the
+    // camera and every ray hits at t ~ 0 (fr-tdin's probe — union DE at the
+    // session's own opening eye is exactly 0 at R = 0.35 and 0.9). Same
+    // treatment as the escape kind, for the same reason.
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("bulb");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
   it("fires onBalloonInflate when the surface Inflate button is clicked (fr-5wlv.6)", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -630,6 +647,16 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
   it("shows the row for an escape surface session too — unlike the balloon row, which hides there (fr-5wlv.6)", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+    });
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("shows the row for a Mandelbulb session too — the floor survives where the balloon degenerates (fr-tdin)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("bulb");
     ui.updateLabels({
       ...initialState(true),
       renderMode: "surface" as const,

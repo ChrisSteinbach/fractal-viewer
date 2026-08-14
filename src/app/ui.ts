@@ -76,6 +76,17 @@ import { installSliderScrollGuard } from "./slider-scroll-guard";
 
 export type { Preset };
 
+/**
+ * Which object a live surface session is actually marching (fr-5wlv.6,
+ * widened by fr-tdin) — the routing decision main.ts made at
+ * `surfaceSession.start()`, pushed in so the panel's rows can tell the
+ * truth about what applies. `"ifs"` is the inverse-descent attractor
+ * (3D or 4D); `"escape"` and `"bulb"` are the two FORWARD-ORBIT
+ * escape-time objects, which share every panel consequence — see
+ * {@link Ui.setSurfaceSessionKind}.
+ */
+export type SurfaceSessionKind = "ifs" | "escape" | "bulb";
+
 /** The geometry (and weight/variations) a transform editor edits. `w` is the
  * optional 4D extension (fr-bf6.3, see `types.ts`'s `WExtension`) — included
  * here so the single editor can be the one UI that creates/edits it, but see
@@ -1042,9 +1053,10 @@ export class Ui {
   private readonly surfaceColorSpeedRow: HTMLElement;
   // The surface balloon rows (fr-5wlv.4): 3D-surface-only this cut — the
   // variant exists only in the 3D material, so both hide under a live 4D
-  // surface session (fourDSurfaceLive) and under an escape-shaped one
-  // (surfaceSessionKind, fr-5wlv.6 — the balloon is permanently inert
-  // there, not just momentarily unavailable like the 4D case); the radius
+  // surface session (fourDSurfaceLive) and under either forward-orbit one
+  // (surfaceSessionKind, fr-5wlv.6 + fr-tdin — the balloon is permanently
+  // inert there, not just momentarily unavailable like the 4D case); the
+  // radius
   // row additionally waits for the balloon itself, mirroring the explorer
   // pair (fr-5wlv.2). Its own Inflate button (fr-5wlv.6) binds the SAME
   // handler as the explorer's balloonInflateButton — one sweep, one
@@ -1054,11 +1066,11 @@ export class Ui {
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
 
   // The surface ground plane row (fr-rhn5): unlike the balloon rows above,
-  // visible for BOTH the "ifs" and "escape" surfaceSessionKind — the floor
-  // survives where the balloon degenerates (fr-5wlv.4's measured
-  // escape-solid interior swallowing the camera never applied to a flat
-  // plane) — and hidden only under a live 4D surface session
-  // (fourDSurfaceLive). Its
+  // visible for EVERY 3D surfaceSessionKind — the floor survives where the
+  // balloon degenerates (fr-5wlv.4's measured escape-solid interior
+  // swallowing the camera, and fr-tdin's identical measurement on the
+  // Mandelbulb, never applied to a flat plane) — and hidden only under a
+  // live 4D surface session (fourDSurfaceLive). Its
   // checkbox is table-driven (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox
   // entry), so only the row itself needs a reference here.
   private readonly surfaceGroundPlaneRow: HTMLElement;
@@ -1109,9 +1121,11 @@ export class Ui {
   private fourDSlabAvailable = true;
   /**
    * The ACTIVE surface session's shape (fr-5wlv.6): `"escape"` for the
-   * escape-time fold render (fr-kltj) — whose forward-orbit object has no
-   * ball to invert, so scene.ts nulls it (fr-5wlv.4's measured
-   * degeneracy) and the balloon is permanently inert there — `"ifs"` for
+   * escape-time fold render (fr-kltj) and `"bulb"` for the Mandelbulb
+   * (fr-tdin) — the two FORWARD-ORBIT objects, filled solids whose
+   * interior reaches the ball centre, so scene.ts nulls the ball
+   * (fr-5wlv.4's measured degeneracy, re-measured on the bulb by
+   * fr-tdin) and the balloon is permanently inert for both — `"ifs"` for
    * every ordinary IFS or live 4D session, `null` outside a surface
    * session (or before the routing decision lands). Session-scoped like
    * {@link fourDSlabAvailable}, set by main.ts's own routing at
@@ -1120,7 +1134,7 @@ export class Ui {
    * to escape" needs the same analysis main.ts's routing already ran; read
    * by updateLabels alongside fourDSurfaceLive to gate the balloon rows.
    */
-  private surfaceSessionKind: "ifs" | "escape" | null = null;
+  private surfaceSessionKind: SurfaceSessionKind | null = null;
   // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
   // the slice controls above. The toggle's own wrapper row (fr-osgs) hides —
   // with the speed row — in a live 4D surface session, where the ambient
@@ -1947,7 +1961,7 @@ export class Ui {
    * caller's next `updateLabels` call (already the established pattern —
    * main.ts's refreshUi runs right after every surface routing decision)
    * is what actually applies it. */
-  setSurfaceSessionKind(kind: "ifs" | "escape" | null): void {
+  setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
   }
 
@@ -2095,14 +2109,16 @@ export class Ui {
     );
     // The surface balloon (fr-5wlv.4) is 3D-only this cut — the variant
     // exists only in the 3D material — so both rows hide under a live 4D
-    // surface session, AND under an escape-shaped one (fr-5wlv.6: the
-    // balloon is PERMANENTLY inert for that filled solid, not just
-    // unavailable like the 4D case — see surfaceSessionKind's own doc);
-    // the radius row additionally waits for the balloon itself to be on,
-    // mirroring the explorer pair (fr-5wlv.2). The surface section as a
-    // whole already gates on renderMode above.
+    // surface session, AND under either FORWARD-ORBIT one (fr-5wlv.6,
+    // fr-tdin: the balloon is PERMANENTLY inert for those filled solids,
+    // not just unavailable like the 4D case — see surfaceSessionKind's
+    // own doc); the radius row additionally waits for the balloon itself
+    // to be on, mirroring the explorer pair (fr-5wlv.2). The surface
+    // section as a whole already gates on renderMode above.
     const surfaceBalloonHidden =
-      this.fourDSurfaceLive || this.surfaceSessionKind === "escape";
+      this.fourDSurfaceLive ||
+      this.surfaceSessionKind === "escape" ||
+      this.surfaceSessionKind === "bulb";
     this.surfaceBalloonRow.classList.toggle("hidden", surfaceBalloonHidden);
     this.surfaceBalloonRadiusRow.classList.toggle(
       "hidden",
@@ -2110,11 +2126,12 @@ export class Ui {
     );
     // The surface ground plane (fr-rhn5) is 3D-only like the balloon above,
     // so it hides under a live 4D surface session too — but unlike the
-    // balloon it is NOT permanently inert for the escape solid (the floor
-    // survives where the balloon degenerates, scene.ts's
-    // enterSurfaceComputeEscapeSession), so it stays visible for BOTH the
-    // "ifs" and "escape" surfaceSessionKind and does not share
-    // surfaceBalloonHidden's escape-kind gate.
+    // balloon it is NOT permanently inert for the forward-orbit solids
+    // (the floor survives where the balloon degenerates, scene.ts's
+    // enterSurfaceComputeForwardSession — a plane under a Mandelbox or a
+    // Mandelbulb is the mode's classic look), so it stays visible for
+    // EVERY 3D surfaceSessionKind and does not share
+    // surfaceBalloonHidden's forward-kind gate.
     this.surfaceGroundPlaneRow.classList.toggle(
       "hidden",
       this.fourDSurfaceLive,

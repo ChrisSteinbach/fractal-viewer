@@ -60,6 +60,44 @@ render a dust indistinguishable from `juliaSet`'s connected curve — the
 whole contrast this pair of presets exists to show would vanish.
 `juliaDust`'s clean, fast escape at iteration 27 is exactly that margin.
 
+## Three showcases beside the two proofs
+
+The pair above is deliberately austere, and it costs them: a LONE transform
+parks the flame's colour coordinate at `derivedColorIndex(0, 1) = 0.5`
+forever, so `juliaSet`/`juliaDust` are structurally incapable of colour
+variation whatever palette they are given (measured hue entropy 0.04 against
+`radiolarian`'s 0.80). They stay that way because what they exist to pin is
+the RECIPE, which a blend or a second constant would put out of reach of the
+tests above. `scripts/julia-flame.harness.ts` searched for what the recipe
+can do when it is allowed to be an artwork, and three of its panels ship
+(fr-7u8t.5):
+
+**`juliaIsland`** — the same exact IIM map at TWO constants, Douady's rabbit
+and `−0.4 + 0.6i` (deep in `M`'s period-2 disc, whose Julia set is the
+classic many-whorled spiral). Each alone is a genuine Julia set; both
+together are the attractor of FOUR inverse branches, which is no
+polynomial's Julia set — an island carrying the rabbit's dendrites and the
+spiral's whorls at once. The second map is also the whole fix for the
+monochrome defect: colour now tracks which branch the orbit took last
+(hue 0.28).
+
+**`juliaSnowflake`** — the island seen through a final `julia` LENS. The
+plot-time map halves every angle and square-roots every radius, folding the
+island into a two-fold star whose dendritic boundary wraps the origin. The
+lens never feeds back, so the attractor under it is byte-for-byte the
+island's.
+
+**`juliaPinwheel`** — a counter-rotating `swirl` pair flattened to the
+plane, through a final `julia` lens turned 1.1 rad, which doubles the spiral
+and pulls its arms around the origin.
+
+Any `c` is reachable and no other affine freedom is: a transform applies
+`V(Mv + t)`, so a `julia` map behind a uniform scale and in-plane rotation
+is still an exact inverse branch — of `λ(z² + c)`, linearly conjugate to
+some `z² + C`. Scale and rotation only re-coordinate the picture, which is
+why these presets spend their freedom on constants rather than on affine
+noise.
+
 The contrast is the textbook fact about the parameter `c`: for `c` outside
 the Mandelbrot set, both inverse branches map a suitable disk containing `J`
 into _disjoint_ sub-disks, so `J` is a genuine, totally disconnected Cantor
