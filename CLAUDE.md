@@ -68,7 +68,23 @@ DIMENSIONLESS RATIOS that survive conjugation — its conjugation-control
 arm, exact at IoU 1.000 / relief 0.0000 over a 4x apparatus span, is what
 makes the other columns shape differences rather than zooms; verdict: both
 ratios are real, and the ONE-SHOT final-transform lens is the most
-sensitive role of the three).
+sensitive role of the three. fr-77oy added four arms where that sheet
+stopped, its estimator now taking one parameter record PER LINK and
+cycling the chain like `runEscapeOrbit`, wedge fold included, pinned
+bit-exact on 2-link, 3-link, order-5 and order-3 systems: a chain DAMPS
+its own links 3.8-6.4x — the same map alone against itself as link 0 of
+three — and the links barely interact (0.72-0.91x at four of five arms);
+the BARE sphere fold has no escape-time object at all, structurally, since
+without a box fold to bring points back in the orbit is empty above
+`|w| ~ 1.2` and a heuristic-invisible smooth solid below it, so the
+control runs through the LENS instead — where the box must be pre-scaled
+into biting or the two rows agree at IoU exactly 1.000; the kaleidoscope
+is orthogonal to the ratio; and the ELIGIBILITY SEAM
+(`SPHEREFOLD_LIPSCHITZ` IS the magnification ratio, so it moves both
+gates) is reached by exactly ONE shipped system — `mandelboxKifs`, 9%
+away, `mR` 0.478 instead of 0.500 — while the three escape presets would
+need `mR > fR` and all three chains are unreachable at any ratio behind a
+box-fold link that expands regardless).
 
 Requires **Node.js 18+** (ES2022 target; developed on Node 22).
 
