@@ -164,7 +164,12 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
-    (identity tuple = order/plane/twist; twist never interpolates).
+    (identity tuple = order/plane/twist; twist never interpolates). The
+    fold's three lengths (fr-s9ll) ride the file's existing `lerpOptional`
+    with the CLASSIC length as the absent side's fallback, never a
+    synthesized 0 — so `minRadius: 0.3` against a side that omits it (the
+    field OR the whole variation entry) morphs 0.3 -> 0.5, and both sides
+    absent stays absent.
   - `mutate-system.ts` — mutation grid perturbation (`mutateSystem`): seeded
     nudge of every field, clamps mirror sliders, optional keys preserved
     exactly; `wildcard` option adds structural kicks. Quality-gated by
@@ -225,9 +230,37 @@ and UI**, so the interesting math is unit-tested without a browser:
     through the UNTOUCHED cores (`final` stays null when `foldFinal` is
     set), with region floors, value-exact sphere/floor prunes and the
     visible-sphere pin; no contraction gate (an un-iterated lens needs
-    none). Oracle for
+    none).
+    THE FOLD'S RADII ARE AUTHORED, NOT BAKED IN, since fr-s9ll: the branch
+    algebra's constants became expressions of the map's own lengths
+    (inner inverse `×0.25 -> ×mR²/fR²` and its sigma `4 -> fR²/mR²`, inner
+    output region `r <= 2 -> r <= fR²/mR`, mid shell `[1,2] -> [fR, fR²/mR]`
+    with inversion `u/|u|² -> fR²u/|u|²` and certified factor
+    `|u| -> |u|/fR`, box preimages `±2 − u -> ±2·wall − u` and in-box region
+    `[-1,1] -> [-wall, wall]`), derived ONCE per map into `SurfaceFoldRadii`
+    (these sit inside a per-candidate, per-branch loop) and carried on
+    `SurfaceDEMap.foldRadii` and the lens. `SPHEREFOLD_LIPSCHITZ` survives
+    only as the CLASSIC value the docs and tests quote — the live bound is
+    `variations.ts`'s `sphereFoldLipschitz`, which the contraction gate and
+    the depth cap read, so the knob moves the Surface/escape-time seam
+    (fr-77oy: exactly one shipped system, `mandelboxKifs`, is close enough
+    to cross it). `SPHEREFOLD_MID_MIN_R` SCALES WITH `fR`, NOT `fR²` — it
+    guards the mid inversion's image `fR²/|u|`, so holding that to `1e3·fR`
+    makes the threshold `1e-3·fR`; `fR²` would be a length² where a length
+    belongs and would break the uniform-rescale equivariance the fold family
+    has (the two are indistinguishable at the classic `fR = 1`, which is why
+    the bead's own sketch proposed the wrong one). Byte-identity at the
+    defaults is by CONSTRUCTION — at the classic lengths every expression
+    reduces to the literal that shipped. Oracle for
     `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
-    render mode over.
+    render mode over — a mirror fr-3pcu still owes, so the GLSL/WGSL fold
+    arms (and the flame kernels) are FROZEN at the classic radii and a
+    non-default document renders a different object on every GPU path until
+    it lands (fr-xb8o). The mitigation until then is reachability: no editor
+    control writes the fields, `random-system.ts` does not roll them, and
+    `mutate-system.ts` perturbs a present one but never materializes an
+    absent one — so only a hand-edited hash, an imported scene or a morph
+    between two such documents can produce one.
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
     fr-beck spike): Jacobi `singularValues4`, `analyzeSurfaceSystem4`,
     `buildSurfaceDE4` (final-transform lens included; also derives
@@ -237,6 +270,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     play, slice/rotor-invariant), beam
     `estimateDistance4` + ghost-free `estimateDistance4Refined` — the 4D
     surface render's CPU oracle, mirrored by `surface-material-4d.ts`.
+    Reads the fold's authored radii at all three of its own branch sites
+    since fr-s9ll, SHARING `SurfaceFoldRadii`/`surfaceFoldRadii` with 3D
+    rather than redefining them (the resolved lengths are dimension-free,
+    and two copies of "what does an absent field mean" is how a 3D system
+    and its 4D lift start rendering different objects); the one genuinely
+    new part is the FOURTH box axis, whose `pw0/pw1/pw2` and `dwUp/dwDn`
+    take the same treatment as x/y/z and whose visible-radius bound's `+ 4`
+    — the axis COUNT — becomes `4·wall²`.
     Measured verdict + numbers in the module doc. Both estimators take an
     optional `halfExtent` (fr-wa6o): the query becomes the SEGMENT
     `p ± halfExtent`, which turns the marched hyperplane into a SLAB of
@@ -562,6 +603,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     game's cyclic (a cyclic fold is discontinuous and would certify empty
     balls across the seam), free per orbit step, and `SymmetryParams.blend`
     is deliberately unread exactly as in `surface-de.ts`.
+    EACH LINK CARRIES ITS OWN FOLD LENGTHS since fr-s9ll (`EscapeLink`'s
+    `boxLimit`/`minRadius2`/`fixedRadius2`, resolved once at build), so a
+    chain may hold a different sphere/box apparatus per link, and
+    `foldLipschitz` tests the real magnification `fR²/mR²` rather than the
+    frozen 4 — which is what keeps this gate the exact COMPLEMENT of the IFS
+    one as the knob moves. Pinned against an INDEPENDENT oracle:
+    `scripts/spherefold-radius-sweep.harness.ts`'s own parameterized copy of
+    `runEscapeOrbit`, written for fr-qi9c's sheet and pinned at the classic
+    lengths before any of this existed, agrees bit-exactly over 12k queries
+    including a two-link chain whose links carry DIFFERENT radii.
     ONE-LINK, UNSYMMETRISED SYSTEMS ARE BIT-IDENTICAL to fr-kltj's loop
     (pinned in `escape-de.test.ts` against a frozen copy of it), and
     fr-s04t carried the cycle into the two shader mirrors, so a CHAIN now
@@ -639,7 +690,19 @@ and UI**, so the interesting math is unit-tested without a browser:
     presets reach it from the Escape-time menu group.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
-    `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
+    `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
+    truth). `Variation` is `{type, weight}` plus — since fr-s9ll — the fold's
+    three optional lengths `minRadius`/`fixedRadius`/`boxLimit`, the FIRST
+    per-variation parameters in a document every other producer treats as a
+    type -> weight MAP; they deliberately break that model rather than
+    pretending to fit it (each belongs to two of the seventeen types and the
+    rest ignore all three), and ABSENT MEANS THE CLASSIC MANDELBOX VALUES
+    (0.5, 1, 1) BYTE-IDENTICALLY — the `weight`/`colorIndex` convention, and
+    what keeps every existing document, preset, morph and `.flame` import
+    unmoved. There is no fourth SIZE field on purpose: only two dimensionless
+    ratios of the three lengths are new shape (fr-qi9c), because a uniform
+    rescale is equivariant through both folds and is therefore already what
+    the transform's own affine part does.
   - `variations.ts` — seventeen nonlinear flame variations as pure functions:
     a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
     `mandelbox`, fr-p7nu), and the two escape-time maps that exist so their
@@ -652,7 +715,26 @@ and UI**, so the interesting math is unit-tested without a browser:
     `p^8` is NOT `((p^2)^2)^2`, which disagrees on 48.8% of queries — so
     every power would need its own closed form). `composeVariations` blends
     a transform's weighted list.
+    THE FOLD'S THREE LENGTHS ARE AUTHORABLE since fr-s9ll, and this module
+    owns what that means: `resolveFoldRadii` is the ONE place the
+    "absent means classic" rule and the domain live (`fixedRadius` below a
+    floor falls back to 1, since `fR² = 0` would divide by zero against this
+    module's stated totality guarantee; `minRadius` clamps into
+    `[fR·1e-6, fR]` — the upper end is the fold's own domain, where the mid
+    shell closes and the fold is exactly the identity, and the floor is
+    RELATIVE so the rescale equivariance survives; `boxLimit` 0 is KEPT, the
+    point reflection `t -> -t`). `isClassicFoldRadii` recognizes the default
+    set and `foldVariationFn` then returns the SHARED classic entry, so an
+    unparameterized document runs the same function object it always ran
+    rather than merely computing the same numbers. `sphereFoldLipschitz` is
+    the magnification `fR²/mR²` — tight, and the expression BOTH surface
+    gates multiply through.
   - `variations4.ts` — same variations lifted to 4D, bit-exact at `w = 0`.
+    Duplicates the fold ARITHMETIC under the twin-file convention but
+    IMPORTS `resolveFoldRadii`/`isClassicFoldRadii`: what an absent field
+    means must have one answer across both dimensions, or a 3D system and
+    its 4D lift would render different objects (pinned — at `w = 0` the 4D
+    fold is bit-exact against the 3D one at NON-classic radii too).
   - `vec.ts` — `clamp`, `clone3`, `to255` helpers.
   - `voxel.ts` — solid render: `accumulateVoxels` → 3D density grid →
     `voxelTextureData` (RGBA8 volume). `buildColorModeLUT` reuses `color.ts`.
@@ -950,7 +1032,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     Strict never-throwing decoder. Document carries optional `CameraPose` and
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
     `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
-    string equality).
+    string equality). A variation's three optional fold lengths (fr-s9ll)
+    encode only when present and finite — an unparameterized document is
+    byte-identical to one predating them — and decode with two deliberate
+    deviations from this file's other optional numbers, both documented at
+    the function: NO `Number()` coercion (a numeric string or boolean drops
+    rather than becoming a radius) and NO clamp, since the domain belongs to
+    `variations.ts`'s `resolveFoldRadii` and persist's job at this leaf is
+    fidelity.
   - `viewer-prefs.ts` — per-browser preferences under their own
     `fractal-viewer:prefs` localStorage key, deliberately OUTSIDE the scene
     document (fr-0ya): a pref belongs to the person at this browser, so it
