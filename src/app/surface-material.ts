@@ -653,17 +653,6 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform vec4 uLensParams;
   uniform mat3 uLensInvM;
   uniform vec3 uLensInvT;
-  /** Escape-time fold render (fr-kltj), alive only under SURFACE_ESCAPE:
-   * the FORWARD affine (M, t) of the single fold map and
-   * (foldKind, w, |w|·sigma_max(M), unused). The variant replaces the
-   * inverse-descent bodies wholesale — see escape-de.ts, the CPU oracle
-   * its loop mirrors. t is the PRE-fold offset; the per-iteration offset
-   * is the query point (fr-7u8t.8's Mandelbrot form), and the unused
-   * slot is where a form flag would ride if the bulb family ever earns
-   * one. */
-  uniform mat3 uEscM;
-  uniform vec3 uEscT;
-  uniform vec4 uEscParams;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -912,28 +901,101 @@ uniform float uBalloonFar;
 #define surfaceDE surfaceDEFractal
 #endif
 #if SURFACE_ESCAPE
+  /** Escape-time fold render (fr-kltj), a LIST since fr-s04t: the FORWARD
+   * affine (M, t) of every CHAIN LINK and its
+   * (foldKind, w, |w|·sigma_max(M), unused) quartet, uMapCount slots
+   * live — the document's own transform list IS the formula sequence
+   * (escape-de.ts's THE TRANSFORM LIST IS THE SEQUENCE). Declared INSIDE
+   * the arm, the SURFACE_BULB precedent: an array per link is the one
+   * uniform block the descent variants would pay real bytes for against
+   * the measured ~80KB Mesa source cliff and could never read. t is the
+   * PRE-fold offset; the per-iteration offset is the query point
+   * (fr-7u8t.8's Mandelbrot form), and the unused slot is where a form
+   * flag would ride if the bulb family ever earns one. */
+  uniform mat3 uEscM[MAX_MAPS];
+  uniform vec3 uEscT[MAX_MAPS];
+  uniform vec4 uEscParams[MAX_MAPS];
+
+  /** escape-de.ts's foldQueryIntoSector — the kaleidoscope as a
+   * QUERY-SPACE wedge fold, applied ONCE before the orbit (never inside
+   * it: the escape set of v <- F(v) + p inherits a rotation only when F
+   * commutes with it, which no added rotation arranges). The fold is
+   * DIHEDRAL, rotations AND mirrors, and that is forced rather than
+   * chosen — the cyclic fold the chaos game uses JUMPS across sector
+   * seams, and a discontinuous map has no Lipschitz bound at all, so the
+   * estimate would certify empty balls straight through the seam. g is
+   * 1-Lipschitz and an isometry per sector, so the orbit is seeded AND
+   * offset by g(p), the rendered set is exactly g^-1(M), and neither the
+   * marching ball nor dr's "+ 1" needs a new term (the oracle's module
+   * doc carries the argument). uSymOrder <= 1 returns the point
+   * untouched, which is what keeps an unsymmetrised document bit-identical
+   * to fr-kltj's. Plane codes are surface-de.ts's SYM_PLANE_CODE
+   * (0 = yz, 1 = xz, 2 = xy), and the two axes per plane are the oracle's
+   * own ia/ib. Landing exactly on a sector boundary is consistent either
+   * way a round() breaks the tie (the two roundings differ by a
+   * reflection the mirror then undoes), so GLSL's implementation-defined
+   * half-way rule costs nothing here. */
+  vec3 foldQuerySector(vec3 p) {
+    if (uSymOrder <= 1) {
+      return p;
+    }
+    float a = uSymPlane == 0 ? p.y : p.x;
+    float b = uSymPlane == 2 ? p.y : p.z;
+    float sector = 6.283185307179586 / float(uSymOrder);
+    // Rotate BACK by the nearest whole sector, then mirror across the
+    // first axis: a composition of half-space reflections, hence the
+    // reflection group's fundamental-domain retraction.
+    float turn = round(atan(b, a) / sector) * sector;
+    float c = cos(turn);
+    float s = sin(turn);
+    float fa = a * c + b * s;
+    float fb = abs(b * c - a * s);
+    if (uSymPlane == 0) {
+      return vec3(p.x, fa, fb);
+    }
+    if (uSymPlane == 1) {
+      return vec3(fa, p.y, fb);
+    }
+    return vec3(fa, fb, p.z);
+  }
+
   /**
-   * Escape-time fold DE (fr-kltj), mirroring escape-de.ts's
-   * estimateEscapeDistance: iterate the single fold map FORWARD from the
-   * query with a scalar running derivative (the Buddhi/Rrrola Mandelbox
-   * form), DE = |v| / dr. This variant REPLACES the inverse-descent
-   * bodies wholesale — the whole #else arm below is not compiled — and
-   * it is phone-cheap: uMaxDepth (30 full, preview-clamped) iterations of
-   * branchless folds per evaluation, no frontier, no branches. cutoff
+   * Escape-time fold DE (fr-kltj, CYCLING through the chain since
+   * fr-s04t), mirroring escape-de.ts's estimateEscapeDistance: iterate the
+   * chain's fold maps FORWARD from the query with ONE shared scalar
+   * running derivative (the Buddhi/Rrrola Mandelbox form), DE = |v| / dr.
+   * This variant REPLACES the inverse-descent bodies wholesale — the whole
+   * #else arm below is not compiled — and it is phone-cheap: ~30 branchless
+   * folds per link per evaluation, no frontier, no branches. cutoff
    * is accepted for signature parity and ignored: the loop is fixed-cost,
    * so the full value is always returned, trivially satisfying the
    * fr-55r5 contract (every return IS the cutoff-0 result).
+   *
+   * CYCLING, NOT CHAINING (the oracle's measured verdict, fr-za0n):
+   * Mandelbulber2's seq->GetSequence(i) — step i applies link
+   * i mod n, with "+ q" and the bailout test after EACH link, never
+   * after all n (chaining lets n folds compound between derivative floors
+   * and fattens the set to 72.8% of the bailout ball at six links, which
+   * is fr-7u8t.8's "the object WAS its own bounding sphere" returning). A
+   * PASS is one full cycle, so the loop runs uMaxDepth * uMapCount single-
+   * link steps and uMaxDepth keeps meaning "how many times is each link
+   * applied" at any chain length — the preview tier's depth clamp included.
    */
   float surfaceDE(vec3 p, float cutoff) {
-    vec3 v = p;
+    vec3 q = foldQuerySector(p);
+    vec3 v = q;
     float dr = 1.0;
     float r = length(v);
-    int kind = int(uEscParams.x);
-    for (int i = 0; i < uMaxDepth; i++) {
+    int n = uMapCount;
+    int steps = uMaxDepth * n;
+    int li = 0;
+    for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
         break;
       }
-      vec3 y = uEscM * v + uEscT;
+      vec4 prm = uEscParams[li];
+      int kind = int(prm.x);
+      vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
       if (kind != 2) {
         // The box fold (boxfold + mandelbox): per-axis reflections,
@@ -947,11 +1009,19 @@ uniform float uBalloonFar;
         y *= f;
         localL = f;
       }
-      // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT, not the
-      // document's t (which stays the pre-fold offset inside y above).
-      v = uEscParams.y * y + p;
-      dr = uEscParams.z * localL * dr + 1.0;
+      // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT (folded,
+      // fr-s04t), not the document's t (which stays the pre-fold offset
+      // inside y above).
+      v = prm.y * y + q;
+      // EVERY LINK CONTRIBUTES ITS OWN FACTOR to the one shared dr, and
+      // the "+ 1" — the per-link offset's own derivative — floors it once
+      // per link rather than once per pass.
+      dr = prm.z * localL * dr + 1.0;
       r = length(v);
+      li++;
+      if (li == n) {
+        li = 0;
+      }
     }
     return r / dr;
   }
@@ -964,7 +1034,8 @@ uniform float uBalloonFar;
    * extras — trap is the CONTINUOUS escape fraction (the canonical Mandelbox palette
    * coordinate), rings/sheets are the orbit's closest radial / y-plane
    * approaches, the same trap vocabulary the IFS variants feed the shared
-   * color sources. firstChoice is always 0 (one map). */
+   * color sources. firstChoice is always 0 (a forward orbit chooses no
+   * map — a chain applies every link in turn). */
   float surfaceDE(
     vec3 p,
     out int firstChoice,
@@ -975,17 +1046,27 @@ uniform float uBalloonFar;
     firstChoice = 0;
     rings = 1.0;
     sheets = 1.0;
-    vec3 v = p;
+    vec3 q = foldQuerySector(p);
+    vec3 v = q;
     float dr = 1.0;
     float r = length(v);
-    int kind = int(uEscParams.x);
-    int escapedAt = uMaxDepth;
-    for (int i = 0; i < uMaxDepth; i++) {
+    int n = uMapCount;
+    int steps = uMaxDepth * n;
+    int li = 0;
+    int escapedAt = steps;
+    // The growth factor of the link whose application produced the
+    // current r — the head link's until a step has run, so a one-link
+    // document reads uEscParams[0].z at every step exactly as it did
+    // before the chain (fr-s04t).
+    float growth = uEscParams[0].z;
+    for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
         escapedAt = i;
         break;
       }
-      vec3 y = uEscM * v + uEscT;
+      vec4 prm = uEscParams[li];
+      int kind = int(prm.x);
+      vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
       if (kind != 2) {
         y = clamp(y, -1.0, 1.0) * 2.0 - y;
@@ -995,11 +1076,16 @@ uniform float uBalloonFar;
         y *= f;
         localL = f;
       }
-      v = uEscParams.y * y + p;
-      dr = uEscParams.z * localL * dr + 1.0;
+      v = prm.y * y + q;
+      dr = prm.z * localL * dr + 1.0;
       r = length(v);
+      growth = prm.z;
       rings = min(rings, r / uBoundingRadius);
       sheets = min(sheets, abs(v.y) / uBoundingRadius);
+      li++;
+      if (li == n) {
+        li = 0;
+      }
     }
     // fr-7u8t.8: the CONTINUOUS escape count, not the raw integer. escapedAt
     // is a step function of position, so a palette over it lands adjacent
@@ -1007,16 +1093,17 @@ uniform float uBalloonFar;
     // structure. Invisible while the escape set was a blob (one iteration
     // count everywhere = one flat colour); the real Mandelbox shows it at
     // once. The orbit leaves the bailout ball by a factor of about
-    // uEscParams.z per step, so how far PAST the radius it landed says where
+    // growth per step, so how far PAST the radius it landed says where
     // between two counts it really crossed: n - log(r/R)/log(growth). Guarded
     // on having escaped at all (a bounded orbit has r <= R, which would add
     // rather than subtract) and on a growth rate above 1 (below it nothing
-    // escapes, and log would flip the sign).
+    // escapes, and log would flip the sign). Both step counts are SINGLE-LINK
+    // steps, so the fraction stays in [0, 1] at any chain length (fr-s04t).
     float escFrac = 0.0;
-    if (escapedAt < uMaxDepth && uEscParams.z > 1.0) {
-      escFrac = clamp(log(r / uBoundingRadius) / log(uEscParams.z), 0.0, 1.0);
+    if (escapedAt < steps && growth > 1.0) {
+      escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);
     }
-    trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);
+    trap = clamp((float(escapedAt) - escFrac) / float(steps), 0.0, 1.0);
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     return r / dr;
@@ -3024,10 +3111,28 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uLensInvM: { value: new THREE.Matrix3() },
       uLensInvT: { value: new THREE.Vector3() },
       // Escape-time render (fr-kltj): inert defaults; alive only under
-      // the SURFACE_ESCAPE define.
-      uEscM: { value: new THREE.Matrix3() },
-      uEscT: { value: new THREE.Vector3() },
-      uEscParams: { value: new THREE.Vector4(0, 1, 1, 0) },
+      // the SURFACE_ESCAPE define. One slot per CHAIN LINK since fr-s04t
+      // (the document's transform list IS the formula sequence), sized
+      // like the descent's per-map arrays — slots past uMapCount are
+      // never read.
+      uEscM: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Matrix3(),
+        ),
+      },
+      uEscT: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector3(),
+        ),
+      },
+      uEscParams: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(0, 1, 1, 0),
+        ),
+      },
       // Mandelbulb render (fr-7u8t.9): inert defaults; alive only under
       // the SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
       // enabled read could never divide by zero or take log of zero).
@@ -3369,46 +3474,51 @@ export function surfaceFragmentFor(
 }
 
 /**
- * Pack an {@link EscapeDE} (fr-kltj) and flip the material onto the
- * escape-time variant. The IFS-side uniforms the shared marcher still
- * reads — bounding/visible radii, uMaxDepth (the iteration budget the
- * preview tier clamps through previewMaxDepth), step scale, slot-0 color
- * for the by-transform source — are packed to the escape set's values;
- * everything descent-specific (maps, symmetry, lenses, grid) is reset to
- * inert, and no grid is ever uploaded for this mode (the empty-space
- * chain's validity argument is IFS-specific).
+ * Pack an {@link EscapeDE} (fr-kltj; its whole formula CHAIN since
+ * fr-s04t) and flip the material onto the escape-time variant. The
+ * IFS-side uniforms the shared marcher still reads — bounding/visible
+ * radii, uMaxDepth (the iteration budget the preview tier clamps through
+ * previewMaxDepth), step scale, slot-0 color for the by-transform source —
+ * are packed to the escape set's values; everything descent-specific
+ * (inverse maps, sector sweep, lenses, grid) is reset to inert, and no
+ * grid is ever uploaded for this mode (the empty-space chain's validity
+ * argument is IFS-specific).
+ *
+ * TWO frozen slots carry escape meanings rather than inert ones, both
+ * because they mean exactly the same thing here as they do for a descent:
+ * `uMapCount` is the LINK COUNT the cycle wraps at, and
+ * `uSymOrder`/`uSymPlane` are the query-space wedge fold's own order and
+ * plane (never the descent's sector sweep, whose `uSymStep` pair stays
+ * inert). Throws past {@link SURFACE_MAX_MAPS} links — the caller gates on
+ * the active-map count first (main.ts's eligibility arm), exactly as the
+ * IFS packer's cap is gated, so reaching the throw is a bug.
  */
 export function setEscapeSystem(
   material: THREE.ShaderMaterial,
   de: EscapeDE,
   color: Vec3,
 ): void {
+  if (de.links.length > SURFACE_MAX_MAPS) {
+    throw new RangeError(
+      `escape DE has ${de.links.length} links, but the material carries at most ${SURFACE_MAX_MAPS}`,
+    );
+  }
   setSurfaceGrid(material, null);
   const u = material.uniforms;
-  const m = de.m;
-  (u.uEscM.value as THREE.Matrix3).set(
-    m[0],
-    m[1],
-    m[2],
-    m[3],
-    m[4],
-    m[5],
-    m[6],
-    m[7],
-    m[8],
-  );
-  (u.uEscT.value as THREE.Vector3).set(...de.t);
-  (u.uEscParams.value as THREE.Vector4).set(
-    de.foldKind,
-    de.w,
-    de.derivGrowth,
-    0,
-  );
+  const escM = u.uEscM.value as THREE.Matrix3[];
+  const escT = u.uEscT.value as THREE.Vector3[];
+  const escParams = u.uEscParams.value as THREE.Vector4[];
+  de.links.forEach((link, i) => {
+    const m = link.m;
+    escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    escT[i].set(...link.t);
+    escParams[i].set(link.foldKind, link.w, link.derivGrowth, 0);
+  });
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
-  u.uMapCount.value = 1;
-  u.uSymOrder.value = 1;
-  u.uSymPlane.value = 1;
+  u.uMapCount.value = de.links.length;
+  u.uSymOrder.value = de.symmetryOrder;
+  u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];
   (u.uSymStep.value as THREE.Vector2).set(1, 0);
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.boundingRadius * 2;

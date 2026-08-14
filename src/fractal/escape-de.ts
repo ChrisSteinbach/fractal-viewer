@@ -301,14 +301,21 @@
  * refused by both gates and rendered by nothing; it is this mode's now.
  * Everything else stays ineligible for both modes, with reasons.
  *
- * WHAT THE SIX MIRRORS SEE, until fr-za0n's mirror pass lands. {@link
- * EscapeDE} extends {@link EscapeLink}, so the flat `m`/`t`/`foldKind`/
- * `w`/`derivGrowth` wire the GLSL `SURFACE_ESCAPE` variant and the WGSL
- * `core:"escape"` packer already read is the FIRST LINK's, unchanged. A
- * one-link document therefore renders bit-identically on every path. A
- * multi-link one renders its head link on the GPU paths until they gain the
- * same inner step — the mirrors are a scheduled, separate pass, and a
- * half-mirrored kernel would be worse than an unmirrored one.
+ * WHAT THE MIRRORS SEE (fr-s04t landed the pass fr-za0n scheduled). The
+ * GLSL `SURFACE_ESCAPE` variant and the WGSL `core:"escape"` kernel both
+ * CYCLE the list now, term for term with {@link runEscapeOrbit} — the
+ * query fold included — so a chain renders what this module estimates on
+ * every path. Each carries the list in its own dialect: GLSL as one
+ * `uEscM`/`uEscT`/`uEscParams` slot per link (a 24-slot cap, the descent's
+ * own, which is the mode's cap because eligibility must be one answer for
+ * both engines), WGSL as one `GpuMap` per link on the maps storage binding
+ * the descent cores already carry. {@link EscapeDE} still extends
+ * {@link EscapeLink}, so the flat `m`/`t`/`foldKind`/`w`/`derivGrowth`
+ * fields remain the head link's — the WGSL params block keeps packing them
+ * as frozen layout ballast, and nothing reads them to render. A one-link
+ * document renders bit-identically to fr-kltj's on every path (`n = 1`
+ * makes the cycle the single map, order 1 skips the fold entirely), which
+ * is what the bench's recorded escape rows check for free.
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";

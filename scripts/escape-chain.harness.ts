@@ -492,7 +492,9 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
   });
 
   it("sweeps the march step scale a chain needs", () => {
-    // Where ESCAPE_CHAIN_STEP_SCALE comes from. The single map leads as the
+    // The sweep that REFUTED a chain-specific step scale (fr-za0n's
+    // verdict: one ESCAPE_STEP_SCALE, 0.35, at every chain length — see
+    // its doc). The single map leads as the
     // control: its row is fr-7u8t.8's 0.35 verdict re-measured at this pose,
     // so the chains' rows can be read against a scale that is known to fit.
     const panels: PanelStats[] = [];

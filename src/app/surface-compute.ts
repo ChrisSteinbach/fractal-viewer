@@ -69,6 +69,7 @@ import type {
 } from "../fractal/surface-de-gpu";
 import {
   packBulbGpuParams,
+  packEscapeGpuMaps,
   packEscapeGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
@@ -1058,18 +1059,23 @@ export class SurfaceComputeRenderer {
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
     // (ArrayBufferLike-backed) don't satisfy writeBuffer's non-shared
-    // buffer requirement — the bench's own idiom. A FORWARD kernel never
+    // buffer requirement — the bench's own idiom. The BULB kernel never
     // DECLARES the maps binding, but the explicit bind group layouts
     // below keep entry 1 (a layout may carry entries a shader ignores),
-    // so those targets bind one zero stride there rather than
-    // forking every layout/bind-group path. A 4D target packs the
+    // so that target binds one zero stride there rather than
+    // forking every layout/bind-group path. The ESCAPE kernel DOES read
+    // it (fr-s04t: one GpuMap per chain link, the document's transform
+    // list being the formula sequence). A 4D target packs the
     // GpuMap4 layout (128-byte stride since fr-rsp6 grew it to eight
     // vec4s for the fold lanes; its own field contract).
-    const mapsData = isForwardTarget(target)
-      ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
-      : target.kind === "ifs4"
-        ? new Float32Array(packSurfaceGpuMaps4(target.de))
-        : new Float32Array(packSurfaceGpuMaps(target.de));
+    const mapsData =
+      target.kind === "escape"
+        ? new Float32Array(packEscapeGpuMaps(target.de))
+        : isForwardTarget(target)
+          ? new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
+          : target.kind === "ifs4"
+            ? new Float32Array(packSurfaceGpuMaps4(target.de))
+            : new Float32Array(packSurfaceGpuMaps(target.de));
     const mapsBuf = device.createBuffer({
       size: mapsData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
