@@ -40,8 +40,11 @@ export const VARIATION_TYPES = [
   // the imaginary basis `(i, j, k)`, which is what makes the w = 0 restriction
   // bit-exact — `span{1, i, j}` is closed under squaring, so the 3D and 4D
   // registries agree at `w = 0` like every other entry. Authored with a
-  // transform's translation as the Julia constant `c`, this is the map whose
-  // escape-time set the surface renderer marches (`qjulia-de.ts`).
+  // transform's translation as the Julia constant `c`, this is the map
+  // `qjulia-de.ts`'s oracle estimates. NOTHING MARCHES IT: the renderer is
+  // fr-7u8t.5, open and demoted by measurement, so authoring a `qsquare`
+  // map and pressing Surface gets the ordinary "uses variations" refusal
+  // (fr-zi3c). It renders as a plain nonlinear warp in every other mode.
   "qsquare",
   // The White/Nylander triplex 8th power (fr-7u8t.7): the Mandelbulb's map,
   // `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)` in spherical coordinates about the z axis

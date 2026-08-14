@@ -23,9 +23,19 @@
  * harness is that a speckled sheet has three possible causes and the
  * defaults cannot tell them apart.
  *
- * Consumers: `qjulia-preview.harness.ts`, `escape-family-preview.harness.ts`,
- * `escape-chain.harness.ts`, `chain-speckle.harness.ts` and the rest of the
- * `*.harness.ts` preview family.
+ * Consumers: `escape-family-preview.harness.ts`, `escape-chain.harness.ts`,
+ * `chain-speckle.harness.ts`, `escape-form-sweep.harness.ts`,
+ * `bulb-preview.harness.ts`, `hybrid-chain.harness.ts` and
+ * `qjulia-beauty.harness.ts` take the whole thing; `julia-flame.harness.ts`
+ * takes `encodePng` alone and assembles its own sheet (its panel stats do
+ * not fit `writeContactSheet`'s shape).
+ *
+ * The one harness that does NOT use this module is
+ * `qjulia-preview.harness.ts`, which predates it and hand-rolls both a
+ * tracer and a byte-for-byte copy of the PNG encoder below, with
+ * independently drifted shading constants — so its sheet is not comparable
+ * with the rest of the family's. Tracked as fr-by0n; this list said
+ * otherwise until fr-vpbq's review caught it.
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";

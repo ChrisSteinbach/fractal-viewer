@@ -84,7 +84,7 @@
  *         `hybrid-chain-sequence-close.png` (chaining vs cycling, the fork
  *         that decided fr-za0n); `hybrid-chain-cross-sequence.png` (the same
  *         fork on cross-family chains); `hybrid-chain-offset.png`;
- *         `hybrid-chain-march.png`
+ *         `hybrid-chain-march.png` and `hybrid-chain-march2.png`
  */
 import {
   analyzeBulbSystem,

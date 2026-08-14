@@ -1109,27 +1109,47 @@ uniform float uBalloonFar;
     // same expression, so every shipped single-map object renders
     // unchanged, and SURFACE_BULB below has always normalized this way.
     //
-    // MEASURED at marched hit points (20k near-boundary exterior samples
-    // per system, |DE| < 0.02), trap [p05 p50 p95] and the fraction that
-    // saturates at the top of the ramp:
+    // MEASURED TWICE, by two populations that disagree about the size of
+    // the win — recorded together, because the difference is the honest
+    // part. Trap [p05 p50 p95]:
     //
-    //   mandelboxClassic  1 link   was [0.152 0.291 0.832]  0.9% saturated
-    //                              now  IDENTICAL  (same expression)
-    //   foldChain         2 links  was [0.108 0.180 0.716]  now
-    //                                  [0.216 0.360 1.000] 12.2% saturated
-    //   foldChainBoulder  3 links  was [0.071 0.110 0.575]  now
-    //                                  [0.214 0.331 1.000] 12.2% saturated
-    //   the same chain x2  6 links  was [0.036 0.056 0.439]  now
-    //                                  [0.215 0.333 1.000] 15.8% saturated
+    // (a) 20k near-boundary exterior samples per system, drawn uniformly in
+    //     the bailout ball and kept where |DE| < 0.02 — the whole surface,
+    //     pose-free:
+    //       mandelboxClassic  1 link  was [0.152 0.291 0.832]  0.9% clamped
+    //                                 now  IDENTICAL (same expression)
+    //       foldChain         2       was [0.108 0.180 0.716]
+    //                                 now [0.216 0.360 1.000] 12.2% clamped
+    //       foldChainBoulder  3       was [0.071 0.110 0.575]
+    //                                 now [0.214 0.331 1.000] 12.2% clamped
+    //       that chain twice  6       was [0.036 0.056 0.439]
+    //                                 now [0.215 0.333 1.000] 15.8% clamped
     //
-    // The last row is the one that settles it: at two, three and six links
-    // the median lands on 0.36/0.33/0.33 — FLAT in chain length, which is
-    // what a colour coordinate should be — where the old denominator ran
-    // 0.180/0.110/0.056, halving with every link or two added. The
-    // disclosed cost is that 12-16% of hit pixels — the longest-surviving
-    // orbits, i.e. the deepest creases — now share the ramp's top with the
-    // never-escaped ones. That is a better trade than the whole object
-    // sharing its bottom.
+    // (b) chain-speckle.harness.ts's own fixtures, sampled at the PIXELS a
+    //     camera actually hits from its pose:
+    //       1 link  was [0.125 0.230 0.757]  now IDENTICAL, 3.99% clamped
+    //       2 links was [0.083 0.132 0.313]  now [0.166 0.265 0.626], 1.9%
+    //       6 links was [0.043 0.072 0.205]  now [0.256 0.431 1.000], 8.6%
+    //
+    // WHAT BOTH AGREE ON, and it is the claim: n = 1 is unchanged to the
+    // bit, and the SYSTEMATIC per-link collapse is gone. The old medians
+    // fell by roughly half with every link or two — 0.291/0.180/0.110/0.056
+    // in (a), 0.230/0.132/0.072 in (b) — which is the defect, because it
+    // tracked the link count rather than the fractal.
+    //
+    // WHAT THEY DISAGREE ON: whether the result is FLAT in chain length.
+    // In (a) two, three and six links land within 0.03 of each other; in
+    // (b) six links lands at 1.9x the single map's median and pins its p95
+    // at the clamp. Different systems, different populations, so "flat" is
+    // not a property this normalizer has — what it has is the absence of a
+    // per-link trend. Where a given chain lands is the chain's business.
+    //
+    // The disclosed cost is the clamp: 1.9-8.6% of the pixels a camera
+    // actually hits at six links (a); up to 15.8% over the whole surface
+    // (b). The longest-surviving orbits — the deepest creases — share the
+    // ramp's top with the never-escaped ones. A better trade than the whole
+    // object sharing its bottom, and the number to beat if anyone revisits
+    // this with a normalizer that does not clamp.
     float escFrac = 0.0;
     if (escapedAt < steps && growth > 1.0) {
       escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);

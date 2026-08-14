@@ -3,7 +3,7 @@ import type { Variation, VariationType, Vec4 } from "./types";
 import { clamp } from "./vec";
 
 /**
- * The 4D lift of the sixteen nonlinear variation functions (fr-hy8), the fourth
+ * The 4D lift of the seventeen nonlinear variation functions (fr-hy8), the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
@@ -36,7 +36,7 @@ import { clamp } from "./vec";
  * `w' = w·c = 0`. Fold warps anchor the same way: `foldAxis(0) = 0` exactly, and
  * the sphere-fold radius ends in `+ w*w`. `bulb` carries `w` like an angular
  * warp and duplicates its x/y/z arithmetic term for term. The equality is
- * exact (not merely close) for all sixteen; the tests pin `toEqual`. That is what makes an
+ * exact (not merely close) for all seventeen; the tests pin `toEqual`. That is what makes an
  * embedded 3D system's `w = 0` slice warp bit-for-bit like the native 3D path.
  */
 export type VariationFn4 = (

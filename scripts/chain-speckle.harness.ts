@@ -150,14 +150,22 @@
  *   own doc before comparing the two at 0.1 — that lands exactly on the
  *   raw count's lattice and manufactures an 8-point gap out of rounding.
  *
- *   A CHAIN USES ONLY THE BOTTOM OF THE RAMP. The coordinate divides by
- *   `maxDepth * n` single-link steps, but escaping orbits leave in a few
- *   steps however long the chain is, so the [p05 p50 p95] of the trap runs
- *   [0.125 0.230 0.757] at one link, [0.083 0.132 0.313] at two and
- *   [0.043 0.072 0.205] at six. A palette over that paints a six-link
- *   chain in the darkest fifth of its ramp — visible in
- *   `chain-speckle-trap.png` as rows that darken with length. Worth a
- *   normalization pass before judging any chain by its colours.
+ *   A CHAIN USED ONLY THE BOTTOM OF THE RAMP, and this is where that was
+ *   found. The coordinate divided by `maxDepth * n` single-link steps,
+ *   but escaping orbits leave in a few steps however long the chain is,
+ *   so the [p05 p50 p95] of the trap ran [0.125 0.230 0.757] at one link,
+ *   [0.083 0.132 0.313] at two and [0.043 0.072 0.205] at six — a palette
+ *   over that painted a six-link chain in the darkest fifth of its ramp,
+ *   visible here as rows that darkened with length.
+ *
+ *   FIXED (fr-byxb): the denominator is the PASS budget now, and this
+ *   harness's own numbers are what the fix was checked against. One link
+ *   is unchanged to the bit; two and six now run [0.166 0.265 0.626] and
+ *   [0.256 0.431 1.000], and the rows brighten with length instead of
+ *   darkening. The cost is the clamp at the top — 1.9% of hit pixels at
+ *   two links, 8.6% at six, against 3.99% for the single map, which is
+ *   the number to beat for anyone trying a normalizer that does not
+ *   saturate.
  *
  * IN ONE LINE: the speckle is ~30% march (fixable, already saturating) and
  * ~70% the object (not fixable by marching or by pixels). It is real

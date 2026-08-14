@@ -32,14 +32,17 @@ unchanged, so `scale.z = 0` is what actually flattens the cloud onto the
 point's warm-up happened to land on, not at `0`.
 
 `presets.ts`'s `juliaSet` and `juliaDust` are this recipe at two different
-constants — see below for why two, and `presets.test.ts` for the tests that
+constants. Those are the BUILDER function names, which is how the rest of
+this document refers to them; the menu ids differ for one of the pair —
+`juliaSet` is selected as `julia` ("Julia Set" in the menu, `#v1=` documents
+and `<option value>` alike), while `juliaDust` is its own id — see below for why two, and `presets.test.ts` for the tests that
 pin the recipe (both the boundary-concentration property and the `z = 0`
 pin) so it cannot silently rot if `julia` or the affine application order
 ever changes.
 
 ## Two presets, one recipe
 
-**`juliaSet`** (`c = −0.123 + 0.745i`, Douady's rabbit — the center of `M`'s
+**`juliaSet`** (menu id `julia`; `c = −0.123 + 0.745i`, Douady's rabbit — the center of `M`'s
 period-3 hyperbolic component) renders a dense, richly detailed curve. It is
 genuinely and robustly connected: the critical orbit of `z² + c` never
 escapes, settling instead onto its attracting 3-cycle (confirmed bounded
