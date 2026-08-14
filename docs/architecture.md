@@ -55,7 +55,7 @@ translation, and a composed case against hand-computed values.
 Strict affine maps only ever produce self-similar, straight-edged attractors.
 **Variations** are nonlinear functions applied to a transform's point _after_
 its affine part, warping space into flowing, organic, "impossible" shapes.
-`variations.ts` holds fifteen as pure `(x, y, z, rng) → [x, y, z]` functions: a
+`variations.ts` holds seventeen as pure `(x, y, z, rng) → [x, y, z]` functions: a
 dozen classics borrowed from Draves & Reckase's _fractal flame_ algorithm
 (`spherical`, `swirl`, `bubble`, `julia`, …), plus a third family — the
 Mandelbox folds — covered below.
@@ -257,7 +257,7 @@ hand-unrolled DUPLICATE rather than an n-generic abstraction over the 3D path �
 the hot loop rewards branch-predictable, register-friendly, unrolled coordinates
 over a dimension-generic one — sharing only the genuinely-common constants
 (`WARMUP_ITERATIONS`, `ESCAPE_LIMIT`, `MAX_TRANSFORMS`). `variations4.ts` lifts the
-same fifteen variation functions `variations.ts` documents, by the identical
+same seventeen variation functions `variations.ts` documents, by the identical
 convention one dimension up (angular warps carry `z` AND `w` through unchanged;
 radial warps and `swirl` use the full 4D radius `x²+y²+z²+w²`; the fold family
 treats `w` exactly like a spatial axis, so `boxfold` reflects all four axes and
@@ -386,7 +386,7 @@ Radiolarian/Swirl/Dyed Spiral, and the "Escape-time" group's Mandelboxes
 and Mandelbulbs),
 which `main.ts` applies when the freshly loaded system's cloud lands,
 snapping the camera fit first so the flame's frozen projection frames the
-new attractor. Two sibling side tables ride the same lookup (fr-7u8t.5):
+new attractor. Two sibling side tables ride the same lookup (fr-7u8t.1):
 `PRESET_FINALS` gives a preset the final-transform LENS it was composed
 around — and, absent, CLEARS whatever lens the session had, so one preset's
 lens can never re-pose the next one's attractor — and `PRESET_PALETTES`
@@ -572,7 +572,7 @@ the composite Lipschitz bound `|w|·L_V·sigma_max(M) < 0.999` (`L = 1` for
 `boxfold`'s isometries, `L = 4` for the families carrying `spherefold`'s ×4
 inner branch), so a fold map can read contractive in the editor yet fail the
 gate — and, the other way, a small enough weight can rescue an expanding
-affine part. The shipped Mandelbox preset's `mandelbox` + `linear` blend
+affine part. The shipped Fold Lattice preset's `mandelbox` + `linear` blend
 still reads "uses variations" under this rule, and a pure-fold final
 transform stays ineligible too (the lens applies once; a multi-branch lens
 would need one root descent per branch). **Mandelbox KIFS** — twelve maps,

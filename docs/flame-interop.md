@@ -69,7 +69,7 @@ Four facts line the two vocabularies up better than they first appear:
 
 ## A deliberate deviation: the fold family isn't flam3's
 
-Fact 2 above has a carve-out. Twelve of our fifteen `VARIATION_TYPES` are
+Fact 2 above has a carve-out. Twelve of our seventeen `VARIATION_TYPES` are
 flam3's own attribute names; the Mandelbox fold family — `boxfold`,
 `spherefold`, `mandelbox` (fr-p7nu) — is ours. flam3 and Apophysis have no
 plain variation attributes by these names at all — their Mandelbox-adjacent
@@ -122,7 +122,7 @@ more valuable property to protect.
 | `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                          |
 | `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                     |
 
-"Known variation attrs" matches any of our fifteen `VARIATION_TYPES` by name
+"Known variation attrs" matches any of our seventeen `VARIATION_TYPES` by name
 — fold family included, per the deviation above. A genuine flam3/Apophysis
 file essentially never carries a `boxfold`/`spherefold`/`mandelbox`
 attribute, but one that does gets read as our fold variation rather than

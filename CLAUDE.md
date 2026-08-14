@@ -153,7 +153,7 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `presets.ts` — default + named systems + add-transform, plus five
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
-    (the renderer a preset was authored for), and — fr-7u8t.5 —
+    (the renderer a preset was authored for), and — fr-7u8t.1 —
     `PRESET_FINALS` (the plot-time lens a composition is built around;
     ABSENT MEANS CLEAR, so no lens survives a preset load into a system
     whose gate refuses one) and `PRESET_PALETTES` (the flame palette a
@@ -268,13 +268,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     single-link steps and an orbit escapes after a handful of them however
     long the chain is, so dividing by a budget that multiplied with the
     link count shrank the reachable ramp per link added and a chain
-    painted in the bottom of its palette. Measured at marched hit points,
-    the median trap at 2/3/6 links was 0.180/0.110/0.056 — halving with
-    every link or two — and is 0.360/0.331/0.333 now: FLAT in chain
-    length, beside the single map's unmoved 0.291, for a disclosed 12-16%
-    of hit pixels saturating at the ramp's top. Identical at n = 1 by
-    being the same expression, and the convention `core:"bulb"` always
-    used)
+    painted in the bottom of its palette. MEASURED TWICE, and the two
+    populations disagree about the size of the win: over the whole
+    surface the median trap at 2/3/6 links went 0.180/0.110/0.056 ->
+    0.360/0.331/0.333, and at the PIXELS chain-speckle's own pose hits it
+    went 0.132/-/0.072 -> 0.265/-/0.431. Both agree on the claim — n = 1
+    identical to the bit (the same expression), and the SYSTEMATIC
+    per-link collapse gone — but not on whether the result is flat, so
+    "no per-link trend" is what this normalizer buys, not
+    chain-invariance. Cost is the clamp: 1.9-8.6% of really-hit pixels at
+    six links, up to 15.8% over the whole surface. The convention
+    `core:"bulb"` always used)
     with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
     `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING, one formula

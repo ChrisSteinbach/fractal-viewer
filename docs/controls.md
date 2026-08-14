@@ -210,7 +210,7 @@ morphs into place instead of snapping (see **Presets** below).
   (fr-5rvk): a map whose variation list is exactly one fold-family entry
   (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can
   sweep the inverse branches of, so it stays eligible — a blend (the
-  shipped **Mandelbox** preset pairs `mandelbox` with `linear`) still
+  shipped **Fold Lattice** preset pairs `mandelbox` with `linear`) still
   trips the uses-variations reason, since a weighted sum has no
   per-branch inverse. A **pure-fold final transform** is eligible too
   (fr-g58b): the lens applies once to each query, so its fold expands
